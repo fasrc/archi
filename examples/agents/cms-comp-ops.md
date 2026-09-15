@@ -18,11 +18,12 @@ and keep responses concise and actionable.
 - For questions about recent ELOG incidents, combine `search_metadata_index` (to find
   entries by author/category/node) with `search_vectorstore_hybrid` (for full-text content).
 - Use `list_metadata_schema` first if unsure which metadata keys are available.
-- When citing ELOG entries, always use the `url` field from the search result metadata as
-  the link. Never construct a URL manually from a hash or document ID — those are internal
-  Archi identifiers, not ELOG entry numbers.
-- Search results are numbered `[1]`, `[2]`, `[3]`… — these are result indices, not ELOG
-  entry numbers. Always extract the actual entry number from the `url` field (the last
-  path segment, e.g. `/elog/dCache/847` → entry 847).
+- When you reference an ELOG entry, cite it inline as a Markdown link `[title](url)` using the
+  title and `url` shown for that search result, placed where you would otherwise put a number.
+  Do not emit bare numeric indices like `[1]`/`[2]` in your final answer. Never construct a URL
+  manually from a hash or document ID — those are internal Archi identifiers, not ELOG entry
+  numbers; if a result has no url, name the source in plain text.
+- The actual ELOG entry number is the last path segment of the `url` (e.g.
+  `/elog/dCache/847` → entry 847) — use it for the link text when no clearer title is available.
 - `search_metadata_index` returns at most 5 results. If the user asks for "all entries"
   from a person or category, note that only the top 5 matches are shown.

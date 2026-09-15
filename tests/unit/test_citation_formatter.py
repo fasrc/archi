@@ -2,9 +2,10 @@
 Unit tests for the citation formatter utility.
 """
 
-import pytest
 from dataclasses import dataclass, field
 from typing import Dict
+
+import pytest
 
 from src.archi.utils.citation_formatter import format_citations
 
@@ -12,6 +13,7 @@ from src.archi.utils.citation_formatter import format_citations
 @dataclass
 class FakeDocument:
     """Minimal stand-in for a LangChain Document."""
+
     page_content: str = ""
     metadata: Dict = field(default_factory=dict)
 
@@ -65,8 +67,8 @@ class TestFormatCitationsDeduplication:
         ]
         result = format_citations(docs, [0.90, 0.50])
         assert result.count("`faq.md`") == 1
-        assert "(relevance: 0.50)" in result
-        assert "(relevance: 0.90)" not in result
+        assert "(relevance: 0.90)" in result
+        assert "(relevance: 0.50)" not in result
 
     def test_duplicate_keeps_real_score_over_no_score(self):
         docs = [
@@ -85,7 +87,7 @@ class TestFormatCitationsScoreHandling:
         assert "relevance" not in result
         assert "`readme.md`" in result
 
-    def test_sorting_lower_is_better(self):
+    def test_sorting_higher_is_better(self):
         docs = [
             FakeDocument(metadata={"display_name": "b.md"}),
             FakeDocument(metadata={"display_name": "a.md"}),
@@ -93,7 +95,19 @@ class TestFormatCitationsScoreHandling:
         result = format_citations(docs, [0.90, 0.10])
         pos_a = result.index("`a.md`")
         pos_b = result.index("`b.md`")
-        assert pos_a < pos_b
+        assert pos_b < pos_a
+
+    def test_real_scores_descending_before_sentinels(self):
+        docs = [
+            FakeDocument(metadata={"display_name": "sentinel.md"}),
+            FakeDocument(metadata={"display_name": "low.md"}),
+            FakeDocument(metadata={"display_name": "high.md"}),
+        ]
+        result = format_citations(docs, [-1.0, 0.30, 0.80])
+        pos_high = result.index("`high.md`")
+        pos_low = result.index("`low.md`")
+        pos_sentinel = result.index("`sentinel.md`")
+        assert pos_high < pos_low < pos_sentinel
 
     def test_no_score_entries_sorted_after_scored(self):
         docs = [
@@ -110,7 +124,9 @@ class TestFormatCitationsCollectionLabels:
 
     def test_multi_collection_shows_labels(self):
         docs = [
-            FakeDocument(metadata={"display_name": "failover.md", "collection": "runbooks"}),
+            FakeDocument(
+                metadata={"display_name": "failover.md", "collection": "runbooks"}
+            ),
             FakeDocument(metadata={"display_name": "setup.md", "collection": "guides"}),
         ]
         result = format_citations(docs, [0.92, 0.87])
@@ -146,6 +162,7 @@ class TestFormatCitationsMissingMetadata:
     def test_document_without_metadata_attr(self):
         class BareDoc:
             page_content = "text"
+
         result = format_citations([BareDoc()], [0.5])
         assert result == ""
 

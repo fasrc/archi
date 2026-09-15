@@ -163,6 +163,34 @@ archi list-services
 
 ---
 
+## Stack will not start: `db-migrate` failed
+
+When Postgres is enabled, a one-shot `db-migrate` container applies pending schema
+migrations before anything else starts. `config-seed` and the data manager wait for it to
+complete successfully, so a failure here keeps the whole stack down by design — see
+[Schema migrations run automatically at startup](advanced_setup_deploy.md#schema-migrations-run-automatically-at-startup).
+
+Symptom: services sit in `Created` or `waiting` and never come up.
+
+Check the container's logs first — it names the file it was applying when it stopped:
+
+```bash
+docker logs <deployment-name>-db-migrate
+```
+
+Common causes:
+
+| Log line | Cause | Fix |
+|---|---|---|
+| `fe_sendauth: no password supplied` or `password authentication failed` | `PG_PASSWORD` is missing or empty in the deployment's `.env` | Set `PG_PASSWORD` in `.env` and redeploy. The container passes it to psql as `PGPASSWORD`. |
+| `could not connect to server` | Postgres was not healthy in time | Check the `postgres` container's logs and healthcheck. |
+| A psql `ERROR:` naming a table or column | A genuine problem in a migration file, applied against your schema | Read the named `.sql` file under your deployment's `migrations/` directory to see what ran. Fix it in `src/cli/templates/migrations/` — **not** in the deployment directory, which is rendered output: each redeploy overwrites the packaged files there and removes any `.sql` no longer packaged. |
+
+The container does not restart on failure (`restart: "no"`), so its logs stay available
+until the next deployment.
+
+---
+
 ## Getting Help
 
 - **GitHub Issues**: [archi-physics/archi](https://github.com/archi-physics/archi/issues)

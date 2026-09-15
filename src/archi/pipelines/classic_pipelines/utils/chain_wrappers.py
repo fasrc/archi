@@ -6,10 +6,11 @@ from langchain_core.language_models.base import BaseLanguageModel
 from langchain_core.prompts.base import BasePromptTemplate
 
 from src.archi.pipelines.classic_pipelines.utils.token_limiter import TokenLimiter
-from src.utils.logging import get_logger
 from src.utils.config_access import get_global_config
+from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
 
 class ChainWrapper:
     """
@@ -18,14 +19,14 @@ class ChainWrapper:
     """
 
     def __init__(
-            self,
-            chain: Any,
-            llm: BaseLanguageModel,
-            prompt: BasePromptTemplate,
-            required_input_variables: List[str] = ['question'],
-            unprunable_input_variables: Optional[List[str]] = [],
-            max_tokens: int = 1e10
-        ):
+        self,
+        chain: Any,
+        llm: BaseLanguageModel,
+        prompt: BasePromptTemplate,
+        required_input_variables: List[str] = ["question"],
+        unprunable_input_variables: Optional[List[str]] = [],
+        max_tokens: int = 1e10,
+    ):
         self.chain = chain
         self.llm = llm
         self.required_input_variables = required_input_variables
@@ -36,7 +37,7 @@ class ChainWrapper:
             llm=self.llm,
             prompt=self.prompt,
             max_tokens=max_tokens,
-            unprunable_input_variables=unprunable_input_variables
+            unprunable_input_variables=unprunable_input_variables,
         )
 
     def _check_prompt(self, prompt: BasePromptTemplate) -> BasePromptTemplate:
@@ -46,9 +47,11 @@ class ChainWrapper:
         """
         for var in self.required_input_variables:
             if var not in prompt.input_variables:
-                raise ValueError(f"Chain requires input variable {var} in the prompt, but could not find it.")
+                raise ValueError(
+                    f"Chain requires input variable {var} in the prompt, but could not find it."
+                )
         return prompt
-    
+
     def _prepare_payload(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """
         Prepare the input_variables to be passed to the chain.
@@ -61,9 +64,11 @@ class ChainWrapper:
         # if there are variables asked for in the prompt that aren't passed, initialize to empty string
         for var in self.prompt.input_variables:
             if var not in inputs:
-                logger.debug(f"Input variable '{var}' not provided, initializing to empty string.")
+                logger.debug(
+                    f"Input variable '{var}' not provided, initializing to empty string."
+                )
                 inputs[var] = ""
-        
+
         return inputs
 
     def invoke(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
@@ -80,13 +85,13 @@ class ChainWrapper:
         # get the payload
         input_variables = self._prepare_payload(inputs)
 
-        logger.debug("Prepared input variables for chain:\n%s", pprint.pformat(input_variables, indent=2))
-        
-        # produce LLM response
-        answer = self.chain.invoke(
-            input_variables,
-            config={}
+        logger.debug(
+            "Prepared input variables for chain:\n%s",
+            pprint.pformat(input_variables, indent=2),
         )
+
+        # produce LLM response
+        answer = self.chain.invoke(input_variables, config={})
 
         logger.debug(f"Chain produced answer: {answer}")
 

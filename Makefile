@@ -22,11 +22,13 @@ export GH_TOKEN ?= $(shell gh auth token 2>/dev/null)
 RUN_FLAGS := \
   --userns=keep-id \
   -e RALPH_MODEL \
+  -e RALPH_TASKS \
   -e GH_TOKEN \
+  -e GH_REPO=fasrc/archi \
   -v $(WORKSPACE):/workspace \
   -v $(CLAUDE_DIR):/home/claude/.claude
 
-.PHONY: help hooks build check-base login loop loop-once shell clean
+.PHONY: help hooks build check-base login loop loop-headless loop-once shell clean
 
 help:
 	@echo "Targets:"
@@ -79,6 +81,13 @@ login:
 loop: hooks check-base
 	@mkdir -p $(CLAUDE_DIR)
 	$(RUNTIME) run --rm -it $(RUN_FLAGS) --name $(IMAGE) $(IMAGE) ralph.sh
+
+# Headless loop for unattended/cron runs (no -it): same as `loop` without a TTY,
+# so it works when launched by cron or a scheduled agent with no terminal.
+# Used by the archi-nightly skill. Ctrl-C still stops a foreground invocation.
+loop-headless: hooks check-base
+	@mkdir -p $(CLAUDE_DIR)
+	$(RUNTIME) run --rm $(RUN_FLAGS) --name $(IMAGE)-headless $(IMAGE) ralph.sh
 
 loop-once: hooks check-base
 	@mkdir -p $(CLAUDE_DIR)

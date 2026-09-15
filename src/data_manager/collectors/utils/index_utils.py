@@ -56,8 +56,12 @@ class CatalogService:
     """Expose lightweight access to catalogued resources and metadata."""
 
     data_path: Path | str
-    pg_config: Optional[Dict[str, Any]] = None  # Reserved for future PostgreSQL-backed catalog
-    include_extensions: Sequence[str] = field(default_factory=lambda: sorted(DEFAULT_TEXT_EXTENSIONS))
+    pg_config: Optional[Dict[str, Any]] = (
+        None  # Reserved for future PostgreSQL-backed catalog
+    )
+    include_extensions: Sequence[str] = field(
+        default_factory=lambda: sorted(DEFAULT_TEXT_EXTENSIONS)
+    )
     db_filename: str = "catalog.sqlite"
     _file_index: Dict[str, str] = field(init=False, default_factory=dict)
     _metadata_index: Dict[str, str] = field(init=False, default_factory=dict)
@@ -66,7 +70,9 @@ class CatalogService:
         self.data_path = Path(self.data_path)
         self.db_path = self.data_path / self.db_filename
         if self.include_extensions:
-            self.include_extensions = tuple(ext.lower() for ext in self.include_extensions)
+            self.include_extensions = tuple(
+                ext.lower() for ext in self.include_extensions
+            )
         self._init_db()
         self.refresh()
 
@@ -175,11 +181,15 @@ class CatalogService:
         if not self.db_path.exists():
             return
         with self._connect() as conn:
-            conn.execute("DELETE FROM resources WHERE resource_hash = ?", (resource_hash,))
+            conn.execute(
+                "DELETE FROM resources WHERE resource_hash = ?", (resource_hash,)
+            )
         self._file_index.pop(resource_hash, None)
         self._metadata_index.pop(resource_hash, None)
 
-    def get_resource_hashes_by_metadata_filter(self, metadata_field: str, value: str) -> List[str]:
+    def get_resource_hashes_by_metadata_filter(
+        self, metadata_field: str, value: str
+    ) -> List[str]:
         """
         Return resource hashes whose metadata contains ``metadata_field`` equal to ``value``.
         """
@@ -311,9 +321,14 @@ class CatalogService:
         for resource_hash, stored_path in self._file_index.items():
             path = self._resolve_path(stored_path)
             if not path.exists():
-                logger.debug("File for resource hash %s not found; skipping.", resource_hash)
+                logger.debug(
+                    "File for resource hash %s not found; skipping.", resource_hash
+                )
                 continue
-            if self.include_extensions and path.suffix.lower() not in self.include_extensions:
+            if (
+                self.include_extensions
+                and path.suffix.lower() not in self.include_extensions
+            ):
                 logger.debug("File %s has excluded extension; skipping.", path)
                 continue
             yield resource_hash, path
@@ -550,7 +565,9 @@ class CatalogService:
             }
 
         # Get selection state for this conversation
-        selection_state = self.get_selection_state(conversation_id) if conversation_id else {}
+        selection_state = (
+            self.get_selection_state(conversation_id) if conversation_id else {}
+        )
 
         where_clauses: List[str] = []
         params: List[object] = []
@@ -595,16 +612,18 @@ class CatalogService:
             if enabled_filter == "disabled" and is_enabled:
                 continue
 
-            all_docs.append({
-                "hash": doc_hash,
-                "display_name": row["display_name"],
-                "source_type": row["source_type"],
-                "url": row["url"],
-                "size_bytes": row["size_bytes"],
-                "suffix": row["suffix"],
-                "ingested_at": row["ingested_at"],
-                "enabled": is_enabled,
-            })
+            all_docs.append(
+                {
+                    "hash": doc_hash,
+                    "display_name": row["display_name"],
+                    "source_type": row["source_type"],
+                    "url": row["url"],
+                    "size_bytes": row["size_bytes"],
+                    "suffix": row["suffix"],
+                    "ingested_at": row["ingested_at"],
+                    "enabled": is_enabled,
+                }
+            )
 
         # Apply pagination after enabled filtering
         paginated = all_docs[offset : offset + limit]
@@ -617,7 +636,9 @@ class CatalogService:
             "offset": offset,
         }
 
-    def get_document_content(self, document_hash: str, max_size: int = 100000) -> Optional[Dict[str, Any]]:
+    def get_document_content(
+        self, document_hash: str, max_size: int = 100000
+    ) -> Optional[Dict[str, Any]]:
         """
         Get document content for preview.
 
@@ -688,7 +709,9 @@ class CatalogService:
         }
 
     @classmethod
-    def load_sources_catalog(cls, data_path: Path | str, filename: Optional[str] = None) -> Dict[str, str]:
+    def load_sources_catalog(
+        cls, data_path: Path | str, filename: Optional[str] = None
+    ) -> Dict[str, str]:
         """
         Convenience helper that returns the resource index mapping with absolute paths.
         """
@@ -767,7 +790,9 @@ class CatalogService:
         conn.row_factory = sqlite3.Row
         return conn
 
-    def _ensure_column(self, conn: sqlite3.Connection, column: str, column_type: str) -> None:
+    def _ensure_column(
+        self, conn: sqlite3.Connection, column: str, column_type: str
+    ) -> None:
         rows = conn.execute("PRAGMA table_info(resources)").fetchall()
         existing = {row["name"] for row in rows}
         if column in existing:
@@ -788,7 +813,9 @@ class CatalogService:
         try:
             extra = json.loads(extra_json) or {}
         except json.JSONDecodeError as exc:
-            logger.warning("Failed to parse extra_json for %s: %s", data.get("resource_hash"), exc)
+            logger.warning(
+                "Failed to parse extra_json for %s: %s", data.get("resource_hash"), exc
+            )
             extra = {}
 
         if isinstance(extra, dict):

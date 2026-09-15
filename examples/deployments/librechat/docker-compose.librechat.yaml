@@ -1,0 +1,38 @@
+# Docker Compose for LibreChat connecting to an archi deployment.
+#
+# Usage:
+#   ARCHI_TOKEN=archi_<your-token> docker compose -f docker-compose.librechat.yaml up -d
+#
+# Assumes archi is already running on the host at port 7861.
+
+services:
+  librechat:
+    image: ghcr.io/danny-avila/librechat:latest
+    ports:
+      - "3080:3080"
+    environment:
+      MONGO_URI: "mongodb://mongodb:27017/LibreChat"
+      ENDPOINTS: "custom"
+      CREDS_KEY: "f34be427ebb29de8d88c107a71546019685ed8b241d8f2ed00c3df97ad2566f0"
+      CREDS_IV: "e2341419ec3dd3d19b13a1a87fafcbfb"
+      JWT_SECRET: "16f8c0ef4a5d391b26034086c628469d3f9f497f08163ab9b40137092f2909ef"
+      JWT_REFRESH_SECRET: "eaa5191d9c5bc31a861ac3a189c3e27e8a29c93d369e7fb632e6ce4ac0294688"
+      ALLOW_REGISTRATION: "true"
+      ALLOW_SOCIAL_LOGIN: "false"
+      ARCHI_TOKEN: "${ARCHI_TOKEN}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./librechat.yaml:/app/librechat.yaml:ro
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:7
+    volumes:
+      - mongodb-data:/data/db
+    restart: unless-stopped
+
+volumes:
+  mongodb-data:

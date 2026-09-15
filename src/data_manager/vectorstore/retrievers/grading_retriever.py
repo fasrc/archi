@@ -8,10 +8,11 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+
 class GradingRetriever(BaseRetriever):
     vectorstore: VectorStore = None
     k: int
-    
+
     def __init__(self, vectorstore: VectorStore, k: int = 3):
         super().__init__()
         self.vectorstore = vectorstore
@@ -23,4 +24,3 @@ class GradingRetriever(BaseRetriever):
         """
         logger.info(f"Retrieving top-{self.k} docs")
         return self.vectorstore.similarity_search(query, k=self.k)
-    

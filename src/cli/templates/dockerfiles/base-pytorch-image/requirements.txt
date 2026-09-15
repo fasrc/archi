@@ -6,10 +6,10 @@ xformers==0.0.29.post2
 # Base Python dependencies shared by all service images.
 # Changes here trigger a base-image rebuild in CI.
 backoff==2.2.1
-beautifulsoup4==4.12.3 
+beautifulsoup4==4.12.3
+markdownify==1.2.2
 clickhouse-connect==0.6.6
 coloredlogs==15.0.1
-duckdb==0.8.1
 fastapi==0.115.13
 flask==3.0.3
 flask-login==0.6.3
@@ -24,9 +24,17 @@ httpx==0.27.2
 humanfriendly==10.0
 croniter==2.0.5
 langgraph==1.0.2
-# See requirements/requirements-base.txt for the rationale on this pin.
+# langgraph-prebuilt is a transitive dep of langgraph. 1.0.9+ added
+# `from langgraph.runtime import ExecutionInfo, ServerInfo` to tool_node.py
+# (those symbols arrived in langgraph 1.0.10+; we're pinned to 1.0.2). Pin
+# <1.0.9 to stay on the last compatible release. Bump in lockstep if
+# langgraph is bumped. See issue #15.
 langgraph-prebuilt<1.0.9
 langchain-mcp-adapters==0.1.11
+# The QA evaluator imports the mcp SDK directly (ClientSession, stdio/http
+# clients), so the pin cannot stay transitive-only. ijson streams Dataset V2.
+mcp==1.27.2
+ijson==3.5.1
 langchain==1.0.3
 langchain_ollama==1.0.0
 loguru==0.7.2
@@ -34,13 +42,17 @@ lz4==4.3.2
 mistune==3.0.2
 monotonic==1.6
 mkdocs==1.6.1
-mkdocs-material
+mkdocs-material==9.7.3
+# Explicit pin for the docs `pymdownx.snippets` extension (glossary acronym
+# tooltips). Previously only transitive via mkdocs-material; declared directly so
+# it stays in lockstep with pyproject.toml's dependencies list.
+pymdown-extensions==11.0.1
 overrides==7.4.0
 piazza-api==0.14.0
 posthog==3.3.1
 pygments==2.18.0
 pypdf==3.16.1
-python-dotenv==1.0.0
+python-dotenv==1.2.2
 python-redmine==2.4.0
 regex==2023.12.25
 sentencepiece==0.2.0
@@ -62,12 +74,23 @@ pydantic==2.11.7
 pydantic-core==2.33.2
 anthropic==0.71.0
 scipy==1.13.1
+# Imported by src/bin/service_benchmark.py, which tests/unit/test_prompt_sweep_*.py
+# import at collection time. The gate (scripts/gate.sh) installs only
+# requirements-base, so pandas must live here for collection to succeed.
+pandas==2.3.2
 urllib3==2.3.0
 pulsar-client==3.5.0
 psycopg2-binary==2.9.10
 requests==2.32.5
 pyyaml==6.0.2
-protobuf==4.25.8
+# add-opentelemetry-tracing moved this pin from 4.25.8. The OTLP exporter needs
+# protobuf 5 or newer from OpenTelemetry 1.28 onward, and the last suite that
+# accepts protobuf 4 cannot be installed at all today (see the OpenTelemetry block
+# at the end of this file). The only package here that constrains protobuf is
+# onnxruntime, which flashrank pulls in and which asks for `protobuf>=4.25.8` with
+# no upper bound. pulsar-client bounds protobuf only under extras this project does
+# not install.
+protobuf==7.36.1
 jira==3.8.0
 spacy==3.8.7
 typer==0.15.4
@@ -93,10 +116,38 @@ aiohttp==3.9.5
 nltk==3.9.1
 sentence-transformers==5.1.2
 rank_bm25==0.2.2
-# Hierarchical-rerank-retrieval (branch-scoped, additive). See
-# requirements/requirements-base.txt (source of truth) for the version-pin
-# rationale; llama-index-core 0.14.19 is the last release compatible with the
-# nltk==3.9.1 pin above. Generated files are normally produced by
-# scripts/dev/build_docker_images.sh from requirements/requirements-base.txt.
+markitdown[pdf,pptx]==0.1.5
+# Hierarchical-rerank-retrieval (branch-scoped, additive). llama-index-core is
+# the lightweight core package (NOT the full `llama-index` meta-package) used
+# for structural parent-child node parsing at ingestion; flashrank is the
+# CPU/ONNX cross-encoder reranker. llama-index-core is pinned to 0.14.19 — the
+# last release that requires `nltk>3.8.1` rather than `nltk>=3.9.3`, so it stays
+# compatible with the existing `nltk==3.9.1` pin above without a forced bump.
 llama-index-core==0.14.19
 flashrank==0.2.10
+# add-opentelemetry-tracing: default-off OpenTelemetry tracing. See
+# docs/docs/proposals/opentelemetry-readiness.md and
+# openspec/changes/add-opentelemetry-tracing/. Core packages are pinned at 1.44.0 and
+# instrumentation packages at 0.65b0. The two numbering schemes move together, so
+# bump all nine in lockstep.
+#
+# This suite is the reason the protobuf pin above moved to 7.x. The last suite that
+# accepts protobuf 4 is 1.27.0 / 0.48b0, and it is not installable today: its
+# `opentelemetry-instrumentation` imports `pkg_resources` at module scope, which
+# setuptools 82 removed, and it declares only `setuptools>=16.0`. A fresh image build
+# therefore installs the newest setuptools and every instrumentor import fails.
+# Measured on 2026-09-09 in a clean virtual environment.
+#
+# openinference-instrumentation-langchain is NOT part of the suite. It carries its own
+# version line and it gives Phoenix the span kinds (LLM, TOOL, RETRIEVER, CHAIN) that
+# plain OpenTelemetry spans lack.
+opentelemetry-sdk==1.44.0
+opentelemetry-exporter-otlp-proto-http==1.44.0
+opentelemetry-instrumentation-flask==0.65b0
+opentelemetry-instrumentation-requests==0.65b0
+opentelemetry-instrumentation-httpx==0.65b0
+opentelemetry-instrumentation-urllib==0.65b0
+opentelemetry-instrumentation-psycopg2==0.65b0
+opentelemetry-instrumentation-sqlite3==0.65b0
+opentelemetry-instrumentation-logging==0.65b0
+openinference-instrumentation-langchain==0.1.74

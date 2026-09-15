@@ -1,0 +1,823 @@
+"""Unit tests for the benchmark run-loop resilience helpers.
+
+Covers the `benchmark-run-resilience` capability of the openspec change
+`harden-benchmark-and-agent-resilience`:
+- per-question failures are captured as marked entries, never propagated;
+- context-overflow degraded answers are classified as degraded (not clean);
+- failed/degraded rows are excluded from aggregates and human-eval consumers;
+- an all-failed configuration yields `n/a` aggregates instead of empty RAGAS.
+"""
+
+from __future__ import annotations
+
+import math
+
+from scripts.benchmarking import compare_runs as cr
+from src.utils.benchmark_resilience import (
+    BANK_SLICE_FIELDS,
+    DEGRADED,
+    FAILED,
+    OK,
+    build_failure_entry,
+    build_ragas_aggregates,
+    build_source_aggregates,
+    classify_metadata,
+    is_scorable,
+    scorable_items,
+    source_hits,
+)
+
+# --- classify_metadata: degraded detection (F3 / PR#91 F2) ------------------
+
+
+def test_clean_answer_is_ok():
+    assert classify_metadata({"event_type": "final"}) == OK
+    assert classify_metadata({}) == OK
+    assert classify_metadata(None) == OK
+
+
+def test_context_overflow_fallback_is_degraded():
+    assert classify_metadata({"error_type": "context_overflow"}) == DEGRADED
+
+
+def test_context_overflow_retry_is_degraded():
+    assert classify_metadata({"context_overflow_retry": True}) == DEGRADED
+
+
+# --- build_failure_entry: exception capture ---------------------------------
+
+
+def test_build_failure_entry_marks_and_captures_error():
+    entry = build_failure_entry(
+        question="q?", reference_answer="ref", error=ValueError("boom")
+    )
+    assert entry["status"] == FAILED
+    assert entry["question"] == "q?"
+    assert "ValueError" in entry["error"]
+    assert "boom" in entry["error"]
+    assert entry["answer"] == ""
+
+
+# --- is_scorable / scorable_items -------------------------------------------
+
+
+def test_is_scorable_only_true_for_ok():
+    assert is_scorable({"status": OK}) is True
+    assert is_scorable({}) is True  # unmarked legacy rows are treated as ok
+    assert is_scorable({"status": FAILED}) is False
+    assert is_scorable({"status": DEGRADED}) is False
+
+
+def test_scorable_items_filters_failed_and_degraded():
+    qwr = {
+        "question_1": {"status": OK, "answer": "a"},
+        "question_2": {"status": FAILED, "error": "x"},
+        "question_3": {"status": DEGRADED, "answer": "trunc"},
+        "question_4": {"answer": "legacy"},  # unmarked -> scorable
+    }
+    kept = scorable_items(qwr)
+    assert set(kept) == {"question_1", "question_4"}
+
+
+# --- _answer_and_score_question: isolation + degraded marking ---------------
+
+from src.bin.service_benchmark import Benchmarker, ResultHandler  # noqa: E402
+
+
+class _FakeDoc:
+    def __init__(self, content, metadata):
+        self.page_content = content
+        self.metadata = metadata
+
+
+class _StubBenchmarker(Benchmarker):
+    """Skip Benchmarker.__init__; stub only what _answer_and_score_question needs."""
+
+    def __init__(self, chain):
+        self.chain = chain
+
+    def prepare_messages(self, raw_messages):
+        return list(raw_messages)
+
+    def _resolve_reference_match_fields(
+        self, question_item, reference_sources, modes_being_run
+    ):
+        # Non-empty so the SOURCES per-source `matched` loop is exercised.
+        return (["url"], [{"url": "https://example/doc"}])
+
+    def get_source_results(self, result, formatted_reference_sources):
+        return [True]
+
+
+_QITEM = {"user_input": "how do I do X?", "reference": "ref", "sources": []}
+_MODES = {"RAGAS", "SOURCES"}
+
+
+def _slice_arm(label, rows):
+    """A real `compare_runs.Arm` over `rows`, for slice-level assertions.
+
+    Deliberately the production dataclass rather than a stub: the behaviour under
+    test lives in `Arm.has_metric` and `Arm.is_scorable`, so a hand-written stand-in
+    could agree with the assertion while disagreeing with the real comparison.
+    """
+    return cr.Arm(
+        label=label,
+        source=f"{label}.json",
+        rows=rows,
+        order=list(rows),
+        total_results={},
+        config_version={},
+        corpus_fingerprint="f1",
+        corpus_snapshot_id="s1",
+        code_version_digest="sha256:a",
+        configuration_file=f"configs/{label}.yaml",
+    )
+
+
+def _result(answer="an answer", metadata=None):
+    return {
+        "answer": answer,
+        "messages": [("AI", answer)],
+        "source_documents": [_FakeDoc("chunk text", {"url": "https://example/doc"})],
+        "metadata": metadata or {},
+    }
+
+
+def test_answer_and_score_clean_success():
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(_QITEM, 1, _MODES)
+    assert bundle["q_results"]["status"] == OK
+    assert bundle["q_results"]["answer"] == "an answer"
+    assert bundle["dataset_result"] is not None  # RAGAS input built
+    # RAGAS input uses the modern ragas 0.3.5 dialect, not legacy columns.
+    assert set(bundle["dataset_result"]) == {
+        "user_input",
+        "retrieved_contexts",
+        "response",
+        "reference",
+    }
+    assert bundle["dataset_result"]["reference"] == "ref"
+    assert bundle["dataset_result"]["response"] == "an answer"
+    assert bundle["matches"] == [True]
+    # per-source match stamped, and source metadata/truncation captured
+    assert bundle["q_results"]["reference_sources_metadata"][0]["matched"] is True
+    assert bundle["q_results"]["sources_metadata"] == [{"url": "https://example/doc"}]
+    assert bundle["q_results"]["sources_trunc_content"] == ["chunk text"]
+
+
+def test_answer_and_score_degraded_is_excluded():
+    agent = _StubBenchmarker(
+        chain=lambda **kw: _result(metadata={"error_type": "context_overflow"})
+    )
+    bundle = agent._answer_and_score_question(_QITEM, 1, _MODES)
+    assert bundle["q_results"]["status"] == DEGRADED
+    # A degraded answer feeds neither RAGAS nor source scoring.
+    assert bundle["dataset_result"] is None
+    assert bundle["matches"] is None
+    # and it must NOT stamp `matched` onto its sources (Codex F4), or the HTML
+    # report would show a truncated-context answer as source-correct.
+    assert "matched" not in bundle["q_results"]["reference_sources_metadata"][0]
+
+
+def test_answer_and_score_exception_is_isolated():
+    def _boom(**kw):
+        raise RuntimeError("context length is only 32768")
+
+    agent = _StubBenchmarker(chain=_boom)
+    bundle = agent._answer_and_score_question(_QITEM, 1, _MODES)
+    assert bundle["q_results"]["status"] == FAILED
+    assert "RuntimeError" in bundle["q_results"]["error"]
+    assert bundle["dataset_result"] is None
+    assert bundle["matches"] is None
+
+
+def test_answer_and_score_draft_row_display_safe_but_ragas_reference_raw():
+    """A draft row (empty `reference`) is scorable: its ragas payload keeps the raw
+    empty `reference` (which drives context-metric eligibility), but the
+    human-facing `reference_answer` is an "N/A" sentinel so the result / Argilla
+    record never carries a blank required field (adversarial review)."""
+    draft_item = {"user_input": "draft q", "sources": []}  # no `reference`
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(draft_item, 1, _MODES)
+    assert bundle["q_results"]["status"] == OK
+    # display / Argilla sink gets a non-empty sentinel...
+    assert bundle["q_results"]["reference_answer"] == "N/A"
+    # ...while the ragas payload keeps the raw empty reference for eligibility.
+    assert bundle["dataset_result"]["reference"] == ""
+
+
+# --- pair_ab_results excludes failed/degraded rows (F4) ---------------------
+
+
+def test_pair_ab_results_skips_non_scorable(monkeypatch):
+    def _row(status, ar):
+        return {
+            "question": "q",
+            "reference_answer": "r",
+            "status": status,
+            "answer_relevancy": ar,
+        }
+
+    results = [
+        {
+            "single_question_results": {
+                "question_1": _row(OK, 0.9),
+                "question_2": _row(FAILED, 0.0),
+            }
+        },
+        {
+            "single_question_results": {
+                "question_1": _row(OK, 0.8),
+                "question_2": _row(OK, 0.7),
+            }
+        },
+    ]
+    monkeypatch.setattr(ResultHandler, "results", results)
+    paired = ResultHandler.pair_ab_results(0, 1)
+    # question_2 is FAILED in config A -> excluded; only question_1 pairs.
+    assert len(paired) == 1
+
+
+# --- source_hits ------------------------------------------------------------
+
+
+def test_source_hits_none_contributes_nothing():
+    assert source_hits(None, [{"url": "x"}]) == (0, 0)
+
+
+def test_source_hits_zero_reference_is_not_a_strict_hit():
+    # A row with no expected sources (a `should_refuse` anchor) cannot hit or
+    # miss a source. `all([])` is vacuously true, so the original semantics
+    # booked a FREE strict hit for it — inflating `source_accuracy` no matter
+    # what the model answered. Such a row must contribute nothing, exactly like
+    # a failed row; `_source_scorable_count` also keeps it out of the denominator.
+    assert source_hits([], []) == (0, 0)
+
+
+def test_source_hits_zero_reference_is_not_confused_with_a_perfect_hit():
+    perfect = source_hits([True], [{"url": "a"}])
+    assert perfect == (1, 1)
+    # The bug: a zero-reference row ALSO returned strict=1, making it
+    # indistinguishable from a row whose every expected source was retrieved.
+    assert source_hits([], [])[1] != perfect[1]
+    # A declared reference that went unmatched is still a real miss, not a no-op.
+    assert source_hits([False], [{"url": "a"}]) == (0, 0)
+
+
+def test_source_hits_relative_only():
+    # one of two references matched -> relative hit, not strict
+    assert source_hits([True, False], [{"url": "a"}, {"url": "b"}]) == (1, 0)
+
+
+def test_source_hits_strict():
+    assert source_hits([True, True], [{"url": "a"}, {"url": "b"}]) == (1, 1)
+
+
+# --- build_ragas_aggregates / build_source_aggregates -----------------------
+
+
+def test_build_ragas_aggregates_nan_when_none():
+    aggs = build_ragas_aggregates(None)
+    assert set(aggs) == {
+        "aggregate_answer_relevancy",
+        "aggregate_faithfulness",
+        "aggregate_context_precision",
+        "aggregate_context_recall",
+        "aggregate_answer_correctness",
+    }
+    assert all(isinstance(v, float) and math.isnan(v) for v in aggs.values())
+
+
+def test_build_ragas_aggregates_means_when_present():
+    import pandas as pd
+
+    df = pd.DataFrame(
+        {
+            "answer_relevancy": [1.0, 0.0],
+            "faithfulness": [0.5, 0.5],
+            "context_precision": [1.0, 1.0],
+            "context_recall": [0.0, 1.0],
+        }
+    )
+    aggs = build_ragas_aggregates(df)
+    assert aggs["aggregate_answer_relevancy"] == 0.5
+    assert aggs["aggregate_faithfulness"] == 0.5
+
+
+def test_build_source_aggregates_zero_questions_is_numeric():
+    assert build_source_aggregates(0.0, 0.0, 0) == {
+        "relative_source_accuracy": 0.0,
+        "source_accuracy": 0.0,
+        "source_scored_count": 0,
+    }
+
+
+def test_build_source_aggregates_emits_its_denominator():
+    # The HTML report used to re-derive the hit count as int(len(questions) * acc).
+    # Now that zero-source rows are excluded, len(questions) is the WRONG
+    # denominator, so the count that was actually divided by has to travel with
+    # the score (mirrors the per-metric `scored_counts` RAGAS already emits).
+    assert build_source_aggregates(3.0, 1.0, 4)["source_scored_count"] == 4
+
+
+def test_build_source_aggregates_divides_by_total_count():
+    aggs = build_source_aggregates(3.0, 1.0, 4)
+    assert aggs["relative_source_accuracy"] == 0.75
+    assert aggs["source_accuracy"] == 0.25
+
+
+# --- _process_config: loop orchestration ------------------------------------
+
+
+class _ConfigStub(Benchmarker):
+    """Skip __init__; drive _process_config with canned per-question bundles."""
+
+    def __init__(self, queries, bundles):
+        self.queries_to_answers = queries
+        self.required_fields = ["user_input"]
+        self._bundles = list(bundles)
+
+    def _answer_and_score_question(self, question_item, question_id, modes_being_run):
+        return self._bundles.pop(0)
+
+
+def _ok_bundle():
+    return {
+        "q_results": {
+            "status": OK,
+            "question": "q",
+            "reference_sources_metadata": [{"url": "x"}],
+        },
+        "dataset_result": {"user_input": "q", "reference": "r"},
+        "matches": [True],
+    }
+
+
+def _miss_bundle():
+    # A real question whose declared source was NOT retrieved.
+    return {
+        "q_results": {
+            "status": OK,
+            "question": "q",
+            "reference_sources_metadata": [{"url": "x"}],
+        },
+        "dataset_result": {"user_input": "q", "reference": "r"},
+        "matches": [False],
+    }
+
+
+def _zero_source_bundle():
+    # A `should_refuse` anchor: declares no sources, so nothing to match.
+    return {
+        "q_results": {
+            "status": OK,
+            "question": "refuse",
+            "reference_sources_metadata": [],
+        },
+        "dataset_result": {"user_input": "refuse", "reference": "r"},
+        "matches": [],
+    }
+
+
+def _fail_bundle():
+    return {
+        "q_results": {"status": FAILED, "error": "boom"},
+        "dataset_result": None,
+        "matches": None,
+    }
+
+
+def test_process_config_sources_aggregate():
+    # The query must DECLARE the source its bundle claims to have matched:
+    # `reference_sources_metadata` is derived from `sources`, so a row cannot match
+    # a source it never declared, and `sources` is now the aggregate's denominator.
+    agent = _ConfigStub(
+        queries=[{"user_input": "q", "sources": ["x"]}], bundles=[_ok_bundle()]
+    )
+    qwr, total = agent._process_config({"SOURCES"})
+    assert set(qwr) == {"question_1"}
+    assert total["relative_source_accuracy"] == 1.0
+    assert total["source_accuracy"] == 1.0
+    assert total["source_scored_count"] == 1
+
+
+def test_process_config_excludes_zero_source_row_from_source_aggregate():
+    # A `should_refuse` anchor beside one real question. Before the fix the anchor
+    # booked a free strict hit AND sat in the denominator, so a run that matched
+    # the one real source reported source_accuracy = 2/2 = 1.0 either way — the
+    # anchor's "score" was pure fiction. It must now be invisible to both.
+    agent = _ConfigStub(
+        queries=[
+            {"user_input": "q", "sources": ["x"]},
+            {"user_input": "refuse", "sources": []},
+        ],
+        bundles=[_ok_bundle(), _zero_source_bundle()],
+    )
+    _, total = agent._process_config({"SOURCES"})
+    assert total["source_scored_count"] == 1
+    assert total["source_accuracy"] == 1.0
+    assert total["relative_source_accuracy"] == 1.0
+
+
+def test_process_config_zero_source_row_cannot_rescue_a_miss():
+    # The anchor must not paper over a real retrieval miss: one declared source,
+    # unmatched -> 0.0, not the 0.5 the free strict hit used to manufacture.
+    agent = _ConfigStub(
+        queries=[
+            {"user_input": "q", "sources": ["x"]},
+            {"user_input": "refuse", "sources": []},
+        ],
+        bundles=[_miss_bundle(), _zero_source_bundle()],
+    )
+    _, total = agent._process_config({"SOURCES"})
+    assert total["source_scored_count"] == 1
+    assert total["source_accuracy"] == 0.0
+
+
+def test_process_config_all_failed_ragas_is_nan():
+    agent = _ConfigStub(queries=[{"user_input": "q"}], bundles=[_fail_bundle()])
+    qwr, total = agent._process_config({"RAGAS"})
+    assert qwr["question_1"]["status"] == FAILED
+    # no scorable RAGAS input -> aggregates are NaN, not an empty-Dataset crash
+    assert math.isnan(total["aggregate_faithfulness"])
+    assert math.isnan(total["aggregate_answer_relevancy"])
+
+
+def test_process_config_skips_invalid_items():
+    agent = _ConfigStub(queries=["not-a-dict", {"no_question": 1}], bundles=[])
+    qwr, total = agent._process_config({"SOURCES"})
+    # both invalid items are skipped; the answer path is never reached
+    assert qwr == {}
+    # denominator is the total question count (2); no hits -> 0.0, numeric
+    assert total["relative_source_accuracy"] == 0.0
+
+
+def test_process_config_passes_only_scorable_to_ragas():
+    """RAGAS scoring must receive exactly the scorable rows, keyed by question
+    (not the full result set, and by key never positionally — Codex F1/F5)."""
+    captured = {}
+
+    class _RagasStub(_ConfigStub):
+        def get_ragas_results(self, rows, keys, results_by_key):
+            captured["keys"] = list(keys)
+            captured["rows"] = list(rows)
+            captured["results_keys"] = list(results_by_key.keys())
+            return {"aggregate_faithfulness": 1.0}
+
+    agent = _RagasStub(
+        queries=[{"user_input": "a"}, {"user_input": "b"}],
+        bundles=[_ok_bundle(), _fail_bundle()],
+    )
+    _, total = agent._process_config({"RAGAS"})
+    # question_2 failed (no ragas input) -> only question_1 reaches RAGAS, keyed.
+    assert captured["keys"] == ["question_1"]
+    assert captured["results_keys"] == ["question_1"]
+    # exactly the scorable row's modern dataset_result is scored.
+    assert captured["rows"] == [{"user_input": "q", "reference": "r"}]
+    assert total["aggregate_faithfulness"] == 1.0
+
+
+# --- answer_correctness: A/B pairing ----------------------------------------
+
+
+def test_pair_ab_results_carries_answer_correctness(monkeypatch):
+    """A/B pairing builds its payload from a fixed metric-name list, so a metric
+    missing from that list is dropped from both the paired scores and the
+    per-metric winner — the comparison would silently ignore it."""
+
+    def _row(ac):
+        return {
+            "question": "q",
+            "reference_answer": "r",
+            "status": OK,
+            "answer_correctness": ac,
+        }
+
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            {"single_question_results": {"question_1": _row(0.9)}},
+            {"single_question_results": {"question_1": _row(0.4)}},
+        ],
+    )
+    paired = ResultHandler.pair_ab_results(0, 1)
+
+    assert len(paired) == 1
+    assert paired[0].ragas_a["answer_correctness"] == 0.9
+    assert paired[0].ragas_b["answer_correctness"] == 0.4
+    assert paired[0].winner_by_metric["answer_correctness"] == "a"
+
+
+def test_build_ragas_aggregates_none_emits_answer_correctness_placeholder():
+    """An all-failed config must report the SAME aggregate key set a scored run
+    does, so a consumer never has to tell "absent because the run failed" from
+    "absent because this key is never emitted". A config that enables ONLY
+    answer_correctness would otherwise get failure output with no aggregate at
+    all for the one metric it asked for."""
+    aggs = build_ragas_aggregates(None)
+    assert "aggregate_answer_correctness" in aggs
+    assert math.isnan(aggs["aggregate_answer_correctness"])
+
+
+def test_build_ragas_aggregates_tolerates_a_frame_without_the_column():
+    """Scoring frames only carry the columns the run enabled, so a metric key in
+    the aggregate map must never KeyError on a frame that omits it."""
+    import pandas as pd
+
+    df = pd.DataFrame(
+        {
+            "answer_relevancy": [1.0, 0.0],
+            "faithfulness": [1.0, 1.0],
+            "context_precision": [0.5, 0.5],
+            "context_recall": [0.0, 1.0],
+        }
+    )
+    aggs = build_ragas_aggregates(df)
+
+    assert aggs["aggregate_answer_relevancy"] == 0.5
+    assert math.isnan(aggs["aggregate_answer_correctness"])
+
+
+def test_all_failed_aggregates_only_cover_enabled_metrics():
+    """Key presence must mean "this run asked for the metric".
+
+    An all-failed run must emit the SAME key set a successful run of the same
+    config would emit — no more. Emitting an opt-in metric the config never
+    enabled makes "metric omitted by config" indistinguishable from "metric
+    requested but unscored", and breaks readers that branch on key presence.
+    """
+    four = [
+        "answer_relevancy",
+        "faithfulness",
+        "context_precision",
+        "context_recall",
+    ]
+    aggs = build_ragas_aggregates(None, enabled_metrics=four)
+    assert "aggregate_answer_correctness" not in aggs
+    assert set(aggs) == {f"aggregate_{m}" for m in four}
+
+    with_ac = build_ragas_aggregates(
+        None, enabled_metrics=four + ["answer_correctness"]
+    )
+    assert math.isnan(with_ac["aggregate_answer_correctness"])
+
+
+def test_process_config_all_failed_emits_only_the_enabled_metrics():
+    """End-to-end wiring: the failure path must consult the run's enabled list.
+
+    Guards against the aggregate keys being driven by a static metric map, which
+    would publish an opt-in metric's key for a config that never enabled it.
+    """
+    agent = _ConfigStub(queries=[{"user_input": "q"}], bundles=[_fail_bundle()])
+    agent.benchmarking_configs = {
+        "mode_settings": {
+            "ragas_settings": {"enabled_metrics": ["answer_relevancy", "faithfulness"]}
+        }
+    }
+
+    _qwr, total = agent._process_config({"RAGAS"})
+
+    assert math.isnan(total["aggregate_answer_relevancy"])
+    assert math.isnan(total["aggregate_faithfulness"])
+    for disabled in (
+        "aggregate_context_precision",
+        "aggregate_context_recall",
+        "aggregate_answer_correctness",
+    ):
+        assert disabled not in total
+
+
+# --- A/B must not claim anything about a metric only one arm scored ----------
+
+
+def _ab_row(**scores):
+    row = {"question": "q", "reference_answer": "r", "status": OK}
+    row.update(scores)
+    return row
+
+
+def test_pair_ab_results_omits_a_metric_only_one_arm_scored(monkeypatch):
+    """A metric one arm never scored has no winner, because there is nothing to
+    compare it against.
+
+    The loop iterated arm A's keys and read arm B with a NaN default, so an
+    unscored arm B came back as "tie" — a published verdict on a metric it never
+    measured. Reachable as soon as two arms enable different metrics, which the
+    opt-in metric makes possible.
+    """
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            {
+                "single_question_results": {
+                    "question_1": _ab_row(faithfulness=0.8, answer_correctness=0.9)
+                }
+            },
+            {"single_question_results": {"question_1": _ab_row(faithfulness=0.4)}},
+        ],
+    )
+    paired = ResultHandler.pair_ab_results(0, 1)
+
+    assert len(paired) == 1
+    assert paired[0].winner_by_metric == {"faithfulness": "a"}
+    assert "answer_correctness" not in paired[0].ragas_a
+    assert "answer_correctness" not in paired[0].ragas_b
+
+
+def test_ab_aggregate_never_fabricates_a_zero_for_an_unscored_metric(monkeypatch):
+    """The mean falls back to 0.0 when an arm has no values, and 0.0 is the WORST
+    possible score — so publishing it for a metric the arm never enabled reads as
+    "this arm is terrible at correctness" rather than "this arm did not measure
+    it"."""
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            {
+                "configuration": {},
+                "single_question_results": {
+                    "question_1": _ab_row(faithfulness=0.8, answer_correctness=0.9)
+                },
+            },
+            {
+                "configuration": {},
+                "single_question_results": {"question_1": _ab_row(faithfulness=0.4)},
+            },
+        ],
+    )
+    monkeypatch.setattr(ResultHandler, "ab_comparisons", [])
+    paired = ResultHandler.pair_ab_results(0, 1)
+    ResultHandler.dump_ab_comparison(paired, 0, 1)
+    agg = ResultHandler.ab_comparisons[-1]["aggregate"]
+
+    assert "answer_correctness" not in agg["mean_scores_b"]
+    assert "answer_correctness" not in agg["mean_scores_a"]
+    assert agg["mean_scores_a"]["faithfulness"] == 0.8
+
+
+def test_pair_ab_results_still_ties_on_nan_both_sides(monkeypatch):
+    """Regression guard: a metric BOTH arms scored, where the judge returned NaN,
+    stays a tie. That is scored-but-failed, not never-measured."""
+    nan = float("nan")
+    monkeypatch.setattr(
+        ResultHandler,
+        "results",
+        [
+            {"single_question_results": {"question_1": _ab_row(faithfulness=nan)}},
+            {"single_question_results": {"question_1": _ab_row(faithfulness=0.4)}},
+        ],
+    )
+    paired = ResultHandler.pair_ab_results(0, 1)
+
+    assert paired[0].winner_by_metric == {"faithfulness": "tie"}
+
+
+# --- _answer_and_score_question: bank `difficulty` propagation (#431) -------
+
+
+def test_answer_and_score_propagates_bank_difficulty():
+    item = {
+        "user_input": "how do I do X?",
+        "reference": "ref",
+        "sources": [],
+        "difficulty": "hard",
+    }
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(item, 1, _MODES)
+    assert bundle["q_results"]["difficulty"] == "hard"
+
+
+def test_answer_and_score_omits_difficulty_when_bank_row_lacks_it():
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(_QITEM, 1, _MODES)
+    assert "difficulty" not in bundle["q_results"]
+
+
+def test_difficulty_key_agrees_with_compare_runs_slice_fields():
+    item = {
+        "user_input": "how do I do X?",
+        "reference": "ref",
+        "sources": [],
+        "difficulty": "hard",
+    }
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(item, 1, _MODES)
+
+    assert "difficulty" in cr.SLICE_FIELDS
+    assert "difficulty" in bundle["q_results"]
+
+
+# --- failed entries keep the bank's slice fields (#431 round 1, Codex P2) ---
+#
+# A question that raised jumps to the isolation handler before the success path
+# copies the bank row's `difficulty`, so its stored row carried no such key. That
+# is not merely missing metadata: `compare_runs.slice_block` reads a value from
+# the baseline arm and counts every arm that disagrees as `excluded_mismatched`,
+# whose documented meaning is "a bank edit re-labelled this question between the
+# runs". `Arm.has_metric` is True when ANY row carries the field, so one failed
+# question in the treatment arm yields `None != "hard"` and is reported as a bank
+# relabelling. A harness failure must never be published as bank drift.
+
+
+def test_build_failure_entry_carries_the_banks_slice_fields():
+    entry = build_failure_entry(
+        question="q",
+        reference_answer="ref",
+        error=RuntimeError("boom"),
+        question_item={
+            "user_input": "q",
+            "difficulty": "hard",
+            "anchor_type": "reasoning",
+        },
+    )
+
+    assert entry["status"] == FAILED
+    assert entry["difficulty"] == "hard"
+    assert entry["anchor_type"] == "reasoning"
+
+
+def test_build_failure_entry_omits_slice_fields_the_bank_row_lacks():
+    entry = build_failure_entry(
+        question="q", reference_answer="ref", error=RuntimeError("boom")
+    )
+
+    # Absent, not defaulted: `slice_block` skips a falsy baseline value, so an
+    # empty-string sentinel would be equivalent here -- but inventing a value the
+    # bank never stated is what would make a real relabelling unreportable.
+    assert "difficulty" not in entry
+    assert "anchor_type" not in entry
+
+
+def test_build_failure_entry_tolerates_a_non_dict_bank_row():
+    entry = build_failure_entry(
+        question="q",
+        reference_answer="ref",
+        error=RuntimeError("boom"),
+        question_item="a bare question string",
+    )
+
+    assert entry["status"] == FAILED
+    assert "difficulty" not in entry
+
+
+def test_failure_slice_fields_agree_with_compare_runs():
+    # The tuple is duplicated across the src/ and scripts/ boundary on purpose --
+    # src must not import from scripts. This is the drift guard for that copy.
+    assert set(BANK_SLICE_FIELDS) == set(cr.SLICE_FIELDS)
+
+
+def test_answer_and_score_keeps_difficulty_when_the_question_raises():
+    def _boom(**kw):
+        raise RuntimeError("context length is only 32768")
+
+    item = {
+        "user_input": "how do I do X?",
+        "reference": "ref",
+        "sources": [],
+        "difficulty": "hard",
+        "anchor_type": "reasoning",
+    }
+    agent = _StubBenchmarker(chain=_boom)
+
+    bundle = agent._answer_and_score_question(item, 1, _MODES)
+
+    assert bundle["q_results"]["status"] == FAILED
+    assert bundle["q_results"]["difficulty"] == "hard"
+    assert bundle["q_results"]["anchor_type"] == "reasoning"
+
+
+def test_a_failed_treatment_question_is_not_reported_as_a_bank_relabelling():
+    """End-to-end on the consequence: `excluded_mismatched` must stay 0.
+
+    Builds the two arms `slice_block` sees when one question fails in the
+    treatment arm only, using the row the fixed `build_failure_entry` writes.
+    """
+    baseline_rows = {
+        f"q{i}": {"difficulty": "hard", "faithfulness": 0.5, "status": OK}
+        for i in range(3)
+    }
+    treatment_rows = {
+        f"q{i}": {"difficulty": "hard", "faithfulness": 0.6, "status": OK}
+        for i in range(2)
+    }
+    treatment_rows["q2"] = build_failure_entry(
+        question="q2",
+        reference_answer="ref",
+        error=RuntimeError("boom"),
+        question_item={"user_input": "q2", "difficulty": "hard"},
+    )
+
+    baseline = _slice_arm("baseline", baseline_rows)
+    treatment = _slice_arm("treatment", treatment_rows)
+    arms = [baseline, treatment]
+
+    block = cr.slice_block(baseline, arms, [f"q{i}" for i in range(3)], {})
+    difficulty_entries = [e for e in block if e["field"] == "difficulty"]
+
+    assert difficulty_entries, "the difficulty slice must still be reported"
+    assert all(e["excluded_mismatched"] == 0 for e in difficulty_entries), (
+        "a question that failed in one arm is a harness failure, not a bank "
+        f"relabelling: {[e['excluded_mismatched'] for e in difficulty_entries]}"
+    )

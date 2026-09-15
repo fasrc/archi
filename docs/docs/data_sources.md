@@ -77,9 +77,171 @@ SSO_USERNAME=username
 SSO_PASSWORD=password
 ```
 
+### Sitemap sources
+
+To track a site that publishes an XML sitemap, list the sitemap itself with a
+`sitemap-` prefix instead of hand-listing every page. It is expanded **at ingest
+time** — each `<loc>` becomes a page URL scraped exactly as if hand-listed — so
+newly published pages are discovered automatically on every **full ingest**
+(`archi create` / a redeploy, i.e. `collect_all_from_config`):
+
+```
+sitemap-https://docs.rc.fas.harvard.edu/kb/epkb_post_type_1-sitemap.xml
+```
+
+A `<urlset>` contributes its pages; a `<sitemapindex>` is followed **one** level
+(each child fetched once; a child that is itself an index is not followed). An
+individual document that fails to fetch or parse is skipped with a warning
+(fail-open), and emitted URLs are normalized to the hand-list form (trailing
+slash collapsed) so they cannot create slash-variant duplicates.
+
+> **Note:** a *scheduled* `links` refresh (`data_manager.sources.links.schedule`)
+> **does** re-read the input lists and re-expand the sitemap, so a `<lastmod>` that
+> advances between full ingests reaches the catalog. What it re-scrapes is only the
+> set of URLs *already in the catalog*. A page published to the sitemap *after* the
+> last full ingest is therefore still picked up only by the next full
+> ingest/redeploy, not by the scheduled refresh.
+>
+> **If the sitemap cannot be expanded** — unreachable, or its page count falls
+> outside the configured `min_pages`/`max_pages` bounds — the scheduled refresh
+> **still runs**. It crawls the catalog using whatever `<lastmod>` values were
+> cached from the last successful expansion, or none if there has never been one.
+> Timestamps already stored are preserved; the only gap is that a page first seen
+> during such a pass carries no `last_modified` until a later pass with a working
+> sitemap supplies one.
+>
+> In the logs this appears as an `ERROR` naming the rejected sitemap source
+> (`failing ingest`), followed by a `WARNING` from the scheduled pass reporting how
+> many cached `<lastmod>` entries it is using and whether they came from a complete
+> expansion. The error describes the *source*; the warning describes the *pass*,
+> which completes. A suppressed refresh would be the worse outcome: it would leave
+> the catalog stale for a whole cycle while still being recorded as a clean run.
+
+Because the emitted list comes from a live remote document that no human reviews,
+expansion is trust-constrained and bounded per source — configured under
+`data_manager.sources.links.sitemap`:
+
+```yaml
+data_manager:
+  sources:
+    links:
+      sitemap:
+        allowed_hosts: []      # extra hosts (besides the sitemap's own) allowed
+        min_pages: 1           # floor: a source below this FAILS the ingest
+        max_pages: 20000       # cap: a source above this FAILS deterministically
+```
+
+Only `http`/`https` URLs on the sitemap's own host (or an `allowed_hosts` entry)
+are fetched or emitted; IP-literal loopback/private/link-local targets and
+cross-host redirects are rejected. The `min_pages` floor runs on **every** ingest
+— a transient sitemap outage fails the run loudly rather than silently shipping
+an empty knowledge base (this matters most on a fresh install or after a `nuke`).
+
+> **Scope (v1):** these defaults target a **trusted first-party** sitemap. Before
+> pointing `sitemap-` at any untrusted/third-party sitemap, adopt the stronger
+> SSRF defenses (DNS resolve-to-global + connection pinning) and fetch-work
+> budgets described in the change's design *§Deferred hardening (v2)*.
+
+The `sitemap-` prefix (runtime, automatic) and `archi sources build`'s
+build-time `sitemap` seed (operator-run, writes a committed list) are
+complementary — see [Building a `sources.list` from a manifest](#building-a-sourceslist-from-a-manifest).
+
 ### Running
 
 Link scraping is controlled by your config (`data_manager.sources.links.enabled`).
+
+---
+
+## Building a `sources.list` from a manifest
+
+Instead of curating a web link list by hand, you can generate it from a typed
+**manifest** with [`archi sources build`](cli_reference.md#archi-sources-build).
+The manifest declares *where the URLs come from*; the command fetches and expands
+them into the same one-URL-per-line `sources.list` the scraper already consumes.
+
+### Where the manifest lives
+
+The manifest is just a file path you pass to `archi sources build <manifest>` — there
+is **no fixed or default location** and no auto-discovery. Keep it wherever suits you:
+
+- **Alongside the deployment it describes** (recommended) — e.g.
+  `deploy/<name>/sources.manifest.yaml`, so the manifest travels with that deployment's
+  config. The FASRC dev deployment uses `deploy/fasrc-dev/sources.manifest.yaml`.
+- **Version-controlled in the repo** if you want it reviewable and reproducible — the
+  shipped template is [`examples/sources.manifest.yaml`](https://github.com/fasrc/archi/blob/dev/examples/sources.manifest.yaml).
+
+Don't confuse the two files: the **manifest** is the *input* (operator-chosen location);
+the generated **`sources.list`** is the *output*, whose location is resolved from the
+config's `data_manager.sources.links.input_lists` (see [Build → redeploy workflow](#build-redeploy-workflow)).
+
+### Manifest format
+
+The manifest is a YAML list of seed entries. Every entry has a `type` and a
+`url`:
+
+```yaml
+# sources.manifest.yaml
+- type: sitemap          # fetch the sitemap XML and emit every <loc>
+  url: https://docs.rc.fas.harvard.edu/kb/epkb_post_type_1-sitemap.xml
+  include: ["*/kb/*"]    # optional URL globs (fnmatch); keep only matches
+  exclude: ["*/author/*"]# optional URL globs; drop matches
+
+- type: crawl            # fetch an index page and extract its same-host links
+  url: https://slurm.schedmd.com/archive/slurm-25.11.5/
+  depth: 1               # optional, default 1
+  include: []
+  exclude: []
+
+- type: literal          # emit a URL verbatim, never fetched or crawled
+  url: https://en.wikipedia.org/wiki/Annie_Jump_Cannon
+```
+
+| Type | Behavior |
+|------|----------|
+| `sitemap` | Fetches the sitemap XML and emits every `<loc>`. Follows **one** level of `<sitemapindex>` nesting (each child sitemap is fetched once); a child that is itself an index is not followed. An empty sitemap is valid and contributes nothing. Honors `include`/`exclude` globs. |
+| `crawl` | Fetches the index page, extracts anchor links, resolves relative links against the seed URL, and keeps only **same-host** links. Honors an optional `depth` (default 1) and `include`/`exclude` globs. Output is sorted for deterministic diffs. |
+| `literal` | Emits the URL verbatim — never fetched, crawled, or glob-filtered. The URL is still normalized like every other entry (see below). |
+
+An unknown `type`, a missing `url`, or invalid YAML makes the command exit
+non-zero without writing anything.
+
+### Output, normalization, and manual extras
+
+The target list is regenerated **wholesale** every run. Every URL is normalized
+(fragment dropped, scheme/host lowercased, a single trailing path slash
+collapsed) and deduplicated preserving first-seen order, so `--dry-run` diffs
+stay small and meaningful.
+
+To keep hand-added entries — including prefixed lines like `git-…`, `sso-…`,
+`elog-…`, `indico-…` — put them in a `manual-extras.list` beside the output.
+Its non-comment, non-blank entries are appended verbatim after the generated
+block. The generated block wins position: an extras line that duplicates a
+generated URL is dropped so the URL appears exactly once.
+
+### Build → redeploy workflow
+
+```bash
+# 1. Preview the diff against the current list
+archi sources build sources.manifest.yaml -c config.yaml --dry-run
+
+# 2. Write the regenerated list (resolves the single input_lists entry)
+archi sources build sources.manifest.yaml -c config.yaml
+
+# 3. Write, then print the redeploy command to ingest it
+archi sources build sources.manifest.yaml -c config.yaml \
+  --name dev --env-file .secrets.env --import
+```
+
+`--import` is **advisory**: after a successful write it prints a copy-pasteable
+redeploy command — `archi create --name <deployment> [--config <config>]
+[--env-file <env>] --force` — and reminds you to append your usual flags
+(`--services …`, `--podman`, host/gpu/tag). It **runs nothing**: auto-executing a
+forced recreate is unsafe because it removes the deployment directory and
+re-renders compose for only the named services (dropping others) while ignoring
+the deployment's runtime flags, so you run the redeploy yourself after reviewing
+the regenerated list. If `--output` points outside the config's `input_lists`,
+the command warns that the redeploy will not ingest that file. See the
+[CLI Reference](cli_reference.md#archi-sources-build) for every flag.
 
 ---
 

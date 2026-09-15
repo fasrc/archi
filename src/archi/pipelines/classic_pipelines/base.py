@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from src.archi.pipelines.classic_pipelines.utils.prompt_utils import read_prompt
-from src.archi.pipelines.classic_pipelines.utils.prompt_validator import ValidatedPromptTemplate
+from src.archi.pipelines.classic_pipelines.utils.prompt_validator import (
+    ValidatedPromptTemplate,
+)
 from src.archi.providers import get_model
 from src.archi.utils.output_dataclass import PipelineOutput
 from src.utils.logging import get_logger
@@ -31,8 +33,16 @@ class BasePipeline:
         self.config = config
         self.archi_config = self.config.get("archi") or {}
         self.dm_config = self.config.get("data_manager", {})
-        pipeline_map = self.archi_config.get("pipeline_map", {}) if isinstance(self.archi_config, dict) else {}
-        self.pipeline_config = pipeline_map.get(self.__class__.__name__, {}) if isinstance(pipeline_map, dict) else {}
+        pipeline_map = (
+            self.archi_config.get("pipeline_map", {})
+            if isinstance(self.archi_config, dict)
+            else {}
+        )
+        self.pipeline_config = (
+            pipeline_map.get(self.__class__.__name__, {})
+            if isinstance(pipeline_map, dict)
+            else {}
+        )
         self.default_provider = default_provider
         self.default_model = default_model
         self.prompt_overrides = prompt_overrides or {}
@@ -52,10 +62,16 @@ class BasePipeline:
     def _init_llms(self) -> None:
         """Initialise language models declared for the pipeline."""
 
-        models_config = self.pipeline_config.get("models", {}) if isinstance(self.pipeline_config, dict) else {}
+        models_config = (
+            self.pipeline_config.get("models", {})
+            if isinstance(self.pipeline_config, dict)
+            else {}
+        )
         self.llms: Dict[str, Any] = {}
 
-        all_models = dict(models_config.get("required", {}), **models_config.get("optional", {}))
+        all_models = dict(
+            models_config.get("required", {}), **models_config.get("optional", {})
+        )
         initialised_models: Dict[str, Any] = {}
 
         if not all_models and self.default_provider and self.default_model:
@@ -66,7 +82,9 @@ class BasePipeline:
                 for key in default_keys:
                     self.llms[key] = instance
             else:
-                self.llms["chat_model"] = get_model(self.default_provider, self.default_model)
+                self.llms["chat_model"] = get_model(
+                    self.default_provider, self.default_model
+                )
             return
 
         for model_name, model_class_name in all_models.items():
@@ -88,7 +106,9 @@ class BasePipeline:
     def _parse_provider_model(model_ref: str) -> (str, str):
         """Expect model_ref as 'provider/model'. Raise if malformed."""
         if not isinstance(model_ref, str) or "/" not in model_ref:
-            raise ValueError(f"Model reference must be 'provider/model', got '{model_ref}'")
+            raise ValueError(
+                f"Model reference must be 'provider/model', got '{model_ref}'"
+            )
         provider, model_id = model_ref.split("/", 1)
         if not provider or not model_id:
             raise ValueError(f"Invalid model reference '{model_ref}'")
@@ -97,7 +117,11 @@ class BasePipeline:
     def _init_prompts(self) -> None:
         """Initialise prompts defined in pipeline configuration."""
 
-        prompts_config = self.pipeline_config.get("prompts", {}) if isinstance(self.pipeline_config, dict) else {}
+        prompts_config = (
+            self.pipeline_config.get("prompts", {})
+            if isinstance(self.pipeline_config, dict)
+            else {}
+        )
         required = prompts_config.get("required", {})
         optional = prompts_config.get("optional", {})
         all_prompts = {**optional, **required}

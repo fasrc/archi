@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 import pytest
+
 from src.utils.rbac.audit import (
     log_authentication_event,
     log_permission_check,
@@ -27,29 +28,29 @@ class TestLogAuthenticationEvent:
         log_authentication_event("user@test.com", "login", success=True, method="sso")
 
         # Should log at info level for success
-        info_calls = [
-            str(c) for c in mock_audit_logger.info.call_args_list
-        ]
-        assert any("AUTH" in c and "login" in c and "user@test.com" in c and "SUCCESS" in c for c in info_calls)
+        info_calls = [str(c) for c in mock_audit_logger.info.call_args_list]
+        assert any(
+            "AUTH" in c and "login" in c and "user@test.com" in c and "SUCCESS" in c
+            for c in info_calls
+        )
 
     def test_failure_logs_warning(self, mock_audit_logger):
         log_authentication_event(
-            "unknown", "api_token_auth", success=False,
-            method="bearer_token", details="No token",
+            "unknown",
+            "api_token_auth",
+            success=False,
+            method="bearer_token",
+            details="No token",
         )
 
         # Should log at warning level for failure
-        warning_calls = [
-            str(c) for c in mock_audit_logger.warning.call_args_list
-        ]
+        warning_calls = [str(c) for c in mock_audit_logger.warning.call_args_list]
         assert any("FAILURE" in c for c in warning_calls)
 
     def test_success_message_format(self, mock_audit_logger):
         log_authentication_event("user@test.com", "login", success=True, method="sso")
 
-        info_calls = [
-            str(c) for c in mock_audit_logger.info.call_args_list
-        ]
+        info_calls = [str(c) for c in mock_audit_logger.info.call_args_list]
         assert any("method: sso" in c for c in info_calls)
 
 
@@ -97,9 +98,7 @@ class TestLogPermissionCheck:
         )
 
         # The structured JSON is logged at info level
-        info_calls = [
-            str(c) for c in mock_audit_logger.info.call_args_list
-        ]
+        info_calls = [str(c) for c in mock_audit_logger.info.call_args_list]
         # Find the AUDIT JSON entry
         audit_json_calls = [c for c in info_calls if "AUDIT" in c]
         assert len(audit_json_calls) > 0

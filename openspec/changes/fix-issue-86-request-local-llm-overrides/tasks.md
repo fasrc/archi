@@ -1,0 +1,35 @@
+## 1. Orchestrator: let a caller supply the pipeline
+
+- [x] 1.1 Write a failing test in `tests/unit/test_archi_pipeline_override.py`: `archi.stream(..., pipeline=<other>)` streams from the supplied pipeline and never touches `self.pipeline`; with no `pipeline=` kwarg it still uses `self.pipeline`. (Construct `archi` without running `__init__` — e.g. `object.__new__` plus the attributes `stream` needs — so the test stays a unit test.)
+- [x] 1.2 Add the optional `pipeline=None` keyword to `archi.stream()` in `src/archi/archi.py`, defaulting to `self.pipeline`; make `supports_stream()` evaluate the pipeline actually in use, and keep `_prepare_call_kwargs` + `_ensure_pipeline_output` on the path. Confirm 1.1 passes.
+- [x] 1.3 Extend the same optional-pipeline support to `archi.invoke()` and `archi.astream()` (with matching `supports_astream()` handling), with a test per method.
+
+## 2. Request-local pipeline view
+
+- [x] 2.1 Write a failing test: a helper that builds a request-local view of a pipeline returns a distinct object whose `agent_llm` is the override, while the source pipeline's `agent_llm` and `agent` remain the *identical objects* they were before (assert with `is`). This identity assertion is the standing guard for design D1's zero-writes-to-shared invariant — do not weaken it later.
+- [x] 2.2 Write a failing test that the view does not share per-run state: the view's `agent`, `_active_tools`, `_active_middleware`, `_active_memory`, `_static_tools`, and (where present) `_vector_tools` / `_vector_retrievers` are reset rather than inherited from the source pipeline.
+- [x] 2.3 Write a failing test for the document-isolation bug that motivates the `_static_tools` reset (design D1a): build a view, invoke a **static** tool (catalog / local-file / metadata search — NOT a vectorstore tool, whose per-run rebuild masks the bug) on the view, and assert the retrieved documents land in the view's run memory while the source pipeline's `_active_memory` stays `None`.
+- [x] 2.4 Implement `_build_request_local_pipeline(pipeline, override_llm)` in `src/interfaces/chat_app/app.py` per design D1 + D1a — `copy.copy`, reset the full attribute list from 2.2, then `refresh_agent(force=True)` on the copy so tools rebuild bound to the view. Include the comment stating the real invariant: *any attribute that is per-run state, or that closes over a bound method of the pipeline, must be rebuilt on the view, never shared.* Confirm 2.1-2.3 pass.
+- [x] 2.5 Write a failing test that two threads concurrently building a view from a pipeline with `_mcp_tools is None` trigger exactly one `_build_mcp_tools()` call and construct exactly one MCP client.
+- [x] 2.6 Implement design D6: add an instance-level `threading.Lock` in `BaseReActAgent.__init__` and guard the lazy `_mcp_tools is None` check-and-build in `refresh_agent` (`base_react.py:1200-1204`) with it. Confirm 2.5 passes. **Do NOT call `refresh_agent()` on the shared pipeline as a "prerequisite"** — design D6 explains why that silently strips the retrieval tool from the shared agent.
+
+## 3. Wire the override path through the request-local view
+
+- [x] 3.1 Write the failing concurrency regression test (the issue's core acceptance criterion): two overlapping overridden `ChatWrapper.stream()` turns each observe their own override LLM for the whole turn, and a third request started after both complete observes the configured default LLM and its `extra_kwargs`. Drive the interleaving deterministically (threads plus an `Event`/barrier, or a generator stepped by hand) — no `sleep`-based timing.
+- [x] 3.2 Write a failing test that the A/B pair is not serialized: the second overridden request produces its first output before the first request's turn completes.
+- [x] 3.3 Rewrite the override block in `ChatWrapper.stream()` (~`app.py:2003-2031`) to build a request-local view instead of calling `_swap_pipeline_llm`, and pass it to `self.archi.stream(..., pipeline=view)` at the call site (~`app.py:2045`). Preserve the existing error contract per design D5: `ValueError` → HTTP 400 + return; any other exception (including a view-build failure) → warning event + fall back to the shared pipeline. Confirm 3.1 and 3.2 pass.
+- [x] 3.4 Write a failing test for the persistence half of design D3: an overridden turn persists the **override's** `provider/model` into the conversation row's `model_used`, while `self.current_model_used` is unchanged. (A test that only asserts the shared field is untouched would pass while shipping a silent mislabelling regression — assert the persisted value.)
+- [x] 3.5 Make the reported model request-local (design D3): add an optional `model_used: Optional[str] = None` parameter to `insert_conversation` (`app.py:1361`) and `_finalize_result` (`app.py:1743`), defaulting to `self.current_model_used` so the non-override and non-streaming `__call__` paths (`app.py:1852/1861`) are unchanged; use it at the three read sites (`app.py:1398/1409/1423`) and at the response payload (`app.py:2484`); pass the override's `f"{provider}/{model}"` from the request-local stream path and stop writing the shared attribute. Confirm 3.4 passes.
+
+## 4. Remove the swap/restore machinery
+
+- [x] 4.1 Delete the `override_applied` / `override_original_llm` / `override_original_model` locals and their restore block from the `finally` (~`app.py:2528-2535`), keeping the cursor/connection cleanup intact. Add a test that the shared pipeline's `agent_llm` is unchanged across an overridden turn that raises mid-stream.
+- [x] 4.2 Delete `_swap_pipeline_llm` and `_restore_pipeline_llm` from `src/interfaces/chat_app/app.py` (~163-192) once they have no callers.
+- [x] 4.3 Update `tests/unit/test_provider_config_override.py`: it imports and tests both deleted helpers (lines ~16-17, ~68-79, ~113, ~133). Remove the swap/restore-specific tests and keep the `_build_provider_config_from_payload` / `extra_kwargs` coverage, which is still valid and still guards `enable_thinking`.
+- [x] 4.4 Grep the tree for any remaining `_swap_pipeline_llm` / `_restore_pipeline_llm` / `override_original_llm` references (src, tests, docs) and clean up stragglers.
+
+## 5. Gate and close out
+
+- [x] 5.1 Run `bash scripts/gate.sh` and get it green — black 24.10.0 + isort 6.0.1, full pytest, and `diff-cover --fail-under=80` against `origin/dev`. (All three touched files are currently black-clean, so no reformat churn is expected.)
+- [x] 5.2 File a follow-up issue for the adjacent, out-of-scope hazards named in design Open Questions: concurrent *default* requests still share `_active_memory` on the shared pipeline (`base_react.py:1345`), and the structural fix is to move the active `RunMemory` into a `contextvars.ContextVar` so `_store_documents` / `_store_tool_input` / `_consume_tool_budget` resolve the caller's memory instead of `self` — which would also make D1a's per-request tool rebuild unnecessary. Reference this change and issue #86.
+- [x] 5.3 Open the PR against `fasrc/archi:dev` with `closes #86`, summarizing the race, the request-local fix, and the concurrency test that proves it. No `Co-Authored-By` trailer. Do not merge.

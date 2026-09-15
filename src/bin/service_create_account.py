@@ -3,10 +3,10 @@ import getpass
 import os
 
 from src.interfaces.chat_app.document_utils import add_username_password
+from src.utils.config_access import get_global_config
 from src.utils.env import read_secret
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
-from src.utils.config_access import get_global_config
 
 setup_logging()
 logger = get_logger(__name__)
@@ -23,7 +23,7 @@ salt = read_secret("UPLOADER_SALT")
 
 while True:
     username = input("Enter username (or type 'STOP' to quit): ")
-    if username.upper() == 'STOP':
+    if username.upper() == "STOP":
         break
 
     password = getpass.getpass("Enter password: ")

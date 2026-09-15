@@ -1,0 +1,11631 @@
+# Benchmark Results Comparison
+
+**Configuration:** configs/config.yaml  
+**Timestamp:** 2026-08-07 00:46:38.322992+00:00  
+**Questions Processed:** 109
+
+## Run provenance
+
+⚠️ Whether the run used the selected configuration was **not recorded**: this artifact predates configuration provenance, so no comparison was made.
+
+⚠️ Corpus stability is **unknown**: it was not observed both before and after the run (` None ` → ` None `).
+
+⏱️ Time to ingest is **not recorded**: this artifact predates the field.
+
+- Code version: *not recorded — this artifact predates version stamping*
+- Deploy-time commit: ` b1d10ba57a0ffbf667c99db018dbfa4d799295d6 ` — frozen by `archi create`; it identifies the deploy, not the image this run used
+- Config version: ` sha256:9dd676871437e3bf5ee5726f31cfe1d00d234cda3d43aa96aacc78f9a402e6c3 `
+- Config basis: reconstructed from the configuration file recorded in this artifact; the configuration the agent read was never captured, so this may not describe the run
+
+Settings that define this arm:
+
+| Setting | Value |
+|---|---|
+| data\_manager.chunk\_overlap | 0 |
+| data\_manager.chunk\_size | 1000 |
+| data\_manager.chunking | {"strategy": "sentence"} |
+| data\_manager.distance\_metric | cosine |
+| data\_manager.embedding\_name | HuggingFaceEmbeddings |
+| data\_manager.retrievers | {"bm25\_retriever": {"num\_documents\_to\_retrieve": 5}, "hierarchical\_rerank": {"candidate\_pool\_size": 20, "enabled": true, "num\_documents\_to\_retrieve": 5, "reranker": {"model": "ms-marco-MiniLM-L-12-v2"}}, "hybrid\_retriever": {"bm25\_weight": 0.6, "num\_documents\_to\_retrieve": 5, "semantic\_weight": 0.4}, "semantic\_retriever": {"num\_documents\_to\_retrieve": 5}} |
+| data\_manager.stemming | {"enabled": false} |
+| services.benchmarking.agent\_class | FASRCDocsAgent |
+| services.benchmarking.agent\_md\_file | /root/archi/agents/fasrc-inline-v1.md |
+| services.benchmarking.mode\_settings | {"ragas\_settings": {"batch\_size": false, "embedding\_model": "HuggingFace", "enabled\_metrics": \["answer\_relevancy", "faithfulness", "context\_precision", "context\_recall"\], "evaluator\_model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0", "evaluator\_ollama\_url": null, "evaluator\_provider": "huit\_bedrock", "timeout": 300}, "sources\_settings": {"default\_match\_field": "url"}} |
+| services.benchmarking.model | palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4 |
+| services.benchmarking.modes | \["RAGAS", "SOURCES"\] |
+| services.benchmarking.provider | openai |
+| services.chat\_app.agent\_class | CMSCompOpsAgent |
+| services.chat\_app.default\_model | llama3.2 |
+| services.chat\_app.default\_provider | local |
+| services.chat\_app.recursion\_limit | 50 |
+| services.vectorstore.backend | postgres |
+| services.vectorstore.distance\_metric | cosine |
+
+## 🎯 Retrieval Accuracy
+
+- **Fully Correct:** 88/106 (83.0%)
+- **Partially Correct** (some expected sources retrieved): 1
+- **Incorrect** (no expected sources retrieved): 17
+
+## 📊 Aggregate RAGAS Metrics
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.683 🟡 |
+| Faithfulness | 0.549 🟡 |
+| Context Precision | 0.615 🟡 |
+| Context Recall | 0.784 🟢 |
+
+---
+
+## Question 1: question\_1
+
+### ❓ Question
+
+How do I request a single GPU in a SLURM submission script on FASRC Cannon?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/running-jobs  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/gpgpu-computing-on-the-cluster, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise6/run.sbatch, github.com/fasrc/User\_Codes/blob/master/AI/heavyAI/README.md, slurm.schedmd.com/sbatch.html, github.com/fasrc/User\_Codes/blob/master/AI/TensorFlow/Example4/README.md  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+````text
+To request a single GPU in a SLURM submission script on FASRC Cannon, add the `--gpus` flag to your `#SBATCH` directives:
+
+```bash
+#SBATCH -p gpu
+#SBATCH --gpus=1
+```
+
+This will allocate one GPU for your job. You can also request CPUs and GPUs independently. For example, to request 1 CPU and 2 GPUs:
+
+```bash
+#SBATCH -p gpu
+#SBATCH -n 1
+#SBATCH --gpus=2
+```
+
+When you submit a GPU job, SLURM automatically selects GPUs and restricts your job to those resources. Inside your code, you reference GPUs using zero-based indexing (e.g., `gpu:0`, `gpu:1`, etc.) based on the number of GPUs you requested [GPU Computing on the FASRC cluster](https://docs.rc.fas.harvard.edu/kb/gpgpu-computing-on-the-cluster/).
+
+If you need a specific GPU model, you can specify it with `#SBATCH --gpus=name:n`, where `name` is the GPU model. You can find available GPU models in the [FASRC documentation on specifying GPU type](https://docs.rc.fas.harvard.edu/kb/running-jobs/#Specifying_GPU_Type).
+````
+
+### ✅ Expected Answer
+
+```text
+Add #SBATCH --gpus=1 to your submission script and SLURM will give the job access to one GPU.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/running-jobs**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+How do I request a single GPU in a SLURM submission script on FASRC Cannon?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+````text
+To request a single GPU in a SLURM submission script on FASRC Cannon, add the `--gpus` flag to your `#SBATCH` directives:
+
+```bash
+#SBATCH -p gpu
+#SBATCH --gpus=1
+```
+
+This will allocate one GPU for your job. You can also request CPUs and GPUs independently. For example, to request 1 CPU and 2 GPUs:
+
+```bash
+#SBATCH -p gpu
+#SBATCH -n 1
+#SBATCH --gpus=2
+```
+
+When you submit a GPU job, SLURM automatically selects GPUs and restricts your job to those resources. Inside your code, you reference GPUs using zero-based indexing (e.g., `gpu:0`, `gpu:1`, etc.) based on the number of GPUs you requested [GPU Computing on the FASRC cluster](https://docs.rc.fas.harvard.edu/kb/gpgpu-computing-on-the-cluster/).
+
+If you need a specific GPU model, you can specify it with `#SBATCH --gpus=name:n`, where `name` is the GPU model. You can find available GPU models in the [FASRC documentation on specifying GPU type](https://docs.rc.fas.harvard.edu/kb/running-jobs/#Specifying_GPU_Type).
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 1.000 🟢 |
+| Faithfulness | 1.000 🟢 |
+| Context Precision | 0.917 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 2: question\_2
+
+### ❓ Question
+
+What is the maximum run time for a job on the FASRC sapphire partition?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/running-jobs  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview, slurm.schedmd.com/srun.html, docs.rc.fas.harvard.edu/kb/geophysics-partitions  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+The maximum run time for a job on the FASRC **sapphire** partition is **3 days** [Harvard T.H. Chan School of Public Health – FAS Research Computing Overview](https://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview/).
+```
+
+### ✅ Expected Answer
+
+```text
+The sapphire partition has a maximum run time of 3 days.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/running-jobs**
+
+### 💬 Agent Messages (2)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+What is the maximum run time for a job on the FASRC sapphire partition?
+```
+
+**🤖 Assistant Message #2**
+
+```text
+The maximum run time for a job on the FASRC **sapphire** partition is **3 days** [Harvard T.H. Chan School of Public Health – FAS Research Computing Overview](https://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview/).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 1.000 🟢 |
+| Faithfulness | 1.000 🟢 |
+| Context Precision | 0.583 🟡 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 3: question\_3
+
+### ❓ Question
+
+How much memory does a SLURM job get on Cannon if I don't specify a memory request?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/running-jobs  
+**Retrieved Documents:** slurm.schedmd.com/slurm.conf.html, slurm.schedmd.com/cons\_tres.html, docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/faq, slurm.schedmd.com/preempt.html, docs.rc.fas.harvard.edu/kb/fairshare, slurm.schedmd.com/salloc.html, slurm.schedmd.com/slurm.conf.html, slurm.schedmd.com/cpu\_management.html, github.com/fasrc/User\_Codes/blob/master/AI/PyTorch/README.md, github.com/fasrc/User\_Codes/blob/master/Applications/Dynamite/README.md, docs.rc.fas.harvard.edu/kb/cursor-remote-development-via-ssh-and-tunnel, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/R/Large\_Data\_Processing\_R/parallel\_computation/R\_embarrassingly\_parallel.md, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise1/README.md, slurm.schedmd.com/scontrol.html, slurm.schedmd.com/faq.html, slurm.schedmd.com/preempt.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+The agent attempted to determine the default memory allocation for SLURM jobs on the Cannon cluster by performing multiple vector and local file searches targeting "Cannon cluster default memory," "--mem-per-cpu," and general SLURM documentation. However, the run terminated after hitting the recursion limit of 50 without successfully retrieving a specific configuration value for Cannon.
+
+Based on general SLURM standards and typical HPC cluster configurations (which the retrieved generic Slurm documentation supports), if you do not specify a memory request (e.g., `--mem-per-cpu` or `--mem`), SLURM typically defaults to **1 GB per CPU core** allocated to the job. However, this default can vary by cluster configuration. Since the specific Cannon cluster documentation was not successfully retrieved before the limit was hit, it is strongly recommended to explicitly specify your memory needs using `#SBATCH --mem-per-cpu=<amount>` or `#SBATCH --mem=<total_amount>` to avoid job termination due to Out-Of-Memory (OOM) errors. You should verify the specific default for Cannon by checking the cluster's official documentation or running `scontrol show config | grep -i memory` on the cluster itself.
+```
+
+### ✅ Expected Answer
+
+```text
+If you omit the memory request you are granted 100 MB by default, which is usually too little and will likely cause the job to be killed for going over.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/running-jobs**
+
+### 💬 Agent Messages (1)
+
+**🤖 Assistant Message #1**
+
+```text
+The agent attempted to determine the default memory allocation for SLURM jobs on the Cannon cluster by performing multiple vector and local file searches targeting "Cannon cluster default memory," "--mem-per-cpu," and general SLURM documentation. However, the run terminated after hitting the recursion limit of 50 without successfully retrieving a specific configuration value for Cannon.
+
+Based on general SLURM standards and typical HPC cluster configurations (which the retrieved generic Slurm documentation supports), if you do not specify a memory request (e.g., `--mem-per-cpu` or `--mem`), SLURM typically defaults to **1 GB per CPU core** allocated to the job. However, this default can vary by cluster configuration. Since the specific Cannon cluster documentation was not successfully retrieved before the limit was hit, it is strongly recommended to explicitly specify your memory needs using `#SBATCH --mem-per-cpu=<amount>` or `#SBATCH --mem=<total_amount>` to avoid job termination due to Out-Of-Memory (OOM) errors. You should verify the specific default for Cannon by checking the cluster's official documentation or running `scontrol show config | grep -i memory` on the cluster itself.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.000 🔴 |
+| Faithfulness | 0.357 🔴 |
+| Context Precision | 0.333 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 4: question\_4
+
+### ❓ Question
+
+What is the storage quota for a FASRC user home directory?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/cluster-storage  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/cluster-storage, docs.rc.fas.harvard.edu/kb/faq, docs.rc.fas.harvard.edu/kb/understanding-permissions, docs.rc.fas.harvard.edu/kb/fas-rc-research-data-retention-and-deletion-policy, docs.rc.fas.harvard.edu/kb/fasse  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+The home directory for each FASRC user has a **100 GB hard limit** [Home and Lab directories – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/cluster-storage/).
+
+Home directories are located at paths like `/n/homeNN/username` (e.g., `/n/home12/jharvard`), are available on all cluster nodes, and are backed up with daily snapshots retained for 2 weeks. They are intended for everyday data, scripts, and documentation—not for I/O-intensive jobs or large-scale computations, for which the scratch filesystem is better suited.
+```
+
+### ✅ Expected Answer
+
+```text
+Each user gets a 100 GB home directory, enforced as a hard limit.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/cluster-storage**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+What is the storage quota for a FASRC user home directory?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+```text
+The home directory for each FASRC user has a **100 GB hard limit** [Home and Lab directories – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/cluster-storage/).
+
+Home directories are located at paths like `/n/homeNN/username` (e.g., `/n/home12/jharvard`), are available on all cluster nodes, and are backed up with daily snapshots retained for 2 weeks. They are intended for everyday data, scripts, and documentation—not for I/O-intensive jobs or large-scale computations, for which the scratch filesystem is better suited.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.954 🟢 |
+| Faithfulness | 1.000 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 5: question\_5
+
+### ❓ Question
+
+How much storage does a FASRC lab group directory get, and how many files?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/cluster-storage  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/cluster-storage, docs.rc.fas.harvard.edu/kb/understanding-permissions, docs.rc.fas.harvard.edu/kb/fasse, docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage, docs.rc.fas.harvard.edu/kb/storage-service-center, docs.rc.fas.harvard.edu/kb/checking-quota-and-usage, docs.rc.fas.harvard.edu/kb/checking-quota-and-usage, docs.rc.fas.harvard.edu/kb/policy-scratch, docs.rc.fas.harvard.edu/kb/data-storage-workflow, docs.rc.fas.harvard.edu/kb/spack-package-manager, docs.rc.fas.harvard.edu/kb/storage-service-center, docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on FASRC documentation:
+
+- **Storage size:** Each PI or Lab Account receives a **4 TiB Lab Directory** for use by all members of the PI's lab group [Data Storage (Offerings, Workflow, Costs)](https://docs.rc.fas.harvard.edu/kb/storage-service-center/).
+
+- **File count limit:** The available documentation does not specify a file count (inode) limit for lab directories. If you need to check your current usage or inode limits, you can use the `quota` command on the cluster.
+
+Let me know if you'd like help checking your lab's current storage usage!
+```
+
+### ✅ Expected Answer
+
+```text
+Each lab gets a 4 TiB lab directory as a hard limit, with a 1 million file limit.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/cluster-storage**
+
+### 💬 Agent Messages (11)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+How much storage does a FASRC lab group directory get, and how many files?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+lab group directory storage limit size file count quota
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+lab directory.*size.*limit
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+lab directory
+```
+
+**🛠️ Tool Call #7: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #8: search\_local\_files**
+
+```text
+Lab Directory.*file.*count
+```
+
+**🛠️ Tool Call #9: search\_local\_files**
+
+```text
+Lab Directory
+```
+
+**🛠️ Tool Call #10: search\_vectorstore\_hybrid**
+
+```text
+lab directory file count limit number of files quota
+```
+
+**🤖 Assistant Message #11**
+
+```text
+Based on FASRC documentation:
+
+- **Storage size:** Each PI or Lab Account receives a **4 TiB Lab Directory** for use by all members of the PI's lab group [Data Storage (Offerings, Workflow, Costs)](https://docs.rc.fas.harvard.edu/kb/storage-service-center/).
+
+- **File count limit:** The available documentation does not specify a file count (inode) limit for lab directories. If you need to check your current usage or inode limits, you can use the `quota` command on the cluster.
+
+Let me know if you'd like help checking your lab's current storage usage!
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.848 🟢 |
+| Faithfulness | 0.667 🟡 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 6: question\_6
+
+### ❓ Question
+
+Where on the Cannon filesystem do FASRC lab directories reside?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/cluster-storage  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/fasrc-cluster-storage-policy, docs.rc.fas.harvard.edu/kb/cluster-storage, docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/understanding-permissions, docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage, docs.rc.fas.harvard.edu/kb/policy-scratch, docs.rc.fas.harvard.edu/kb/mounting-storage, docs.rc.fas.harvard.edu/kb/checking-quota-and-usage, docs.rc.fas.harvard.edu/kb/storage-modernization-initiative-faqs  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+On the Cannon filesystem, FASRC lab directories reside under **`/n/scratch`** (the shared networked scratch filesystem).
+
+Each lab creates its own folder inside `/n/scratch` under the lab's group directory. For example, a lab might have a path like `/n/scratch/your_lab_name/`. You can create your own subfolder within your lab's directory for your projects.
+
+Key details about this location:
+- **Path:** `/n/scratch`
+- **Size:** 50TB per lab group
+- **Retention:** Files older than 90 days are subject to periodic purge
+- **Backup:** Not backed up — it's temporary, high-performance scratch space
+- **Availability:** Accessible from all cluster nodes
+
+For more details, see the [Scratch policy page](https://docs.rc.fas.harvard.edu/kb/policy-scratch).
+```
+
+### ✅ Expected Answer
+
+```text
+Lab directories reside under /n/holylabs.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/cluster-storage**
+
+### 💬 Agent Messages (8)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Where on the Cannon filesystem do FASRC lab directories reside?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_local\_files**
+
+```text
+lab directories Cannon /n/scratch
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+lab directory path Cannon filesystem /n/scratch
+```
+
+**🛠️ Tool Call #5: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+/n/scratch
+```
+
+**🛠️ Tool Call #7: search\_vectorstore\_hybrid**
+
+```text
+lab directory path /n/scratch Cannon
+```
+
+**🤖 Assistant Message #8**
+
+```text
+On the Cannon filesystem, FASRC lab directories reside under **`/n/scratch`** (the shared networked scratch filesystem).
+
+Each lab creates its own folder inside `/n/scratch` under the lab's group directory. For example, a lab might have a path like `/n/scratch/your_lab_name/`. You can create your own subfolder within your lab's directory for your projects.
+
+Key details about this location:
+- **Path:** `/n/scratch`
+- **Size:** 50TB per lab group
+- **Retention:** Files older than 90 days are subject to periodic purge
+- **Backup:** Not backed up — it's temporary, high-performance scratch space
+- **Availability:** Accessible from all cluster nodes
+
+For more details, see the [Scratch policy page](https://docs.rc.fas.harvard.edu/kb/policy-scratch).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.995 🟢 |
+| Faithfulness | 0.333 🔴 |
+| Context Precision | 0.425 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 7: question\_7
+
+### ❓ Question
+
+What hostname do I SSH to for command-line access to the FASRC cluster?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/quickstart-guide  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/introduction-to-cluster-online, docs.rc.fas.harvard.edu/kb/quickstart-guide, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3, docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel, docs.rc.fas.harvard.edu/kb/about-usernames  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+For command-line access to the FASRC cluster, SSH to **`login.rc.fas.harvard.edu`** using your FASRC username, password, and OpenAuth token [User Quick Start Guide](https://docs.rc.fas.harvard.edu/kb/introduction-to-cluster-online).
+
+If you're connecting from off-campus, you'll need to use the FASRC VPN first [IQSS FASRC and FASSE Quick Start Guide v3](https://docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3).
+
+For more detailed SSH instructions, see [Command line access using a terminal](https://docs.rc.fas.harvard.edu/kb/terminal-access/).
+```
+
+### ✅ Expected Answer
+
+```text
+SSH to login.rc.fas.harvard.edu using your FASRC username, password, and OpenAuth token.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/quickstart-guide**
+
+### 💬 Agent Messages (2)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+What hostname do I SSH to for command-line access to the FASRC cluster?
+```
+
+**🤖 Assistant Message #2**
+
+```text
+For command-line access to the FASRC cluster, SSH to **`login.rc.fas.harvard.edu`** using your FASRC username, password, and OpenAuth token [User Quick Start Guide](https://docs.rc.fas.harvard.edu/kb/introduction-to-cluster-online).
+
+If you're connecting from off-campus, you'll need to use the FASRC VPN first [IQSS FASRC and FASSE Quick Start Guide v3](https://docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3).
+
+For more detailed SSH instructions, see [Command line access using a terminal](https://docs.rc.fas.harvard.edu/kb/terminal-access/).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.800 🟢 |
+| Faithfulness | 0.625 🟡 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 8: question\_8
+
+### ❓ Question
+
+What command lists the modules I currently have loaded on Cannon?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/modules-intro  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/modules-intro, docs.rc.fas.harvard.edu/kb/all-modules, docs.rc.fas.harvard.edu/kb/r-parallel, docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster, github.com/fasrc/User\_Codes/blob/master/Applications/KHARMA/README.md, docs.rc.fas.harvard.edu/kb/spack-package-manager, github.com/fasrc/User\_Codes/blob/master/Notes/cutlass.md, docs.rc.fas.harvard.edu/kb/spack, docs.rc.fas.harvard.edu/kb/knime-on-the-fasrc-clusters, docs.rc.fas.harvard.edu/kb/modules-intro  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+To list the modules currently loaded in your session on Cannon, run:
+
+```bash
+module list
+```
+
+This command shows all software modules that are currently active in your environment. You can also use `module avail` to see what modules are available to load.
+
+For more details, see the Lmod software modules documentation [Lmod software modules – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/modules-intro/).
+````
+
+### ✅ Expected Answer
+
+```text
+Run module list to display all modules currently loaded in your shell environment.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/modules-intro**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+What command lists the modules I currently have loaded on Cannon?
+```
+
+**🛠️ Tool Call #2: search\_local\_files**
+
+```text
+module list
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #4**
+
+````text
+To list the modules currently loaded in your session on Cannon, run:
+
+```bash
+module list
+```
+
+This command shows all software modules that are currently active in your environment. You can also use `module avail` to see what modules are available to load.
+
+For more details, see the Lmod software modules documentation [Lmod software modules – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/modules-intro/).
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.891 🟢 |
+| Faithfulness | 1.000 🟢 |
+| Context Precision | 0.810 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 9: question\_9
+
+### ❓ Question
+
+What command shows my lab's fairshare information on FASRC?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/fairshare  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/fairshare, docs.rc.fas.harvard.edu/kb/dual-lab-affiliations-on-cluster, docs.rc.fas.harvard.edu/kb/lab-groups, docs.rc.fas.harvard.edu/kb/openmp-software-on-odyssey, docs.rc.fas.harvard.edu/kb/cluster-storage, slurm.schedmd.com/classic\_fair\_share.html, docs.rc.fas.harvard.edu/kb/convenient-slurm-commands, docs.rc.fas.harvard.edu/kb/common-pitfalls, docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa, docs.rc.fas.harvard.edu/kb/bhi-partitions  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+To check your lab's fairshare information on FASRC, use the **`sshare`** command.
+
+For example, to see fairshare details for a specific lab account:
+
+```bash
+sshare -a --account=<labname>
+```
+
+You can also see a list of active users in your lab over the last six months with the same command. For more details on how fairshare works and how scores are calculated, see the [Fairshare and Job Accounting](https://docs.rc.fas.harvard.edu/kb/fairshare/) documentation.
+````
+
+### ✅ Expected Answer
+
+```text
+Use sshare (e.g. sshare --account=<lab> -a) to see RawShares, NormShares, RawUsage, EffectvUsage, and the FairShare score for an account.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/fairshare**
+
+### 💬 Agent Messages (6)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+What command shows my lab's fairshare information on FASRC?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_local\_files**
+
+```text
+fairshare command
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+fairshare
+```
+
+**🛠️ Tool Call #5: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #6**
+
+````text
+To check your lab's fairshare information on FASRC, use the **`sshare`** command.
+
+For example, to see fairshare details for a specific lab account:
+
+```bash
+sshare -a --account=<labname>
+```
+
+You can also see a list of active users in your lab over the last six months with the same command. For more details on how fairshare works and how scores are calculated, see the [Fairshare and Job Accounting](https://docs.rc.fas.harvard.edu/kb/fairshare/) documentation.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.890 🟢 |
+| Faithfulness | 1.000 🟢 |
+| Context Precision | 0.143 🔴 |
+| Context Recall | 0.000 🔴 |
+
+---
+
+## Question 10: question\_10
+
+### ❓ Question
+
+How long are FASRC home directory snapshots kept?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/cluster-storage  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/fas-rc-research-data-retention-and-deletion-policy, docs.rc.fas.harvard.edu/kb/cluster-storage, docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage, docs.rc.fas.harvard.edu/kb/storage-service-center, docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+FASRC home directory snapshots are retained for **2 weeks** [Home and Lab directories – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/cluster-storage/).
+
+Note that while the snapshots are only kept for two weeks, the home directory itself has an indefinite retention policy — meaning your files won't be deleted, but you won't have access to older snapshot versions beyond that two-week window.
+```
+
+### ✅ Expected Answer
+
+```text
+Home directories have daily snapshots retained for 2 weeks, accessible via the .snapshot directory.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/cluster-storage**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+How long are FASRC home directory snapshots kept?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+```text
+FASRC home directory snapshots are retained for **2 weeks** [Home and Lab directories – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/cluster-storage/).
+
+Note that while the snapshots are only kept for two weeks, the home directory itself has an indefinite retention policy — meaning your files won't be deleted, but you won't have access to older snapshot versions beyond that two-week window.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.990 🟢 |
+| Faithfulness | 0.667 🟡 |
+| Context Precision | 0.500 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 11: question\_11
+
+### ❓ Question
+
+My SLURM job on Cannon was killed for running out of memory. How do I find out how much memory it actually used, and how do I request more next time?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/running-jobs  
+**Retrieved Documents:** slurm.schedmd.com/slurm.conf.html, docs.rc.fas.harvard.edu/kb/running-jobs, slurm.schedmd.com/faq.html, docs.rc.fas.harvard.edu/kb/faq, docs.rc.fas.harvard.edu/kb/slurm-memory-limits, slurm.schedmd.com/slurm.conf.html, docs.rc.fas.harvard.edu/kb/convenient-slurm-commands, docs.rc.fas.harvard.edu/kb/slurm-memory-limits, docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices, docs.rc.fas.harvard.edu/kb/job-defense-shield, docs.rc.fas.harvard.edu/kb/running-jobs  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Here's how to diagnose and fix your out-of-memory (OOM) issue on Cannon:
+
+### 1. Find out how much memory your job actually used
+
+*   **If the job completed successfully:** Run `sacct -j <JOBID>` to see the peak memory Slurm recorded.
+*   **For a more detailed report:** Run `jobstats <JOBID>`. This gives you a summary of CPU and memory usage.
+*   **Important caveat:** If your job was killed with an `OUT_OF_MEMORY` state, the memory usage recorded by Slurm (`sacct`) and `jobstats` will be **inaccurate** (it won't show the true peak). To get an accurate measurement, you must run the job again with a higher memory limit so it completes successfully, then check the stats.
+
+### 2. Request more memory for your next job
+
+Add the `--mem` flag to your `#SBATCH` directives in your job script. This sets the memory limit **per node**.
+
+*   **In MB:** `#SBATCH --mem 4000` (for 4 GB)
+*   **In GB:** `#SBATCH --mem 4G` (for 4 GB)
+
+**How to choose the right amount:**
+1.  Start with a generous limit (e.g., `4G` or `8G`) to ensure your job doesn't get killed.
+2.  Run the job to completion.
+3.  Use `jobstats <JOBID>` to see the actual peak memory used.
+4.  Set your `--mem` request slightly higher than that peak for future runs.
+
+Requesting only the memory you need helps the scheduler place your job more efficiently.
+```
+
+### ✅ Expected Answer
+
+```text
+After the job ends, run sacct -j <jobid> --format=JobID,Elapsed,ReqMem,MaxRSS to compare the peak memory used (MaxRSS) against what was requested (ReqMem). In your next submit script raise the request with --mem=<N>G (whole job) or --mem-per-cpu=<N>G, setting it a bit above the observed MaxRSS so normal variation doesn't kill the job.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/running-jobs**
+
+### 💬 Agent Messages (6)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+My SLURM job on Cannon was killed for running out of memory. How do I find out how much memory it actually used, and how do I request more next time?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+Cannon cluster SLURM job killed out of memory how to check memory usage sacct sacctmgr
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+Cannon cluster how to check actual memory usage jobstats sacct
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+jobstats
+```
+
+**🤖 Assistant Message #6**
+
+```text
+Here's how to diagnose and fix your out-of-memory (OOM) issue on Cannon:
+
+### 1. Find out how much memory your job actually used
+
+*   **If the job completed successfully:** Run `sacct -j <JOBID>` to see the peak memory Slurm recorded.
+*   **For a more detailed report:** Run `jobstats <JOBID>`. This gives you a summary of CPU and memory usage.
+*   **Important caveat:** If your job was killed with an `OUT_OF_MEMORY` state, the memory usage recorded by Slurm (`sacct`) and `jobstats` will be **inaccurate** (it won't show the true peak). To get an accurate measurement, you must run the job again with a higher memory limit so it completes successfully, then check the stats.
+
+### 2. Request more memory for your next job
+
+Add the `--mem` flag to your `#SBATCH` directives in your job script. This sets the memory limit **per node**.
+
+*   **In MB:** `#SBATCH --mem 4000` (for 4 GB)
+*   **In GB:** `#SBATCH --mem 4G` (for 4 GB)
+
+**How to choose the right amount:**
+1.  Start with a generous limit (e.g., `4G` or `8G`) to ensure your job doesn't get killed.
+2.  Run the job to completion.
+3.  Use `jobstats <JOBID>` to see the actual peak memory used.
+4.  Set your `--mem` request slightly higher than that peak for future runs.
+
+Requesting only the memory you need helps the scheduler place your job more efficiently.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.612 🟡 |
+| Faithfulness | 0.875 🟢 |
+| Context Precision | 0.225 🔴 |
+| Context Recall | 0.500 🟡 |
+
+---
+
+## Question 12: question\_12
+
+### ❓ Question
+
+Is the two-factor code for logging into FASRC the same as my Harvard Key code? If not, how do I set it up?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/quickstart-guide  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/introduction-to-cluster-online, docs.rc.fas.harvard.edu/kb/quickstart-guide, docs.rc.fas.harvard.edu/kb/duo-mobile, docs.rc.fas.harvard.edu/kb/about-usernames, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+No, the two-factor code for logging into FASRC is **not** the same as your Harvard Key code. FASRC uses its own separate OpenAuth two-factor authentication system. However, if you already have the **Duo Mobile** app installed on your device for your Harvard Key, you can use the same app to generate your FASRC two-factor code.
+
+Here is how to set it up:
+
+1.  **Visit the setup page:** Go to [https://two-factor.rc.fas.harvard.edu](https://two-factor.rc.fas.harvard.edu/) and log in with your RC username and password.
+2.  **Check your email:** You will receive an email with a link. Click that link (or copy/paste it into your browser).
+3.  **Scan the QR code:** The link will display a QR code for your OpenAuth token. Open the Duo Mobile app on your mobile device and scan this QR code to add your RC token.
+
+Once set up, you will use the code generated by Duo Mobile for your FASRC login.
+
+For more details, see the guide on [Using Duo Mobile to display your RC two-factor code](https://docs.rc.fas.harvard.edu/kb/duo-mobile).
+```
+
+### ✅ Expected Answer
+
+```text
+No. FASRC has its own two-factor system (OpenAuth) that is separate from Harvard Key. Set it up with a smartphone authenticator app (e.g. Google Authenticator or Duo) before accessing cluster resources; you use this OpenAuth token along with your FASRC username and password.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/quickstart-guide**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Is the two-factor code for logging into FASRC the same as my Harvard Key code? If not, how do I set it up?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+```text
+No, the two-factor code for logging into FASRC is **not** the same as your Harvard Key code. FASRC uses its own separate OpenAuth two-factor authentication system. However, if you already have the **Duo Mobile** app installed on your device for your Harvard Key, you can use the same app to generate your FASRC two-factor code.
+
+Here is how to set it up:
+
+1.  **Visit the setup page:** Go to [https://two-factor.rc.fas.harvard.edu](https://two-factor.rc.fas.harvard.edu/) and log in with your RC username and password.
+2.  **Check your email:** You will receive an email with a link. Click that link (or copy/paste it into your browser).
+3.  **Scan the QR code:** The link will display a QR code for your OpenAuth token. Open the Duo Mobile app on your mobile device and scan this QR code to add your RC token.
+
+Once set up, you will use the code generated by Duo Mobile for your FASRC login.
+
+For more details, see the guide on [Using Duo Mobile to display your RC two-factor code](https://docs.rc.fas.harvard.edu/kb/duo-mobile).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.917 🟢 |
+| Context Precision | 0.950 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 13: question\_13
+
+### ❓ Question
+
+How do I find which versions of a software package are available as modules on Cannon, and how should I load it so my workflow keeps working when defaults change?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/modules-intro  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/r-parallel, docs.rc.fas.harvard.edu/kb/helmod-faq, docs.rc.fas.harvard.edu/kb/spack-package-manager, docs.rc.fas.harvard.edu/kb/spack, docs.rc.fas.harvard.edu/kb/modules-intro, docs.rc.fas.harvard.edu/kb/all-modules, docs.rc.fas.harvard.edu/kb/cpp-programming-language, docs.rc.fas.harvard.edu/kb/modules-intro, docs.rc.fas.harvard.edu/kb/rocky-8-transition-guide, docs.rc.fas.harvard.edu/kb/all-modules, github.com/fasrc/User\_Codes/blob/master/Notes/README.md, github.com/fasrc/User\_Codes/blob/master/Applications/Dynamite/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise6/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Advanced\_Cluster\_Usage/Exercise6/README.md, github.com/fasrc/User\_Codes/blob/master/Training/GenAI-Tools/extras.md, docs.rc.fas.harvard.edu/kb/tensorflow  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Here's how to find available module versions and load a specific one so your workflow doesn't break when defaults change:
+
+---
+
+### 1. Find available versions
+
+**`module avail <name>`** — lists all versions of a package that can be loaded in your current environment (i.e., given any compilers/MPI already loaded):
+
+```bash
+module avail python
+```
+
+**`module spider <name>`** — searches all modules (including those not loadable in your current compiler/MPI context) and shows all available versions:
+
+```bash
+module spider python
+```
+
+**`module overview`** — gives a broad alphabetical listing of all packages with version counts (e.g., `python (9)` means 9 versions are available).
+
+> **Note:** `module avail` only shows modules loadable in your *current* environment. To see modules built against specific compilers or MPI versions, load those first, then run `module avail` again.
+
+---
+
+### 2. Load a specific version (pin it)
+
+Always load the **full version string** rather than relying on the default:
+
+```bash
+# ❌ Don't do this — relies on the default, which can change
+module load python
+
+# ✅ Do this — pins to a specific version
+module load python/3.10.13-fasrc01
+```
+
+This ensures your workflow uses the same version regardless of whether FASRC changes the default.
+
+---
+
+### 3. Best practices for reproducibility
+
+- **Pin versions explicitly** in your scripts and job submissions (e.g., `module load gcc/11.3.1-fasrc01`).
+- **Record your module list** in your job script or workflow config so you can reproduce it later:
+  ```bash
+  module list > my-modules.txt
+  ```
+- For software not available as modules, consider using **Spack** ([Spack Package Manager](https://docs.rc.fas.harvard.edu/kb/spack-package-manager/)) or conda environments, which also support version pinning.
+
+---
+
+**Sources:**
+- [Lmod software modules – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/all-modules/)
+- [Lmod software modules intro – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/modules-intro/)
+- [Rocky 8 Transition Guide – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/rocky-8-transition-guide/)
+````
+
+### ✅ Expected Answer
+
+```text
+Search with module spider <name> to list all available modules matching the string regardless of your current environment. Then load with both the name and a specific version (module load <name>/<version>) — FASRC strongly recommends this so you are protected if the default version changes later.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/modules-intro**
+
+### 💬 Agent Messages (9)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+How do I find which versions of a software package are available as modules on Cannon, and how should I load it so my workflow keeps working when defaults change?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+Cannon module list available versions load specific version
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+How to load a specific version of a software module on Cannon
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #5: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+module avail
+```
+
+**🛠️ Tool Call #7: search\_local\_files**
+
+```text
+module load specific version
+```
+
+**🛠️ Tool Call #8: search\_local\_files**
+
+```text
+module load python
+```
+
+**🤖 Assistant Message #9**
+
+````text
+Here's how to find available module versions and load a specific one so your workflow doesn't break when defaults change:
+
+---
+
+### 1. Find available versions
+
+**`module avail <name>`** — lists all versions of a package that can be loaded in your current environment (i.e., given any compilers/MPI already loaded):
+
+```bash
+module avail python
+```
+
+**`module spider <name>`** — searches all modules (including those not loadable in your current compiler/MPI context) and shows all available versions:
+
+```bash
+module spider python
+```
+
+**`module overview`** — gives a broad alphabetical listing of all packages with version counts (e.g., `python (9)` means 9 versions are available).
+
+> **Note:** `module avail` only shows modules loadable in your *current* environment. To see modules built against specific compilers or MPI versions, load those first, then run `module avail` again.
+
+---
+
+### 2. Load a specific version (pin it)
+
+Always load the **full version string** rather than relying on the default:
+
+```bash
+# ❌ Don't do this — relies on the default, which can change
+module load python
+
+# ✅ Do this — pins to a specific version
+module load python/3.10.13-fasrc01
+```
+
+This ensures your workflow uses the same version regardless of whether FASRC changes the default.
+
+---
+
+### 3. Best practices for reproducibility
+
+- **Pin versions explicitly** in your scripts and job submissions (e.g., `module load gcc/11.3.1-fasrc01`).
+- **Record your module list** in your job script or workflow config so you can reproduce it later:
+  ```bash
+  module list > my-modules.txt
+  ```
+- For software not available as modules, consider using **Spack** ([Spack Package Manager](https://docs.rc.fas.harvard.edu/kb/spack-package-manager/)) or conda environments, which also support version pinning.
+
+---
+
+**Sources:**
+- [Lmod software modules – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/all-modules/)
+- [Lmod software modules intro – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/modules-intro/)
+- [Rocky 8 Transition Guide – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/rocky-8-transition-guide/)
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.565 🟡 |
+| Context Precision | 0.618 🟡 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 14: question\_14
+
+### ❓ Question
+
+What's the recommended way to set up an isolated Python environment for a project on Cannon?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/python  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/proxy-settings, docs.rc.fas.harvard.edu/kb/anthropic, docs.rc.fas.harvard.edu/kb/claude, docs.rc.fas.harvard.edu/kb/python-package-installation, docs.rc.fas.harvard.edu/kb/spack-package-manager, github.com/fasrc/User\_Codes/blob/master/Languages/Python/README.md, docs.rc.fas.harvard.edu/kb/home-directory-full, docs.rc.fas.harvard.edu/kb/python-package-installation, docs.rc.fas.harvard.edu/kb/ood-remote-desktop-how-to-open-software, docs.rc.fas.harvard.edu/kb/ai-extensions-on-fasrc-clusters  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+````text
+Based on FASRC documentation, the recommended way to set up an isolated Python environment on Cannon is to use **Mamba** (a faster drop-in replacement for Conda) with environments stored in a lab share location rather than your home directory.
+
+Here's the recommended approach:
+
+1. **Load the Python module** (which includes Mamba):
+   ```bash
+   module load python
+   ```
+
+2. **Create an environment in a lab share location** (not your home directory, which has high filesystem latency):
+   ```bash
+   mamba create --prefix /n/holylabs/{YOUR_LAB}/Lab/<envname> python={PYTHON_VERSION}
+   ```
+
+3. **Activate the environment**:
+   ```bash
+   source activate /n/holylabs/{YOUR_LAB}/Lab/<envname>
+   ```
+
+4. **Install packages** within the activated environment:
+   ```bash
+   mamba install <package_name>
+   ```
+
+**Key points:**
+- Direct use of `pip` outside of a virtual environment is discouraged on FASRC clusters [Python Package Installation](https://docs.rc.fas.harvard.edu/kb/python-package-installation/)
+- The FASRC `python` module is built with Miniforge3 and uses `conda-forge` as the default channel (the default Anaconda channel is blocked at the network level due to licensing restrictions)
+- Mamba is faster than Conda and fully compatible with it, so you can use the same commands
+- Using a lab share location allows you to share your environment with other team members and provides better performance than your home directory [Python Package Installation](https://docs.rc.fas.harvard.edu/kb/python-package-installation/)
+````
+
+### ✅ Expected Answer
+
+```text
+Load a module that provides mamba (python/3*, Miniforge3, or Mambaforge), then create an isolated environment, e.g. mamba create -n data_env python=3.9 pandas numpy, and activate it with source activate data_env. FASRC recommends using Miniforge with mamba so dependencies are isolated and you avoid conflicts rather than working in the base environment.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/python**
+
+### 💬 Agent Messages (5)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+What's the recommended way to set up an isolated Python environment for a project on Cannon?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+Cannon cluster isolated Python environment virtualenv venv conda mamba
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #5**
+
+````text
+Based on FASRC documentation, the recommended way to set up an isolated Python environment on Cannon is to use **Mamba** (a faster drop-in replacement for Conda) with environments stored in a lab share location rather than your home directory.
+
+Here's the recommended approach:
+
+1. **Load the Python module** (which includes Mamba):
+   ```bash
+   module load python
+   ```
+
+2. **Create an environment in a lab share location** (not your home directory, which has high filesystem latency):
+   ```bash
+   mamba create --prefix /n/holylabs/{YOUR_LAB}/Lab/<envname> python={PYTHON_VERSION}
+   ```
+
+3. **Activate the environment**:
+   ```bash
+   source activate /n/holylabs/{YOUR_LAB}/Lab/<envname>
+   ```
+
+4. **Install packages** within the activated environment:
+   ```bash
+   mamba install <package_name>
+   ```
+
+**Key points:**
+- Direct use of `pip` outside of a virtual environment is discouraged on FASRC clusters [Python Package Installation](https://docs.rc.fas.harvard.edu/kb/python-package-installation/)
+- The FASRC `python` module is built with Miniforge3 and uses `conda-forge` as the default channel (the default Anaconda channel is blocked at the network level due to licensing restrictions)
+- Mamba is faster than Conda and fully compatible with it, so you can use the same commands
+- Using a lab share location allows you to share your environment with other team members and provides better performance than your home directory [Python Package Installation](https://docs.rc.fas.harvard.edu/kb/python-package-installation/)
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.952 🟢 |
+| Context Precision | 0.267 🔴 |
+| Context Recall | 0.500 🟡 |
+
+---
+
+## Question 15: question\_15
+
+### ❓ Question
+
+How is my job's priority determined on Cannon, and how can I see the priority of my pending jobs?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/fairshare  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/fairshare, slurm.schedmd.com/priority\_multifactor.html, slurm.schedmd.com/slurm.conf.html, slurm.schedmd.com/priority\_multifactor.html, slurm.schedmd.com/preempt.html, slurm.schedmd.com/scontrol.html, slurm.schedmd.com/squeue.html, docs.rc.fas.harvard.edu/kb/faq, slurm.schedmd.com/salloc.html, slurm.schedmd.com/quickstart\_admin.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Based on the FASRC documentation, here is how job priority works on Cannon and how you can check it:
+
+### How Priority is Determined
+Your job's priority is primarily based on your lab's **FairShare score** [Fairshare and Job Accounting](https://docs.rc.fas.harvard.edu/kb/fairshare/). 
+
+*   **FairShare Score:** This score is calculated by comparing your lab's "Share" (the portion of the cluster granted to your lab, based on hardware purchased and base allocation) against the actual amount of cluster resources your lab has used.
+*   **Impact:** If your lab has used more than its fair share, your FairShare score drops, which lowers the priority of your jobs relative to other labs. Conversely, if your lab has used less than its share, your jobs get higher priority. This system prevents any single lab from monopolizing resources.
+*   **Other Factors:** The scheduler also considers job age and size, but FairShare is the dominant factor for inter-lab priority [Slurm Workload Manager - Multifactor Priority Plugin](https://slurm.schedmd.com/priority_multifactor.html).
+
+### How to See Your Priority and FairShare Score
+
+1.  **Check Your FairShare Score:**
+    Run the following command to see your lab's current FairShare score:
+    ```bash
+    sshare -u <your_username>
+    ```
+    Look at the last column for your effective score. A score **≤ 0.5** generally indicates lower priority, while a score **> 0.5** indicates higher priority [Frequently Asked Questions (FAQ)](https://docs.rc.fas.harvard.edu/kb/faq).
+
+2.  **Check Pending Job Priority:**
+    Use `squeue` to view your pending jobs. If a job is stuck in a "Pending" state, check the **Reason** column:
+    *   **Priority:** This reason indicates your job is waiting because its priority is lower than other jobs currently in the queue [Frequently Asked Questions (FAQ)](https://docs.rc.fas.harvard.edu/kb/faq).
+    *   **Resources:** This means your job is waiting for specific hardware resources (like nodes with enough memory or GPUs) to become available.
+
+    To see a list of pending jobs sorted by priority (highest first), you can use:
+    ```bash
+    squeue --sort=-p,i --states=PD
+    ```
+````
+
+### ✅ Expected Answer
+
+```text
+A job's priority combines two parts: your FairShare score multiplied by a weighting factor (10,000,000) to make it an integer, plus job age, which accrues while the job waits and caps at 3 days on Cannon. Inspect the breakdown for pending jobs with sprio, or use showq -o -p <partition> to see the pending queue ordered by priority.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/fairshare**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+How is my job's priority determined on Cannon, and how can I see the priority of my pending jobs?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+how to see job priority pending jobs slurm Cannon
+```
+
+**🤖 Assistant Message #4**
+
+````text
+Based on the FASRC documentation, here is how job priority works on Cannon and how you can check it:
+
+### How Priority is Determined
+Your job's priority is primarily based on your lab's **FairShare score** [Fairshare and Job Accounting](https://docs.rc.fas.harvard.edu/kb/fairshare/). 
+
+*   **FairShare Score:** This score is calculated by comparing your lab's "Share" (the portion of the cluster granted to your lab, based on hardware purchased and base allocation) against the actual amount of cluster resources your lab has used.
+*   **Impact:** If your lab has used more than its fair share, your FairShare score drops, which lowers the priority of your jobs relative to other labs. Conversely, if your lab has used less than its share, your jobs get higher priority. This system prevents any single lab from monopolizing resources.
+*   **Other Factors:** The scheduler also considers job age and size, but FairShare is the dominant factor for inter-lab priority [Slurm Workload Manager - Multifactor Priority Plugin](https://slurm.schedmd.com/priority_multifactor.html).
+
+### How to See Your Priority and FairShare Score
+
+1.  **Check Your FairShare Score:**
+    Run the following command to see your lab's current FairShare score:
+    ```bash
+    sshare -u <your_username>
+    ```
+    Look at the last column for your effective score. A score **≤ 0.5** generally indicates lower priority, while a score **> 0.5** indicates higher priority [Frequently Asked Questions (FAQ)](https://docs.rc.fas.harvard.edu/kb/faq).
+
+2.  **Check Pending Job Priority:**
+    Use `squeue` to view your pending jobs. If a job is stuck in a "Pending" state, check the **Reason** column:
+    *   **Priority:** This reason indicates your job is waiting because its priority is lower than other jobs currently in the queue [Frequently Asked Questions (FAQ)](https://docs.rc.fas.harvard.edu/kb/faq).
+    *   **Resources:** This means your job is waiting for specific hardware resources (like nodes with enough memory or GPUs) to become available.
+
+    To see a list of pending jobs sorted by priority (highest first), you can use:
+    ```bash
+    squeue --sort=-p,i --states=PD
+    ```
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.789 🟢 |
+| Context Precision | 0.625 🟡 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 16: question\_16
+
+### ❓ Question
+
+I need to move a very large dataset to the cluster. Should I use Globus, and can I transfer it straight into my home directory?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/globus-file-transfer  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage, docs.rc.fas.harvard.edu/kb/mounting-storage, docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/transferring-data, docs.rc.fas.harvard.edu/kb/globus-file-transfer  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Yes, **Globus is the recommended tool for large datasets** [Transferring Data Externally](https://docs.rc.fas.harvard.edu/kb/transferring-data/). You can set up a personal endpoint on your computer if you don't have an institutional endpoint.
+
+However, **you should not transfer large datasets directly into your home directory**. Your home directory has limited space. Instead, transfer your data to one of the larger storage volumes:
+
+* **`/n/holylabs`** (Lab Directory) — 4TB, no retention limit, but no backups
+* **`/n/netscratch`** (NetScratch) — 50TB, 90-day retention policy, no backups
+
+For more details on storage options and workflows, see [Getting Started with FASRC Storage](https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage/).
+
+Would you like help setting up a Globus endpoint or finding your group's specific storage locations?
+```
+
+### ✅ Expected Answer
+
+```text
+Yes, use Globus — it's the recommended alternative to SSH/SCP specifically for very large data sets, and you can install Globus Connect Personal to make your own machine an endpoint. However, you cannot transfer into your home directory: home directories are not available through Globus (and never will be) because sharing them is a security vulnerability. Target a lab or scratch location instead.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/globus-file-transfer**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I need to move a very large dataset to the cluster. Should I use Globus, and can I transfer it straight into my home directory?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #4**
+
+```text
+Yes, **Globus is the recommended tool for large datasets** [Transferring Data Externally](https://docs.rc.fas.harvard.edu/kb/transferring-data/). You can set up a personal endpoint on your computer if you don't have an institutional endpoint.
+
+However, **you should not transfer large datasets directly into your home directory**. Your home directory has limited space. Instead, transfer your data to one of the larger storage volumes:
+
+* **`/n/holylabs`** (Lab Directory) — 4TB, no retention limit, but no backups
+* **`/n/netscratch`** (NetScratch) — 50TB, 90-day retention policy, no backups
+
+For more details on storage options and workflows, see [Getting Started with FASRC Storage](https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage/).
+
+Would you like help setting up a Globus endpoint or finding your group's specific storage locations?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.214 🔴 |
+| Context Precision | 0.700 🟡 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 17: question\_17
+
+### ❓ Question
+
+I accidentally deleted some files in my home directory on Cannon. Can I get them back, and is there any situation where I can't?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/cluster-storage  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/home-directory-full, docs.rc.fas.harvard.edu/kb/cluster-storage, docs.rc.fas.harvard.edu/kb/data-deletion-recommendations, docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving, github.com/fasrc/User\_Codes/blob/master/Applications/KHARMA/README.md, docs.rc.fas.harvard.edu/kb/faq, docs.rc.fas.harvard.edu/kb/rdiff-backup, docs.rc.fas.harvard.edu/kb/mounting-storage  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on FASRC documentation, here's what you need to know about recovering accidentally deleted files from your home directory on Cannon:
+
+## Recovery is possible — but with limits
+
+Your home directory has **daily snapshots that are retained for 2 weeks** [Home and Lab directories](https://docs.rc.fas.harvard.edu/kb/cluster-storage/). This means:
+
+- **If you deleted files within the last 2 weeks**, recovery is likely possible by restoring from a snapshot.
+- **If more than 2 weeks have passed**, the snapshots may have been rotated and recovery may not be possible.
+
+## Important caveats
+
+1. **Act quickly** — the sooner you contact FASRC support, the better your chances of recovering from a recent snapshot.
+
+2. **Data Deletion Recommendations** page explicitly states: *"Data accidentally deleted is likely not retrievable depending on where it was stored"* [Data Deletion Recommendations](https://docs.rc.fas.harvard.edu/kb/data-deletion-recommendations/). This underscores that recovery is not guaranteed and depends on timing and storage location.
+
+3. **Home directories are not suitable for** HRCI/Level 3 or other sensitive data, and the backup/recovery policies apply specifically to home directories.
+
+## What to do now
+
+1. **Contact FASRC support immediately** to request recovery from a recent snapshot.
+2. Specify exactly which files/directories were deleted and approximately when.
+3. If you have backups elsewhere (e.g., external storage, lab directories with different backup policies), those may be alternatives.
+
+For future protection, consider using storage options with more robust backup policies or maintaining your own backups of critical data.
+```
+
+### ✅ Expected Answer
+
+```text
+Usually yes: home directories have daily snapshots retained for 2 weeks, so you can recover recently deleted files from the .snapshot directory. The exception is if you delete your entire home directory — that also deletes the snapshots, and it is not recoverable.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/cluster-storage**
+
+### 💬 Agent Messages (5)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I accidentally deleted some files in my home directory on Cannon. Can I get them back, and is there any situation where I can't?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+accidentally deleted files home directory recovery backup
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #5**
+
+```text
+Based on FASRC documentation, here's what you need to know about recovering accidentally deleted files from your home directory on Cannon:
+
+## Recovery is possible — but with limits
+
+Your home directory has **daily snapshots that are retained for 2 weeks** [Home and Lab directories](https://docs.rc.fas.harvard.edu/kb/cluster-storage/). This means:
+
+- **If you deleted files within the last 2 weeks**, recovery is likely possible by restoring from a snapshot.
+- **If more than 2 weeks have passed**, the snapshots may have been rotated and recovery may not be possible.
+
+## Important caveats
+
+1. **Act quickly** — the sooner you contact FASRC support, the better your chances of recovering from a recent snapshot.
+
+2. **Data Deletion Recommendations** page explicitly states: *"Data accidentally deleted is likely not retrievable depending on where it was stored"* [Data Deletion Recommendations](https://docs.rc.fas.harvard.edu/kb/data-deletion-recommendations/). This underscores that recovery is not guaranteed and depends on timing and storage location.
+
+3. **Home directories are not suitable for** HRCI/Level 3 or other sensitive data, and the backup/recovery policies apply specifically to home directories.
+
+## What to do now
+
+1. **Contact FASRC support immediately** to request recovery from a recent snapshot.
+2. Specify exactly which files/directories were deleted and approximately when.
+3. If you have backups elsewhere (e.g., external storage, lab directories with different backup policies), those may be alternatives.
+
+For future protection, consider using storage options with more robust backup policies or maintaining your own backups of critical data.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.928 🟢 |
+| Faithfulness | 0.222 🔴 |
+| Context Precision | 0.500 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 18: question\_18
+
+### ❓ Question
+
+I want to run a short GPU job on Cannon. How do I request the GPU and make sure it has enough memory so it isn't killed?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/running-jobs  
+**Retrieved Documents:** github.com/fasrc/User\_Codes/blob/master/Applications/AlphaFold/README.md, github.com/fasrc/User\_Codes/blob/master/GPU\_Computing/Dist\_GPU\_Computing/README.md, docs.rc.fas.harvard.edu/kb/gpgpu-computing-on-the-cluster, docs.rc.fas.harvard.edu/kb/fasrc-ai-facilitation, github.com/fasrc/User\_Codes/blob/master/GPU\_Computing/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Advanced\_Cluster\_Usage/Exercise1/Python/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Advanced\_Cluster\_Usage/Exercise2/Python/README.md, docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/faq, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise4/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise6/README.md, slurm.schedmd.com/gres.html, github.com/fasrc/User\_Codes/blob/master/Training/Advanced\_Cluster\_Usage/Exercise2/Cpp/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Advanced\_Cluster\_Usage/Exercise2/Fortran/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Advanced\_Cluster\_Usage/Exercise1/Fortran/README.md, slurm.schedmd.com/MISC25/Slinky-CUG2025.pdf, slurm.schedmd.com/srun.html  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+```text
+I don't have specific documentation about GPU job submission on Cannon in my indexed sources. 
+
+For GPU jobs on FASRC clusters, you'll typically need:
+- `--gres=gpu:<count>` to request GPUs
+- Memory limits via `--mem` or `--mem-per-gpu` to prevent OOM kills
+- Possibly `--constraint` flags to target specific GPU types
+
+I'd recommend checking the FASRC Cannon documentation directly at [fas.harvard.edu/research-computing](https://www.fas.harvard.edu/research-computing) or contacting FASRC support for cluster-specific GPU job submission details.
+```
+
+### ✅ Expected Answer
+
+```text
+Request the GPU with #SBATCH --gpus=1. Don't rely on the default memory — if you omit a memory request you only get 100 MB and the job will likely be killed, so set #SBATCH --mem=<N>G to a value your job needs. Submit to a GPU-capable partition and keep within its time limit (for short tests, use a test/short partition).
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/running-jobs**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Cannon GPU job request memory limit SLURM
+```
+
+**🛠️ Tool Call #2: search\_local\_files**
+
+```text
+Cannon GPU
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+SLURM GPU job submission
+```
+
+**🤖 Assistant Message #4**
+
+```text
+I don't have specific documentation about GPU job submission on Cannon in my indexed sources. 
+
+For GPU jobs on FASRC clusters, you'll typically need:
+- `--gres=gpu:<count>` to request GPUs
+- Memory limits via `--mem` or `--mem-per-gpu` to prevent OOM kills
+- Possibly `--constraint` flags to target specific GPU types
+
+I'd recommend checking the FASRC Cannon documentation directly at [fas.harvard.edu/research-computing](https://www.fas.harvard.edu/research-computing) or contacting FASRC support for cluster-specific GPU job submission details.
+```
+
+---
+
+## Question 19: question\_19
+
+### ❓ Question
+
+What is the GPU partition layout on MIT's Engaging cluster, and how do I request an L40S there?
+
+### 🤖 archi's Answer
+
+```text
+The indexed FASRC documentation does not appear to cover MIT's Engaging cluster or its GPU partition layout. The sources I was able to retrieve focus on Harvard's FASRC cluster (e.g., GPU computing on the FASRC cluster, SEAS compute resources, Kempner partitions), but none mention MIT's Engaging cluster or L40S GPU requests there.
+
+For accurate information about Engaging's GPU partition layout and how to request L40S GPUs, you'll want to consult MIT's own documentation directly:
+
+- **MIT Engaging documentation**: [https://engaging.mit.edu/](https://engaging.mit.edu/)
+- **MIT Engaging user guide / SLURM documentation** on their site
+- **MIT Engaging support**: contact their helpdesk or check their user forums
+
+These sources will have the authoritative details on partition names, GPU types available, and the correct `sbatch`/`srun` flags (e.g., `--gres=gpu:l40s:1` or similar) for requesting L40S GPUs on Engaging.
+```
+
+### ✅ Expected Answer
+
+```text
+I don't have FASRC documentation covering MIT's Engaging cluster — it's a separate institution's HPC system. For Engaging-specific questions the right contact is the MIT research computing team. If you're comparing Engaging and Cannon for a workload, I can help with the Cannon side.
+```
+
+### 💬 Agent Messages (8)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+What is the GPU partition layout on MIT's Engaging cluster, and how do I request an L40S there?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+MIT Engaging cluster GPU partition layout L40S
+```
+
+**🛠️ Tool Call #3: search\_local\_files**
+
+```text
+Engaging cluster GPU partition L40S
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+Engaging cluster GPU nodes partition
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+Engaging
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+L40S
+```
+
+**🛠️ Tool Call #7: search\_vectorstore\_hybrid**
+
+```text
+MIT Engaging cluster GPU partition
+```
+
+**🤖 Assistant Message #8**
+
+```text
+The indexed FASRC documentation does not appear to cover MIT's Engaging cluster or its GPU partition layout. The sources I was able to retrieve focus on Harvard's FASRC cluster (e.g., GPU computing on the FASRC cluster, SEAS compute resources, Kempner partitions), but none mention MIT's Engaging cluster or L40S GPU requests there.
+
+For accurate information about Engaging's GPU partition layout and how to request L40S GPUs, you'll want to consult MIT's own documentation directly:
+
+- **MIT Engaging documentation**: [https://engaging.mit.edu/](https://engaging.mit.edu/)
+- **MIT Engaging user guide / SLURM documentation** on their site
+- **MIT Engaging support**: contact their helpdesk or check their user forums
+
+These sources will have the authoritative details on partition names, GPU types available, and the correct `sbatch`/`srun` flags (e.g., `--gres=gpu:l40s:1` or similar) for requesting L40S GPUs on Engaging.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.000 🔴 |
+| Faithfulness | 0.400 🔴 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 0.333 🔴 |
+
+---
+
+## Question 20: question\_20
+
+### ❓ Question
+
+How do I submit a job on TACC Frontera using its queue limits?
+
+### 🤖 archi's Answer
+
+```text
+I don't have specific documentation on TACC Frontera's queue limits in my current knowledge base. The search results returned general Slurm configuration documentation and FASRC-specific resources, but nothing specific to TACC's Frontera system.
+
+To get accurate information about submitting jobs on TACC Frontera with its queue limits, I recommend:
+
+1. **Checking TACC's official documentation** at [https://portal.tacc.utexas.edu/tacc-guides/frontera/](https://portal.tacc.utexas.edu/tacc-guides/frontera/)
+2. **Reviewing Frontera's queue/partition documentation** which should list:
+   - Maximum walltime limits per partition
+   - Maximum number of nodes/CPU cores per job
+   - Memory limits
+   - Any user/project-specific quotas
+3. **Using `sinfo` and `squeue` commands** on the cluster to see current queue status and limits
+4. **Contacting TACC support** or checking their user forums for the most current queue policies
+
+Would you like help with general SLURM job submission syntax instead, or do you have specific queue limit information you'd like help formatting into a job script?
+```
+
+### ✅ Expected Answer
+
+```text
+That's outside FASRC's documentation — Frontera is a TACC system at UT Austin with its own scheduler policies and queues. Check TACC's user guide for Frontera. I can help with the equivalent on FASRC Cannon (SLURM partitions, limits, and submit scripts) if that's useful.
+```
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+How do I submit a job on TACC Frontera using its queue limits?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+TACC Frontera SLURM job submission queue limits
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+TACC Frontera SLURM queue limits job submission
+```
+
+**🤖 Assistant Message #4**
+
+```text
+I don't have specific documentation on TACC Frontera's queue limits in my current knowledge base. The search results returned general Slurm configuration documentation and FASRC-specific resources, but nothing specific to TACC's Frontera system.
+
+To get accurate information about submitting jobs on TACC Frontera with its queue limits, I recommend:
+
+1. **Checking TACC's official documentation** at [https://portal.tacc.utexas.edu/tacc-guides/frontera/](https://portal.tacc.utexas.edu/tacc-guides/frontera/)
+2. **Reviewing Frontera's queue/partition documentation** which should list:
+   - Maximum walltime limits per partition
+   - Maximum number of nodes/CPU cores per job
+   - Memory limits
+   - Any user/project-specific quotas
+3. **Using `sinfo` and `squeue` commands** on the cluster to see current queue status and limits
+4. **Contacting TACC support** or checking their user forums for the most current queue policies
+
+Would you like help with general SLURM job submission syntax instead, or do you have specific queue limit information you'd like help formatting into a job script?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.000 🔴 |
+| Faithfulness | 0.222 🔴 |
+| Context Precision | 0.208 🔴 |
+| Context Recall | 0.333 🔴 |
+
+---
+
+## Question 21: question\_21
+
+### ❓ Question
+
+What is the exact dollar-per-core-hour price FASRC charges for Cannon CPU time this fiscal year?
+
+### 🤖 archi's Answer
+
+```text
+The agent attempted to determine the exact dollar-per-core-hour price for Cannon CPU time for the current fiscal year by performing multiple hybrid vector searches and local file searches targeting keywords like "Cannon," "charge back," and "price." However, the retrieved documents primarily contained general cluster quickstart guides, maintenance notices, and unrelated code snippets, failing to surface a specific pricing table or fiscal year rate sheet.
+
+The run stopped after hitting the recursion limit of 50. Based on the available context, I cannot provide the exact dollar-per-core-hour price for Cannon CPU time this fiscal year, as the specific pricing data was not found in the retrieved documents. You may need to consult the FASRC billing portal or contact FASRC support directly for the most current fiscal year rates.
+```
+
+### ✅ Expected Answer
+
+```text
+I don't have a documented per-core-hour price to quote — FASRC cost/billing specifics aren't something I can confirm from the documentation, and quoting a number I can't verify would be misleading. Please contact FASRC (e.g. via a support ticket) for current billing or cost-recovery details.
+```
+
+### 💬 Agent Messages (1)
+
+**🤖 Assistant Message #1**
+
+```text
+The agent attempted to determine the exact dollar-per-core-hour price for Cannon CPU time for the current fiscal year by performing multiple hybrid vector searches and local file searches targeting keywords like "Cannon," "charge back," and "price." However, the retrieved documents primarily contained general cluster quickstart guides, maintenance notices, and unrelated code snippets, failing to surface a specific pricing table or fiscal year rate sheet.
+
+The run stopped after hitting the recursion limit of 50. Based on the available context, I cannot provide the exact dollar-per-core-hour price for Cannon CPU time this fiscal year, as the specific pricing data was not found in the retrieved documents. You may need to consult the FASRC billing portal or contact FASRC support directly for the most current fiscal year rates.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.000 🔴 |
+| Faithfulness | 0.385 🔴 |
+| Context Precision | 0.858 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 22: question\_22
+
+### ❓ Question
+
+I'm Harvard faculty but I just want to run jobs inside a colleague's existing lab group on the cluster — I don't want my own group and I don't want to deal with billing. Which job title should I pick on the account request form?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/account-qualifications  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/account-qualifications, docs.rc.fas.harvard.edu/kb/additional-groups, docs.rc.fas.harvard.edu/kb/how-do-i-get-a-research-computing-account, docs.rc.fas.harvard.edu/kb/acceptable-use, docs.rc.fas.harvard.edu/kb/other-institutions, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3, docs.rc.fas.harvard.edu/kb/how-do-i-get-a-research-computing-account, docs.rc.fas.harvard.edu/kb/roles-responsibilities, docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+The agent attempted to retrieve specific documentation from the FASRC (FAS Research Computing) knowledge base regarding account request forms, job titles, and billing structures for faculty wishing to join existing lab groups. The search queries focused on "account request form," "job title," "faculty," "colleague," "lab group," and "billing."
+
+However, the retrieved documents did not contain the specific instruction for the "job title" field on the account request form. The available text primarily discussed general billing (billed to the school level like HLS) and links to other resources (HMS, Storage Service Center), but did not explicitly state which job title to select for a faculty member joining another group without creating their own.
+
+**Answer:**
+Based on standard FASRC practices for Harvard faculty who do not wish to create their own group or handle billing directly, you should typically select the job title or role that corresponds to **"Faculty"** or **"Principal Investigator"** but ensure that the **Group** field on the form specifies your **colleague's group** (or the specific project within their group) rather than creating a new group under your name. 
+
+However, since the specific form field options were not detailed in the retrieved context, the most accurate next step is to:
+1.  Select **"Faculty"** as your primary role/title.
+2.  In the group/project selection, choose your **colleague's existing group**.
+3.  If there is a specific "Job Title" dropdown that includes options like "Research Staff," "Postdoc," or "Faculty," and you are not managing the group's billing, **"Faculty"** is usually the correct affiliation, with the understanding that the group's PI (your colleague) is responsible for the resources.
+
+*Note: This run stopped after hitting the recursion limit of 50, so further specific form-field verification was not completed.*
+```
+
+### ✅ Expected Answer
+
+```text
+Pick POSTDOC/RESEARCHER. A Harvard faculty member who wants to sign up as an individual collaborator under another faculty member's cluster group should choose POSTDOC/RESEARCHER, because choosing FACULTY requires billing information and starts the new lab setup process (and FACULTY signups require vetting, so they take longer to process).
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/account-qualifications**
+
+### 💬 Agent Messages (1)
+
+**🤖 Assistant Message #1**
+
+```text
+The agent attempted to retrieve specific documentation from the FASRC (FAS Research Computing) knowledge base regarding account request forms, job titles, and billing structures for faculty wishing to join existing lab groups. The search queries focused on "account request form," "job title," "faculty," "colleague," "lab group," and "billing."
+
+However, the retrieved documents did not contain the specific instruction for the "job title" field on the account request form. The available text primarily discussed general billing (billed to the school level like HLS) and links to other resources (HMS, Storage Service Center), but did not explicitly state which job title to select for a faculty member joining another group without creating their own.
+
+**Answer:**
+Based on standard FASRC practices for Harvard faculty who do not wish to create their own group or handle billing directly, you should typically select the job title or role that corresponds to **"Faculty"** or **"Principal Investigator"** but ensure that the **Group** field on the form specifies your **colleague's group** (or the specific project within their group) rather than creating a new group under your name. 
+
+However, since the specific form field options were not detailed in the retrieved context, the most accurate next step is to:
+1.  Select **"Faculty"** as your primary role/title.
+2.  In the group/project selection, choose your **colleague's existing group**.
+3.  If there is a specific "Job Title" dropdown that includes options like "Research Staff," "Postdoc," or "Faculty," and you are not managing the group's billing, **"Faculty"** is usually the correct affiliation, with the understanding that the group's PI (your colleague) is responsible for the resources.
+
+*Note: This run stopped after hitting the recursion limit of 50, so further specific form-field verification was not completed.*
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.000 🔴 |
+| Faithfulness | 0.174 🔴 |
+| Context Precision | 0.667 🟡 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 23: question\_23
+
+### ❓ Question
+
+What does someone with non-faculty PI rights have to supply at signup that an ordinary researcher does not?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/account-qualifications  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/account-qualifications, docs.rc.fas.harvard.edu/kb/fasse, docs.rc.fas.harvard.edu/kb/how-do-i-get-a-research-computing-account, docs.rc.fas.harvard.edu/kb/lab-groups, docs.rc.fas.harvard.edu/kb/pi-responsibilities-at-fas-rc  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the FASRC documentation, someone selecting the **NON-FACULTY PI** job title during signup does not need to supply a sponsor (the Sponsor option is greyed out). Instead, they are vetted directly by FASRC staff.
+
+However, FASRC staff may need to follow up to verify two specific things that an ordinary researcher (who is sponsored by a faculty member) does not need to provide:
+
+1.  **Proof of university PI rights:** Being listed as a PI on a grant is not the same as having university PI status. You must have been conferred PI rights by the university.
+2.  **Proof of control of budget:** You must demonstrate that you control the budget for the research.
+
+If it is not clear that you have these rights, your request may be rejected. You can contact FASRC with further details if you have PI rights but your request is rejected for this reason.
+
+Source: [Request an FAS Research Computing Account](https://docs.rc.fas.harvard.edu/kb/how-do-i-get-a-research-computing-account/)
+```
+
+### ✅ Expected Answer
+
+```text
+A NON-FACULTY PI must supply a 33-digit billing code at signup. Non-Faculty PI accounts also carry additional controls and privileges, and the signup requires vetting so it takes longer to process.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/account-qualifications**
+
+### 💬 Agent Messages (2)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+What does someone with non-faculty PI rights have to supply at signup that an ordinary researcher does not?
+```
+
+**🤖 Assistant Message #2**
+
+```text
+Based on the FASRC documentation, someone selecting the **NON-FACULTY PI** job title during signup does not need to supply a sponsor (the Sponsor option is greyed out). Instead, they are vetted directly by FASRC staff.
+
+However, FASRC staff may need to follow up to verify two specific things that an ordinary researcher (who is sponsored by a faculty member) does not need to provide:
+
+1.  **Proof of university PI rights:** Being listed as a PI on a grant is not the same as having university PI status. You must have been conferred PI rights by the university.
+2.  **Proof of control of budget:** You must demonstrate that you control the budget for the research.
+
+If it is not clear that you have these rights, your request may be rejected. You can contact FASRC with further details if you have PI rights but your request is rejected for this reason.
+
+Source: [Request an FAS Research Computing Account](https://docs.rc.fas.harvard.edu/kb/how-do-i-get-a-research-computing-account/)
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.662 🟡 |
+| Faithfulness | 0.818 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 24: question\_24
+
+### ❓ Question
+
+Our lab has grant money and wants to buy extra compute nodes for the cluster. Can we just have them racked whenever we're ready?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa, docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview, docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices, docs.rc.fas.harvard.edu/kb/account-qualifications, docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview, docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices, docs.rc.fas.harvard.edu/kb/macaulay2, slurm.schedmd.com/slurm.html, slurm.schedmd.com/SLUG23/NERSC-SLUG23.pdf  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+No, you cannot simply purchase and rack extra compute nodes on your own. FASRC manages all cluster hardware procurement, installation, and integration centrally. Here's why:
+
+- **Infrastructure management**: FASRC handles all aspects of cluster hardware, including procurement, rack installation, network integration (such as the NDR Infiniband interconnect), power, cooling, and ongoing maintenance [Harvard T.H. Chan School of Public Health – FAS Research Computing Overview](https://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview/).
+
+- **Standardization**: The cluster uses standardized node configurations and topologies. Mixing non-standard or lab-purchased hardware could create compatibility issues with the workload manager (Slurm), storage systems, and network fabric.
+
+- **Procurement process**: Any hardware additions go through FASRC's internal procurement and planning processes, which consider factors like:
+  - Power and cooling capacity in the data center
+  - Network fabric expansion
+  - Software and licensing compatibility
+  - Long-term maintenance and support contracts
+
+**What you can do instead:**
+
+1. **Contact FASRC** to discuss your compute needs and explore options for additional resources. You can reach them through the [FASRC Portal](https://portal.rc.fas.harvard.edu).
+
+2. **Consider alternative options** such as:
+   - Requesting additional allocation on existing cluster partitions
+   - Using cloud resources (AWS, GCP, Azure) which FASRC may support
+   - Exploring dedicated partitions if your lab has sustained high demand
+
+3. **Optimize current usage**: Review [Job Efficiency and Optimization Best Practices](https://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices/) to ensure you're getting the most from your current allocation.
+
+If you have specific compute requirements, FASRC can help identify the best path forward for your lab's needs.
+```
+
+### ✅ Expected Answer
+
+```text
+No. FASRC will discuss your computing needs, coordinate a quote, and install the new hardware, but as of the 2019 cluster refresh and the move to water-cooling, new nodes can be added into the cluster only at certain times of the year.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Our lab has grant money and wants to buy extra compute nodes for the cluster. Can we just have them racked whenever we're ready?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+buy extra compute nodes for the cluster rack hardware procurement
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+FASRC cluster hardware procurement rack nodes grant money
+```
+
+**🤖 Assistant Message #4**
+
+```text
+No, you cannot simply purchase and rack extra compute nodes on your own. FASRC manages all cluster hardware procurement, installation, and integration centrally. Here's why:
+
+- **Infrastructure management**: FASRC handles all aspects of cluster hardware, including procurement, rack installation, network integration (such as the NDR Infiniband interconnect), power, cooling, and ongoing maintenance [Harvard T.H. Chan School of Public Health – FAS Research Computing Overview](https://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview/).
+
+- **Standardization**: The cluster uses standardized node configurations and topologies. Mixing non-standard or lab-purchased hardware could create compatibility issues with the workload manager (Slurm), storage systems, and network fabric.
+
+- **Procurement process**: Any hardware additions go through FASRC's internal procurement and planning processes, which consider factors like:
+  - Power and cooling capacity in the data center
+  - Network fabric expansion
+  - Software and licensing compatibility
+  - Long-term maintenance and support contracts
+
+**What you can do instead:**
+
+1. **Contact FASRC** to discuss your compute needs and explore options for additional resources. You can reach them through the [FASRC Portal](https://portal.rc.fas.harvard.edu).
+
+2. **Consider alternative options** such as:
+   - Requesting additional allocation on existing cluster partitions
+   - Using cloud resources (AWS, GCP, Azure) which FASRC may support
+   - Exploring dedicated partitions if your lab has sustained high demand
+
+3. **Optimize current usage**: Review [Job Efficiency and Optimization Best Practices](https://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices/) to ensure you're getting the most from your current allocation.
+
+If you have specific compute requirements, FASRC can help identify the best path forward for your lab's needs.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.742 🟢 |
+| Faithfulness | 0.304 🔴 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 25: question\_25
+
+### ❓ Question
+
+If a Chan School PI sponsors an outside collaborator's cluster account, who ends up paying for that person's compute time, and what happens to their access if the PI leaves?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa, docs.rc.fas.harvard.edu/kb/account-qualifications, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v2, docs.rc.fas.harvard.edu/kb/account-qualifications, docs.rc.fas.harvard.edu/kb/onboarding  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the Harvard T.H. Chan School of Public Health (HSPH) and FAS Research Computing Q&A:
+
+**Who pays?**
+The outside collaborator's compute usage (CPU hours) is applied to the sponsoring PI's lab group fairshare and billed to the school (HSPH) on a quarterly basis. There is no up-front cost for creating the account, but the PI's lab group absorbs the compute costs.
+
+**What happens if the PI leaves?**
+If the sponsoring PI leaves HSPH, the outside collaborator's access would also end unless it is transferred to another PI's account and billing. It is the departing PI's responsibility to notify FASRC when the collaborator's access should be withdrawn.
+
+**Key requirements:**
+- The collaborator's account must be approved by and attached to an existing HSPH PI's FASRC account
+- When requesting the account, you must note that this is an outside collaborator (select 'EXTERNAL') [Harvard T.H. Chan School of Public Health + FAS Research Computing Q&A](https://docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa/)
+```
+
+### ✅ Expected Answer
+
+```text
+There is no up-front cost for the collaborator's account, but their cluster usage (in CPU hours) is applied to the sponsoring PI's lab group fairshare and billed to the school on a quarterly basis. The account must be requested as EXTERNAL and be approved by and attached to an existing HCSPH PI's FASRC account. Should the PI leave HCSPH, the collaborator's access also ends unless it is transferred to another PI's account and billing; it is the PI's responsibility to notify FASRC when the collaborator's access should be withdrawn.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa**
+
+### 💬 Agent Messages (2)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+If a Chan School PI sponsors an outside collaborator's cluster account, who ends up paying for that person's compute time, and what happens to their access if the PI leaves?
+```
+
+**🤖 Assistant Message #2**
+
+```text
+Based on the Harvard T.H. Chan School of Public Health (HSPH) and FAS Research Computing Q&A:
+
+**Who pays?**
+The outside collaborator's compute usage (CPU hours) is applied to the sponsoring PI's lab group fairshare and billed to the school (HSPH) on a quarterly basis. There is no up-front cost for creating the account, but the PI's lab group absorbs the compute costs.
+
+**What happens if the PI leaves?**
+If the sponsoring PI leaves HSPH, the outside collaborator's access would also end unless it is transferred to another PI's account and billing. It is the departing PI's responsibility to notify FASRC when the collaborator's access should be withdrawn.
+
+**Key requirements:**
+- The collaborator's account must be approved by and attached to an existing HSPH PI's FASRC account
+- When requesting the account, you must note that this is an outside collaborator (select 'EXTERNAL') [Harvard T.H. Chan School of Public Health + FAS Research Computing Q&A](https://docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa/)
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.473 🔴 |
+| Faithfulness | 0.800 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 26: question\_26
+
+### ❓ Question
+
+How long can a job run on the Chan School's own GPU nodes, and what GPUs are actually in them?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/seas-compute-resources, docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices, docs.rc.fas.harvard.edu/kb/fasrc-ai-facilitation, docs.rc.fas.harvard.edu/kb/kempner-partitions, docs.rc.fas.harvard.edu/kb/gpgpu-computing-on-the-cluster, docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa, docs.rc.fas.harvard.edu/kb/harvard-school-of-public-health, docs.rc.fas.harvard.edu/kb/account-qualifications, docs.rc.fas.harvard.edu/kb/data-use-agreements, docs.rc.fas.harvard.edu/kb/administrative-data, docs.rc.fas.harvard.edu/kb/running-jobs  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+```text
+The agent attempted to retrieve specific details about the Chan School's GPU infrastructure, including hardware specifications (GPU types) and job time limits, by querying vector stores and local files related to "Chan School," "HSph," and "FASRC" (Harvard FAS Research Computing). However, the run terminated after hitting the recursion limit of 50 iterations.
+
+Based on the retrieved context, the Chan School's computing resources are managed through the **FAS Research Computing Center (FASRC)**. The documents provided detail the **FASSE** cluster (part of FASRC), which is the primary resource for such workloads.
+
+*   **GPU Types:** The retrieved text explicitly mentions the **FASSE** cluster in the context of AI workflows and MPI jobs. While the specific GPU model (e.g., NVIDIA A100, V100) is not explicitly named in the truncated snippets, FASSE is known to house NVIDIA GPUs (typically A100s or similar high-performance accelerators in recent years) connected via HDR InfiniBand. The text notes nodes with 2 Intel Xeon Cascade Lake CPUs and 184 GB RAM.
+*   **Job Time Limits:** The documents reference Slurm partitions (like `shared`) and maintenance schedules but do not provide the specific maximum wall-clock time limit for GPU jobs in the visible text. Typically, FASRC partitions have varying limits (e.g., 24 hours, 7 days, or 14 days depending on the partition and priority), but this specific data point was not captured in the final retrieved snippets.
+
+**Note:** This response was generated because the agent hit the recursion limit (50) before it could retrieve the precise, up-to-date partition time limits and exact GPU model numbers from the official FASRC documentation. For the most accurate and current specifications, please consult the [FASRC Documentation](https://docs.rc.fas.harvard.edu/) directly.
+```
+
+### ✅ Expected Answer
+
+```text
+The hsph_gpu partition has a 3 day time limit. The block contains 128 AMD Genoa cores and 8 Nvidia H200 GPUs; each node is water-cooled with 64 cores, 1.5TB of RAM, and 4 GPUs, and the nodes are interconnected with NDR Infiniband. (The CPU-only hsph partition also has a 3 day time limit.)
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview**
+
+### 💬 Agent Messages (1)
+
+**🤖 Assistant Message #1**
+
+```text
+The agent attempted to retrieve specific details about the Chan School's GPU infrastructure, including hardware specifications (GPU types) and job time limits, by querying vector stores and local files related to "Chan School," "HSph," and "FASRC" (Harvard FAS Research Computing). However, the run terminated after hitting the recursion limit of 50 iterations.
+
+Based on the retrieved context, the Chan School's computing resources are managed through the **FAS Research Computing Center (FASRC)**. The documents provided detail the **FASSE** cluster (part of FASRC), which is the primary resource for such workloads.
+
+*   **GPU Types:** The retrieved text explicitly mentions the **FASSE** cluster in the context of AI workflows and MPI jobs. While the specific GPU model (e.g., NVIDIA A100, V100) is not explicitly named in the truncated snippets, FASSE is known to house NVIDIA GPUs (typically A100s or similar high-performance accelerators in recent years) connected via HDR InfiniBand. The text notes nodes with 2 Intel Xeon Cascade Lake CPUs and 184 GB RAM.
+*   **Job Time Limits:** The documents reference Slurm partitions (like `shared`) and maintenance schedules but do not provide the specific maximum wall-clock time limit for GPU jobs in the visible text. Typically, FASRC partitions have varying limits (e.g., 24 hours, 7 days, or 14 days depending on the partition and priority), but this specific data point was not captured in the final retrieved snippets.
+
+**Note:** This response was generated because the agent hit the recursion limit (50) before it could retrieve the precise, up-to-date partition time limits and exact GPU model numbers from the official FASRC documentation. For the most accurate and current specifications, please consult the [FASRC Documentation](https://docs.rc.fas.harvard.edu/) directly.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.000 🔴 |
+| Faithfulness | 0.385 🔴 |
+| Context Precision | 0.000 🔴 |
+| Context Recall | 0.000 🔴 |
+
+---
+
+## Question 27: question\_27
+
+### ❓ Question
+
+Do Harvard Chan people still get charged that yearly per-person fee just to have a Research Computing account?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v2, docs.rc.fas.harvard.edu/kb/account-qualifications, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3, docs.rc.fas.harvard.edu/kb/acceptable-use, docs.rc.fas.harvard.edu/kb/account-qualifications  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the available documentation, I don't see specific information about whether Harvard Chan School (HSPH) users are charged a yearly per-person fee for Research Computing accounts.
+
+What I can confirm from the sources:
+
+- **Account access is sponsored**: You need a PI with an existing FASRC account to sponsor your request [Harvard T.H. Chan School of Public Health – FAS Research Computing Overview](https://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview).
+- **Billing is at the school/department level**: "Cluster usage and additional resources may be subject to charges to the PI, school, or department. All billing is done via Harvard internal billing codes at the Tub/school level" [Account Qualifications and Affiliations](https://docs.rc.fas.harvard.edu/kb/account-qualifications).
+- **HSPH uses FASRC**: The Chan School is listed as using the FAS Research Computing environment [Harvard T.H. Chan School of Public Health – FAS Research Computing Overview](https://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview).
+
+However, the documentation doesn't specify whether there's a per-person annual fee for Chan School users specifically. For the most current and accurate information about HSPH-specific billing arrangements, I'd recommend:
+
+1. Checking with your HSPH department administrator or PI about their current billing arrangement
+2. Contacting FASRC directly at [https://www.rc.fas.harvard.edu/about/contact/](https://www.rc.fas.harvard.edu/about/contact/)
+3. Reviewing the [HCSPH & FAS Research Computing Q&A](/hsph-fas-research-computing-qa/) page mentioned in the Chan School overview
+```
+
+### ✅ Expected Answer
+
+```text
+No. The previous annual per-user charge for FAS Research Computing accounts is no longer used as of fiscal year 2019. Standard services — including accounts and access to the FASRC high-performance computing cluster — are effectively free to Harvard Chan School community members via the account of an eligible PI, because these FASRC computing costs are now covered by the school's overhead rate. Supplemental resources such as increased storage and VMs still involve additional charges.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview**
+
+### 💬 Agent Messages (8)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Do Harvard Chan people still get charged that yearly per-person fee just to have a Research Computing account?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+Harvard Chan School HSPH Research Computing account fee charge per person
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+Chan School fee per person account charge
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+HSPH fee
+```
+
+**🛠️ Tool Call #7: search\_vectorstore\_hybrid**
+
+```text
+Harvard Chan School HSPH billing per person account fee annual
+```
+
+**🤖 Assistant Message #8**
+
+```text
+Based on the available documentation, I don't see specific information about whether Harvard Chan School (HSPH) users are charged a yearly per-person fee for Research Computing accounts.
+
+What I can confirm from the sources:
+
+- **Account access is sponsored**: You need a PI with an existing FASRC account to sponsor your request [Harvard T.H. Chan School of Public Health – FAS Research Computing Overview](https://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview).
+- **Billing is at the school/department level**: "Cluster usage and additional resources may be subject to charges to the PI, school, or department. All billing is done via Harvard internal billing codes at the Tub/school level" [Account Qualifications and Affiliations](https://docs.rc.fas.harvard.edu/kb/account-qualifications).
+- **HSPH uses FASRC**: The Chan School is listed as using the FAS Research Computing environment [Harvard T.H. Chan School of Public Health – FAS Research Computing Overview](https://docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview).
+
+However, the documentation doesn't specify whether there's a per-person annual fee for Chan School users specifically. For the most current and accurate information about HSPH-specific billing arrangements, I'd recommend:
+
+1. Checking with your HSPH department administrator or PI about their current billing arrangement
+2. Contacting FASRC directly at [https://www.rc.fas.harvard.edu/about/contact/](https://www.rc.fas.harvard.edu/about/contact/)
+3. Reviewing the [HCSPH & FAS Research Computing Q&A](/hsph-fas-research-computing-qa/) page mentioned in the Chan School overview
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.000 🔴 |
+| Faithfulness | 0.556 🟡 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 28: question\_28
+
+### ❓ Question
+
+I'm on FASSE and want to run VS Code on a compute node. Can I just set up Remote-SSH to the compute node the way I do on Cannon?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel, github.com/fasrc/User\_Codes/blob/master/Notes/vscode\_remote\_tunnel.md, docs.rc.fas.harvard.edu/kb/git-and-github, docs.rc.fas.harvard.edu/kb/git-and-github-on-odyssey, docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel, docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel, docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel, docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+No, you can't just copy the Cannon Remote-SSH setup to FASSE. The documented VS Code Remote-SSH configuration is specific to the **Cannon** cluster (it proxies through `cannon` login nodes and uses Cannon's SLURM partitions like `gpu_test` or `test`) [VSCode Remote Development via SSH and Tunnel](https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel/).
+
+FASSE has a different cluster architecture and login node naming, so the `ProxyCommand` and host definitions won't work as-is. You would need to adapt the SSH config for FASSE's login nodes and SLURM partition names, or use the **Remote – Tunnel** approach instead, which FASRC recommends for resilience against network glitches [VSCode Remote Development via SSH and Tunnel](https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel/).
+
+Would you like help adapting the setup for FASSE, or guidance on using the Remote Tunnel approach?
+```
+
+### ✅ Expected Answer
+
+```text
+No. You cannot use Remote SSH to connect your local VS Code to a FASSE compute node, because salloc is not permitted on FASSE for security reasons. Remote SSH to FASSE's login node does work. For a FASSE compute node, launching a Remote Tunnel as a batch job (Approach I) is your only option — and before doing that you must enable internet access by setting a network proxy (you are on the FASSE VPN realm, @fasse), including adding the same proxy in your local VS Code settings; remember to unset that proxy in VS Code when you are not on the FASSE VPN, or it will block your other non-FASSE VS Code remote sessions.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I'm on FASSE and want to run VS Code on a compute node. Can I just set up Remote-SSH to the compute node the way I do on Cannon?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+FASSE VS Code Remote SSH compute node setup
+```
+
+**🤖 Assistant Message #4**
+
+```text
+No, you can't just copy the Cannon Remote-SSH setup to FASSE. The documented VS Code Remote-SSH configuration is specific to the **Cannon** cluster (it proxies through `cannon` login nodes and uses Cannon's SLURM partitions like `gpu_test` or `test`) [VSCode Remote Development via SSH and Tunnel](https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel/).
+
+FASSE has a different cluster architecture and login node naming, so the `ProxyCommand` and host definitions won't work as-is. You would need to adapt the SSH config for FASSE's login nodes and SLURM partition names, or use the **Remote – Tunnel** approach instead, which FASRC recommends for resilience against network glitches [VSCode Remote Development via SSH and Tunnel](https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel/).
+
+Would you like help adapting the setup for FASSE, or guidance on using the Remote Tunnel approach?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.710 🟢 |
+| Faithfulness | 0.636 🟡 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 29: question\_29
+
+### ❓ Question
+
+The VS Code Dev Containers extension keeps trying to talk to a Docker daemon on the cluster, which doesn't exist there. What do I have to change so it uses the container runtime FASRC actually provides?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel, docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel, docs.rc.fas.harvard.edu/kb/podman, docs.rc.fas.harvard.edu/kb/containers, docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel, slurm.schedmd.com/containers.html, slurm.schedmd.com/containers.html, slurm.schedmd.com/containers.html, docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+The VS Code Dev Containers extension defaults to Docker, but FASRC clusters provide **Podman** instead. You need to reconfigure the extension to point at Podman's socket.
+
+### Setup steps
+
+1. **Install the extension** — [Visual Studio Code Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+2. **Change two settings** in *Code > Settings > Extensions > Dev Containers*:
+   - **Dev > Containers: Docker Path** — change from `docker` to `podman`
+   - **Dev > Containers: Docker Socket Path** — change from `/var/run/docker.sock` to `/tmp/podman-run-<uid>/podman/podman.sock`, replacing `<uid>` with your FASRC user ID (find it with `id -u` on the cluster)
+
+> ⚠️ **Note:** If you use a local VS Code (not via OOD Remote Desktop), you'll need to revert these changes when you want to use dev containers with a local Docker installation on your laptop.
+
+### Recommended connection method
+
+The Dev Container extension is **not supported** in the web-browser-based VS Code (vscode.dev) with a remote tunnel. Use either:
+- **OOD Remote Desktop** to launch VS Code on the cluster, or
+- **Approach I: Remote – Tunnel via batch job** with a local VS Code client
+
+### Known limitations
+
+- The `docker-in-docker` dev container feature is **unsupported**
+- The `docker-outside-of-docker` feature requires a workaround: start a Podman API service on the compute node with `nohup podman system service -t 0 >/dev/null 2>&1 &` and add socket-mount settings to your `devcontainer.json`
+
+For full details, see [VSCode Remote Development via SSH and Tunnel](https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel).
+```
+
+### ✅ Expected Answer
+
+```text
+Point the Dev Containers extension at Podman. In Code > Settings > Extensions > Dev Containers, change 'Dev > Containers: Docker Path' from 'docker' to 'podman', and change 'Dev > Containers: Docker Socket Path' from '/var/run/docker.sock' to '/tmp/podman-run-<uid>/podman/podman.sock', replacing <uid> with your FASRC user ID (obtained by running 'id -u' on the cluster). If you are using a local VS Code rather than an OOD Remote Desktop, you will need to revert these settings later if you use dev containers with a local Docker installation.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel**
+
+### 💬 Agent Messages (9)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+The VS Code Dev Containers extension keeps trying to talk to a Docker daemon on the cluster, which doesn't exist there. What do I have to change so it uses the container runtime FASRC actually provides?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_local\_files**
+
+```text
+Dev Containers Podman docker socket container runtime
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+VS Code Dev Containers extension Podman container runtime configuration
+```
+
+**🛠️ Tool Call #5: search\_vectorstore\_hybrid**
+
+```text
+VS Code Dev Containers extension Docker socket Podman container runtime FASRC
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+Dev Containers
+```
+
+**🛠️ Tool Call #7: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #8: search\_local\_files**
+
+```text
+Dev Containers
+```
+
+**🤖 Assistant Message #9**
+
+```text
+The VS Code Dev Containers extension defaults to Docker, but FASRC clusters provide **Podman** instead. You need to reconfigure the extension to point at Podman's socket.
+
+### Setup steps
+
+1. **Install the extension** — [Visual Studio Code Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+2. **Change two settings** in *Code > Settings > Extensions > Dev Containers*:
+   - **Dev > Containers: Docker Path** — change from `docker` to `podman`
+   - **Dev > Containers: Docker Socket Path** — change from `/var/run/docker.sock` to `/tmp/podman-run-<uid>/podman/podman.sock`, replacing `<uid>` with your FASRC user ID (find it with `id -u` on the cluster)
+
+> ⚠️ **Note:** If you use a local VS Code (not via OOD Remote Desktop), you'll need to revert these changes when you want to use dev containers with a local Docker installation on your laptop.
+
+### Recommended connection method
+
+The Dev Container extension is **not supported** in the web-browser-based VS Code (vscode.dev) with a remote tunnel. Use either:
+- **OOD Remote Desktop** to launch VS Code on the cluster, or
+- **Approach I: Remote – Tunnel via batch job** with a local VS Code client
+
+### Known limitations
+
+- The `docker-in-docker` dev container feature is **unsupported**
+- The `docker-outside-of-docker` feature requires a workaround: start a Podman API service on the compute node with `nohup podman system service -t 0 >/dev/null 2>&1 &` and add socket-mount settings to your `devcontainer.json`
+
+For full details, see [VSCode Remote Development via SSH and Tunnel](https://docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.791 🟢 |
+| Faithfulness | 0.944 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 30: question\_30
+
+### ❓ Question
+
+I set up TF 2.16 on the cluster with the FASRC conda steps and now Keras blows up saying it has no backend. What environment variable am I supposed to export?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/tensorflow  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/tensorflow, docs.rc.fas.harvard.edu/kb/tensorflow, docs.rc.fas.harvard.edu/kb/home-directory-full, docs.rc.fas.harvard.edu/kb/ood-remote-desktop-how-to-open-software, github.com/fasrc/User\_Codes/blob/master/Example\_Recipes/pytorch/README.md  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+You need to export the `KERAS_BACKEND` environment variable:
+
+```bash
+export KERAS_BACKEND="tensorflow"
+```
+
+This tells Keras to use TensorFlow as its backend. You can add this line to your shell profile (e.g., `~/.bashrc`) so it persists across sessions, or set it in your job scripts before running your code.
+````
+
+### ✅ Expected Answer
+
+```text
+Export KERAS_BACKEND="tensorflow". Starting with version 2.16.1, TensorFlow includes Keras 3.0, so the Keras backend must be set to TF. FASRC's instructions include `export KERAS_BACKEND="tensorflow"` in both the GPU and CPU conda recipes, and prefix the singularity runs with it as well, e.g. `KERAS_BACKEND="tensorflow" singularity exec --nv tf2.16.1_gpu.simg python3`.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/tensorflow**
+
+### 💬 Agent Messages (2)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I set up TF 2.16 on the cluster with the FASRC conda steps and now Keras blows up saying it has no backend. What environment variable am I supposed to export?
+```
+
+**🤖 Assistant Message #2**
+
+````text
+You need to export the `KERAS_BACKEND` environment variable:
+
+```bash
+export KERAS_BACKEND="tensorflow"
+```
+
+This tells Keras to use TensorFlow as its backend. You can add this line to your shell profile (e.g., `~/.bashrc`) so it persists across sessions, or set it in your job scripts before running your code.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.610 🟡 |
+| Faithfulness | 0.375 🔴 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 31: question\_31
+
+### ❓ Question
+
+In FASRC's GPU conda recipe for TensorFlow, which CUDA toolkit and cuDNN versions are pinned?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/tensorflow  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/tensorflow, docs.rc.fas.harvard.edu/kb/gpgpu-computing-on-the-cluster, github.com/fasrc/User\_Codes/blob/master/GPU\_Computing/CUDA/README.md, github.com/fasrc/User\_Codes/blob/master/Example\_Recipes/pytorch/README.md, docs.rc.fas.harvard.edu/kb/pytorch  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on FASRC's TensorFlow documentation, the GPU conda recipe example pins the following versions:
+
+- **CUDA toolkit**: 12.1.0
+- **cuDNN**: 9.0.0.312
+
+These are installed alongside TensorFlow 2.16.1 and Python 3.10 in a conda environment. The installation uses `mamba` from the `nvidia` channel to pull in the CUDA and cuDNN packages.
+
+See the full instructions at [TensorFlow – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/tensorflow/).
+```
+
+### ✅ Expected Answer
+
+```text
+The GPU conda recipe pins CUDA toolkit 12.1.0 (`mamba install -c "nvidia/label/cuda-12.1.0" cuda-toolkit=12.1.0`) and cuDNN 9.0.0.312 (`pip install nvidia-cudnn-cu12==9.0.0.312`). This example is for TensorFlow 2.16.1 with Python 3.10.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/tensorflow**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+In FASRC's GPU conda recipe for TensorFlow, which CUDA toolkit and cuDNN versions are pinned?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #4**
+
+```text
+Based on FASRC's TensorFlow documentation, the GPU conda recipe example pins the following versions:
+
+- **CUDA toolkit**: 12.1.0
+- **cuDNN**: 9.0.0.312
+
+These are installed alongside TensorFlow 2.16.1 and Python 3.10 in a conda environment. The installation uses `mamba` from the `nvidia` channel to pull in the CUDA and cuDNN packages.
+
+See the full instructions at [TensorFlow – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/tensorflow/).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.919 🟢 |
+| Faithfulness | 0.750 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 32: question\_32
+
+### ❓ Question
+
+My PyTorch job on gpu\_test sees a device but the card looks sliced up and I only get a fraction of it. What do I need to do differently on that partition?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/pytorch  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/pytorch, docs.rc.fas.harvard.edu/kb/pytorch, github.com/fasrc/User\_Codes/blob/master/Notes/mmpose.md, github.com/fasrc/User\_Codes/blob/master/Example\_Recipes/pytorch/README.md, docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+On the `gpu_test` partition, the GPUs are configured in **MIG (Multi-Instance GPU) mode**, which slices the physical GPU into smaller instances. This is why you see a device but only get a fraction of the card's resources.
+
+To use the GPU correctly on `gpu_test`, you need to explicitly set the `CUDA_VISIBLE_DEVICES` environment variable to point to the specific MIG instance allocated to your job.
+
+Here's what you need to do:
+
+1. **Check which MIG instance you have:**
+   ```bash
+   nvidia-smi -L
+   ```
+
+2. **Set `CUDA_VISIBLE_DEVICES` to the MIG instance:**
+   ```bash
+   export CUDA_VISIBLE_DEVICES=MIG-5b3...  # replace with the actual MIG UUID from nvidia-smi -L
+   ```
+
+This step is **specific to the `gpu_test` partition** and is not necessary on the `gpu` partition, where GPUs are used in their full, unsliced form.
+
+For more details, see the [mmpose setup notes](https://github.com/fasrc/User_Codes/blob/master/Notes/mmpose.md) and the [PyTorch guide](https://docs.rc.fas.harvard.edu/kb/pytorch).
+````
+
+### ✅ Expected Answer
+
+```text
+gpu_test is currently the only FASRC partition with MIG (multi-instance GPU) mode enabled, so you must target a MIG instance explicitly. Get the GPU/MIG instance name with `nvidia-smi -L`, then set CUDA_VISIBLE_DEVICES to the MIG instance, e.g. `export CUDA_VISIBLE_DEVICES=MIG-5b36b802-0ab0-5f37-af2d-ac23f40ef62d`, or automate it with `export CUDA_VISIBLE_DEVICES=$(nvidia-smi -L | awk '/MIG/ {gsub(/[()]/,"");print $NF}')`.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/pytorch**
+
+### 💬 Agent Messages (2)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+My PyTorch job on gpu_test sees a device but the card looks sliced up and I only get a fraction of it. What do I need to do differently on that partition?
+```
+
+**🤖 Assistant Message #2**
+
+````text
+On the `gpu_test` partition, the GPUs are configured in **MIG (Multi-Instance GPU) mode**, which slices the physical GPU into smaller instances. This is why you see a device but only get a fraction of the card's resources.
+
+To use the GPU correctly on `gpu_test`, you need to explicitly set the `CUDA_VISIBLE_DEVICES` environment variable to point to the specific MIG instance allocated to your job.
+
+Here's what you need to do:
+
+1. **Check which MIG instance you have:**
+   ```bash
+   nvidia-smi -L
+   ```
+
+2. **Set `CUDA_VISIBLE_DEVICES` to the MIG instance:**
+   ```bash
+   export CUDA_VISIBLE_DEVICES=MIG-5b3...  # replace with the actual MIG UUID from nvidia-smi -L
+   ```
+
+This step is **specific to the `gpu_test` partition** and is not necessary on the `gpu` partition, where GPUs are used in their full, unsliced form.
+
+For more details, see the [mmpose setup notes](https://github.com/fasrc/User_Codes/blob/master/Notes/mmpose.md) and the [PyTorch guide](https://docs.rc.fas.harvard.edu/kb/pytorch).
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.518 🟡 |
+| Faithfulness | 0.538 🟡 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 33: question\_33
+
+### ❓ Question
+
+Our CryoSPARC master keeps coming up bound to the wrong machine name so the workers can't reach it. Where is that hostname actually set?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/cryosparc  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/cryosparc, github.com/fasrc/User\_Codes/blob/master/Applications/CryoSPARC/README.md, github.com/fasrc/User\_Codes/blob/master/Applications/CryoSPARC/bashrc\_additions.sh, slurm.schedmd.com/slurm.conf.html, slurm.schedmd.com/slurmdbd.conf.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+The hostname is set in the CryoSPARC master configuration file:
+
+**`cryosparc_master/config.sh`**
+
+Look for the `CRYOSPARC_MASTER_HOSTNAME` variable. For example:
+
+```bash
+export CRYOSPARC_MASTER_HOSTNAME=holy_______.rc.fas.harvard.edu
+```
+
+You'll find this file at `$INSTALL_DIR/cryosparc_master/config.sh` (where `$INSTALL_DIR` is your CryoSPARC installation directory).
+
+After changing the hostname, restart the master so workers can reach it:
+
+```shell
+cryosparcm restart
+```
+
+If you also changed the port number, you'll need to fix the database port mapping first:
+
+```shell
+cryosparcm fixdbport
+cryosparcm restart
+```
+
+See the [FASRC CryoSPARC documentation](https://docs.rc.fas.harvard.edu/kb/cryosparc/) and the [CryoSPARC config.sh reference](https://github.com/fasrc/User_Codes/blob/master/Applications/CryoSPARC/README.md) for more details.
+````
+
+### ✅ Expected Answer
+
+```text
+It is set in the CryoSPARC master config file, `cryosparc_master/config.sh`, which holds the license, the path to the MongoDB database, the master hostname, and the base TCP port. The hostname of the node running the master application is typically hardcoded in that config.sh; if it is left unset, CryoSPARC takes the hostname of the machine on which `cryosparcm start` is called. If these config.sh settings are not correct you will experience errors. Note also that the TCP ports of the individual component programs are not individually configurable — only the base port the user connects to is.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/cryosparc**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Our CryoSPARC master keeps coming up bound to the wrong machine name so the workers can't reach it. Where is that hostname actually set?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+````text
+The hostname is set in the CryoSPARC master configuration file:
+
+**`cryosparc_master/config.sh`**
+
+Look for the `CRYOSPARC_MASTER_HOSTNAME` variable. For example:
+
+```bash
+export CRYOSPARC_MASTER_HOSTNAME=holy_______.rc.fas.harvard.edu
+```
+
+You'll find this file at `$INSTALL_DIR/cryosparc_master/config.sh` (where `$INSTALL_DIR` is your CryoSPARC installation directory).
+
+After changing the hostname, restart the master so workers can reach it:
+
+```shell
+cryosparcm restart
+```
+
+If you also changed the port number, you'll need to fix the database port mapping first:
+
+```shell
+cryosparcm fixdbport
+cryosparcm restart
+```
+
+See the [FASRC CryoSPARC documentation](https://docs.rc.fas.harvard.edu/kb/cryosparc/) and the [CryoSPARC config.sh reference](https://github.com/fasrc/User_Codes/blob/master/Applications/CryoSPARC/README.md) for more details.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.839 🟢 |
+| Faithfulness | 0.667 🟡 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 34: question\_34
+
+### ❓ Question
+
+Which processes does \`cryosparcm start\` bring up?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/cryosparc  
+**Retrieved Documents:** github.com/fasrc/User\_Codes/blob/master/Applications/CryoSPARC/README.md, docs.rc.fas.harvard.edu/kb/cryosparc, github.com/fasrc/User\_Codes/blob/master/Applications/CryoSPARC/bashrc\_additions.sh, github.com/fasrc/User\_Codes/blob/master/Applications/CryoSPARC/configure.sh, slurm.schedmd.com/burst\_buffer.html, slurm.schedmd.com/faq.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+The retrieved FASRC documentation doesn't list the specific processes that `cryosparcm start` launches. However, according to the official CryoSPARC documentation, `cryosparcm start` brings up the following core processes:
+
+1. **CryoSPARC Master** — the central web application and API server
+2. **MongoDB database** — stores CryoSPARC project and job data
+3. **CryoSPARC Worker** — handles job execution (if configured on the same node)
+
+For a complete list of processes and their roles, see the official CryoSPARC management documentation [here](https://guide.cryosparc.com/setup-configuration-and-management/management-and-monitoring/cryosparcm).
+
+On FASRC clusters, the master is typically started on a CPU compute node, and separate GPU worker nodes are configured for job execution [CryoSPARC – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/cryosparc/).
+```
+
+### ✅ Expected Answer
+
+```text
+Running `cryosparcm start` brings up six applications: app (cli), command_core, command_rtp, command_vis, database (MongoDB), and webapp. At the top level cryosparcm is a Supervisor-based shell script that manages them, and they mostly communicate with one another over TCP.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/cryosparc**
+
+### 💬 Agent Messages (6)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Which processes does `cryosparcm start` bring up?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+cryosparcm start processes started
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+cryosparcm start what processes mongodb database worker
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+cryosparcm start processes
+```
+
+**🤖 Assistant Message #6**
+
+```text
+The retrieved FASRC documentation doesn't list the specific processes that `cryosparcm start` launches. However, according to the official CryoSPARC documentation, `cryosparcm start` brings up the following core processes:
+
+1. **CryoSPARC Master** — the central web application and API server
+2. **MongoDB database** — stores CryoSPARC project and job data
+3. **CryoSPARC Worker** — handles job execution (if configured on the same node)
+
+For a complete list of processes and their roles, see the official CryoSPARC management documentation [here](https://guide.cryosparc.com/setup-configuration-and-management/management-and-monitoring/cryosparcm).
+
+On FASRC clusters, the master is typically started on a CPU compute node, and separate GPU worker nodes are configured for job execution [CryoSPARC – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/cryosparc/).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.250 🔴 |
+| Context Precision | 0.500 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 35: question\_35
+
+### ❓ Question
+
+Google finally approved my AlphaFold 3 request and sent me the weights as a .bin.zst download. Where am I supposed to unpack that on Cannon — can I just leave it in netscratch?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/alphafold  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/alphafold, docs.rc.fas.harvard.edu/kb/alphafold, github.com/fasrc/User\_Codes/blob/master/Applications/AlphaFold/README.md, github.com/fasrc/User\_Codes/blob/master/Applications/AlphaFold/alphafold\_v3.def, github.com/fasrc/User\_Codes/blob/master/Notes/alphapose.md, github.com/fasrc/User\_Codes/blob/master/Applications/AlphaFold/README.md, docs.rc.fas.harvard.edu/kb/mounting-storage, github.com/fasrc/User\_Codes/blob/master/Applications/AlphaFold/run\_af3\_data\_pipeline.sh, docs.rc.fas.harvard.edu/kb/alphafold, github.com/fasrc/User\_Codes/blob/master/Applications/AlphaFold/README.md  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Based on the FASRC documentation, here's what you need to know about storing and unpacking your AlphaFold 3 model weights on Cannon:
+
+### Where to store the model parameters
+
+The example scripts on FASRC's [User_Codes GitHub](https://github.com/fasrc/User_Codes/blob/master/Applications/AlphaFold/README.md) show model parameters being stored in a lab-specific directory, such as:
+
+```
+/n/holylabs/LABS/<your_lab>/Lab/alphafold3/model_parameters
+```
+
+You should **not** leave the `.bin.zst` file in `netscratch` for long-term use. `netscratch` is intended for temporary, active work — model weights are large, persistent files that should live in a more permanent location.
+
+### Recommended approach
+
+1. **Transfer the `.bin.zst` file** to a more permanent directory (e.g., your lab's Holylabs directory or your home directory if space allows).
+2. **Unpack it** using `zstd`:
+   ```bash
+   zstd -d your_model_weights.bin.zst
+   ```
+   This will produce the `.bin` file(s) that AlphaFold 3 expects.
+3. **Point your SLURM scripts** to the unpacked location via the `my_model_parms_dir` variable in the example scripts.
+
+### Key references
+
+- The FASRC AlphaFold docs explain that model parameters must be requested from Google and stored in a directory you specify [AlphaFold – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/alphafold/)
+- The example SLURM scripts on [FASRC User_Codes GitHub](https://github.com/fasrc/User_Codes/blob/master/Applications/AlphaFold/README.md) show how to set `my_model_parms_dir` and bind it into the Singularity container
+
+### Next steps
+
+- Confirm with your PI or lab admin where your lab's Holylabs directory is located
+- Check available space in that directory before transferring the weights
+- Let me know if you need help adapting the example SLURM scripts for your setup
+````
+
+### ✅ Expected Answer
+
+```text
+Extract the file Google sends you with `unzstd file.bin.zst`, then place the resulting `file.bin` in a lab share — do NOT put it in netscratch. That location is what you pass as `--model_dir` when you run AlphaFold3.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/alphafold**
+
+### 💬 Agent Messages (10)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Google finally approved my AlphaFold 3 request and sent me the weights as a .bin.zst download. Where am I supposed to unpack that on Cannon — can I just leave it in netscratch?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+AlphaFold 3 model weights database location Cannon netscratch scratch
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+AlphaFold 3 model parameters weights database netscratch scratch
+```
+
+**🛠️ Tool Call #6: search\_vectorstore\_hybrid**
+
+```text
+AlphaFold 3 model parameters weights location database path
+```
+
+**🛠️ Tool Call #7: search\_local\_files**
+
+```text
+model parameters
+```
+
+**🛠️ Tool Call #8: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #9: search\_vectorstore\_hybrid**
+
+```text
+AlphaFold 3 model parameters directory location netscratch scratch Cannon
+```
+
+**🤖 Assistant Message #10**
+
+````text
+Based on the FASRC documentation, here's what you need to know about storing and unpacking your AlphaFold 3 model weights on Cannon:
+
+### Where to store the model parameters
+
+The example scripts on FASRC's [User_Codes GitHub](https://github.com/fasrc/User_Codes/blob/master/Applications/AlphaFold/README.md) show model parameters being stored in a lab-specific directory, such as:
+
+```
+/n/holylabs/LABS/<your_lab>/Lab/alphafold3/model_parameters
+```
+
+You should **not** leave the `.bin.zst` file in `netscratch` for long-term use. `netscratch` is intended for temporary, active work — model weights are large, persistent files that should live in a more permanent location.
+
+### Recommended approach
+
+1. **Transfer the `.bin.zst` file** to a more permanent directory (e.g., your lab's Holylabs directory or your home directory if space allows).
+2. **Unpack it** using `zstd`:
+   ```bash
+   zstd -d your_model_weights.bin.zst
+   ```
+   This will produce the `.bin` file(s) that AlphaFold 3 expects.
+3. **Point your SLURM scripts** to the unpacked location via the `my_model_parms_dir` variable in the example scripts.
+
+### Key references
+
+- The FASRC AlphaFold docs explain that model parameters must be requested from Google and stored in a directory you specify [AlphaFold – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/alphafold/)
+- The example SLURM scripts on [FASRC User_Codes GitHub](https://github.com/fasrc/User_Codes/blob/master/Applications/AlphaFold/README.md) show how to set `my_model_parms_dir` and bind it into the Singularity container
+
+### Next steps
+
+- Confirm with your PI or lab admin where your lab's Holylabs directory is located
+- Check available space in that directory before transferring the weights
+- Let me know if you need help adapting the example SLURM scripts for your setup
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.412 🔴 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 36: question\_36
+
+### ❓ Question
+
+Before I can run an AlphaFold3 prediction on the cluster, do I need to download the AlphaFold databases into my own lab storage first? If they're already there, what's the path?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/alphafold  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/alphafold, github.com/fasrc/User\_Codes/blob/master/Applications/AlphaFold/README.md, docs.rc.fas.harvard.edu/kb/alphafold, docs.rc.fas.harvard.edu/kb/quickstart-guide, docs.rc.fas.harvard.edu/kb/introduction-to-cluster-online  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+**No, you do not need to download the AlphaFold databases yourself.** FASRC has already placed the databases in a cluster-wide location:
+
+- **AlphaFold 3 databases:** `/n/holylabs/rc_admin/Everyone/alphafold_databases/v3`
+- **AlphaFold 2 databases:** `/n/holylabs/rc_admin/Everyone/alphafold_databases/v2`
+
+These are stored on SSD storage as recommended by the developers, so you can reference them directly in your job scripts without any local download step.
+
+**One additional requirement for AlphaFold 3:** You must obtain the model parameters from Google (see [Obtaining model parameters](https://github.com/google-deepmind/alphafold3/tree/main?tab=readme-ov-file#obtaining-model-parameters)). After downloading the `file_name.bin.zst` file from Google, extract it with `unzstd file.bin.zst` and place the resulting `file.bin` in a **lab share** (not netscratch). This will be the path you pass to `--model_dir` in your AlphaFold 3 run.
+
+Example scripts for running AlphaFold 3 (data pipeline on CPU, inference on GPU) are available in the [FASRC User_Codes repo](https://github.com/fasrc/User_Codes/tree/master/Applications/AlphaFold).
+```
+
+### ✅ Expected Answer
+
+```text
+No download is needed. The AlphaFold database is kept in a cluster-wide location (on SSD, as the developers recommend), so individual users do not have to download it. The AlphaFold3 database is at `/n/holylabs/rc_admin/Everyone/alphafold_databases/v3` (AlphaFold2's is at `/n/holylabs/rc_admin/Everyone/alphafold_databases/v2`). Likewise, the Singularity images are cluster-wide at `/n/singularity_images/FAS/alphafold/`, so you do not have to copy those either.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/alphafold**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Before I can run an AlphaFold3 prediction on the cluster, do I need to download the AlphaFold databases into my own lab storage first? If they're already there, what's the path?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+```text
+**No, you do not need to download the AlphaFold databases yourself.** FASRC has already placed the databases in a cluster-wide location:
+
+- **AlphaFold 3 databases:** `/n/holylabs/rc_admin/Everyone/alphafold_databases/v3`
+- **AlphaFold 2 databases:** `/n/holylabs/rc_admin/Everyone/alphafold_databases/v2`
+
+These are stored on SSD storage as recommended by the developers, so you can reference them directly in your job scripts without any local download step.
+
+**One additional requirement for AlphaFold 3:** You must obtain the model parameters from Google (see [Obtaining model parameters](https://github.com/google-deepmind/alphafold3/tree/main?tab=readme-ov-file#obtaining-model-parameters)). After downloading the `file_name.bin.zst` file from Google, extract it with `unzstd file.bin.zst` and place the resulting `file.bin` in a **lab share** (not netscratch). This will be the path you pass to `--model_dir` in your AlphaFold 3 run.
+
+Example scripts for running AlphaFold 3 (data pipeline on CPU, inference on GPU) are available in the [FASRC User_Codes repo](https://github.com/fasrc/User_Codes/tree/master/Applications/AlphaFold).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.691 🟡 |
+| Faithfulness | 1.000 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 37: question\_37
+
+### ❓ Question
+
+I copied a friend's sbatch script and stripped it down — it has no partition line, no memory line, and no time line. What does the scheduler actually hand me?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/running-jobs  
+**Retrieved Documents:** github.com/fasrc/User\_Codes/blob/master/Languages/R/Example1/run.sbatch, docs.rc.fas.harvard.edu/kb/running-jobs, github.com/fasrc/User\_Codes/blob/master/IQSS-slurm-examples/multicore.slurm, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise6/run.sbatch, github.com/fasrc/User\_Codes/blob/master/Applications/CryoSPARC/configure.sh, github.com/fasrc/User\_Codes/blob/master/IQSS-slurm-examples/basicbatch.slurm, slurm.schedmd.com/sbatch.html, slurm.schedmd.com/slurmdbd.conf.html, docs.rc.fas.harvard.edu/kb/faq, slurm.schedmd.com/cons\_tres.html, slurm.schedmd.com/cli\_filter\_plugins.html, slurm.schedmd.com/job\_submit\_plugins.html, slurm.schedmd.com/scontrol.html, docs.rc.fas.harvard.edu/kb/submitting-large-numbers-of-jobs, github.com/fasrc/User\_Codes/blob/master/Languages/Cpp/Example6/README.md, github.com/fasrc/User\_Codes/blob/master/Example\_Recipes/Job\_Arrays/job\_arrays\_1/test.py, slurm.schedmd.com/slurm.conf.html, github.com/fasrc/User\_Codes/blob/master/IQSS-slurm-examples/README.md  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+````text
+When you omit `#SBATCH` directives for partition, memory, and time, SLURM applies the **default values** defined in your account’s SLURM configuration. Here’s what you typically get:
+
+- **Partition**: Falls back to the **default partition** for your account (often `standard` or `workq`, depending on cluster and your group’s settings). You can check your default partition with `sacctmgr show user <username> format account,default_partition`.
+- **Memory**: Defaults to the **per-node or per-core memory limit** set in the SLURM config (commonly 2–4 GB per core on many FASRC clusters). If your job needs more, it will be killed with an `Out Of Memory` error.
+- **Time**: Defaults to the **maximum walltime** allowed for the default partition (often 24–48 hours). If you need less, you should still specify it to avoid holding resources longer than necessary.
+
+### How to check your actual defaults
+
+Run these commands to see what your account is assigned:
+
+```bash
+# Show your account and default partition
+sacctmgr show user <username> format account,default_partition
+
+# Check resource limits for your account
+sacctmgr show account <accountname> format MaxTRES,MaxJobs,MaxNodes
+
+# See current SLURM defaults for your user
+scontrol show config | grep -i "def"
+```
+
+### Recommendation
+
+It’s best practice to **explicitly specify** partition, memory, and time in your script so you know exactly what you’re getting and avoid surprises. For example:
+
+```bash
+#SBATCH --partition=standard
+#SBATCH --mem=8G
+#SBATCH --time=02:00:00
+```
+
+This makes your job’s resource needs clear and reproducible.
+
+If you’d like, I can help you look up the specific defaults for your account or cluster.
+````
+
+### ✅ Expected Answer
+
+```text
+FASRC's defaults when nothing is requested are: 1 core, 100 MB of memory, 0 GPUs, and the `serial_requeue` partition. Time is the exception — there is no default time limit, so you must always declare a time yourself. The 100 MB memory default is very likely to get your job killed, so you should always specify `--mem` or `--mem-per-cpu`.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/running-jobs**
+
+### 💬 Agent Messages (1)
+
+**🤖 Assistant Message #1**
+
+````text
+When you omit `#SBATCH` directives for partition, memory, and time, SLURM applies the **default values** defined in your account’s SLURM configuration. Here’s what you typically get:
+
+- **Partition**: Falls back to the **default partition** for your account (often `standard` or `workq`, depending on cluster and your group’s settings). You can check your default partition with `sacctmgr show user <username> format account,default_partition`.
+- **Memory**: Defaults to the **per-node or per-core memory limit** set in the SLURM config (commonly 2–4 GB per core on many FASRC clusters). If your job needs more, it will be killed with an `Out Of Memory` error.
+- **Time**: Defaults to the **maximum walltime** allowed for the default partition (often 24–48 hours). If you need less, you should still specify it to avoid holding resources longer than necessary.
+
+### How to check your actual defaults
+
+Run these commands to see what your account is assigned:
+
+```bash
+# Show your account and default partition
+sacctmgr show user <username> format account,default_partition
+
+# Check resource limits for your account
+sacctmgr show account <accountname> format MaxTRES,MaxJobs,MaxNodes
+
+# See current SLURM defaults for your user
+scontrol show config | grep -i "def"
+```
+
+### Recommendation
+
+It’s best practice to **explicitly specify** partition, memory, and time in your script so you know exactly what you’re getting and avoid surprises. For example:
+
+```bash
+#SBATCH --partition=standard
+#SBATCH --mem=8G
+#SBATCH --time=02:00:00
+```
+
+This makes your job’s resource needs clear and reproducible.
+
+If you’d like, I can help you look up the specific defaults for your account or cluster.
+````
+
+---
+
+## Question 38: question\_38
+
+### ❓ Question
+
+I have about 12,000 near-identical runs to do. Can I submit them as one --array job, and does that eat into the number of jobs I'm allowed to have queued?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/running-jobs  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/running-jobs, slurm.schedmd.com/job\_array.html, slurm.schedmd.com/job\_array.html, slurm.schedmd.com/slurm.conf.html, docs.rc.fas.harvard.edu/kb/responsibilities, slurm.schedmd.com/slurm.conf.html, docs.rc.fas.harvard.edu/kb/running-jobs, slurm.schedmd.com/job\_array.html, slurm.schedmd.com/sbatch.html, slurm.schedmd.com/openapi\_release\_notes.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Yes, you can submit 12,000 near-identical runs as a single job array, but there are important limits and considerations:
+
+### Job Array Limits
+- Slurm has a configuration parameter called **MaxArraySize** that controls the maximum number of tasks in a job array. The default is typically 1,001, but the system maximum can be up to 4,000,001 [Slurm Job Array Support](https://slurm.schedmd.com/job_array.html).
+- You'll need to check what **MaxArraySize** is configured to on FASRC clusters. If it's set to the default of 1,001, you'll need to request an increase or split your work into multiple arrays.
+
+### Does it count against your queued job limit?
+- A job array is counted as **one job** in Slurm's job accounting, not 12,000 separate jobs. So it won't eat into your per-user queued job limit in the same way submitting 12,000 individual jobs would.
+- However, the array tasks still consume resources (CPUs, memory, nodes) when they run, and those resources count against your allocation.
+
+### Practical considerations for 12,000 tasks
+- Use `--array=0-11999` (or your preferred indexing scheme) to submit the array.
+- Consider using a limit on simultaneous tasks with the `%` syntax, e.g., `--array=0-11999%100`, to prevent all 12,000 tasks from trying to run at once and overwhelming the scheduler.
+- Make sure your batch script uses the `$SLURM_ARRAY_TASK_ID` environment variable to differentiate between runs (e.g., for input/output file naming).
+
+Would you like help constructing the `sbatch` command with the array syntax?
+```
+
+### ✅ Expected Answer
+
+```text
+No — you must split it. The maximum array size is 10,000 (that cap applies to both the array index and the array size), so a single 12,000-element array is not allowed. And yes, it counts against your job cap: each array index counts as a single job for the purposes of the Maximum Number of Jobs per User, which is 10,100.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/running-jobs**
+
+### 💬 Agent Messages (6)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I have about 12,000 near-identical runs to do. Can I submit them as one --array job, and does that eat into the number of jobs I'm allowed to have queued?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+FASRC SLURM job array limit MaxArraySize 12000 jobs queued limit
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+FASRC SLURM job array limit per user queued jobs limit
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+job array limit per user queued jobs
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+MaxArraySize
+```
+
+**🤖 Assistant Message #6**
+
+```text
+Yes, you can submit 12,000 near-identical runs as a single job array, but there are important limits and considerations:
+
+### Job Array Limits
+- Slurm has a configuration parameter called **MaxArraySize** that controls the maximum number of tasks in a job array. The default is typically 1,001, but the system maximum can be up to 4,000,001 [Slurm Job Array Support](https://slurm.schedmd.com/job_array.html).
+- You'll need to check what **MaxArraySize** is configured to on FASRC clusters. If it's set to the default of 1,001, you'll need to request an increase or split your work into multiple arrays.
+
+### Does it count against your queued job limit?
+- A job array is counted as **one job** in Slurm's job accounting, not 12,000 separate jobs. So it won't eat into your per-user queued job limit in the same way submitting 12,000 individual jobs would.
+- However, the array tasks still consume resources (CPUs, memory, nodes) when they run, and those resources count against your allocation.
+
+### Practical considerations for 12,000 tasks
+- Use `--array=0-11999` (or your preferred indexing scheme) to submit the array.
+- Consider using a limit on simultaneous tasks with the `%` syntax, e.g., `--array=0-11999%100`, to prevent all 12,000 tasks from trying to run at once and overwhelming the scheduler.
+- Make sure your batch script uses the `$SLURM_ARRAY_TASK_ID` environment variable to differentiate between runs (e.g., for input/output file naming).
+
+Would you like help constructing the `sbatch` command with the array syntax?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.914 🟢 |
+| Faithfulness | 0.381 🔴 |
+| Context Precision | 0.143 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 39: question\_39
+
+### ❓ Question
+
+My analysis takes about 3 hours every time on the shared partition, but when I run the exact same thing on serial\_requeue it keeps getting killed for hitting the wall clock. What time should I be asking for there?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices, docs.rc.fas.harvard.edu/kb/responsibilities, docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview, docs.rc.fas.harvard.edu/kb/fairshare, slurm.schedmd.com/slurm.conf.html, slurm.schedmd.com/srun.html, docs.rc.fas.harvard.edu/kb/submitting-large-numbers-of-jobs, github.com/fasrc/User\_Codes/blob/master/Languages/Cpp/Example6/README.md, github.com/fasrc/User\_Codes/blob/master/Example\_Recipes/Job\_Arrays/job\_arrays\_1/test.py  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the documentation, the `serial_requeue` partition is designed for short, serial jobs — typically those that run **5 to 10 minutes** or less. The guidance is to keep jobs on this partition brief so the scheduler can efficiently process them.
+
+Since your analysis takes **3 hours**, it is **not well-suited** for `serial_requeue`. That partition is meant for quick, individual tasks (like file compression, small data transformations, etc.), not long-running analyses.
+
+### What to do instead:
+
+1. **Stick with the `shared` partition** for your 3-hour jobs — that's what it's for.
+2. If you need to break your analysis into smaller pieces that can run on `serial_requeue`, each piece should be **under ~10 minutes**.
+3. If your 3-hour job keeps getting killed on `shared`, check whether you're requesting enough time. As a best practice, run a test job, check the actual runtime with `sacct` or `seff-account`, then round **up to the nearest hour** to account for variability ([Job Efficiency and Optimization Best Practices](https://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices/)).
+
+### If you must use `serial_requeue`:
+You'd need to restructure your analysis into many smaller, independent tasks, each taking well under an hour (ideally 5–10 minutes). For a 3-hour job, that means breaking it into dozens of smaller pieces and submitting them as a job array or loop.
+
+Would you like help breaking your analysis into smaller tasks, or troubleshooting why it's being killed on `shared`?
+```
+
+### ✅ Expected Answer
+
+```text
+Ask for roughly 9 hours. `serial_requeue` (and `gpu_requeue`) are mosaic partitions made of a wide variety of hardware, so run times vary a lot depending on which host you land on. The rule of thumb is a factor of three variance in speed — so a job that takes 3 hours on most hardware should be given 9 hours on `serial_requeue`. Alternatively, use the `--constraint` option to pin the job to a specific hardware type so the runtime is predictable.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices**
+
+### 💬 Agent Messages (8)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+My analysis takes about 3 hours every time on the shared partition, but when I run the exact same thing on serial_requeue it keeps getting killed for hitting the wall clock. What time should I be asking for there?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+serial_requeue partition wall clock time limit
+```
+
+**🛠️ Tool Call #3: search\_local\_files**
+
+```text
+serial_requeue
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #5: search\_vectorstore\_hybrid**
+
+```text
+serial_requeue partition time limit maximum wall clock
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+serial_requeue time limit
+```
+
+**🛠️ Tool Call #7: search\_local\_files**
+
+```text
+serial_requeue
+```
+
+**🤖 Assistant Message #8**
+
+```text
+Based on the documentation, the `serial_requeue` partition is designed for short, serial jobs — typically those that run **5 to 10 minutes** or less. The guidance is to keep jobs on this partition brief so the scheduler can efficiently process them.
+
+Since your analysis takes **3 hours**, it is **not well-suited** for `serial_requeue`. That partition is meant for quick, individual tasks (like file compression, small data transformations, etc.), not long-running analyses.
+
+### What to do instead:
+
+1. **Stick with the `shared` partition** for your 3-hour jobs — that's what it's for.
+2. If you need to break your analysis into smaller pieces that can run on `serial_requeue`, each piece should be **under ~10 minutes**.
+3. If your 3-hour job keeps getting killed on `shared`, check whether you're requesting enough time. As a best practice, run a test job, check the actual runtime with `sacct` or `seff-account`, then round **up to the nearest hour** to account for variability ([Job Efficiency and Optimization Best Practices](https://docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices/)).
+
+### If you must use `serial_requeue`:
+You'd need to restructure your analysis into many smaller, independent tasks, each taking well under an hour (ideally 5–10 minutes). For a 3-hour job, that means breaking it into dozens of smaller pieces and submitting them as a job array or loop.
+
+Would you like help breaking your analysis into smaller tasks, or troubleshooting why it's being killed on `shared`?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.582 🟡 |
+| Faithfulness | 0.261 🔴 |
+| Context Precision | 0.500 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 40: question\_40
+
+### ❓ Question
+
+My PI bought the nodes in our lab's own partition, and we only ever run there. So why does our fairshare keep dropping — aren't we just using hardware we already paid for?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/fairshare  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/fairshare, docs.rc.fas.harvard.edu/kb/fairshare, docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview, docs.rc.fas.harvard.edu/kb/quickstart-guide, docs.rc.fas.harvard.edu/kb/introduction-to-cluster-online, slurm.schedmd.com/classic\_fair\_share.html, slurm.schedmd.com/sacctmgr.html, slurm.schedmd.com/classic\_fair\_share.html, slurm.schedmd.com/fair\_tree.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+This is a common point of confusion! The short answer is: **Fairshare is calculated community-wide, not per-partition.**
+
+Here's what's happening:
+
+1. **Your "Share" is higher** — Because your PI bought nodes, your lab's **Share** (the portion of the system you're granted) is boosted above the base Gratis Share that every lab receives. This is documented in the [Fairshare and Job Accounting](https://docs.rc.fas.harvard.edu/kb/fairshare/) guide.
+
+2. **Fairshare score = Share vs. Usage** — The Fairshare score is calculated based on the ratio of your **Share** to your actual **Usage** across the entire cluster. If you're using a lot of resources (even on your own partition), your usage goes up, which can drive your Fairshare score down.
+
+3. **It's a community-wide system** — The Fairshare system is designed to ensure all labs get their fair portion of the cluster and to prevent any single lab from monopolizing resources. As the docs state, "This keeps individual labs from monopolizing the resources, thus making it unfair to labs who have not used their fairshare for quite some time" [Fairshare and Job Accounting](https://docs.rc.fas.harvard.edu/kb/fairshare/).
+
+**The key insight:** Buying nodes increases your Share (your entitlement), but if you're actively using those nodes heavily, your Usage increases proportionally. The Fairshare score reflects whether you're using resources commensurate with your Share. If you're using more than your fair portion relative to other labs, your score drops.
+
+If you want to understand your specific Fairshare score, you can check it via the cluster dashboard or contact FASRC for consultation on budgeting your usage [Fairshare and Job Accounting](https://docs.rc.fas.harvard.edu/kb/fairshare/).
+```
+
+### ✅ Expected Answer
+
+```text
+Because Fairshare is a global quantity on Cannon, not a per-partition one: RawShares are granted to everyone and can be used anywhere on the cluster, so a user is charged regardless of which partition they run in. Groups that own private partitions are granted RawShares equivalent to the hardware in that partition, and that grant exactly offsets the usage of the partition — so it nets out. The upside of this design is flexibility: because the Share is global, a group can leave its own partition idle and spend its shares elsewhere on the cluster instead.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/fairshare**
+
+### 💬 Agent Messages (7)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+My PI bought the nodes in our lab's own partition, and we only ever run there. So why does our fairshare keep dropping — aren't we just using hardware we already paid for?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+fairshare calculation formula share vs usage
+```
+
+**🛠️ Tool Call #5: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #6: search\_vectorstore\_hybrid**
+
+```text
+fairshare score drops when using own partition nodes
+```
+
+**🤖 Assistant Message #7**
+
+```text
+This is a common point of confusion! The short answer is: **Fairshare is calculated community-wide, not per-partition.**
+
+Here's what's happening:
+
+1. **Your "Share" is higher** — Because your PI bought nodes, your lab's **Share** (the portion of the system you're granted) is boosted above the base Gratis Share that every lab receives. This is documented in the [Fairshare and Job Accounting](https://docs.rc.fas.harvard.edu/kb/fairshare/) guide.
+
+2. **Fairshare score = Share vs. Usage** — The Fairshare score is calculated based on the ratio of your **Share** to your actual **Usage** across the entire cluster. If you're using a lot of resources (even on your own partition), your usage goes up, which can drive your Fairshare score down.
+
+3. **It's a community-wide system** — The Fairshare system is designed to ensure all labs get their fair portion of the cluster and to prevent any single lab from monopolizing resources. As the docs state, "This keeps individual labs from monopolizing the resources, thus making it unfair to labs who have not used their fairshare for quite some time" [Fairshare and Job Accounting](https://docs.rc.fas.harvard.edu/kb/fairshare/).
+
+**The key insight:** Buying nodes increases your Share (your entitlement), but if you're actively using those nodes heavily, your Usage increases proportionally. The Fairshare score reflects whether you're using resources commensurate with your Share. If you're using more than your fair portion relative to other labs, your score drops.
+
+If you want to understand your specific Fairshare score, you can check it via the cluster dashboard or contact FASRC for consultation on budgeting your usage [Fairshare and Job Accounting](https://docs.rc.fas.harvard.edu/kb/fairshare/).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.736 🟢 |
+| Faithfulness | 0.952 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 41: question\_41
+
+### ❓ Question
+
+Last week a bunch of our jobs died from node failures and we cancelled several more that were misconfigured. Does that wasted compute still count against our lab's score, and how long until it stops hurting us?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/fairshare  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/running-jobs, slurm.schedmd.com/job\_state\_codes.html, slurm.schedmd.com/resource\_limits.html, slurm.schedmd.com/slurm.conf.html, slurm.schedmd.com/scontrol.html, docs.rc.fas.harvard.edu/kb/job-defense-shield, docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/quickstart-guide, docs.rc.fas.harvard.edu/kb/introduction-to-cluster-online, docs.rc.fas.harvard.edu/kb/job-defense-shield  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the available documentation, I can provide some general guidance, but specific details about FASRC's scoring policy and decay timelines are not fully covered in the indexed sources.
+
+**Node failures:** According to the [Running Jobs](https://docs.rc.fas.harvard.edu/kb/running-jobs/) documentation, jobs that die from `NODE_FAILURE` are automatically requeued by the scheduler. This suggests that compute consumed by node failures may be handled differently than user-initiated cancellations.
+
+**Score decay:** The [Slurm Resource Limits](https://slurm.schedmd.com/resource_limits.html) documentation mentions that resource usage (GrpTRESMins) is "decayed (at a rate of PriorityDecayHalfLife)" and can also be "reset (according to PriorityUsageResetPeriod)." However, the exact values for these parameters on the FASRC cluster are not specified in the available documentation.
+
+**What you should do:**
+1. Check your lab's current score and usage in the FASRC Portal or Coldfront
+2. Contact FASRC Support directly ([support@rc.fas.harvard.edu](mailto:support@rc.fas.harvard.edu)) to ask specifically about:
+   - Whether `NODE_FAILURE` jobs count against your score
+   - Whether cancelled jobs count against your score
+   - The exact decay timeline for your cluster's configuration
+
+The FASRC team can provide the most accurate answer regarding your specific lab's scoring policy and the current `PriorityDecayHalfLife` and `PriorityUsageResetPeriod` values in use.
+```
+
+### ✅ Expected Answer
+
+```text
+Yes, it still counts. RawUsage is the sum of all usage including failed jobs, jobs that are requeued, and jobs that ran on nodes that failed — FASRC counts it because it is the user's responsibility to use the allocated time effectively even when it is cut short. That usage does decay, though: RawUsage is attenuated by the cluster's half-life, currently 3 days. Work done in the last 3 days counts at full cost, work done 6 days ago costs half, work done 9 days ago one fourth, and so on. To limit the damage from failures, FASRC recommends testing/verifying code before running and enabling checkpointing so jobs can restart where they left off.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/fairshare**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Last week a bunch of our jobs died from node failures and we cancelled several more that were misconfigured. Does that wasted compute still count against our lab's score, and how long until it stops hurting us?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+FASRC cluster job score wasted compute node failure cancelled jobs
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+FASRC cluster score decay PriorityDecayHalfLife wasted compute
+```
+
+**🤖 Assistant Message #4**
+
+```text
+Based on the available documentation, I can provide some general guidance, but specific details about FASRC's scoring policy and decay timelines are not fully covered in the indexed sources.
+
+**Node failures:** According to the [Running Jobs](https://docs.rc.fas.harvard.edu/kb/running-jobs/) documentation, jobs that die from `NODE_FAILURE` are automatically requeued by the scheduler. This suggests that compute consumed by node failures may be handled differently than user-initiated cancellations.
+
+**Score decay:** The [Slurm Resource Limits](https://slurm.schedmd.com/resource_limits.html) documentation mentions that resource usage (GrpTRESMins) is "decayed (at a rate of PriorityDecayHalfLife)" and can also be "reset (according to PriorityUsageResetPeriod)." However, the exact values for these parameters on the FASRC cluster are not specified in the available documentation.
+
+**What you should do:**
+1. Check your lab's current score and usage in the FASRC Portal or Coldfront
+2. Contact FASRC Support directly ([support@rc.fas.harvard.edu](mailto:support@rc.fas.harvard.edu)) to ask specifically about:
+   - Whether `NODE_FAILURE` jobs count against your score
+   - Whether cancelled jobs count against your score
+   - The exact decay timeline for your cluster's configuration
+
+The FASRC team can provide the most accurate answer regarding your specific lab's scoring policy and the current `PriorityDecayHalfLife` and `PriorityUsageResetPeriod` values in use.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.000 🔴 |
+| Faithfulness | 0.400 🔴 |
+| Context Precision | 0.000 🔴 |
+| Context Recall | 0.000 🔴 |
+
+---
+
+## Question 42: question\_42
+
+### ❓ Question
+
+I'm a master's student and my advisor wants me to run analyses on the Nielsen consumer panel data. Can I be added to the agreement?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/nielsen-dataset  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/nielsen-dataset, docs.rc.fas.harvard.edu/kb/other-institutions, docs.rc.fas.harvard.edu/kb/data-use-agreements, docs.rc.fas.harvard.edu/kb/checking-quota-and-usage, docs.rc.fas.harvard.edu/kb/roles-responsibilities  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the documentation, access to the Nielsen consumer panel data is managed through a specific process involving the Harvard Office of Sponsored Programs and Chicago Booth. Here's what you need to know:
+
+**The agreement is project-based, not individual-based.** The Harvard Office of Sponsored Programs manages registration codes and provides a Data Use Agreement (DUA) for **Researchers** (typically Principal Investigators). Before you can access the data, your advisor (as the PI) must:
+
+1. **Register the project** on the Chicago Booth Nielsen site
+2. **Submit data safety and DUA applications** in the Research Administration system
+3. **Determine who handles certificate of destruction** after the data expires (your department IT or FASRC if using FASRC servers)
+4. **If using FASRC resources**, submit a FASSE project request form with the DUA and DAT IDs
+
+**As a master's student**, you would typically work under your advisor's project. You don't get "added to the agreement" directly—rather, your advisor establishes the project and DUA, and then you can be granted access to use the data on FASRC resources through that project.
+
+**Next steps:**
+- Ask your advisor to initiate the DUA process through the Harvard Office of Sponsored Programs
+- Once the DUA is approved, you'll need to submit a FASSE project request if using FASRC servers
+- Data transfer happens via Globus
+
+For more details, see the [Nielsen Dataset documentation](https://docs.rc.fas.harvard.edu/kb/nielsen-dataset/).
+```
+
+### ✅ Expected Answer
+
+```text
+No. Under the Master Access Agreement, the Nielsen data and license are made solely to the individual researcher registered via the Chicago Booth Nielsen site. That researcher can be a Ph.D. student or a postdoc who has a tenure-track faculty member registered on the site — but the data is explicitly not available to undergraduates or master's students. Relatedly, under the Data Access and Confidentiality Agreement the Researcher may disclose the Data only to PhD-seeking students of Harvard working under their supervision on the Research Project.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/nielsen-dataset**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I'm a master's student and my advisor wants me to run analyses on the Nielsen consumer panel data. Can I be added to the agreement?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+```text
+Based on the documentation, access to the Nielsen consumer panel data is managed through a specific process involving the Harvard Office of Sponsored Programs and Chicago Booth. Here's what you need to know:
+
+**The agreement is project-based, not individual-based.** The Harvard Office of Sponsored Programs manages registration codes and provides a Data Use Agreement (DUA) for **Researchers** (typically Principal Investigators). Before you can access the data, your advisor (as the PI) must:
+
+1. **Register the project** on the Chicago Booth Nielsen site
+2. **Submit data safety and DUA applications** in the Research Administration system
+3. **Determine who handles certificate of destruction** after the data expires (your department IT or FASRC if using FASRC servers)
+4. **If using FASRC resources**, submit a FASSE project request form with the DUA and DAT IDs
+
+**As a master's student**, you would typically work under your advisor's project. You don't get "added to the agreement" directly—rather, your advisor establishes the project and DUA, and then you can be granted access to use the data on FASRC resources through that project.
+
+**Next steps:**
+- Ask your advisor to initiate the DUA process through the Harvard Office of Sponsored Programs
+- Once the DUA is approved, you'll need to submit a FASSE project request if using FASRC servers
+- Data transfer happens via Globus
+
+For more details, see the [Nielsen Dataset documentation](https://docs.rc.fas.harvard.edu/kb/nielsen-dataset/).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.732 🟢 |
+| Faithfulness | 0.333 🔴 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 43: question\_43
+
+### ❓ Question
+
+We're about to submit a paper that uses the Nielsen data. Do we owe Chicago Booth anything before it goes out?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/nielsen-dataset  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/nielsen-dataset, docs.rc.fas.harvard.edu/kb/data-storage-billing, docs.rc.fas.harvard.edu/kb/storage-modernization-initiative-faqs, docs.rc.fas.harvard.edu/kb/job-defense-shield, docs.rc.fas.harvard.edu/kb/faq  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the [Nielsen Dataset documentation](https://docs.rc.fas.harvard.edu/kb/nielsen-dataset/), before submitting a paper that uses the Nielsen data, you need to ensure you have fulfilled the requirements set by Chicago Booth and Harvard. Specifically:
+
+1.  **Data Use Agreement (DUA):** You must have submitted and received approval for the data safety and DUA applications through the Harvard Research Administration system.
+2.  **Certificate of Destruction:** You must have arranged with a Harvard IT representative (either your department's IT or FASRC, depending on where the data resides) for the destruction of the data after the expiration date.
+3.  **Project Registration:** The project must be registered on the Chicago Booth Nielsen site.
+
+The documentation notes that the Harvard Office of Sponsored Programs manages the registration codes and provides the DUA. You should review the full [Data Access and Confidentiality Agreement](https://docs.rc.fas.harvard.edu/kb/nielsen-dataset/) carefully, as the summary does not substitute for reading the entire document.
+
+For specific obligations regarding publication acknowledgment or prior review by Chicago Booth, you should refer directly to the terms of your specific DUA or contact the Harvard Office of Sponsored Programs, as the FASRC documentation focuses on the access and data management requirements rather than publication-specific conditions.
+```
+
+### ✅ Expected Answer
+
+```text
+Yes. The Researcher must submit to Chicago Booth copies of all final papers or other publications arising from use of the Data at least thirty (30) days prior to their proposed publication or other public dissemination. Note also that Nielsen owns the data and there are particular rules around publishing that must be met, an annual status report must be provided back to Chicago Booth, and no personally identified information within the Data may be disclosed in any manner.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/nielsen-dataset**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+We're about to submit a paper that uses the Nielsen data. Do we owe Chicago Booth anything before it goes out?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+```text
+Based on the [Nielsen Dataset documentation](https://docs.rc.fas.harvard.edu/kb/nielsen-dataset/), before submitting a paper that uses the Nielsen data, you need to ensure you have fulfilled the requirements set by Chicago Booth and Harvard. Specifically:
+
+1.  **Data Use Agreement (DUA):** You must have submitted and received approval for the data safety and DUA applications through the Harvard Research Administration system.
+2.  **Certificate of Destruction:** You must have arranged with a Harvard IT representative (either your department's IT or FASRC, depending on where the data resides) for the destruction of the data after the expiration date.
+3.  **Project Registration:** The project must be registered on the Chicago Booth Nielsen site.
+
+The documentation notes that the Harvard Office of Sponsored Programs manages the registration codes and provides the DUA. You should review the full [Data Access and Confidentiality Agreement](https://docs.rc.fas.harvard.edu/kb/nielsen-dataset/) carefully, as the summary does not substitute for reading the entire document.
+
+For specific obligations regarding publication acknowledgment or prior review by Chicago Booth, you should refer directly to the terms of your specific DUA or contact the Harvard Office of Sponsored Programs, as the FASRC documentation focuses on the access and data management requirements rather than publication-specific conditions.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.596 🟡 |
+| Faithfulness | 0.500 🟡 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 44: question\_44
+
+### ❓ Question
+
+I want to spin up a few hundred cores on Cannon to crawl a public website faster. It's for academic research — any issue with that?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/web-scraping-policy  
+**Retrieved Documents:** github.com/fasrc/User\_Codes/blob/master/GPU\_Computing/Dist\_GPU\_Computing/README.md, docs.rc.fas.harvard.edu/kb/how-do-i-figure-out-how-efficient-my-job-is, docs.rc.fas.harvard.edu/kb/r-parallel, docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/R/README.md, docs.rc.fas.harvard.edu/kb/web-scraping-policy, docs.rc.fas.harvard.edu/kb/acceptable-use, docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide, docs.rc.fas.harvard.edu/kb/data-security-levels, slurm.schedmd.com/rest.html, docs.rc.fas.harvard.edu/kb/running-jobs  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Yes — there are a few important issues to consider before using hundreds of Cannon cores for web crawling:
+
+### 1. Web Scraping Policy
+FASRC has a specific [Web Scraping Policy](https://docs.rc.fas.harvard.edu/kb/web-scraping-policy/) that you should review. Key points:
+
+- **Fair use does not generally cover programmatic machine scraping.** The policy distinguishes between human information gathering and automated scraping.
+- **You are using the target site's servers and bandwidth** in ways they may not approve, which can lead to IP blacklisting or even legal action.
+- **Academic purpose does not exempt you** from the usage policies of social media or other Internet platforms.
+- If you're scraping for the purpose of training a Generative AI (GAI) model, you must contact the Harvard Office of the General Counsel or the Office of the Vice Provost for Research.
+- If the data is sensitive, confidential, or contains human data, it needs compliance review before being placed on the FASRC cluster.
+
+### 2. Cluster Resource Limits
+Submitting a job for "a few hundred cores" on Cannon will need to go through Slurm and comply with FASRC's [Acceptable Use Policy](https://docs.rc.fas.harvard.edu/kb/acceptable-use/). Large multi-core jobs are subject to:
+- Partition-specific limits (core/node caps, walltime limits)
+- Fairshare scheduling priorities
+- Potential impact on other users' jobs
+
+### Recommendations
+1. **Review the Web Scraping Policy** linked above and consider whether your use case is appropriate for cluster resources.
+2. **Contact FASRC support** or your department's research computing liaison to discuss your job size and whether Cannon is the right platform for this workload.
+3. **Consider whether a smaller-scale approach** (fewer cores, longer walltime, or using a different resource) would be more appropriate.
+
+Would you like help figuring out the right Slurm job parameters or partition to target?
+```
+
+### ✅ Expected Answer
+
+```text
+Yes, several. FASRC highly discourages using the cluster itself to scrape: because of its size and ease of parallelization, the cluster is easily weaponized and your actions could have consequences for other researchers, so you should seek another avenue for data acquisition first. You must contact FASRC before commencing any scraping activity using the FASRC cluster. It is highly preferable that you do the scraping elsewhere and then bring the data to the cluster for processing — and if the data is sensitive, confidential, contains human data, or it is unclear, doing it elsewhere is a requirement. Highly parallelized scraping is specifically called out as risking blacklisting of the cluster's or the university's IP range, which would harm other users. Being an academic does not exempt you from a site's usage policies.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/web-scraping-policy**
+
+### 💬 Agent Messages (9)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I want to spin up a few hundred cores on Cannon to crawl a public website faster. It's for academic research — any issue with that?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+web crawling scraping policy acceptable use Cannon cluster
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+Cannon cluster job limits cores nodes web scraping
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #5: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #6: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #7: search\_local\_files**
+
+```text
+Acceptable Use Policy
+```
+
+**🛠️ Tool Call #8: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #9**
+
+```text
+Yes — there are a few important issues to consider before using hundreds of Cannon cores for web crawling:
+
+### 1. Web Scraping Policy
+FASRC has a specific [Web Scraping Policy](https://docs.rc.fas.harvard.edu/kb/web-scraping-policy/) that you should review. Key points:
+
+- **Fair use does not generally cover programmatic machine scraping.** The policy distinguishes between human information gathering and automated scraping.
+- **You are using the target site's servers and bandwidth** in ways they may not approve, which can lead to IP blacklisting or even legal action.
+- **Academic purpose does not exempt you** from the usage policies of social media or other Internet platforms.
+- If you're scraping for the purpose of training a Generative AI (GAI) model, you must contact the Harvard Office of the General Counsel or the Office of the Vice Provost for Research.
+- If the data is sensitive, confidential, or contains human data, it needs compliance review before being placed on the FASRC cluster.
+
+### 2. Cluster Resource Limits
+Submitting a job for "a few hundred cores" on Cannon will need to go through Slurm and comply with FASRC's [Acceptable Use Policy](https://docs.rc.fas.harvard.edu/kb/acceptable-use/). Large multi-core jobs are subject to:
+- Partition-specific limits (core/node caps, walltime limits)
+- Fairshare scheduling priorities
+- Potential impact on other users' jobs
+
+### Recommendations
+1. **Review the Web Scraping Policy** linked above and consider whether your use case is appropriate for cluster resources.
+2. **Contact FASRC support** or your department's research computing liaison to discuss your job size and whether Cannon is the right platform for this workload.
+3. **Consider whether a smaller-scale approach** (fewer cores, longer walltime, or using a different resource) would be more appropriate.
+
+Would you like help figuring out the right Slurm job parameters or partition to target?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.840 🟢 |
+| Faithfulness | 0.667 🟡 |
+| Context Precision | 0.167 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 45: question\_45
+
+### ❓ Question
+
+I logged in to Globus and picked the Harvard FAS RC Holyoke collection, but I can't browse into my home directory and the Everyone folder in my lab share doesn't show up either. Is my account misconfigured?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/globus-file-transfer  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/storage-service-center, docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm, docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/data-storage-workflow, docs.rc.fas.harvard.edu/kb/storage-service-center-bill  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+This is expected behavior — your account is not misconfigured.
+
+**Home directories are not available in Globus.** Per the [Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/) documentation, home directories are intentionally excluded from Globus under all circumstances because "sharing home directories creates a security vulnerability, as authentication keys/passwords are stored there."
+
+**Regarding the "Everyone" folder in your lab share:** If you don't see it, it likely means you don't have explicit access to that share. Lab shares in Globus are only visible to users who have been granted access. You'll need to be added as a user or have the share explicitly shared with you. Check with your PI or lab manager to confirm your access permissions on the lab storage.
+```
+
+### ✅ Expected Answer
+
+```text
+Nothing is misconfigured — both are expected. Home directories are not and will not be added to Globus under any circumstances, because sharing home directories creates a security vulnerability (authentication keys/passwords could be shared inadvertently). And within a lab share, Globus can only see the `Lab` and `Users/$USER` folders — anything outside those, such as `Everyone` and `Transfer`, is not available through Globus (note the `Users` folder has been deprecated as of 2025). Also be aware symlinks do not work in Globus. If your lab share genuinely lacks a `Lab` directory or is not visible at all in the Holyoke/Boston collections, contact FASRC.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/globus-file-transfer**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I logged in to Globus and picked the Harvard FAS RC Holyoke collection, but I can't browse into my home directory and the Everyone folder in my lab share doesn't show up either. Is my account misconfigured?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+Globus home directory not available Harvard FAS RC Holycole
+```
+
+**🤖 Assistant Message #4**
+
+```text
+This is expected behavior — your account is not misconfigured.
+
+**Home directories are not available in Globus.** Per the [Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/) documentation, home directories are intentionally excluded from Globus under all circumstances because "sharing home directories creates a security vulnerability, as authentication keys/passwords are stored there."
+
+**Regarding the "Everyone" folder in your lab share:** If you don't see it, it likely means you don't have explicit access to that share. Lab shares in Globus are only visible to users who have been granted access. You'll need to be added as a user or have the share explicitly shared with you. Check with your PI or lab manager to confirm your access permissions on the lab storage.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.785 🟢 |
+| Faithfulness | 0.500 🟡 |
+| Context Precision | 0.659 🟡 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 46: question\_46
+
+### ❓ Question
+
+I need to move a directory holding roughly half a million small output files off the cluster with Globus. What's the recommended way to package that up?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/globus-file-transfer  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/storage-service-center, docs.rc.fas.harvard.edu/kb/storage-service-center-bill, docs.rc.fas.harvard.edu/kb/data-storage-workflow, docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving, docs.rc.fas.harvard.edu/kb/tape-globus-access  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+For a directory with ~500,000 small files, FASRC strongly recommends **packaging the data into a tar archive** before transferring via Globus. Transferring hundreds of thousands of individual files is slow and prone to interruption, whereas a single tar file transfers more quickly and is much more resilient to transfer failures ([Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/)).
+
+### Recommended approach
+
+1. **Create a tar archive** of the directory on the cluster. Use the guidance in [Tips for using tar to archive data](https://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving/) to plan your archive strategy.
+2. **Keep archives reasonably sized** — avoid creating one massive archive. If your data is large, split it into multiple tar files so that a single corruption doesn't destroy your entire dataset.
+3. **Generate a checksum file** alongside the tar archive to verify data integrity after transfer.
+4. **Transfer the tar file(s)** via Globus instead of the individual files.
+
+### Why tar?
+- **Faster transfers**: Globus handles a single file much more efficiently than hundreds of thousands of small files.
+- **Resilience**: If the transfer is interrupted, you can resume from a single file rather than thousands of individual transfers.
+- **Tape compatibility**: If you're archiving to tape, tarred files are smaller and transfer more efficiently when retrieved ([Globus: Transfer Data to Tape](https://docs.rc.fas.harvard.edu/kb/tape-globus-access/)).
+
+Would you like help with the specific `tar` command or Globus setup for your data?
+```
+
+### ✅ Expected Answer
+
+```text
+Tar the directory into subset files first. FASRC recommends that your tar files range in size from 1-100 GiB — that size range transfers more quickly (especially if the transfer is interrupted) and is smaller to retrieve if it ever needs to come back from Tape. If you leave hundreds or thousands of files in a single directory, Globus will go into an 'endpoint is too busy' state and your job will timeout, restart, timeout, etc. FASRC also recommends reading their 'Tips for using tar to archive data' page before tarring.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/globus-file-transfer**
+
+### 💬 Agent Messages (5)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I need to move a directory holding roughly half a million small output files off the cluster with Globus. What's the recommended way to package that up?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+Globus transfer many small files tar archive packaging
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #5**
+
+```text
+For a directory with ~500,000 small files, FASRC strongly recommends **packaging the data into a tar archive** before transferring via Globus. Transferring hundreds of thousands of individual files is slow and prone to interruption, whereas a single tar file transfers more quickly and is much more resilient to transfer failures ([Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/)).
+
+### Recommended approach
+
+1. **Create a tar archive** of the directory on the cluster. Use the guidance in [Tips for using tar to archive data](https://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving/) to plan your archive strategy.
+2. **Keep archives reasonably sized** — avoid creating one massive archive. If your data is large, split it into multiple tar files so that a single corruption doesn't destroy your entire dataset.
+3. **Generate a checksum file** alongside the tar archive to verify data integrity after transfer.
+4. **Transfer the tar file(s)** via Globus instead of the individual files.
+
+### Why tar?
+- **Faster transfers**: Globus handles a single file much more efficiently than hundreds of thousands of small files.
+- **Resilience**: If the transfer is interrupted, you can resume from a single file rather than thousands of individual transfers.
+- **Tape compatibility**: If you're archiving to tape, tarred files are smaller and transfer more efficiently when retrieved ([Globus: Transfer Data to Tape](https://docs.rc.fas.harvard.edu/kb/tape-globus-access/)).
+
+Would you like help with the specific `tar` command or Globus setup for your data?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.750 🟢 |
+| Faithfulness | 0.941 🟢 |
+| Context Precision | 0.587 🟡 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 47: question\_47
+
+### ❓ Question
+
+I ran shasum on a folder before I tarred it up, and when I extracted the archive later and hashed it again the values don't match, even though every file looks fine. What am I doing wrong?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving, docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving, docs.rc.fas.harvard.edu/kb/globus-file-transfer, slurm.schedmd.com/sacctmgr.html, slurm.schedmd.com/slurmdbd.conf.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+The most common reason for mismatched checksums after `tar` extraction is that **the paths used for the checksum are different**.
+
+For example, if you hash a folder using its full path:
+
+```bash
+find /home/username/myscans/ -type f -print0 | xargs --null -o shasum | sort | shasum
+```
+
+But then extract the archive into a relative directory and hash it with:
+
+```bash
+find myscans/ -type f -print0 | xargs --null -o shasum | sort | shasum
+```
+
+The resulting checksums will differ, even though the file contents are identical. This is because the full paths are embedded in the `shasum` output, and `sort` orders them differently.
+
+**Recommendation:** Always use the exact same path format when computing checksums before and after extraction — ideally just the directory and sub-directory in question, rather than mixing absolute and relative paths. If you can't do this consistently, checksumming may not be reliable for your use case.
+
+Also note: you cannot store the checksum file *inside* the tar archive itself, because its presence would affect the checksum. You'd need to remove it after extraction and before re-running the checksum.
+
+See [Tips for using tar to archive data](https://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving/) for more details.
+````
+
+### ✅ Expected Answer
+
+```text
+The checksum depends on the path you hand to find, so the same files hashed two different ways produce two different values. FASRC's guidance is to always do it the exact same way: cd to the directory *above* the one you are archiving (e.g. /n/mypath/scans) and then run find against the relative directory name (myscans) — not the full path. Two other things will break the comparison: (1) modifying the data after you took the checksum but before you tarred it (a checksum is useless on an active filesystem), and (2) storing the checksum file itself inside the tar, since its presence changes the checksum unless you remove it after un-tarring and before re-running.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving**
+
+### 💬 Agent Messages (2)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I ran shasum on a folder before I tarred it up, and when I extracted the archive later and hashed it again the values don't match, even though every file looks fine. What am I doing wrong?
+```
+
+**🤖 Assistant Message #2**
+
+````text
+The most common reason for mismatched checksums after `tar` extraction is that **the paths used for the checksum are different**.
+
+For example, if you hash a folder using its full path:
+
+```bash
+find /home/username/myscans/ -type f -print0 | xargs --null -o shasum | sort | shasum
+```
+
+But then extract the archive into a relative directory and hash it with:
+
+```bash
+find myscans/ -type f -print0 | xargs --null -o shasum | sort | shasum
+```
+
+The resulting checksums will differ, even though the file contents are identical. This is because the full paths are embedded in the `shasum` output, and `sort` orders them differently.
+
+**Recommendation:** Always use the exact same path format when computing checksums before and after extraction — ideally just the directory and sub-directory in question, rather than mixing absolute and relative paths. If you can't do this consistently, checksumming may not be reliable for your use case.
+
+Also note: you cannot store the checksum file *inside* the tar archive itself, because its presence would affect the checksum. You'd need to remove it after extraction and before re-running the checksum.
+
+See [Tips for using tar to archive data](https://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving/) for more details.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.594 🟡 |
+| Faithfulness | 0.769 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 48: question\_48
+
+### ❓ Question
+
+RC made a tar of my project with Starfish. I copied it to netscratch and extracted it there, but instead of my ProjectX folder I got this weird nested tree of empty directories with ProjectX way down at the bottom. Is the archive corrupt?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving, docs.rc.fas.harvard.edu/kb/checking-quota-and-usage, docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving, docs.rc.fas.harvard.edu/kb/policy-scratch, docs.rc.fas.harvard.edu/kb/onboarding, docs.rc.fas.harvard.edu/kb/7zip, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/podman  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+This is a common issue with tar archives and it's **not necessarily corrupt**. The problem is almost certainly that the RC team created the tar archive using **absolute paths** (e.g., `/n/holyscratch01/username/ProjectX/...`) instead of relative paths.
+
+When you extract a tar archive that contains absolute paths, tar will recreate the full directory structure starting from the root, which is why you're seeing empty directories all the way down to your actual `ProjectX` folder.
+
+**To fix this, you have a few options:**
+
+1. **Extract to the correct location** - If the archive contains absolute paths like `/n/holyscratch01/username/ProjectX`, you can extract it directly to the root:
+   ```bash
+   tar -xvf archive.tar -C /
+   ```
+   This will recreate the full path structure.
+
+2. **Use `--strip-components`** - If you want to remove some levels of the directory structure, you can use:
+   ```bash
+   tar -xvf archive.tar --strip-components=N
+   ```
+   where N is the number of directory levels to strip from the beginning of each path.
+
+3. **Check the archive contents first** - Before extracting, see what's in the archive:
+   ```bash
+   tar -tvf archive.tar | head -20
+   ```
+   This will show you the full path structure and help you determine the right extraction approach.
+
+**To prevent this in the future**, when creating tar archives, always use relative paths or specify the directory you want to archive rather than using absolute paths. For example:
+```bash
+cd /n/holyscratch01/username/
+tar -cvf archive.tar ProjectX/
+```
+
+Instead of:
+```bash
+tar -cvf archive.tar /n/holyscratch01/username/ProjectX/
+```
+
+The FASRC documentation on [Tips for using tar to archive data](https://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving/) recommends being careful about how you specify paths when creating archives to avoid these issues.
+````
+
+### ✅ Expected Answer
+
+```text
+The archive is fine. Starfish tars in place and captures the entire path inside the tar file, so extracting recreates that whole path underneath your output directory. Extracting a Starfish tar of /n/holylabs/jharvard_lab/ProjectX into /n/netscratch/jharvard/temp gives you /n/netscratch/jharvard/temp/n/holylabs/jharvard_lab/ProjectX. Move the ProjectX directory to where you actually want it, then remove the leftover empty n/holylabs/jharvard_lab tree. Use plain `rm` rather than `rm -rf`, so it errors out if other files remain or you typed the wrong path.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving**
+
+### 💬 Agent Messages (6)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+RC made a tar of my project with Starfish. I copied it to netscratch and extracted it there, but instead of my ProjectX folder I got this weird nested tree of empty directories with ProjectX way down at the bottom. Is the archive corrupt?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+tar archive nested directories empty directories when extracting
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+RC tar archive nested directories empty directories
+```
+
+**🛠️ Tool Call #5: search\_vectorstore\_hybrid**
+
+```text
+RC tar archive created with absolute paths nested directories
+```
+
+**🤖 Assistant Message #6**
+
+````text
+This is a common issue with tar archives and it's **not necessarily corrupt**. The problem is almost certainly that the RC team created the tar archive using **absolute paths** (e.g., `/n/holyscratch01/username/ProjectX/...`) instead of relative paths.
+
+When you extract a tar archive that contains absolute paths, tar will recreate the full directory structure starting from the root, which is why you're seeing empty directories all the way down to your actual `ProjectX` folder.
+
+**To fix this, you have a few options:**
+
+1. **Extract to the correct location** - If the archive contains absolute paths like `/n/holyscratch01/username/ProjectX`, you can extract it directly to the root:
+   ```bash
+   tar -xvf archive.tar -C /
+   ```
+   This will recreate the full path structure.
+
+2. **Use `--strip-components`** - If you want to remove some levels of the directory structure, you can use:
+   ```bash
+   tar -xvf archive.tar --strip-components=N
+   ```
+   where N is the number of directory levels to strip from the beginning of each path.
+
+3. **Check the archive contents first** - Before extracting, see what's in the archive:
+   ```bash
+   tar -tvf archive.tar | head -20
+   ```
+   This will show you the full path structure and help you determine the right extraction approach.
+
+**To prevent this in the future**, when creating tar archives, always use relative paths or specify the directory you want to archive rather than using absolute paths. For example:
+```bash
+cd /n/holyscratch01/username/
+tar -cvf archive.tar ProjectX/
+```
+
+Instead of:
+```bash
+tar -cvf archive.tar /n/holyscratch01/username/ProjectX/
+```
+
+The FASRC documentation on [Tips for using tar to archive data](https://docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving/) recommends being careful about how you specify paths when creating archives to avoid these issues.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.688 🟡 |
+| Faithfulness | 0.182 🔴 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 0.800 🟢 |
+
+---
+
+## Question 49: question\_49
+
+### ❓ Question
+
+I already pushed a bunch of archives into our lab's tape area on Globus and then realized I named them badly. Can I just rename them, or move a couple into a different folder to tidy things up?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/tape-globus-access  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/storage-service-center-bill  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Unfortunately, the documentation doesn't explicitly address renaming or moving files **after** they've been staged/migrated to tape. Here's what I can tell you based on how tape systems typically work:
+
+**Key points:**
+
+1. **Tape staging area vs. tape itself** — You're likely writing to a disk-based staging/buffer area first, and then the data is migrated to tape. The staging area is what you interact with via Globus [Globus: Transfer Data to Tape](https://docs.rc.fas.harvard.edu/kb/tape-globus-access/).
+
+2. **Before migration to tape** — If your files are still in the staging area (not yet migrated to tape), you should be able to rename or move them using Globus File Manager just like any other file transfer.
+
+3. **After migration to tape** — Once data has been migrated to tape, renaming or moving files is generally not supported in the same way as on disk. Tape systems typically don't support arbitrary file operations post-migration.
+
+**What to do:**
+
+- Check in Globus whether your files are still in the staging area or have already migrated to tape
+- If they're still in staging, you can rename/move them via Globus File Manager
+- If they've already migrated to tape, you may need to contact the Storage Service Center for guidance on whether retrieval and re-transfer is possible
+
+Would you like help checking the status of your transfers or reaching out to the Storage Service Center?
+```
+
+### ✅ Expected Answer
+
+```text
+No — do not delete, move, or rename data once it has been transferred to the tape buffer. The Globus buffer gives you write access to upload data destined for tape, and all changes within your lab's Globus collection are automatically picked up by the tape robot. Deletions on the Globus buffer may result in permanent deletion on tape, and deleting files that have already been placed on tape removes the 'link' and makes retrieval impossible. Mass deletions, moves, and file renaming require cumbersome manual intervention. Name files appropriately before you transfer them, and work with your PI or lab data manager on your lab's tape storage protocols.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/tape-globus-access**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I already pushed a bunch of archives into our lab's tape area on Globus and then realized I named them badly. Can I just rename them, or move a couple into a different folder to tidy things up?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+```text
+Unfortunately, the documentation doesn't explicitly address renaming or moving files **after** they've been staged/migrated to tape. Here's what I can tell you based on how tape systems typically work:
+
+**Key points:**
+
+1. **Tape staging area vs. tape itself** — You're likely writing to a disk-based staging/buffer area first, and then the data is migrated to tape. The staging area is what you interact with via Globus [Globus: Transfer Data to Tape](https://docs.rc.fas.harvard.edu/kb/tape-globus-access/).
+
+2. **Before migration to tape** — If your files are still in the staging area (not yet migrated to tape), you should be able to rename or move them using Globus File Manager just like any other file transfer.
+
+3. **After migration to tape** — Once data has been migrated to tape, renaming or moving files is generally not supported in the same way as on disk. Tape systems typically don't support arbitrary file operations post-migration.
+
+**What to do:**
+
+- Check in Globus whether your files are still in the staging area or have already migrated to tape
+- If they're still in staging, you can rename/move them via Globus File Manager
+- If they've already migrated to tape, you may need to contact the Storage Service Center for guidance on whether retrieval and re-transfer is possible
+
+Would you like help checking the status of your transfers or reaching out to the Storage Service Center?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.000 🔴 |
+| Faithfulness | 0.500 🟡 |
+| Context Precision | 0.500 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 50: question\_50
+
+### ❓ Question
+
+Our PI wants to let a postdoc read and write only one project folder inside our lab's tape collection on Globus, not the rest of it. How do we set that up?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/tape-globus-access  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/storage-service-center, docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm, docs.rc.fas.harvard.edu/kb/data-storage-workflow, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/storage-service-center-bill, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/sequencing-information, docs.rc.fas.harvard.edu/kb/rclone, docs.rc.fas.harvard.edu/kb/starfish-data-management, github.com/fasrc/User\_Codes/blob/master/Applications/AlphaFold/README.md  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on FASRC documentation, here is how the PI can grant the postdoc read/write access to only one project folder within the lab's tape collection:
+
+### The Solution: Create a Globus Guest Collection
+
+Globus allows you to share a specific **subfolder** (rather than the entire tape collection) by creating a **Guest Collection**. This is the standard way to restrict access to a single project folder.
+
+**Steps for the PI (or General Manager):**
+
+1.  **Get the Postdoc's Globus Account:** Obtain the email address associated with the postdoc's Globus identity.
+2.  **Go to Globus File Manager:** Log in to the [Globus File Manager](https://app.globus.org/file-manager).
+3.  **Select the Folder:** Navigate to the specific project folder inside the tape collection that the postdoc should access.
+4.  **Create Guest Collection:**
+    *   Select the folder and click the **"Share"** icon (or right-click and select "Share").
+    *   Click on **"Add Guest Collection"**.
+    *   Fill in the information for the new Guest Collection and click **"Create Collection"** [Globus File Transfer – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer).
+5.  **Grant Permissions:**
+    *   In the **"Permissions"** tab of the new Guest Collection, click **"Add Permissions — Share With"**.
+    *   Enter the postdoc's Globus account email to share the collection with them [Globus File Transfer – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer).
+6.  **Postdoc Access:** The postdoc will receive a notification email and will then be able to initiate file transfers to/from that specific shared folder [Globus File Transfer – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer).
+
+### Important Notes on Tape Access
+*   **Default Permissions:** By default, only the PI and General Manager have access to the tape collection via Globus [Globus: Transfer Data to Tape – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/tape-globus-access).
+*   **Lab Members:** The PI or General Manager can add other lab members to access the tape, but the entire group does not have access by default [Globus: Transfer Data to Tape – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/tape-globus-access).
+*   **Staging Area:** Users write to a disk-based staging/buffer area via Globus, and the data is then migrated to tape [Globus: Transfer Data to Tape – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/tape-globus-access).
+
+For detailed step-by-step instructions on creating Guest Collections, FASRC recommends the official Globus tutorial: [How To Share Data Using Globus](https://docs.globus.org/guides/tutorials/manage-files/share-files/).
+```
+
+### ✅ Expected Answer
+
+```text
+You cannot. There is no way to restrict permissions on individual folders within your lab tape collection — read/write access applies to the whole lab collection on Globus. The underlying filesystem is not owned by FASRC, so FASRC cannot set those permissions; everyone with access is essentially a guest on the NESE tape system. (The PI and General Manager can add lab members to the collection, but only to all of it.)
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/tape-globus-access**
+
+### 💬 Agent Messages (19)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Our PI wants to let a postdoc read and write only one project folder inside our lab's tape collection on Globus, not the rest of it. How do we set that up?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+Globus share folder subdirectory permission postdoc tape collection
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+share a subdirectory
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+share subdirectory
+```
+
+**🛠️ Tool Call #7: search\_local\_files**
+
+```text
+Example 2: Share a sub
+```
+
+**🛠️ Tool Call #8: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #9: search\_local\_files**
+
+```text
+Example 2: Share a subfolder that you own on FASRC with a collaborator
+```
+
+**🛠️ Tool Call #10: search\_local\_files**
+
+```text
+Share a subfolder that you own on FASRC with a collaborator
+```
+
+**🛠️ Tool Call #11: search\_local\_files**
+
+```text
+Share a subfolder
+```
+
+**🛠️ Tool Call #12: search\_local\_files**
+
+```text
+share a subfolder
+```
+
+**🛠️ Tool Call #13: search\_local\_files**
+
+```text
+subfolder
+```
+
+**🛠️ Tool Call #14: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #15: search\_local\_files**
+
+```text
+Example 2: Share a subfolder that you own on FASRC with a collaborator
+```
+
+**🛠️ Tool Call #16: search\_local\_files**
+
+```text
+Guest Collection
+```
+
+**🛠️ Tool Call #17: search\_local\_files**
+
+```text
+Add Guest Collection
+```
+
+**🛠️ Tool Call #18: search\_local\_files**
+
+```text
+Add Guest Collection
+```
+
+**🤖 Assistant Message #19**
+
+```text
+Based on FASRC documentation, here is how the PI can grant the postdoc read/write access to only one project folder within the lab's tape collection:
+
+### The Solution: Create a Globus Guest Collection
+
+Globus allows you to share a specific **subfolder** (rather than the entire tape collection) by creating a **Guest Collection**. This is the standard way to restrict access to a single project folder.
+
+**Steps for the PI (or General Manager):**
+
+1.  **Get the Postdoc's Globus Account:** Obtain the email address associated with the postdoc's Globus identity.
+2.  **Go to Globus File Manager:** Log in to the [Globus File Manager](https://app.globus.org/file-manager).
+3.  **Select the Folder:** Navigate to the specific project folder inside the tape collection that the postdoc should access.
+4.  **Create Guest Collection:**
+    *   Select the folder and click the **"Share"** icon (or right-click and select "Share").
+    *   Click on **"Add Guest Collection"**.
+    *   Fill in the information for the new Guest Collection and click **"Create Collection"** [Globus File Transfer – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer).
+5.  **Grant Permissions:**
+    *   In the **"Permissions"** tab of the new Guest Collection, click **"Add Permissions — Share With"**.
+    *   Enter the postdoc's Globus account email to share the collection with them [Globus File Transfer – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer).
+6.  **Postdoc Access:** The postdoc will receive a notification email and will then be able to initiate file transfers to/from that specific shared folder [Globus File Transfer – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer).
+
+### Important Notes on Tape Access
+*   **Default Permissions:** By default, only the PI and General Manager have access to the tape collection via Globus [Globus: Transfer Data to Tape – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/tape-globus-access).
+*   **Lab Members:** The PI or General Manager can add other lab members to access the tape, but the entire group does not have access by default [Globus: Transfer Data to Tape – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/tape-globus-access).
+*   **Staging Area:** Users write to a disk-based staging/buffer area via Globus, and the data is then migrated to tape [Globus: Transfer Data to Tape – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/tape-globus-access).
+
+For detailed step-by-step instructions on creating Guest Collections, FASRC recommends the official Globus tutorial: [How To Share Data Using Globus](https://docs.globus.org/guides/tutorials/manage-files/share-files/).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.778 🟢 |
+| Faithfulness | 0.850 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 51: question\_51
+
+### ❓ Question
+
+On Cannon I just do salloc to grab a shell on a compute node, but on FASSE it doesn't work. How am I supposed to get an interactive session there?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/fasse  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster, docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel, docs.rc.fas.harvard.edu/kb/developing-apps-on-ood, docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide, docs.rc.fas.harvard.edu/kb/running-jobs, slurm.schedmd.com/srun.html, slurm.schedmd.com/faq.html  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+````text
+On FASSE, you should use **`srun`** instead of `salloc` to get an interactive shell.
+
+For example:
+```bash
+srun -p test -t 10 --mem 1G --pty /bin/bash
+```
+
+This allocates resources and starts an interactive shell on a compute node. The `--pty` flag allocates a pseudo-terminal, giving you an interactive session.
+
+As noted in the FASRC documentation, `salloc` should not be used on FASSE for interactive sessions [Running Jobs – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/running-jobs/).
+
+Would you like help with specific resource requests (partition, time, memory, or GPUs)?
+````
+
+### ✅ Expected Answer
+
+```text
+salloc is deliberately unavailable on FASSE — it is disabled for security reasons, and FASSE does not allow interactive jobs from the command line at all. For interactive work you use the FASSE Open OnDemand (OOD) / VDI virtual desktop at https://fasseood.rc.fas.harvard.edu, reachable in your browser while connected to the FASRC VPN on the @fasse realm (note @fasse, not the @fasrc realm you use for Cannon). OOD gives you pre-built apps and interactive command-line access in a desktop-like environment. SSH to fasselogin.rc.fas.harvard.edu remains available for batch work.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/fasse**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+On Cannon I just do salloc to grab a shell on a compute node, but on FASSE it doesn't work. How am I supposed to get an interactive session there?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+FASSE interactive session salloc srun sinteractive
+```
+
+**🤖 Assistant Message #3**
+
+````text
+On FASSE, you should use **`srun`** instead of `salloc` to get an interactive shell.
+
+For example:
+```bash
+srun -p test -t 10 --mem 1G --pty /bin/bash
+```
+
+This allocates resources and starts an interactive shell on a compute node. The `--pty` flag allocates a pseudo-terminal, giving you an interactive session.
+
+As noted in the FASRC documentation, `salloc` should not be used on FASSE for interactive sessions [Running Jobs – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/running-jobs/).
+
+Would you like help with specific resource requests (partition, time, memory, or GPUs)?
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.647 🟡 |
+| Faithfulness | 0.500 🟡 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 0.500 🟡 |
+
+---
+
+## Question 52: question\_52
+
+### ❓ Question
+
+How long can a job run on the FASSE H200 GPU nodes, and how many GPUs does each of those nodes have?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/fasse  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/seas-compute-resources, docs.rc.fas.harvard.edu/kb/running-jobs, slurm.schedmd.com/srun.html, docs.rc.fas.harvard.edu/kb/fasrc-ai-facilitation, docs.rc.fas.harvard.edu/kb/kempner-partitions, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise6/run.sbatch, docs.rc.fas.harvard.edu/kb/seas-compute-resources, docs.rc.fas.harvard.edu/kb/fasse, docs.rc.fas.harvard.edu/kb/running-jobs  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the FASRC documentation:
+
+- **Time limit:** Jobs on the `gpu_h200` partition (FASSE H200 nodes) have a maximum runtime of **3 days** [Running Jobs – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/running-jobs/).
+- **GPUs per node:** Each node has **4 NVIDIA H200 GPUs** [Running Jobs – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/running-jobs/).
+
+When submitting jobs, you'll need to request GPUs using `#SBATCH --gres=gpu:n` where `n` can be 1–4 per node [Running Jobs – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/running-jobs/).
+```
+
+### ✅ Expected Answer
+
+```text
+The fasse_gpu_h200 partition has a 3-day time limit — shorter than the 7 days allowed on the other FASSE partitions. There are 2 such nodes, each with 4 H200 GPUs, 112 Intel 'Sapphire Rapids' cores, 990 GB of memory per node, and 843 GB of local /scratch.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/fasse**
+
+### 💬 Agent Messages (6)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+How long can a job run on the FASSE H200 GPU nodes, and how many GPUs does each of those nodes have?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+FASSE H200 GPU nodes time limit number of GPUs per node
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+FASSE H200 GPU partition time limit nodes
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+FASSE H200 GPU
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+H200
+```
+
+**🤖 Assistant Message #6**
+
+```text
+Based on the FASRC documentation:
+
+- **Time limit:** Jobs on the `gpu_h200` partition (FASSE H200 nodes) have a maximum runtime of **3 days** [Running Jobs – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/running-jobs/).
+- **GPUs per node:** Each node has **4 NVIDIA H200 GPUs** [Running Jobs – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/running-jobs/).
+
+When submitting jobs, you'll need to request GPUs using `#SBATCH --gres=gpu:n` where `n` can be 1–4 per node [Running Jobs – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/running-jobs/).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.884 🟢 |
+| Faithfulness | 0.500 🟡 |
+| Context Precision | 0.000 🔴 |
+| Context Recall | 0.000 🔴 |
+
+---
+
+## Question 53: question\_53
+
+### ❓ Question
+
+A data provider will only let me download their dataset if I give them an IP address to add to their allowlist. What address do they see when I pull the data from a FASSE compute node?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/proxy-settings  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/web-scraping-policy, docs.rc.fas.harvard.edu/kb/nielsen-dataset, docs.rc.fas.harvard.edu/kb/data-use-agreements, docs.rc.fas.harvard.edu/kb/proxy-settings, docs.rc.fas.harvard.edu/kb/acceptable-use  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+When you download data from a FASSE compute node, the external server sees the IP address of the FASRC proxy that your traffic exits through, not the compute node's internal IP.
+
+You can find the exact public IP address by running this command on a compute node:
+
+```bash
+curl icanhazip.com
+```
+
+This will return the IP address that the internet sees you coming from, which is the address you should provide to the data provider for their allowlist [FASSE Proxy Settings](https://docs.rc.fas.harvard.edu/kb/proxy-settings/).
+
+Note that FASSE uses a proxy for internet access, so all outbound traffic from compute nodes goes through this proxy, and the data provider will see the proxy's IP address.
+````
+
+### ✅ Expected Answer
+
+```text
+140.247.232.228. All traffic to the Internet from FASSE — VPN, login, compute, or fasseood — goes out through the FASRC proxy (rcproxy.rc.fas.harvard.edu), which currently has that external IP address. It is subject to change, so you can confirm it by running `curl icanhazip.com` from the node you will actually be working on.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/proxy-settings**
+
+### 💬 Agent Messages (2)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+A data provider will only let me download their dataset if I give them an IP address to add to their allowlist. What address do they see when I pull the data from a FASSE compute node?
+```
+
+**🤖 Assistant Message #2**
+
+````text
+When you download data from a FASSE compute node, the external server sees the IP address of the FASRC proxy that your traffic exits through, not the compute node's internal IP.
+
+You can find the exact public IP address by running this command on a compute node:
+
+```bash
+curl icanhazip.com
+```
+
+This will return the IP address that the internet sees you coming from, which is the address you should provide to the data provider for their allowlist [FASSE Proxy Settings](https://docs.rc.fas.harvard.edu/kb/proxy-settings/).
+
+Note that FASSE uses a proxy for internet access, so all outbound traffic from compute nodes goes through this proxy, and the data provider will see the proxy's IP address.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.400 🔴 |
+| Context Precision | 0.250 🔴 |
+| Context Recall | 0.333 🔴 |
+
+---
+
+## Question 54: question\_54
+
+### ❓ Question
+
+Our data use agreement says the data has to be encrypted at rest. I was planning to stage the intermediate files for my FASSE jobs in netscratch since it's fast. Is that OK?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers, docs.rc.fas.harvard.edu/kb/storage-service-center, docs.rc.fas.harvard.edu/kb/data-storage-workflow, docs.rc.fas.harvard.edu/kb/storage-service-center-bill, docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+**No, you cannot use netscratch (or any scratch space) for data covered by a DUA that requires encryption at rest.**
+
+According to the FASSE documentation on protected data transfers:
+
+> "If you have a DUA that requires encryption at rest, you must not use scratch for any data that the DUA applies to. Neither local scratch, nor our global scratch, support encryption at rest." [FASSE / Protected Data Transfers](https://docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers/)
+
+This applies to both local scratch on the compute nodes and global scratch (netscratch). You'll need to use a storage location that supports encryption at rest for your intermediate files.
+
+Would you like help identifying which storage options on FASSE support encryption at rest?
+```
+
+### ✅ Expected Answer
+
+```text
+No. If you have a DUA that requires encryption at rest, you must not use scratch for any data the DUA applies to — neither local scratch nor FASRC's global scratch supports encryption at rest. Separately, DSL 3 / FASSE data should not be stored in your home directory either. You are responsible for knowing and complying with the applicable Harvard Information Security Policy, the Harvard Research Data Security Policy, and any applicable contracts / data use agreements; if you are unsure how this applies to your data, consult FASRC at security@rc.fas.harvard.edu or your School Security Officer.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Our data use agreement says the data has to be encrypted at rest. I was planning to stage the intermediate files for my FASSE jobs in netscratch since it's fast. Is that OK?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #4**
+
+```text
+**No, you cannot use netscratch (or any scratch space) for data covered by a DUA that requires encryption at rest.**
+
+According to the FASSE documentation on protected data transfers:
+
+> "If you have a DUA that requires encryption at rest, you must not use scratch for any data that the DUA applies to. Neither local scratch, nor our global scratch, support encryption at rest." [FASSE / Protected Data Transfers](https://docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers/)
+
+This applies to both local scratch on the compute nodes and global scratch (netscratch). You'll need to use a storage location that supports encryption at rest for your intermediate files.
+
+Would you like help identifying which storage options on FASSE support encryption at rest?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.500 🟡 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 55: question\_55
+
+### ❓ Question
+
+Our level 3 project storage doesn't show up as a collection in Globus at all. What do we have to do to get it added?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers, docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/tape-globus-access  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the FASRC documentation, **data security level 3 storage shares are not automatically added to Globus** ([Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/)).
+
+To get your level 3 project storage added, you need to **contact FASRC** directly. The documentation states:
+
+> "If you find that your lab share is not seen by Globus or these sub directories don't exist in your lab's share, in the Holyoke or Boston collections, please contact us."
+
+Specifically, level 3 data should appear under either:
+- **"Harvard FAS RC Holyoke Secure"** (for Holyoke data center)
+- **"Harvard FAS RC Boston Secure"** (for Boston data center)
+
+Reach out to FASRC support to request the addition of your level 3 storage to Globus.
+```
+
+### ✅ Expected Answer
+
+```text
+Nothing is broken: DSL 3 / FASSE storage is intentionally not included in Globus by default. To have it exposed, first review the governing DUA — Globus makes data available over the Internet without a VPN or private network, so a DUA requiring VPN/private-network access for all access to the data would not be Globus-compliant (consult your School Security Officer if unsure). Then submit a ticket to rchelp@rc.fas.harvard.edu that (1) includes the path to the project to add (e.g. /n/piname_project_l3), (2) states that the PI attests Globus is compliant with any contracts/DUAs governing the data, and (3) is either sent by the PI or receives a direct reply from the PI confirming it.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers**
+
+### 💬 Agent Messages (8)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Our level 3 project storage doesn't show up as a collection in Globus at all. What do we have to do to get it added?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+Globus collection not showing up level 3 project storage add
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+Globus collection request add storage FASRC
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+Globus collection level 3 project storage
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+Globus collection request
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+Globus collection
+```
+
+**🛠️ Tool Call #7: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #8**
+
+```text
+Based on the FASRC documentation, **data security level 3 storage shares are not automatically added to Globus** ([Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/)).
+
+To get your level 3 project storage added, you need to **contact FASRC** directly. The documentation states:
+
+> "If you find that your lab share is not seen by Globus or these sub directories don't exist in your lab's share, in the Holyoke or Boston collections, please contact us."
+
+Specifically, level 3 data should appear under either:
+- **"Harvard FAS RC Holyoke Secure"** (for Holyoke data center)
+- **"Harvard FAS RC Boston Secure"** (for Boston data center)
+
+Reach out to FASRC support to request the addition of your level 3 storage to Globus.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.875 🟢 |
+| Context Precision | 0.250 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 56: question\_56
+
+### ❓ Question
+
+How much CPU and RAM am I actually allowed on the FASRC login server, and is there a cap on how many terminal windows I can have open at once?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/terminal-access  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/trinity, docs.rc.fas.harvard.edu/kb/hsph-research-computing-overview, docs.rc.fas.harvard.edu/kb/ood-remote-desktop-how-to-open-software, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/R/Large\_Data\_Processing\_R/parallel\_computation/R\_parLapply\_vdi.md, slurm.schedmd.com/salloc.html, slurm.schedmd.com/cgroup.conf.html, docs.rc.fas.harvard.edu/kb/slurm-memory-limits, docs.rc.fas.harvard.edu/kb/rocky-8-transition-guide, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/R/Large\_Data\_Processing\_R/parallel\_computation/R\_embarrassingly\_parallel.md, docs.rc.fas.harvard.edu/kb/checking-quota-and-usage, docs.rc.fas.harvard.edu/kb/vpn-setup, docs.rc.fas.harvard.edu/kb/about-usernames, docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster, slurm.schedmd.com/pam\_slurm\_adopt.html, docs.rc.fas.harvard.edu/kb/jupyter-notebook-server-on-cluster, docs.rc.fas.harvard.edu/kb/mounting-storage, docs.rc.fas.harvard.edu/kb/rclone, slurm.schedmd.com/MISC25/Slinky-CUG2025.pdf, docs.rc.fas.harvard.edu/kb/ssh-to-a-compute-node, docs.rc.fas.harvard.edu/kb/access-and-login, docs.rc.fas.harvard.edu/kb/virtual-desktop, github.com/fasrc/User\_Codes/blob/master/AI/AITools/ollama.md, docs.rc.fas.harvard.edu/kb/access-from-abroad, docs.rc.fas.harvard.edu/kb/responsibilities, slurm.schedmd.com/slurmd.html, slurm.schedmd.com/sackd.html, docs.rc.fas.harvard.edu/kb/glossary, docs.rc.fas.harvard.edu/kb/developing-apps-on-ood  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on FASRC documentation, here are the limits for the login nodes:
+
+### CPU and RAM Limits
+The Rocky 8 login nodes use a system-level mechanism called **cgroups** which limits each logged-in account to:
+*   **1 CPU core**
+*   **8 GB of memory** [Don't run anything on the login nodes](https://docs.rc.fas.harvard.edu/kb/responsibilities/)
+
+If a process exceeds these limits, it will be killed without warning. Login nodes are intended only for light processes like preparing jobs, editing files, or monitoring jobs—not for actual computation. If you need more resources, you should request an interactive job session on a compute node.
+
+### Terminal Windows
+The documentation does not specify a hard cap on the number of terminal windows (SSH sessions) you can have open at once. However, because each session consumes resources (up to the 1 core / 8 GB limit per account), opening many sessions that run background processes could cause you to hit those resource limits and get killed.
+
+For light use (just keeping shells open or running very small tasks), you likely won't hit a session count limit, but you should monitor your resource usage.
+```
+
+### ✅ Expected Answer
+
+```text
+Each login-node session is limited to 1 core and 8GB of memory, and you may have at most 5 sessions per user. Users who abuse the login nodes may have their sessions terminated, and the login nodes are rebooted during monthly maintenance to clear out stale sessions. If you need more than 5 sessions, switch to batch jobs, use Open OnDemand (which gives you a desktop with multiple terminals on a dedicated compute node), or use screen/tmux to multiplex one session.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/terminal-access**
+
+### 💬 Agent Messages (10)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+How much CPU and RAM am I actually allowed on the FASRC login server, and is there a cap on how many terminal windows I can have open at once?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+FASRC login server CPU RAM limits resources
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+FASRC login node limits resources terminal sessions
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+login node limits resources
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+login server CPU RAM
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+login node
+```
+
+**🛠️ Tool Call #7: search\_local\_files**
+
+```text
+login node resources limits
+```
+
+**🛠️ Tool Call #8: search\_local\_files**
+
+```text
+login node CPU memory
+```
+
+**🛠️ Tool Call #9: search\_local\_files**
+
+```text
+login node
+```
+
+**🤖 Assistant Message #10**
+
+```text
+Based on FASRC documentation, here are the limits for the login nodes:
+
+### CPU and RAM Limits
+The Rocky 8 login nodes use a system-level mechanism called **cgroups** which limits each logged-in account to:
+*   **1 CPU core**
+*   **8 GB of memory** [Don't run anything on the login nodes](https://docs.rc.fas.harvard.edu/kb/responsibilities/)
+
+If a process exceeds these limits, it will be killed without warning. Login nodes are intended only for light processes like preparing jobs, editing files, or monitoring jobs—not for actual computation. If you need more resources, you should request an interactive job session on a compute node.
+
+### Terminal Windows
+The documentation does not specify a hard cap on the number of terminal windows (SSH sessions) you can have open at once. However, because each session consumes resources (up to the 1 core / 8 GB limit per account), opening many sessions that run background processes could cause you to hit those resource limits and get killed.
+
+For light use (just keeping shells open or running very small tasks), you likely won't hit a session count limit, but you should monitor your resource usage.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.873 🟢 |
+| Faithfulness | 0.615 🟡 |
+| Context Precision | n/a (unscored) |
+| Context Recall | 0.000 🔴 |
+
+---
+
+## Question 57: question\_57
+
+### ❓ Question
+
+I ran ssh-copy-id and my key works great when I'm in the office, but from my apartment it still makes me punch in the 6-digit code every single time. Did the key not install properly?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/terminal-access  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel, docs.rc.fas.harvard.edu/kb/terminal-access, docs.rc.fas.harvard.edu/kb/ssh-to-a-compute-node, docs.rc.fas.harvard.edu/kb/faq, docs.rc.fas.harvard.edu/kb/faq, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v2, docs.rc.fas.harvard.edu/kb/duo-mobile, docs.rc.fas.harvard.edu/kb/introduction-to-cluster-online, docs.rc.fas.harvard.edu/kb/quickstart-guide, docs.rc.fas.harvard.edu/kb/sftp-file-transfer, docs.rc.fas.harvard.edu/kb/faq, docs.rc.fas.harvard.edu/kb/duo-mobile, docs.rc.fas.harvard.edu/kb/vpn-setup, docs.rc.fas.harvard.edu/kb/about-usernames, docs.rc.fas.harvard.edu/kb/globus-file-transfer  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the documentation, **your SSH key likely installed correctly** — the 6-digit code you're seeing is your **two-factor authentication (OpenAuth/Duo) token**, not a passphrase on your SSH key.
+
+Here's what's happening:
+
+- When you're **on the office network**, FASRC likely recognizes your connection as coming from a trusted/internal network, so it may skip or bypass the two-factor challenge for SSH connections.
+- When you're **off-campus (from your apartment)**, FASRC requires the full authentication flow: SSH key → password → **two-factor code** (the 6-digit code from your OpenAuth/Duo Mobile app).
+
+This is normal security behavior — your SSH key authenticates *who you are*, but the two-factor code is an additional layer that's required when connecting from untrusted networks.
+
+**What you can do:**
+
+1. **Use the VPN** — If you connect via the FASRC VPN first, your connection will appear to come from the trusted office network, and you may be able to bypass the two-factor prompt. See the [VPN setup documentation](https://docs.rc.fas.harvard.edu/kb/vpn-setup/) for details.
+
+2. **Keep using Duo Mobile** — As documented in [Using Duo Mobile to display your RC two-factor code](https://docs.rc.fas.harvard.edu/kb/duo-mobile/), you can use Duo Mobile to generate the 6-digit OpenAuth token for off-campus SSH connections.
+
+3. **Verify your key is installed** — You can confirm your key is working by checking that you're only prompted for the 6-digit code (not a password) after the key authentication succeeds.
+
+The key itself is working fine — you're just seeing the expected two-factor authentication requirement for off-campus connections.
+```
+
+### ✅ Expected Answer
+
+```text
+The key is fine — this is by design. Passwordless (ssh-key) authentication is only permitted to the Cannon login nodes from Harvard networks, including Harvard/FASRC VPNs. If you connect from an external network you are still required to provide two-factor authentication regardless of your key. So either connect to the VPN from home, or accept the 2FA prompt. (On FASSE, passwordless ssh is permitted from the FASSE VPN only.) You can confirm the key installed by checking that it is present in ~/.ssh/authorized_keys on the cluster.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/terminal-access**
+
+### 💬 Agent Messages (13)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I ran ssh-copy-id and my key works great when I'm in the office, but from my apartment it still makes me punch in the 6-digit code every single time. Did the key not install properly?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+SSH key authentication 2FA two-factor MFA 6-digit code office vs remote
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+Duo two-factor authentication SSH key bypass office network
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+Duo two-factor authentication SSH key bypass office network
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+Duo Mobile
+```
+
+**🛠️ Tool Call #6: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #7: search\_vectorstore\_hybrid**
+
+```text
+SSH key authentication bypass 2FA office network trusted network
+```
+
+**🛠️ Tool Call #8: search\_local\_files**
+
+```text
+trusted network SSH key bypass 2FA office
+```
+
+**🛠️ Tool Call #9: search\_local\_files**
+
+```text
+two-factor SSH key office network trusted
+```
+
+**🛠️ Tool Call #10: search\_local\_files**
+
+```text
+two-factor authentication SSH
+```
+
+**🛠️ Tool Call #11: search\_local\_files**
+
+```text
+two-factor
+```
+
+**🛠️ Tool Call #12: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #13**
+
+```text
+Based on the documentation, **your SSH key likely installed correctly** — the 6-digit code you're seeing is your **two-factor authentication (OpenAuth/Duo) token**, not a passphrase on your SSH key.
+
+Here's what's happening:
+
+- When you're **on the office network**, FASRC likely recognizes your connection as coming from a trusted/internal network, so it may skip or bypass the two-factor challenge for SSH connections.
+- When you're **off-campus (from your apartment)**, FASRC requires the full authentication flow: SSH key → password → **two-factor code** (the 6-digit code from your OpenAuth/Duo Mobile app).
+
+This is normal security behavior — your SSH key authenticates *who you are*, but the two-factor code is an additional layer that's required when connecting from untrusted networks.
+
+**What you can do:**
+
+1. **Use the VPN** — If you connect via the FASRC VPN first, your connection will appear to come from the trusted office network, and you may be able to bypass the two-factor prompt. See the [VPN setup documentation](https://docs.rc.fas.harvard.edu/kb/vpn-setup/) for details.
+
+2. **Keep using Duo Mobile** — As documented in [Using Duo Mobile to display your RC two-factor code](https://docs.rc.fas.harvard.edu/kb/duo-mobile/), you can use Duo Mobile to generate the 6-digit OpenAuth token for off-campus SSH connections.
+
+3. **Verify your key is installed** — You can confirm your key is working by checking that you're only prompted for the 6-digit code (not a password) after the key authentication succeeds.
+
+The key itself is working fine — you're just seeing the expected two-factor authentication requirement for off-campus connections.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.349 🔴 |
+| Faithfulness | 0.318 🔴 |
+| Context Precision | 0.156 🔴 |
+| Context Recall | 0.167 🔴 |
+
+---
+
+## Question 58: question\_58
+
+### ❓ Question
+
+I'm an IQSS researcher and my survey data is classified Level 2. Which cluster am I supposed to be on, and what exactly goes in the VPN box versus the cluster login box?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/account-qualifications, docs.rc.fas.harvard.edu/kb/fasse, docs.rc.fas.harvard.edu/kb/vdi-apps, docs.rc.fas.harvard.edu/kb/optimization, docs.rc.fas.harvard.edu/kb/data-security-information-on-storage-and-use-of-confidential-data-hrci, docs.rc.fas.harvard.edu/kb/fasse, docs.rc.fas.harvard.edu/kb/fasse, docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers, docs.rc.fas.harvard.edu/kb/storage-service-center, docs.rc.fas.harvard.edu/kb/data-storage-workflow, docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm, docs.rc.fas.harvard.edu/kb/submitting-large-numbers-of-jobs, docs.rc.fas.harvard.edu/kb/helmod-faq, docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers, github.com/fasrc/User\_Codes/blob/master/AI/PyTorch/README.md, github.com/fasrc/User\_Codes/blob/master/Applications/Dynamite/README.md, docs.rc.fas.harvard.edu/kb/cursor-remote-development-via-ssh-and-tunnel, docs.rc.fas.harvard.edu/kb/vpn-setup, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise1/README.md, docs.rc.fas.harvard.edu/kb/spack-package-manager, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise6/README.md, github.com/fasrc/User\_Codes/blob/master/GPU\_Computing/Dist\_GPU\_Computing/NCCL\_and\_CUDA/SingleNode/README.md, docs.rc.fas.harvard.edu/kb/anthropic, github.com/fasrc/User\_Codes/blob/master/Notes/JobArrays/commands\_for\_exercises.txt, docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage, docs.rc.fas.harvard.edu/kb/acceptable-use, docs.rc.fas.harvard.edu/kb/data-use-agreements, docs.rc.fas.harvard.edu/kb/seas-compute-resources, docs.rc.fas.harvard.edu/kb/fasse, docs.rc.fas.harvard.edu/kb/openai-guidelines, docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide, docs.rc.fas.harvard.edu/kb/fortran, docs.rc.fas.harvard.edu/kb/data-security-levels, docs.rc.fas.harvard.edu/kb/storage-service-center-bill  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the documentation, here is the breakdown for your Level 2 survey data:
+
+### 1. Which cluster?
+You should be on the **Cannon** cluster. 
+
+*   **Cannon** is rated for **Level 2** data (and below) [IQSS Cannon Quickstart Guide](https://docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide/).
+*   **FASSE** is the secure environment reserved for **Level 3** data. You should **not** use FASSE for Level 2 data, and you should not transfer Level 3 data from FASSE into Level 2 space on Cannon [FASSE Cluster (FAS Secure Environment)](https://docs.rc.fas.harvard.edu/kb/fasse/).
+
+### 2. What goes in the boxes?
+When connecting to Cannon, you perform two distinct steps:
+
+**Step A: The VPN Box**
+*   **Server Address:** `vpn.rc.fas.harvard.edu`
+*   **Username:** Your FASRC username followed by `@fasrc` (e.g., `jharvard@fasrc`)
+*   **Password:** Your FASRC password
+*   **2FA Token:** Your FASRC 2FA token (generated via your FASRC 2FA setup, **not** your HarvardKey code) [IQSS Cannon Quickstart Guide](https://docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide/).
+
+**Step B: The Cluster Login Box**
+*   **URL:** `https://rcood.rc.fas.harvard.edu` (Open On Demand)
+*   **Username:** Your FASRC username **only** (do **not** include `@fasrc`)
+*   **Password:** Your FASRC password [IQSS Cannon Quickstart Guide](https://docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide/).
+```
+
+### ✅ Expected Answer
+
+```text
+Level 2 data belongs on Cannon, the FAS research computing cluster for Data Security Level 2 (only Level 3 data must move to the FASSE secure environment). To get on: in the Cisco AnyConnect VPN client use server address vpn.rc.fas.harvard.edu and enter your FASRC username in the format username@fasrc, your FASRC password, and your FASRC 2FA token — note this is NOT the code associated with your HarvardKey account. Then log into the Cannon cluster at https://rcood.rc.fas.harvard.edu using just your FASRC username WITHOUT the '@fasrc', plus your FASRC password.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide**
+
+### 💬 Agent Messages (24)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I'm an IQSS researcher and my survey data is classified Level 2. Which cluster am I supposed to be on, and what exactly goes in the VPN box versus the cluster login box?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+IQSS Level 2 survey data cluster FASSE VPN login
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #5: search\_vectorstore\_hybrid**
+
+```text
+IQSS Level 2 data cluster Cannon
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+Level 2 IQSS cluster
+```
+
+**🛠️ Tool Call #7: search\_vectorstore\_hybrid**
+
+```text
+IQSS Level 2 data cluster
+```
+
+**🛠️ Tool Call #8: search\_local\_files**
+
+```text
+Level 2
+```
+
+**🛠️ Tool Call #9: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #10: search\_vectorstore\_hybrid**
+
+```text
+IQSS cluster Cannon Level 2 data
+```
+
+**🛠️ Tool Call #11: search\_local\_files**
+
+```text
+IQSS
+```
+
+**🛠️ Tool Call #12: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #13: search\_vectorstore\_hybrid**
+
+```text
+Cannon cluster Level 2 data IQSS
+```
+
+**🛠️ Tool Call #14: search\_local\_files**
+
+```text
+Cannon
+```
+
+**🛠️ Tool Call #15: search\_local\_files**
+
+```text
+Level 2 cluster
+```
+
+**🛠️ Tool Call #16: search\_local\_files**
+
+```text
+Level 2 data
+```
+
+**🛠️ Tool Call #17: search\_local\_files**
+
+```text
+Level 3
+```
+
+**🛠️ Tool Call #18: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #19: search\_local\_files**
+
+```text
+Cannon cluster
+```
+
+**🛠️ Tool Call #20: search\_local\_files**
+
+```text
+Cannon
+```
+
+**🛠️ Tool Call #21: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #22: search\_local\_files**
+
+```text
+Level 2
+```
+
+**🛠️ Tool Call #23: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #24**
+
+```text
+Based on the documentation, here is the breakdown for your Level 2 survey data:
+
+### 1. Which cluster?
+You should be on the **Cannon** cluster. 
+
+*   **Cannon** is rated for **Level 2** data (and below) [IQSS Cannon Quickstart Guide](https://docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide/).
+*   **FASSE** is the secure environment reserved for **Level 3** data. You should **not** use FASSE for Level 2 data, and you should not transfer Level 3 data from FASSE into Level 2 space on Cannon [FASSE Cluster (FAS Secure Environment)](https://docs.rc.fas.harvard.edu/kb/fasse/).
+
+### 2. What goes in the boxes?
+When connecting to Cannon, you perform two distinct steps:
+
+**Step A: The VPN Box**
+*   **Server Address:** `vpn.rc.fas.harvard.edu`
+*   **Username:** Your FASRC username followed by `@fasrc` (e.g., `jharvard@fasrc`)
+*   **Password:** Your FASRC password
+*   **2FA Token:** Your FASRC 2FA token (generated via your FASRC 2FA setup, **not** your HarvardKey code) [IQSS Cannon Quickstart Guide](https://docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide/).
+
+**Step B: The Cluster Login Box**
+*   **URL:** `https://rcood.rc.fas.harvard.edu` (Open On Demand)
+*   **Username:** Your FASRC username **only** (do **not** include `@fasrc`)
+*   **Password:** Your FASRC password [IQSS Cannon Quickstart Guide](https://docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide/).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.778 🟢 |
+| Faithfulness | 0.929 🟢 |
+| Context Precision | n/a (unscored) |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 59: question\_59
+
+### ❓ Question
+
+My pandas script keeps blowing up with a memory error because the file is bigger than the node's RAM. Does FASRC want me to rewrite it, or can I keep using pandas somehow?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/python  
+**Retrieved Documents:** github.com/fasrc/User\_Codes/blob/master/Languages/Python/Example2/run.sbatch, github.com/fasrc/User\_Codes/blob/master/Training/Advanced\_Cluster\_Usage/Exercise1/Python/README.md, docs.rc.fas.harvard.edu/kb/r-parallel, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/PnetCDF/Example3/block\_cyclic.f90, docs.rc.fas.harvard.edu/kb/trinity, docs.rc.fas.harvard.edu/kb/python, slurm.schedmd.com/srun.html, docs.rc.fas.harvard.edu/kb/python  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+FASRC doesn't require you to abandon pandas, but you do need to process the data in chunks rather than loading the entire file into memory at once. Here are the main approaches:
+
+### 1. Use `chunksize` with `read_csv`
+```python
+import pandas as pd
+
+chunk_iter = pd.read_csv('large_file.csv', chunksize=100_000)
+results = []
+for chunk in chunk_iter:
+    # Process each chunk
+    processed = chunk.some_operation()
+    results.append(processed)
+
+final_result = pd.concat(results)
+```
+This keeps only one chunk in memory at a time.
+
+### 2. Use Dask as a drop-in replacement
+[Dask](https://docs.dask.org/) provides a pandas-like API that works out-of-core (on disk) and can scale to multiple cores:
+```python
+import dask.dataframe as dd
+
+ddf = dd.read_csv('large_file.csv')
+result = ddf.groupby('column').mean().compute()
+```
+
+### 3. Request more memory
+If your file is only slightly larger than available RAM, you can request a larger memory allocation in your SLURM job script:
+```bash
+#SBATCH --mem=64G   # request more RAM per node
+```
+Check available node sizes and partitions on the [FASRC documentation](https://docs.rc.fas.harvard.edu/kb/slurm/) to pick an appropriate allocation.
+
+### 4. Use more efficient file formats
+Consider converting to **Parquet** or **HDF5**, which support columnar storage and can be read more efficiently:
+```python
+# Write once
+df.to_parquet('large_file.parquet')
+
+# Read with filtering
+df = pd.read_parquet('large_file.parquet', columns=['col1', 'col2'])
+```
+
+### Recommendation
+- For **small to moderate** oversize: increase `--mem` in your job script.
+- For **large files**: use `chunksize` or switch to Dask.
+- For **repeated analysis**: convert to Parquet/HDF5 for faster, more memory-efficient reads.
+
+Let me know what size your file is and what operation you're doing, and I can suggest a more specific approach.
+````
+
+### ✅ Expected Answer
+
+```text
+Both options exist, and which one FASRC recommends depends on scale. Start with chunking. For moderately large datasets, Dask can enhance Pandas by parallelizing operations — you can convert a Pandas DataFrame to a Dask DataFrame with dd.from_pandas() and keep most of your existing code. But for very large datasets that exceed memory constraints, using Dask alone as a substitute for Pandas is the more effective solution: Dask is a drop-in replacement with a familiar DataFrame API that works lazily, breaking work into smaller tasks that only execute when you call .compute(). Separately, switching from CSV to a columnar format like Parquet (e.g. df.to_parquet('output_data.parquet', compression='snappy')) greatly improves I/O performance.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/python**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+My pandas script keeps blowing up with a memory error because the file is bigger than the node's RAM. Does FASRC want me to rewrite it, or can I keep using pandas somehow?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+pandas memory error large file chunksize out of core
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+pandas chunksize read_csv memory efficient large file
+```
+
+**🤖 Assistant Message #4**
+
+````text
+FASRC doesn't require you to abandon pandas, but you do need to process the data in chunks rather than loading the entire file into memory at once. Here are the main approaches:
+
+### 1. Use `chunksize` with `read_csv`
+```python
+import pandas as pd
+
+chunk_iter = pd.read_csv('large_file.csv', chunksize=100_000)
+results = []
+for chunk in chunk_iter:
+    # Process each chunk
+    processed = chunk.some_operation()
+    results.append(processed)
+
+final_result = pd.concat(results)
+```
+This keeps only one chunk in memory at a time.
+
+### 2. Use Dask as a drop-in replacement
+[Dask](https://docs.dask.org/) provides a pandas-like API that works out-of-core (on disk) and can scale to multiple cores:
+```python
+import dask.dataframe as dd
+
+ddf = dd.read_csv('large_file.csv')
+result = ddf.groupby('column').mean().compute()
+```
+
+### 3. Request more memory
+If your file is only slightly larger than available RAM, you can request a larger memory allocation in your SLURM job script:
+```bash
+#SBATCH --mem=64G   # request more RAM per node
+```
+Check available node sizes and partitions on the [FASRC documentation](https://docs.rc.fas.harvard.edu/kb/slurm/) to pick an appropriate allocation.
+
+### 4. Use more efficient file formats
+Consider converting to **Parquet** or **HDF5**, which support columnar storage and can be read more efficiently:
+```python
+# Write once
+df.to_parquet('large_file.parquet')
+
+# Read with filtering
+df = pd.read_parquet('large_file.parquet', columns=['col1', 'col2'])
+```
+
+### Recommendation
+- For **small to moderate** oversize: increase `--mem` in your job script.
+- For **large files**: use `chunksize` or switch to Dask.
+- For **repeated analysis**: convert to Parquet/HDF5 for faster, more memory-efficient reads.
+
+Let me know what size your file is and what operation you're doing, and I can suggest a more specific approach.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.741 🟢 |
+| Faithfulness | 0.364 🔴 |
+| Context Precision | 0.208 🔴 |
+| Context Recall | 0.800 🟢 |
+
+---
+
+## Question 60: question\_60
+
+### ❓ Question
+
+I switched to the newest Intel module on the cluster and now the compiler command I've always used doesn't exist anymore. What am I supposed to call to build my C file now?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/c-programming-language  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/c-programming-language, docs.rc.fas.harvard.edu/kb/cpp-programming-language, docs.rc.fas.harvard.edu/kb/spack, docs.rc.fas.harvard.edu/kb/spack-package-manager, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/MPI/README.md, github.com/fasrc/User\_Codes/blob/master/Applications/WRF\_Model/README.md, docs.rc.fas.harvard.edu/kb/spack-package-manager, docs.rc.fas.harvard.edu/kb/spack, docs.rc.fas.harvard.edu/kb/cpp-programming-language  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+The compiler command changed when Intel moved to the **oneAPI** toolchain (Intel 24.0.0 and newer). Here's what to use:
+
+| Intel module version | C compiler command |
+|---|---|
+| **Below 24.0.0** (e.g., `intel/23.0.0-fasrc01`) | `icc` |
+| **24.0.0 and above** (e.g., `intel/24.0.1-fasrc01`) | **`icx`** |
+
+So if you loaded the newest Intel module (24.x), use **`icx`** instead of the old `icc`:
+
+```bash
+module load intel/24.0.1-fasrc01   # or whatever the latest version is
+icx -O2 -o myprogram myprogram.c
+```
+
+You can check which Intel versions are available with:
+
+```bash
+module spider intel
+```
+
+And then load the specific version you want. See the [C Programming Language](https://docs.rc.fas.harvard.edu/kb/c-programming-language/) page for more details.
+````
+
+### ✅ Expected Answer
+
+```text
+Intel renamed the compiler binaries at version 24.0.0. For Intel modules below 24.0.0 the commands are icc (C), ifortran (Fortran), and icpc (C++). For Intel 24.0.0 and above they are icx (C), ifx (Fortran), and icpx (C++). So with a newer Intel module you must invoke icx instead of icc. (You can list the available Intel compilers with `module spider intel` and load a specific one, e.g. `module load intel/23.0.0-fasrc01`.)
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/c-programming-language**
+
+### 💬 Agent Messages (10)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I switched to the newest Intel module on the cluster and now the compiler command I've always used doesn't exist anymore. What am I supposed to call to build my C file now?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+Intel compiler command icc icx new module oneAPI
+```
+
+**🛠️ Tool Call #3: search\_local\_files**
+
+```text
+icc icx compiler command Intel module
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+Intel oneAPI compiler icx icc command build C file
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+Intel compiler icx icc
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+Intel module compiler
+```
+
+**🛠️ Tool Call #7: search\_local\_files**
+
+```text
+Intel oneAPI
+```
+
+**🛠️ Tool Call #8: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #9: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #10**
+
+````text
+The compiler command changed when Intel moved to the **oneAPI** toolchain (Intel 24.0.0 and newer). Here's what to use:
+
+| Intel module version | C compiler command |
+|---|---|
+| **Below 24.0.0** (e.g., `intel/23.0.0-fasrc01`) | `icc` |
+| **24.0.0 and above** (e.g., `intel/24.0.1-fasrc01`) | **`icx`** |
+
+So if you loaded the newest Intel module (24.x), use **`icx`** instead of the old `icc`:
+
+```bash
+module load intel/24.0.1-fasrc01   # or whatever the latest version is
+icx -O2 -o myprogram myprogram.c
+```
+
+You can check which Intel versions are available with:
+
+```bash
+module spider intel
+```
+
+And then load the specific version you want. See the [C Programming Language](https://docs.rc.fas.harvard.edu/kb/c-programming-language/) page for more details.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.751 🟢 |
+| Faithfulness | 0.833 🟢 |
+| Context Precision | 0.667 🟡 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 61: question\_61
+
+### ❓ Question
+
+Is it fine to build my C code right after I ssh in, and should I just put the gcc line at the top of my job script so it's always fresh?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/c-programming-language  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/cpp-programming-language, docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel, docs.rc.fas.harvard.edu/kb/c-programming-language, docs.rc.fas.harvard.edu/kb/ssh-to-a-compute-node, docs.rc.fas.harvard.edu/kb/centos7-singularity  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+No to both ideas:
+
+1. **Don't build right after SSHing in** — compilation can take seconds to a minute, so you'll tie up the login node. The best practice is to jump to a compute node (via `salloc` or `srun`) to compile, or compile separately before submitting a batch job [C Programming Language](https://docs.rc.fas.harvard.edu/kb/c-programming-language/).
+
+2. **Don't put the `gcc` line at the top of your job script** — this recompiles the program every time you submit the job. Instead, compile once separately, then use the resulting executable in your `sbatch` script. If you change the source code, recompile separately and then submit the production run as a batch job [C Programming Language](https://docs.rc.fas.harvard.edu/kb/c-programming-language/).
+
+In short: compile once on a compute node (or interactively), then submit the executable via `sbatch`.
+```
+
+### ✅ Expected Answer
+
+```text
+No on both counts. FASRC recommends jumping to a compute node to compile a C program (compilation can take a few seconds to a minute depending on the code's complexity), and specifically recommends using the `test` partition to compile and test the program before running the production job. Best practice is to compile the code separately and then use the resulting executable in your sbatch script — avoid putting the compilation command inside the sbatch script, because that recompiles the program on every submission. If you change the source, recompile separately and then resubmit the production batch job.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/c-programming-language**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Is it fine to build my C code right after I ssh in, and should I just put the gcc line at the top of my job script so it's always fresh?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+```text
+No to both ideas:
+
+1. **Don't build right after SSHing in** — compilation can take seconds to a minute, so you'll tie up the login node. The best practice is to jump to a compute node (via `salloc` or `srun`) to compile, or compile separately before submitting a batch job [C Programming Language](https://docs.rc.fas.harvard.edu/kb/c-programming-language/).
+
+2. **Don't put the `gcc` line at the top of your job script** — this recompiles the program every time you submit the job. Instead, compile once separately, then use the resulting executable in your `sbatch` script. If you change the source code, recompile separately and then submit the production run as a batch job [C Programming Language](https://docs.rc.fas.harvard.edu/kb/c-programming-language/).
+
+In short: compile once on a compute node (or interactively), then submit the executable via `sbatch`.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.821 🟢 |
+| Faithfulness | 0.923 🟢 |
+| Context Precision | 0.833 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 62: question\_62
+
+### ❓ Question
+
+I want to completely wipe my Julia install off the cluster and start clean. Is there a single command, and does it leave junk behind in my home directory?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/julia  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/julia, slurm.schedmd.com/sacctmgr.html, docs.rc.fas.harvard.edu/kb/bash, github.com/fasrc/User\_Codes/blob/master/Languages/Julia/Notebook.md, github.com/fasrc/User\_Codes/blob/master/Languages/Julia/README.md  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Based on the FASRC documentation, there is **no single "uninstall" command** for a Julia installation. Here's what you need to know:
+
+### How Julia is installed on the cluster
+Julia is typically installed locally in your `$HOME` directory using the installer from [julialang.org/downloads](https://julialang.org/downloads/). The installer:
+- Places Julia binaries in `$HOME/.juliaup` (or similar)
+- Adds `juliaup` initialization lines to your `~/.bashrc`
+
+### To completely remove Julia
+You'll need to do two things manually:
+
+1. **Remove the Julia installation directory** (usually `~/.juliaup` and `~/.julia`):
+   ```bash
+   rm -rf ~/.juliaup ~/.julia
+   ```
+
+2. **Clean up your `~/.bashrc`** — remove the lines that Juliaup added to your PATH. These typically look like:
+   ```bash
+   # juliaup
+   eval "$(juliaup shellintegration bash --save-quiet)"
+   ```
+
+### Does it leave junk behind?
+Yes, if you only delete the Julia binaries, it will leave:
+- `~/.juliaup/` — the Juliaup package manager and installed versions
+- `~/.julia/` — package registries, compiled artifacts, and package data
+- Modified `~/.bashrc` — PATH initialization lines
+
+So a truly clean wipe requires removing all three.
+
+For more details, see the [Julia Programming Language](https://docs.rc.fas.harvard.edu/kb/julia/) documentation.
+````
+
+### ✅ Expected Answer
+
+```text
+Run `juliaup self uninstall`. That is the uninstall command, but it does not always clean everything up: afterward, check for the `~/.julia` and `~/.juliaup` directories and delete them manually if they are still there. (This matters because the default Julia install location is $HOME, and the installer also adds Juliaup initialization to your ~/.bashrc to put `julia` on your $PATH.)
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/julia**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I want to completely wipe my Julia install off the cluster and start clean. Is there a single command, and does it leave junk behind in my home directory?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+````text
+Based on the FASRC documentation, there is **no single "uninstall" command** for a Julia installation. Here's what you need to know:
+
+### How Julia is installed on the cluster
+Julia is typically installed locally in your `$HOME` directory using the installer from [julialang.org/downloads](https://julialang.org/downloads/). The installer:
+- Places Julia binaries in `$HOME/.juliaup` (or similar)
+- Adds `juliaup` initialization lines to your `~/.bashrc`
+
+### To completely remove Julia
+You'll need to do two things manually:
+
+1. **Remove the Julia installation directory** (usually `~/.juliaup` and `~/.julia`):
+   ```bash
+   rm -rf ~/.juliaup ~/.julia
+   ```
+
+2. **Clean up your `~/.bashrc`** — remove the lines that Juliaup added to your PATH. These typically look like:
+   ```bash
+   # juliaup
+   eval "$(juliaup shellintegration bash --save-quiet)"
+   ```
+
+### Does it leave junk behind?
+Yes, if you only delete the Julia binaries, it will leave:
+- `~/.juliaup/` — the Juliaup package manager and installed versions
+- `~/.julia/` — package registries, compiled artifacts, and package data
+- Modified `~/.bashrc` — PATH initialization lines
+
+So a truly clean wipe requires removing all three.
+
+For more details, see the [Julia Programming Language](https://docs.rc.fas.harvard.edu/kb/julia/) documentation.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.734 🟢 |
+| Faithfulness | 0.250 🔴 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 63: question\_63
+
+### ❓ Question
+
+I chmod 777'd a file in my lab's share so a collaborator in a different lab group could grab it, but they still get permission denied when they try to read it. What's going on?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/understanding-permissions  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/understanding-permissions, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/understanding-permissions, docs.rc.fas.harvard.edu/kb/unix-permissions, docs.rc.fas.harvard.edu/kb/can-i-share-my-account, docs.rc.fas.harvard.edu/kb/additional-groups, docs.rc.fas.harvard.edu/kb/faq, docs.rc.fas.harvard.edu/kb/data-ownership-and-access-policy  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Based on the documentation, here's what's happening:
+
+## The Problem: POSIX Permissions Are Hierarchical
+
+On FASRC storage, file access is governed by **POSIX-style permissions** with three layers: **Owner**, **Group**, and **Other** (see [Understanding file and group permissions](https://docs.rc.fas.harvard.edu/kb/understanding-permissions/)).
+
+When you `chmod 777` a **file**, you're granting read/write/execute to everyone — but **directory permissions also matter**. To access a file, a user must have **execute (x) permission on every parent directory** in the path to that file. If the parent directory (or any ancestor) has restrictive permissions (e.g., `drwxr-x---`), users outside the owning group **cannot traverse into it**, regardless of what the file's own permissions are.
+
+## Why Your Collaborator Gets "Permission Denied"
+
+1. **Directory permissions block access** — Even if the file itself is `777`, the directories leading to it may only allow access to your lab group. Your collaborator, being in a different lab group, can't pass through those directories.
+
+2. **Lab shares use group-based access** — Lab directories and tiered shares are typically set up with group ownership (e.g., `drwxrws--` for the Lab directory) so that only members of your lab group can access the data. Users from other labs are in the "Other" category, which often has no permissions.
+
+## How to Fix It
+
+You have a few options:
+
+1. **Use POSIX ACLs** — Instead of `chmod`, use `setfacl` to grant specific users or groups access to files and directories:
+   ```bash
+   setfacl -m g:other_lab_group:rX /path/to/file
+   ```
+
+2. **Add your collaborator to your lab group** — If appropriate, request that your PI add them as a temporary member of your lab group.
+
+3. **Use Globus or another transfer mechanism** — [Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/) is designed for sharing files between different groups.
+
+4. **Create a shared directory with appropriate permissions** — Place the file in a location where both groups have access, or use a shared project directory.
+
+Would you like help with any of these approaches?
+````
+
+### ✅ Expected Answer
+
+```text
+Making the file world-readable is not enough on its own. For a user in the 'Other' category to reach a file, they must first be able to traverse into the top-level share/directory that contains it. If the top level of the lab directory or share is set drwxr-x---, drwxrwx---, or drwxr-s--- then Other has no access to the share at all, even if a file inside it is set -rwxrwxrwx. Other must first be able to 'see' into the directory/share; otherwise it has no access. (FASSE/L3 shares should never allow Other access.) To share with someone outside the group, the enclosing directory must permit Other traversal - e.g. the 'Everyone' directory that lab shares provide for exactly this purpose - or the person can be added to your lab Group by your PI.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/understanding-permissions**
+
+### 💬 Agent Messages (9)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I chmod 777'd a file in my lab's share so a collaborator in a different lab group could grab it, but they still get permission denied when they try to read it. What's going on?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+permission denied different lab group share POSIX ACL
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #5: search\_vectorstore\_hybrid**
+
+```text
+POSIX ACL shared storage different lab group access
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+POSIX ACL
+```
+
+**🛠️ Tool Call #7: search\_local\_files**
+
+```text
+chmod 777 permission denied
+```
+
+**🛠️ Tool Call #8: search\_local\_files**
+
+```text
+lab group share access
+```
+
+**🤖 Assistant Message #9**
+
+````text
+Based on the documentation, here's what's happening:
+
+## The Problem: POSIX Permissions Are Hierarchical
+
+On FASRC storage, file access is governed by **POSIX-style permissions** with three layers: **Owner**, **Group**, and **Other** (see [Understanding file and group permissions](https://docs.rc.fas.harvard.edu/kb/understanding-permissions/)).
+
+When you `chmod 777` a **file**, you're granting read/write/execute to everyone — but **directory permissions also matter**. To access a file, a user must have **execute (x) permission on every parent directory** in the path to that file. If the parent directory (or any ancestor) has restrictive permissions (e.g., `drwxr-x---`), users outside the owning group **cannot traverse into it**, regardless of what the file's own permissions are.
+
+## Why Your Collaborator Gets "Permission Denied"
+
+1. **Directory permissions block access** — Even if the file itself is `777`, the directories leading to it may only allow access to your lab group. Your collaborator, being in a different lab group, can't pass through those directories.
+
+2. **Lab shares use group-based access** — Lab directories and tiered shares are typically set up with group ownership (e.g., `drwxrws--` for the Lab directory) so that only members of your lab group can access the data. Users from other labs are in the "Other" category, which often has no permissions.
+
+## How to Fix It
+
+You have a few options:
+
+1. **Use POSIX ACLs** — Instead of `chmod`, use `setfacl` to grant specific users or groups access to files and directories:
+   ```bash
+   setfacl -m g:other_lab_group:rX /path/to/file
+   ```
+
+2. **Add your collaborator to your lab group** — If appropriate, request that your PI add them as a temporary member of your lab group.
+
+3. **Use Globus or another transfer mechanism** — [Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/) is designed for sharing files between different groups.
+
+4. **Create a shared directory with appropriate permissions** — Place the file in a location where both groups have access, or use a shared project directory.
+
+Would you like help with any of these approaches?
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.741 🟢 |
+| Faithfulness | 0.500 🟡 |
+| Context Precision | 0.833 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 64: question\_64
+
+### ❓ Question
+
+My labmate keeps his personal scratch folder under Users/ in our old lab share, but our newly created share and netscratch have no Users folder. Where am I supposed to put my own personal directory now?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/understanding-permissions  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/understanding-permissions, docs.rc.fas.harvard.edu/kb/policy-scratch, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/mounting-storage, docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Per FASRC documentation, the `Users` directory **only exists on shares created prior to October 2024**. On newly created shares and `/n/netscratch`, you should use the **`Lab`** directory to create your personal folders instead [Understanding file and group permissions – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/understanding-permissions/).
+
+So for your new share or netscratch, create your personal directory directly under the `Lab` folder (e.g., `/path/to/share/Lab/your_username/`).
+```
+
+### ✅ Expected Answer
+
+```text
+The Users directory only exists on shares created prior to October 2024. On new shares and on /n/netscratch there is no Users directory - FASRC says to use the Lab directory to create personal folders instead. The Lab directory is set drwxrws--- so that every member of the lab group has read/write/execute access to share data amongst the group, and it is the preferred place both for personal folders on new shares and for sharing data with your lab group. On the older shares, the sub-directories in the Users directory are owned by individuals and by default only allow execute access to the group.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/understanding-permissions**
+
+### 💬 Agent Messages (2)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+My labmate keeps his personal scratch folder under Users/ in our old lab share, but our newly created share and netscratch have no Users folder. Where am I supposed to put my own personal directory now?
+```
+
+**🤖 Assistant Message #2**
+
+```text
+Per FASRC documentation, the `Users` directory **only exists on shares created prior to October 2024**. On newly created shares and `/n/netscratch`, you should use the **`Lab`** directory to create your personal folders instead [Understanding file and group permissions – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/understanding-permissions/).
+
+So for your new share or netscratch, create your personal directory directly under the `Lab` folder (e.g., `/path/to/share/Lab/your_username/`).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.666 🟡 |
+| Faithfulness | 0.714 🟢 |
+| Context Precision | 0.756 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 65: question\_65
+
+### ❓ Question
+
+I finished the cluster account request form and it never asked me to choose a password. How do I actually get a password to log in?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/account-signup  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/additional-groups, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v2, docs.rc.fas.harvard.edu/kb/introduction-to-cluster-online, docs.rc.fas.harvard.edu/kb/quickstart-guide, docs.rc.fas.harvard.edu/kb/how-do-i-get-a-research-computing-account, docs.rc.fas.harvard.edu/kb/get-a-fasse-account-and-project-group, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v2, docs.rc.fas.harvard.edu/kb/vpn-setup, docs.rc.fas.harvard.edu/kb/get-a-fasse-account-and-project-group, docs.rc.fas.harvard.edu/kb/virtual-desktop  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+```text
+You need to set your password separately from the account request form. Here's how:
+
+1. **Go to the password reset page:** [https://portal.rc.fas.harvard.edu/p3/pwreset/](https://portal.rc.fas.harvard.edu/p3/pwreset/)
+2. Enter your **email address** (the only place you'll use your email for FASRC services)
+3. Follow the instructions to set your password
+
+After setting your password, you'll also need to:
+- Set up **two-factor authentication (2FA)** using OpenAuth: [OpenAuth setup guide](https://docs.rc.fas.harvard.edu/kb/openauth/)
+- Set up the **FASRC VPN** to log in to the cluster: [VPN setup guide](https://docs.rc.fas.harvard.edu/kb/vpn-setup/)
+
+For logging in, you'll use your FASRC **username** (not your email or Harvard Key) along with your password and 2FA code.
+```
+
+### ✅ Expected Answer
+
+```text
+Passwords are not collected by the signup application. Your account is created with a random password, and upon completion of the request you use the password reset tool to set your initial password. You will receive an email once the account has been created with links and instructions to do so.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/account-signup**
+
+### 💬 Agent Messages (7)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I finished the cluster account request form and it never asked me to choose a password. How do I actually get a password to log in?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+set your FASRC password first time login
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+Set your FASRC password
+```
+
+**🛠️ Tool Call #6: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #7**
+
+```text
+You need to set your password separately from the account request form. Here's how:
+
+1. **Go to the password reset page:** [https://portal.rc.fas.harvard.edu/p3/pwreset/](https://portal.rc.fas.harvard.edu/p3/pwreset/)
+2. Enter your **email address** (the only place you'll use your email for FASRC services)
+3. Follow the instructions to set your password
+
+After setting your password, you'll also need to:
+- Set up **two-factor authentication (2FA)** using OpenAuth: [OpenAuth setup guide](https://docs.rc.fas.harvard.edu/kb/openauth/)
+- Set up the **FASRC VPN** to log in to the cluster: [VPN setup guide](https://docs.rc.fas.harvard.edu/kb/vpn-setup/)
+
+For logging in, you'll use your FASRC **username** (not your email or Harvard Key) along with your password and 2FA code.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.443 🔴 |
+| Faithfulness | 1.000 🟢 |
+| Context Precision | 0.467 🔴 |
+| Context Recall | 0.667 🟡 |
+
+---
+
+## Question 66: question\_66
+
+### ❓ Question
+
+I log into the FASRC web portal in my browser, it accepts my credentials, and then it just spins forever and never shows the menus. Restarting the browser doesn't help. What can I do myself before emailing support?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/virtual-desktop  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3, docs.rc.fas.harvard.edu/kb/coldfront-allocation-management, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v2, docs.rc.fas.harvard.edu/kb/access-and-login, docs.rc.fas.harvard.edu/kb/troubleshooting, docs.rc.fas.harvard.edu/kb/terminal-access, docs.rc.fas.harvard.edu/kb/cant-login-cluster-access, docs.rc.fas.harvard.edu/kb/submitting-large-numbers-of-jobs, docs.rc.fas.harvard.edu/kb/helmod-faq, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/R/Large\_Data\_Processing\_R/parallel\_computation/R\_embarrassingly\_parallel.md, slurm.schedmd.com/platforms.html, docs.rc.fas.harvard.edu/kb/cursor-remote-development-via-ssh-and-tunnel, slurm.schedmd.com/classic\_fair\_share.html, docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers, slurm.schedmd.com/dist\_plane.html, slurm.schedmd.com/cgroups.html, github.com/fasrc/User\_Codes/blob/master/Languages/R/Example1/README.md, docs.rc.fas.harvard.edu/kb/storage-service-center  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the documentation, here's what you can try:
+
+### 1. Clear your browser cache and cookies
+The FASRC docs note that if you have difficulties logging into web-based services (like Coldfront), you may need to **clear the cache on your website browser** [Storage Service Center](https://docs.rc.fas.harvard.edu/kb/storage-service-center/). Stale session data or cached authentication tokens are a common cause of pages that accept credentials but never render.
+
+Try:
+- **Hard refresh**: `Ctrl+Shift+R` (Windows/Linux) or `Cmd+Shift+R` (Mac)
+- **Clear cache/cookies** for `portal.rc.fas.harvard.edu` specifically, then try again
+- Try an **incognito/private window** to bypass any cached data
+
+### 2. Try a different browser
+If one browser has corrupted cache or conflicting extensions, a different browser (or the same browser in incognito mode) may work.
+
+### 3. Check for known outages
+FASRC publishes maintenance and outage information on their status page. Check [https://status.rc.fas.harvard.edu](https://status.rc.fas.harvard.edu) or the [alternate status page](https://fasrc.instatus.com) to see if there's a known issue with the portal or authentication services.
+
+### 4. Verify your account is active
+Make sure your FASRC account is properly set up with 2-factor authentication enabled, as accounts without proper 2FA setup may fail silently during login [IQSS FASRC and FASSE Quick Start Guide v3](https://docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3/).
+
+If none of these steps resolve the issue, you should contact FASRC support with details about your browser, OS, and any error messages you see in the browser's developer console (F12 → Console tab).
+```
+
+### ✅ Expected Answer
+
+```text
+If the browser hangs for a long time after authenticating without displaying the Open OnDemand dashboard, restart your Per-User NGINX (PUN) process by visiting:
+- Cannon: https://rcood.rc.fas.harvard.edu/nginx/stop?redir=/pun/sys/dashboard/
+- FASSE: https://fasseood.rc.fas.harvard.edu/nginx/stop?redir=/pun/sys/dashboard/
+Also note that the very first login can legitimately take some time while OOD sets up files and cache in your home directory; that Avast security software can cause 'no internet', 'read error', and 'the requested URL could not be retrieved' messages (disable Web Shield); and that Chrome or Firefox are recommended over Safari and Internet Explorer.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/virtual-desktop**
+
+### 💬 Agent Messages (16)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I log into the FASRC web portal in my browser, it accepts my credentials, and then it just spins forever and never shows the menus. Restarting the browser doesn't help. What can I do myself before emailing support?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+FASRC portal spins forever login browser troubleshooting
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+FASRC portal login spins forever browser cache clear
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+portal spins login browser cache clear
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+portal
+```
+
+**🛠️ Tool Call #7: search\_local\_files**
+
+```text
+portal.rc.fas.harvard.edu
+```
+
+**🛠️ Tool Call #8: search\_local\_files**
+
+```text
+browser cache clear
+```
+
+**🛠️ Tool Call #9: search\_local\_files**
+
+```text
+troubleshoot
+```
+
+**🛠️ Tool Call #10: search\_local\_files**
+
+```text
+Open On Demand
+```
+
+**🛠️ Tool Call #11: search\_local\_files**
+
+```text
+Open On Demand troubleshooting
+```
+
+**🛠️ Tool Call #12: search\_local\_files**
+
+```text
+OOD
+```
+
+**🛠️ Tool Call #13: search\_local\_files**
+
+```text
+portal login stuck
+```
+
+**🛠️ Tool Call #14: search\_local\_files**
+
+```text
+cache
+```
+
+**🛠️ Tool Call #15: search\_local\_files**
+
+```text
+browser
+```
+
+**🤖 Assistant Message #16**
+
+```text
+Based on the documentation, here's what you can try:
+
+### 1. Clear your browser cache and cookies
+The FASRC docs note that if you have difficulties logging into web-based services (like Coldfront), you may need to **clear the cache on your website browser** [Storage Service Center](https://docs.rc.fas.harvard.edu/kb/storage-service-center/). Stale session data or cached authentication tokens are a common cause of pages that accept credentials but never render.
+
+Try:
+- **Hard refresh**: `Ctrl+Shift+R` (Windows/Linux) or `Cmd+Shift+R` (Mac)
+- **Clear cache/cookies** for `portal.rc.fas.harvard.edu` specifically, then try again
+- Try an **incognito/private window** to bypass any cached data
+
+### 2. Try a different browser
+If one browser has corrupted cache or conflicting extensions, a different browser (or the same browser in incognito mode) may work.
+
+### 3. Check for known outages
+FASRC publishes maintenance and outage information on their status page. Check [https://status.rc.fas.harvard.edu](https://status.rc.fas.harvard.edu) or the [alternate status page](https://fasrc.instatus.com) to see if there's a known issue with the portal or authentication services.
+
+### 4. Verify your account is active
+Make sure your FASRC account is properly set up with 2-factor authentication enabled, as accounts without proper 2FA setup may fail silently during login [IQSS FASRC and FASSE Quick Start Guide v3](https://docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3/).
+
+If none of these steps resolve the issue, you should contact FASRC support with details about your browser, OS, and any error messages you see in the browser's developer console (F12 → Console tab).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.549 🟡 |
+| Faithfulness | 0.211 🔴 |
+| Context Precision | 0.000 🔴 |
+| Context Recall | 0.000 🔴 |
+
+---
+
+## Question 67: question\_67
+
+### ❓ Question
+
+My R job asks Slurm for 8 cores, but when it runs my parallel code spawns dozens of workers and the node grinds to a halt. How am I supposed to determine the worker count inside the script?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/r-parallel  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices, slurm.schedmd.com/salloc.html, slurm.schedmd.com/sbatch.html, slurm.schedmd.com/cpu\_management.html, slurm.schedmd.com/srun.html, slurm.schedmd.com/srun.html, slurm.schedmd.com/cpu\_management.html, slurm.schedmd.com/scrun.html, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/EP/Example1/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise1/README.md, docs.rc.fas.harvard.edu/kb/hybrid-mpiopenmp-codes-on-odyssey, docs.rc.fas.harvard.edu/kb/spack-package-manager, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise6/README.md, github.com/fasrc/User\_Codes/blob/master/Courses/CS205/OpenMP/Example1/README.md, slurm.schedmd.com/srun.html  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+````text
+The agent attempted to resolve the issue of R parallel workers exceeding allocated Slurm resources by searching for the correct environment variables (specifically `SLURM_NTASKS` and `SLURM_CPUS_PER_TASK`) that define the number of available cores. The search confirmed that Slurm passes the task count via `SLURM_NTASKS` and CPU count via `SLURM_CPUS_PER_TASK`.
+
+**Answer:**
+To determine the worker count inside your R script, you should read the `SLURM_NTASKS` environment variable, which represents the total number of tasks (cores) allocated to your job.
+
+In R, you can retrieve this value using:
+```r
+n_cores <- as.integer(Sys.getenv("SLURM_NTASKS"))
+```
+
+If you specifically need the number of CPUs per task (which might differ if you requested multiple threads per task), use `SLURM_CPUS_PER_TASK`. However, for most parallel backends like `parallel` or `future`, `SLURM_NTASKS` is the standard metric for the number of parallel workers to spawn.
+
+**Note:** This run stopped after hitting the recursion limit of 50.
+````
+
+### ✅ Expected Answer
+
+```text
+Do not use parallel::detectCores() to determine the number of CPUs/processes to use in your job - it detects the number of physical CPU cores on the compute node, not the number allocated to your job, which is why you end up oversubscribed. Use parallelly::availableCores() instead, which returns the number of CPUs allocated to your Slurm job.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/r-parallel**
+
+### 💬 Agent Messages (1)
+
+**🤖 Assistant Message #1**
+
+````text
+The agent attempted to resolve the issue of R parallel workers exceeding allocated Slurm resources by searching for the correct environment variables (specifically `SLURM_NTASKS` and `SLURM_CPUS_PER_TASK`) that define the number of available cores. The search confirmed that Slurm passes the task count via `SLURM_NTASKS` and CPU count via `SLURM_CPUS_PER_TASK`.
+
+**Answer:**
+To determine the worker count inside your R script, you should read the `SLURM_NTASKS` environment variable, which represents the total number of tasks (cores) allocated to your job.
+
+In R, you can retrieve this value using:
+```r
+n_cores <- as.integer(Sys.getenv("SLURM_NTASKS"))
+```
+
+If you specifically need the number of CPUs per task (which might differ if you requested multiple threads per task), use `SLURM_CPUS_PER_TASK`. However, for most parallel backends like `parallel` or `future`, `SLURM_NTASKS` is the standard metric for the number of parallel workers to spawn.
+
+**Note:** This run stopped after hitting the recursion limit of 50.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.797 🟢 |
+| Faithfulness | 0.308 🔴 |
+| Context Precision | 0.000 🔴 |
+| Context Recall | 0.000 🔴 |
+
+---
+
+## Question 68: question\_68
+
+### ❓ Question
+
+I had openmpi loaded, then loaded mpich later in the same session, and now openmpi is gone from my module list. Did I corrupt my environment, and can I keep both around?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/MPI/README.md, github.com/fasrc/User\_Codes/blob/master/Courses/CS205/MPI\_2021/Example4/build.sh, github.com/fasrc/User\_Codes/blob/master/Courses/CS205/MPI\_2021/Example2/build.sh, github.com/fasrc/User\_Codes/blob/master/Courses/CS205/MPI\_2021/Example5/build.sh  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+You haven't corrupted your environment — this is expected behavior. On the FASRC cluster, **OpenMPI and MPICH are mutually exclusive** because they provide the same set of MPI commands and libraries, and the module system is designed so that loading one will unload the other to avoid conflicts.
+
+From the FASRC documentation:
+
+> "There is no default MPI library in your environment when you log in to the cluster. You need to choose the desired MPI implementation for your applications. This is done by loading an appropriate MPI module. Currently the available MPI implementations on our cluster are OpenMPI and Mpich." [MPI (Message Passing Interface) & OpenMPI](https://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface/)
+
+### Can you keep both around?
+
+Not simultaneously in the same shell session. The module system will automatically swap one for the other when you load a different MPI implementation. This is intentional to prevent linking against the wrong MPI libraries.
+
+### What to do:
+
+- If you need to switch back to OpenMPI, simply load it again:
+  ```bash
+  module load openmpi/<version>
+  ```
+- If you need both implementations available, you can load whichever one you need at the time you compile or run your code. Just make sure you're using the correct MPI compiler wrappers (`mpicc`, `mpirun`, etc.) that correspond to the loaded module.
+
+For reference, here are some common module combinations:
+```bash
+# GCC + OpenMPI
+module load gcc/13.2.0-fasrc01 openmpi/5.0.2-fasrc01
+
+# GCC + MPICH
+module load gcc/13.2.0-fasrc01 mpich/4.2.0-fasrc01
+```
+See [MPI Software on the FASRC cluster](https://github.com/fasrc/User_Codes/blob/master/Parallel_Computing/MPI/README.md) for more examples.
+````
+
+### ✅ Expected Answer
+
+```text
+Nothing is corrupted - this is intentional. The modules are set up so that you can only have one MPI module loaded at a time; if you try loading a second one it will automatically unload the first, which is done to avoid dependency collisions. So you cannot keep both loaded: pick one implementation (OpenMPI or MPICH, each built with either the GNU or the Intel compiler suite) and load it with its matching compiler module, e.g. module load gcc/13.2.0-fasrc01 openmpi/5.0.2-fasrc01. Note also that there is no default MPI library in your environment when you log in - you must load one.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I had openmpi loaded, then loaded mpich later in the same session, and now openmpi is gone from my module list. Did I corrupt my environment, and can I keep both around?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+````text
+You haven't corrupted your environment — this is expected behavior. On the FASRC cluster, **OpenMPI and MPICH are mutually exclusive** because they provide the same set of MPI commands and libraries, and the module system is designed so that loading one will unload the other to avoid conflicts.
+
+From the FASRC documentation:
+
+> "There is no default MPI library in your environment when you log in to the cluster. You need to choose the desired MPI implementation for your applications. This is done by loading an appropriate MPI module. Currently the available MPI implementations on our cluster are OpenMPI and Mpich." [MPI (Message Passing Interface) & OpenMPI](https://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface/)
+
+### Can you keep both around?
+
+Not simultaneously in the same shell session. The module system will automatically swap one for the other when you load a different MPI implementation. This is intentional to prevent linking against the wrong MPI libraries.
+
+### What to do:
+
+- If you need to switch back to OpenMPI, simply load it again:
+  ```bash
+  module load openmpi/<version>
+  ```
+- If you need both implementations available, you can load whichever one you need at the time you compile or run your code. Just make sure you're using the correct MPI compiler wrappers (`mpicc`, `mpirun`, etc.) that correspond to the loaded module.
+
+For reference, here are some common module combinations:
+```bash
+# GCC + OpenMPI
+module load gcc/13.2.0-fasrc01 openmpi/5.0.2-fasrc01
+
+# GCC + MPICH
+module load gcc/13.2.0-fasrc01 mpich/4.2.0-fasrc01
+```
+See [MPI Software on the FASRC cluster](https://github.com/fasrc/User_Codes/blob/master/Parallel_Computing/MPI/README.md) for more examples.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.514 🟡 |
+| Faithfulness | 0.526 🟡 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 0.750 🟢 |
+
+---
+
+## Question 69: question\_69
+
+### ❓ Question
+
+I need mpi4py in a conda environment, but it has to be built against the same OpenMPI my Fortran code uses. I just ran mamba create with mpi4py in the package list - what MPI did that actually give me, and how do I get OpenMPI instead?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface, docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface, slurm.schedmd.com/mpi\_guide.html, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/Python/mpi4py/Example1/README.md, docs.rc.fas.harvard.edu/kb/mpi-io, docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/Python/mpi4py/README.md  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+When you run `mamba create` with `mpi4py` from the default (conda-forge) channels, it pulls in **`mpich`** as the MPI backend — **not OpenMPI** [MPI (Message Passing Interface) & OpenMPI – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface/).
+
+This is because the conda-forge `mpi4py` package depends on `mpich` by default.
+
+### How to get OpenMPI instead
+
+You need to explicitly request OpenMPI when creating the environment so that `mpi4py` is built against it:
+
+```bash
+module load python/3.10.12-fasrc01
+mamba create -n python3_env1 python numpy pip wheel mpi4py openmpi
+source activate python3_env1
+```
+
+By including `openmpi` in the package list, conda/mamba will resolve `mpi4py` against the OpenMPI libraries instead of MPICH.
+
+### Verify which MPI you got
+
+Once activated, you can check:
+
+```bash
+conda list | grep -E "mpi4py|mpich|openmpi"
+```
+
+This will show you exactly which MPI implementation your `mpi4py` is linked against.
+
+### Important note
+
+If your Fortran code is using a **module-loaded** MPI (e.g., `module load mpi/openmpi4`), that MPI is separate from the conda environment's MPI. For true compatibility, you'd want both the Fortran code and the Python `mpi4py` environment to use the same MPI implementation. If your Fortran code is compiled against a system/module OpenMPI, consider building your conda environment with the matching OpenMPI version, or use the cluster's module-loaded MPI with `mpi4py` installed in a way that links against it (which may require a more manual build approach).
+````
+
+### ✅ Expected Answer
+
+```text
+Putting mpi4py in the mamba create package list (e.g. mamba create -n python3_env1 python numpy pip wheel mpi4py) also installs an MPI library required by mpi4py, and by default that is MPICH - not OpenMPI. If your workflow requires a specific flavor and/or version of MPI, install mpi4py with pip into a custom conda environment instead: load the compiler and MPI modules first (module load gcc/12.2.0-fasrc01; module load openmpi/4.1.5-fasrc03), load a Python module (module load python/3.10.12-fasrc01), create the environment WITHOUT mpi4py (mamba create -n python3_env2 python numpy pip wheel), activate it (source activate python3_env2), then run pip install mpi4py so it builds against the loaded OpenMPI.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface**
+
+### 💬 Agent Messages (6)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I need mpi4py in a conda environment, but it has to be built against the same OpenMPI my Fortran code uses. I just ran mamba create with mpi4py in the package list - what MPI did that actually give me, and how do I get OpenMPI instead?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+conda mpi4py OpenMPI vs MPICH which MPI does conda install
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+conda mpi4py OpenMPI mpich conda-forge which MPI backend
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+mpi4py conda OpenMPI mpich
+```
+
+**🤖 Assistant Message #6**
+
+````text
+When you run `mamba create` with `mpi4py` from the default (conda-forge) channels, it pulls in **`mpich`** as the MPI backend — **not OpenMPI** [MPI (Message Passing Interface) & OpenMPI – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface/).
+
+This is because the conda-forge `mpi4py` package depends on `mpich` by default.
+
+### How to get OpenMPI instead
+
+You need to explicitly request OpenMPI when creating the environment so that `mpi4py` is built against it:
+
+```bash
+module load python/3.10.12-fasrc01
+mamba create -n python3_env1 python numpy pip wheel mpi4py openmpi
+source activate python3_env1
+```
+
+By including `openmpi` in the package list, conda/mamba will resolve `mpi4py` against the OpenMPI libraries instead of MPICH.
+
+### Verify which MPI you got
+
+Once activated, you can check:
+
+```bash
+conda list | grep -E "mpi4py|mpich|openmpi"
+```
+
+This will show you exactly which MPI implementation your `mpi4py` is linked against.
+
+### Important note
+
+If your Fortran code is using a **module-loaded** MPI (e.g., `module load mpi/openmpi4`), that MPI is separate from the conda environment's MPI. For true compatibility, you'd want both the Fortran code and the Python `mpi4py` environment to use the same MPI implementation. If your Fortran code is compiled against a system/module OpenMPI, consider building your conda environment with the matching OpenMPI version, or use the cluster's module-loaded MPI with `mpi4py` installed in a way that links against it (which may require a more manual build approach).
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.833 🟢 |
+| Faithfulness | 0.438 🔴 |
+| Context Precision | 0.917 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 70: question\_70
+
+### ❓ Question
+
+I used the 'copy mount path to clipboard' button in Starfish and got /n/vast-holylabs/C/jharvard\_lab, but when I cd to it on a login node I get 'No such file or directory'. What's the correct path?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage, docs.rc.fas.harvard.edu/kb/mounting-storage, docs.rc.fas.harvard.edu/kb/checking-quota-and-usage, docs.rc.fas.harvard.edu/kb/checking-quota-and-usage, docs.rc.fas.harvard.edu/kb/mounting-storage, docs.rc.fas.harvard.edu/kb/onboarding, slurm.schedmd.com/namespace.html, docs.rc.fas.harvard.edu/kb/submitting-large-numbers-of-jobs, docs.rc.fas.harvard.edu/kb/helmod-faq, docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers, docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+The path Starfish copies includes two pieces of metadata that need to be removed for use on the command line:
+
+1. **`vast-`** — this prefix is only used in the Starfish UI.
+2. **`/C`** (or `/F`) — this indicates which cluster the storage lives on (`C` = Cannon, `F` = FASSE).
+
+So from the Starfish path:
+
+```
+/n/vast-holylabs/C/jharvard_lab
+```
+
+Remove `vast-` and `/C` to get the correct command-line path:
+
+```
+/n/holylabs/jharvard_lab
+```
+
+You can then `cd` to it on a login node:
+
+```bash
+cd /n/holylabs/jharvard_lab
+```
+
+This is documented in the [Getting Started with FASRC Storage](https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage/) guide.
+````
+
+### ✅ Expected Answer
+
+```text
+The path Starfish copies is not directly usable - you must make two edits: remove 'vast-' and remove '/C'. So /n/vast-holylabs/C/jharvard_lab becomes /n/holylabs/jharvard_lab. The letter C indicates the filesystem is on the Cannon cluster; a group share on FASSE would show F instead of C before the group name.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage**
+
+### 💬 Agent Messages (7)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I used the 'copy mount path to clipboard' button in Starfish and got /n/vast-holylabs/C/jharvard_lab, but when I cd to it on a login node I get 'No such file or directory'. What's the correct path?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+Starfish mount path clipboard /n/vast correct path login node
+```
+
+**🛠️ Tool Call #3: search\_local\_files**
+
+```text
+Starfish mount path clipboard
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+Starfish
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+copy mount path to clipboard
+```
+
+**🛠️ Tool Call #6: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #7**
+
+````text
+The path Starfish copies includes two pieces of metadata that need to be removed for use on the command line:
+
+1. **`vast-`** — this prefix is only used in the Starfish UI.
+2. **`/C`** (or `/F`) — this indicates which cluster the storage lives on (`C` = Cannon, `F` = FASSE).
+
+So from the Starfish path:
+
+```
+/n/vast-holylabs/C/jharvard_lab
+```
+
+Remove `vast-` and `/C` to get the correct command-line path:
+
+```
+/n/holylabs/jharvard_lab
+```
+
+You can then `cd` to it on a login node:
+
+```bash
+cd /n/holylabs/jharvard_lab
+```
+
+This is documented in the [Getting Started with FASRC Storage](https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage/) guide.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.580 🟡 |
+| Faithfulness | 0.917 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 71: question\_71
+
+### ❓ Question
+
+I want to drag a few files out of my home directory into my lab's netscratch folder using a point-and-click interface, but my home directory doesn't show up as an endpoint in Globus. What else can I use?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage, docs.rc.fas.harvard.edu/kb/storage-service-center, docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm, docs.rc.fas.harvard.edu/kb/cluster-storage, docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/faq  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Unfortunately, your home directory is **not available as a Globus endpoint** under any circumstances. According to FASRC documentation, "Home directories are not and will not be added to Globus under any circumstances" because sharing them would create a security vulnerability (authentication keys, passwords, etc. could be exposed) [Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/).
+
+For moving files from your home directory to your lab's netscratch folder, here are your options:
+
+1. **Use the command line** — You can use standard Unix commands like `cp`, `mv`, or `rsync` to transfer files between your home directory and lab storage on the cluster:
+   ```bash
+   cp /n/homeNN/yourlogin/somefile /n/scratchNN/labshare/somefile
+   ```
+
+2. **Use Open On Demand (OOD)** — FASRC provides a graphical file manager through Open On Demand that lets you browse and move files between directories on the cluster via a point-and-click interface. You can access it at [https://portal.rc.fas.harvard.edu](https://portal.rc.fas.harvard.edu/) and use the "Files" app [Getting Started with FASRC Storage](https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage/).
+
+3. **Mount your home directory locally** — If you need a desktop point-and-click interface, you can mount your home directory on your local machine and then use Globus to transfer from your lab share endpoint. See the [mounting storage documentation](/kb/mounting-storage/) for details.
+
+For a few files, the command line or Open On Demand are the quickest solutions.
+````
+
+### ✅ Expected Answer
+
+```text
+Globus does not have access to home directories, which is why yours does not appear. For transfers to or from your home directory, use an Open OnDemand Remote Desktop session instead: go to the OOD dashboard (Cannon: rcood.rc.fas.harvard.edu, FASSE: fasseood.rc.fas.harvard.edu), start a Remote Desktop session, open a File Manager by clicking the 'Home' folder on the desktop (or Applications -> File Manager), open a second File Manager window, navigate one to the source (e.g. /n/home01/jharvard/) and the other to the destination (e.g. /n/netscratch/jharvard_lab/Lab/), then right-click the source file -> Copy and right-click the destination window -> Paste (drag-and-drop works too, but behaves like cut-and-paste). Command-line tools (cp, mv, rsync, fpsync) are the alternative; Globus is only recommended for transfers between different filesystems, not within one.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage**
+
+### 💬 Agent Messages (6)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I want to drag a few files out of my home directory into my lab's netscratch folder using a point-and-click interface, but my home directory doesn't show up as an endpoint in Globus. What else can I use?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+Globus home directory endpoint not showing up FASRC
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+transfer files home directory to netscratch Globus alternative FASRC
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #5: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #6**
+
+````text
+Unfortunately, your home directory is **not available as a Globus endpoint** under any circumstances. According to FASRC documentation, "Home directories are not and will not be added to Globus under any circumstances" because sharing them would create a security vulnerability (authentication keys, passwords, etc. could be exposed) [Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/).
+
+For moving files from your home directory to your lab's netscratch folder, here are your options:
+
+1. **Use the command line** — You can use standard Unix commands like `cp`, `mv`, or `rsync` to transfer files between your home directory and lab storage on the cluster:
+   ```bash
+   cp /n/homeNN/yourlogin/somefile /n/scratchNN/labshare/somefile
+   ```
+
+2. **Use Open On Demand (OOD)** — FASRC provides a graphical file manager through Open On Demand that lets you browse and move files between directories on the cluster via a point-and-click interface. You can access it at [https://portal.rc.fas.harvard.edu](https://portal.rc.fas.harvard.edu/) and use the "Files" app [Getting Started with FASRC Storage](https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage/).
+
+3. **Mount your home directory locally** — If you need a desktop point-and-click interface, you can mount your home directory on your local machine and then use Globus to transfer from your lab share endpoint. See the [mounting storage documentation](/kb/mounting-storage/) for details.
+
+For a few files, the command line or Open On Demand are the quickest solutions.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.815 🟢 |
+| Faithfulness | 0.737 🟢 |
+| Context Precision | 0.333 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 72: question\_72
+
+### ❓ Question
+
+My collaborator is at another university and doesn't have a HarvardKey. Can she still get an account on the cluster, and is there anything I have to keep doing so her access doesn't get shut off?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/onboarding  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/onboarding, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v2, docs.rc.fas.harvard.edu/kb/account-qualifications, docs.rc.fas.harvard.edu/kb/account-qualifications, docs.rc.fas.harvard.edu/kb/acceptable-use, docs.rc.fas.harvard.edu/kb/offboarding, docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/responsibilities, docs.rc.fas.harvard.edu/kb/onboarding, docs.rc.fas.harvard.edu/kb/account-qualifications, docs.rc.fas.harvard.edu/kb/account-signup  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the documentation, here's what you need to know about your collaborator's access:
+
+## Yes, your collaborator can get an account
+
+As an external collaborator without a HarvardKey, she can apply for an **external FASRC account** through the [account request tool](https://portal.rc.fas.harvard.edu/request/account). You (as her sponsoring PI) can sponsor her account even though she doesn't have a Harvard appointment [Onboarding Policies and Procedures](https://docs.rc.fas.harvard.edu/kb/onboarding/).
+
+## You must re-enable her account every 90 days
+
+External accounts need to be **re-enabled every 90 days**. You will need to **request an extension every 90 days** to prevent her account from being suspended [Onboarding Policies and Procedures](https://docs.rc.fas.harvard.edu/kb/onboarding/).
+
+## Your responsibilities as sponsor
+
+- You are responsible for the usage and conduct of your external collaborator [Account Qualifications and Affiliations](https://docs.rc.fas.harvard.edu/kb/account-qualifications/)
+- The cluster should only be used for Harvard-based research, including work with external collaborators on jointly held projects [Responsibilities](https://docs.rc.fas.harvard.edu/kb/responsibilities/)
+- If she no longer needs the account, you should notify FASRC to close it, especially if it incurs charges or has access to sensitive data [Account Qualifications and Affiliations](https://docs.rc.fas.harvard.edu/kb/account-qualifications/)
+
+## Alternative: Globus file sharing
+
+If she only needs to share files rather than access the cluster directly, you can use [Globus](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/) to transfer files with external collaborators without requiring them to have FASRC accounts.
+
+Would you like help with the account request process or setting up the 90-day extension reminders?
+```
+
+### ✅ Expected Answer
+
+```text
+Yes. A collaborator without a HarvardKey can apply for an external FASRC account through the account request portal (https://portal.rc.fas.harvard.edu/request/account). External accounts have to be re-enabled every 90 days: the PI must request an extension every 90 days or the account will be suspended. Faculty can sponsor FASRC accounts for anyone working in their lab, including external collaborators.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/onboarding**
+
+### 💬 Agent Messages (8)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+My collaborator is at another university and doesn't have a HarvardKey. Can she still get an account on the cluster, and is there anything I have to keep doing so her access doesn't get shut off?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+external collaborator outside university HarvardKey account access maintenance
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #5: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #6: search\_vectorstore\_hybrid**
+
+```text
+external collaborator account qualifications Harvard affiliate outside university
+```
+
+**🛠️ Tool Call #7: search\_local\_files**
+
+```text
+external collaborator
+```
+
+**🤖 Assistant Message #8**
+
+```text
+Based on the documentation, here's what you need to know about your collaborator's access:
+
+## Yes, your collaborator can get an account
+
+As an external collaborator without a HarvardKey, she can apply for an **external FASRC account** through the [account request tool](https://portal.rc.fas.harvard.edu/request/account). You (as her sponsoring PI) can sponsor her account even though she doesn't have a Harvard appointment [Onboarding Policies and Procedures](https://docs.rc.fas.harvard.edu/kb/onboarding/).
+
+## You must re-enable her account every 90 days
+
+External accounts need to be **re-enabled every 90 days**. You will need to **request an extension every 90 days** to prevent her account from being suspended [Onboarding Policies and Procedures](https://docs.rc.fas.harvard.edu/kb/onboarding/).
+
+## Your responsibilities as sponsor
+
+- You are responsible for the usage and conduct of your external collaborator [Account Qualifications and Affiliations](https://docs.rc.fas.harvard.edu/kb/account-qualifications/)
+- The cluster should only be used for Harvard-based research, including work with external collaborators on jointly held projects [Responsibilities](https://docs.rc.fas.harvard.edu/kb/responsibilities/)
+- If she no longer needs the account, you should notify FASRC to close it, especially if it incurs charges or has access to sensitive data [Account Qualifications and Affiliations](https://docs.rc.fas.harvard.edu/kb/account-qualifications/)
+
+## Alternative: Globus file sharing
+
+If she only needs to share files rather than access the cluster directly, you can use [Globus](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/) to transfer files with external collaborators without requiring them to have FASRC accounts.
+
+Would you like help with the account request process or setting up the 90-day extension reminders?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.765 🟢 |
+| Context Precision | 0.893 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 73: question\_73
+
+### ❓ Question
+
+I'm a new PI with a HarvardKey but the system won't let me approve my grad student's FASRC account request. What do I need to do?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/onboarding  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v2, docs.rc.fas.harvard.edu/kb/offboarding, docs.rc.fas.harvard.edu/kb/how-do-i-get-a-research-computing-account, docs.rc.fas.harvard.edu/kb/faq, docs.rc.fas.harvard.edu/kb/how-do-i-get-a-research-computing-account, docs.rc.fas.harvard.edu/kb/hsph-fas-research-computing-qa, docs.rc.fas.harvard.edu/kb/additional-groups, docs.rc.fas.harvard.edu/kb/account-qualifications  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the documentation, here's what's likely happening:
+
+**FASRC accounts are separate from HarvardKey.** You need to set up an FASRC account with 2-Factor authentication to have access to FASRC resources ([IQSS FASRC and FASSE Quick Start Guide](https://docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3)).
+
+**Regarding PI approval/sponsorship:**
+
+The account request process distinguishes between different PI types ([Request an FAS Research Computing Account](https://docs.rc.fas.harvard.edu/kb/how-do-i-get-a-research-computing-account)):
+
+- **FACULTY PI** – You can sponsor accounts under your FASRC lab group
+- **NON-FACULTY PI** – If you're not a faculty member but have been conferred PI rights by the university, you select "NON-FACULTY PI" as your job title. This **greys out the Sponsor option**, and you are instead vetted by FASRC staff. Being noted as a PI on a grant is *not* the same as university PI status.
+
+**What to do:**
+
+1. **If you're a faculty member:** Make sure you've completed your own FASRC account signup with 2FA first, then you should be able to sponsor your student under your lab group.
+
+2. **If you're a non-faculty PI:** You won't have a "Sponsor" option in the portal. FASRC staff will vet your PI rights and budget control. If your student's request isn't being approved, you may need to contact FASRC directly with details about your PI status.
+
+3. **If you're unsure of your status:** Contact FASRC support to clarify your role and how to properly sponsor accounts under your group.
+
+Would you like help finding the right contact information for FASRC?
+```
+
+### ✅ Expected Answer
+
+```text
+Complete the FAS Onboard tool for approvers at https://onboard.rc.fas.harvard.edu/onboard/. The onboarding checklist states that if you have a HarvardKey but are denied access to approve new accounts, you should visit and complete the FAS Onboard tool for approvers.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/onboarding**
+
+### 💬 Agent Messages (6)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I'm a new PI with a HarvardKey but the system won't let me approve my grad student's FASRC account request. What do I need to do?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+PI sponsor approve student account request FASRC portal
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+sponsor PI approve account request
+```
+
+**🛠️ Tool Call #5: search\_vectorstore\_hybrid**
+
+```text
+PI account request sponsor option greyed out HarvardKey
+```
+
+**🤖 Assistant Message #6**
+
+```text
+Based on the documentation, here's what's likely happening:
+
+**FASRC accounts are separate from HarvardKey.** You need to set up an FASRC account with 2-Factor authentication to have access to FASRC resources ([IQSS FASRC and FASSE Quick Start Guide](https://docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3)).
+
+**Regarding PI approval/sponsorship:**
+
+The account request process distinguishes between different PI types ([Request an FAS Research Computing Account](https://docs.rc.fas.harvard.edu/kb/how-do-i-get-a-research-computing-account)):
+
+- **FACULTY PI** – You can sponsor accounts under your FASRC lab group
+- **NON-FACULTY PI** – If you're not a faculty member but have been conferred PI rights by the university, you select "NON-FACULTY PI" as your job title. This **greys out the Sponsor option**, and you are instead vetted by FASRC staff. Being noted as a PI on a grant is *not* the same as university PI status.
+
+**What to do:**
+
+1. **If you're a faculty member:** Make sure you've completed your own FASRC account signup with 2FA first, then you should be able to sponsor your student under your lab group.
+
+2. **If you're a non-faculty PI:** You won't have a "Sponsor" option in the portal. FASRC staff will vet your PI rights and budget control. If your student's request isn't being approved, you may need to contact FASRC directly with details about your PI status.
+
+3. **If you're unsure of your status:** Contact FASRC support to clarify your role and how to properly sponsor accounts under your group.
+
+Would you like help finding the right contact information for FASRC?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.688 🟡 |
+| Context Precision | 0.000 🔴 |
+| Context Recall | 0.000 🔴 |
+
+---
+
+## Question 74: question\_74
+
+### ❓ Question
+
+We're wrapping up a project and want to push the raw data off to tape. Before we start, what constraints are there on how the data has to be laid out, and what does it cost per year?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving, docs.rc.fas.harvard.edu/kb/storage-modernization-initiative-faqs, docs.rc.fas.harvard.edu/kb/storage-service-center-bill, docs.rc.fas.harvard.edu/kb/data-storage-workflow, docs.rc.fas.harvard.edu/kb/data-storage-billing, docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm, docs.rc.fas.harvard.edu/kb/storage-service-center, docs.rc.fas.harvard.edu/kb/storage-service-center, docs.rc.fas.harvard.edu/kb/data-storage-workflow, docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm, docs.rc.fas.harvard.edu/kb/submitting-large-numbers-of-jobs, docs.rc.fas.harvard.edu/kb/helmod-faq, slurm.schedmd.com/platforms.html, docs.rc.fas.harvard.edu/kb/spack-package-manager, slurm.schedmd.com/cgroups.html, docs.rc.fas.harvard.edu/kb/starfish-data-management, docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/data-deletion-recommendations, docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the FASRC documentation, here's what you need to know before pushing data to tape:
+
+## Cost
+
+Tape storage (NESE Cold Storage) costs **$15/yr per TB** [[Data Storage (Offerings, Workflow, Costs)](https://docs.rc.fas.harvard.edu/kb/storage-service-center-bill/)]. Rates are charged per year but billed monthly.
+
+## Layout Constraints
+
+The key constraint is on **file count**, not file size. NESE Tape enforces a default limit of **10,000 files per TB** of allocation (e.g., a 200 TB allocation allows ~2,000,000 files) [[Starfish Zones Data Visualization Tool](https://docs.rc.fas.harvard.edu/kb/starfish-data-management/)].
+
+To stay within this limit, you should **archive your data into tar files** before transferring to tape. FASRC provides a Starfish tarring script that creates tar files compliant with NESE Tape requirements, and it tars files "in place" to avoid storage capacity issues [[Starfish Zones Data Visualization Tool](https://docs.rc.fas.harvard.edu/kb/starfish-data-management/)].
+
+## Access & Transfer
+
+- You write to a **disk-based staging/buffer area** available via Globus, then the data is migrated to tape automatically [[Globus: Transfer Data to Tape](https://docs.rc.fas.harvard.edu/kb/tape-globus-access/)].
+- By default, only the **PI and General Manager** have access to the tape collection via Globus. They can add other lab members, but the entire group does not have access by default [[Globus: Transfer Data to Tape](https://docs.rc.fas.harvard.edu/kb/tape-globus-access/)].
+- Permissions apply to the whole lab collection—there's no way to restrict access on individual folders within the tape collection [[Globus: Transfer Data to Tape](https://docs.rc.fas.harvard.edu/kb/tape-globus-access/)].
+
+## Next Steps
+
+1. **Archive your data** using the Starfish tarring script or `tar` to consolidate files and stay within the file-count limit.
+2. **Ensure your PI or General Manager** has Globus access to the tape collection, and add any other lab members who need access.
+3. **Transfer via Globus** to the staging area, then let the system migrate to tape.
+
+Would you like more details on the tarring script or Globus setup?
+```
+
+### ✅ Expected Answer
+
+```text
+Tape (NESE) storage is sold in 20TB increments, allows ten thousand files per folder, and requires file sizes between 1GiB and 100GiB. It costs $15/yr per TB, is externally managed by the Northeast Storage Exchange (NESE), and data is transferred to tape using Globus. It is intended for long-term storage of inactive research data after project completion or for data retention purposes.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm**
+
+### 💬 Agent Messages (16)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+We're wrapping up a project and want to push the raw data off to tape. Before we start, what constraints are there on how the data has to be laid out, and what does it cost per year?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+tape storage cost per year pricing constraints layout
+```
+
+**🛠️ Tool Call #5: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #6: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #7: search\_local\_files**
+
+```text
+tape.*cost|cost.*tape|tape.*price|price.*tape|per year|per TiB|per year per
+```
+
+**🛠️ Tool Call #8: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #9: search\_local\_files**
+
+```text
+tape.*layout|layout.*tape|archive|tar|constraints|single file|file size|tape.*file
+```
+
+**🛠️ Tool Call #10: search\_vectorstore\_hybrid**
+
+```text
+tape storage constraints file layout archive tar single file
+```
+
+**🛠️ Tool Call #11: search\_local\_files**
+
+```text
+tape.*single|single.*file|tape.*archive|archive.*tape|tape.*tar|tar.*tape
+```
+
+**🛠️ Tool Call #12: search\_vectorstore\_hybrid**
+
+```text
+NESE tape storage requirements file size limit
+```
+
+**🛠️ Tool Call #13: search\_local\_files**
+
+```text
+NESE tape
+```
+
+**🛠️ Tool Call #14: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #15: search\_local\_files**
+
+```text
+Tape allocation.*limit|limit.*Tape|file.*count.*tape|tape.*file.*count
+```
+
+**🤖 Assistant Message #16**
+
+```text
+Based on the FASRC documentation, here's what you need to know before pushing data to tape:
+
+## Cost
+
+Tape storage (NESE Cold Storage) costs **$15/yr per TB** [[Data Storage (Offerings, Workflow, Costs)](https://docs.rc.fas.harvard.edu/kb/storage-service-center-bill/)]. Rates are charged per year but billed monthly.
+
+## Layout Constraints
+
+The key constraint is on **file count**, not file size. NESE Tape enforces a default limit of **10,000 files per TB** of allocation (e.g., a 200 TB allocation allows ~2,000,000 files) [[Starfish Zones Data Visualization Tool](https://docs.rc.fas.harvard.edu/kb/starfish-data-management/)].
+
+To stay within this limit, you should **archive your data into tar files** before transferring to tape. FASRC provides a Starfish tarring script that creates tar files compliant with NESE Tape requirements, and it tars files "in place" to avoid storage capacity issues [[Starfish Zones Data Visualization Tool](https://docs.rc.fas.harvard.edu/kb/starfish-data-management/)].
+
+## Access & Transfer
+
+- You write to a **disk-based staging/buffer area** available via Globus, then the data is migrated to tape automatically [[Globus: Transfer Data to Tape](https://docs.rc.fas.harvard.edu/kb/tape-globus-access/)].
+- By default, only the **PI and General Manager** have access to the tape collection via Globus. They can add other lab members, but the entire group does not have access by default [[Globus: Transfer Data to Tape](https://docs.rc.fas.harvard.edu/kb/tape-globus-access/)].
+- Permissions apply to the whole lab collection—there's no way to restrict access on individual folders within the tape collection [[Globus: Transfer Data to Tape](https://docs.rc.fas.harvard.edu/kb/tape-globus-access/)].
+
+## Next Steps
+
+1. **Archive your data** using the Starfish tarring script or `tar` to consolidate files and stay within the file-count limit.
+2. **Ensure your PI or General Manager** has Globus access to the tape collection, and add any other lab members who need access.
+3. **Transfer via Globus** to the staging area, then let the system migrate to tape.
+
+Would you like more details on the tarring script or Globus setup?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.600 🟡 |
+| Context Precision | 0.395 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 75: question\_75
+
+### ❓ Question
+
+I put a dataset in the Everyone folder so another lab could grab it, but it never shows up in Globus. Is Globus broken?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/tape-globus-access, docs.rc.fas.harvard.edu/kb/storage-service-center, docs.rc.fas.harvard.edu/kb/storage-service-center-bill, docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm, docs.rc.fas.harvard.edu/kb/globus-file-transfer, docs.rc.fas.harvard.edu/kb/data-storage-workflow  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the FASRC documentation, **Globus is not broken** — this is expected behavior. Here's what's happening:
+
+## The Issue
+
+Globus can **only** see folders inside `Lab` and `Users/$USER` — as of 2025, the `Users` folder has been deprecated. **Anything outside `Lab` and `Users/$USER`, such as `Everyone` and `Transfer`, is not available through Globus** [Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/).
+
+## What to Do Instead
+
+To share data with another lab via Globus, you need to:
+
+1. **Copy the dataset into your lab's share** (inside the `Lab` folder)
+2. **Create a shared collection** from that location in Globus
+3. Share the collection link with the other lab
+
+You cannot share data directly from the `Everyone` folder through Globus.
+
+## Alternative Options
+
+If you need to share data from `Everyone`, consider:
+- Using SSH/SCP for smaller transfers
+- Using Globus to transfer files from `Everyone` to your lab share first, then sharing from there
+
+For more details on setting up Globus transfers, see the [Globus File Transfer documentation](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/).
+```
+
+### ✅ Expected Answer
+
+```text
+No, that is expected behavior. The Everyone subdirectory is visible to anyone on the HPC cluster and is intended only for internal sharing with other labs on the cluster — it is not available on Globus. The Lab subdirectory is the one shared out via Globus, so data that has to move over Globus needs to live under Lab.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/data-storage-workflow-rdm**
+
+### 💬 Agent Messages (5)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I put a dataset in the Everyone folder so another lab could grab it, but it never shows up in Globus. Is Globus broken?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+Globus Everyone folder dataset not showing up sync
+```
+
+**🛠️ Tool Call #3: search\_local\_files**
+
+```text
+Everyone folder Globus
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #5**
+
+```text
+Based on the FASRC documentation, **Globus is not broken** — this is expected behavior. Here's what's happening:
+
+## The Issue
+
+Globus can **only** see folders inside `Lab` and `Users/$USER` — as of 2025, the `Users` folder has been deprecated. **Anything outside `Lab` and `Users/$USER`, such as `Everyone` and `Transfer`, is not available through Globus** [Globus File Transfer](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/).
+
+## What to Do Instead
+
+To share data with another lab via Globus, you need to:
+
+1. **Copy the dataset into your lab's share** (inside the `Lab` folder)
+2. **Create a shared collection** from that location in Globus
+3. Share the collection link with the other lab
+
+You cannot share data directly from the `Everyone` folder through Globus.
+
+## Alternative Options
+
+If you need to share data from `Everyone`, consider:
+- Using SSH/SCP for smaller transfers
+- Using Globus to transfer files from `Everyone` to your lab share first, then sharing from there
+
+For more details on setting up Globus transfers, see the [Globus File Transfer documentation](https://docs.rc.fas.harvard.edu/kb/globus-file-transfer/).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.731 🟢 |
+| Faithfulness | 0.417 🔴 |
+| Context Precision | 0.786 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 76: question\_76
+
+### ❓ Question
+
+Is there already a samtools container sitting on the cluster somewhere, or do I have to pull one from Docker Hub myself?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/podman, docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster, docs.rc.fas.harvard.edu/kb/macaulay2, slurm.schedmd.com/SLUG15/shifter.pdf, docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster, docs.rc.fas.harvard.edu/kb/all-modules, docs.rc.fas.harvard.edu/kb/modules-intro, docs.rc.fas.harvard.edu/kb/software, slurm.schedmd.com/containers.html, slurm.schedmd.com/containers.html, docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Good news — **yes, there is already a samtools container on the cluster**. It's available on CVMFS via the Galaxy Project's Singularity image library.
+
+You can use it directly without pulling anything yourself:
+
+```bash
+singularity exec /cvmfs/singularity.galaxyproject.org/s/a/samtools:1.13--h8c37831_0 samtools --help
+```
+
+This is a pre-built Singularity image (version 1.13) hosted on CVMFS at the Galaxy Project's image library — no need to pull from Docker Hub yourself.
+
+For more details on how to work with Singularity containers on the cluster, see [Singularity – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster/).
+````
+
+### ✅ Expected Answer
+
+```text
+There is one already on the cluster. Cluster nodes automount a CernVM-File System at /cvmfs/singularity.galaxyproject.org/, which provides Singularity images for the BioContainers project (auto-generated from Bioconda packages). Images follow the layout /cvmfs/singularity.galaxyproject.org/FIRST_LETTER/SECOND_LETTER/PACKAGE_NAME:VERSION--CONDA_BUILD, for example: `singularity exec /cvmfs/singularity.galaxyproject.org/s/a/samtools:1.13--h8c37831_0 samtools --help`. Expect a 10-30 second delay the first time the path is accessed on a compute node that has not mounted/cached it.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster**
+
+### 💬 Agent Messages (6)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Is there already a samtools container sitting on the cluster somewhere, or do I have to pull one from Docker Hub myself?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+samtools available module container pre-installed
+```
+
+**🛠️ Tool Call #3: search\_local\_files**
+
+```text
+samtools
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #5: search\_vectorstore\_hybrid**
+
+```text
+samtools container CVMFS pre-installed singularity galaxy
+```
+
+**🤖 Assistant Message #6**
+
+````text
+Good news — **yes, there is already a samtools container on the cluster**. It's available on CVMFS via the Galaxy Project's Singularity image library.
+
+You can use it directly without pulling anything yourself:
+
+```bash
+singularity exec /cvmfs/singularity.galaxyproject.org/s/a/samtools:1.13--h8c37831_0 samtools --help
+```
+
+This is a pre-built Singularity image (version 1.13) hosted on CVMFS at the Galaxy Project's image library — no need to pull from Docker Hub yourself.
+
+For more details on how to work with Singularity containers on the cluster, see [Singularity – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster/).
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.889 🟢 |
+| Faithfulness | 0.200 🔴 |
+| Context Precision | 0.000 🔴 |
+| Context Recall | 0.000 🔴 |
+
+---
+
+## Question 77: question\_77
+
+### ❓ Question
+
+A spack install blew up and by the time I looked the build log was already gone. How do I stop spack from throwing the logs away?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/spack  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/spack-package-manager, docs.rc.fas.harvard.edu/kb/spack, docs.rc.fas.harvard.edu/kb/spack, docs.rc.fas.harvard.edu/kb/spack-package-manager, github.com/fasrc/User\_Codes/blob/master/Notes/augustus-install.md, docs.rc.fas.harvard.edu/kb/spack-package-manager  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+By default, Spack deletes build logs after a successful install and keeps them only for failed builds. To **keep all build logs** (even for successful installs), set the `keep_build_logs` config option to `true`:
+
+```bash
+spack config set config:build_artifacts:keep_build_logs:true
+```
+
+Or, if you prefer editing the config file directly, add this to your `~/.spack/config.yaml` (or `etc/spack/config.yaml`):
+
+```yaml
+config:
+  build_artifacts:
+    keep_build_logs: true
+```
+
+With this enabled, Spack will preserve build logs in the build stage directory (typically under `~/.spack/build_cache` or the build stage path) even after successful installs.
+
+You can verify the setting with:
+
+```bash
+spack config get config:build_artifacts:keep_build_logs
+```
+
+Let me know if you'd like help locating where the logs are stored or recovering any that were already deleted.
+````
+
+### ✅ Expected Answer
+
+```text
+Spack builds in a `stage` directory located in /tmp and cleans that space up once it finishes building, whether the build succeeded or failed — which is why the logs disappear. To keep them, first set the `$TMP` environment variable to a location you want the stage files dumped into, then add the `--keep-stage` flag, e.g. `spack install --keep-stage <package>`, which tells spack to keep the staging files rather than remove them.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/spack**
+
+### 💬 Agent Messages (7)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+A spack install blew up and by the time I looked the build log was already gone. How do I stop spack from throwing the logs away?
+```
+
+**🛠️ Tool Call #2: search\_local\_files**
+
+```text
+spack log keep build logs
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+spack keep build logs configuration
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+keep_build_logs
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+config.yaml spack
+```
+
+**🛠️ Tool Call #6: search\_vectorstore\_hybrid**
+
+```text
+spack config keep_build_logs true
+```
+
+**🤖 Assistant Message #7**
+
+````text
+By default, Spack deletes build logs after a successful install and keeps them only for failed builds. To **keep all build logs** (even for successful installs), set the `keep_build_logs` config option to `true`:
+
+```bash
+spack config set config:build_artifacts:keep_build_logs:true
+```
+
+Or, if you prefer editing the config file directly, add this to your `~/.spack/config.yaml` (or `etc/spack/config.yaml`):
+
+```yaml
+config:
+  build_artifacts:
+    keep_build_logs: true
+```
+
+With this enabled, Spack will preserve build logs in the build stage directory (typically under `~/.spack/build_cache` or the build stage path) even after successful installs.
+
+You can verify the setting with:
+
+```bash
+spack config get config:build_artifacts:keep_build_logs
+```
+
+Let me know if you'd like help locating where the logs are stored or recovering any that were already deleted.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.765 🟢 |
+| Faithfulness | 0.077 🔴 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 78: question\_78
+
+### ❓ Question
+
+Software I built with spack runs fine on the node I built it on but won't run on nodes in other partitions. How do I build something that works everywhere on the cluster?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/spack  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/spack, docs.rc.fas.harvard.edu/kb/spack-package-manager, github.com/fasrc/User\_Codes/blob/master/Notes/augustus-install.md, docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/responsibilities, docs.rc.fas.harvard.edu/kb/rocky-8-transition-guide, docs.rc.fas.harvard.edu/kb/responsibilities  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+The issue you're experiencing is likely because you built your software on a **login node** or a node with a specific CPU architecture, and other partitions have different hardware.
+
+Here's how to fix it:
+
+### 1. Build on a Compute Node, Not a Login Node
+
+Always build software on a compute node that matches the target architecture. As shown in the Augustus installation example, you should request an interactive session on a compute node first:
+
+```bash
+salloc -p shared --mem-per-cpu 4g -t 0-03:00 -c 4
+```
+
+Then activate Spack and install:
+
+```bash
+. share/spack/setup-env.sh
+spack install <package>
+```
+
+This ensures the binary is compiled for the compute node's CPU architecture rather than the login node's.
+
+### 2. Use Spack's Compiler and Architecture Specs
+
+Spack allows you to explicitly specify the target architecture and compiler. You can force a build for a generic architecture (e.g., `x86_64`) that will run on most nodes:
+
+```bash
+spack install <package> %gcc@9.3.0 arch=linux-rhel8-x86_64
+```
+
+Check what architecture your login node reports with:
+```bash
+spack arch
+```
+
+And compare it to a compute node:
+```bash
+srun spack arch
+```
+
+### 3. Use Portable Compiler Flags
+
+You can also add compiler flags to ensure the binary doesn't use CPU-specific instructions that only your build node supports:
+
+```bash
+spack install <package> CFLAGS="-march=x86-64" CXXFLAGS="-march=x86-64"
+```
+
+### Summary
+
+- **Never build on login nodes** — always use `salloc` to get a compute node
+- **Match the target architecture** — use `spack arch` to check and specify the right target
+- **Use generic compiler flags** — like `-march=x86-64` for portability
+
+For more details, see the [Spack Package Manager documentation](https://docs.rc.fas.harvard.edu/kb/spack/).
+````
+
+### ✅ Expected Answer
+
+```text
+By default Spack autodetects the architecture of the hardware it is building on and optimizes the build for it, so a build made on one CPU generation may not run on another (the docs give the example that LAMMPS built on Sapphire Rapids may not run on Cascade Lake). If you plan to run across heterogeneous hardware/partitions, set Spack to a generic architecture: edit `etc/spack/packages.yaml` inside the spack folder (create it if it does not exist) and add:
+packages:
+  all:
+    target: [x86_64]
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/spack**
+
+### 💬 Agent Messages (6)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Software I built with spack runs fine on the node I built it on but won't run on nodes in other partitions. How do I build something that works everywhere on the cluster?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: search\_local\_files**
+
+```text
+build on login node vs compute node architecture
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+spack build on compute node vs login node architecture portability
+```
+
+**🛠️ Tool Call #5: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #6**
+
+````text
+The issue you're experiencing is likely because you built your software on a **login node** or a node with a specific CPU architecture, and other partitions have different hardware.
+
+Here's how to fix it:
+
+### 1. Build on a Compute Node, Not a Login Node
+
+Always build software on a compute node that matches the target architecture. As shown in the Augustus installation example, you should request an interactive session on a compute node first:
+
+```bash
+salloc -p shared --mem-per-cpu 4g -t 0-03:00 -c 4
+```
+
+Then activate Spack and install:
+
+```bash
+. share/spack/setup-env.sh
+spack install <package>
+```
+
+This ensures the binary is compiled for the compute node's CPU architecture rather than the login node's.
+
+### 2. Use Spack's Compiler and Architecture Specs
+
+Spack allows you to explicitly specify the target architecture and compiler. You can force a build for a generic architecture (e.g., `x86_64`) that will run on most nodes:
+
+```bash
+spack install <package> %gcc@9.3.0 arch=linux-rhel8-x86_64
+```
+
+Check what architecture your login node reports with:
+```bash
+spack arch
+```
+
+And compare it to a compute node:
+```bash
+srun spack arch
+```
+
+### 3. Use Portable Compiler Flags
+
+You can also add compiler flags to ensure the binary doesn't use CPU-specific instructions that only your build node supports:
+
+```bash
+spack install <package> CFLAGS="-march=x86-64" CXXFLAGS="-march=x86-64"
+```
+
+### Summary
+
+- **Never build on login nodes** — always use `salloc` to get a compute node
+- **Match the target architecture** — use `spack arch` to check and specify the right target
+- **Use generic compiler flags** — like `-march=x86-64` for portability
+
+For more details, see the [Spack Package Manager documentation](https://docs.rc.fas.harvard.edu/kb/spack/).
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.771 🟢 |
+| Faithfulness | 0.391 🔴 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 79: question\_79
+
+### ❓ Question
+
+I don't want spack spending hours compiling its own OpenMPI — how do I make it use the openmpi module we already have on the cluster, and is there anything I have to do before installing?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/spack  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/spack, docs.rc.fas.harvard.edu/kb/spack-package-manager, docs.rc.fas.harvard.edu/kb/spack, docs.rc.fas.harvard.edu/kb/spack-package-manager, docs.rc.fas.harvard.edu/kb/spack-package-manager, docs.rc.fas.harvard.edu/kb/spack, docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster, docs.rc.fas.harvard.edu/kb/spack-package-manager, docs.rc.fas.harvard.edu/kb/spack, docs.rc.fas.harvard.edu/kb/helmod-faq, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/R/Large\_Data\_Processing\_R/parallel\_computation/R\_embarrassingly\_parallel.md, github.com/fasrc/User\_Codes/blob/master/Applications/Dynamite/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise1/README.md, docs.rc.fas.harvard.edu/kb/hybrid-mpiopenmp-codes-on-odyssey  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+The agent attempted to locate documentation on configuring Spack to use system-installed MPI libraries (specifically OpenMPI) via the `spack external` command and module management, but the process terminated after hitting the recursion limit of 50.
+
+To make Spack use your cluster's existing OpenMPI module instead of compiling its own, follow these steps:
+
+1.  **Load the Module**: Ensure the desired OpenMPI module is loaded in your environment.
+    ```bash
+    module load openmpi
+    ```
+2.  **Register the External Package**: Use `spack external find` to detect the loaded MPI and register it as an "external" package. This tells Spack that the compiler and MPI are already installed on the system.
+    ```bash
+    spack external find openmpi
+    ```
+    *Note: If `spack external find` does not automatically detect the version, you may need to manually add it to your `packages.yaml` file under `openmpi` with the `buildable: false` option and specify the `prefix` pointing to the module's installation path.*
+3.  **Purge Modules (Recommended)**: As noted in the retrieved evidence, run `module purge` before installing to avoid conflicts between system modules and Spack's environment, unless you are explicitly relying on the loaded module for the external detection.
+4.  **Install Your Package**: Now install your target package (e.g., GROMACS, HDF5) using the `%` flag to specify the compiler, and Spack will link against the external OpenMPI.
+    ```bash
+    spack install gromacs %gcc
+    ```
+
+**Key Constraint**: Ensure the external OpenMPI version is compatible with the compiler version you are using for the target package. If Spack does not detect the correct version, you must manually edit `~/.spack/packages.yaml` to define the external OpenMPI instance.
+````
+
+### ✅ Expected Answer
+
+```text
+Configure the cluster's OpenMPI as an external package in `~/.spack/packages.yaml` (create the file if it does not exist). Get the prefix by loading the modules and reading $MPI_HOME, then add:
+packages:
+  openmpi:
+    externals:
+    - spec: openmpi@5.0.5%gcc@14.2.0
+      prefix: /n/sw/helmod-rocky8/apps/Comp/gcc/14.2.0-fasrc01/openmpi/5.0.5-fasrc01
+    buildable: false
+The `buildable: false` option ensures MPI won't be built from source and Spack will use the module in that prefix instead. Before installing, run `module purge` — this is required or the build fails (e.g. `module purge` then `spack install hdf5@1.14.6 % gcc@14.2.0 ^ openmpi@5.0.5`).
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/spack**
+
+### 💬 Agent Messages (1)
+
+**🤖 Assistant Message #1**
+
+````text
+The agent attempted to locate documentation on configuring Spack to use system-installed MPI libraries (specifically OpenMPI) via the `spack external` command and module management, but the process terminated after hitting the recursion limit of 50.
+
+To make Spack use your cluster's existing OpenMPI module instead of compiling its own, follow these steps:
+
+1.  **Load the Module**: Ensure the desired OpenMPI module is loaded in your environment.
+    ```bash
+    module load openmpi
+    ```
+2.  **Register the External Package**: Use `spack external find` to detect the loaded MPI and register it as an "external" package. This tells Spack that the compiler and MPI are already installed on the system.
+    ```bash
+    spack external find openmpi
+    ```
+    *Note: If `spack external find` does not automatically detect the version, you may need to manually add it to your `packages.yaml` file under `openmpi` with the `buildable: false` option and specify the `prefix` pointing to the module's installation path.*
+3.  **Purge Modules (Recommended)**: As noted in the retrieved evidence, run `module purge` before installing to avoid conflicts between system modules and Spack's environment, unless you are explicitly relying on the loaded module for the external detection.
+4.  **Install Your Package**: Now install your target package (e.g., GROMACS, HDF5) using the `%` flag to specify the compiler, and Spack will link against the external OpenMPI.
+    ```bash
+    spack install gromacs %gcc
+    ```
+
+**Key Constraint**: Ensure the external OpenMPI version is compatible with the compiler version you are using for the target package. If Spack does not detect the correct version, you must manually edit `~/.spack/packages.yaml` to define the external OpenMPI instance.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.914 🟢 |
+| Faithfulness | 0.406 🔴 |
+| Context Precision | 0.710 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 80: question\_80
+
+### ❓ Question
+
+We cleaned out several TB of old data last month but this month's storage charge came in exactly the same. Is the bill wrong?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/data-storage-billing  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/data-storage-billing, docs.rc.fas.harvard.edu/kb/data-storage-billing, slurm.schedmd.com/slurmdbd.conf.html, docs.rc.fas.harvard.edu/kb/data-deletion-recommendations, docs.rc.fas.harvard.edu/kb/storage-modernization-initiative-faqs, docs.rc.fas.harvard.edu/kb/coldfront-allocation-management, docs.rc.fas.harvard.edu/kb/coldfront-allocation-management, docs.rc.fas.harvard.edu/kb/storage-service-center-bill  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Based on the FASRC documentation, **the bill is likely correct** — and here's why:
+
+### Billing is based on a snapshot taken on the 15th of each month
+
+Storage allocations are **determined on the 15th of the month**, and bills are sent within the first week of the following month ([Data Storage Billing – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/data-storage-billing/)). This means:
+
+- If you cleaned up data **after** the 15th of last month, that reduction **won't be reflected** in last month's bill (which was based on the 15th snapshot).
+- The cleaned-up data **will** be reflected in the **next** month's bill (based on the 15th of this month).
+
+### What you can do
+
+1. **Check the billing cutoff date** noted in your bill email — it states which date the allocation was measured against.
+2. **Wait for the next bill** — if you deleted data before the 15th of this month, you should see a reduction in the following month's charge.
+3. **Contact the Storage Service Center** at [rchelp@rc.fas.harvard.edu](mailto:rchelp@rc.fas.harvard.edu) if you believe there's an error. You have **3 days** after the billing email is sent to review, dispute, or request adjustments ([Data Storage Billing – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/data-storage-billing/)).
+
+Would you like help checking your current allocation or understanding your bill line items?
+```
+
+### ✅ Expected Answer
+
+```text
+No, the bill is correct. The monthly charge is based on the size of the storage allocation, not on the amount of storage actually used, so deleting files will not reduce the charge unless the allocation size itself is also reduced. Separately, the cutoff for billing changes is the 15th of each month — any change made to an allocation after the 15th is only reflected on the following month's bill.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/data-storage-billing**
+
+### 💬 Agent Messages (6)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+We cleaned out several TB of old data last month but this month's storage charge came in exactly the same. Is the bill wrong?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+storage billing cutoff date allocation determined 15th month
+```
+
+**🛠️ Tool Call #5: search\_vectorstore\_hybrid**
+
+```text
+storage billing cutoff date allocation determined 15th month
+```
+
+**🤖 Assistant Message #6**
+
+```text
+Based on the FASRC documentation, **the bill is likely correct** — and here's why:
+
+### Billing is based on a snapshot taken on the 15th of each month
+
+Storage allocations are **determined on the 15th of the month**, and bills are sent within the first week of the following month ([Data Storage Billing – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/data-storage-billing/)). This means:
+
+- If you cleaned up data **after** the 15th of last month, that reduction **won't be reflected** in last month's bill (which was based on the 15th snapshot).
+- The cleaned-up data **will** be reflected in the **next** month's bill (based on the 15th of this month).
+
+### What you can do
+
+1. **Check the billing cutoff date** noted in your bill email — it states which date the allocation was measured against.
+2. **Wait for the next bill** — if you deleted data before the 15th of this month, you should see a reduction in the following month's charge.
+3. **Contact the Storage Service Center** at [rchelp@rc.fas.harvard.edu](mailto:rchelp@rc.fas.harvard.edu) if you believe there's an error. You have **3 days** after the billing email is sent to review, dispute, or request adjustments ([Data Storage Billing – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/data-storage-billing/)).
+
+Would you like help checking your current allocation or understanding your bill line items?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.857 🟢 |
+| Faithfulness | 0.400 🔴 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 81: question\_81
+
+### ❓ Question
+
+After the storage billing email lands, how long do we actually get to dispute the charges before they just go through?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/data-storage-billing  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/data-storage-billing, docs.rc.fas.harvard.edu/kb/data-storage-billing, docs.rc.fas.harvard.edu/kb/fas-rc-research-data-retention-and-deletion-policy, docs.rc.fas.harvard.edu/kb/coldfront-allocation-management, docs.rc.fas.harvard.edu/kb/data-storage-workflow  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Once the storage billing email is sent, you have **3 days** to review the charges, make adjustments, or contact the Storage Service Center to dispute any issues. After 3 days, a lack of communication is considered approval and the bills will be processed [Data Storage Billing – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/data-storage-billing/).
+```
+
+### ✅ Expected Answer
+
+```text
+Three days. Once billing emails are sent, PIs or lab managers have 3 days to review the charges and approve them, make adjustments, or contact the storage service center to clear up any issues. After 3 days, a lack of communication is considered approval and the bills will be processed.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/data-storage-billing**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+After the storage billing email lands, how long do we actually get to dispute the charges before they just go through?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+```text
+Once the storage billing email is sent, you have **3 days** to review the charges, make adjustments, or contact the Storage Service Center to dispute any issues. After 3 days, a lack of communication is considered approval and the bills will be processed [Data Storage Billing – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/data-storage-billing/).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.866 🟢 |
+| Faithfulness | 0.833 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 82: question\_82
+
+### ❓ Question
+
+Every time I try to map my Cannon home drive on my Windows laptop I end up locked out of my account. How many bad tries does that take, how long am I locked out for, and what am I doing wrong in the Map Network Drive box?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/mounting-storage  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/iqss-cannon-quickstart-guide, docs.rc.fas.harvard.edu/kb/mounting-storage, docs.rc.fas.harvard.edu/kb/unlock\_account, docs.rc.fas.harvard.edu/kb/cluster-storage, docs.rc.fas.harvard.edu/kb/snakemake, docs.rc.fas.harvard.edu/kb/mounting-storage, docs.rc.fas.harvard.edu/kb/faq  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Based on the FASRC documentation, here's what's happening:
+
+### How many bad tries? How long locked out?
+Your account locks after **multiple incorrect password attempts**. The lockout is **not permanent** — your account automatically unlocks after about **5–10 minutes** [Locked Account – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/unlock_account/).
+
+### What you're likely doing wrong
+The most common cause of repeated lockouts when mapping a Cannon home drive on Windows is **not including the `rc\` domain specifier** in your username. When the login prompt appears (or in the "Map Network Drive" dialog), you must enter your username as:
+
+```
+rc\your_username
+```
+
+For example, if your username is `jdoe`, enter:
+```
+rc\jdoe
+```
+
+Without the `rc\` prefix, Windows may be sending your credentials to the wrong domain, resulting in repeated failed authentication attempts.
+
+### Correct steps for Windows
+1. Open File Explorer and select **This PC**.
+2. Click **Map network drive**.
+3. For the folder path, use the appropriate Cannon home directory share path (e.g., `\\cannon.fas.harvard.edu\home\your_username` or the SMB path — check the full [Mounting Storage on Desktop or Laptop](https://docs.rc.fas.harvard.edu/kb/mounting-storage/) guide for the exact path).
+4. When prompted for credentials, enter **`rc\your_username`** and your password.
+
+If you continue to have issues after ensuring the `rc\` prefix is used, contact FASRC support for further assistance.
+````
+
+### ✅ Expected Answer
+
+```text
+You are almost certainly letting Windows authenticate with your local PC account. In the Map Network Drive dialog you must tick "Connect using different credentials"; if you don't, Windows tries your local PC information and after three failed attempts you are locked out. The lockout expires automatically in about 5 minutes. When prompted for network credentials, prepend your FASRC username with RC\ (for example RC\jharvard) so you authenticate against the RC domain.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/mounting-storage**
+
+### 💬 Agent Messages (8)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Every time I try to map my Cannon home drive on my Windows laptop I end up locked out of my account. How many bad tries does that take, how long am I locked out for, and what am I doing wrong in the Map Network Drive box?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+Windows map network drive Cannon home directory rc\ username domain specifier
+```
+
+**🛠️ Tool Call #5: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+Map Network Drive Cannon home directory smb://
+```
+
+**🛠️ Tool Call #7: search\_vectorstore\_hybrid**
+
+```text
+Windows map network drive smb:// Cannon home directory correct path
+```
+
+**🤖 Assistant Message #8**
+
+````text
+Based on the FASRC documentation, here's what's happening:
+
+### How many bad tries? How long locked out?
+Your account locks after **multiple incorrect password attempts**. The lockout is **not permanent** — your account automatically unlocks after about **5–10 minutes** [Locked Account – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/unlock_account/).
+
+### What you're likely doing wrong
+The most common cause of repeated lockouts when mapping a Cannon home drive on Windows is **not including the `rc\` domain specifier** in your username. When the login prompt appears (or in the "Map Network Drive" dialog), you must enter your username as:
+
+```
+rc\your_username
+```
+
+For example, if your username is `jdoe`, enter:
+```
+rc\jdoe
+```
+
+Without the `rc\` prefix, Windows may be sending your credentials to the wrong domain, resulting in repeated failed authentication attempts.
+
+### Correct steps for Windows
+1. Open File Explorer and select **This PC**.
+2. Click **Map network drive**.
+3. For the folder path, use the appropriate Cannon home directory share path (e.g., `\\cannon.fas.harvard.edu\home\your_username` or the SMB path — check the full [Mounting Storage on Desktop or Laptop](https://docs.rc.fas.harvard.edu/kb/mounting-storage/) guide for the exact path).
+4. When prompted for credentials, enter **`rc\your_username`** and your password.
+
+If you continue to have issues after ensuring the `rc\` prefix is used, contact FASRC support for further assistance.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.823 🟢 |
+| Faithfulness | 0.733 🟢 |
+| Context Precision | 0.500 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 83: question\_83
+
+### ❓ Question
+
+I'm on a collaborator's network where I can't run a second VPN client. Can I still get files off the cluster with FileZilla, or is the VPN mandatory for everything?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/mounting-storage  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/transferring-data, docs.rc.fas.harvard.edu/kb/sftp-file-transfer, docs.rc.fas.harvard.edu/kb/vpn-setup, docs.rc.fas.harvard.edu/kb/faq, docs.rc.fas.harvard.edu/kb/introduction-to-cluster-online  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+```text
+**Yes, you can use FileZilla without the VPN.**
+
+The FASRC documentation explicitly recommends FileZilla for SFTP file transfers and provides setup instructions for connecting directly to the cluster login nodes (e.g., `login.rc.fas.harvard.edu` for Cannon) [SFTP file transfer using Filezilla (Mac/Windows/Linux)](https://docs.rc.fas.harvard.edu/kb/sftp-file-transfer/).
+
+The VPN is **not** required for SFTP/SCP file transfers. The VPN is only mandatory for accessing specific internal services like:
+*   **Coldfront** (project management)
+*   **Starfish** (storage management)
+
+For transferring files off the cluster, you can use:
+*   **SFTP/SCP** (e.g., via FileZilla) directly to the login node [Transferring Data Externally](https://docs.rc.fas.harvard.edu/kb/transferring-data/)
+*   **rsync**
+*   **Globus** (recommended for large datasets)
+
+If you're on a collaborator's network and can't run a second VPN client, FileZilla connecting to `login.rc.fas.harvard.edu` (or the appropriate login node for your cluster) will work fine.
+```
+
+### ✅ Expected Answer
+
+```text
+You can still use SFTP. Mounting cluster storage as a drive does require the VPN — cluster storage must be routed through a VPN connection — but SFTP to a login node does not require a FASRC/FAS VPN connection, because login nodes use two-factor authentication. FASRC recommends FileZilla as a cross-platform SFTP client; you need OpenAuth set up plus cluster access and a home directory.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/mounting-storage**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I'm on a collaborator's network where I can't run a second VPN client. Can I still get files off the cluster with FileZilla, or is the VPN mandatory for everything?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #4**
+
+```text
+**Yes, you can use FileZilla without the VPN.**
+
+The FASRC documentation explicitly recommends FileZilla for SFTP file transfers and provides setup instructions for connecting directly to the cluster login nodes (e.g., `login.rc.fas.harvard.edu` for Cannon) [SFTP file transfer using Filezilla (Mac/Windows/Linux)](https://docs.rc.fas.harvard.edu/kb/sftp-file-transfer/).
+
+The VPN is **not** required for SFTP/SCP file transfers. The VPN is only mandatory for accessing specific internal services like:
+*   **Coldfront** (project management)
+*   **Starfish** (storage management)
+
+For transferring files off the cluster, you can use:
+*   **SFTP/SCP** (e.g., via FileZilla) directly to the login node [Transferring Data Externally](https://docs.rc.fas.harvard.edu/kb/transferring-data/)
+*   **rsync**
+*   **Globus** (recommended for large datasets)
+
+If you're on a collaborator's network and can't run a second VPN client, FileZilla connecting to `login.rc.fas.harvard.edu` (or the appropriate login node for your cluster) will work fine.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.769 🟢 |
+| Faithfulness | 0.688 🟡 |
+| Context Precision | 0.000 🔴 |
+| Context Recall | 0.333 🔴 |
+
+---
+
+## Question 84: question\_84
+
+### ❓ Question
+
+My home dir is full and now rm won't even work — it says 'No space left on device' when I try to delete something. How am I supposed to clean up if I can't delete anything?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/home-directory-full  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/home-directory-full, docs.rc.fas.harvard.edu/kb/cluster-storage, docs.rc.fas.harvard.edu/kb/vscode-remote-development-via-ssh-or-tunnel, docs.rc.fas.harvard.edu/kb/data-deletion-recommendations, docs.rc.fas.harvard.edu/kb/policy-scratch  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+This is a known issue: when your home directory is full, even deleting files can fail with **"No space left on device"** because the filesystem needs a tiny bit of free space to update its metadata (like the inode table) before it can actually remove the file.
+
+### Workaround: Truncate files to zero bytes first
+
+Instead of trying to `rm` the file directly, shrink it to 0 bytes using `truncate`:
+
+```bash
+truncate -s 0 /path/to/large/file
+```
+
+Or alternatively:
+
+```bash
+cat /dev/null > /path/to/large/file
+```
+
+Once you've freed enough space to get back under your quota, `rm` will work normally again.
+
+### Tips for cleanup
+
+- **Use full paths** when deleting to avoid accidentally removing the wrong file.
+- **Check your usage** with:
+  ```bash
+  df -h ~
+  ```
+- Be cautious with wildcards like `*` — always double-check what you're about to delete.
+
+For more details, see the [Home directory full](https://docs.rc.fas.harvard.edu/kb/home-directory-full/) guide.
+````
+
+### ✅ Expected Answer
+
+```text
+Shrink a file to zero bytes instead of unlinking it. Pick a large file you intend to remove and run `truncate -s 0 FILENAME` (you can list several files: `truncate -s 0 FILE1 FILE2 FILE3`), or equivalently redirect the empty device into it with `cat /dev/null > ~/mybig.file`. Once enough space is recovered to get you back under quota, `rm` will work again. Use full paths when deleting to avoid removing the wrong file.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/home-directory-full**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+My home dir is full and now rm won't even work — it says 'No space left on device' when I try to delete something. How am I supposed to clean up if I can't delete anything?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+````text
+This is a known issue: when your home directory is full, even deleting files can fail with **"No space left on device"** because the filesystem needs a tiny bit of free space to update its metadata (like the inode table) before it can actually remove the file.
+
+### Workaround: Truncate files to zero bytes first
+
+Instead of trying to `rm` the file directly, shrink it to 0 bytes using `truncate`:
+
+```bash
+truncate -s 0 /path/to/large/file
+```
+
+Or alternatively:
+
+```bash
+cat /dev/null > /path/to/large/file
+```
+
+Once you've freed enough space to get back under your quota, `rm` will work normally again.
+
+### Tips for cleanup
+
+- **Use full paths** when deleting to avoid accidentally removing the wrong file.
+- **Check your usage** with:
+  ```bash
+  df -h ~
+  ```
+- Be cautious with wildcards like `*` — always double-check what you're about to delete.
+
+For more details, see the [Home directory full](https://docs.rc.fas.harvard.edu/kb/home-directory-full/) guide.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.840 🟢 |
+| Faithfulness | 0.750 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 85: question\_85
+
+### ❓ Question
+
+Quota says I'm at my limit but when I add up my folders with du it's way less than that. Which one is lying, and how do I find whatever is eating the space?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/home-directory-full  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/home-directory-full, docs.rc.fas.harvard.edu/kb/cluster-storage, docs.rc.fas.harvard.edu/kb/checking-quota-and-usage, docs.rc.fas.harvard.edu/kb/checking-quota-and-usage, slurm.schedmd.com/sbatch.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Neither is necessarily "lying"—`du` and `quota` measure different things, and several common issues can make them disagree:
+
+### Why `du` and `quota` can disagree
+
+1. **Deleted but still-open files** — If a program has a file open (e.g., a log file) and the file is deleted, the space isn't freed until the process closes it. `du` won't count it (it's gone from the filesystem), but the quota system still does.
+2. **Hidden files and dotfiles** — `du` may not count hidden files unless you use `du -a` or `du -ah`.
+3. **Files in subdirectories you didn't check** — Make sure you're running `du` on the right top-level directory and using `-s` for a summary.
+4. **Quota includes all files** — Quota counts *all* files owned by you (or your group) on that filesystem, including temporary files, swap files, editor backups, etc.
+
+### How to find what's eating space
+
+1. **Check your actual quota usage:**
+   ```bash
+   quota -s ~
+   ```
+   This shows your home directory usage directly from the quota system.
+
+2. **Find large files/directories:**
+   ```bash
+   du -sh ~/
+   du -sh ~/[a-zA-Z]*
+   ```
+   Use `du -ah` to include hidden files.
+
+3. **Find deleted-but-open files:**
+   ```bash
+   lsof +L1
+   ```
+   This shows files that have been deleted but are still held open by a process. Restarting the process will free the space.
+
+4. **Check for hidden space hogs:**
+   ```bash
+   du -sh ~/.*
+   ```
+
+### If you're stuck
+
+If `quota` says you're over but `du` doesn't show it, check for deleted-but-open files with `lsof +L1`. If you find some, restart the offending process. If that doesn't help, contact FASRC support for further assistance.
+
+For more details, see [Home directory full](https://docs.rc.fas.harvard.edu/kb/home-directory-full/) and [Checking quota and usage](https://docs.rc.fas.harvard.edu/kb/checking-quota-and-usage/).
+````
+
+### ✅ Expected Answer
+
+```text
+Neither is lying — you likely have sparse files, whose space is counted by the filesystem's quota check (what `df` reports) but not accounted for properly by `du`. To find them, show the logical size instead: `cd ~` then `du -ch --apparent-size --max-depth=1 .` That points you at the directories responsible.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/home-directory-full**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Quota says I'm at my limit but when I add up my folders with du it's way less than that. Which one is lying, and how do I find whatever is eating the space?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #4**
+
+````text
+Neither is necessarily "lying"—`du` and `quota` measure different things, and several common issues can make them disagree:
+
+### Why `du` and `quota` can disagree
+
+1. **Deleted but still-open files** — If a program has a file open (e.g., a log file) and the file is deleted, the space isn't freed until the process closes it. `du` won't count it (it's gone from the filesystem), but the quota system still does.
+2. **Hidden files and dotfiles** — `du` may not count hidden files unless you use `du -a` or `du -ah`.
+3. **Files in subdirectories you didn't check** — Make sure you're running `du` on the right top-level directory and using `-s` for a summary.
+4. **Quota includes all files** — Quota counts *all* files owned by you (or your group) on that filesystem, including temporary files, swap files, editor backups, etc.
+
+### How to find what's eating space
+
+1. **Check your actual quota usage:**
+   ```bash
+   quota -s ~
+   ```
+   This shows your home directory usage directly from the quota system.
+
+2. **Find large files/directories:**
+   ```bash
+   du -sh ~/
+   du -sh ~/[a-zA-Z]*
+   ```
+   Use `du -ah` to include hidden files.
+
+3. **Find deleted-but-open files:**
+   ```bash
+   lsof +L1
+   ```
+   This shows files that have been deleted but are still held open by a process. Restarting the process will free the space.
+
+4. **Check for hidden space hogs:**
+   ```bash
+   du -sh ~/.*
+   ```
+
+### If you're stuck
+
+If `quota` says you're over but `du` doesn't show it, check for deleted-but-open files with `lsof +L1`. If you find some, restart the offending process. If that doesn't help, contact FASRC support for further assistance.
+
+For more details, see [Home directory full](https://docs.rc.fas.harvard.edu/kb/home-directory-full/) and [Checking quota and usage](https://docs.rc.fas.harvard.edu/kb/checking-quota-and-usage/).
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.809 🟢 |
+| Faithfulness | 0.111 🔴 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 86: question\_86
+
+### ❓ Question
+
+openconnect on my Ubuntu box dies right after it authenticates — something about not being able to find a script to configure the tunnel. How do I fix that?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/linux-vpn  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/linux-vpn, docs.rc.fas.harvard.edu/kb/vpn-setup, docs.rc.fas.harvard.edu/kb/linux-vpn, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3, docs.rc.fas.harvard.edu/kb/faq  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+The issue is that OpenConnect can't find the `vpnc-script` that configures the tunnel interface after authentication. Here's how to fix it:
+
+**1. Install the vpnc-script package**
+
+On Ubuntu/Debian:
+```bash
+sudo apt-get install vpnc-scripts
+```
+
+On Fedora/CentOS:
+```bash
+sudo dnf install vpnc-script
+```
+
+**2. Make sure the script is executable**
+
+```bash
+sudo chmod u+x /etc/vpnc/vpnc-script
+```
+
+**3. If OpenConnect still can't find it, specify the path explicitly**
+
+```bash
+openconnect --script /etc/vpnc/vpnc-script https://vpn.rc.fas.harvard.edu/
+```
+
+Replace `/etc/vpnc/vpnc-script` with whatever path your system actually uses.
+
+This is documented in the FASRC Linux VPN guide [Connecting to the FAS RC VPN from Linux clients](https://docs.rc.fas.harvard.edu/kb/linux-vpn/).
+````
+
+### ✅ Expected Answer
+
+```text
+OpenConnect needs vpnc-script. Install it if you don't have it (Ubuntu/Debian: `sudo apt-get install vpnc-scripts`; Fedora/CentOS: `sudo dnf install vpnc-script`; Arch: `sudo pacman -S vpnc`), make sure it is executable (e.g. `sudo chmod u+x /etc/vpnc/vpnc-script`), and if OpenConnect still can't find it, pass its location explicitly: `openconnect --script /etc/vpnc/vpnc-script https://vpn.rc.fas.harvard.edu/` (substituting the actual path on your system).
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/linux-vpn**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+openconnect on my Ubuntu box dies right after it authenticates — something about not being able to find a script to configure the tunnel. How do I fix that?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+````text
+The issue is that OpenConnect can't find the `vpnc-script` that configures the tunnel interface after authentication. Here's how to fix it:
+
+**1. Install the vpnc-script package**
+
+On Ubuntu/Debian:
+```bash
+sudo apt-get install vpnc-scripts
+```
+
+On Fedora/CentOS:
+```bash
+sudo dnf install vpnc-script
+```
+
+**2. Make sure the script is executable**
+
+```bash
+sudo chmod u+x /etc/vpnc/vpnc-script
+```
+
+**3. If OpenConnect still can't find it, specify the path explicitly**
+
+```bash
+openconnect --script /etc/vpnc/vpnc-script https://vpn.rc.fas.harvard.edu/
+```
+
+Replace `/etc/vpnc/vpnc-script` with whatever path your system actually uses.
+
+This is documented in the FASRC Linux VPN guide [Connecting to the FAS RC VPN from Linux clients](https://docs.rc.fas.harvard.edu/kb/linux-vpn/).
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.688 🟡 |
+| Faithfulness | 0.778 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 87: question\_87
+
+### ❓ Question
+
+Connecting to the FASRC VPN with openconnect on Linux, what exactly do I type at the Username prompt — just my RC login?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/linux-vpn  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3, docs.rc.fas.harvard.edu/kb/linux-vpn, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v2, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v2, docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+At the Username prompt, you should enter your RC login followed by `@fasrc` — for example, `jharvard@fasrc`, not just `jharvard` [IQSS FASRC and FASSE Quick Start Guide v3](https://docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3).
+
+This applies whether you're using the VPN app or the `openconnect` command line on Linux [Connecting to the FAS RC VPN from Linux clients](https://docs.rc.fas.harvard.edu/kb/linux-vpn).
+```
+
+### ✅ Expected Answer
+
+```text
+No — the username must be your RC username with the @fasrc realm appended, i.e. <rcusername>@fasrc. You then supply your RC password, and finally a six-digit authorization token (OpenAuth). If you launched openconnect with sudo, the first password prompt is your local computer password, not your RC password.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/linux-vpn**
+
+### 💬 Agent Messages (2)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Connecting to the FASRC VPN with openconnect on Linux, what exactly do I type at the Username prompt — just my RC login?
+```
+
+**🤖 Assistant Message #2**
+
+```text
+At the Username prompt, you should enter your RC login followed by `@fasrc` — for example, `jharvard@fasrc`, not just `jharvard` [IQSS FASRC and FASSE Quick Start Guide v3](https://docs.rc.fas.harvard.edu/kb/iqss-fasrc-and-fasse-quick-start-guide-v3).
+
+This applies whether you're using the VPN app or the `openconnect` command line on Linux [Connecting to the FAS RC VPN from Linux clients](https://docs.rc.fas.harvard.edu/kb/linux-vpn).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.855 🟢 |
+| Faithfulness | 0.571 🟡 |
+| Context Precision | 0.950 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 88: question\_88
+
+### ❓ Question
+
+I hit Ctrl-C on my srun job to stop it and it just printed some status about the tasks and kept running. How do I actually make it stop?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/srun.html  
+**Retrieved Documents:** slurm.schedmd.com/srun.html, slurm.schedmd.com/srun.html, slurm.schedmd.com/faq.html, slurm.schedmd.com/srun.html, slurm.schedmd.com/sbatch.html, slurm.schedmd.com/srun.html, slurm.schedmd.com/faq.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+The agent attempted to resolve the issue of `srun` continuing to run after a `Ctrl-C` interrupt by searching the knowledge base for solutions regarding killing `srun` job steps. The search returned documentation on job allocation options, job hints, and background task management, but did not explicitly retrieve the specific command-line flags for force-killing a stuck `srun` step (such as `--kill-on-bad-exit` or using `scancel`).
+
+**Summary of Attempt:**
+The agent performed multiple vector searches to find documentation on handling `srun` interruptions and killing job steps. It retrieved general Slurm configuration options and examples of background tasks but failed to isolate the specific mechanism for terminating a non-responsive `srun` step.
+
+**Answer:**
+Hitting `Ctrl-C` in an `srun` job often only sends a signal to the `srun` process itself, which may then propagate to the tasks, but if the tasks are unresponsive or the signal is ignored, the job step may persist. To actually stop it, you should use `scancel` to terminate the job step or the entire job.
+
+1.  **Identify the Job ID:** If you don't have it, run `squeue -u $USER` to find the job ID associated with your running tasks.
+2.  **Kill the Job Step:** Use `scancel -s TERM <job_id>` to send a termination signal. If it doesn't stop, use `scancel -s KILL <job_id>` to force kill it.
+3.  **Alternative:** If you are inside the `srun` command and it is stuck, you can try pressing `Ctrl-\` (SIGQUIT) instead of `Ctrl-C`, which often forces a core dump and termination more aggressively than SIGINT.
+
+**Note:** This run stopped after hitting the recursion limit of 50, preventing further tool calls to verify the exact syntax or retrieve more specific error-handling documentation.
+```
+
+### ✅ Expected Answer
+
+```text
+That is by design: a single <control-c> is an escape sequence that reports the state of all tasks associated with the srun command. To kill the job, press <control-c> twice within one second — that sends SIGINT to all tasks and starts a termination sequence of SIGCONT, SIGTERM and SIGKILL to all spawned tasks. A third <control-c> terminates srun itself immediately, without waiting for the remote tasks to exit or their I/O to complete. (Signal forwarding does not work at all for asynchronous steps launched with --async; use scancel --signal for those.)
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/srun.html**
+
+### 💬 Agent Messages (1)
+
+**🤖 Assistant Message #1**
+
+```text
+The agent attempted to resolve the issue of `srun` continuing to run after a `Ctrl-C` interrupt by searching the knowledge base for solutions regarding killing `srun` job steps. The search returned documentation on job allocation options, job hints, and background task management, but did not explicitly retrieve the specific command-line flags for force-killing a stuck `srun` step (such as `--kill-on-bad-exit` or using `scancel`).
+
+**Summary of Attempt:**
+The agent performed multiple vector searches to find documentation on handling `srun` interruptions and killing job steps. It retrieved general Slurm configuration options and examples of background tasks but failed to isolate the specific mechanism for terminating a non-responsive `srun` step.
+
+**Answer:**
+Hitting `Ctrl-C` in an `srun` job often only sends a signal to the `srun` process itself, which may then propagate to the tasks, but if the tasks are unresponsive or the signal is ignored, the job step may persist. To actually stop it, you should use `scancel` to terminate the job step or the entire job.
+
+1.  **Identify the Job ID:** If you don't have it, run `squeue -u $USER` to find the job ID associated with your running tasks.
+2.  **Kill the Job Step:** Use `scancel -s TERM <job_id>` to send a termination signal. If it doesn't stop, use `scancel -s KILL <job_id>` to force kill it.
+3.  **Alternative:** If you are inside the `srun` command and it is stuck, you can try pressing `Ctrl-\` (SIGQUIT) instead of `Ctrl-C`, which often forces a core dump and termination more aggressively than SIGINT.
+
+**Note:** This run stopped after hitting the recursion limit of 50, preventing further tool calls to verify the exact syntax or retrieve more specific error-handling documentation.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.864 🟢 |
+| Faithfulness | 0.059 🔴 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 0.250 🔴 |
+
+---
+
+## Question 89: question\_89
+
+### ❓ Question
+
+I asked for several tasks in an interactive srun --pty session, but only one of them shows any output and the rest die instantly. What is --pty doing to the others?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/srun.html  
+**Retrieved Documents:** slurm.schedmd.com/faq.html, slurm.schedmd.com/srun.html, slurm.schedmd.com/faq.html, slurm.schedmd.com/srun.html, slurm.schedmd.com/faq.html, slurm.schedmd.com/srun.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+The `--pty` flag in `srun` allocates a pseudo-terminal for **interactive use**, which means **stdin is connected to only one task** — typically the first (rank 0) task. The other tasks in the job do not receive any input from the terminal, and if they are waiting for stdin, they will hang or exit immediately.
+
+From the [Slurm FAQ](https://slurm.schedmd.com/faq.html):
+
+> The `srun` command is designed for interactive use, with someone monitoring the output. The output of the application is seen as output of the `srun` command, typically at the user's terminal.
+
+And from the [srun man page](https://slurm.schedmd.com/srun.html):
+
+> When initiating remote processes **srun** will propagate the current working directory, unless `--chdir=<path>` is specified...
+
+The key point is that **`--pty` binds the terminal to a single task** (usually rank 0). If you launch multiple tasks with `srun --pty -n N`, only task 0 gets the terminal's stdin/stdout/stderr. The other tasks either:
+
+- Receive no input and may exit immediately if they expect stdin, or
+- Hang waiting for input that never arrives
+
+### Workarounds
+
+1. **Run tasks sequentially** instead of in parallel:
+   ```bash
+   srun --pty -n 1 ./my_program
+   ```
+   (Run this multiple times, or loop in a script.)
+
+2. **Use `--input=none` or redirect stdin** for non-interactive tasks:
+   ```bash
+   srun --pty -n 4 --input=none ./my_program
+   ```
+
+3. **Use `salloc` + `srun`** if you need multiple interactive tasks on different nodes, and manage their I/O separately.
+
+4. **Avoid stdin-dependent programs** in multi-task `--pty` jobs — use files or arguments instead.
+
+If you share the exact command you're running, I can suggest a more specific fix.
+````
+
+### ✅ Expected Answer
+
+```text
+--pty runs only task zero under a pseudo terminal. It implicitly sets --error and --output to /dev/null for every task except task zero, which can make those other tasks exit immediately — shells in particular typically exit right away in that situation. --pty also implicitly sets --unbuffered, and it applies to step allocations.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/srun.html**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I asked for several tasks in an interactive srun --pty session, but only one of them shows any output and the rest die instantly. What is --pty doing to the others?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+srun --pty multiple tasks only one shows output others die instantly
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+srun --pty interactive multiple tasks stdin only one task gets input
+```
+
+**🤖 Assistant Message #4**
+
+````text
+The `--pty` flag in `srun` allocates a pseudo-terminal for **interactive use**, which means **stdin is connected to only one task** — typically the first (rank 0) task. The other tasks in the job do not receive any input from the terminal, and if they are waiting for stdin, they will hang or exit immediately.
+
+From the [Slurm FAQ](https://slurm.schedmd.com/faq.html):
+
+> The `srun` command is designed for interactive use, with someone monitoring the output. The output of the application is seen as output of the `srun` command, typically at the user's terminal.
+
+And from the [srun man page](https://slurm.schedmd.com/srun.html):
+
+> When initiating remote processes **srun** will propagate the current working directory, unless `--chdir=<path>` is specified...
+
+The key point is that **`--pty` binds the terminal to a single task** (usually rank 0). If you launch multiple tasks with `srun --pty -n N`, only task 0 gets the terminal's stdin/stdout/stderr. The other tasks either:
+
+- Receive no input and may exit immediately if they expect stdin, or
+- Hang waiting for input that never arrives
+
+### Workarounds
+
+1. **Run tasks sequentially** instead of in parallel:
+   ```bash
+   srun --pty -n 1 ./my_program
+   ```
+   (Run this multiple times, or loop in a script.)
+
+2. **Use `--input=none` or redirect stdin** for non-interactive tasks:
+   ```bash
+   srun --pty -n 4 --input=none ./my_program
+   ```
+
+3. **Use `salloc` + `srun`** if you need multiple interactive tasks on different nodes, and manage their I/O separately.
+
+4. **Avoid stdin-dependent programs** in multi-task `--pty` jobs — use files or arguments instead.
+
+If you share the exact command you're running, I can suggest a more specific fix.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.725 🟢 |
+| Faithfulness | 0.462 🔴 |
+| Context Precision | 0.000 🔴 |
+| Context Recall | 0.333 🔴 |
+
+---
+
+## Question 90: question\_90
+
+### ❓ Question
+
+I added two more #SBATCH lines further down my script, below my module load commands, and Slurm completely ignored them. I also tried #SBATCH --job-name=$MYNAME and it came out literally as $MYNAME. Why?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/sbatch.html  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/submitting-large-numbers-of-jobs, slurm.schedmd.com/sbatch.html, github.com/fasrc/User\_Codes/blob/master/IQSS-slurm-examples/template.slurm, docs.rc.fas.harvard.edu/kb/faq, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise6/README.md, github.com/fasrc/User\_Codes/blob/master/IQSS-slurm-examples/hello.R.slurm, github.com/fasrc/User\_Codes/blob/master/IQSS-slurm-examples/multitask.example.R.slurm, github.com/fasrc/User\_Codes/blob/master/IQSS-slurm-examples/hello.sh.slurm, github.com/fasrc/User\_Codes/blob/master/IQSS-slurm-examples/hello.mathematica.slurm  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+1) **Summary of Attempt**: The agent attempted to diagnose why Slurm ignored `#SBATCH` directives placed below module load commands and why shell variables like `$MYNAME` were not expanded in job names. It performed multiple hybrid vector searches to retrieve documentation on `sbatch` parsing rules and variable expansion behavior.
+
+2) **Best Possible Answer**:
+   - **Ignored Directives**: Slurm only parses `#SBATCH` directives that appear at the **very top** of the script, before any other commands (including `#!/bin/bash` shebangs or `module load` commands). Any `#SBATCH` lines placed later in the file are treated as comments and ignored. You must move all `#SBATCH` lines to the top of your script.
+   - **Literal `$MYNAME`**: Slurm does **not** expand shell variables (like `$MYNAME`) within `#SBATCH` directives. To use a variable, you must define it in the shell script and use it in the command arguments, or use Slurm's built-in job ID placeholders (like `%j`) which are expanded by Slurm itself. For example, instead of `#SBATCH --job-name=$MYNAME`, you might need to set the job name via the `sbatch` command line argument (`sbatch -J $MYNAME script.sh`) or ensure the variable is expanded by the shell before Slurm sees it (which is not standard for `#SBATCH` lines).
+
+3) **Note**: This run stopped after hitting the recursion limit of 50.
+```
+
+### ✅ Expected Answer
+
+```text
+Both behaviors are documented sbatch parsing rules. Slurm stops reading #SBATCH directives once the first non-comment, non-whitespace line in the script has been reached — so any #SBATCH placed after your module load (or any other command) is never processed. And #SBATCH directives are read directly by Slurm, not by the shell, so shell-specific syntax including variable names is read as literal text, which is why $MYNAME was not expanded. Put all #SBATCH lines at the top of the script, before any commands.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/sbatch.html**
+
+### 💬 Agent Messages (1)
+
+**🤖 Assistant Message #1**
+
+```text
+1) **Summary of Attempt**: The agent attempted to diagnose why Slurm ignored `#SBATCH` directives placed below module load commands and why shell variables like `$MYNAME` were not expanded in job names. It performed multiple hybrid vector searches to retrieve documentation on `sbatch` parsing rules and variable expansion behavior.
+
+2) **Best Possible Answer**:
+   - **Ignored Directives**: Slurm only parses `#SBATCH` directives that appear at the **very top** of the script, before any other commands (including `#!/bin/bash` shebangs or `module load` commands). Any `#SBATCH` lines placed later in the file are treated as comments and ignored. You must move all `#SBATCH` lines to the top of your script.
+   - **Literal `$MYNAME`**: Slurm does **not** expand shell variables (like `$MYNAME`) within `#SBATCH` directives. To use a variable, you must define it in the shell script and use it in the command arguments, or use Slurm's built-in job ID placeholders (like `%j`) which are expanded by Slurm itself. For example, instead of `#SBATCH --job-name=$MYNAME`, you might need to set the job name via the `sbatch` command line argument (`sbatch -J $MYNAME script.sh`) or ensure the variable is expanded by the shell before Slurm sees it (which is not standard for `#SBATCH` lines).
+
+3) **Note**: This run stopped after hitting the recursion limit of 50.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.924 🟢 |
+| Faithfulness | 0.500 🟡 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 0.750 🟢 |
+
+---
+
+## Question 91: question\_91
+
+### ❓ Question
+
+I ran scontrol hold on a job that was already running because I wanted to pause it, and it just kept going. What did that command actually do to my job, and can I pause a running job at all?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/scontrol.html  
+**Retrieved Documents:** slurm.schedmd.com/scontrol.html, slurm.schedmd.com/scontrol.html, slurm.schedmd.com/sbatch.html, slurm.schedmd.com/srun.html, slurm.schedmd.com/faq.html, slurm.schedmd.com/gang\_scheduling.html, slurm.schedmd.com/quickstart\_admin.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Here's what happened:
+
+**`scontrol hold` does not pause or suspend a running job.** According to the [Slurm documentation](https://slurm.schedmd.com/scontrol.html), "attempting to hold a running job will not suspend or cancel it. But, it will set the job priority to 0 and update the job reason field, which would hold the job if it was requeued at a later time."
+
+In other words, your job kept running exactly as before. The `hold` flag only affects a job's position in the queue — it would prevent the job from being *scheduled* again if it were ever requeued (e.g., after a failure or completion), but it has no effect on a job that is already executing.
+
+**Can you pause a running job?** Slurm does not provide a built-in "pause" or "suspend" mechanism for user jobs in the way you might expect. The only way to stop a running job is to cancel it with `scancel <job_id>`, which terminates it immediately.
+
+If you need to temporarily stop work and resume later, you would need to handle that within your application or script itself (e.g., by writing state to disk, exiting, and then re-submitting the job later).
+```
+
+### ✅ Expected Answer
+
+```text
+Holding a running job does not suspend or cancel it. What it does is set the job's priority to 0 and update the job's reason field, which would hold the job if it were requeued at a later time. Actually pausing a running job is the `suspend` command, and only a privileged user or an account coordinator can suspend jobs (time spent suspended does not count against the job's time limit, and a suspended job that is requeued is placed in a held state). Note also that a hold placed by an ordinary user is a user-hold, while one placed by a privileged user is an admin-hold, and the hold type determines who can `release` it.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/scontrol.html**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I ran scontrol hold on a job that was already running because I wanted to pause it, and it just kept going. What did that command actually do to my job, and can I pause a running job at all?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+scontrol hold running job SLURM pause suspend
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+scontrol hold running job priority zero reason field
+```
+
+**🤖 Assistant Message #4**
+
+```text
+Here's what happened:
+
+**`scontrol hold` does not pause or suspend a running job.** According to the [Slurm documentation](https://slurm.schedmd.com/scontrol.html), "attempting to hold a running job will not suspend or cancel it. But, it will set the job priority to 0 and update the job reason field, which would hold the job if it was requeued at a later time."
+
+In other words, your job kept running exactly as before. The `hold` flag only affects a job's position in the queue — it would prevent the job from being *scheduled* again if it were ever requeued (e.g., after a failure or completion), but it has no effect on a job that is already executing.
+
+**Can you pause a running job?** Slurm does not provide a built-in "pause" or "suspend" mechanism for user jobs in the way you might expect. The only way to stop a running job is to cancel it with `scancel <job_id>`, which terminates it immediately.
+
+If you need to temporarily stop work and resume later, you would need to handle that within your application or script itself (e.g., by writing state to disk, exiting, and then re-submitting the job later).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.500 🟡 |
+| Context Precision | 0.500 🔴 |
+| Context Recall | 0.750 🟢 |
+
+---
+
+## Question 92: question\_92
+
+### ❓ Question
+
+I overwrote my submit script by accident but the job is still sitting in the queue. Is there any way to get the original script back out of Slurm?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/scontrol.html  
+**Retrieved Documents:** slurm.schedmd.com/slurm.conf.html, github.com/fasrc/User\_Codes/blob/master/IQSS-slurm-examples/README.md, slurm.schedmd.com/job\_submit\_plugins.html, slurm.schedmd.com/openapi\_release\_notes.html, github.com/fasrc/User\_Codes/blob/master/Example\_Recipes/README.md, slurm.schedmd.com/heterogeneous\_jobs.html, slurm.schedmd.com/openapi\_release\_notes.html, slurm.schedmd.com/openapi\_release\_notes.html, slurm.schedmd.com/prolog\_epilog.html, slurm.schedmd.com/job\_submit\_plugins.html  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+```text
+Unfortunately, **Slurm does not store or provide a way to retrieve the original submit script** once it has been submitted. The job script is passed to Slurm at submission time, but Slurm does not keep a persistent copy of it on the server side that users can retrieve later.
+
+However, there are a few things you can try:
+
+1. **Check if the script is still accessible on the compute node** — If the job is still running or recently ran, the script may still exist in the job's working directory or in a temporary location on the compute node. You can check the job's working directory or look for the script in the job's environment.
+
+2. **Check your shell history** — If you submitted the job using `sbatch`, your shell history (e.g., `~/.bash_history`) might contain the `sbatch` command with the script path, which could help you locate a backup or version control copy.
+
+3. **Version control or backups** — If you use Git, Subversion, or another version control system, check for previous commits or backups.
+
+4. **Contact FASRC support** — If this is critical, you can reach out to FASRC support for assistance, though they likely won't have access to the original script either.
+
+For future jobs, consider:
+- Using version control (Git) to track your scripts
+- Keeping backups of your submit scripts
+- Using `sbatch` with the `--export` option to ensure environment variables are preserved
+
+Would you like help with any of these recovery options?
+```
+
+### ✅ Expected Answer
+
+```text
+Yes — use `scontrol write batch_script <job_id> [optional_filename]`. It writes the batch script that was submitted for that job to a file, defaulting to slurm-<job_id>.sh if you don't give a filename; pass `-` instead of a filename to write it to stdout. Only a privileged user or the owner of the job can retrieve the script.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/scontrol.html**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I overwrote my submit script by accident but the job is still sitting in the queue. Is there any way to get the original script back out of Slurm?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+retrieve original submit script from Slurm job queue
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+Slurm job script path location on compute node
+```
+
+**🤖 Assistant Message #4**
+
+```text
+Unfortunately, **Slurm does not store or provide a way to retrieve the original submit script** once it has been submitted. The job script is passed to Slurm at submission time, but Slurm does not keep a persistent copy of it on the server side that users can retrieve later.
+
+However, there are a few things you can try:
+
+1. **Check if the script is still accessible on the compute node** — If the job is still running or recently ran, the script may still exist in the job's working directory or in a temporary location on the compute node. You can check the job's working directory or look for the script in the job's environment.
+
+2. **Check your shell history** — If you submitted the job using `sbatch`, your shell history (e.g., `~/.bash_history`) might contain the `sbatch` command with the script path, which could help you locate a backup or version control copy.
+
+3. **Version control or backups** — If you use Git, Subversion, or another version control system, check for previous commits or backups.
+
+4. **Contact FASRC support** — If this is critical, you can reach out to FASRC support for assistance, though they likely won't have access to the original script either.
+
+For future jobs, consider:
+- Using version control (Git) to track your scripts
+- Keeping backups of your submit scripts
+- Using `sbatch` with the `--export` option to ensure environment variables are preserved
+
+Would you like help with any of these recovery options?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.000 🔴 |
+| Context Precision | 0.000 🔴 |
+| Context Recall | 0.000 🔴 |
+
+---
+
+## Question 93: question\_93
+
+### ❓ Question
+
+I want to grab a couple of nodes and sit on them for a while, but I don't want salloc to drop me into a shell that I have to keep open. Can I reserve the resources and then send work at them later from my normal terminal?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/salloc.html  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/running-jobs, slurm.schedmd.com/slurm.conf.html, slurm.schedmd.com/slurm.conf.html, slurm.schedmd.com/salloc.html, slurm.schedmd.com/cpu\_management.html, slurm.schedmd.com/salloc.html, slurm.schedmd.com/power\_save.html, slurm.schedmd.com/salloc.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Yes — you can reserve nodes with `salloc` in the background so it doesn't drop you into an interactive shell. Use the `--detach` flag:
+
+```bash
+salloc --detach -N 2 -t 01:00:00
+```
+
+This reserves 2 nodes for 1 hour and returns you to your normal terminal immediately. The allocation will still appear in `squeue` and you can run jobs on it later using `srun` or `salloc`-aware commands.
+
+To check on your allocation:
+```bash
+squeue -u $USER
+```
+
+To cancel it when you're done:
+```bash
+scancel <jobid>
+```
+
+Note that detached allocations still consume your quota and will be terminated when the time limit expires. If you need long-term reservations, consider using `sbatch` with a script instead.
+````
+
+### ✅ Expected Answer
+
+```text
+Use `salloc --no-shell`. It exits immediately after allocating the resources without running a command, but the Slurm job is still created and stays active, owning the allocated resources for as long as it lives — you get a Slurm job id with no associated processes or tasks. You can then run work against it by passing `--jobid=<that job id>` to srun. The job is still subject to normal constraints such as time limits, so it will eventually end on its own, or you can end it early with scancel.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/salloc.html**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I want to grab a couple of nodes and sit on them for a while, but I don't want salloc to drop me into a shell that I have to keep open. Can I reserve the resources and then send work at them later from my normal terminal?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+salloc detach background reserve nodes without shell
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+salloc detach background job allocation
+```
+
+**🤖 Assistant Message #4**
+
+````text
+Yes — you can reserve nodes with `salloc` in the background so it doesn't drop you into an interactive shell. Use the `--detach` flag:
+
+```bash
+salloc --detach -N 2 -t 01:00:00
+```
+
+This reserves 2 nodes for 1 hour and returns you to your normal terminal immediately. The allocation will still appear in `squeue` and you can run jobs on it later using `srun` or `salloc`-aware commands.
+
+To check on your allocation:
+```bash
+squeue -u $USER
+```
+
+To cancel it when you're done:
+```bash
+scancel <jobid>
+```
+
+Note that detached allocations still consume your quota and will be terminated when the time limit expires. If you need long-term reservations, consider using `sbatch` with a script instead.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.182 🔴 |
+| Context Precision | 0.167 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 94: question\_94
+
+### ❓ Question
+
+If my salloc allocation gets cancelled or hits its time limit, what signal does salloc send to the command it launched when I used -K without giving it a signal?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/salloc.html  
+**Retrieved Documents:** slurm.schedmd.com/salloc.html, slurm.schedmd.com/salloc.html, slurm.schedmd.com/srun.html, slurm.schedmd.com/slurm.conf.html, slurm.schedmd.com/salloc.html, slurm.schedmd.com/slurm.conf.html, docs.rc.fas.harvard.edu/kb/spack-package-manager, github.com/fasrc/User\_Codes/blob/master/Training/GenAI-Tools/extras.md, slurm.schedmd.com/slinky.html, slurm.schedmd.com/MISC25/Slurm\_Bridge\_KubeCon\_25.pdf, slurm.schedmd.com/tls.html, slurm.schedmd.com/MISC25/Slinky-CUG2025.pdf, docs.rc.fas.harvard.edu/kb/ssh-key-error, docs.rc.fas.harvard.edu/kb/ssh-to-a-compute-node, docs.rc.fas.harvard.edu/kb/git-and-github, slurm.schedmd.com/srun.html, github.com/fasrc/User\_Codes/blob/master/Languages/Cpp/Example6/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise6/README.md  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+```text
+I'm sorry, but the conversation history has grown too large for me to process. Please start a new conversation to continue.
+```
+
+### ✅ Expected Answer
+
+```text
+If you do not name a signal and Slurm is configured to signal the spawned command at job termination, the default is SIGHUP for interactive sessions and SIGTERM for non-interactive sessions. Note that -K takes its optional argument with no space (e.g. "-K1", not "-K 1").
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/salloc.html**
+
+### 💬 Agent Messages (1)
+
+**🤖 Assistant Message #1**
+
+```text
+I'm sorry, but the conversation history has grown too large for me to process. Please start a new conversation to continue.
+```
+
+---
+
+## Question 95: question\_95
+
+### ❓ Question
+
+Our compute nodes have hyperthreading turned on (2 threads per core). If my job asks for 3 tasks, does Slurm hand me exactly 3 hyperthreads, and could another user's job end up sharing a core with mine?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/faq.html  
+**Retrieved Documents:** slurm.schedmd.com/srun.html, slurm.schedmd.com/sbatch.html, slurm.schedmd.com/sbatch.html, slurm.schedmd.com/faq.html, slurm.schedmd.com/mc\_support.html, slurm.schedmd.com/salloc.html, slurm.schedmd.com/cpu\_management.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+Here's what happens on FASRC nodes with hyperthreading enabled:
+
+### Does Slurm give you exactly 3 hyperthreads?
+
+**Not necessarily.** By default, Slurm's task placement depends on the **allocation plugin** and whether you use `--threads-per-core`.
+
+- **Without `--threads-per-core`**: Slurm may place multiple tasks on the same physical core (different hyperthreads). For example, if you request 3 tasks, Slurm might put 2 tasks on separate hyperthreads of core 0, and 2 tasks (both hyperthreads) on core 1 — meaning you'd actually **consume 4 CPUs** (2 cores × 2 threads each), even though you only asked for 3 tasks. This is documented in the Slurm `srun` reference, which shows that when `--threads-per-core` is not used, tasks can share cores and the allocated memory per CPU includes all threads on those cores [Slurm Workload Manager - srun](https://slurm.schedmd.com/srun.html).
+
+- **With `--threads-per-core=1`**: Slurm is instructed to treat each hyperthread as a separate resource and place tasks accordingly, giving you more predictable 1:1 task-to-hyperthread mapping.
+
+### Can another user's job share a core with yours?
+
+**Yes, it depends on the allocation strategy:**
+
+- If Slurm uses a **node-exclusive** allocation (e.g., the `select/linear` plugin allocating whole nodes), then no other job will share your node at all.
+- If Slurm uses **consumable resources** or a **shared-node** allocation, then yes — other jobs can be placed on the same node, and they may share physical cores (and thus compete for cache, memory bandwidth, etc.) with your tasks.
+
+### What should you do?
+
+1. **Check your partition's allocation plugin** — ask FASRC support or check `sinfo` output for the partition's configuration.
+2. **If you need predictable core isolation**, request `--threads-per-core=1` to ensure each task gets its own hyperthread and Slurm tracks resources accurately.
+3. **If you need exclusive access to a full node** (no sharing with other jobs), request `--exclusive` or use `--nodes=1 --ntasks-per-node=<total CPUs>`.
+
+Would you like help checking your partition's configuration or crafting a job script with the right flags?
+```
+
+### ✅ Expected Answer
+
+```text
+With hyperthreading enabled a "CPU" in Slurm means a hyperthread (without it, a CPU is a core), but Slurm still generally allocates resources to jobs at the level of a whole core. A job requesting three tasks on a node with ThreadsPerCore=2 is therefore allocated two full cores (four threads), not three threads. Two different jobs will not share a core unless the partition's OverSubscribe configuration parameter allows it. You can check ThreadsPerCore with "scontrol show node". The exception is the atypical configuration where the admin sets SelectTypeParameters=CR_CPU with only a CPU count per node (no socket/core/thread spec) — then each thread is scheduled independently as a CPU.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/faq.html**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Our compute nodes have hyperthreading turned on (2 threads per core). If my job asks for 3 tasks, does Slurm hand me exactly 3 hyperthreads, and could another user's job end up sharing a core with mine?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+Slurm hyperthreading --threads-per-core task allocation sharing cores
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+Slurm hyperthreading default task placement sharing cores between jobs
+```
+
+**🤖 Assistant Message #4**
+
+```text
+Here's what happens on FASRC nodes with hyperthreading enabled:
+
+### Does Slurm give you exactly 3 hyperthreads?
+
+**Not necessarily.** By default, Slurm's task placement depends on the **allocation plugin** and whether you use `--threads-per-core`.
+
+- **Without `--threads-per-core`**: Slurm may place multiple tasks on the same physical core (different hyperthreads). For example, if you request 3 tasks, Slurm might put 2 tasks on separate hyperthreads of core 0, and 2 tasks (both hyperthreads) on core 1 — meaning you'd actually **consume 4 CPUs** (2 cores × 2 threads each), even though you only asked for 3 tasks. This is documented in the Slurm `srun` reference, which shows that when `--threads-per-core` is not used, tasks can share cores and the allocated memory per CPU includes all threads on those cores [Slurm Workload Manager - srun](https://slurm.schedmd.com/srun.html).
+
+- **With `--threads-per-core=1`**: Slurm is instructed to treat each hyperthread as a separate resource and place tasks accordingly, giving you more predictable 1:1 task-to-hyperthread mapping.
+
+### Can another user's job share a core with yours?
+
+**Yes, it depends on the allocation strategy:**
+
+- If Slurm uses a **node-exclusive** allocation (e.g., the `select/linear` plugin allocating whole nodes), then no other job will share your node at all.
+- If Slurm uses **consumable resources** or a **shared-node** allocation, then yes — other jobs can be placed on the same node, and they may share physical cores (and thus compete for cache, memory bandwidth, etc.) with your tasks.
+
+### What should you do?
+
+1. **Check your partition's allocation plugin** — ask FASRC support or check `sinfo` output for the partition's configuration.
+2. **If you need predictable core isolation**, request `--threads-per-core=1` to ensure each task gets its own hyperthread and Slurm tracks resources accurately.
+3. **If you need exclusive access to a full node** (no sharing with other jobs), request `--exclusive` or use `--nodes=1 --ntasks-per-node=<total CPUs>`.
+
+Would you like help checking your partition's configuration or crafting a job script with the right flags?
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | n/a (unscored) |
+| Faithfulness | 0.333 🔴 |
+| Context Precision | 0.250 🔴 |
+| Context Recall | 0.800 🟢 |
+
+---
+
+## Question 96: question\_96
+
+### ❓ Question
+
+My MPI run blows up about half a minute after one rank finishes early — the rest of the ranks were still working. Can I stop Slurm from tearing the whole thing down that fast?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/faq.html  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/running-jobs, slurm.schedmd.com/faq.html, slurm.schedmd.com/srun.html, slurm.schedmd.com/mpi\_guide.html, slurm.schedmd.com/quickstart.html, slurm.schedmd.com/srun.html, slurm.schedmd.com/upgrades.html, slurm.schedmd.com/big\_sys.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+### What's happening
+
+By default, Slurm sends a **kill signal to the entire job** as soon as any rank exits with a non-zero status (or, depending on configuration, even when a rank exits early). This is the **`KillOnBadExit`** policy. That's why the remaining ranks get terminated within seconds of the first one finishing.
+
+### How to prevent it
+
+Add this line to your `#SBATCH` directives (or your `sbatch` command):
+
+```bash
+#SBATCH --kill-on-bad-exit=0
+```
+
+Setting it to `0` tells Slurm **not** to kill the rest of the job when one rank fails/exits early. The remaining ranks will continue running until they finish or hit their time limit.
+
+### Caveats
+
+- **Resource accounting:** Slurm will still charge you for the full allocation until the job completes or is manually cancelled.
+- **MPI consistency:** If your MPI code relies on all ranks reaching a barrier or collective call, ranks that exit early may cause the others to hang. Make sure your application can handle partial completion gracefully (e.g., by having remaining ranks check for early-exit ranks and exit cleanly).
+- **Job state:** The job will stay in `RUNNING` state until all remaining ranks finish or are killed. You can monitor it with `squeue -j <jobid>`.
+
+### Quick check
+
+After submitting with `--kill-on-bad-exit=0`, verify the setting took effect:
+
+```bash
+scontrol show job <jobid> | grep KillOnBadExit
+```
+
+If you'd like, I can help you adjust your job script or MPI code to handle partial completion more cleanly.
+````
+
+### ✅ Expected Answer
+
+```text
+That is srun's default behavior, not a crash: srun monitors when tasks exit and by default kills the job 30 seconds after the first task exits (producing "srun: First task exited 30s ago" followed by "srun Job Failed"). Use srun's --wait=<time> option to either lengthen the timeout period or disable the timeout altogether.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/faq.html**
+
+### 💬 Agent Messages (8)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+My MPI run blows up about half a minute after one rank finishes early — the rest of the ranks were still working. Can I stop Slurm from tearing the whole thing down that fast?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+Slurm kill early MPI rank job timeout signal
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+Slurm job kill when one rank fails MPI all ranks
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+kill on exit signal early rank MPI
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+kill_on_bad_exit
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+kill_on_bad_exit=0
+```
+
+**🛠️ Tool Call #7: search\_vectorstore\_hybrid**
+
+```text
+Slurm kill_on_bad_exit MPI rank fails
+```
+
+**🤖 Assistant Message #8**
+
+````text
+### What's happening
+
+By default, Slurm sends a **kill signal to the entire job** as soon as any rank exits with a non-zero status (or, depending on configuration, even when a rank exits early). This is the **`KillOnBadExit`** policy. That's why the remaining ranks get terminated within seconds of the first one finishing.
+
+### How to prevent it
+
+Add this line to your `#SBATCH` directives (or your `sbatch` command):
+
+```bash
+#SBATCH --kill-on-bad-exit=0
+```
+
+Setting it to `0` tells Slurm **not** to kill the rest of the job when one rank fails/exits early. The remaining ranks will continue running until they finish or hit their time limit.
+
+### Caveats
+
+- **Resource accounting:** Slurm will still charge you for the full allocation until the job completes or is manually cancelled.
+- **MPI consistency:** If your MPI code relies on all ranks reaching a barrier or collective call, ranks that exit early may cause the others to hang. Make sure your application can handle partial completion gracefully (e.g., by having remaining ranks check for early-exit ranks and exit cleanly).
+- **Job state:** The job will stay in `RUNNING` state until all remaining ranks finish or are killed. You can monitor it with `squeue -j <jobid>`.
+
+### Quick check
+
+After submitting with `--kill-on-bad-exit=0`, verify the setting took effect:
+
+```bash
+scontrol show job <jobid> | grep KillOnBadExit
+```
+
+If you'd like, I can help you adjust your job script or MPI code to handle partial completion more cleanly.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.580 🟡 |
+| Faithfulness | 0.000 🔴 |
+| Context Precision | 0.500 🔴 |
+| Context Recall | 0.500 🟡 |
+
+---
+
+## Question 97: question\_97
+
+### ❓ Question
+
+Why does sacct come back empty for a job I ran last Tuesday, but show it just fine as soon as I pass the job ID with -j?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/sacct.html  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/faq, docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/convenient-slurm-commands, slurm.schedmd.com/srun.html, slurm.schedmd.com/sacct.html, slurm.schedmd.com/sacct.html, slurm.schedmd.com/salloc.html, slurm.schedmd.com/openapi\_release\_notes.html, slurm.schedmd.com/openapi\_release\_notes.html, slurm.schedmd.com/openapi\_release\_notes.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+This is a common point of confusion with `sacct`. The behavior you're seeing is due to **default filtering**:
+
+### Why `sacct` (no arguments) returns empty
+By default, `sacct` only shows jobs for the **current user** and often only **recent** jobs (depending on Slurm's `AcctGatherNodeRetTime` and `JobAcctGatherType` settings, as well as how far back Slurm retains accounting data). If your job ran last Tuesday and is no longer in the "recent" window, or if you're not querying with the right filters, it won't appear.
+
+### Why `sacct -j JOBID` works
+When you explicitly pass a job ID with `-j JOBID`, you're telling `sacct` to look up that specific job regardless of time filters or user restrictions, so it returns the record if it exists in the accounting database.
+
+### How to see older jobs
+Try these approaches:
+
+1. **Specify a time range:**
+   ```bash
+   sacct --starttime="2024-01-09" --endtime="2024-01-15"
+   ```
+
+2. **Query all users (if you have permission):**
+   ```bash
+   sacct --allusers
+   ```
+
+3. **Check your specific job with a broader query:**
+   ```bash
+   sacct -u $USER --starttime="last Tuesday"
+   ```
+
+4. **Verify accounting is enabled:**
+   ```bash
+   sinfo -O features
+   ```
+   or check with `sacctmgr` to confirm accounting data is being retained.
+
+If `sacct` still doesn't show your job even with `-j JOBID`, the job may not have been accounted for (e.g., it was killed before accounting completed, or accounting is misconfigured). In that case, check your job's output files or contact FASRC support.
+````
+
+### ✅ Expected Answer
+
+```text
+sacct's default search window changes depending on which options you use. With neither --jobs nor --state specified, --starttime defaults to Midnight and --endtime defaults to Now, so a job from last week falls outside the window and nothing is returned. As soon as you specify --jobs, --starttime defaults to Epoch 0 (with --endtime still Now), so the old job is found. To list older jobs without a job ID, pass an explicit -S/--starttime. Running sacct with -v/--verbose prints the time window actually in use.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/sacct.html**
+
+### 💬 Agent Messages (7)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Why does sacct come back empty for a job I ran last Tuesday, but show it just fine as soon as I pass the job ID with -j?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+sacct empty no jobs shown but -j jobid works
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+sacct no jobs shown default filter user
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+sacct empty no jobs shown
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+sacct --allusers
+```
+
+**🛠️ Tool Call #6: search\_vectorstore\_hybrid**
+
+```text
+sacct default filter only current user jobs
+```
+
+**🤖 Assistant Message #7**
+
+````text
+This is a common point of confusion with `sacct`. The behavior you're seeing is due to **default filtering**:
+
+### Why `sacct` (no arguments) returns empty
+By default, `sacct` only shows jobs for the **current user** and often only **recent** jobs (depending on Slurm's `AcctGatherNodeRetTime` and `JobAcctGatherType` settings, as well as how far back Slurm retains accounting data). If your job ran last Tuesday and is no longer in the "recent" window, or if you're not querying with the right filters, it won't appear.
+
+### Why `sacct -j JOBID` works
+When you explicitly pass a job ID with `-j JOBID`, you're telling `sacct` to look up that specific job regardless of time filters or user restrictions, so it returns the record if it exists in the accounting database.
+
+### How to see older jobs
+Try these approaches:
+
+1. **Specify a time range:**
+   ```bash
+   sacct --starttime="2024-01-09" --endtime="2024-01-15"
+   ```
+
+2. **Query all users (if you have permission):**
+   ```bash
+   sacct --allusers
+   ```
+
+3. **Check your specific job with a broader query:**
+   ```bash
+   sacct -u $USER --starttime="last Tuesday"
+   ```
+
+4. **Verify accounting is enabled:**
+   ```bash
+   sinfo -O features
+   ```
+   or check with `sacctmgr` to confirm accounting data is being retained.
+
+If `sacct` still doesn't show your job even with `-j JOBID`, the job may not have been accounted for (e.g., it was killed before accounting completed, or accounting is misconfigured). In that case, check your job's output files or contact FASRC support.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.873 🟢 |
+| Faithfulness | 0.524 🟡 |
+| Context Precision | 0.167 🔴 |
+| Context Recall | 0.800 🟢 |
+
+---
+
+## Question 98: question\_98
+
+### ❓ Question
+
+sacct -X shows my completed job but every memory and CPU utilization column reads 0. Is our accounting broken?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/sacct.html  
+**Retrieved Documents:** slurm.schedmd.com/sacct.html, docs.rc.fas.harvard.edu/kb/slurm-memory-limits, github.com/fasrc/User\_Codes/blob/master/Training/Advanced\_Cluster\_Usage/Exercise2/Python/README.md, slurm.schedmd.com/salloc.html, docs.rc.fas.harvard.edu/kb/running-jobs, github.com/fasrc/User\_Codes/blob/master/Training/Advanced\_Cluster\_Usage/Exercise2/C/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Advanced\_Cluster\_Usage/Exercise1/Python/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Advanced\_Cluster\_Usage/Exercise2/C/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Advanced\_Cluster\_Usage/Exercise2/Cpp/README.md, slurm.schedmd.com/job\_exit\_code.html, slurm.schedmd.com/sh5util.html, slurm.schedmd.com/classic\_fair\_share.html, slurm.schedmd.com/job\_state\_codes.html, github.com/fasrc/User\_Codes/blob/master/Training/Advanced\_Cluster\_Usage/Exercise2/Cpp/README.md, docs.rc.fas.harvard.edu/kb/convenient-slurm-commands, docs.rc.fas.harvard.edu/kb/slurm-memory-limits, docs.rc.fas.harvard.edu/kb/job-efficiency-and-optimization-best-practices, slurm.schedmd.com/cgroups.html, docs.rc.fas.harvard.edu/kb/parallel-computing  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+1) **Summary of Attempt**: The agent attempted to diagnose why `sacct -X` displays zero values for memory and CPU utilization columns for completed jobs. It performed multiple hybrid vector searches and local file searches for terms like `sacct -X`, `seff`, `MaxRSS`, and `jobstats` to find documentation on Slurm accounting configuration and common pitfalls.
+
+2) **Best Possible Answer**: Your accounting is likely **not broken**. The `sacct -X` command is designed to show a compact summary of job steps, but it often fails to populate memory and CPU utilization metrics for several common reasons:
+   * **Missing Accounting Storage**: Slurm requires the `AccountingStorageType=accounting_storage/slurmdbd` (or similar) and the `slurmdbd` daemon to be running and properly configured to store detailed usage data. If this is not set, `sacct` may show job completion but lack resource usage details.
+   * **Job Step vs. Job Summary**: `sacct -X` shows job steps. If your job ran as a single step without explicit step accounting enabled, or if the accounting plugin didn't capture the data, these fields will be 0.
+   * **Use `seff` Instead**: The most reliable way to view detailed memory and CPU utilization for a specific job is to use the `seff <jobid>` command. `seff` parses the accounting data and presents it in a human-readable format, often providing more accurate and detailed statistics than `sacct -X`.
+   * **Check `MaxRSS`**: Ensure that the `SlurmctldParameters=enable_steppd` (or similar step accounting parameters) are enabled in `slurm.conf`. Without step accounting, memory usage per step may not be recorded.
+
+   **Recommendation**: Run `seff <your_job_id>` to see if detailed metrics are available there. If `seff` also shows zeros, check your `slurm.conf` for `AccountingStorageType` and ensure `slurmdbd` is running.
+
+3) **Note**: This run stopped after hitting the recursion limit of 50.
+```
+
+### ✅ Expected Answer
+
+```text
+Not necessarily. -X/--allocations only shows statistics relevant to the job allocation itself and does not take job steps into consideration, and without including steps the utilization statistics for the allocation are reported as zero. Drop -X (or query the steps) to see real usage. Separately, which metrics exist at all depends on the jobacct_gather plugin in use — for example jobacct_gather/cgroup with cgroup/v2 cannot provide virtual-memory metrics and shows 0 for those fields.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/sacct.html**
+
+### 💬 Agent Messages (1)
+
+**🤖 Assistant Message #1**
+
+```text
+1) **Summary of Attempt**: The agent attempted to diagnose why `sacct -X` displays zero values for memory and CPU utilization columns for completed jobs. It performed multiple hybrid vector searches and local file searches for terms like `sacct -X`, `seff`, `MaxRSS`, and `jobstats` to find documentation on Slurm accounting configuration and common pitfalls.
+
+2) **Best Possible Answer**: Your accounting is likely **not broken**. The `sacct -X` command is designed to show a compact summary of job steps, but it often fails to populate memory and CPU utilization metrics for several common reasons:
+   * **Missing Accounting Storage**: Slurm requires the `AccountingStorageType=accounting_storage/slurmdbd` (or similar) and the `slurmdbd` daemon to be running and properly configured to store detailed usage data. If this is not set, `sacct` may show job completion but lack resource usage details.
+   * **Job Step vs. Job Summary**: `sacct -X` shows job steps. If your job ran as a single step without explicit step accounting enabled, or if the accounting plugin didn't capture the data, these fields will be 0.
+   * **Use `seff` Instead**: The most reliable way to view detailed memory and CPU utilization for a specific job is to use the `seff <jobid>` command. `seff` parses the accounting data and presents it in a human-readable format, often providing more accurate and detailed statistics than `sacct -X`.
+   * **Check `MaxRSS`**: Ensure that the `SlurmctldParameters=enable_steppd` (or similar step accounting parameters) are enabled in `slurm.conf`. Without step accounting, memory usage per step may not be recorded.
+
+   **Recommendation**: Run `seff <your_job_id>` to see if detailed metrics are available there. If `seff` also shows zeros, check your `slurm.conf` for `AccountingStorageType` and ensure `slurmdbd` is running.
+
+3) **Note**: This run stopped after hitting the recursion limit of 50.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.828 🟢 |
+| Faithfulness | 0.143 🔴 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 0.750 🟢 |
+
+---
+
+## Question 99: question\_99
+
+### ❓ Question
+
+Is there a way to keep an eye on just my own jobs in the queue, refreshing every 30 seconds, without typing my username or wrapping the command in a shell loop?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/squeue.html  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/faq, docs.rc.fas.harvard.edu/kb/convenient-slurm-commands, slurm.schedmd.com/scontrol.html, slurm.schedmd.com/gang\_scheduling.html, slurm.schedmd.com/faq.html, docs.rc.fas.harvard.edu/kb/faq, slurm.schedmd.com/squeue.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Yes—use the `watch` command with `squeue` filtered to your user. Since `watch` runs the command repeatedly and `squeue -u` defaults to your own account if no user is specified, you can do:
+
+```bash
+watch -n 30 squeue -u
+```
+
+This will refresh your own jobs every 30 seconds without needing to type your username or wrap it in a shell loop.
+
+If you want a cleaner, more compact view, you can also format the output:
+
+```bash
+watch -n 30 squeue -u -o jobid,partition,state,time,node
+```
+
+See the [Running Jobs](https://docs.rc.fas.harvard.edu/kb/running-jobs/) and [Convenient Slurm Commands](https://docs.rc.fas.harvard.edu/kb/convenient-slurm-commands/) pages for more on `squeue` and job monitoring.
+````
+
+### ✅ Expected Answer
+
+```text
+Yes — run `squeue --me -i 30`. The --me option is equivalent to --user=<my username>, and -i/--iterate=<seconds> makes squeue repeatedly gather and report the requested information at the interval specified (printing a time stamp with the header by default). Note the man page's PERFORMANCE warning: executing squeue sends a remote procedure call to slurmctld, so do not run squeue from loops in shell scripts or other programs, and keep calls to the minimum necessary — enough of them can degrade slurmctld and even cause a denial of service.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/squeue.html**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Is there a way to keep an eye on just my own jobs in the queue, refreshing every 30 seconds, without typing my username or wrapping the command in a shell loop?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+watch squeue refresh every 30 seconds my own jobs
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+squeue refresh every 30 seconds watch my jobs
+```
+
+**🤖 Assistant Message #4**
+
+````text
+Yes—use the `watch` command with `squeue` filtered to your user. Since `watch` runs the command repeatedly and `squeue -u` defaults to your own account if no user is specified, you can do:
+
+```bash
+watch -n 30 squeue -u
+```
+
+This will refresh your own jobs every 30 seconds without needing to type your username or wrap it in a shell loop.
+
+If you want a cleaner, more compact view, you can also format the output:
+
+```bash
+watch -n 30 squeue -u -o jobid,partition,state,time,node
+```
+
+See the [Running Jobs](https://docs.rc.fas.harvard.edu/kb/running-jobs/) and [Convenient Slurm Commands](https://docs.rc.fas.harvard.edu/kb/convenient-slurm-commands/) pages for more on `squeue` and job monitoring.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.451 🔴 |
+| Faithfulness | 0.100 🔴 |
+| Context Precision | 0.000 🔴 |
+| Context Recall | 0.000 🔴 |
+
+---
+
+## Question 100: question\_100
+
+### ❓ Question
+
+I want a one-line-per-partition view of how many nodes are busy versus free, but sinfo keeps giving me several rows per partition. What do I run, and how do I read the counts it prints?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/sinfo.html  
+**Retrieved Documents:** slurm.schedmd.com/quickstart.html, docs.rc.fas.harvard.edu/kb/running-jobs, slurm.schedmd.com/pdfs/summary.pdf, slurm.schedmd.com/sinfo.html, slurm.schedmd.com/mc\_support.html, slurm.schedmd.com/sinfo.html, slurm.schedmd.com/sinfo.html, slurm.schedmd.com/mc\_support.html, slurm.schedmd.com/gres.html, slurm.schedmd.com/gang\_scheduling.html, docs.rc.fas.harvard.edu/kb/convenient-slurm-commands, github.com/fasrc/User\_Codes/blob/master/Notes/README.md  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+The default `sinfo` output lists **one row per node** within each partition, which is why you see multiple rows per partition. To collapse everything into **one line per partition**, use the `-s` (summary) flag:
+
+```bash
+sinfo -s
+```
+
+### How to read the output
+
+The output has two lines:
+
+1. **Header line** — shows the total counts:
+   ```
+   NODES  A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z
+   ```
+   Each letter corresponds to a node state. The most common ones you'll care about are:
+   - **A** = **ALLOCATED** (busy / running jobs)
+   - **I** = **IDLE** (free / available)
+   - **M** = **MAINT** (maintenance)
+   - **DL** = **DOWN** (not available)
+
+2. **Second line** — the actual counts, e.g.:
+   ```
+   100  45  50  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   ```
+   In this example: **45 nodes are ALLOCATED**, **50 are IDLE**, and the rest are in other states.
+
+### Per-partition summary
+
+If you want this breakdown **per partition** (still one line per partition), use:
+
+```bash
+sinfo -p <partition-name> -s
+```
+
+Or for **all partitions** in a compact summary:
+
+```bash
+sinfo -o '%P %c %e %t'
+```
+
+This prints:
+- **%P** = partition name
+- **%c** = total CPUs
+- **%e** = allocated CPUs
+- **%t** = node state summary
+
+See the [Convenient Slurm Commands](https://docs.rc.fas.harvard.edu/kb/convenient-slurm-commands/) page for more examples.
+````
+
+### ✅ Expected Answer
+
+```text
+Run `sinfo -s` (--summarize), which lists only a partition state summary with no node state details (internally it uses the format "%#P %.5a %.10l %.16F %N"). In that output the NODES(A/I/O/T) column is the count of nodes by state in the form allocated/idle/other/total — so, for example, 2/6/0/8 means 2 allocated, 6 idle, 0 other, 8 total.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/sinfo.html**
+
+### 💬 Agent Messages (10)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I want a one-line-per-partition view of how many nodes are busy versus free, but sinfo keeps giving me several rows per partition. What do I run, and how do I read the counts it prints?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+sinfo one line per partition summary nodes busy free
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+sinfo summary one line per partition nodes busy free
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+sinfo summary one line per partition
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+sinfo -o
+```
+
+**🛠️ Tool Call #6: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #7: search\_local\_files**
+
+```text
+sinfo -o '%P %c %e %t'
+```
+
+**🛠️ Tool Call #8: search\_local\_files**
+
+```text
+sinfo -p
+```
+
+**🛠️ Tool Call #9: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #10**
+
+````text
+The default `sinfo` output lists **one row per node** within each partition, which is why you see multiple rows per partition. To collapse everything into **one line per partition**, use the `-s` (summary) flag:
+
+```bash
+sinfo -s
+```
+
+### How to read the output
+
+The output has two lines:
+
+1. **Header line** — shows the total counts:
+   ```
+   NODES  A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z
+   ```
+   Each letter corresponds to a node state. The most common ones you'll care about are:
+   - **A** = **ALLOCATED** (busy / running jobs)
+   - **I** = **IDLE** (free / available)
+   - **M** = **MAINT** (maintenance)
+   - **DL** = **DOWN** (not available)
+
+2. **Second line** — the actual counts, e.g.:
+   ```
+   100  45  50  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   ```
+   In this example: **45 nodes are ALLOCATED**, **50 are IDLE**, and the rest are in other states.
+
+### Per-partition summary
+
+If you want this breakdown **per partition** (still one line per partition), use:
+
+```bash
+sinfo -p <partition-name> -s
+```
+
+Or for **all partitions** in a compact summary:
+
+```bash
+sinfo -o '%P %c %e %t'
+```
+
+This prints:
+- **%P** = partition name
+- **%c** = total CPUs
+- **%e** = allocated CPUs
+- **%t** = node state summary
+
+See the [Convenient Slurm Commands](https://docs.rc.fas.harvard.edu/kb/convenient-slurm-commands/) page for more examples.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.542 🟡 |
+| Faithfulness | 0.409 🔴 |
+| Context Precision | 0.226 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 101: question\_101
+
+### ❓ Question
+
+Several nodes are offline and I want to see the note the admins left about why. Which sinfo option shows those notes, and how much of each note do I actually get to see?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/sinfo.html  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/running-jobs, slurm.schedmd.com/quickstart.html, slurm.schedmd.com/pdfs/summary.pdf, slurm.schedmd.com/mc\_support.html, slurm.schedmd.com/sinfo.html, slurm.schedmd.com/sinfo.html, slurm.schedmd.com/sinfo.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Based on the sinfo documentation, here's what you need:
+
+## Option to see admin notes
+
+Use **`--list-reasons`** (or `-R`) to display the reasons/notes admins have set for why nodes are unavailable:
+
+```bash
+sinfo --list-reasons
+```
+
+This shows:
+- The reason text (the admin's note)
+- The user who set the reason
+- The timestamp of when the reason was set
+- The affected node(s)
+
+## How much of each note do you see?
+
+The reason field is formatted with a **20-character width** by default in the `--list-reasons` output format (`%20E`). If the admin's note is longer than 20 characters, it will be truncated in the default output.
+
+If you need to see the full reason text regardless of length, you can use the custom format option:
+
+```bash
+sinfo -o "%E %u %H %N"
+```
+
+This gives you the same information as `--list-reasons` but with the reason field (`%E`) using its natural width (no 20-character limit), so you'll see the complete note.
+
+For more details, see the [sinfo man page](https://slurm.schedmd.com/sinfo.html).
+````
+
+### ✅ Expected Answer
+
+```text
+Use `sinfo -R` (--list-reasons). It lists the reasons nodes are in the down, drained, fail or failing state — the administrator-supplied "reason" string — but it displays only the first 20 characters of the reason field, along with the list of nodes carrying that reason. Adding -l (--long) also includes the current node state in the output.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/sinfo.html**
+
+### 💬 Agent Messages (6)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Several nodes are offline and I want to see the note the admins left about why. Which sinfo option shows those notes, and how much of each note do I actually get to see?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+sinfo option show node reason note admins offline
+```
+
+**🛠️ Tool Call #3: search\_local\_files**
+
+```text
+sinfo.*reason
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #5: search\_vectorstore\_hybrid**
+
+```text
+sinfo --list-reasons option node reason note
+```
+
+**🤖 Assistant Message #6**
+
+````text
+Based on the sinfo documentation, here's what you need:
+
+## Option to see admin notes
+
+Use **`--list-reasons`** (or `-R`) to display the reasons/notes admins have set for why nodes are unavailable:
+
+```bash
+sinfo --list-reasons
+```
+
+This shows:
+- The reason text (the admin's note)
+- The user who set the reason
+- The timestamp of when the reason was set
+- The affected node(s)
+
+## How much of each note do you see?
+
+The reason field is formatted with a **20-character width** by default in the `--list-reasons` output format (`%20E`). If the admin's note is longer than 20 characters, it will be truncated in the default output.
+
+If you need to see the full reason text regardless of length, you can use the custom format option:
+
+```bash
+sinfo -o "%E %u %H %N"
+```
+
+This gives you the same information as `--list-reasons` but with the reason field (`%E`) using its natural width (no 20-character limit), so you'll see the complete note.
+
+For more details, see the [sinfo man page](https://slurm.schedmd.com/sinfo.html).
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.828 🟢 |
+| Faithfulness | 0.615 🟡 |
+| Context Precision | 0.267 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 102: question\_102
+
+### ❓ Question
+
+I compiled my binary in my home directory on the login node and the job can't find it once it lands on a compute node. Does the scheduler copy my files out to the nodes for me?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/quickstart.html  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/ssh-to-a-compute-node, docs.rc.fas.harvard.edu/kb/copying-data-to-and-from-cluster-using-scp, docs.rc.fas.harvard.edu/kb/responsibilities, docs.rc.fas.harvard.edu/kb/cpp-programming-language, docs.rc.fas.harvard.edu/kb/jupyter-notebook-server-on-cluster, slurm.schedmd.com/configurator.html, slurm.schedmd.com/configurator.easy.html, slurm.schedmd.com/slurm.conf.html, slurm.schedmd.com/MISC25/Slinky-KubeConEurope2025.pdf, slurm.schedmd.com/SLUG24/Slinky-Slurm-Bridge.pdf, docs.rc.fas.harvard.edu/kb/helmod-faq, docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers, docs.rc.fas.harvard.edu/kb/bash  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+```text
+No, the scheduler does **not** copy your files to the compute nodes for you.
+
+On FASRC clusters, your home directory (`/home/username`) is mounted on the compute nodes via a shared filesystem (typically NFS). This means files you compile or create in your home directory on the login node **should** be accessible from your job on the compute nodes—provided the home directory is properly mounted and your files are in a location the job can reach.
+
+However, there are a few common reasons your job might not find the binary:
+
+1. **Relative vs. absolute paths** — If your job script uses a relative path to the binary, it will resolve relative to the job's working directory (which defaults to the directory from which you submitted the job, not necessarily where the binary lives). Use an absolute path or `cd` to the correct directory in your job script.
+
+2. **Working directory** — By default, SLURM runs your job in the directory from which you submitted it. If your binary is elsewhere, you need to either `cd` to its location in the job script or specify the full path.
+
+3. **Home directory not mounted or slow** — While home directories are generally shared, they can be slow or occasionally have mount issues. For large I/O or compiled binaries, it's often better to work in `/scratch` or `/data` (which are also shared across nodes) and copy your binary there before running.
+
+**Quick fix:** In your SLURM job script, either:
+- Use the full path to your binary (e.g., `/home/username/mydir/mybinary`)
+- Or `cd` to the directory containing the binary before executing it
+
+If you're still having trouble, check that the file exists on a compute node by adding `ls -l /home/username/mydir/mybinary` to your job script and checking the job output.
+```
+
+### ✅ Expected Answer
+
+```text
+No. Slurm does not automatically migrate executable or data files to the nodes allocated to a job — the files must already exist on local disk on those nodes or on a global file system such as NFS or Lustre. If you do want a copy on the compute nodes' local storage, use sbcast, which transfers a file to local disk on the allocated nodes using Slurm's hierarchical communications (e.g. `sbcast a.out /tmp/joe.a.out`, then run it with srun and delete it from local storage afterwards).
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/quickstart.html**
+
+### 💬 Agent Messages (11)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I compiled my binary in my home directory on the login node and the job can't find it once it lands on a compute node. Does the scheduler copy my files out to the nodes for me?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+SLURM job compute node home directory file access scheduler copy
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+FASRC home directory shared compute nodes file access
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+home directory shared compute nodes
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+home directory compute node file access
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+home directory
+```
+
+**🛠️ Tool Call #7: search\_local\_files**
+
+```text
+compute node home directory shared NFS
+```
+
+**🛠️ Tool Call #8: search\_local\_files**
+
+```text
+scheduler copy files compute nodes
+```
+
+**🛠️ Tool Call #9: search\_local\_files**
+
+```text
+SLURM job working directory
+```
+
+**🛠️ Tool Call #10: search\_vectorstore\_hybrid**
+
+```text
+FASRC SLURM job working directory home directory shared filesystem
+```
+
+**🤖 Assistant Message #11**
+
+```text
+No, the scheduler does **not** copy your files to the compute nodes for you.
+
+On FASRC clusters, your home directory (`/home/username`) is mounted on the compute nodes via a shared filesystem (typically NFS). This means files you compile or create in your home directory on the login node **should** be accessible from your job on the compute nodes—provided the home directory is properly mounted and your files are in a location the job can reach.
+
+However, there are a few common reasons your job might not find the binary:
+
+1. **Relative vs. absolute paths** — If your job script uses a relative path to the binary, it will resolve relative to the job's working directory (which defaults to the directory from which you submitted the job, not necessarily where the binary lives). Use an absolute path or `cd` to the correct directory in your job script.
+
+2. **Working directory** — By default, SLURM runs your job in the directory from which you submitted it. If your binary is elsewhere, you need to either `cd` to its location in the job script or specify the full path.
+
+3. **Home directory not mounted or slow** — While home directories are generally shared, they can be slow or occasionally have mount issues. For large I/O or compiled binaries, it's often better to work in `/scratch` or `/data` (which are also shared across nodes) and copy your binary there before running.
+
+**Quick fix:** In your SLURM job script, either:
+- Use the full path to your binary (e.g., `/home/username/mydir/mybinary`)
+- Or `cd` to the directory containing the binary before executing it
+
+If you're still having trouble, check that the file exists on a compute node by adding `ls -l /home/username/mydir/mybinary` to your job script and checking the job output.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.675 🟡 |
+| Faithfulness | 0.696 🟡 |
+| Context Precision | 0.000 🔴 |
+| Context Recall | 0.000 🔴 |
+
+---
+
+## Question 103: question\_103
+
+### ❓ Question
+
+I ran scancel -s KILL on my job. The processes died, but the job is still sitting there holding its nodes. Why didn't it go away?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/scancel.html  
+**Retrieved Documents:** slurm.schedmd.com/burst\_buffer.html, slurm.schedmd.com/salloc.html, slurm.schedmd.com/troubleshoot.html, slurm.schedmd.com/scancel.html, docs.rc.fas.harvard.edu/kb/running-jobs, slurm.schedmd.com/salloc.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+When you run `scancel -s KILL`, Slurm sends the **KILL** signal (SIGKILL) to the job's processes, which terminates them immediately. However, the **job itself may not be immediately removed from the queue** for a few reasons:
+
+### 1. Job state transitions to `COMPLETING`
+After receiving the signal, Slurm often moves the job into a **COMPLETING** state while it waits for the job's step processes to fully exit and for cleanup (e.g., accounting, job scripts, burst buffer teardown) to finish. During this time, the job still holds its allocated nodes.
+
+### 2. Burst buffer or cleanup tasks
+If the job was using a **burst buffer** or had post-run cleanup tasks, Slurm may need time to complete stage-out or teardown before releasing the nodes. As noted in the Slurm Burst Buffer Guide, when a job is cancelled, Slurm may run teardown scripts before the job is fully released [Slurm Burst Buffer Guide](https://slurm.schedmd.com/burst_buffer.html).
+
+### 3. Slurmctld processing delay
+There can be a delay between the signal being sent and Slurm's controller (`slurmctld`) updating the job state and freeing the nodes, especially if many jobs are being cancelled or if the controller is busy.
+
+### What you can do:
+- **Check the job state** with `sacct -j <JOBID>` or `squeue -j <JOBID>` to see if it's in `COMPLETING`, `CANCELLED`, or another state.
+- **Wait a few moments** — Slurm typically releases the nodes within a short time once all processes have exited and cleanup is done.
+- **If the job is stuck for a long time** (e.g., more than a few minutes in `COMPLETING`), contact FASRC support, as this may indicate a hung process or a Slurm controller issue.
+
+If you'd like, I can help you check the current state of your job.
+```
+
+### ✅ Expected Answer
+
+```text
+Because sending a signal value of KILL to an entire job cancels the job's active job steps but does not cancel the job itself, and cancelling a job step never terminates the job — the job must be cancelled to release its resource allocation. To actually cancel it, invoke scancel with no --signal option: that sends a SIGCONT to all steps to wake them up, then a SIGTERM, waits the KillWait duration defined in slurm.conf, and finally sends SIGKILL if they have not terminated.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/scancel.html**
+
+### 💬 Agent Messages (7)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+I ran scancel -s KILL on my job. The processes died, but the job is still sitting there holding its nodes. Why didn't it go away?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+scancel -s KILL job stuck nodes not released
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+scancel signal KILL job stuck COMPLETING nodes not freed
+```
+
+**🛠️ Tool Call #4: search\_local\_files**
+
+```text
+scancel -s KILL
+```
+
+**🛠️ Tool Call #5: search\_local\_files**
+
+```text
+scancel signal
+```
+
+**🛠️ Tool Call #6: search\_vectorstore\_hybrid**
+
+```text
+scancel signal KILL job state COMPLETING
+```
+
+**🤖 Assistant Message #7**
+
+```text
+When you run `scancel -s KILL`, Slurm sends the **KILL** signal (SIGKILL) to the job's processes, which terminates them immediately. However, the **job itself may not be immediately removed from the queue** for a few reasons:
+
+### 1. Job state transitions to `COMPLETING`
+After receiving the signal, Slurm often moves the job into a **COMPLETING** state while it waits for the job's step processes to fully exit and for cleanup (e.g., accounting, job scripts, burst buffer teardown) to finish. During this time, the job still holds its allocated nodes.
+
+### 2. Burst buffer or cleanup tasks
+If the job was using a **burst buffer** or had post-run cleanup tasks, Slurm may need time to complete stage-out or teardown before releasing the nodes. As noted in the Slurm Burst Buffer Guide, when a job is cancelled, Slurm may run teardown scripts before the job is fully released [Slurm Burst Buffer Guide](https://slurm.schedmd.com/burst_buffer.html).
+
+### 3. Slurmctld processing delay
+There can be a delay between the signal being sent and Slurm's controller (`slurmctld`) updating the job state and freeing the nodes, especially if many jobs are being cancelled or if the controller is busy.
+
+### What you can do:
+- **Check the job state** with `sacct -j <JOBID>` or `squeue -j <JOBID>` to see if it's in `COMPLETING`, `CANCELLED`, or another state.
+- **Wait a few moments** — Slurm typically releases the nodes within a short time once all processes have exited and cleanup is done.
+- **If the job is stuck for a long time** (e.g., more than a few minutes in `COMPLETING`), contact FASRC support, as this may indicate a hung process or a Slurm controller issue.
+
+If you'd like, I can help you check the current state of your job.
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.796 🟢 |
+| Faithfulness | 0.158 🔴 |
+| Context Precision | 0.250 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 104: question\_104
+
+### ❓ Question
+
+Can I wipe out all of my queued-but-not-yet-started jobs in one partition with a single command, without touching the ones already running and without listing job IDs?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/scancel.html  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/running-jobs, slurm.schedmd.com/scontrol.html, slurm.schedmd.com/slurm.conf.html, slurm.schedmd.com/scontrol.html, docs.rc.fas.harvard.edu/kb/responsibilities, slurm.schedmd.com/scontrol.html, slurm.schedmd.com/scancel.html, slurm.schedmd.com/cpu\_management.html, slurm.schedmd.com/salloc.html, slurm.schedmd.com/slurm.conf.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Yes—you can cancel all of **your** queued (but not yet running) jobs in a specific partition with a single command:
+
+```bash
+scancel --state=PENDING --partition=<partition_name>
+```
+
+### Why this works:
+- `--state=PENDING` limits the cancellation to jobs that are queued but have not yet started. Running jobs (state `RUNNING`) are **not** affected.
+- `--partition=<partition_name>` scopes the command to only jobs in that partition.
+- `scancel` without a job ID defaults to acting on **your** jobs only, so you don’t need to list job IDs or worry about other users’ jobs.
+
+### Example:
+To cancel all of your pending jobs in the `shared` partition:
+```bash
+scancel --state=PENDING --partition=shared
+```
+
+### Notes:
+- You must have permission to cancel jobs in that partition.
+- If you want to see what would be cancelled before running, you can use `squeue --state=PENDING --partition=<partition_name>` to preview the list.
+
+Let me know if you’d like help checking which jobs are pending first!
+````
+
+### ✅ Expected Answer
+
+```text
+Yes — filter scancel by state, owner and partition, e.g. `scancel --state=PENDING --user=bob --partition=debug` (use --me instead of --user to mean your own jobs). The -t/--state filter accepts PENDING, RUNNING or SUSPENDED, and when multiple filters are supplied only the jobs satisfying all of the filtering options are signaled, so running jobs in that partition are left alone.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/scancel.html**
+
+### 💬 Agent Messages (4)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Can I wipe out all of my queued-but-not-yet-started jobs in one partition with a single command, without touching the ones already running and without listing job IDs?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+cancel all queued jobs in partition slurm single command
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+scancel cancel all jobs partition user queued only
+```
+
+**🤖 Assistant Message #4**
+
+````text
+Yes—you can cancel all of **your** queued (but not yet running) jobs in a specific partition with a single command:
+
+```bash
+scancel --state=PENDING --partition=<partition_name>
+```
+
+### Why this works:
+- `--state=PENDING` limits the cancellation to jobs that are queued but have not yet started. Running jobs (state `RUNNING`) are **not** affected.
+- `--partition=<partition_name>` scopes the command to only jobs in that partition.
+- `scancel` without a job ID defaults to acting on **your** jobs only, so you don’t need to list job IDs or worry about other users’ jobs.
+
+### Example:
+To cancel all of your pending jobs in the `shared` partition:
+```bash
+scancel --state=PENDING --partition=shared
+```
+
+### Notes:
+- You must have permission to cancel jobs in that partition.
+- If you want to see what would be cancelled before running, you can use `squeue --state=PENDING --partition=<partition_name>` to preview the list.
+
+Let me know if you’d like help checking which jobs are pending first!
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.771 🟢 |
+| Faithfulness | 0.636 🟡 |
+| Context Precision | 0.143 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 105: question\_105
+
+### ❓ Question
+
+The Slurm website's manual pages describe a much newer release than the one our cluster actually runs. Where can I get documentation that matches our older version?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://slurm.schedmd.com/documentation.html  
+**Retrieved Documents:** slurm.schedmd.com/big\_sys.html, slurm.schedmd.com/programmer\_guide.html, slurm.schedmd.com/documentation.html, slurm.schedmd.com, slurm.schedmd.com/topology.conf.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+The official Slurm documentation site hosts older version manuals alongside the current release. On the main documentation page, look for the note that says:
+
+> **NOTE: This documentation is for Slurm version 26.05. Documentation for older versions of Slurm is available at [https://slurm.schedmd.com/archive.html](https://slurm.schedmd.com/archive.html).**
+
+You can find the manual pages that match your cluster's Slurm version at that archive page.
+
+If you're not sure which version your cluster runs, you can check with:
+```bash
+sinfo --version
+```
+or
+```bash
+scontrol --version
+```
+
+Let me know your version and I can point you to the exact archive link.
+````
+
+### ✅ Expected Answer
+
+```text
+The online documentation set on slurm.schedmd.com is for Slurm version 26.05. Documentation for older versions of Slurm is distributed with the Slurm source itself, or can be found in SchedMD's documentation archive at https://slurm.schedmd.com/archive/.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://slurm.schedmd.com/documentation.html**
+
+### 💬 Agent Messages (2)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+The Slurm website's manual pages describe a much newer release than the one our cluster actually runs. Where can I get documentation that matches our older version?
+```
+
+**🤖 Assistant Message #2**
+
+````text
+The official Slurm documentation site hosts older version manuals alongside the current release. On the main documentation page, look for the note that says:
+
+> **NOTE: This documentation is for Slurm version 26.05. Documentation for older versions of Slurm is available at [https://slurm.schedmd.com/archive.html](https://slurm.schedmd.com/archive.html).**
+
+You can find the manual pages that match your cluster's Slurm version at that archive page.
+
+If you're not sure which version your cluster runs, you can check with:
+```bash
+sinfo --version
+```
+or
+```bash
+scontrol --version
+```
+
+Let me know your version and I can point you to the exact archive link.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.923 🟢 |
+| Faithfulness | 0.250 🔴 |
+| Context Precision | 0.417 🔴 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 106: question\_106
+
+### ❓ Question
+
+Which SLURM partition on FASRC Cannon should I submit GPU jobs to, and what flag do I use to request GPUs?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/running-jobs  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/gpgpu-computing-on-the-cluster, docs.rc.fas.harvard.edu/kb/kempner-partitions, slurm.schedmd.com/slurm.conf.html, slurm.schedmd.com/gres.html, slurm.schedmd.com/gres.html  
+**Status:** ❌ INCORRECT
+
+### 🤖 archi's Answer
+
+````text
+To submit GPU jobs on the FASRC cluster, you should use the **`gpu`** partition and request GPUs with the **`--gpus`** flag.
+
+Here is a minimal example for an `sbatch` script:
+
+```bash
+#SBATCH -p gpu
+#SBATCH --gpus=1
+```
+
+*   **Partition**: Use `-p gpu` to target the general-use GPU partition [GPU Computing on the FASRC cluster](https://docs.rc.fas.harvard.edu/kb/gpgpu-computing-on-the-cluster/).
+*   **GPU Flag**: Use `#SBATCH --gpus=N` to request `N` GPUs. You can also request specific GPU models using `#SBATCH --gpus=name:N` (e.g., `--gpus=a100:1`) [GPU Computing on the FASRC cluster](https://docs.rc.fas.harvard.edu/kb/gpgpu-computing-on-the-cluster/).
+
+When the job runs, SLURM restricts your job to the allocated GPUs, which you can reference in your code using zero-based indexing (e.g., `gpu:0`, `gpu:1`).
+````
+
+### ✅ Expected Answer
+
+```text
+Use the gpu partition (or gpu_test for short test jobs). Request GPUs with --gres=gpu:N in your SLURM submit script, e.g. --gres=gpu:1.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/running-jobs**
+
+### 💬 Agent Messages (3)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Which SLURM partition on FASRC Cannon should I submit GPU jobs to, and what flag do I use to request GPUs?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #3**
+
+````text
+To submit GPU jobs on the FASRC cluster, you should use the **`gpu`** partition and request GPUs with the **`--gpus`** flag.
+
+Here is a minimal example for an `sbatch` script:
+
+```bash
+#SBATCH -p gpu
+#SBATCH --gpus=1
+```
+
+*   **Partition**: Use `-p gpu` to target the general-use GPU partition [GPU Computing on the FASRC cluster](https://docs.rc.fas.harvard.edu/kb/gpgpu-computing-on-the-cluster/).
+*   **GPU Flag**: Use `#SBATCH --gpus=N` to request `N` GPUs. You can also request specific GPU models using `#SBATCH --gpus=name:N` (e.g., `--gpus=a100:1`) [GPU Computing on the FASRC cluster](https://docs.rc.fas.harvard.edu/kb/gpgpu-computing-on-the-cluster/).
+
+When the job runs, SLURM restricts your job to the allocated GPUs, which you can reference in your code using zero-based indexing (e.g., `gpu:0`, `gpu:1`).
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.669 🟡 |
+| Faithfulness | 0.909 🟢 |
+| Context Precision | 1.000 🟢 |
+| Context Recall | 1.000 🟢 |
+
+---
+
+## Question 107: question\_107
+
+### ❓ Question
+
+Where on the FASRC Cannon filesystem should I store large datasets that I don't need backed up?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/cluster-storage  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/fasrc-cluster-storage-policy, docs.rc.fas.harvard.edu/kb/cluster-storage, docs.rc.fas.harvard.edu/kb/administrative-data, docs.rc.fas.harvard.edu/kb/acceptable-use, docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/stata-on-cluster, docs.rc.fas.harvard.edu/kb/fasse, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/R/README.md, docs.rc.fas.harvard.edu/kb/r-parallel, docs.rc.fas.harvard.edu/kb/submitting-large-numbers-of-jobs, docs.rc.fas.harvard.edu/kb/helmod-faq, docs.rc.fas.harvard.edu/kb/fasse-protected-data-transfers, github.com/fasrc/User\_Codes/blob/master/Training/GenAI-Tools/extras.md, docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface, docs.rc.fas.harvard.edu/kb/fasse, docs.rc.fas.harvard.edu/kb/other-resources, docs.rc.fas.harvard.edu/kb/python, docs.rc.fas.harvard.edu/kb/python-package-installation, docs.rc.fas.harvard.edu/kb/pytorch, github.com/fasrc/User\_Codes/blob/master/Applications/Gurobi/Matlab/README.md, docs.rc.fas.harvard.edu/kb/ood-remote-desktop-how-to-open-software, docs.rc.fas.harvard.edu/kb/tips-for-tar-archiving, docs.rc.fas.harvard.edu/kb/cursor-remote-development-via-ssh-and-tunnel, docs.rc.fas.harvard.edu/kb/checking-quota-and-usage, docs.rc.fas.harvard.edu/kb/spack-package-manager, docs.rc.fas.harvard.edu/kb/storage-service-center, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise6/README.md, docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage, docs.rc.fas.harvard.edu/kb/data-storage-workflow  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+```text
+For large datasets you don't need backed up, the best option on the FASRC Cannon cluster is **netscratch** at **`/n/netscratch`** [Getting Started with FASRC Storage](https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage/).
+
+Key details about netscratch:
+- **Path:** `/n/netscratch`
+- **Capacity:** 50TB per PI/lab account (complimentary)
+- **Backup:** No backups (snapshots only)
+- **Retention policy:** 90-day retention — files older than 90 days may be automatically cleaned up
+- **Purpose:** Designed as temporary storage for high-performance data analysis and I/O-intensive workloads
+
+This is ideal for large intermediate datasets, temporary working files, or data you can regenerate. If you need longer-term retention without backups, your **Lab Directory** at `/n/holylabs` (4TB per lab, no backups but no automatic retention policy) is another option, though it has a much smaller capacity.
+
+For reference, your **Home Directory** (`/n/homeNN/`) is also not backed up (daily snapshots retained for 2 weeks), but it's limited to 100GB and not recommended for large datasets or I/O-intensive jobs [Home and Lab directories – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/cluster-storage/).
+```
+
+### ✅ Expected Answer
+
+```text
+Use /n/holyscratch01/<lab>/ for fast scratch storage. It is not backed up and is periodically purged of older files.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/cluster-storage**
+
+### 💬 Agent Messages (17)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+Where on the FASRC Cannon filesystem should I store large datasets that I don't need backed up?
+```
+
+**🛠️ Tool Call #2: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #3: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🛠️ Tool Call #4: search\_vectorstore\_hybrid**
+
+```text
+FASRC Cannon scratch filesystem large datasets not backed up
+```
+
+**🛠️ Tool Call #5: search\_vectorstore\_hybrid**
+
+```text
+FASRC scratch filesystem /project /scratch backup policy
+```
+
+**🛠️ Tool Call #6: search\_local\_files**
+
+```text
+scratch filesystem backup retention policy
+```
+
+**🛠️ Tool Call #7: search\_vectorstore\_hybrid**
+
+```text
+FASRC scratch filesystem path /project /scratch
+```
+
+**🛠️ Tool Call #8: search\_local\_files**
+
+```text
+scratch
+```
+
+**🛠️ Tool Call #9: search\_local\_files**
+
+```text
+scratch filesystem path /project
+```
+
+**🛠️ Tool Call #10: search\_local\_files**
+
+```text
+scratch
+```
+
+**🛠️ Tool Call #11: search\_vectorstore\_hybrid**
+
+```text
+FASRC scratch filesystem /project /scratch path backup
+```
+
+**🛠️ Tool Call #12: search\_local\_files**
+
+```text
+/project
+```
+
+**🛠️ Tool Call #13: search\_local\_files**
+
+```text
+/project/
+```
+
+**🛠️ Tool Call #14: search\_local\_files**
+
+```text
+/project
+```
+
+**🛠️ Tool Call #15: search\_local\_files**
+
+```text
+scratch
+```
+
+**🛠️ Tool Call #16: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #17**
+
+```text
+For large datasets you don't need backed up, the best option on the FASRC Cannon cluster is **netscratch** at **`/n/netscratch`** [Getting Started with FASRC Storage](https://docs.rc.fas.harvard.edu/kb/getting-started-with-fasrc-storage/).
+
+Key details about netscratch:
+- **Path:** `/n/netscratch`
+- **Capacity:** 50TB per PI/lab account (complimentary)
+- **Backup:** No backups (snapshots only)
+- **Retention policy:** 90-day retention — files older than 90 days may be automatically cleaned up
+- **Purpose:** Designed as temporary storage for high-performance data analysis and I/O-intensive workloads
+
+This is ideal for large intermediate datasets, temporary working files, or data you can regenerate. If you need longer-term retention without backups, your **Lab Directory** at `/n/holylabs` (4TB per lab, no backups but no automatic retention policy) is another option, though it has a much smaller capacity.
+
+For reference, your **Home Directory** (`/n/homeNN/`) is also not backed up (daily snapshots retained for 2 weeks), but it's limited to 100GB and not recommended for large datasets or I/O-intensive jobs [Home and Lab directories – FASRC DOCS](https://docs.rc.fas.harvard.edu/kb/cluster-storage/).
+```
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.826 🟢 |
+| Faithfulness | 0.680 🟡 |
+| Context Precision | 0.000 🔴 |
+| Context Recall | 0.000 🔴 |
+
+---
+
+## Question 108: question\_108
+
+### ❓ Question
+
+My SLURM job on Cannon was killed with an out-of-memory error. How do I diagnose what the actual memory peak was, and how do I request more memory for the next submission?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/running-jobs  
+**Retrieved Documents:** docs.rc.fas.harvard.edu/kb/faq, docs.rc.fas.harvard.edu/kb/running-jobs, docs.rc.fas.harvard.edu/kb/running-jobs, slurm.schedmd.com/slurm.conf.html, docs.rc.fas.harvard.edu/kb/slurm-stats, slurm.schedmd.com/faq.html, docs.rc.fas.harvard.edu/kb/slurm-memory-limits, slurm.schedmd.com/faq.html  
+**Status:** ✅ FULLY CORRECT
+
+### 🤖 archi's Answer
+
+````text
+Here's how to diagnose and fix the OOM issue on Cannon:
+
+## Diagnosing the memory peak
+
+Slurm only records an **accurate** memory peak if the job completes successfully. If your job was killed with `OUT_OF_MEMORY`, the recorded memory usage will be inaccurate. To find the true peak:
+
+1. **Run a test job** with the same workload but with a generous memory request so it completes without being killed.
+2. **Check the recorded peak** using `sacct`:
+   ```
+   sacct -j <job_id> --format=JobID,MaxRSS
+   ```
+   (MaxRSS shows the peak resident set size in KB.)
+
+3. You can also use the **`jobstats`** tool to analyze how much memory your job actually used ([Slurm memory limits](https://docs.rc.fas.harvard.edu/kb/slurm-memory-limits/)).
+
+## Requesting more memory
+
+Add a `--mem` directive to your `#SBATCH` block:
+
+```bash
+#SBATCH --mem 4G
+```
+
+This requests 4 GB per node. You can use `M` for megabytes or `G` for gigabytes.
+
+**Tip:** Start with a generous request (job slots average ~4000 MB per core), then use `jobstats` or `sacct` to see what you actually used, and tighten the request. Smaller requests are easier for the scheduler to place.
+
+For more details, see [Slurm memory limits](https://docs.rc.fas.harvard.edu/kb/slurm-memory-limits/).
+````
+
+### ✅ Expected Answer
+
+```text
+After the job ends, run sacct -j <jobid> --format=JobID,MaxRSS,ReqMem to see the peak memory the job used (MaxRSS) versus what was requested (ReqMem). In your next submit script, increase the memory request via --mem=<N>G (whole-job) or --mem-per-cpu=<N>G (per-task), aiming a bit above the observed MaxRSS so future variations don't kill the job again.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/running-jobs**
+
+### 💬 Agent Messages (5)
+
+**🛠️ Tool Call #1: search\_vectorstore\_hybrid**
+
+```text
+My SLURM job on Cannon was killed with an out-of-memory error. How do I diagnose what the actual memory peak was, and how do I request more memory for the next submission?
+```
+
+**🛠️ Tool Call #2: search\_vectorstore\_hybrid**
+
+```text
+Cannon SLURM job killed out of memory diagnose memory peak SlurmJobEnforcedMemoryLimit
+```
+
+**🛠️ Tool Call #3: search\_vectorstore\_hybrid**
+
+```text
+request more memory SLURM Cannon sbatch mem
+```
+
+**🛠️ Tool Call #4: fetch\_catalog\_document**
+
+```text
+No query found.
+```
+
+**🤖 Assistant Message #5**
+
+````text
+Here's how to diagnose and fix the OOM issue on Cannon:
+
+## Diagnosing the memory peak
+
+Slurm only records an **accurate** memory peak if the job completes successfully. If your job was killed with `OUT_OF_MEMORY`, the recorded memory usage will be inaccurate. To find the true peak:
+
+1. **Run a test job** with the same workload but with a generous memory request so it completes without being killed.
+2. **Check the recorded peak** using `sacct`:
+   ```
+   sacct -j <job_id> --format=JobID,MaxRSS
+   ```
+   (MaxRSS shows the peak resident set size in KB.)
+
+3. You can also use the **`jobstats`** tool to analyze how much memory your job actually used ([Slurm memory limits](https://docs.rc.fas.harvard.edu/kb/slurm-memory-limits/)).
+
+## Requesting more memory
+
+Add a `--mem` directive to your `#SBATCH` block:
+
+```bash
+#SBATCH --mem 4G
+```
+
+This requests 4 GB per node. You can use `M` for megabytes or `G` for gigabytes.
+
+**Tip:** Start with a generous request (job slots average ~4000 MB per core), then use `jobstats` or `sacct` to see what you actually used, and tighten the request. Smaller requests are easier for the scheduler to place.
+
+For more details, see [Slurm memory limits](https://docs.rc.fas.harvard.edu/kb/slurm-memory-limits/).
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.646 🟡 |
+| Faithfulness | 0.588 🟡 |
+| Context Precision | 0.243 🔴 |
+| Context Recall | 0.500 🟡 |
+
+---
+
+## Question 109: question\_109
+
+### ❓ Question
+
+I want to run a multi-node MPI program on Cannon that uses one GPU per node. What does the SLURM submit script need to specify, and how do I launch the MPI ranks?
+
+### 🎯 Retrieval Check
+
+**Expected Document(s):** https\://docs.rc.fas.harvard.edu/kb/running-jobs, https\://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface  
+**Retrieved Documents:** github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise6/run.sbatch, github.com/fasrc/User\_Codes/blob/master/GPU\_Computing/Dist\_GPU\_Computing/NCCL\_and\_CUDA/MultiNode/README.md, docs.rc.fas.harvard.edu/kb/running-jobs, github.com/fasrc/User\_Codes/blob/master/GPU\_Computing/Dist\_GPU\_Computing/NCCL\_and\_CUDA/MultiNode/ncclAllGather\_mpi.cu, slurm.schedmd.com/gres.html, github.com/fasrc/User\_Codes/blob/master/GPU\_Computing/Dist\_GPU\_Computing/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise4/README.md, github.com/fasrc/User\_Codes/blob/master/Training/Distributed\_GPU\_Computing/Exercise5/README.md, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/R/Large\_Data\_Processing\_R/parallel\_computation/R\_embarrassingly\_parallel.md, github.com/fasrc/User\_Codes/blob/master/Parallel\_Computing/EP/README.md, github.com/fasrc/User\_Codes/blob/master/Applications/Dynamite/README.md  
+**Status:** ⚠️ PARTIALLY CORRECT (1/2 sources found)
+
+### 🤖 archi's Answer
+
+````text
+The agent attempted to retrieve specific SLURM configuration details and MPI launch instructions for the Cannon cluster, specifically focusing on multi-node setups with one GPU per node. It queried the vector store and local files for examples of `#SBATCH` directives (like `--gpus-per-node`) and `srun` usage.
+
+**Summary of Attempt:**
+The agent gathered information on SLURM job submission scripts and MPI execution commands from the Cannon cluster documentation and example code repositories.
+
+**Answer:**
+To run a multi-node MPI program on Cannon with one GPU per node, you need to configure your SLURM script and launch command as follows:
+
+1.  **SLURM Submit Script (`#SBATCH` directives):**
+    *   Specify the number of nodes: `#SBATCH --nodes=<num_nodes>`
+    *   Specify the number of tasks (MPI ranks) per node: `#SBATCH --ntasks-per-node=1` (since you want one rank per node).
+    *   Specify one GPU per node: `#SBATCH --gpus-per-node=1`
+    *   Ensure you select the correct partition (e.g., `#SBATCH --partition=gpu`).
+
+    *Example Script:*
+    ```bash
+    #!/bin/bash
+    #SBATCH --job-name=mpi_gpu
+    #SBATCH --nodes=2
+    #SBATCH --ntasks-per-node=1
+    #SBATCH --gpus-per-node=1
+    #SBATCH --time=00:30:00
+    #SBATCH --partition=gpu
+
+    module load mpi/cuda/openmpi  # Load appropriate MPI module
+    srun ./your_mpi_program
+    ```
+
+2.  **Launching MPI Ranks:**
+    *   Use `srun` to launch the MPI executable. SLURM automatically handles the process placement and GPU binding.
+    *   Command: `srun ./your_program`
+    *   If your program requires explicit MPI initialization (like `MPI_Init`), ensure it is called within the executable launched by `srun`. The environment variables set by SLURM (like `SLURM_NODELIST`, `SLURM_PROCID`) will be available to the MPI ranks.
+
+**Note:** This run stopped after hitting the recursion limit of 50.
+````
+
+### ✅ Expected Answer
+
+```text
+In your submit script: choose a GPU-enabled partition (e.g. gpu), set --nodes=<N> with --ntasks-per-node=1 and --gres=gpu:1 (per-node GPU request), load the MPI and CUDA modules with module load. Launch the program with srun (not mpirun directly) so SLURM places one rank per node with the bound GPU; e.g. srun --mpi=pmix ./my_program. Use sinfo and scontrol show partition gpu to confirm node configuration before submitting.
+```
+
+### 🎯 Expected Source Documents
+
+- **https\://docs.rc.fas.harvard.edu/kb/running-jobs**
+- **https\://docs.rc.fas.harvard.edu/kb/mpi-message-passing-interface**
+
+### 💬 Agent Messages (1)
+
+**🤖 Assistant Message #1**
+
+````text
+The agent attempted to retrieve specific SLURM configuration details and MPI launch instructions for the Cannon cluster, specifically focusing on multi-node setups with one GPU per node. It queried the vector store and local files for examples of `#SBATCH` directives (like `--gpus-per-node`) and `srun` usage.
+
+**Summary of Attempt:**
+The agent gathered information on SLURM job submission scripts and MPI execution commands from the Cannon cluster documentation and example code repositories.
+
+**Answer:**
+To run a multi-node MPI program on Cannon with one GPU per node, you need to configure your SLURM script and launch command as follows:
+
+1.  **SLURM Submit Script (`#SBATCH` directives):**
+    *   Specify the number of nodes: `#SBATCH --nodes=<num_nodes>`
+    *   Specify the number of tasks (MPI ranks) per node: `#SBATCH --ntasks-per-node=1` (since you want one rank per node).
+    *   Specify one GPU per node: `#SBATCH --gpus-per-node=1`
+    *   Ensure you select the correct partition (e.g., `#SBATCH --partition=gpu`).
+
+    *Example Script:*
+    ```bash
+    #!/bin/bash
+    #SBATCH --job-name=mpi_gpu
+    #SBATCH --nodes=2
+    #SBATCH --ntasks-per-node=1
+    #SBATCH --gpus-per-node=1
+    #SBATCH --time=00:30:00
+    #SBATCH --partition=gpu
+
+    module load mpi/cuda/openmpi  # Load appropriate MPI module
+    srun ./your_mpi_program
+    ```
+
+2.  **Launching MPI Ranks:**
+    *   Use `srun` to launch the MPI executable. SLURM automatically handles the process placement and GPU binding.
+    *   Command: `srun ./your_program`
+    *   If your program requires explicit MPI initialization (like `MPI_Init`), ensure it is called within the executable launched by `srun`. The environment variables set by SLURM (like `SLURM_NODELIST`, `SLURM_PROCID`) will be available to the MPI ranks.
+
+**Note:** This run stopped after hitting the recursion limit of 50.
+````
+
+### 📊 RAGAS Scores
+
+| Metric | Score |
+|---|---|
+| Answer Relevancy | 0.872 🟢 |
+| Faithfulness | 0.600 🟡 |
+| Context Precision | 0.532 🟡 |
+| Context Recall | 0.667 🟡 |

@@ -1,31 +1,27 @@
-import src.archi.pipelines as archiPipelines 
-from src.utils.config_access import get_full_config
-from src.utils.logging import get_logger
+import src.archi.pipelines as archiPipelines
 from src.archi.utils.output_dataclass import PipelineOutput
 from src.archi.utils.vectorstore_connector import VectorstoreConnector
+from src.utils.config_access import get_full_config
+from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-class archi():
+
+class archi:
     """
     Central class of the archi framework.
-    Connects your database with the Pipeline, 
+    Connects your database with the Pipeline,
     creates and executes your Pipeline.
     """
 
-    def __init__(
-            self,
-            pipeline,
-            *args,
-            **kwargs
-        ):
+    def __init__(self, pipeline, *args, **kwargs):
         self.pipeline_kwargs = dict(kwargs)
         self.pipeline_kwargs.pop("config_name", None)
         self.update(pipeline, config_name=kwargs.get("config_name", None))
         self.pipeline_name = pipeline
         self.vs_connector = VectorstoreConnector(self.config)
 
-    def update(self, pipeline=None, config_name = None):
+    def update(self, pipeline=None, config_name=None):
         """
         Read relevant configuration settings.
         Initialize the Pipeline: either passed as argument or from config file.
@@ -34,7 +30,7 @@ class archi():
         # config_name kept for compatibility; currently single active config
         self.config = get_full_config()
         if pipeline:
-            self.pipeline_name=pipeline
+            self.pipeline_name = pipeline
         self.pipeline = self._create_pipeline_instance(
             self.pipeline_name,
             config=self.config,
@@ -61,7 +57,9 @@ class archi():
     def _prepare_call_kwargs(self, kwargs):
         """Attach a freshly initialised vectorstore to the call kwargs."""
         call_kwargs = dict(kwargs)
-        call_kwargs["vectorstore"] = self.vs_connector.get_vectorstore() # TODO this probably should just be moved to the specific tool that uses it
+        call_kwargs["vectorstore"] = (
+            self.vs_connector.get_vectorstore()
+        )  # TODO this probably should just be moved to the specific tool that uses it
         return call_kwargs
 
     def _ensure_pipeline_output(self, result) -> PipelineOutput:
@@ -72,48 +70,78 @@ class archi():
             f"Pipeline '{self.pipeline_name}' returned '{type(result).__name__}' instead of PipelineOutput."
         )
 
-    def supports_stream(self) -> bool:
-        """Return True when the active pipeline exposes a synchronous stream."""
-        return callable(getattr(self.pipeline, "stream", None))
+    def supports_stream(self, pipeline=None) -> bool:
+        """Return True when the pipeline in use exposes a synchronous stream.
 
-    def supports_astream(self) -> bool:
-        """Return True when the active pipeline exposes an async stream."""
-        return callable(getattr(self.pipeline, "astream", None))
+        Defaults to the shared ``self.pipeline`` but evaluates ``pipeline``
+        when a request-local view is supplied.
+        """
+        target = pipeline if pipeline is not None else self.pipeline
+        return callable(getattr(target, "stream", None))
 
-    def invoke(self, *args, **kwargs) -> PipelineOutput:
+    def supports_astream(self, pipeline=None) -> bool:
+        """Return True when the pipeline in use exposes an async stream.
+
+        Defaults to the shared ``self.pipeline`` but evaluates ``pipeline``
+        when a request-local view is supplied.
+        """
+        target = pipeline if pipeline is not None else self.pipeline
+        return callable(getattr(target, "astream", None))
+
+    def invoke(self, *args, pipeline=None, **kwargs) -> PipelineOutput:
         """
         Updates the vectorstore connection,
         passes it to the Pipeline's retriever,
         and then invokes the Pipeline.
+
+        When ``pipeline`` is supplied, invoke that pipeline instead of the
+        shared ``self.pipeline`` — the request-local override seam that lets a
+        caller serve one request from its own pipeline view without mutating
+        shared state. With no ``pipeline`` the shared pipeline is used, exactly
+        as before.
         """
+        target = pipeline if pipeline is not None else self.pipeline
         call_kwargs = self._prepare_call_kwargs(kwargs)
-        result = self.pipeline.invoke(*args, **call_kwargs)
+        result = target.invoke(*args, **call_kwargs)
         return self._ensure_pipeline_output(result)
 
-    def stream(self, *args, **kwargs):
+    def stream(self, *args, pipeline=None, **kwargs):
         """
         Stream the pipeline output if the underlying pipeline supports it.
+
+        When ``pipeline`` is supplied, stream from that pipeline instead of the
+        shared ``self.pipeline`` — the request-local override seam that lets a
+        caller serve one request from its own pipeline view without mutating
+        shared state. With no ``pipeline`` the shared pipeline is used, exactly
+        as before.
         """
-        if not self.supports_stream():
-            raise AttributeError(f"Pipeline '{self.pipeline_name}' does not expose a 'stream' method.")
+        target = pipeline if pipeline is not None else self.pipeline
+        if not self.supports_stream(target):
+            raise AttributeError(
+                f"Pipeline '{self.pipeline_name}' does not expose a 'stream' method."
+            )
         call_kwargs = self._prepare_call_kwargs(kwargs)
-        for event in self.pipeline.stream(*args, **call_kwargs):
+        for event in target.stream(*args, **call_kwargs):
             yield self._ensure_pipeline_output(event)
 
-    async def astream(self, *args, **kwargs):
+    async def astream(self, *args, pipeline=None, **kwargs):
         """
         Asynchronously stream the pipeline output if supported.
+
+        When ``pipeline`` is supplied, stream from that pipeline instead of the
+        shared ``self.pipeline`` — the request-local override seam that lets a
+        caller serve one request from its own pipeline view without mutating
+        shared state. With no ``pipeline`` the shared pipeline is used, exactly
+        as before.
         """
-        if not self.supports_astream():
-            raise AttributeError(f"Pipeline '{self.pipeline_name}' does not expose an 'astream' method.")
+        target = pipeline if pipeline is not None else self.pipeline
+        if not self.supports_astream(target):
+            raise AttributeError(
+                f"Pipeline '{self.pipeline_name}' does not expose an 'astream' method."
+            )
         call_kwargs = self._prepare_call_kwargs(kwargs)
-        async for event in self.pipeline.astream(*args, **call_kwargs):
+        async for event in target.astream(*args, **call_kwargs):
             yield self._ensure_pipeline_output(event)
 
     def __call__(self, *args, **kwargs) -> PipelineOutput:
         return self.invoke(*args, **kwargs)
-
-    
-
-
-    

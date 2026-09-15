@@ -138,15 +138,46 @@ archi's native streaming events are translated to OpenAI format:
 | `thinking_start` | _(dropped)_ | No OpenAI equivalent |
 | `error` | `delta.content: "[Error: ...]"` | Mid-stream errors |
 
+The native `final` event carries two answer fields: `response`, the finalized text as the
+native chat UI renders it (it ends with the UI's own appended source list), and `answer`, the
+bare pipeline answer without that list. `answer` is omitted — never emitted as an empty
+placeholder — when the pipeline produced no answer value. Non-streaming `/v1` responses build
+their message content from `answer`, so the endpoint controls citation formatting itself (see
+below).
+
 ## Source Citations
 
-When the pipeline returns source documents, a citation block is appended to the response:
+When the pipeline returns source documents that carry a usable display name, a citation block is
+appended to the response:
 
 ```markdown
 ---
 **Sources:**
-- `document.md` (relevance: 0.85)
 - `guide.md` [collection-name] (relevance: 0.92)
+- `document.md` (relevance: 0.85)
 ```
 
+Sources are ordered by relevance, highest first; a higher score means a closer match. When the
+same document contributes more than one chunk it is listed once, at its best score. Sources the
+pipeline returned without a score are listed last, without a `(relevance: ...)` suffix.
+
 Collection labels appear only when sources span multiple collections.
+
+A `/v1` response carries **at most one** source list appended by archi — the endpoint's citation
+block or the native chat UI's, never both. A source section the model wrote into its own answer
+text is passed through as written; the endpoint does not detect or remove it.
+
+For a non-streaming request, which text the endpoint returns depends only on whether the `final`
+event carried the bare `answer` field, never on what retrieval returned. Normally the content is
+that answer plus one citation block in the format above, and the native chat UI's own source list
+(a `Show all sources` details block) does not appear. If a `final` event ever arrives without the
+`answer` field, the endpoint returns the finalized `response` unchanged and appends no citation
+block, so the content carries at most the chat UI's own list.
+
+A streaming request never takes that branch: its content is assembled from the streamed chunks
+with one citation block appended when the `final` event arrives, whether or not that event carries
+`answer`, and the chat UI's own list is never involved.
+
+Either path can come back with no source list at all, even when retrieval found documents: the
+citation block is empty when no document carries a usable display name, and the chat UI's list is
+empty when its own relevance and visibility filtering leaves nothing to show.

@@ -105,9 +105,13 @@ def _run_vectorstore_tool(config: Dict) -> None:
     _map_embedding_classes(config)
     vectorstore = VectorstoreConnector(config).get_vectorstore()
 
-    retriever_cfg = config.get("data_manager", {}).get("retrievers", {}).get("hybrid_retriever")
+    retriever_cfg = (
+        config.get("data_manager", {}).get("retrievers", {}).get("hybrid_retriever")
+    )
     if not retriever_cfg:
-        _fail("Missing data_manager.retrievers.hybrid_retriever config for vectorstore tool")
+        _fail(
+            "Missing data_manager.retrievers.hybrid_retriever config for vectorstore tool"
+        )
 
     hybrid_retriever = HybridRetriever(
         vectorstore=vectorstore,

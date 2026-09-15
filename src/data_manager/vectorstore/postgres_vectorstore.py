@@ -19,6 +19,43 @@ from langchain_core.vectorstores import VectorStore
 
 from src.utils.logging import get_logger
 
+
+def _merge_row_metadata(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge a retrieved chunk's metadata with its document-level fields.
+
+    The base is the chunk's own ``c.metadata`` (what it was embedded with).
+    Document columns (``resource_hash``/``display_name``/``source_type``/``url``)
+    are overlaid, and ``title`` is overlaid from the catalog ``extra_json`` — so a
+    title backfilled onto the document surfaces at retrieval even for chunks
+    embedded before the title existed and not since re-embedded.
+    """
+    metadata = row["metadata"] or {}
+    if isinstance(metadata, str):
+        metadata = json.loads(metadata)
+
+    if row.get("resource_hash"):
+        metadata["resource_hash"] = row["resource_hash"]
+    if row.get("display_name"):
+        metadata["display_name"] = row["display_name"]
+    if row.get("source_type"):
+        metadata["source_type"] = row["source_type"]
+    if row.get("url"):
+        metadata["url"] = row["url"]
+
+    extra = row.get("extra_json")
+    if isinstance(extra, str):
+        try:
+            extra = json.loads(extra)
+        except (ValueError, TypeError):
+            extra = None
+    if isinstance(extra, dict):
+        title = extra.get("title")
+        if isinstance(title, str) and title.strip():
+            metadata["title"] = title
+
+    return metadata
+
+
 logger = get_logger(__name__)
 
 
@@ -334,7 +371,8 @@ class PostgresVectorStore(VectorStore):
                         d.resource_hash,
                         d.display_name,
                         d.source_type,
-                        d.url
+                        d.url,
+                        d.extra_json
                     FROM document_chunks c
                     LEFT JOIN documents d ON c.document_id = d.id
                     WHERE {where_sql}
@@ -349,31 +387,28 @@ class PostgresVectorStore(VectorStore):
 
         results: List[Tuple[Document, float]] = []
         for row in rows:
-            # Merge chunk metadata with document metadata
-            metadata = row["metadata"] or {}
-            if isinstance(metadata, str):
-                metadata = json.loads(metadata)
-
-            # Add document-level metadata
-            if row["resource_hash"]:
-                metadata["resource_hash"] = row["resource_hash"]
-            if row["display_name"]:
-                metadata["display_name"] = row["display_name"]
-            if row["source_type"]:
-                metadata["source_type"] = row["source_type"]
-            if row["url"]:
-                metadata["url"] = row["url"]
+            metadata = _merge_row_metadata(row)
 
             doc = Document(
                 page_content=row["chunk_text"],
                 metadata=metadata,
             )
-            # Convert distance to similarity score (for cosine: 1 - distance)
-            score = (
-                1.0 - row["distance"]
-                if self._distance_metric == "cosine"
-                else row["distance"]
-            )
+            # Convert distance to a higher-is-better score, for EVERY metric.
+            #
+            # `hybrid_search` already computes `1.0 - (embedding <op> vec)` whatever
+            # `_distance_op` is, so returning a raw distance here made the two
+            # producers in this class disagree about score direction. The citation
+            # layer sorts descending and applies a floor, and HybridRetriever's
+            # semantic-only fallback routes here -- so under `l2`/`inner_product`
+            # a raw distance surfaced the least relevant source first.
+            #
+            # `1.0 - distance` is monotonically decreasing in distance for all
+            # three operators, so it orders correctly in each: `<->` and `<=>`
+            # both grow as similarity falls, and `<#>` returns the NEGATIVE inner
+            # product, so `1.0 - (-ip)` grows with the inner product. Only cosine
+            # yields a value bounded to a 0..1-style range; see the score-scale
+            # caveat on the threshold in `similarity_threshold.py`.
+            score = 1.0 - row["distance"]
             results.append((doc, score))
 
         return results
@@ -387,18 +422,24 @@ class PostgresVectorStore(VectorStore):
         bm25_weight: float = 0.3,
         **kwargs: Any,
     ) -> List[Tuple[Document, float]]:
-        """
-        Hybrid search combining semantic similarity and BM25 full-text search.
+        """Hybrid search combining semantic similarity and BM25 full-text search.
+
+        Both components are oriented higher-is-better and min-max normalized
+        to ``0..1`` over the candidate set before weighting.  The BM25 ``<@>``
+        operator returns negative scores (lower = better match); the SQL
+        negates them so the convention is uniform.  ``combined_score`` is
+        relative to this query's candidates and is **not** comparable across
+        queries.
 
         Args:
             query: Query text
             k: Number of results to return
-            semantic_weight: Weight for semantic similarity (0-1)
-            bm25_weight: Weight for BM25 score (0-1)
-            **kwargs: Additional filters
+            semantic_weight: Weight for the normalized semantic component (0-1)
+            bm25_weight: Weight for the normalized BM25 component (0-1)
+            **kwargs: Additional filters (``filter``, ``include_deleted``)
 
         Returns:
-            List of (Document, combined_score) tuples
+            List of (Document, combined_score) tuples, highest first
         """
         logger.debug("Performing hybrid search: query='%s', k=%d", query, k)
 
@@ -452,32 +493,47 @@ class PostgresVectorStore(VectorStore):
                 )
 
                 query_sql = f"""
-                    WITH scored AS (
-                        SELECT 
+                    WITH raw AS (
+                        SELECT
                             c.id,
                             c.chunk_text,
                             c.metadata,
                             1.0 - (c.embedding {self._distance_op} %s::vector) AS semantic_score,
-                            {bm25_score_expr} AS bm25_score,
+                            -1.0 * COALESCE({bm25_score_expr}, 0) AS bm25_score,
                             d.resource_hash,
                             d.display_name,
                             d.source_type,
-                            d.url
+                            d.url,
+                            d.extra_json
                         FROM document_chunks c
                         LEFT JOIN documents d ON c.document_id = d.id
                         WHERE {where_sql}
+                    ),
+                    normed AS (
+                        SELECT
+                            *,
+                            COALESCE(
+                                (semantic_score - MIN(semantic_score) OVER ())
+                                / NULLIF(MAX(semantic_score) OVER () - MIN(semantic_score) OVER (), 0),
+                                0
+                            ) AS sem_norm,
+                            COALESCE(
+                                (bm25_score - MIN(bm25_score) OVER ())
+                                / NULLIF(MAX(bm25_score) OVER () - MIN(bm25_score) OVER (), 0),
+                                0
+                            ) AS bm25_norm
+                        FROM raw
                     )
-                    SELECT 
+                    SELECT
                         *,
-                        (semantic_score * %s + COALESCE(bm25_score, 0) * %s) AS combined_score
-                    FROM scored
+                        (sem_norm * %s + bm25_norm * %s) AS combined_score
+                    FROM normed
                     ORDER BY combined_score DESC
                     LIMIT %s
                 """
 
-                # Params order: embedding, collection (+ any filters), query, semantic_weight, bm25_weight, k
                 all_params = (
-                    [embedding_str] + params + [query, semantic_weight, bm25_weight, k]
+                    [embedding_str, query] + params + [semantic_weight, bm25_weight, k]
                 )
                 cursor.execute(query_sql, all_params)
                 rows = cursor.fetchall()
@@ -485,23 +541,17 @@ class PostgresVectorStore(VectorStore):
             self._close_connection(conn)
 
         results: List[Tuple[Document, float]] = []
-        # If BM25 returned zero rows, fall back to semantic similarity to avoid empty results
         if not rows:
+            logger.warning(
+                "hybrid_search fallback to semantic-only:"
+                " reason=zero_rows collection=%s k=%d",
+                self._collection_name,
+                k,
+            )
             return self.similarity_search_with_score(query, k=k, **kwargs)
 
         for row in rows:
-            metadata = row["metadata"] or {}
-            if isinstance(metadata, str):
-                metadata = json.loads(metadata)
-
-            if row["resource_hash"]:
-                metadata["resource_hash"] = row["resource_hash"]
-            if row["display_name"]:
-                metadata["display_name"] = row["display_name"]
-            if row["source_type"]:
-                metadata["source_type"] = row["source_type"]
-            if row["url"]:
-                metadata["url"] = row["url"]
+            metadata = _merge_row_metadata(row)
 
             doc = Document(
                 page_content=row["chunk_text"],

@@ -1,0 +1,14 @@
+# Evaluator profile for the QA eval trial: Anthropic standby model used for both
+# the atom extractor and the judge. Model id is the anthropic standby's
+# default_model from deploy/fasrc-dev/config.example.yaml (no config.yaml is
+# checked out on this host, so the example is the source of truth here).
+version: 1
+qa:
+  atoms_extractor:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    timeout: 120
+  evaluator:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    timeout: 120

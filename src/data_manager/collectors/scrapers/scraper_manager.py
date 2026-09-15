@@ -1,16 +1,66 @@
+from __future__ import annotations
+
 import importlib
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from src.data_manager.collectors.persistence import PersistenceService
+from src.data_manager.collectors.scrapers.scrape_pool import (
+    host_key,
+    run_seeds,
+    shared_host_limiter,
+)
 from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 from src.data_manager.collectors.scrapers.scraper import LinkScraper
+from src.data_manager.collectors.scrapers.sitemap_source import (
+    SitemapExpansionError,
+    normalize_page_url,
+)
 from src.utils.config_access import get_global_config
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+# ``int()`` rejects a non-finite float with ``OverflowError``, which is NOT a
+# subclass of ``ValueError`` — so YAML's `.inf` (a perfectly ordinary way to write
+# "no limit") escapes a bare (TypeError, ValueError) guard and takes down whatever
+# is being constructed. Every tolerant coercion in this module promises to fall back
+# on bad input, so all of them catch this triple.
+_COERCION_ERRORS = (TypeError, ValueError, OverflowError)
+
+
+def _parse_worker_knob(value: Any, name: str, default: int) -> int:
+    """Coerce a scrape-concurrency knob to an int, tolerating junk.
+
+    Falls back to ``default`` with a logged warning when ``value`` is unset or not a
+    valid integer, then clamps the result to a minimum of 1.
+    """
+    if value is None:
+        resolved = default
+    else:
+        try:
+            resolved = int(value)
+        except _COERCION_ERRORS:
+            logger.warning(
+                "Invalid '%s' value %r. Falling back to default %d.",
+                name,
+                value,
+                default,
+            )
+            resolved = default
+    return max(1, resolved)
+
+
+def _dedup_key(u: str) -> str:
+    """Normalize a URL for deduplication; fall back to the raw string on ValueError."""
+    try:
+        return normalize_page_url(u)
+    except ValueError:
+        return u
+
 
 if TYPE_CHECKING:
     from src.data_manager.collectors.scrapers.integrations.git_scraper import GitScraper
@@ -51,13 +101,27 @@ class ScraperManager:
         if isinstance(links_config, dict):
             scraper_config = links_config.get("html_scraper", {}) or {}
         self.config = scraper_config
+        self.sitemap_config = (
+            links_config.get("sitemap", {}) if isinstance(links_config, dict) else {}
+        )
         raw_max_pages = links_config.get("max_pages")
         self.max_pages = None
         if raw_max_pages not in (None, ""):
             try:
                 self.max_pages = int(raw_max_pages)
-            except (TypeError, ValueError):
+            except _COERCION_ERRORS:
                 logger.warning(f"Invalid max_pages value {raw_max_pages}; ignoring.")
+
+        # Scrape-phase concurrency knobs (issue #136). Independent of the embedding
+        # phase's `parallel_workers`. Tolerant parse mirrors VectorStoreManager: coerce
+        # to int, fall back to the default with a logged warning on junk, clamp to >= 1.
+        dm = dm_config or {}
+        self.scrape_workers = _parse_worker_knob(
+            dm.get("scrape_workers"), "scrape_workers", 8
+        )
+        self.scrape_per_host_workers = _parse_worker_knob(
+            dm.get("scrape_per_host_workers"), "scrape_per_host_workers", 4
+        )
 
         self.links_enabled = True
         self.git_enabled = (
@@ -92,18 +156,34 @@ class ScraperManager:
 
         self.data_path.mkdir(parents=True, exist_ok=True)
 
-        self.web_scraper = LinkScraper(
+        # Shared scraper for the sequential and selenium/SSO paths. The parallel
+        # link path must NOT reuse this instance: crawl_iter resets and mutates
+        # per-instance state, so concurrent seeds each need their own scraper
+        # from _new_link_scraper() (issue #136).
+        self.web_scraper = self._new_link_scraper()
+        self._git_scraper: Optional["GitScraper"] = None
+        self._indico_scraper: Optional["IndicoScraper"] = None
+
+    def _new_link_scraper(self) -> LinkScraper:
+        """Build a fresh LinkScraper for a single seed crawl.
+
+        Each concurrent crawl in the parallel link path gets its own instance:
+        crawl_iter resets and mutates per-instance ``visited_urls`` /
+        ``seen_urls`` / ``page_data`` for the duration of a crawl, so sharing one
+        instance across threads would let one seed's reset corrupt another's
+        in-flight state (issue #136). The construction args mirror the shared
+        sequential ``self.web_scraper`` so per-worker scrapers behave identically.
+        """
+        return LinkScraper(
             verify_urls=self.config.get(
                 "verify_urls", False
             ),  # Default to False for broader compatibility
             enable_warnings=self.config.get("enable_warnings", False),
         )
-        self._git_scraper: Optional["GitScraper"] = None
-        self._indico_scraper: Optional["IndicoScraper"] = None
 
     def collect_all_from_config(self, persistence: PersistenceService) -> None:
         """Run the configured scrapers and persist their output."""
-        link_urls, git_urls, sso_urls, elog_urls, indico_urls = (
+        link_urls, git_urls, sso_urls, elog_urls, indico_urls, sitemap_urls = (
             self._collect_urls_from_lists_by_type(self.input_lists)
         )
 
@@ -112,6 +192,23 @@ class ScraperManager:
         if sso_urls:
             self.sso_enabled = True
             self._ensure_sso_defaults()
+
+        # Expand any `sitemap-` sources into page URLs and append (dedup,
+        # order-preserving) before standard link collection. A below-floor /
+        # over-cap SitemapExpansionError is intentionally NOT caught here: it
+        # propagates out and fails the ingest rather than shipping a bad corpus.
+        self._sitemap_lastmod_map: Dict[str, str] = {}
+        if sitemap_urls:
+            # Dedup expanded pages against the NORMALIZED hand-list keys, not the
+            # raw strings, so a hand-listed `/x/` and a sitemap-derived `/x` are the
+            # same page. LinkScraper does not dedup across seeds, so without this a
+            # slash/case/fragment variant would be scraped twice (#118) during the
+            # hand-list -> sitemap migration window. Expanded URLs are already
+            # normalized, so they compare directly against these keys.
+            existing_keys = {_dedup_key(u) for u in link_urls}
+            link_urls.extend(
+                self._refresh_sitemap_lastmod_map(sitemap_urls, existing_keys)
+            )
 
         self.collect_links(persistence, link_urls=link_urls)
         self.collect_sso(persistence, sso_urls=sso_urls)
@@ -204,6 +301,75 @@ class ScraperManager:
         logger.info(
             "Scheduled links collection found %d URL(s) in catalog", len(catalog_urls)
         )
+        link_urls, _, _, _, _, sitemap_urls = self._collect_urls_from_lists_by_type(
+            self.input_lists
+        )
+        if sitemap_urls:
+            existing_keys = {_dedup_key(u) for u in link_urls}
+            try:
+                self._refresh_sitemap_lastmod_map(sitemap_urls, existing_keys)
+            except SitemapExpansionError as exc:
+                # Degrade, never skip. The catalog upsert preserves an already-stored
+                # timestamp through `last_modified = COALESCE(EXCLUDED.last_modified,
+                # documents.last_modified)` in
+                # src/data_manager/collectors/utils/catalog_postgres.py (#233, PR
+                # #242), so crawling with an empty or stale map cannot NULL out rows
+                # an earlier pass stamped. The whole cost is a page first seen during
+                # this pass: it carries no last_modified until a later pass with a
+                # working map supplies one.
+                #
+                # An earlier revision returned here whenever no map had ever been
+                # built, back when the upsert wrote EXCLUDED.last_modified
+                # unconditionally and a mapless crawl really did destroy timestamps.
+                # Once the persistence layer stopped destroying them, that skip only
+                # bought a stale catalog for a full refresh cycle — and
+                # service_data_manager still recorded the suppressed pass as a clean
+                # success, so nothing surfaced it (#277).
+                #
+                # `_sitemap_map_valid` no longer decides anything here; it only
+                # labels the log. Whether the retained entries came from a complete
+                # expansion or from a truncated one changes how much an operator
+                # should trust the timestamps this pass writes, and that provenance
+                # is invisible from the entry count alone. The flag still gates the
+                # retention branch in _refresh_sitemap_lastmod_map.
+                #
+                # Reading the logs: a below-floor or over-cap expansion has already
+                # logged its own ERROR ("failing ingest") inside
+                # expand_sitemap_source before raising, so an operator sees that
+                # error followed by this warning. The error is accurate for the
+                # SOURCE — that sitemap was rejected — and this warning is accurate
+                # for the PASS, which continues. expand_sitemap_source is shared
+                # with the full ingest, where the same condition genuinely does
+                # fail the run, so its level is deliberately left alone here.
+                logger.warning(
+                    "sitemap expansion failed (%s); continuing the scheduled crawl "
+                    "with %d cached lastmod entries (%s) — pages absent from that "
+                    "map carry no last_modified this pass",
+                    exc,
+                    len(getattr(self, "_sitemap_lastmod_map", {})),
+                    (
+                        "from the last complete expansion"
+                        if getattr(self, "_sitemap_map_valid", False)
+                        else "never validated by a complete expansion"
+                    ),
+                )
+        elif getattr(self, "_input_lists_complete", True):
+            # Every sitemap source has been removed or reclassified. Wholesale
+            # replacement is the semantics used when an individual page disappears,
+            # so a source disappearing must clear the map too — otherwise the crawl
+            # keeps stamping pages from a sitemap that is no longer configured.
+            #
+            # Guarded on a COMPLETE read: a configured list that was missing this
+            # cycle also yields zero sitemap sources, and clearing on that would turn
+            # a transient IO failure into NULL for every stored last_modified.
+            self._sitemap_lastmod_map = {}
+            self._sitemap_map_valid = True
+        else:
+            logger.warning(
+                "no sitemap sources found, but at least one configured input list "
+                "could not be read; retaining the previous lastmod map rather than "
+                "treating an unreadable list as an intentional removal"
+            )
         self.collect_links(persistence, link_urls=catalog_urls)
 
     def schedule_collect_git(
@@ -309,20 +475,39 @@ class ScraperManager:
             if authenticator_class is not None:
                 authenticator = authenticator_class(**kwargs)
 
-        total_count = 0
+        depth = max_depth if max_depth is not None else self.base_depth
+
+        # One limiter object, used for two things: bounding the pool, and letting a
+        # crawl move its slot when a redirect lands it on a different host than the
+        # seed it was dispatched for (issue #136 review). It is the process-wide
+        # limiter, so an overlapping upload_url batch contends with this one.
+        limiter = shared_host_limiter(self.scrape_per_host_workers)
+
+        def _scrape_one_seed(seed: str) -> int:
+            # For standard link collection, don't use selenium for scraping (SSO
+            # urls are handled separately via collect_sso). Each concurrent seed
+            # crawl gets its own LinkScraper from the factory seam so that the
+            # per-instance state crawl_iter resets is never shared across threads
+            # (issue #136).
+            return self._handle_standard_url(
+                seed,
+                persistence,
+                output_dir,
+                max_depth=depth,
+                client=None,
+                use_client_for_scraping=False,
+                scraper=self._new_link_scraper(),
+                on_request_url=lambda url: limiter.rekey_current(host_key(url)),
+            )
+
         try:
-            for url in urls:
-                # For standard link collection, don't use selenium for scraping
-                # (SSO urls are handled separately via collect_sso)
-                count = self._handle_standard_url(
-                    url,
-                    persistence,
-                    output_dir,
-                    max_depth=max_depth if max_depth is not None else self.base_depth,
-                    client=None,
-                    use_client_for_scraping=False,
-                )
-                total_count += count
+            total_count = run_seeds(
+                urls,
+                _scrape_one_seed,
+                workers=self.scrape_workers,
+                per_host_workers=self.scrape_per_host_workers,
+                limiter=limiter,
+            )
         finally:
             if authenticator is not None:
                 authenticator.close()  # Close the authenticator properly and free the resources
@@ -393,15 +578,24 @@ class ScraperManager:
             }
 
     def _collect_urls_from_lists(self, input_lists) -> List[str]:
-        """Collect URLs from the configured weblists."""
+        """Collect URLs from the configured weblists.
+
+        Also records whether EVERY configured list was actually readable, in
+        ``_input_lists_complete``. Callers need that to tell "the configuration no
+        longer lists any sitemap source" from "the file that listed them was missing
+        this cycle" — the two are otherwise identical (an empty result), and acting
+        on the second as if it were the first discards live state.
+        """
         # Handle case where input_lists might be None
         urls: List[str] = []
+        self._input_lists_complete = True
         if not input_lists:
             return urls
         for list_name in input_lists:
             list_path = Path("weblists") / Path(list_name).name
             if not list_path.exists():
                 logger.warning(f"Input list {list_path} not found.")
+                self._input_lists_complete = False
                 continue
 
             urls.extend(self._extract_urls_from_file(list_path))
@@ -410,19 +604,27 @@ class ScraperManager:
 
     def _collect_urls_from_lists_by_type(
         self, input_lists: List[str]
-    ) -> tuple[List[str], List[str], List[str], List[str], List[str]]:
+    ) -> tuple[List[str], List[str], List[str], List[str], List[str], List[str]]:
         """All types of URLs are in the same input lists, separate them via prefixes or auto-detection."""
         link_urls: List[str] = []
         git_urls: List[str] = []
         sso_urls: List[str] = []
         elog_urls: List[str] = []
         indico_urls: List[str] = []
+        sitemap_urls: List[str] = []
         for raw_url in self._collect_urls_from_lists(input_lists):
             if raw_url.startswith("git-"):
                 git_urls.append(raw_url.split("git-", 1)[1])
                 continue
             if raw_url.startswith("sso-"):
                 sso_urls.append(raw_url.split("sso-", 1)[1])
+                continue
+            # Explicit `sitemap-` prefix is peeled before the elog/indico
+            # auto-detection heuristics below, so a sitemap URL whose path
+            # happens to contain `/elog/` or `/event/` still routes to sitemap
+            # expansion (mirrors the explicit-prefix-beats-heuristic rule).
+            if raw_url.startswith("sitemap-"):
+                sitemap_urls.append(raw_url.split("sitemap-", 1)[1])
                 continue
             if raw_url.startswith("elog-"):
                 elog_urls.append(raw_url.split("elog-", 1)[1])
@@ -437,7 +639,125 @@ class ScraperManager:
                 indico_urls.append(raw_url)
                 continue
             link_urls.append(raw_url)
-        return link_urls, git_urls, sso_urls, elog_urls, indico_urls
+        return link_urls, git_urls, sso_urls, elog_urls, indico_urls, sitemap_urls
+
+    def _expand_sitemaps(
+        self, sitemap_urls: List[str]
+    ) -> List[Tuple[str, Optional[str]]]:
+        """Expand ``sitemap-`` source URLs into (page_url, lastmod|None) pairs.
+
+        Thin call site over :mod:`sitemap_source`: builds the trust/bounds policy
+        from the ``sources.links.sitemap`` config sub-block plus a ``requests``
+        fetch, then delegates. A source-level ``SitemapExpansionError``
+        (below-floor / over-cap) is allowed to propagate so it FAILS the ingest
+        rather than shipping an empty or runaway corpus.
+        """
+        from functools import partial
+
+        from src.data_manager.collectors.scrapers import sitemap_source
+
+        def _as_int(value, default: int) -> int:
+            try:
+                return int(value)
+            except _COERCION_ERRORS:
+                return default
+
+        cfg = self.sitemap_config if isinstance(self.sitemap_config, dict) else {}
+        raw_hosts = cfg.get("allowed_hosts", []) or []
+        # A YAML scalar (`allowed_hosts: cdn.example.com`) must be treated as a
+        # single host, not char-exploded by list("host").
+        if isinstance(raw_hosts, str):
+            raw_hosts = [raw_hosts]
+        policy = sitemap_source.SitemapPolicy(
+            allowed_hosts=[str(host) for host in raw_hosts],
+            min_pages=_as_int(cfg.get("min_pages"), 1),
+            max_pages=_as_int(cfg.get("max_pages"), 20000),
+        )
+        fetch = partial(
+            sitemap_source.fetch_sitemap_text,
+            verify=self.config.get("verify_urls", False),
+        )
+        # Record per-document failures so the caller can tell a COMPLETE expansion
+        # from one that merely did not raise. Expansion fails open per document, so
+        # without this a failed child of a <sitemapindex> is indistinguishable from
+        # a sitemap that genuinely lists fewer pages — and republishing the map from
+        # that truncated result silently drops the failed child's timestamps.
+        failures: List[Tuple[str, Exception]] = []
+        pairs = list(
+            sitemap_source.expand_sitemaps(
+                sitemap_urls,
+                fetch,
+                policy,
+                lambda url, exc: failures.append((url, exc)),
+            )
+        )
+        self._sitemap_expansion_failures = failures
+        self._sitemap_expansion_incomplete = bool(failures)
+        return pairs
+
+    def _refresh_sitemap_lastmod_map(
+        self, sitemap_urls: List[str], existing_keys: Set[str]
+    ) -> List[str]:
+        """Expand sitemaps, rebuild ``_sitemap_lastmod_map``, return new page URLs.
+
+        Walks the expanded pairs in order, skipping URLs already in
+        ``existing_keys`` (mutating that set as it goes so the caller's dedup
+        state stays correct).  Builds the map into a local dict and publishes it
+        only when the expansion was COMPLETE.
+
+        Completeness is not the same as "did not raise". ``SitemapExpansionError``
+        covers only source-level bounds (over cap, below floor); a per-document
+        fetch/parse failure fails open, contributing zero pairs with a WARNING
+        (``sitemap_source._fetch_and_parse``). So a ``<sitemapindex>`` whose child
+        fails while its siblings still clear ``min_pages`` yields a TRUNCATED list
+        and no exception. Publishing that would discard every timestamp belonging
+        to the failed child, and the catalog crawl would then conflict-upsert NULL
+        over those rows. When the expansion was incomplete and a usable map already
+        exists, the previous map is retained instead (design D3, now actually
+        enforced rather than merely asserted).
+
+        Replacement stays wholesale whenever the expansion WAS complete, so a page
+        genuinely removed from the sitemap still drops out.
+
+        ``SitemapExpansionError`` always propagates; the caller decides whether
+        to catch it (design D1).
+        """
+        sitemap_pairs = self._expand_sitemaps(sitemap_urls)
+        new_map: Dict[str, str] = {}
+        new_urls: List[str] = []
+        for url, lastmod in sitemap_pairs:
+            if url not in existing_keys:
+                existing_keys.add(url)
+                new_urls.append(url)
+                if lastmod is not None:
+                    new_map[url] = lastmod
+        incomplete = getattr(self, "_sitemap_expansion_incomplete", False)
+        # Keyed on PROVENANCE (did a complete refresh ever publish?), never on the
+        # map's contents. A fully successful expansion publishes {} when every page
+        # omits the optional <lastmod>, so `if previous:` would read a valid empty
+        # map as "nothing to retain" — the same conflation the degrade path above
+        # already had to unlearn.
+        if incomplete and getattr(self, "_sitemap_map_valid", False):
+            previous = getattr(self, "_sitemap_lastmod_map", {})
+            logger.warning(
+                "sitemap expansion was incomplete (%d document(s) failed to fetch or "
+                "parse); retaining the previous lastmod map of %d entry(ies) rather "
+                "than publishing a truncated one of %d",
+                len(getattr(self, "_sitemap_expansion_failures", ()) or ()),
+                len(previous),
+                len(new_map),
+            )
+            return new_urls
+        self._sitemap_lastmod_map = new_map
+        if not incomplete:
+            # Latched only on a COMPLETE publish, empty map included: a page
+            # legitimately lacking <lastmod> is a success, but a child sitemap that
+            # failed to fetch is not. Latching on a truncated expansion would tell
+            # the scheduled degrade path it has a usable map when it does not, and
+            # the catalog crawl would then conflict-upsert NULL over every row the
+            # failed child owned — precisely the loss that guard exists to prevent.
+            self._sitemap_map_valid = True
+        return new_urls
 
     @staticmethod
     def _is_elog_url(url: str) -> bool:
@@ -507,17 +827,33 @@ class ScraperManager:
         max_depth: int,
         client=None,
         use_client_for_scraping: bool = False,
+        scraper: Optional[LinkScraper] = None,
+        on_request_url: Optional[Callable[[str], None]] = None,
     ) -> int:
         """Scrape a URL and persist resources. Returns count of resources scraped."""
+        # Parallel seed crawls pass their own per-worker scraper; the sequential
+        # and selenium/SSO callers fall back to the shared ``self.web_scraper``.
+        scraper = scraper if scraper is not None else self.web_scraper
+
+        lastmod_map: Dict[str, str] = getattr(self, "_sitemap_lastmod_map", {})
         count = 0
         try:
-            for resource in self.web_scraper.crawl_iter(
+            for resource in scraper.crawl_iter(
                 url,
                 browserclient=client,
                 max_depth=max_depth,
                 selenium_scrape=use_client_for_scraping,
                 max_pages=self.max_pages,
+                on_request_url=on_request_url,
             ):
+                if lastmod_map:
+                    try:
+                        norm = normalize_page_url(resource.url)
+                    except ValueError:
+                        norm = resource.url
+                    lm = lastmod_map.get(norm)
+                    if lm is not None:
+                        resource.metadata["last_modified"] = lm
                 persistence.persist_resource(resource, output_dir)
                 count += 1
             logger.info(f"Scraped {count} resources from {url}")

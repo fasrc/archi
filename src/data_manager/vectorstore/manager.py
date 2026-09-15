@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import nltk
 import psycopg2
@@ -17,10 +17,13 @@ from src.utils.logging import get_logger
 from .loader_utils import select_loader
 from .node_parsing import (
     CHILD_EMBEDDING_DIM,
+    DEFAULT_CHILD_CHUNK_SIZE,
+    DEFAULT_PARENT_CHUNK_SIZE,
     MARKDOWN_STRATEGY,
     SENTENCE_STRATEGY,
     build_hierarchical_nodes,
     embed_child_nodes,
+    resolve_effective_strategy,
 )
 from .postgres_vectorstore import PostgresVectorStore
 from .schema import ensure_hierarchical_schema
@@ -28,6 +31,31 @@ from .schema import ensure_hierarchical_schema
 logger = get_logger(__name__)
 
 SUPPORTED_DISTANCE_METRICS = ["l2", "cosine", "ip"]
+
+
+def _resolve_chunk_sizes(chunking_cfg):
+    """Resolve hierarchical parent/child target sizes from ``data_manager.chunking``.
+
+    Reads ``parent_chunk_size`` / ``child_chunk_size`` from the chunking config
+    section, falling back independently to the node-parser defaults when a key is
+    absent. Keeping this resolution backward-compatible means an existing
+    deployment that omits the keys reproduces its prior chunking exactly.
+    """
+    parent = chunking_cfg.get("parent_chunk_size", DEFAULT_PARENT_CHUNK_SIZE)
+    child = chunking_cfg.get("child_chunk_size", DEFAULT_CHILD_CHUNK_SIZE)
+    return parent, child
+
+
+def _resolve_chunking_strategy(chunking_cfg):
+    """Resolve ``data_manager.chunking.strategy``, defaulting to the shipped strategy.
+
+    The CLI template renders ``sentence`` when the key is unset, and the
+    markdown-structural-chunking spec requires an unset strategy to chunk with
+    ``sentence``. A hand-authored runtime config that omits the key lands on the
+    same path, not on legacy flat ``character`` chunks that the default-on
+    hierarchical reranker cannot expand to parent context.
+    """
+    return chunking_cfg.get("strategy", SENTENCE_STRATEGY)
 
 
 class VectorStoreManager:
@@ -107,15 +135,21 @@ class VectorStoreManager:
         )
 
         # Structure-aware chunking strategy (data_manager.chunking.strategy).
-        # 'character' (default) keeps the CharacterTextSplitter path above;
-        # 'sentence'/'markdown' enable hierarchical parent-child node parsing,
-        # persisting parents to document_parent_nodes and embedded children to
-        # document_chunks (linked via metadata.parent_id).
+        # 'sentence' (the default, also when the key is absent) and 'markdown'
+        # enable hierarchical parent-child node parsing, persisting parents to
+        # document_parent_nodes and embedded children to document_chunks (linked
+        # via metadata.parent_id); 'character' keeps the CharacterTextSplitter
+        # path above.
         chunking_cfg = self._data_manager_config.get("chunking", {}) or {}
-        self.chunking_strategy = chunking_cfg.get("strategy", "character")
+        self.chunking_strategy = _resolve_chunking_strategy(chunking_cfg)
         self.hierarchical_chunking = self.chunking_strategy in (
             SENTENCE_STRATEGY,
             MARKDOWN_STRATEGY,
+        )
+        # Target parent/child node sizes for the hierarchical parser; configurable
+        # so a benchmark can sweep them, defaulting to the node-parser constants.
+        self.parent_chunk_size, self.child_chunk_size = _resolve_chunk_sizes(
+            chunking_cfg
         )
 
         self.stemmer = None
@@ -237,17 +271,37 @@ class VectorStoreManager:
             f"Files in catalog: {len(hashes_in_data)}, Files in vectorstore: {len(hashes_in_vstore)}"
         )
 
-        if hashes_in_data == hashes_in_vstore:
+        # Hashes are identity-based (URL/path), so an HTML->Markdown rewrite keeps the
+        # same hash while the persisted file's basename flips (page.html -> page.md).
+        # Comparing only hash sets would leave a re-ingested doc's stale chunks in
+        # place. Detect hashes whose embedded filename(s) no longer match the current
+        # on-disk basename (i.e. the conversion extension flip) and refresh them:
+        # delete their old chunks and re-embed the new content. (This filename-based
+        # signal catches the conversion case; a same-name content rewrite is not
+        # detected here — see _collect_stale_hashes.)
+        stale_hashes = self._collect_stale_hashes(files_in_data, hashes_in_vstore)
+
+        if hashes_in_data == hashes_in_vstore and not stale_hashes:
             logger.info("Vectorstore is up to date")
         else:
             logger.info("Vectorstore needs to be updated")
 
             hashes_to_remove = list(hashes_in_vstore - hashes_in_data)
+            if stale_hashes:
+                logger.info(
+                    f"Refreshing {len(stale_hashes)} documents with changed content "
+                    "under an unchanged hash"
+                )
+                # Remove their stale chunks so the re-embed below replaces them.
+                hashes_to_remove.extend(stale_hashes)
             if hashes_to_remove:
                 logger.info(f"Removing {len(hashes_to_remove)} stale documents")
                 self._remove_from_postgres(hashes_to_remove)
 
-            hashes_to_add = hashes_in_data - hashes_in_vstore
+            # New hashes plus the refreshed (stale) ones get (re-)embedded.
+            hashes_to_add = (hashes_in_data - hashes_in_vstore) | (
+                stale_hashes & hashes_in_data
+            )
             files_to_add = {
                 hash_value: files_in_data[hash_value] for hash_value in hashes_to_add
             }
@@ -278,6 +332,96 @@ class VectorStoreManager:
                 return {row[0] for row in cursor.fetchall()}
         finally:
             conn.close()
+
+    def _collect_embedded_filenames(self) -> Dict[str, Set[str]]:
+        """Map resource hash -> the set of ALL distinct filenames on its embedded chunks.
+
+        Used to detect content that changed under an unchanged hash: if the persisted
+        file's basename now differs from what was embedded (e.g. ``page.html`` ->
+        ``page.md`` after HTML->Markdown conversion), the document's chunks are stale.
+
+        Returns every distinct filename per hash (not just the first): a hash carrying
+        more than one filename is itself evidence of a prior rewrite/conversion that
+        left chunks under multiple names, which the caller treats as stale.
+        """
+        conn = psycopg2.connect(**self._pg_config)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT DISTINCT metadata->>'resource_hash' AS hash,
+                                    metadata->>'filename' AS filename
+                    FROM document_chunks
+                    WHERE (metadata->>'collection' = %s OR metadata->>'collection' IS NULL)
+                      AND metadata->>'resource_hash' IS NOT NULL
+                    """,
+                    (self.collection_name,),
+                )
+                result: Dict[str, Set[str]] = {}
+                for resource_hash, filename in cursor.fetchall():
+                    if resource_hash is None or filename is None:
+                        continue
+                    result.setdefault(resource_hash, set()).add(filename)
+                return result
+        finally:
+            conn.close()
+
+    def _collect_stale_hashes(
+        self, files_in_data: Dict[str, str], hashes_in_vstore: set
+    ) -> set:
+        """Return hashes whose persisted filename changed since they were embedded.
+
+        Only considers hashes present in BOTH the catalog and the vectorstore (a
+        re-ingest of an already-embedded document). A differing basename means the
+        on-disk content was rewritten under the same hash and the old chunks are stale.
+
+        LIMITATION: detection keys off the persisted *filename* (basename), not the
+        content itself. It reliably catches the HTML->Markdown case this change
+        targets — conversion always flips the extension (``page.html`` -> ``page.md``)
+        — but a content-only change that keeps the SAME filename under an unchanged
+        hash is NOT detected here and would retain its old chunks until the hash
+        changes or the document is removed and re-added. A content-hash signal would
+        close that gap; the cheaper filename signal is sufficient for the conversion
+        case and avoids re-hashing every document on every ingest.
+        """
+        candidates = set(files_in_data.keys()) & set(hashes_in_vstore)
+        if not candidates:
+            return set()
+
+        try:
+            embedded_filenames = self._collect_embedded_filenames()
+        except Exception as exc:
+            logger.warning(
+                "Could not load embedded filenames to detect stale chunks: %s", exc
+            )
+            return set()
+
+        stale: set = set()
+        for resource_hash in candidates:
+            embedded = embedded_filenames.get(resource_hash)
+            if not embedded:
+                continue
+            # More than one distinct embedded filename for a single hash means a prior
+            # rewrite/conversion already left chunks under multiple names -> stale.
+            if len(embedded) > 1:
+                logger.info(
+                    "Hash %s has chunks under multiple filenames %s; refreshing chunks.",
+                    resource_hash,
+                    sorted(embedded),
+                )
+                stale.add(resource_hash)
+                continue
+            current = Path(files_in_data[resource_hash]).name
+            if current not in embedded:
+                logger.info(
+                    "Detected changed content under unchanged hash %s: embedded as "
+                    "%s, now '%s'; refreshing chunks.",
+                    resource_hash,
+                    sorted(embedded),
+                    current,
+                )
+                stale.add(resource_hash)
+        return stale
 
     def _remove_from_postgres(self, hashes_to_remove: List[str]) -> None:
         """Remove chunks by resource hash from PostgreSQL."""
@@ -679,10 +823,23 @@ class VectorStoreManager:
             tokenize = nltk.tokenize.word_tokenize
             stem = self.stemmer.stem
 
+        # Per-file dispatch: the markdown strategy applies only to Markdown
+        # files; every other file falls back to the sentence strategy.
+        effective_strategy = resolve_effective_strategy(
+            self.chunking_strategy,
+            filename=filename,
+            suffix=(file_level_metadata or {}).get("suffix"),
+        )
+
         parents: List[Dict[str, Any]] = []
         parent_index = 0
         for doc in docs:
-            for node in build_hierarchical_nodes(doc, strategy=self.chunking_strategy):
+            for node in build_hierarchical_nodes(
+                doc,
+                strategy=effective_strategy,
+                parent_chunk_size=self.parent_chunk_size,
+                child_chunk_size=self.child_chunk_size,
+            ):
                 child_texts: List[str] = []
                 for child in node.child_texts:
                     child = (child or "").replace("\x00", "")

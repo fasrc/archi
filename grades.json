@@ -1,0 +1,53 @@
+{
+  "Who was Annie Jump Cannon?": {
+    "question": "Who was Annie Jump Cannon?",
+    "corpus_snapshot_id": "5a7376d9-b81f-4ba6-9a38-09a2f061c45c",
+    "responses": [
+      {
+        "user": "ca849e81-ed71-4f64-8984-73ff31738e10",
+        "quality": 5
+      }
+    ]
+  },
+  "What is Slurm and what does it do?": {
+    "question": "What is Slurm and what does it do?",
+    "corpus_snapshot_id": "5a7376d9-b81f-4ba6-9a38-09a2f061c45c",
+    "responses": [
+      {
+        "user": "ca849e81-ed71-4f64-8984-73ff31738e10",
+        "quality": 3
+      }
+    ]
+  },
+  "How do I submit a job array in Slurm?": {
+    "question": "How do I submit a job array in Slurm?",
+    "corpus_snapshot_id": "5a7376d9-b81f-4ba6-9a38-09a2f061c45c",
+    "responses": [
+      {
+        "user": "ca849e81-ed71-4f64-8984-73ff31738e10",
+        "quality": 4,
+        "notes": "Wordy but accurate."
+      }
+    ]
+  },
+  "How do I get a research computing account at FAS RC?": {
+    "question": "How do I get a research computing account at FAS RC?",
+    "corpus_snapshot_id": "5a7376d9-b81f-4ba6-9a38-09a2f061c45c",
+    "responses": [
+      {
+        "user": "ca849e81-ed71-4f64-8984-73ff31738e10",
+        "quality": 5
+      }
+    ]
+  },
+  "What is a job reason code in Slurm?": {
+    "question": "What is a job reason code in Slurm?",
+    "corpus_snapshot_id": "5a7376d9-b81f-4ba6-9a38-09a2f061c45c",
+    "responses": [
+      {
+        "user": "ca849e81-ed71-4f64-8984-73ff31738e10",
+        "quality": 4
+      }
+    ]
+  }
+}

@@ -15,7 +15,7 @@ FILES_AND_PATTERNS = [
     ),
     (
         PROJECT_ROOT / "docs/mkdocs.yml",
-        re.compile(r'(^\s*version:\s*)[^\n]+', re.MULTILINE),
+        re.compile(r"(^\s*version:\s*)[^\n]+", re.MULTILINE),
         lambda match, version: f"{match.group(1)}{version}",
     ),
 ]
@@ -23,14 +23,18 @@ FILES_AND_PATTERNS = [
 
 def update_file(path: Path, pattern: re.Pattern[str], formatter, version: str) -> bool:
     text = path.read_text()
-    new_text, count = pattern.subn(lambda match: formatter(match, version), text, count=1)
+    new_text, count = pattern.subn(
+        lambda match: formatter(match, version), text, count=1
+    )
     if count:
         path.write_text(new_text)
     return bool(count)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Update version strings across project files.")
+    parser = argparse.ArgumentParser(
+        description="Update version strings across project files."
+    )
     parser.add_argument("version", help="Version string to write (e.g. 1.2.3)")
     args = parser.parse_args()
 

@@ -9,12 +9,10 @@ map to larger **parent** context nodes, which are deduplicated, reranked, and re
 as context. The feature is additive (the `document_chunks` schema and `hybrid_search`
 read path are unchanged) and gated behind configuration with a fallback to the
 existing `HybridRetriever`.
-
 ## Requirements
-
 ### Requirement: Structural parent-child chunking at ingestion
 
-Ingestion SHALL split documents with a structure-aware parser that produces small embedded **child** nodes linked to larger **parent** nodes, replacing fixed-character splitting. The parser SHALL default to sentence-aware splitting and MAY use markdown-element parsing for markdown sources.
+Ingestion SHALL split documents with a structure-aware parser that produces small embedded **child** nodes linked to larger **parent** nodes, replacing fixed-character splitting. The parser SHALL default to sentence-aware splitting and MAY use markdown-element parsing for markdown sources. The target **parent** and **child** node sizes SHALL be configurable via `data_manager.chunking` (`parent_chunk_size` / `child_chunk_size`); when unset, the system SHALL fall back to its built-in defaults, preserving prior behavior.
 
 #### Scenario: Document produces linked parent and child nodes
 
@@ -25,6 +23,16 @@ Ingestion SHALL split documents with a structure-aware parser that produces smal
 
 - **WHEN** a document is split into child nodes
 - **THEN** child text is segmented on sentence/structural boundaries (not a fixed character count) so individual sentences are not split across children
+
+#### Scenario: Configured chunk sizes drive the parser
+
+- **WHEN** `data_manager.chunking.parent_chunk_size` and/or `child_chunk_size` are set in the config
+- **THEN** ingestion parses documents using those target sizes rather than the built-in defaults
+
+#### Scenario: Omitted chunk sizes preserve existing behavior
+
+- **WHEN** `parent_chunk_size` / `child_chunk_size` are absent from the config
+- **THEN** ingestion uses the built-in default sizes, producing the same chunking as before this change
 
 ### Requirement: Additive parent-node storage preserves the existing chunk schema
 
@@ -114,3 +122,50 @@ The child-embedding dimension guard SHALL derive its expected dimension from the
 
 - **WHEN** the embedder returns a vector whose dimension differs from the configured `embedding_dimensions`
 - **THEN** the guard raises rather than storing a wrong-dimension vector
+
+### Requirement: Hierarchical-rerank retrieval is enabled by default
+
+A deployment configuration rendered from the CLI config template SHALL enable
+hierarchical-rerank retrieval by default — i.e. when the deployment's source config does not
+set `data_manager.retrievers.hierarchical_rerank.enabled`, the rendered config SHALL contain
+`enabled: true`. Operators SHALL retain the ability to opt out by setting
+`hierarchical_rerank.enabled: false` in their deployment config, which renders `false` and
+falls back to the existing `HybridRetriever`.
+
+#### Scenario: Default render enables the reranker
+
+- **WHEN** a deployment config is rendered and the source config omits
+  `data_manager.retrievers.hierarchical_rerank.enabled`
+- **THEN** the rendered config sets `hierarchical_rerank.enabled: true`, so retrieval uses the
+  hierarchical cross-encoder reranker
+
+#### Scenario: Explicit opt-out is honored
+
+- **WHEN** a deployment config sets `data_manager.retrievers.hierarchical_rerank.enabled: false`
+- **THEN** the rendered config sets `enabled: false` and retrieval falls back to
+  `HybridRetriever`
+
+### Requirement: Default chunking strategy pairs with the default reranker
+
+A deployment config rendered with hierarchical-rerank enabled by default SHALL also render a
+hierarchical chunking strategy by default: when the source config omits
+`data_manager.chunking.strategy`, the rendered config SHALL set `strategy: sentence` (not the
+legacy `character` strategy). The hierarchical-rerank retriever only returns parent context
+when ingestion has built parent/child nodes (a `sentence` or `markdown` strategy); a
+`character` strategy produces flat chunks with no `parent_id`, so the reranker would pay its
+cost without the parent-context benefit. Pairing the defaults keeps the out-of-the-box
+configuration coherent with the benchmarked package.
+
+#### Scenario: Default render uses a hierarchical chunking strategy
+
+- **WHEN** a deployment config is rendered and the source config omits
+  `data_manager.chunking.strategy`
+- **THEN** the rendered config sets `chunking.strategy: sentence`, so ingestion builds the
+  parent/child nodes the default-on reranker needs
+
+#### Scenario: Default chunking and reranker are enabled together
+
+- **WHEN** a deployment config is rendered with neither chunking nor retriever settings
+- **THEN** both `chunking.strategy: sentence` and `hierarchical_rerank.enabled: true` are
+  rendered, matching the ADR 0003 treatment configuration
+

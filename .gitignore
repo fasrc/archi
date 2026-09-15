@@ -3,6 +3,7 @@ key.py
 *.txt
 !requirements.txt
 !requirements/*.txt
+!examples/qa_eval/sentinel_value.txt
 !templates/dockerfiles/base-pytorch-image/*
 !templates/dockerfiles/base-python-image/*
 *.ipynb
@@ -10,6 +11,7 @@ key.py
 *.swp
 __pycache__
 venv
+.venv
 *.DS_Store
 *.egg-info
 *sqlite_db
@@ -33,15 +35,67 @@ local_files/
 raw_local_files/
 websites/
 
-# config/ is its own git repository and holds config/benchmarking/secrets.env;
-# committing it would either break as a gitlink or leak the secret.
+# Real ServiceNow ticket data — operator-local only, never commit.
+examples/benchmarking/snow_ragas_queries_pt1.json
+
+# config/ is its own git repository (fasrc/archi-config, private) and holds
+# config/benchmarking/secrets.env; committing it would either break as a
+# gitlink or leak the secret. Deploys provision it automatically at a pinned,
+# SHA-verified ref — see ensure_config in deploy/fasrc-dev/scripts/lib.sh.
 /config/
 
 # Claude Code session state (worktrees, plans, memory, local settings).
-/.claude/
+# Ignore everything under .claude/ EXCEPT project-authored agents — shared,
+# archi-specific subagents are institutional knowledge worth versioning. The
+# worktrees (full repo checkouts), settings.local.json, and runtime locks stay out.
+/.claude/*
+!/.claude/agents/
 
 # Ralph harness runtime state (machine-written; never committed)
 .ralph/
+# The loop's task-list pointer (ralph.conf: RALPH_TASKS="tasks.md") is a SYMLINK to
+# whichever OpenSpec change is active, so its target differs on every branch. While
+# it was tracked, each branch had its own version and they conflicted with each
+# other; ca31e80d (#164) dropped it from dev, which turned it into a modify/delete
+# conflict that made five open PRs unmergeable at once (#159-#163, cleared under
+# #168). It is working-tree state, so ignore it rather than track it. The leading
+# slash is load-bearing: it anchors to the repo root, leaving the real
+# openspec/changes/**/tasks.md files — the actual source of truth — tracked. Both
+# properties are asserted by tests/unit/test_repo_hygiene.py.
+/tasks.md
 /review-findings.md
 .coverage
 coverage.xml
+
+# FASRC deployments. The orchestration scripts are host-neutral and tracked at
+# deploy/scripts/ (both hosts run them; identity comes from host.env), together
+# with a sanitized example config, so a deploy is reproducible and not
+# bus-factor-1. Every host's REAL config, agent prompts, source manifests, and
+# secrets stay out.
+#
+# deploy/fasrc-dev/ is the GPU host's own directory and is default-deny: a
+# future stray file there is ignored unless explicitly allow-listed here.
+# A second host directory added later needs its own default-deny block --
+# nothing here covers it, so its config would be tracked by default.
+deploy/fasrc-dev/*
+!deploy/fasrc-dev/config.example.yaml
+# Defense-in-depth: never track secrets/env even under the tracked scripts dir.
+deploy/scripts/**/*.env
+deploy/scripts/**/*secret*
+
+# Argilla user rosters are operator data: real names, real email addresses, and
+# optionally credentials. One was committed here once, so this is a default-deny
+# rather than a reminder. Only the .example template is tracked; see
+# tests/unit/test_repo_hygiene.py, which enforces both halves of that.
+argilla/*.csv
+argilla/*.txt
+!argilla/*.example
+
+# Agent-tooling scratch directories, none of which are project artifacts. This
+# is a default-deny for a reason: .superpowers/brainstorm/.last-token is a
+# 64-character opaque credential, and a single `git add -A` would publish it to
+# this public repo.
+.serena/
+.superpowers/
+# Local benchmark output (JSON + HTML reports), reproducible from a run.
+bench_out/

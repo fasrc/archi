@@ -1,0 +1,28 @@
+# LibreChat configuration for connecting to archi's OpenAI-compatible API.
+#
+# Replace ARCHI_TOKEN with your archi API token, or set it as an env variable
+# and use ${ARCHI_TOKEN} below.
+#
+# The "modelDisplayLabel" and model ID should match the name returned by
+# archi's GET /v1/models endpoint (typically your archi config name).
+
+version: 1.2.1
+cache: true
+
+endpoints:
+  custom:
+    - name: "Archi"
+      apiKey: "${ARCHI_TOKEN}"
+      baseURL: "http://host.docker.internal:7861/v1"
+      models:
+        default: ["archi"]
+        fetch: true
+      titleConvo: true
+      titleModel: "archi"
+      summarize: false
+      dropParams:
+        - "stop"
+        - "frequency_penalty"
+        - "presence_penalty"
+        - "top_p"
+        - "logit_bias"

@@ -8,4 +8,3 @@ def read_prompt(prompt_filepath: str) -> str:
         )
     except FileNotFoundError:
         raise FileNotFoundError(f"Prompt file not found: {prompt_filepath}")
-

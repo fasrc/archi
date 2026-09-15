@@ -1,0 +1,104 @@
+{
+  "schema_version": "qa-dataset-v2",
+  "items": [
+    {
+      "id": "qa-static-storage-quota",
+      "question": "According to the FASRC knowledge base, what is the default storage quota for a new lab's home directory on Cannon?",
+      "answer": "500 GB",
+      "time_sensitive": false,
+      "category": "storage",
+      "answer_mode": "direct_answer",
+      "answer_source": "static_docs_tickets",
+      "expected_atoms": [
+        {
+          "id": "quota-amount",
+          "text": "The default home directory quota for a new lab on Cannon is 500 GB.",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "qa-static-gpu-partition",
+      "question": "What is the name of the FASRC Cannon partition reserved for GPU jobs that require an A100 accelerator?",
+      "answer": "gpu_requeue",
+      "time_sensitive": false,
+      "category": "job-scheduling",
+      "answer_mode": "direct_answer",
+      "answer_source": "static_docs_tickets",
+      "expected_atoms": [
+        {
+          "id": "partition-name",
+          "text": "The GPU partition reserved for A100 jobs on Cannon is gpu_requeue.",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "qa-static-account-activation",
+      "question": "Which support channel should a new FASRC user contact about a stuck account-activation request?",
+      "answer": "the FASRC RC help portal (rc-help ticketing system)",
+      "time_sensitive": false,
+      "category": "account-access",
+      "answer_mode": "direct_answer",
+      "answer_source": "static_docs_tickets",
+      "expected_atoms": [
+        {
+          "id": "support-channel",
+          "text": "A new user with a stuck account-activation request should contact FASRC through the RC help portal.",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "qa-live-capacity-primary",
+      "question": "According to the live operations tool, how much capacity is currently available on the primary storage service?",
+      "time_sensitive": true,
+      "category": "storage",
+      "oracle": {
+        "kind": "mcp",
+        "calls": [
+          {
+            "id": "capacity-primary",
+            "server": "capacity",
+            "tool": "current_capacity",
+            "arguments": {
+              "service": "primary"
+            },
+            "answer_fields": {
+              "available": "/available"
+            },
+            "metadata_fields": {
+              "revision": "/revision"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "qa-live-capacity-secondary",
+      "question": "According to the live operations tool, how much capacity is currently available on the secondary storage service?",
+      "time_sensitive": true,
+      "category": "storage",
+      "oracle": {
+        "kind": "mcp",
+        "calls": [
+          {
+            "id": "capacity-secondary",
+            "server": "capacity",
+            "tool": "current_capacity",
+            "arguments": {
+              "service": "secondary"
+            },
+            "answer_fields": {
+              "available": "/available"
+            },
+            "metadata_fields": {
+              "revision": "/revision",
+              "service": "/service"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

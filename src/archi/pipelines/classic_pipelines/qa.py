@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from langchain_classic.chains.combine_documents.stuff import create_stuff_documents_chain
+from langchain_classic.chains.combine_documents.stuff import (
+    create_stuff_documents_chain,
+)
 from langchain_core.output_parsers import StrOutputParser
 
-from src.archi.pipelines.classic_pipelines.utils.chain_wrappers import ChainWrapper
 from src.archi.pipelines.classic_pipelines.base import BasePipeline
-from src.archi.utils.output_dataclass import PipelineOutput
-from src.data_manager.vectorstore.retrievers import SemanticRetriever, HybridRetriever
 from src.archi.pipelines.classic_pipelines.utils import history_utils
+from src.archi.pipelines.classic_pipelines.utils.chain_wrappers import ChainWrapper
+from src.archi.utils.output_dataclass import PipelineOutput
+from src.data_manager.vectorstore.retrievers import HybridRetriever, SemanticRetriever
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -29,25 +31,25 @@ class QAPipeline(BasePipeline):
         super().__init__(config, *args, **kwargs)
 
         self.condense_chain = ChainWrapper(
-            chain=self.prompts['condense_prompt']
-            | self.llms['condense_model']
+            chain=self.prompts["condense_prompt"]
+            | self.llms["condense_model"]
             | StrOutputParser(),
-            llm=self.llms['condense_model'],
-            prompt=self.prompts['condense_prompt'],
-            required_input_variables=['history'],
-            max_tokens=self.pipeline_config['max_tokens'],
+            llm=self.llms["condense_model"],
+            prompt=self.prompts["condense_prompt"],
+            required_input_variables=["history"],
+            max_tokens=self.pipeline_config["max_tokens"],
         )
         self.chat_chain = ChainWrapper(
             chain=create_stuff_documents_chain(
-                llm=self.llms['chat_model'],
-                prompt=self.prompts['chat_prompt'],
+                llm=self.llms["chat_model"],
+                prompt=self.prompts["chat_prompt"],
                 document_variable_name="retriever_output",
             ),
-            llm=self.llms['chat_model'],
-            prompt=self.prompts['chat_prompt'],
-            required_input_variables=['question'],
-            unprunable_input_variables=['question'],
-            max_tokens=self.pipeline_config['max_tokens'],
+            llm=self.llms["chat_model"],
+            prompt=self.prompts["chat_prompt"],
+            required_input_variables=["question"],
+            unprunable_input_variables=["question"],
+            max_tokens=self.pipeline_config["max_tokens"],
         )
 
     def _prepare_inputs(self, history: Any, **kwargs) -> Dict[str, Any]:
@@ -86,7 +88,7 @@ class QAPipeline(BasePipeline):
         inputs = self._prepare_inputs(history=kwargs.get("history"))
 
         condense_output = self.condense_chain.invoke({**inputs})
-        retriever_output = self.retriever.invoke(condense_output['answer'])
+        retriever_output = self.retriever.invoke(condense_output["answer"])
         documents: List = []
         scores: List = []
         if retriever_output:
@@ -94,23 +96,27 @@ class QAPipeline(BasePipeline):
             documents = list(retrieved_docs)
             scores = list(retrieved_scores)
 
-        answer_output = self.chat_chain.invoke({
-            **inputs,
-            'condense_output': condense_output['answer'],
-            'retriever_output': documents if documents else "",
-        })
+        answer_output = self.chat_chain.invoke(
+            {
+                **inputs,
+                "condense_output": condense_output["answer"],
+                "retriever_output": documents if documents else "",
+            }
+        )
 
         # Extract model identifier for tracking
-        chat_model = self.llms.get('chat_model')
-        model_used = getattr(chat_model, 'model_name', None) or getattr(chat_model, 'model', 'unknown')
+        chat_model = self.llms.get("chat_model")
+        model_used = getattr(chat_model, "model_name", None) or getattr(
+            chat_model, "model", "unknown"
+        )
 
         return PipelineOutput(
-            answer=answer_output['answer'],
+            answer=answer_output["answer"],
             source_documents=documents,
             messages=[],
             metadata={
                 "retriever_scores": scores,
-                "condensed_output": condense_output['answer'],
+                "condensed_output": condense_output["answer"],
                 "question": inputs.get("question", ""),
                 "model_used": model_used,
                 "pipeline_used": self.__class__.__name__,

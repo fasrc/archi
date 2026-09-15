@@ -143,6 +143,27 @@ docker restart chatbot-my-archi
 4. **Commit**: Use short, lowercase commit summaries (e.g., `add gemini provider`).
 5. **PR**: Include a brief summary, test results, and documentation impact. Link related issues.
 
+### Reading the PR list
+
+The pull request index shows the CI check rollup but **not** mergeability, so a
+conflicted PR with green checks looks identical to one that is ready. Two
+automatically-maintained labels close that gap — see
+[PR Readiness Labels](#pr-readiness-labels-pr-readiness-labelsyml):
+
+| Chip | Meaning |
+|------|---------|
+| `ready-to-merge` | Nothing blocks a merge: not a draft, no conflicts, checks green, and no unresolved review finding. |
+| `conflicts` | Merge-conflicted with `dev`, drafts included. Resolve it before spending another review round — answering findings cannot land the PR. |
+| *neither* | In flight: review findings outstanding, or checks not green. |
+
+`ready-to-merge` is **not** a claim that review is provably complete — it is a
+mechanical predicate: no unresolved review threads, checks green, not conflicted.
+The review-response skill resolves threads as it addresses them, so `isResolved`
+is the authoritative signal.
+
+Filter for what is actually mergeable:
+[`is:pr is:open label:ready-to-merge`](https://github.com/fasrc/archi/pulls?q=is%3Apr+is%3Aopen+label%3Aready-to-merge).
+
 ## Editing Documentation
 
 Editing documentation requires the `mkdocs` Python package:
@@ -217,6 +238,39 @@ export METADATA_SEARCH_QUERY="ppc.mit.edu"
 export VECTORSTORE_QUERY="cms"
 ```
 
+### Embedding benchmarks
+
+The embedding benchmarks live in `tests/smoke/test_embedding_benchmarks.py` and are deliberately
+**outside the gating suite** so a HuggingFace CDN outage cannot red a pull request (see issue #187).
+Run them manually when you need to verify the embedding pipeline:
+
+```bash
+python -m pytest tests/smoke/test_embedding_benchmarks.py -v
+```
+
+These tests download approximately 90 MB of model weights from the HuggingFace CDN on first run and
+take 30–50 seconds per test on CPU. If the CDN is unreachable they are reported as skipped with a
+reason that names the network, rather than failing.
+
+A skip means "not verified", so the guard is deliberately narrow about what earns one:
+
+| Outcome | When |
+|---------|------|
+| **Skipped** — network | A connection or transport failure, a TLS error, a timeout, an interrupted transfer, a protocol error from the *server*, `429` rate limiting, **any** `5xx` (including the `520`–`524` codes Cloudflare emits for origin trouble), or offline mode with a cold cache. |
+| **Skipped** — library | `langchain_huggingface` (or another benchmark dependency) is not installed. |
+| **Failed** | The Hub answered definitively — the model repository is missing, renamed, or gated behind credentials (`404`/`403`/`401`); the endpoint is misconfigured (a malformed `HF_ENDPOINT`, a redirect loop, a protocol error in the request *we* built); or the failure is local, such as a permission error on the model cache or a full disk. |
+
+The last row is the important one: a removed model repository or a mistyped `HF_ENDPOINT` is a broken
+dependency, not an outage, so it fails loudly instead of leaving the benchmarks permanently
+green-by-skip. The `5xx` side is a range rather than a list of codes, because a fronting CDN reports
+origin trouble with its own status numbers.
+
+The distinction that decides every row is **"did a usable answer come back?"** — not which library
+raised. That is why the guard names transport exception types individually rather than the convenient
+shared base class of each HTTP library: those bases also cover URL-validation and client-side protocol
+errors, which never touch the network. A test enumerates the subclasses of everything the guard names
+and fails if an over-broad base is added, so this cannot regress quietly.
+
 ## CI / CD Architecture
 
 All CI workflows run on GitHub-hosted `ubuntu-latest` runners with Docker (not Podman).
@@ -246,6 +300,115 @@ Manually dispatched; builds Docker base images, pushes to DockerHub, runs smoke 
 ### Publish Base Images (`publish-base-images.yml`)
 
 Triggered on push to `main`; rebuilds and pushes base images when requirements or Dockerfiles change.
+
+### PR Readiness Labels (`pr-readiness-labels.yml`)
+
+Reconciles the `ready-to-merge` and `conflicts` labels on every open PR so the PR
+index reflects mergeability, which GitHub itself never renders there.
+
+The workflow subscribes to every event Actions can be triggered by that changes the
+answer:
+
+| Trigger | Why it changes the answer |
+|---------|---------------------------|
+| `push` to `dev` | Merging one PR is what conflicts the others |
+| `pull_request` (incl. `edited`, `labeled`/`unlabeled`) | Retargeting changes the base; a hand-edited chip needs correcting |
+| `pull_request_review`, `pull_request_review_comment` | A new finding appears |
+| `workflow_run` on `gate` / `PR Preview` | Checks feed `mergeStateStatus`; a rerun turns a green check pending |
+| `schedule` (hourly) | The **only** observer of thread resolution — plus a missed delivery, a failed run, or mergeability still `UNKNOWN` |
+| `workflow_dispatch` | Manual, with a `dry_run` input |
+
+One input has no trigger: **resolving or un-resolving a review thread.**
+`pull_request_review_thread` is a real *webhook* event but is not among the events
+that can start a workflow, so the hourly sweep is what picks resolution up. Adding it
+to the trigger list does not silently no-op — it makes the workflow file invalid, and
+GitHub then records a startup failure on every push. Check the Actions events
+reference, not the webhooks reference; they are different sets.
+
+All the logic lives in `scripts/ci/pr_readiness_labels.sh`, with a self-test suite
+(`scripts/ci/test_pr_readiness_labels.sh`) wired into `scripts/gate.sh`; the workflow is
+only the trigger surface. Run it yourself with:
+
+```bash
+bash scripts/ci/pr_readiness_labels.sh --dry-run     # decide and print, change nothing
+```
+
+`ready-to-merge` requires all four of: not a draft, no merge conflicts (`mergeable !=
+CONFLICTING`), zero blocking checks, and zero *live* review findings — a review thread
+that is unresolved (`isResolved == false`). Check state is evaluated from the individual
+contexts in the commit's status-check rollup, not from `mergeStateStatus`.
+
+Three further guards withhold the chip even when those four are satisfied, each because
+the evidence on record does not describe the PR as it stands. All three are fail-closed:
+
+- **`mergeStateStatus == BEHIND`** — the checks on record did not test the current base,
+  so a green rollup says nothing about what merging would produce.
+- **`mergeStateStatus == BLOCKED` with an *empty* rollup** — GitHub reports something
+  blocking while no checks exist to explain it, so readiness cannot be verified. The
+  reconciler's own in-progress run cannot trip this: its CheckRun sits on the head commit,
+  so the rollup is non-empty whenever it is the trigger. `UNSTABLE` is deliberately not
+  gated alongside it — see the check-state note below.
+- **A truncated rollup** (`totalCount` greater than the fetched count) — a blocking check
+  could be sitting in the unfetched tail.
+
+Seven design notes worth knowing before changing it:
+
+- **`mergeable` and `mergeStateStatus` answer different questions.** `mergeStateStatus`
+  is a *priority* field: on a draft it reports `DRAFT`, masking `DIRTY`. So `conflicts`
+  is derived from `mergeable == CONFLICTING` — otherwise a conflicted draft gets no chip,
+  which is where it is arguably most useful. `mergeStateStatus` is retained in the query
+  for the `UNKNOWN` retry/revoke path and for the two state guards above, but it is no
+  longer the field *check state* is read from; that comes from individual rollup contexts
+  instead. The distinction matters: `BEHIND` and `BLOCKED` are consulted as statements
+  about whether the recorded evidence is current, never as a substitute for counting
+  checks.
+
+- **Check state comes from individual rollup contexts, not from `mergeStateStatus`.**
+  A `CheckRun` is passing when its `conclusion` is `SUCCESS`, `NEUTRAL`, or `SKIPPED`;
+  anything else — including a null conclusion (still in progress) — is blocking. A
+  `StatusContext` (legacy commit status) is passing when its `state` is `SUCCESS`. The
+  reconciler's own job (name `reconcile`, matching `jobs.reconcile` in
+  `pr-readiness-labels.yml`) is excluded from the blocking count so the script does not
+  block on its own in-progress check when triggered by pull-request events. A null rollup
+  (no checks on record) counts as zero blocking checks — but that is a statement about
+  the *count*, not about readiness: when `mergeStateStatus` is `BLOCKED` at the same
+  time, the empty-rollup guard above still withholds the chip, because GitHub is
+  reporting something blocking that no check on record explains. A null rollup on an
+  otherwise clean PR does grant. A
+  truncated rollup (`totalCount` greater than the fetched count) is fail-closed: the chip
+  is withheld rather than guessed at, since a blocking check could be sitting in the
+  unfetched tail.
+
+- **An incomplete snapshot is never guessed at**, and the two cases are not
+  symmetric. Connections are fetched one page (100) deep and each `totalCount` is
+  checked. Truncated `reviewThreads` means the live-findings count may be an
+  undercount, so the chip is *withheld* — otherwise a PR whose first 100 threads all
+  read as addressed would count zero while a live one sat in the tail. Truncated
+  `labels` instead triggers an authoritative re-read of the full label list, because
+  concluding a chip is *absent* just because it fell off the page would schedule no
+  removal and leave the PR advertising readiness.
+
+- **Every run sweeps every open PR**, not just the one that triggered it. Merging PR
+  A is what conflicts PRs B–F, so the chips needing revocation are on the PRs that
+  did *not* change. This also makes a run idempotent.
+- **Sweeps serialize; they are not cancelled.** The workflow sets
+  `cancel-in-progress: false` deliberately. A cancelled run can have a label write
+  already in flight, which may land *after* the replacement run wrote from a newer
+  snapshot — persisting the stale decision until the next sweep.
+- **Granting is conservative, revocation is unconditional.** A stale green chip is
+  worse than no chip.
+- **`UNKNOWN` mergeability is never guessed — and never left advertised.** GitHub
+  computes mergeability lazily and reports `UNKNOWN` until it lands, which is exactly
+  the state right after a push to `dev`. The script re-queries a few times, since
+  querying is what prompts the computation. If it is still unknown, the PR
+  *revokes* any `ready-to-merge` it holds (readiness that cannot be verified must not
+  be asserted) and asserts nothing else — no `conflicts` either, since that is
+  equally unverified.
+
+The predicate keys on `isResolved`: a review thread blocks the chip until it is
+explicitly resolved. The review-response skill resolves threads as it addresses
+findings, so the signal tracks real work rather than the `isOutdated` proxy it
+replaced.
 
 ### Docker Layer Caching
 
@@ -312,6 +475,145 @@ Push the image:
 ```bash
 podman push a2rchi/<image-name>:<tag>
 ```
+
+### Pointing the service templates at a base image
+
+The 15 service templates under `src/cli/templates/dockerfiles/` each start with a `FROM`
+line that names a base image. `scripts/dev/update_service_base_images.py` is the only
+writer of those lines. Do not edit them by hand.
+
+**What counts as a service template.** `service_templates()` in
+`src/cli/managers/base_image_preflight.py` walks that directory **recursively**: every
+`Dockerfile*` at any depth is a service template unless it is named in
+`NON_SERVICE_TEMPLATES`. Those keys are paths relative to the template directory —
+`base-python-image/Dockerfile`, not `Dockerfile` — so excluding a nested file cannot
+silently exclude every file of the same name elsewhere in the tree. Two consequences are
+worth knowing before you add a file there:
+
+- A `Dockerfile*` you add in a subdirectory joins the service set the moment it lands, and
+  `archi create` refuses to deploy when the preflight cannot cover it. If the file is not a
+  service template — it defines a base image, or builds on a third-party image — add its
+  relative path to `NON_SERVICE_TEMPLATES` with the reason, in the same change.
+- The rewriter above is **not** recursive. It reads only the `Dockerfile*` files at the top
+  of the directory, so a nested template's `FROM` line is never retargeted by the release
+  workflow and never checked by `--verify`. Keep service templates at the top level unless
+  you extend the rewriter in the same change --
+  `test_no_service_template_is_nested_while_the_release_rewriter_is_top_level_only` fails
+  otherwise, which is what forces the two changes to land together.
+
+```bash
+# Move every template to a tag.
+python scripts/dev/update_service_base_images.py --tag dev-abc1234 --switch-source ghcr --orig-tag all
+
+# Pin every template to a digest, with the tag recorded on the line above.
+python scripts/dev/update_service_base_images.py \
+  --digest python=sha256:<64 hex> \
+  --digest pytorch=sha256:<64 hex> \
+  --tag dev-abc1234 --switch-source ghcr --orig-tag all
+
+# Check instead of write: fail unless every template already names this reference.
+# The tag is the release tag, zero-padded as the CalVer tags are: v2026.08.0, not v2026.8.0.
+# --verify compares it exactly, so the unpadded form reports every reference as wrong.
+python scripts/dev/update_service_base_images.py --verify --tag v2026.08.0 --switch-source ghcr
+```
+
+| Option | Effect |
+|---|---|
+| `--tag <tag>` | The tag to write. With `--digest`, the tag is recorded in a `# base-image-pin:` line above the reference instead. |
+| `--digest <name>=sha256:<64 hex>` | Pins that base image by digest. Repeatable. `<name>` is `python` or `pytorch`. Requires `--tag`. |
+| `--orig-tag <tag>` | Only rewrites lines that carry this tag. **The default is `latest`.** Use `all` to match every line, digest-pinned lines included. |
+| `--switch-source <source>` | Moves the registry: `ghcr`, `dockerhub`, or `localhost`. |
+| `--bases <name> …` | Limits the run to these base images. Defaults to both. |
+| `--verify` | Checks instead of writing. Exits non-zero unless every base reference already names `--tag`, at the registry `--switch-source` names when it is given. Requires `--tag`; refuses `--digest`. |
+
+Four rules decide what the script writes:
+
+1. A tag and a digest are alternatives. A digest-pinned line carries no tag, so only
+   `--orig-tag all` reaches it.
+2. A digest says nothing about which build it is. The tag from `--tag` therefore goes in a
+   `# base-image-pin: <tag> (managed by update_service_base_images.py)` line directly above the `FROM` line. That line survives while the digest holds,
+   and the script removes it whenever it writes a tag. It cannot go on the `FROM` line
+   itself: a Dockerfile reads `#` as a comment only at the start of a line, so a trailing
+   comment there makes the build fail to parse. The script removes such a line only when
+   the whole wording matches, so a comment of your own above a `FROM` line is safe.
+3. A rewrite that names no new reference keeps the digest it finds. A bare
+   `--switch-source` moves the registry only; it never unpins an image.
+4. The script refuses an unknown `--digest` name, a malformed digest, a digest for a base
+   image that `--bases` excludes, `--digest` without `--tag`, and a `--tag` that is not a
+   valid image tag — `[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}`, which an unexpanded shell
+   variable is not. Each
+   exits non-zero and writes nothing. The last one matters because a digest names no build: without a tag to
+   record above it, the pin says nothing about which build the services are on, and
+   `test_service_templates_pin_one_explicit_base_tag` fails.
+
+`--verify` is the proof that a rewrite landed. It reads the reference each template
+declares, not whether the file changed, because those two tests disagree on exactly one
+input: a template that already carries the target reference, which is what a re-dispatch of
+the same release tag produces. It fails on a reference at another tag or another registry,
+on an `a2rchi` base image the script cannot place — a rename the rewriter would skip in
+silence — and on a run that matched no reference at all, since a check that reads nothing
+would otherwise pass without reading anything. It shares the rewriter's `FROM` matcher and
+base image map, so it cannot disagree with the rewriter about what a base line is.
+
+Its bound is worth knowing: it reads the references templates **declare**. A template that
+declares no base image at all is invisible to it, as it is to the rewriter. In-tree that gap
+is closed: `service_templates()` in `src/cli/managers/base_image_preflight.py` declares the
+service set, the deploy preflight refuses a member it cannot cover, and
+`test_service_templates_pin_one_explicit_base_tag` fails naming the file.
+
+### Which service templates the deploy preflight refuses
+
+`archi create` refuses **before** it removes an existing deployment when a service template
+is one the preflight cannot probe. Five shapes are refused, and the message names which:
+
+1. **No resolvable `FROM`.** The template carries no `FROM` line, or its final stage is
+   `FROM <alias>` in a chain that does not end at a real reference.
+2. **An a2rchi base outside the placeable set.** Only `a2rchi-python-base` and
+   `a2rchi-pytorch-base` — `PLACEABLE_BASES` in `base_image_preflight.py` — can be probed.
+   A template on, say, `a2rchi-node-base` declares a base and is still refused, because
+   nothing checks that image's Python version before the build needs it. Adding a base means
+   adding it to `PLACEABLE_BASES` *and* giving it a rule in `required_base_image_names`; a
+   guard test fails if you do only the first.
+3. **A final stage that is not an a2rchi base.** The check judges the stage that ships, not
+   the first `FROM`, so a multistage template may build in an a2rchi stage and still be
+   refused if it ends on a third-party image. The name must match at image boundaries: a
+   registry prefix and a tag or digest are allowed, so `ghcr.io/fasrc/a2rchi-python-base@sha256:…`
+   is accepted while the lookalike `a2rchi-python-base-custom` is not.
+4. **A heredoc this walk cannot prove is closed.** The reader finds a heredoc opener by
+   text, and it cannot see shell quoting. `RUN echo "example <<EOF here"` is a valid
+   instruction Docker builds without complaint, but the walk reads `<<EOF` as an opener,
+   finds no delimiter line below it, and refuses the template. The same goes for other text
+   that only looks like an opener, such as `$(( 1 << 3 ))`. This direction is deliberate: the
+   walk either over-reads and refuses, which is loud, or under-reads and lets a third-party
+   final stage ship unprobed, which is silent. If a template hits this, put the text in a
+   file the instruction reads, or split the line so the marker is not in the instruction the
+   walk sees. Do not work around it by removing the base `FROM`.
+5. **A split pin on a required base.** Two service templates name the same required base
+   image at different references. The preflight can probe only one, so a split pin would
+   otherwise establish one digest in the registry while a build pulls another. The check is
+   scoped to the bases the deployment requires — a split pin on a base the current deployment
+   will not build stays hidden until a deployment that does need it.
+   `test_service_templates_pin_one_explicit_base_tag` is the repository-side guard this check
+   does not replace: that test keys on the annotation, not on the reference the templates
+   agree on.
+
+Only a line that starts a Dockerfile instruction can start a stage. A `FROM` inside a
+`RUN <<EOF` heredoc body — including the second payload of a `RUN <<ONE <<TWO` — on the
+continuation of an earlier instruction, or in a comment, is not read as one. A `FROM` may
+carry flags before its reference; `FROM --platform=$BUILDPLATFORM <image>` is read as
+`<image>`, the same form the rewriter above accepts.
+
+The image the preflight actually pulls is the one the final stage names, for the same
+reason: a template may name the same base twice, one digest in a builder stage and another
+in the stage that ships, and probing the builder's line would establish an image the
+deployment never runs.
+
+Two CI jobs call the script: `pr-preview.yml` points the templates at the PR's base-image
+build, and `test-and-build-tag.yml` points them at the release build. The release workflow
+passes `--orig-tag all` — without it the script takes its `latest` default and matches none
+of the templates, which is issue #339 — and calls `--verify` three times: after the retarget
+and before the smoke deployment, on the release job's fresh checkout before anything is
+published, and once more on the tree the tag is cut from.
 
 ## Data Ingestion Architecture
 

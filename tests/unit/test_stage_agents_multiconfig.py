@@ -79,7 +79,9 @@ def test_same_basename_different_files_is_rejected(tmp_path, monkeypatch):
         def get_configs(self):
             return configs
 
-    context = SimpleNamespace(config_manager=_CM(), base_dir=base_dir, benchmarking=True)
+    context = SimpleNamespace(
+        config_manager=_CM(), base_dir=base_dir, benchmarking=True
+    )
     mgr = object.__new__(TemplateManager)
     with pytest.raises(ValueError, match="same basename"):
         mgr._stage_agents(context)

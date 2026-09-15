@@ -24,7 +24,7 @@ def test_list_documents_returns_pagination_metadata():
     cursor = MagicMock()
     cursor.fetchone.side_effect = [
         {"count": 10},  # total
-        {"count": 8},   # enabled_count
+        {"count": 8},  # enabled_count
     ]
     cursor.fetchall.return_value = [
         {

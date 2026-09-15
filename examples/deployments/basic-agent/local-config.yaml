@@ -48,4 +48,4 @@ data_manager:
           device: cpu
         encode_kwargs:
           normalize_embeddings: true
-      similarity_score_reference: 10
+      similarity_score_reference: 0.0

@@ -26,9 +26,16 @@ from src.archi.pipelines.agents.utils.run_memory import RunMemory
 
 def _make_retriever(documents: List[Document] | None = None) -> MagicMock:
     """Return a MagicMock that quacks like a BaseRetriever with controllable invoke()."""
-    docs = documents if documents is not None else [
-        Document(page_content="hit", metadata={"filename": "f.md", "resource_hash": "abc"})
-    ]
+    docs = (
+        documents
+        if documents is not None
+        else [
+            Document(
+                page_content="hit",
+                metadata={"filename": "f.md", "resource_hash": "abc"},
+            )
+        ]
+    )
     retriever = MagicMock(spec=BaseRetriever)
     retriever.invoke.return_value = docs
     return retriever
@@ -117,7 +124,9 @@ def test_fresh_run_memory_resets_counter():
     )
     for q in ("q1", "q2", "q3"):
         tool1.invoke({"query": q})
-    assert retriever.invoke.call_count == 2, "turn 1 should hit the retriever exactly twice"
+    assert (
+        retriever.invoke.call_count == 2
+    ), "turn 1 should hit the retriever exactly twice"
     assert turn1.tool_call_count("search_vectorstore_hybrid") == 3
 
     # Turn 2: brand-new RunMemory ⇒ brand-new budget.
@@ -129,7 +138,9 @@ def test_fresh_run_memory_resets_counter():
         enforce_budget=_budget_callback(turn2, "search_vectorstore_hybrid", cap=2),
     )
     out = tool2.invoke({"query": "q4"})
-    assert retriever.invoke.call_count == 3, "turn 2's first call must reach the retriever"
+    assert (
+        retriever.invoke.call_count == 3
+    ), "turn 2's first call must reach the retriever"
     assert "Search budget exhausted" not in out
     assert turn2.tool_call_count("search_vectorstore_hybrid") == 1
 
@@ -209,7 +220,9 @@ def test_enforce_budget_callback_returning_none_lets_calls_through():
         tool.invoke({"query": q})
 
     assert calls["n"] == 3, "the callback runs on every call"
-    assert retriever.invoke.call_count == 3, "every call must reach the retriever when callback returns None"
+    assert (
+        retriever.invoke.call_count == 3
+    ), "every call must reach the retriever when callback returns None"
 
 
 if __name__ == "__main__":

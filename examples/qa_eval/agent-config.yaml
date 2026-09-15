@@ -1,0 +1,44 @@
+# Agent config for the QA eval trial CLI run (--agent-config), adapted from
+# deploy/fasrc-dev/config.example.yaml. No deploy/fasrc-dev/config.yaml is
+# checked out on this host, so config.example.yaml is the base — it already
+# ships no secrets, only <LIKE_THIS> host-specific placeholders, so nothing was
+# stripped. default_provider/default_model are switched from the dev
+# deployment's vLLM default to the Anthropic standby so the trial runs from
+# ANTHROPIC_API_KEY alone, with no vLLM endpoint required.
+#
+# The vectorstore/data_manager block still names the dev deployment's
+# host-specific corpus path — replace <REPO_ROOT> with a real checkout (see
+# deploy/fasrc-dev/config.example.yaml) before pointing this at a live KB.
+
+name: archi_qa_eval_trial
+
+services:
+  chat_app:
+    agent_class: FASRCDocsAgent
+    agents_dir: examples/qa_eval
+    default_provider: anthropic
+    default_model: claude-sonnet-4-6
+    providers:
+      anthropic:
+        enabled: true
+        default_model: claude-sonnet-4-6
+        # ANTHROPIC_API_KEY must be set in the environment running the trial.
+    trained_on: "FASRC research-computing documentation (QA eval trial)"
+    port: 7866
+    external_port: 7866
+  vectorstore:
+    backend: postgres # PostgreSQL with pgvector (only supported backend)
+  data_manager:
+    port: 7889
+    external_port: 7889
+    auth:
+      enabled: false
+
+data_manager:
+  sources:
+    links:
+      input_lists:
+        # Host-specific; point at a real seeded corpus (e.g. the dev
+        # deployment's config/lists/sources.list) for a live console/CLI run.
+        - <REPO_ROOT>/config/lists/sources.list
+  embedding_name: HuggingFaceEmbeddings

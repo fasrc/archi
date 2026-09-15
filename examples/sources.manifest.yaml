@@ -1,0 +1,21 @@
+# Example manifest for `archi sources build`.
+#
+# Each entry has a `type` (sitemap | crawl | literal) and a `url`. `sitemap` and
+# `crawl` seeds accept optional `include`/`exclude` URL globs (fnmatch); `crawl`
+# also accepts an optional `depth` (default 1). `literal` seeds are emitted
+# verbatim (never fetched), but are still normalized like every other URL.
+#
+# Build a list:   archi sources build examples/sources.manifest.yaml -o sources.list
+# Preview a diff: archi sources build examples/sources.manifest.yaml -c config.yaml --dry-run
+
+- type: sitemap
+  url: https://docs.rc.fas.harvard.edu/kb/epkb_post_type_1-sitemap.xml
+  include: ["*/kb/*"]
+  exclude: ["*/author/*"]
+
+- type: crawl
+  url: https://slurm.schedmd.com/archive/slurm-25.11.5/
+  depth: 1
+
+- type: literal
+  url: https://en.wikipedia.org/wiki/Annie_Jump_Cannon

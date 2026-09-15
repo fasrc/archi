@@ -4,13 +4,14 @@ from unittest.mock import patch
 
 import pytest
 from flask import Flask
-from src.utils.rbac.registry import RBACRegistry
-from src.utils.rbac.decorators import (
-    require_permission,
-    require_any_permission,
-    check_sso_required,
-)
 
+from src.utils.rbac.decorators import (
+    check_sso_required,
+    is_api_request,
+    require_any_permission,
+    require_permission,
+)
+from src.utils.rbac.registry import RBACRegistry
 
 # ---------------------------------------------------------------------------
 # Shared config
@@ -160,7 +161,9 @@ class TestCheckSsoRequired:
         """When allow_anonymous is True, unauthenticated requests pass through."""
         anon_registry = RBACRegistry(ANON_CONFIG)
         app = _create_app(anon_registry)
-        with patch("src.utils.rbac.decorators.get_registry", return_value=anon_registry):
+        with patch(
+            "src.utils.rbac.decorators.get_registry", return_value=anon_registry
+        ):
             with app.test_client() as c:
                 resp = c.get("/sso-gate")
                 assert resp.status_code == 200
@@ -169,3 +172,37 @@ class TestCheckSsoRequired:
         """When allow_anonymous is False and no session, JSON request → 401."""
         resp = client.get("/sso-gate", headers={"Content-Type": "application/json"})
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# 4.8  is_api_request — the shared JSON-vs-browser predicate (issue #176)
+# ---------------------------------------------------------------------------
+
+
+class TestIsApiRequest:
+    """The predicate the decorators use to decide 401-JSON versus login-redirect.
+
+    Extracted so ``FlaskAppWrapper.require_auth`` and ``require_perm`` stop open-coding a
+    weaker path-only variant; the four sites in this module already agreed on this shape.
+    """
+
+    @pytest.fixture
+    def app(self):
+        return Flask(__name__)
+
+    def test_api_path_is_an_api_request(self, app):
+        with app.test_request_context("/api/upload/file"):
+            assert is_api_request() is True
+
+    def test_browser_get_is_not_an_api_request(self, app):
+        with app.test_request_context("/chat"):
+            assert is_api_request() is False
+
+    def test_json_content_type_off_an_api_path_is_an_api_request(self, app):
+        with app.test_request_context("/chat", content_type="application/json"):
+            assert is_api_request() is True
+
+    def test_api_prefix_must_be_anchored(self, app):
+        """``/api/`` is a prefix, not a substring — ``/docs/api/x`` is a browser page."""
+        with app.test_request_context("/docs/api/x"):
+            assert is_api_request() is False

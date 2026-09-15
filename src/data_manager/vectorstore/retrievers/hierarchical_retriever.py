@@ -13,7 +13,6 @@ dedupe) and task 3.2 (FlashRank cross-encoder rerank + top-N truncation).
 Configuration gating / fallback to ``HybridRetriever`` lands in 3.3.
 """
 
-import json
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,6 +22,7 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.vectorstores.base import VectorStore
 
+from src.data_manager.vectorstore.postgres_vectorstore import _merge_row_metadata
 from src.data_manager.vectorstore.schema import ensure_hierarchical_schema
 from src.utils.logging import get_logger
 
@@ -167,7 +167,8 @@ class LlamaIndexHierarchicalRetriever(BaseRetriever):
                         d.resource_hash,
                         d.display_name,
                         d.source_type,
-                        d.url
+                        d.url,
+                        d.extra_json
                     FROM document_parent_nodes p
                     LEFT JOIN documents d ON p.document_id = d.id
                     WHERE p.id = ANY(%s)
@@ -180,21 +181,12 @@ class LlamaIndexHierarchicalRetriever(BaseRetriever):
 
         parents: Dict[Any, Document] = {}
         for row in rows:
-            metadata = row["metadata"] or {}
-            if isinstance(metadata, str):
-                metadata = json.loads(metadata)
-            else:
-                metadata = dict(metadata)
-
+            # Reuse the canonical overlay so parent context carries the same
+            # source fields as direct results — including the title backfilled
+            # into documents.extra_json (hyperlink citations). _merge_row_metadata
+            # does not set parent_id, so apply it after.
+            metadata = _merge_row_metadata(row)
             metadata["parent_id"] = row["id"]
-            if row.get("resource_hash"):
-                metadata["resource_hash"] = row["resource_hash"]
-            if row.get("display_name"):
-                metadata["display_name"] = row["display_name"]
-            if row.get("source_type"):
-                metadata["source_type"] = row["source_type"]
-            if row.get("url"):
-                metadata["url"] = row["url"]
 
             parents[row["id"]] = Document(
                 page_content=row["parent_text"],

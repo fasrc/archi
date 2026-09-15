@@ -11,54 +11,352 @@ This script helps evaluate benchmarking results by showing:
 
 Usage:
     python generate_benchmark_report.py <results.json>
-    python generate_benchmark_report.py <results.json> --html output.html
+    python generate_benchmark_report.py <results.json> --markdown_output out.md
+    python generate_benchmark_report.py <results.json> --html_output out.html
     python generate_benchmark_report.py <results.json> --question 1
+
+With no format flag, a markdown report is written next to the input JSON as
+its ``<stem>_report.md`` sibling. ``--html_output`` opts into the HTML report.
 """
 
-import json
-import sys
 import argparse
 import html
-from pathlib import Path
+import json
+import math
+import re
+import sys
 from datetime import datetime
+from pathlib import Path
 
 
 def get_single_question_results(config_data):
     """Return the single question results regardless of key format."""
     return (
-        config_data.get('single question results')
-        or config_data.get('single_question_results')
+        config_data.get("single question results")
+        or config_data.get("single_question_results")
         or {}
     )
+
 
 def get_total_results(config_data):
     """Return the total results regardless of key format."""
-    return (
-        config_data.get('total results')
-        or config_data.get('total_results')
-        or {}
-    )
+    return config_data.get("total results") or config_data.get("total_results") or {}
+
 
 def load_benchmark_results(filepath):
-
     """Load and parse benchmark results JSON"""
-    with open(filepath, 'r') as f:
+    with open(filepath, "r") as f:
         data = json.load(f)
 
-    return data['benchmarking_results'], data['metadata']
+    return data["benchmarking_results"], data["metadata"]
+
+
+#: Distinguishes "this artifact was written before ingest timing existed" from
+#: "no ingest was observed" (``None``). Both would read as a missing number
+#: through a plain ``.get``, but they are different facts about the run and the
+#: reports say so differently.
+_INGEST_NOT_RECORDED = object()
+
+#: Sentinel for ``provenance["host"]``: the artifact predates host stamping.
+#: ``None`` means no host reached this artifact, which has FOUR causes: the
+#: deploy predates the field, capture ran and the hostname was unreadable, the
+#: benchmark could not read ``git_info.yaml`` at all -- ``add_metadata`` catches
+#: ``OSError`` on that read and carries on with no host
+#: (``src/bin/service_benchmark.py:449-460``), so a missing mount or a permissions
+#: fault lands here even though capture succeeded on the deploy host -- or the
+#: container engine was not provably local, so ``collect_host_information``
+#: refused to capture (``src/utils/container_endpoint.py``). None of the four
+#: are distinguishable from this field alone, so the null text names all four
+#: rather than asserting a lookup that may never have run, or a capture that
+#: may never have been read. Its lead clause claims only the ARTIFACT ("no host
+#: reached this artifact"), never the deploy: on the unreadable-metadata path the
+#: deploy did record a host, so "this deploy recorded no host" would state as
+#: fact the one thing this field cannot establish, and would send an operator to
+#: debug capture instead of the mount.
+_HOST_NOT_RECORDED = object()
+
+_MD_HOST_NOT_RECORDED = "*not recorded — this artifact predates host stamping*"
+_MD_HOST_NULL = (
+    "*not available — no host reached this artifact"
+    " (the deploy predates the field, capture failed, the metadata could not"
+    " be read, or the container engine was not provably local, so no host was"
+    " recorded)*"
+)
+
+_HTML_HOST_NOT_RECORDED = (
+    "<em>not recorded &mdash; this artifact predates host stamping</em>"
+)
+_HTML_HOST_NULL = (
+    "<em>not available &mdash; no host reached this artifact"
+    " (the deploy predates the field, capture failed, the metadata could not"
+    " be read, or the container engine was not provably local, so no host was"
+    " recorded)</em>"
+)
+
+
+def _format_seconds(seconds):
+    """Seconds for arithmetic, h/m/s so a person can read it.
+
+    An ingest is reported in seconds because that is what gets compared across
+    campaign arms -- but "7351" is not a duration anyone can feel, and
+    "2h 2m 31s" is.
+    """
+    total = int(round(seconds))
+    if total < 60:
+        return f"{total} s"
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{total} s ({hours}h {minutes}m {secs}s)"
+    return f"{total} s ({minutes}m {secs}s)"
+
 
 def parse_benchmark_results(results, metadata):
     """Parse benchmark results JSON"""
 
     result = results[0]
-    
-    questions = result.get('single_question_results', {})
-    total_results = result.get('total_results', {})
-    config_name = result.get('configuration_file', 'Unknown configuration')
-    config_data = result.get('configuration', {})
+
+    questions = result.get("single_question_results", {})
+    total_results = result.get("total_results", {})
+    config_name = result.get("configuration_file", "Unknown configuration")
+    config_data = result.get("configuration", {})
     timestamp = metadata.get("time", "Unknown time")
-    
-    return config_data, config_name, timestamp, questions, total_results
+
+    # `config_data` stays the SELECTED file: the benchmark harness reads its own
+    # settings from there (services.benchmarking.modes decides which sections
+    # render below), so presenting the running configuration in its place would
+    # trade one wrong label for another. Only the agent reads Postgres, so the
+    # provenance of what the agent actually ran is reported alongside instead.
+    provenance = {
+        "running_configuration": result.get("running_configuration"),
+        # None, not []. An artifact written before configuration provenance has no
+        # such key, and [] would be read below as "compared, and they agreed" --
+        # a positive claim about a comparison that never ran, on exactly the
+        # historical runs whose mislabelling prompted this work.
+        "configuration_divergence": result.get("configuration_divergence"),
+        "corpus_fingerprint_before": result.get("corpus_fingerprint_before"),
+        "corpus_fingerprint": result.get("corpus_fingerprint"),
+        "corpus_unchanged_at_endpoints": result.get("corpus_unchanged_at_endpoints"),
+        # Identity, alongside the divergence findings above. Divergence says
+        # whether this report can be trusted; the digests say whether this run is
+        # the same code and settings as another one, which is the question a
+        # campaign actually asks. `config_version` is per arm and comes off the
+        # record; `code_version` is per invocation and comes off the metadata.
+        "config_version": result.get("config_version"),
+        "code_version": metadata.get("code_version"),
+        # Three readings, and the renderers keep them apart: the sentinel means
+        # the artifact predates the field, None means no ingest was observed
+        # while the run waited, a float means seconds. A plain .get() would
+        # collapse the first two into one wrong claim.
+        "ingest_wall_seconds": result.get("ingest_wall_seconds", _INGEST_NOT_RECORDED),
+        # Same three-state distinction for host: sentinel = the artifact
+        # predates the field, None = no host reached the artifact (an older
+        # deploy, a failed capture, or an unreadable `git_info.yaml`), dict =
+        # recorded host.
+        "host": metadata.get("host", _HOST_NOT_RECORDED),
+        "host_captured_at": metadata.get("host_captured_at"),
+    }
+
+    return config_data, config_name, timestamp, questions, total_results, provenance
+
+
+def format_provenance_html(provenance):
+    """Render whether the report can be trusted to describe the run.
+
+    The selected configuration and the one the agent actually used can differ:
+    the agent reads Postgres while the harness writes and reads a YAML file. A
+    report that showed only the file reported a run executed at
+    ``context_window: 8192`` as ``32768``. This block is what makes that visible
+    to the person reading the report rather than only to a container log.
+    """
+    if not provenance:
+        return ""
+
+    divergence = provenance.get("configuration_divergence")
+    if divergence:
+        config_line = (
+            "<p class='provenance-alert'>The run did <strong>not</strong> use the "
+            "selected configuration. Settings that differ between the selected "
+            "file and what the agent read:</p><ul>"
+            + "".join(f"<li><code>{item}</code></li>" for item in divergence)
+            + "</ul>"
+        )
+    elif divergence is None:
+        # Absence is not agreement. An empty list means the two were compared and
+        # agreed; a missing key means no comparison was made at all.
+        config_line = (
+            "<p class='provenance-alert'>Whether the run used the selected "
+            "configuration was <strong>not recorded</strong>: this artifact "
+            "predates configuration provenance, so no comparison was made.</p>"
+        )
+    else:
+        config_line = (
+            "<p class='provenance-ok'>The configuration the agent read "
+            "<strong>matches</strong> the selected file.</p>"
+        )
+
+    stable = provenance.get("corpus_unchanged_at_endpoints")
+    before = provenance.get("corpus_fingerprint_before")
+    after = provenance.get("corpus_fingerprint")
+    if stable is True:
+        # Deliberately weaker than "unchanged for the whole run". Two samples
+        # prove only that the endpoints matched: a corpus that changed and
+        # changed back while the questions ran would produce this same result.
+        corpus_line = (
+            "<p class='provenance-ok'>The corpus was the same at the start and "
+            f"the end of the run (<code>{after}</code>). This does not rule out "
+            "a change that was reverted in between.</p>"
+        )
+    elif stable is False:
+        corpus_line = (
+            "<p class='provenance-alert'>The corpus <strong>changed</strong> "
+            "while the run was in progress, so its questions were not all "
+            f"scored against the same documents (<code>{before}</code> &rarr; "
+            f"<code>{after}</code>).</p>"
+        )
+    else:
+        corpus_line = (
+            "<p class='provenance-alert'>Corpus stability is "
+            "<strong>unknown</strong>: it was not observed both before and "
+            f"after the run (<code>{before}</code> &rarr; <code>{after}</code>)."
+            "</p>"
+        )
+
+    ingest = provenance.get("ingest_wall_seconds", _INGEST_NOT_RECORDED)
+    if ingest is _INGEST_NOT_RECORDED:
+        ingest_line = (
+            "<p class='provenance-alert'>Time to ingest is <strong>not "
+            "recorded</strong>: this artifact predates the field.</p>"
+        )
+    elif ingest is None:
+        ingest_line = (
+            "<p class='provenance-ok'>Time to ingest: <strong>not "
+            "measured</strong> &mdash; no ingest was observed while this run "
+            "waited, which normally means it reused an existing corpus.</p>"
+        )
+    else:
+        ingest_line = (
+            "<p class='provenance-ok'>Time to ingest: "
+            f"<strong>{_format_seconds(ingest)}</strong> &mdash; the span from "
+            "the first status poll reporting progress to the one reporting "
+            "completion. An <strong>approximation</strong>, not a measurement: "
+            "ingestion that ran before this benchmark began polling is "
+            "missing, and non-ingest time after it began is included. Measured "
+            "once before the sweep, so every arm of this run carries the same "
+            "figure &mdash; where arms report different "
+            "<code>corpus_fingerprint</code> values, it describes only the "
+            "first.</p>"
+        )
+
+    return (
+        "<div class='provenance'><h2>Run provenance</h2>"
+        + config_line
+        + corpus_line
+        + ingest_line
+        + format_version_html(provenance)
+        + "</div>"
+    )
+
+
+_NOT_RECORDED = "<em>not recorded &mdash; this artifact predates version stamping</em>"
+
+
+def format_version_html(provenance):
+    """Render the code and configuration identity of the run.
+
+    Divergence and corpus stability, above, say whether this report describes its
+    own run. These digests answer the question a campaign asks across runs: was
+    this the same code, and the same settings, as that other arm? Equal digests
+    mean equal inputs.
+
+    Neither is derivable from ``git_info.last_commit``: ``archi create`` writes it
+    once and freezes it, so every run between 2026-08-11 and 2026-08-17 reports
+    ``0a157cdce0`` with an empty diff. The commit is shown, labelled, so a reader
+    does not mistake it for the code this run executed.
+
+    An artifact written before stamping says so rather than being filled in with
+    a plausible guess.
+    """
+    if not provenance:
+        return ""
+
+    code = provenance.get("code_version") or {}
+    config = provenance.get("config_version") or {}
+    host = provenance.get("host", _HOST_NOT_RECORDED)
+    if not code and not config and host is _HOST_NOT_RECORDED:
+        return ""
+
+    rows = []
+
+    code_digest = code.get("digest")
+    rows.append(
+        "<li>Code version: "
+        + (
+            f"<code>{html.escape(str(code_digest))}</code>"
+            if code_digest
+            else _NOT_RECORDED
+        )
+        + "</li>"
+    )
+    commit = code.get("deploy_git_commit")
+    if commit:
+        dirty = " (dirty tree)" if code.get("deploy_git_dirty") else ""
+        rows.append(
+            f"<li>Deploy-time commit: <code>{html.escape(str(commit))}</code>{dirty} "
+            "&mdash; frozen by <code>archi create</code>; it identifies the "
+            "deploy, not the image this run used</li>"
+        )
+
+    config_digest = config.get("digest")
+    rows.append(
+        "<li>Config version: "
+        + (
+            f"<code>{html.escape(str(config_digest))}</code>"
+            if config_digest
+            else _NOT_RECORDED
+        )
+        + "</li>"
+    )
+    if config.get("source"):
+        rows.append(f"<li>Config basis: {html.escape(str(config['source']))}</li>")
+
+    key_settings = config.get("key_settings") or {}
+    if key_settings:
+        settings_rows = "".join(
+            "<tr><td><code>{}</code></td><td><code>{}</code></td></tr>".format(
+                html.escape(path),
+                html.escape(
+                    json.dumps(key_settings[path], sort_keys=True, default=repr)
+                    if isinstance(key_settings[path], (dict, list))
+                    else str(key_settings[path])
+                ),
+            )
+            for path in sorted(key_settings)
+        )
+        settings_table = (
+            "<p>Settings that define this arm:</p>"
+            "<table class='provenance-settings'>"
+            "<tr><th>Setting</th><th>Value</th></tr>" + settings_rows + "</table>"
+        )
+    else:
+        settings_table = ""
+
+    if host is _HOST_NOT_RECORDED:
+        rows.append("<li>Host: " + _HTML_HOST_NOT_RECORDED + "</li>")
+    elif host is None:
+        rows.append("<li>Host: " + _HTML_HOST_NULL + "</li>")
+    else:
+        hostname = host.get("hostname", "")
+        cpu_model = host.get("cpu_model")
+        host_str = f"<code>{html.escape(hostname)}</code>"
+        if cpu_model is not None:
+            host_str += f" ({html.escape(cpu_model)})"
+        captured_at = provenance.get("host_captured_at") or ""
+        if captured_at:
+            host_str += f" &mdash; {html.escape(captured_at)}"
+        rows.append(f"<li>Host: {host_str}</li>")
+
+    return "<ul>" + "".join(rows) + "</ul>" + settings_table
 
 
 def format_total_duration(raw_duration):
@@ -98,10 +396,17 @@ def format_total_duration(raw_duration):
     return friendly, assumed_unit
 
 
-def format_html_output(config_data, config_name, timestamp,questions, total_results):
-    """Format results as HTML for easier reading"""
+def format_html_output(
+    config_data, config_name, timestamp, questions, total_results, provenance=None
+):
+    """Format results as HTML for easier reading.
 
-    html_parts = ["""
+    ``provenance`` defaults to None so result files written before provenance was
+    recorded still render.
+    """
+
+    html_parts = [
+        """
     <!DOCTYPE html>
     <html>
     <head>
@@ -190,336 +495,1009 @@ def format_html_output(config_data, config_name, timestamp,questions, total_resu
             .score-low { color: #dc3545; }
             .score-medium { color: #ffc107; }
             .score-high { color: #28a745; }
+            /* Unscored: deliberately not on the red-amber-green scale — it is
+               the absence of a grade, not a bad one. */
+            .score-na { color: #6c757d; font-size: 0.6em; }
         </style>
     </head>
     <body>
-    """]
+    """
+    ]
 
-
-
-    
     # Header
-    html_parts.append(f"""
+    html_parts.append(
+        f"""
     <div class="header">
         <h1>📊 Benchmark Results Comparison</h1>
         <p><strong>Configuration:</strong> {config_name}</p>
         <p><strong>Timestamp:</strong> {timestamp}</p>
         <p><strong>Questions Processed:</strong> {len(questions)}</p>
     </div>
-""")
+    {format_provenance_html(provenance)}
+"""
+    )
 
     # sources (retrieval accuracy) metrics
-    if 'SOURCES' in config_data.get('services', {}).get('benchmarking', {}).get('modes', []):
+    sources_mode = "SOURCES" in config_data.get("services", {}).get(
+        "benchmarking", {}
+    ).get("modes", [])
+    if sources_mode and _has_source_tally(total_results, questions):
 
         # Retrieval Accuracy
-        ret_accuracy = total_results.get('source_accuracy', None)
-        ret_total = len(questions)
-        ret_correct =  int(ret_total*ret_accuracy)
+        ret_accuracy = total_results.get("source_accuracy", None)
+        ret_total = source_scored_count(total_results, questions)
+        # round(), not int(): the count is reconstructed by multiplying the rate
+        # back out, and 22 * (15/22) == 14.999999999999998 in binary floating
+        # point, which int() truncates to 14 — moving a hit into the "Incorrect"
+        # bucket and disagreeing with the markdown report of the same artifact.
+        ret_correct = round(ret_total * ret_accuracy)
 
-        if ret_accuracy: ret_accuracy *= 100
-        ret_partial = total_results.get('relative_source_accuracy', None)
-        ret_partial =  int(ret_total*ret_partial)-ret_correct
+        if ret_accuracy:
+            ret_accuracy *= 100
+        ret_partial = total_results.get("relative_source_accuracy", None)
+        ret_partial = round(ret_total * ret_partial) - ret_correct
 
         html_parts.append('<div class="metrics">')
-        html_parts.append('<h2>🎯 Retrieval Accuracy</h2>')
-        html_parts.append('<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; max-width: 900px; margin: 0 auto;">')
+        html_parts.append("<h2>🎯 Retrieval Accuracy</h2>")
+        html_parts.append(
+            '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; max-width: 900px; margin: 0 auto;">'
+        )
 
         # Fully Correct
-        score_class = 'score-low' if ret_accuracy < 50 else 'score-medium' if ret_accuracy < 80 else 'score-high'
-        html_parts.append(f"""
+        score_class = (
+            "score-low"
+            if ret_accuracy < 50
+            else "score-medium" if ret_accuracy < 80 else "score-high"
+        )
+        html_parts.append(
+            f"""
             <div class="metric-item">
                 <div class="metric-value {score_class}">{ret_accuracy:.1f}%</div>
                 <div class="metric-label">Fully Correct: {ret_correct}/{ret_total}</div>
             </div>
-        """)
+        """
+        )
 
         # Partially Correct
         if ret_partial > 0:
-            html_parts.append(f"""
+            html_parts.append(
+                f"""
                 <div class="metric-item">
                     <div class="metric-value score-medium">{ret_partial}</div>
-                    <div class="metric-label">Partially Correct (some sources found)</div>
+                    <div class="metric-label">Partially Correct (some expected sources retrieved)</div>
                 </div>
-            """)
+            """
+            )
 
-        # Incorrect
+        # Incorrect. A residual over the EXPECTED sources, so it counts questions
+        # where none of the expected sources were among those retrieved -- NOT
+        # questions where retrieval returned nothing. The old label claimed the
+        # latter: in benchmarking-ragas-205-20260817_040939 all 106 scored
+        # questions retrieved documents and none retrieved zero, yet the report
+        # announced "19 Incorrect (no sources found)", inviting the reader to
+        # diagnose a retrieval outage that had not happened.
         ret_incorrect = ret_total - ret_correct - ret_partial
         if ret_incorrect > 0:
-            html_parts.append(f"""
+            html_parts.append(
+                f"""
                 <div class="metric-item">
                     <div class="metric-value score-low">{ret_incorrect}</div>
-                    <div class="metric-label">Incorrect (no sources found)</div>
+                    <div class="metric-label">Incorrect (no expected sources retrieved)</div>
                 </div>
-            """)
+            """
+            )
 
-        html_parts.append('</div></div>')
+        html_parts.append("</div></div>")
 
-    if 'RAGAS' in config_data.get('services', {}).get('benchmarking', {}).get('modes', []):
+    if "RAGAS" in config_data.get("services", {}).get("benchmarking", {}).get(
+        "modes", []
+    ):
 
         # Aggregate RAGAS Metrics
         if total_results:
             html_parts.append('<div class="metrics">')
-            html_parts.append('<h2>Aggregate RAGAS Metrics</h2>')
+            html_parts.append("<h2>Aggregate RAGAS Metrics</h2>")
             html_parts.append('<div class="metrics-grid">')
             for metric, value in total_results.items():
-                if 'aggregate' in metric:
-                    clean_name = metric.replace('aggregate_', '').replace('_', ' ').title()
-                    score_class = 'score-low' if value < 0.5 else 'score-medium' if value < 0.7 else 'score-high'
-                    html_parts.append(f"""
+                if "aggregate" in metric:
+                    clean_name = (
+                        metric.replace("aggregate_", "").replace("_", " ").title()
+                    )
+                    score_class, display = _html_score_parts(value)
+                    html_parts.append(
+                        f"""
                     <div class="metric-item">
-                        <div class="metric-value {score_class}">{value:.3f}</div>
+                        <div class="metric-value {score_class}">{display}</div>
                         <div class="metric-label">{clean_name}</div>
                     </div>
-                    """)
-            html_parts.append('</div></div>')
+                    """
+                    )
+            html_parts.append("</div></div>")
 
     # Each Question
     for i, (qid, q_data) in enumerate(questions.items(), 1):
         html_parts.append(f'<div class="question-card">')
-        html_parts.append(f'<h2>Question {i}: {qid}</h2>')
-        
+        html_parts.append(f"<h2>Question {i}: {qid}</h2>")
+
         # Question
         html_parts.append(f'<div class="section">')
         html_parts.append(f'<div class="section-title">❓ Question</div>')
         html_parts.append(f'<p>{q_data["question"]}</p>')
-        html_parts.append(f'</div>')
-        
+        html_parts.append(f"</div>")
+
         # reference sources
-        reference_sources_metadata = q_data.get('reference_sources_metadata', [])
-        reference_sources_match_fields = q_data.get('reference_sources_match_fields', [])
+        reference_sources_metadata = q_data.get("reference_sources_metadata", [])
+        reference_sources_match_fields = q_data.get(
+            "reference_sources_match_fields", []
+        )
         expected_sources = []
-        for ref_source, match_field in zip(reference_sources_metadata, reference_sources_match_fields):
+        for ref_source, match_field in zip(
+            reference_sources_metadata, reference_sources_match_fields
+        ):
             expected_sources.append(ref_source[match_field])
-        found_sources = [source for i, source in enumerate(expected_sources) if reference_sources_metadata[i]['matched']]
+        found_sources = [
+            source
+            for i, source in enumerate(expected_sources)
+            # Degraded/failed rows are never source-scored, so the harness does
+            # not stamp `matched` on their reference metadata; treat an absent
+            # flag as a miss rather than crashing report generation.
+            if reference_sources_metadata[i].get("matched")
+        ]
 
         # retrieved sources
-        sources_metadata = q_data.get('sources_metadata', [])
+        sources_metadata = q_data.get("sources_metadata", [])
         retrieved_sources = [
             s.get("display_name") or s.get("file_name") or "" for s in sources_metadata
         ]
-        
+
         # Check if any expected source was retrieved
-        expected_sources_set = set(expected_sources) 
-        
-        retrieval_status = 'none'
-        if len(found_sources) == len(expected_sources_set) and len(expected_sources_set) > 0:
-            retrieval_status = 'full'
+        expected_sources_set = set(expected_sources)
+
+        retrieval_status = "none"
+        if (
+            len(found_sources) == len(expected_sources_set)
+            and len(expected_sources_set) > 0
+        ):
+            retrieval_status = "full"
         elif len(found_sources) > 0:
-            retrieval_status = 'partial'
-        
+            retrieval_status = "partial"
+
         if expected_sources:
-            if retrieval_status == 'full':
-                status_class = 'score-high'
-                status_icon = '✅'
-                status_text = 'FULLY CORRECT'
-            elif retrieval_status == 'partial':
-                status_class = 'score-medium'
-                status_icon = '⚠️'
-                status_text = f'PARTIALLY CORRECT ({len(found_sources)}/{len(expected_sources_set)} sources found)'
+            if retrieval_status == "full":
+                status_class = "score-high"
+                status_icon = "✅"
+                status_text = "FULLY CORRECT"
+            elif retrieval_status == "partial":
+                status_class = "score-medium"
+                status_icon = "⚠️"
+                status_text = f"PARTIALLY CORRECT ({len(found_sources)}/{len(expected_sources_set)} sources found)"
             else:
-                status_class = 'score-low'
-                status_icon = '❌'
-                status_text = 'INCORRECT'
-            
+                status_class = "score-low"
+                status_icon = "❌"
+                status_text = "INCORRECT"
+
             # Display expected sources
-            expected_display = ', '.join(expected_sources)
-    
+            expected_display = ", ".join(expected_sources)
+
             html_parts.append(f'<div class="section">')
             html_parts.append(f'<div class="section-title">🎯 Retrieval Check</div>')
-            html_parts.append(f'<div style="background: #f8f9fa; padding: 15px; border-radius: 5px;">')
-            html_parts.append(f'<p><strong>Expected Document(s):</strong> {expected_display}</p>')
-            html_parts.append(f'<p><strong>Retrieved Documents:</strong> {", ".join(retrieved_sources) if retrieved_sources else "None"}</p>')
-            html_parts.append(f'<p><strong class="{status_class}">{status_icon} Status: {status_text}</strong></p>')
-            html_parts.append(f'</div>')
-            html_parts.append(f'</div>')
-
+            html_parts.append(
+                f'<div style="background: #f8f9fa; padding: 15px; border-radius: 5px;">'
+            )
+            html_parts.append(
+                f"<p><strong>Expected Document(s):</strong> {expected_display}</p>"
+            )
+            html_parts.append(
+                f'<p><strong>Retrieved Documents:</strong> {", ".join(retrieved_sources) if retrieved_sources else "None"}</p>'
+            )
+            html_parts.append(
+                f'<p><strong class="{status_class}">{status_icon} Status: {status_text}</strong></p>'
+            )
+            html_parts.append(f"</div>")
+            html_parts.append(f"</div>")
 
         # archi's Answer
         html_parts.append(f'<div class="section">')
         html_parts.append(f'<div class="section-title">🤖 archi\'s Answer</div>')
-        html_parts.append(f'<div class="answer-box">{q_data.get("answer", "N/A")}</div>')
-        html_parts.append(f'</div>')
-        
+        # Escaped: FASRC documentation is full of command placeholders such as
+        # `<jobid>` and `<rcusername>`, which a browser parses as unknown elements
+        # and renders as nothing -- silently deleting the argument the reader
+        # needs from the command they were told to run.
+        html_parts.append(
+            f'<div class="answer-box">'
+            f'{html.escape(str(q_data.get("answer", "N/A")))}</div>'
+        )
+        html_parts.append(f"</div>")
+
         # Expected Answer
         html_parts.append(f'<div class="section">')
         html_parts.append(f'<div class="section-title">✅ Expected Answer</div>')
-        html_parts.append(f'<div class="answer-box expected-box">{q_data.get("reference_answer", "N/A")}</div>')
-        html_parts.append(f'</div>')
+        html_parts.append(
+            f'<div class="answer-box expected-box">'
+            f'{html.escape(str(q_data.get("reference_answer", "N/A")))}</div>'
+        )
+        html_parts.append(f"</div>")
 
         # Expected Documents/Sources
         if expected_sources:
             html_parts.append(f'<div class="section">')
-            html_parts.append(f'<div class="section-title">🎯 Expected Source Documents</div>')
-            html_parts.append(f'<div style="background: #e8f5e9; border-left: 4px solid #4CAF50; padding: 15px; border-radius: 5px;">')
+            html_parts.append(
+                f'<div class="section-title">🎯 Expected Source Documents</div>'
+            )
+            html_parts.append(
+                f'<div style="background: #e8f5e9; border-left: 4px solid #4CAF50; padding: 15px; border-radius: 5px;">'
+            )
             html_parts.append(f'<ul style="margin: 0; padding-left: 20px;">')
             for source in expected_sources:
-                html_parts.append(f'<li style="padding: 5px 0;"><strong>{source}</strong></li>')
-            html_parts.append(f'</ul>')
-            html_parts.append(f'</div>')
-            html_parts.append(f'</div>')
+                html_parts.append(
+                    f'<li style="padding: 5px 0;"><strong>{source}</strong></li>'
+                )
+            html_parts.append(f"</ul>")
+            html_parts.append(f"</div>")
+            html_parts.append(f"</div>")
 
         # Retrieved Contexts/Documents
-        contexts = q_data.get('contexts', [])
+        contexts = q_data.get("contexts", [])
         if contexts:
             html_parts.append(f'<div class="section">')
-            html_parts.append(f'<div class="section-title">📚 Retrieved Documents ({len(contexts)})</div>')
+            html_parts.append(
+                f'<div class="section-title">📚 Retrieved Documents ({len(contexts)})</div>'
+            )
             for j, ctx in enumerate(contexts, 1):
                 # Extract ticket ID from context
-                ticket_id = retrieved_sources[j-1]
-                ticket_badge = f'<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.85em; margin-left: 10px;">{ticket_id}</span>' if ticket_id else ''
-                
-                # Parse context if it's a Document representation
-                if isinstance(ctx, str) and ctx.startswith('page_content='):
-                    try:
-                        content_start = ctx.find("page_content='") + len("page_content='")
-                        content_end = ctx.find("' metadata=", content_start)
-                        if content_end != -1:
-                            ctx_text = ctx[content_start:content_end]
-                            # Extract metadata
-                            metadata_start = ctx.find("metadata={", content_end)
-                            if metadata_start != -1:
-                                metadata_end = ctx.find("}", metadata_start)
-                                metadata_text = ctx[metadata_start:metadata_end+1]
-                        else:
-                            ctx_text = ctx
-                            metadata_text = ""
-                    except:
-                        ctx_text = ctx
-                        metadata_text = ""
-                else:
-                    ctx_text = str(ctx)
-                    metadata_text = ""
-                
+                ticket_id = retrieved_sources[j - 1]
+                ticket_badge = (
+                    f'<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.85em; margin-left: 10px;">{ticket_id}</span>'
+                    if ticket_id
+                    else ""
+                )
+
+                # Parse context if it's a Document representation; shared with
+                # the markdown formatter so a parsing fix lands in both.
+                ctx_text = extract_context_text(ctx)
+
                 # Truncate if too long for display
-                display_text = ctx_text[:500] + "..." if len(ctx_text) > 500 else ctx_text
-                full_text = ctx_text.replace('<', '&lt;').replace('>', '&gt;')
-                
-                html_parts.append(f'''
+                display_text = (
+                    ctx_text[:500] + "..." if len(ctx_text) > 500 else ctx_text
+                )
+                full_text = ctx_text.replace("<", "&lt;").replace(">", "&gt;")
+
+                html_parts.append(
+                    f"""
                 <div class="context-box" style="background: #f8f9fa; border-left: 3px solid #2196F3; padding: 15px; margin: 10px 0; border-radius: 5px;">
                     <div style="font-weight: bold; margin-bottom: 8px;">Document {j}{ticket_badge}</div>
                     <div style="font-size: 0.9em; white-space: pre-wrap; font-family: 'Courier New', monospace;">{display_text}</div>
                     {f'<details style="margin-top: 10px;"><summary style="cursor: pointer; color: #667eea;">Show full document</summary><pre style="margin-top: 10px; font-size: 0.85em; overflow-x: auto;">{full_text}</pre></details>' if len(ctx_text) > 500 else ''}
                 </div>
-                ''')
-            html_parts.append(f'</div>')
+                """
+                )
+            html_parts.append(f"</div>")
 
         # Agent message trace
-        messages = q_data.get('messages', [])
+        messages = q_data.get("messages", [])
         if messages:
             html_parts.append(f'<div class="section">')
-            html_parts.append(f'<div class="section-title">💬 Agent Messages ({len(messages)})</div>')
-            html_parts.append(f'<div style="display: flex; flex-direction: column; gap: 12px;">')
+            html_parts.append(
+                f'<div class="section-title">💬 Agent Messages ({len(messages)})</div>'
+            )
+            html_parts.append(
+                f'<div style="display: flex; flex-direction: column; gap: 12px;">'
+            )
             for m_idx, message in enumerate(messages, 1):
-                msg_type = message.get('type', 'message')
-                duration_display, duration_unit = format_total_duration(message.get("total_duration"))
+                msg_type = message.get("type", "message")
+                duration_display, duration_unit = format_total_duration(
+                    message.get("total_duration")
+                )
                 duration_suffix = f" ({duration_display})" if duration_display else ""
                 duration_title = ""
                 if duration_display:
                     raw_duration = html.escape(str(message.get("total_duration")))
-                    unit_hint = f"assumed {duration_unit}" if duration_unit else "raw value"
-                    duration_title = f' title="Raw duration: {raw_duration} ({unit_hint})"'
-                if msg_type == 'tool_call':
+                    unit_hint = (
+                        f"assumed {duration_unit}" if duration_unit else "raw value"
+                    )
+                    duration_title = (
+                        f' title="Raw duration: {raw_duration} ({unit_hint})"'
+                    )
+                if msg_type == "tool_call":
                     title = f'🛠️ Tool Call #{m_idx}: {message.get("tool_name", "Unknown Tool")}{duration_suffix}'
-                    args = message.get('tool_args')
-                    body = f'<strong>Args:</strong> {html.escape(str(args))}' if args is not None else '<em>No arguments provided</em>'
-                    border_color = '#17a2b8'
-                elif msg_type == 'ai_message':
-                    title = f'🤖 Assistant Message #{m_idx}{duration_suffix}'
-                    content = message.get('content', '')
-                    body = html.escape(str(content)).replace('\\n', '<br>')
-                    border_color = '#6f42c1'
+                    args = message.get("tool_args")
+                    body = (
+                        f"<strong>Args:</strong> {html.escape(str(args))}"
+                        if args is not None
+                        else "<em>No arguments provided</em>"
+                    )
+                    border_color = "#17a2b8"
+                elif msg_type == "ai_message":
+                    title = f"🤖 Assistant Message #{m_idx}{duration_suffix}"
+                    content = message.get("content", "")
+                    body = html.escape(str(content)).replace("\\n", "<br>")
+                    border_color = "#6f42c1"
                 else:
-                    title = f'📝 Message #{m_idx}{duration_suffix}'
-                    fallback = message.get('content', message)
-                    body = html.escape(str(fallback)).replace('\\n', '<br>')
-                    border_color = '#343a40'
-                html_parts.append(f'''
+                    title = f"📝 Message #{m_idx}{duration_suffix}"
+                    fallback = message.get("content", message)
+                    body = html.escape(str(fallback)).replace("\\n", "<br>")
+                    border_color = "#343a40"
+                html_parts.append(
+                    f"""
                 <div class="answer-box" style="background: #fff; border-left-color: {border_color};">
                     <div style="font-weight: 600; margin-bottom: 6px;"{duration_title}>{title}</div>
                     <div style="font-size: 0.9em; white-space: pre-wrap;">{body}</div>
                 </div>
-                ''')
-            html_parts.append(f'</div>')
-            html_parts.append(f'</div>')
-            
+                """
+                )
+            html_parts.append(f"</div>")
+            html_parts.append(f"</div>")
 
         # RAGAS Metrics
         ragas_metrics = {
-            'answer_relevancy': 'Answer Relevancy',
-            'faithfulness': 'Faithfulness',
-            'context_precision': 'Context Precision',
-            'context_recall': 'Context Recall'
+            "answer_relevancy": "Answer Relevancy",
+            "faithfulness": "Faithfulness",
+            "context_precision": "Context Precision",
+            "context_recall": "Context Recall",
+            "answer_correctness": "Answer Correctness",
         }
 
-        if 'RAGAS' in config_data.get('services', {}).get('benchmarking', {}).get('modes', []):
+        if "RAGAS" in config_data.get("services", {}).get("benchmarking", {}).get(
+            "modes", []
+        ):
             html_parts.append(f'<div class="section">')
             html_parts.append(f'<div class="section-title">📊 RAGAS Scores</div>')
             html_parts.append(f'<div class="metrics-grid">')
+            # Key PRESENT is the test, not key-present-and-not-None: the key is
+            # there because the run asked for the metric, so a null/NaN cell is
+            # a scoring failure worth showing. Dropping the tile instead made an
+            # unscored metric look identical to one the config never enabled.
             for metric_key, metric_name in ragas_metrics.items():
-                if metric_key in q_data and q_data[metric_key] is not None:
-                    value = q_data[metric_key]
-                    score_class = 'score-low' if value < 0.5 else 'score-medium' if value < 0.7 else 'score-high'
-                    html_parts.append(f"""
+                if metric_key in q_data:
+                    score_class, display = _html_score_parts(q_data[metric_key])
+                    html_parts.append(
+                        f"""
                     <div class="metric-item">
-                        <div class="metric-value {score_class}">{value:.3f}</div>
+                        <div class="metric-value {score_class}">{display}</div>
                         <div class="metric-label">{metric_name}</div>
                     </div>
-                    """)
-            html_parts.append(f'</div></div>')
-        
-        html_parts.append(f'</div>')
+                    """
+                    )
+            html_parts.append(f"</div></div>")
 
-    html_parts.append('</body></html>')
-    return '\n'.join(html_parts)
+        html_parts.append(f"</div>")
+
+    html_parts.append("</body></html>")
+    return "\n".join(html_parts)
+
+
+# Inline (non-fenced) markdown fields are escaped with this table. The report is
+# pasted into GitHub, so a data field must not be able to restructure it: no
+# emphasis, code spans, links, tables, or raw HTML. The backslashes render
+# invisibly on GitHub, so escaped text still reads as the original.
+_MD_INLINE_ESCAPES = str.maketrans(
+    {
+        "\\": "\\\\",
+        "`": "\\`",
+        "*": "\\*",
+        "_": "\\_",
+        "~": "\\~",
+        "[": "\\[",
+        "]": "\\]",
+        "|": "\\|",
+        "@": "\\@",
+        "<": "&lt;",
+        ">": "&gt;",
+    }
+)
+
+
+def md_escape(text):
+    """Neutralize artifact-sourced text for inline markdown interpolation.
+
+    Whitespace is collapsed onto one line, so only the FIRST character can sit
+    at a line start when the field is rendered as its own paragraph — a leading
+    block starter there would grow a heading or a list out of data, so it gets
+    a backslash too.
+    """
+    escaped = " ".join(str(text).split()).translate(_MD_INLINE_ESCAPES)
+    # GFM autolinks bare URLs (scheme://, any www. — parentheses count as
+    # valid preceders — and emails via the @ escape above); an escaped colon
+    # or dot cannot participate, so the payload stays plain text.
+    escaped = escaped.replace("://", "\\://")
+    escaped = re.sub(r"(?i)(www)\.", r"\1\\.", escaped)
+    if escaped.startswith(("#", "-", "+")):
+        escaped = "\\" + escaped
+    else:
+        # An ordered-list marker (`1. item` / `1) item`) is a block starter
+        # too: escape its delimiter so the digits stay plain text.
+        head = escaped.split(" ", 1)[0]
+        if head[:-1].isdigit() and head[-1:] in ".)":
+            escaped = head[:-1] + "\\" + head[-1] + escaped[len(head) :]
+    return escaped
+
+
+def fence(text):
+    """Wrap artifact text in a code fence it cannot terminate.
+
+    FASRC documentation is full of command placeholders such as ``<jobid>``,
+    and answers can carry markdown of their own; a fence one backtick longer
+    than the longest backtick run inside the text renders all of it literally.
+    """
+    text = str(text)
+    longest = 0
+    run = 0
+    for char in text:
+        run = run + 1 if char == "`" else 0
+        longest = max(longest, run)
+    ticks = "`" * max(3, longest + 1)
+    return f"{ticks}text\n{text}\n{ticks}"
+
+
+def code_span(text):
+    """Wrap artifact data in an inline code span it cannot terminate.
+
+    Markdown does not process backslashes inside code spans, so ``md_escape``
+    is useless there; instead the delimiter is one backtick longer than the
+    longest backtick run inside the data, space-padded per GFM so edge
+    backticks render and the padding is stripped by the renderer.
+    """
+    text = " ".join(str(text).split())
+    longest = 0
+    run = 0
+    for char in text:
+        run = run + 1 if char == "`" else 0
+        longest = max(longest, run)
+    ticks = "`" * (longest + 1)
+    return f"{ticks} {text} {ticks}"
+
+
+def _score_badge(value):
+    """The 0.5 / 0.7 thresholds the HTML report encodes as colors."""
+    if value < 0.5:
+        return "🔴"
+    if value < 0.7:
+        return "🟡"
+    return "🟢"
+
+
+def _is_scored(value):
+    """True when ``value`` is a number a reader may treat as a score.
+
+    Two spellings of "unscored" reach the reports and both must land here.
+    ``build_ragas_aggregates`` emits ``float("nan")`` in memory, and NaN fails
+    BOTH threshold comparisons — so an unguarded cell wore the green badge and
+    printed a literal ``nan``, reading as a success. Since #279 the artifact
+    spells the same thing ``null``, and an unguarded ``None`` raises
+    ``TypeError`` on ``value < 0.5``, taking the whole report down.
+    """
+    return isinstance(value, (int, float)) and math.isfinite(value)
+
+
+UNSCORED_CELL = "n/a (unscored)"
+
+
+def source_scored_count(total_results, questions):
+    """The retrieval-accuracy denominator.
+
+    The scores were divided by the SOURCE-SCORABLE question count, which excludes
+    zero-source rows (the ``should_refuse`` anchor is why this exists). Deriving
+    the count from ``len(questions)`` would disagree with the score it is derived
+    from; artifacts older than the key predate that fix and used ``len(questions)``.
+    """
+    return total_results.get("source_scored_count", len(questions))
+
+
+def _has_source_tally(total_results, questions):
+    """True when the retrieval-accuracy section can actually be computed.
+
+    Three things have to hold, and each of them failed differently in practice:
+
+    - Both rates present. A run CAN declare ``SOURCES`` and record neither —
+      every question degraded, or an artifact older than the keys — and
+      unguarded that reached ``int(count * None)`` and took the report down with
+      a ``TypeError`` after the scores had already been computed and dumped.
+    - Both rates finite, for the same reason a metric cell has to be (#279):
+      ``int(count * nan)`` raises ``ValueError``.
+    - A denominator above zero. ``build_source_aggregates`` emits
+      ``0.0 / 0.0 / 0`` when NO question declared an expected source, and
+      rendering that printed "Fully Correct: 0/0 (0.0%)" — an empty sample shown
+      as a total retrieval failure, which is the same "unscored read as a scored
+      zero" confusion this issue is about.
+
+    A measured ``0.0`` over a real denominator IS a floor result and keeps its
+    section; only an absent, non-finite or empty-sample tally suppresses it.
+    """
+    return (
+        _is_scored(total_results.get("source_accuracy"))
+        and _is_scored(total_results.get("relative_source_accuracy"))
+        and source_scored_count(total_results, questions) > 0
+    )
+
+
+def _score_cell(value):
+    """A score cell: badged when scored, plainly unscored when not."""
+    if not _is_scored(value):
+        return UNSCORED_CELL
+    return f"{value:.3f} {_score_badge(value)}"
+
+
+def _html_score_parts(value):
+    """``(css_class, display_text)`` for one HTML metric tile.
+
+    The HTML report paints its own tiles rather than reusing ``_score_cell``'s
+    text, so the unscored case needs the same decision in the colour it picks:
+    a neutral class, never the green one a NaN would otherwise fall into.
+    """
+    if not _is_scored(value):
+        return "score-na", UNSCORED_CELL
+    if value < 0.5:
+        return "score-low", f"{value:.3f}"
+    if value < 0.7:
+        return "score-medium", f"{value:.3f}"
+    return "score-high", f"{value:.3f}"
+
+
+def extract_context_text(ctx):
+    """Extract the page text from a retrieved-context entry.
+
+    LangChain ``Document`` entries arrive as their ``repr`` string; this slices
+    the ``page_content`` out of that shape and falls back to the raw string for
+    anything else. Shared by the HTML and markdown formatters so a parsing fix
+    lands in both report formats at once.
+    """
+    if isinstance(ctx, str) and ctx.startswith("page_content="):
+        try:
+            content_start = ctx.find("page_content='") + len("page_content='")
+            content_end = ctx.find("' metadata=", content_start)
+            if content_end != -1:
+                return ctx[content_start:content_end]
+            return ctx
+        except Exception:
+            return ctx
+    return str(ctx)
+
+
+_MD_NOT_RECORDED = "*not recorded — this artifact predates version stamping*"
+
+
+def format_version_markdown(provenance):
+    """Markdown mirror of ``format_version_html``: the run's identity digests."""
+    if not provenance:
+        return ""
+
+    code = provenance.get("code_version") or {}
+    config = provenance.get("config_version") or {}
+    host = provenance.get("host", _HOST_NOT_RECORDED)
+    if not code and not config and host is _HOST_NOT_RECORDED:
+        return ""
+
+    lines = []
+
+    code_digest = code.get("digest")
+    lines.append(
+        "- Code version: "
+        + (code_span(code_digest) if code_digest else _MD_NOT_RECORDED)
+    )
+    commit = code.get("deploy_git_commit")
+    if commit:
+        dirty = " (dirty tree)" if code.get("deploy_git_dirty") else ""
+        lines.append(
+            f"- Deploy-time commit: {code_span(commit)}{dirty} — frozen by "
+            "`archi create`; it identifies the deploy, not the image this run used"
+        )
+
+    config_digest = config.get("digest")
+    lines.append(
+        "- Config version: "
+        + (code_span(config_digest) if config_digest else _MD_NOT_RECORDED)
+    )
+    if config.get("source"):
+        lines.append(f"- Config basis: {md_escape(config['source'])}")
+
+    key_settings = config.get("key_settings") or {}
+    if key_settings:
+        lines += [
+            "",
+            "Settings that define this arm:",
+            "",
+            "| Setting | Value |",
+            "|---|---|",
+        ]
+        for path in sorted(key_settings):
+            value = key_settings[path]
+            rendered = (
+                json.dumps(value, sort_keys=True, default=repr)
+                if isinstance(value, (dict, list))
+                else str(value)
+            )
+            lines.append(f"| {md_escape(path)} | {md_escape(rendered)} |")
+
+    if key_settings:
+        # A bullet touching the last table row is parsed as one more row by
+        # Python-Markdown's tables extension, which swallows the host line into
+        # the settings table. A blank line ends the table under every renderer.
+        lines.append("")
+
+    if host is _HOST_NOT_RECORDED:
+        lines.append("- Host: " + _MD_HOST_NOT_RECORDED)
+    elif host is None:
+        lines.append("- Host: " + _MD_HOST_NULL)
+    else:
+        hostname = host.get("hostname", "")
+        cpu_model = host.get("cpu_model")
+        host_str = code_span(hostname)
+        if cpu_model is not None:
+            host_str += f" ({md_escape(cpu_model)})"
+        captured_at = provenance.get("host_captured_at") or ""
+        if captured_at:
+            host_str += f" — {md_escape(captured_at)}"
+        lines.append(f"- Host: {host_str}")
+
+    return "\n".join(lines)
+
+
+def format_provenance_markdown(provenance):
+    """Markdown mirror of ``format_provenance_html``.
+
+    Same content, same caveats: an empty divergence list means the selected and
+    running configurations were compared and agreed; a missing key means no
+    comparison was made, which is reported as such rather than as agreement.
+    """
+    if not provenance:
+        return ""
+
+    lines = ["## Run provenance", ""]
+
+    divergence = provenance.get("configuration_divergence")
+    if divergence:
+        lines.append(
+            "⚠️ The run did **not** use the selected configuration. Settings that "
+            "differ between the selected file and what the agent read:"
+        )
+        lines.append("")
+        lines += [f"- {code_span(item)}" for item in divergence]
+    elif divergence is None:
+        lines.append(
+            "⚠️ Whether the run used the selected configuration was **not "
+            "recorded**: this artifact predates configuration provenance, so no "
+            "comparison was made."
+        )
+    else:
+        lines.append(
+            "✅ The configuration the agent read **matches** the selected file."
+        )
+
+    stable = provenance.get("corpus_unchanged_at_endpoints")
+    before = provenance.get("corpus_fingerprint_before")
+    after = provenance.get("corpus_fingerprint")
+    lines.append("")
+    if stable is True:
+        lines.append(
+            "✅ The corpus was the same at the start and the end of the run "
+            f"({code_span(after)}). This does not rule out a change that was "
+            "reverted in between."
+        )
+    elif stable is False:
+        lines.append(
+            "⚠️ The corpus **changed** while the run was in progress, so its "
+            "questions were not all scored against the same documents "
+            f"({code_span(before)} → {code_span(after)})."
+        )
+    else:
+        lines.append(
+            "⚠️ Corpus stability is **unknown**: it was not observed both before "
+            f"and after the run ({code_span(before)} → {code_span(after)})."
+        )
+
+    ingest = provenance.get("ingest_wall_seconds", _INGEST_NOT_RECORDED)
+    lines.append("")
+    if ingest is _INGEST_NOT_RECORDED:
+        lines.append(
+            "⏱️ Time to ingest is **not recorded**: this artifact predates the field."
+        )
+    elif ingest is None:
+        lines.append(
+            "⏱️ Time to ingest: **not measured** — no ingest was observed while "
+            "this run waited, which normally means it reused an existing "
+            "corpus."
+        )
+    else:
+        lines.append(
+            f"⏱️ Time to ingest: **{_format_seconds(ingest)}** — the span from "
+            "the first status poll reporting progress to the one reporting "
+            "completion. An **approximation**, not a measurement: ingestion "
+            "that ran before this benchmark began polling is missing, and "
+            "non-ingest time after it began is included. Measured once before "
+            "the sweep, so every arm of this run carries the same figure — "
+            "where arms report different `corpus_fingerprint` values, it "
+            "describes only the first."
+        )
+
+    version_md = format_version_markdown(provenance)
+    if version_md:
+        lines += ["", version_md]
+
+    return "\n".join(lines)
+
+
+def format_markdown_output(
+    config_data, config_name, timestamp, questions, total_results, provenance=None
+):
+    """Format results as GitHub-flavored markdown.
+
+    Mirrors ``format_html_output`` section for section. ``provenance`` defaults
+    to None so result files written before provenance was recorded still render.
+    """
+    modes = config_data.get("services", {}).get("benchmarking", {}).get("modes", [])
+
+    parts = [
+        "# Benchmark Results Comparison",
+        "",
+        f"**Configuration:** {md_escape(config_name)}  ",
+        f"**Timestamp:** {md_escape(timestamp)}  ",
+        f"**Questions Processed:** {len(questions)}",
+    ]
+
+    provenance_md = format_provenance_markdown(provenance)
+    if provenance_md:
+        parts += ["", provenance_md]
+
+    if "SOURCES" in modes and _has_source_tally(total_results, questions):
+        ret_accuracy = total_results.get("source_accuracy", None)
+        # Same denominator and the same round()-not-int() reconstruction as the
+        # HTML report, from the same shared helper: the two reports render the
+        # same numbers and must not disagree about them.
+        ret_total = source_scored_count(total_results, questions)
+        ret_correct = round(ret_total * ret_accuracy)
+        if ret_accuracy:
+            ret_accuracy *= 100
+        ret_partial = total_results.get("relative_source_accuracy", None)
+        ret_partial = round(ret_total * ret_partial) - ret_correct
+
+        parts += ["", "## 🎯 Retrieval Accuracy", ""]
+        parts.append(
+            f"- **Fully Correct:** {ret_correct}/{ret_total} ({ret_accuracy:.1f}%)"
+        )
+        if ret_partial > 0:
+            parts.append(
+                f"- **Partially Correct** (some expected sources retrieved): "
+                f"{ret_partial}"
+            )
+        # A residual over the EXPECTED sources — questions where none of the
+        # expected sources were retrieved, NOT questions with zero retrieval.
+        ret_incorrect = ret_total - ret_correct - ret_partial
+        if ret_incorrect > 0:
+            parts.append(
+                f"- **Incorrect** (no expected sources retrieved): {ret_incorrect}"
+            )
+
+    if "RAGAS" in modes and total_results:
+        parts += [
+            "",
+            "## 📊 Aggregate RAGAS Metrics",
+            "",
+            "| Metric | Score |",
+            "|---|---|",
+        ]
+        for metric, value in total_results.items():
+            if "aggregate" in metric:
+                clean_name = metric.replace("aggregate_", "").replace("_", " ").title()
+                parts.append(f"| {md_escape(clean_name)} | {_score_cell(value)} |")
+
+    ragas_metrics = {
+        "answer_relevancy": "Answer Relevancy",
+        "faithfulness": "Faithfulness",
+        "context_precision": "Context Precision",
+        "context_recall": "Context Recall",
+        "answer_correctness": "Answer Correctness",
+    }
+
+    for i, (qid, q_data) in enumerate(questions.items(), 1):
+        parts += ["", "---", "", f"## Question {i}: {md_escape(qid)}"]
+
+        parts += ["", "### ❓ Question", "", md_escape(q_data["question"])]
+
+        reference_sources_metadata = q_data.get("reference_sources_metadata", [])
+        reference_sources_match_fields = q_data.get(
+            "reference_sources_match_fields", []
+        )
+        expected_sources = []
+        for ref_source, match_field in zip(
+            reference_sources_metadata, reference_sources_match_fields
+        ):
+            expected_sources.append(ref_source[match_field])
+        found_sources = [
+            source
+            for idx, source in enumerate(expected_sources)
+            # Degraded/failed rows are never source-scored; an absent `matched`
+            # flag is a miss, not a crash — same rule as the HTML report.
+            if reference_sources_metadata[idx].get("matched")
+        ]
+
+        sources_metadata = q_data.get("sources_metadata", [])
+        retrieved_sources = [
+            s.get("display_name") or s.get("file_name") or "" for s in sources_metadata
+        ]
+
+        expected_sources_set = set(expected_sources)
+        retrieval_status = "none"
+        if (
+            len(found_sources) == len(expected_sources_set)
+            and len(expected_sources_set) > 0
+        ):
+            retrieval_status = "full"
+        elif len(found_sources) > 0:
+            retrieval_status = "partial"
+
+        if expected_sources:
+            if retrieval_status == "full":
+                status_line = "✅ FULLY CORRECT"
+            elif retrieval_status == "partial":
+                status_line = (
+                    f"⚠️ PARTIALLY CORRECT ({len(found_sources)}/"
+                    f"{len(expected_sources_set)} sources found)"
+                )
+            else:
+                status_line = "❌ INCORRECT"
+
+            retrieved_display = (
+                md_escape(", ".join(retrieved_sources)) if retrieved_sources else "None"
+            )
+            parts += [
+                "",
+                "### 🎯 Retrieval Check",
+                "",
+                f"**Expected Document(s):** {md_escape(', '.join(expected_sources))}  ",
+                f"**Retrieved Documents:** {retrieved_display}  ",
+                f"**Status:** {status_line}",
+            ]
+
+        parts += ["", "### 🤖 archi's Answer", "", fence(q_data.get("answer", "N/A"))]
+        parts += [
+            "",
+            "### ✅ Expected Answer",
+            "",
+            fence(q_data.get("reference_answer", "N/A")),
+        ]
+
+        if expected_sources:
+            parts += ["", "### 🎯 Expected Source Documents", ""]
+            parts += [f"- **{md_escape(source)}**" for source in expected_sources]
+
+        contexts = q_data.get("contexts", [])
+        if contexts:
+            parts += ["", f"### 📚 Retrieved Documents ({len(contexts)})"]
+            for j, ctx in enumerate(contexts, 1):
+                ticket_id = (
+                    retrieved_sources[j - 1] if j - 1 < len(retrieved_sources) else ""
+                )
+                header = f"**Document {j}**"
+                if ticket_id:
+                    header += f" — {md_escape(ticket_id)}"
+                ctx_text = extract_context_text(ctx)
+                if len(ctx_text) > 500:
+                    # Same contract as the HTML report's expander: the preview
+                    # is followed by the COMPLETE text, so the evidence never
+                    # requires opening the JSON artifact.
+                    parts += ["", header, "", fence(ctx_text[:500] + "...")]
+                    parts += [
+                        "",
+                        "<details><summary>Show full document</summary>",
+                        "",
+                        fence(ctx_text),
+                        "",
+                        "</details>",
+                    ]
+                else:
+                    parts += ["", header, "", fence(ctx_text)]
+
+        messages = q_data.get("messages", [])
+        if messages:
+            parts += ["", f"### 💬 Agent Messages ({len(messages)})"]
+            for m_idx, message in enumerate(messages, 1):
+                msg_type = message.get("type", "message")
+                duration_display, _ = format_total_duration(
+                    message.get("total_duration")
+                )
+                suffix = f" ({duration_display})" if duration_display else ""
+                if msg_type == "tool_call":
+                    tool_name = md_escape(message.get("tool_name", "Unknown Tool"))
+                    title = f"🛠️ Tool Call #{m_idx}: {tool_name}{suffix}"
+                    args = message.get("tool_args")
+                    body = (
+                        fence(args) if args is not None else "*No arguments provided*"
+                    )
+                elif msg_type == "ai_message":
+                    title = f"🤖 Assistant Message #{m_idx}{suffix}"
+                    body = fence(message.get("content", ""))
+                else:
+                    title = f"📝 Message #{m_idx}{suffix}"
+                    body = fence(message.get("content", message))
+                parts += ["", f"**{title}**", "", body]
+
+        if "RAGAS" in modes:
+            # Key PRESENT is the test (see the HTML mirror): a null cell means
+            # the run asked for the metric and the judge produced nothing, which
+            # is exactly what a reader needs to see.
+            score_rows = [
+                f"| {metric_name} | {_score_cell(q_data[metric_key])} |"
+                for metric_key, metric_name in ragas_metrics.items()
+                if metric_key in q_data
+            ]
+            if score_rows:
+                parts += [
+                    "",
+                    "### 📊 RAGAS Scores",
+                    "",
+                    "| Metric | Score |",
+                    "|---|---|",
+                ]
+                parts += score_rows
+
+    return "\n".join(parts) + "\n"
+
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Compare expected vs actual outputs from archi benchmarking',
+        description="Compare expected vs actual outputs from archi benchmarking",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Generate HTML report to default results.html
+  # Generate a markdown report next to the input (results_report.md)
   python generate_benchmark_report.py results.json
-  
-  # View specific question
-  python generate_benchmark_report.py results.json --question 3
-  
-  # Save HTML report to specific path
-  python generate_benchmark_report.py results.json --html report.html
-        """
+
+  # Save the markdown report to a specific path
+  python generate_benchmark_report.py results.json --markdown_output report.md
+
+  # Opt into the HTML report instead
+  python generate_benchmark_report.py results.json --html_output report.html
+        """,
     )
-    
-    parser.add_argument('results_file', help='Path to benchmark results JSON file')
-    parser.add_argument('--html_output', help='Generate HTML output file')
-    parser.add_argument('--question', '-q', type=int, help='Show only specific question number')
-    
+
+    parser.add_argument("results_file", help="Path to benchmark results JSON file")
+    parser.add_argument("--html_output", help="Generate HTML output file")
+    parser.add_argument("--markdown_output", help="Generate markdown output file")
+    parser.add_argument(
+        "--question", "-q", type=int, help="Show only specific question number"
+    )
+
     args = parser.parse_args()
-    
+
     # Validate input file
-    if not Path(args.results_file).exists():
+    results_path = Path(args.results_file)
+    if not results_path.exists():
         print(f"Error: File '{args.results_file}' not found", file=sys.stderr)
         sys.exit(1)
-    
-    if not args.html_output:
-        print(f"HTML output path not found, using default.")
-        html_path = Path(args.results_file).stem + '.html'
-    else:
-        html_path = args.html_output
+
+    # Markdown is the default report format; HTML is opt-in. With no format
+    # flag the report is written as the artifact's `_report.md` sibling, the
+    # same shape a run produces, so the backfill path can always find it.
+    markdown_path = args.markdown_output
+    if not args.html_output and not args.markdown_output:
+        markdown_path = results_path.with_name(results_path.stem + "_report.md")
 
     # Load results
     try:
         results, metadata = load_benchmark_results(args.results_file)
-        config_data, config_name, timestamp, questions, total_results = parse_benchmark_results(results, metadata)
+        config_data, config_name, timestamp, questions, total_results, provenance = (
+            parse_benchmark_results(results, metadata)
+        )
     except Exception as e:
         print(f"Error loading results: {e}", file=sys.stderr)
         sys.exit(1)
-    
-    # Generates HTML output
-    html_content = format_html_output(config_data, config_name, timestamp,questions, total_results)
-    with open(html_path, 'w') as f:
-        f.write(html_content)
-    print(f"✅ HTML report generated: {args.html}")
+
+    if markdown_path:
+        markdown_content = format_markdown_output(
+            config_data, config_name, timestamp, questions, total_results, provenance
+        )
+        with open(markdown_path, "w") as f:
+            f.write(markdown_content)
+        print(f"✅ Markdown report generated: {markdown_path}")
+
+    if args.html_output:
+        html_content = format_html_output(
+            config_data, config_name, timestamp, questions, total_results, provenance
+        )
+        with open(args.html_output, "w") as f:
+            f.write(html_content)
+        print(f"✅ HTML report generated: {args.html_output}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

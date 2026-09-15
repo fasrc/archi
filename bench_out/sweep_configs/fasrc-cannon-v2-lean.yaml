@@ -1,0 +1,57 @@
+name: ragas-bench
+global:
+  DATA_PATH: /root/data/
+  verbosity: 2
+data_manager:
+  sources:
+    links:
+      enabled: true
+      input_lists:
+      - config/lists/sources.list
+  embedding_name: HuggingFaceEmbeddings
+services:
+  data_manager:
+    external_port: 7881
+  postgres:
+    port: 5433
+  benchmarking:
+    agent_class: CMSCompOpsAgent
+    agent_md_file: /home/a2rchi/archi-openai-compat/config/agents/archive/fasrc-cannon-v2-lean.md
+    provider: openai
+    model: Qwen/Qwen3.5-35B-A3B-GPTQ-Int4
+    ollama_url: ''
+    queries_path: config/benchmarking/queries.json
+    out_dir: bench_out
+    modes:
+    - RAGAS
+    - SOURCES
+    mode_settings:
+      sources_settings:
+        default_match_field: url
+      ragas_settings:
+        embedding_model: HuggingFace
+        evaluator_provider: huit_bedrock
+        evaluator_model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+        enabled_metrics:
+        - answer_relevancy
+        - faithfulness
+        - context_precision
+        - context_recall
+        timeout: 180
+        batch_size: false
+    argilla:
+      min_submitted: 2
+    name: fasrc-cannon-v2-lean
+    primary_metric: faithfulness
+  chat_app:
+    providers:
+      openai:
+        api_key: EMPTY
+        base_url: http://localhost:8000/v1
+        default_model: Qwen/Qwen3.5-35B-A3B-GPTQ-Int4
+        enabled: true
+        extra_kwargs:
+          extra_body:
+            chat_template_kwargs:
+              enable_thinking: false
+          temperature: 0.3

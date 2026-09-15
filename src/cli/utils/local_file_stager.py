@@ -11,7 +11,9 @@ logger = get_logger(__name__)
 
 def _collect_local_paths(config: dict) -> Tuple[bool, List[Path]]:
     """Return (enabled, paths) from the config's local_files section."""
-    local_cfg = (((config.get("data_manager") or {}).get("sources") or {}).get("local_files") or {})
+    local_cfg = ((config.get("data_manager") or {}).get("sources") or {}).get(
+        "local_files"
+    ) or {}
     enabled = bool(local_cfg.get("enabled", True))
     raw_paths = local_cfg.get("paths") or []
     if isinstance(raw_paths, (str, Path)):
@@ -38,12 +40,18 @@ def _dest_relative(path: Path, staging_subdir: str) -> Path:
 
 def _run_copy_command(cmd: List[str]) -> None:
     logger.debug("Running: %s", " ".join(cmd))
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = subprocess.run(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
     if result.returncode != 0:
-        raise RuntimeError(f"Command failed ({result.returncode}): {result.stderr.strip()}")
+        raise RuntimeError(
+            f"Command failed ({result.returncode}): {result.stderr.strip()}"
+        )
 
 
-def _copy_file(container_tool: str, volume_name: str, data_root: str, src: Path, dest_rel: Path) -> None:
+def _copy_file(
+    container_tool: str, volume_name: str, data_root: str, src: Path, dest_rel: Path
+) -> None:
     """Copy a single file into the target volume."""
     src_parent = src.parent
     cmd = [
@@ -62,7 +70,9 @@ def _copy_file(container_tool: str, volume_name: str, data_root: str, src: Path,
     _run_copy_command(cmd)
 
 
-def _copy_dir(container_tool: str, volume_name: str, data_root: str, src: Path, dest_rel: Path) -> None:
+def _copy_dir(
+    container_tool: str, volume_name: str, data_root: str, src: Path, dest_rel: Path
+) -> None:
     """Copy a directory into the target volume, preserving the directory name."""
     cmd = [
         container_tool,
@@ -98,7 +108,9 @@ def stage_local_files_to_volume(
             else:
                 data_root = f"/data/{root_path.as_posix()}"
     except Exception:
-        logger.debug("Falling back to default data root for staging; unable to read global.DATA_PATH.")
+        logger.debug(
+            "Falling back to default data root for staging; unable to read global.DATA_PATH."
+        )
 
     enabled, host_paths = _collect_local_paths(config)
     if not enabled:
@@ -108,10 +120,14 @@ def stage_local_files_to_volume(
         logger.info("No local_files.paths specified; skipping staging.")
         return
     if not volume_name:
-        logger.warning("No volume name available for data-manager; cannot stage local files.")
+        logger.warning(
+            "No volume name available for data-manager; cannot stage local files."
+        )
         return
 
-    logger.info("Staging local files into volume '%s' under %s", volume_name, staging_subdir)
+    logger.info(
+        "Staging local files into volume '%s' under %s", volume_name, staging_subdir
+    )
     for host_path in host_paths:
         if not host_path.exists():
             logger.warning("Host path missing, skipping: %s", host_path)

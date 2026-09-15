@@ -1,0 +1,2980 @@
+"""Which base images `archi create` must have in hand before it tears anything down.
+
+The preflight exists because the service templates build `FROM` an `a2rchi-*-base` image and
+then run `pip install .`. An image below the declared Python floor turns every service build
+into a failure -- and under `--force` that failure lands *after* the existing deployment has
+been removed unless something refuses first (fasrc/archi#266, #287).
+"""
+
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from src.cli.managers import base_image_preflight as preflight
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TEMPLATE_DIR = REPO_ROOT / "src" / "cli" / "templates" / "dockerfiles"
+UPDATER = REPO_ROOT / "scripts" / "dev" / "update_service_base_images.py"
+
+_FROM_GHCR = re.compile(r"^FROM (ghcr\.io/fasrc/\S+)", re.MULTILINE)
+_DIGEST_REF = re.compile(r"^ghcr\.io/fasrc/[a-z0-9-]+@sha256:[0-9a-f]{64}$")
+# The release workflow rewrites every template to the CalVer tag it just built
+# (``test-and-build-tag.yml:158``) and commits the result to the dispatched
+# branch (:207). That state is deliberate and verified two steps later, so it is
+# an accepted pin -- not the mutable ``dev-<sha>`` tag these guards exist to
+# keep out.
+_RELEASE_REF = re.compile(r"^ghcr\.io/fasrc/[a-z0-9-]+:v\d{4}\.\d{2}\.\d+$")
+
+
+def _pin_state(reference):
+    """Classify one base reference as ``digest``, ``release``, or ``mutable``."""
+    if _DIGEST_REF.match(reference):
+        return "digest"
+    if _RELEASE_REF.match(reference):
+        return "release"
+    return "mutable"
+
+
+_IMAGE_NAME = re.compile(r"^ghcr\.io/fasrc/([a-z0-9-]+)[@:]")
+_RELEASE_TAG = re.compile(r"^ghcr\.io/fasrc/[a-z0-9-]+:(v\d{4}\.\d{2}\.\d+)$")
+
+KNOWN_BASES = {preflight.PYTHON_BASE, preflight.PYTORCH_BASE}
+
+
+def _base_references(directory=TEMPLATE_DIR):
+    """``(filename, reference)`` for every ``FROM ghcr.io/fasrc/...`` line."""
+    references = []
+    for path in sorted(directory.glob("Dockerfile-*")):
+        for match in _FROM_GHCR.finditer(path.read_text()):
+            references.append((path.name, match.group(1)))
+    return references
+
+
+def _image_map(directory=TEMPLATE_DIR):
+    """``{template name: base image name}`` -- identity, with the pin stripped.
+
+    ``_pin_state`` deliberately ignores which image a reference names, so on its
+    own it cannot tell a correct rewrite from one that pointed the CPU templates
+    at the GPU base. This is the half that can.
+    """
+    mapping = {}
+    for name, reference in _base_references(directory):
+        match = _IMAGE_NAME.match(reference)
+        mapping[name] = match.group(1) if match else reference
+    return mapping
+
+
+# --- Digest pins on the real templates (task 1.1) ----------------------------------------
+
+
+def test_base_references_are_pinned_to_the_expected_digests():
+    """The templates must carry immutable digest references, not mutable tags.
+
+    Both the pattern and the exact digest are asserted so that a tag repin cannot
+    slip past this check and a digest swap requires an explicit update here.
+    """
+    if {_pin_state(ref) for _name, ref in _base_references()} == {"release"}:
+        pytest.skip(
+            "tree is release-retargeted; the digest constants describe the "
+            "development state only"
+        )
+
+    python_ref = preflight.base_reference(preflight.PYTHON_BASE)
+    pytorch_ref = preflight.base_reference(preflight.PYTORCH_BASE)
+
+    assert python_ref is not None, f"{preflight.PYTHON_BASE} not found in any template"
+    assert (
+        pytorch_ref is not None
+    ), f"{preflight.PYTORCH_BASE} not found in any template"
+
+    digest_re = re.compile(r"@sha256:[0-9a-f]{64}$")
+    assert digest_re.search(
+        python_ref
+    ), f"{preflight.PYTHON_BASE} reference is not digest-pinned: {python_ref!r}"
+    assert digest_re.search(
+        pytorch_ref
+    ), f"{preflight.PYTORCH_BASE} reference is not digest-pinned: {pytorch_ref!r}"
+
+    python_digest = (
+        "sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8"
+    )
+    pytorch_digest = (
+        "sha256:c29c6e8b4262736e3a5d3d47756b0d483db88254a91b16932d37f498bc704b5e"
+    )
+    assert (
+        python_digest in python_ref
+    ), f"{preflight.PYTHON_BASE} digest mismatch: {python_ref!r}"
+    assert (
+        pytorch_digest in pytorch_ref
+    ), f"{preflight.PYTORCH_BASE} digest mismatch: {pytorch_ref!r}"
+
+
+# --- Template shape guards (task 1.2) ---------------------------------------------------
+
+
+def test_no_template_carries_a_mutable_base_reference():
+    """A floating tag such as ``dev-4314ac4`` makes the template mutable.
+
+    Two references are immutable enough to ship: a digest, and the CalVer release
+    tag the release workflow writes. Everything else is rejected.
+    """
+    references = _base_references()
+    assert references, f"no ghcr base references found in {TEMPLATE_DIR}"
+
+    offenders = [
+        f"{name}: {ref}" for name, ref in references if _pin_state(ref) == "mutable"
+    ]
+    assert not offenders, f"mutable ghcr FROM found in: {offenders}"
+
+
+def test_all_templates_share_one_pin_state():
+    """Every service template carries a pin, and a split tree means a partial rewrite.
+
+    Coverage alone would miss the worse failure: a rewrite that updated some
+    templates and not others leaves every template pinned and the deployment
+    building against two different base images.
+
+    Coverage is asserted per *template*, not by counting references. A multistage
+    template pins twice -- a builder stage and the stage that ships -- which is the
+    shape `_final_stage_base` exists to read and which
+    `test_base_reference_returns_the_final_stage_pin_not_the_builder_pin` requires.
+    Requiring one reference per template would fail CI the day a real template
+    adopts it, for no safety gain: `update_service_base_images.py` rewrites every
+    matching line in a file, `test_every_digest_pinned_from_line_has_the_annotation_above_it`
+    annotates every pinned line, and the pin-state check below still reads *all*
+    references, so a second stage left unretargeted still fails here.
+    """
+    references = _base_references()
+    pinned = {name for name, _reference in references}
+    expected = {template.name for template in preflight.service_templates()}
+    assert pinned == expected, (
+        f"service templates carrying no base reference: {sorted(expected - pinned)}; "
+        f"base references from outside the service set: {sorted(pinned - expected)}"
+    )
+
+    states = {_pin_state(ref) for _name, ref in references}
+    assert len(states) == 1, f"templates disagree on pin state: {states}"
+
+    assert set(_image_map().values()) <= KNOWN_BASES, (
+        "templates name a base image outside "
+        f"{sorted(KNOWN_BASES)}: {sorted(set(_image_map().values()))}"
+    )
+
+    if states == {"release"}:
+        tags = {_RELEASE_TAG.match(ref).group(1) for _name, ref in references}
+        assert len(tags) == 1, f"release-retargeted templates disagree on tag: {tags}"
+
+
+def test_every_digest_pinned_from_line_has_the_annotation_above_it():
+    """The annotation line is what update_service_base_images.py uses to locate pins."""
+    annotation = (
+        "# base-image-pin: dev-4314ac4 (managed by update_service_base_images.py)"
+    )
+    digest_from_re = re.compile(
+        r"^FROM ghcr\.io/fasrc/[a-z0-9-]+@sha256:[0-9a-f]{64}", re.MULTILINE
+    )
+
+    dockerfiles = list(TEMPLATE_DIR.glob("Dockerfile-*"))
+    assert dockerfiles, f"no Dockerfiles found in {TEMPLATE_DIR}"
+
+    offenders = []
+    for f in dockerfiles:
+        lines = f.read_text().splitlines()
+        for i, line in enumerate(lines):
+            if digest_from_re.match(line):
+                prev = lines[i - 1] if i > 0 else ""
+                if prev != annotation:
+                    offenders.append(
+                        f"{f.name}:{i + 1} — annotation missing above FROM (got {prev!r})"
+                    )
+
+    assert not offenders, f"digest-pinned FROM lines without annotation: {offenders}"
+
+
+def test_no_from_line_contains_a_hash():
+    """A # on a FROM line is a parse error at build time (fasrc/archi#342 regression guard)."""
+    dockerfiles = list(TEMPLATE_DIR.glob("Dockerfile-*"))
+    assert dockerfiles, f"no Dockerfiles found in {TEMPLATE_DIR}"
+
+    offenders = []
+    for f in dockerfiles:
+        for i, line in enumerate(f.read_text().splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("FROM") and "#" in stripped:
+                offenders.append(f"{f.name}:{i}: {line!r}")
+
+    assert not offenders, f"FROM lines containing '#': {offenders}"
+
+
+# --- Which images a deployment requires (design D4) -------------------------------------
+
+
+def test_python_base_is_always_required():
+    """Every deployment builds at least one python-base service.
+
+    `config-seed` builds `Dockerfile-chat` irrespective of whether the chatbot is enabled, so
+    there is no supported configuration that skips the python base.
+    """
+    refs = preflight.required_base_images(gpu_ids=None, grader_enabled=False)
+
+    assert any(preflight.PYTHON_BASE in ref for ref in refs), refs
+
+
+def test_gpu_deployment_also_requires_the_pytorch_base():
+    refs = preflight.required_base_images(gpu_ids="all", grader_enabled=False)
+
+    assert any(preflight.PYTORCH_BASE in ref for ref in refs), refs
+
+
+def test_grader_requires_the_pytorch_base_without_any_gpu():
+    """`Dockerfile-grader` is a non-GPU service that builds on the pytorch base.
+
+    This is the case that defeats a "GPU implies pytorch, otherwise python" shortcut: the
+    shortcut would skip the one image this deployment actually needs.
+    """
+    refs = preflight.required_base_images(gpu_ids=None, grader_enabled=True)
+
+    assert any(preflight.PYTORCH_BASE in ref for ref in refs), refs
+
+
+def test_pytorch_base_is_not_fetched_when_nothing_uses_it():
+    """The pytorch base is the expensive image; fetching it speculatively is the cost to avoid."""
+    refs = preflight.required_base_images(gpu_ids=None, grader_enabled=False)
+
+    assert not any(preflight.PYTORCH_BASE in ref for ref in refs), refs
+
+
+def test_required_references_carry_the_pin_from_the_templates():
+    """A hard-coded tag would let the preflight and the templates disagree silently."""
+    refs = preflight.required_base_images(gpu_ids="all", grader_enabled=True)
+
+    template_refs = set()
+    for dockerfile in TEMPLATE_DIR.glob("Dockerfile-*"):
+        match = re.search(
+            r"^FROM\s+(\S*a2rchi-\w+-base\S*)", dockerfile.read_text(), re.MULTILINE
+        )
+        if match:
+            template_refs.add(match.group(1))
+
+    assert set(refs) <= template_refs, (
+        f"preflight returned reference(s) no template declares: "
+        f"{sorted(set(refs) - template_refs)}"
+    )
+    assert all(":" in ref for ref in refs), f"unpinned reference in {refs}"
+
+
+# --- The rule must keep matching the templates it claims to describe --------------------
+
+
+def test_two_image_rule_still_matches_every_template():
+    """The rule in `required_base_images` is a claim about the templates. Check the claim.
+
+    A new pytorch-based service that is not a `-gpu` variant, or a `-gpu` variant moved onto
+    the python base, silently invalidates the rule -- the preflight would then fetch one image
+    and the build would need another. Failing here forces design D4 to be revisited.
+
+    The judgement lives in `two_image_rule_offenders`, which reads the *final* stage. Reading
+    the first FROM here instead let a python-builder/pytorch-final template pass every guard.
+    """
+    offenders = preflight.two_image_rule_offenders()
+
+    assert not offenders, (
+        f"the two-image rule no longer describes the templates: {offenders} -- "
+        f"update design D4 and `required_base_images` together"
+    )
+
+
+# --- The availability decision (design D2, D7) ------------------------------------------
+
+GHCR_REF = "ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4"
+LOCAL_REF = "localhost/a2rchi/a2rchi-python-base:dev-4314ac4"
+
+
+def _decide(**overrides):
+    kwargs = {"runtime_available": True, "present_locally": False, "fetch_cause": None}
+    kwargs.update(overrides)
+    reference = kwargs.pop("reference", GHCR_REF)
+    return preflight.decide_availability(reference, **kwargs)
+
+
+def test_present_locally_is_available_without_any_fetch():
+    """A provisioned host must not be made to reach a registry it does not need."""
+    outcome = _decide(present_locally=True, fetch_cause=preflight.Cause.UNAUTHORIZED)
+
+    assert outcome.verdict is preflight.Verdict.AVAILABLE
+    assert outcome.cause is None
+
+
+def test_absent_but_pulled_is_available():
+    outcome = _decide(present_locally=False, fetch_cause=None)
+
+    assert outcome.verdict is preflight.Verdict.AVAILABLE
+
+
+@pytest.mark.parametrize(
+    "cause",
+    [
+        preflight.Cause.UNAUTHORIZED,
+        preflight.Cause.UNKNOWN_TAG,
+        preflight.Cause.UNREACHABLE,
+        preflight.Cause.NO_DISK,
+    ],
+)
+def test_a_failed_pull_refuses_and_keeps_its_cause(cause):
+    """The cause has to survive the decision, because each one has a different remedy."""
+    outcome = _decide(fetch_cause=cause)
+
+    assert outcome.verdict is preflight.Verdict.REFUSED
+    assert outcome.cause is cause
+
+
+def test_absent_localhost_reference_refuses_without_consulting_a_registry():
+    """`localhost/` is a registry-style name, not evidence the image exists.
+
+    `build_docker_images.sh` tags locally built bases this way. A fresh or pruned daemon
+    resolves the name to nothing, and no registry can supply it.
+    """
+    outcome = _decide(reference=LOCAL_REF, fetch_cause=None)
+
+    assert outcome.verdict is preflight.Verdict.REFUSED
+    assert outcome.cause is preflight.Cause.LOCAL_BUILD_MISSING
+
+
+def test_no_runtime_refuses_a_real_create():
+    """Compose needs the same runtime later, so standing down only moves the failure."""
+    outcome = _decide(runtime_available=False, dry=False)
+
+    assert outcome.verdict is preflight.Verdict.REFUSED
+    assert outcome.cause is preflight.Cause.NO_RUNTIME
+
+
+def test_no_runtime_leaves_a_dry_run_unverified_rather_than_refused():
+    """`--dry` requires no runtime by an existing decision (cli_main.py:155-160)."""
+    outcome = _decide(runtime_available=False, dry=True)
+
+    assert outcome.verdict is preflight.Verdict.UNVERIFIED
+    assert outcome.cause is preflight.Cause.NO_RUNTIME
+
+
+def test_dry_run_cannot_verify_an_image_it_did_not_pull():
+    outcome = _decide(dry=True, fetch_cause=None)
+
+    assert outcome.verdict is preflight.Verdict.UNVERIFIED
+    assert outcome.cause is preflight.Cause.NOT_PULLED
+
+
+def test_unsupported_probe_is_unverified_not_refused():
+    outcome = _decide(dry=True, fetch_cause=preflight.Cause.PROBE_UNSUPPORTED)
+
+    assert outcome.verdict is preflight.Verdict.UNVERIFIED
+    assert outcome.cause is preflight.Cause.PROBE_UNSUPPORTED
+
+
+def test_a_real_create_has_no_unverified_outcome():
+    """The invariant, asserted directly rather than inferred from the cases above.
+
+    Every combination a real create can produce must be available or refused. An unverified
+    real create would be the original defect back again: proceeding on an assumption.
+    """
+    causes = [None] + list(preflight.Cause)
+    for present in (True, False):
+        for cause in causes:
+            for reference in (GHCR_REF, LOCAL_REF):
+                outcome = preflight.decide_availability(
+                    reference,
+                    runtime_available=True,
+                    present_locally=present,
+                    fetch_cause=cause,
+                    dry=False,
+                )
+                assert outcome.verdict is not preflight.Verdict.UNVERIFIED, (
+                    f"real create returned UNVERIFIED for present={present} "
+                    f"cause={cause} ref={reference}"
+                )
+
+
+# --- The Python floor (design D5) --------------------------------------------------------
+
+
+def test_version_at_or_above_the_floor_is_available():
+    outcome = preflight.check_python_floor(GHCR_REF, "Python 3.11.9", ">=3.11")
+
+    assert outcome.verdict is preflight.Verdict.AVAILABLE
+
+
+def test_version_below_the_floor_refuses_and_names_both_numbers():
+    """The operator needs to see what the image has AND what the project demands."""
+    outcome = preflight.check_python_floor(GHCR_REF, "Python 3.10.20", ">=3.11")
+
+    assert outcome.verdict is preflight.Verdict.REFUSED
+    assert outcome.cause is preflight.Cause.VERSION_BELOW_FLOOR
+
+    message = preflight.compose_message(outcome)
+    assert "3.10.20" in message
+    assert ">=3.11" in message
+
+
+@pytest.mark.parametrize("reported", [None, "", "not a version", "Python"])
+def test_unreadable_version_refuses(reported):
+    """Passing this would trade an unknown compatibility result for a teardown."""
+    outcome = preflight.check_python_floor(GHCR_REF, reported, ">=3.11")
+
+    assert outcome.verdict is preflight.Verdict.REFUSED
+    assert outcome.cause is preflight.Cause.VERSION_UNREADABLE
+
+
+# --- Diagnostics (design D3, D6) ---------------------------------------------------------
+
+
+def test_unauthorized_message_names_the_classic_pat_and_sso():
+    """A fine-grained token fails identically, so "log in" alone sends them round again."""
+    outcome = preflight.Outcome(
+        GHCR_REF, preflight.Verdict.REFUSED, preflight.Cause.UNAUTHORIZED
+    )
+    message = preflight.compose_message(outcome)
+
+    assert "classic" in message.lower()
+    assert "read:packages" in message
+    assert "sso" in message.lower()
+    assert GHCR_REF in message
+
+
+def test_stale_pin_message_does_not_send_the_operator_to_log_in():
+    outcome = preflight.Outcome(
+        GHCR_REF, preflight.Verdict.REFUSED, preflight.Cause.UNKNOWN_TAG
+    )
+    message = preflight.compose_message(outcome)
+
+    assert "login" not in message.lower()
+    assert "update_service_base_images" in message
+
+
+def test_out_of_disk_message_does_not_send_the_operator_to_log_in():
+    outcome = preflight.Outcome(
+        GHCR_REF, preflight.Verdict.REFUSED, preflight.Cause.NO_DISK
+    )
+    message = preflight.compose_message(outcome)
+
+    assert "login" not in message.lower()
+    assert "disk" in message.lower()
+
+
+def test_missing_local_build_message_names_the_build_script():
+    outcome = preflight.Outcome(
+        LOCAL_REF, preflight.Verdict.REFUSED, preflight.Cause.LOCAL_BUILD_MISSING
+    )
+    message = preflight.compose_message(outcome)
+
+    assert "build_docker_images.sh" in message
+    assert "login" not in message.lower()
+
+
+def test_login_command_matches_the_deployments_container_tool():
+    """Telling a podman operator to run `docker login` is a wrong instruction."""
+    outcome = preflight.Outcome(
+        GHCR_REF, preflight.Verdict.REFUSED, preflight.Cause.UNAUTHORIZED
+    )
+
+    assert "podman login" in preflight.compose_message(outcome, "podman")
+    assert "docker login" in preflight.compose_message(outcome, "docker")
+
+
+def test_unverified_messages_say_not_verified():
+    for cause in (preflight.Cause.NOT_PULLED, preflight.Cause.PROBE_UNSUPPORTED):
+        outcome = preflight.Outcome(GHCR_REF, preflight.Verdict.UNVERIFIED, cause)
+        assert "NOT VERIFIED" in preflight.compose_message(outcome)
+
+
+def test_summary_omits_available_references():
+    outcomes = [
+        preflight.Outcome(GHCR_REF, preflight.Verdict.AVAILABLE),
+        preflight.Outcome(
+            LOCAL_REF, preflight.Verdict.REFUSED, preflight.Cause.LOCAL_BUILD_MISSING
+        ),
+    ]
+    summary = preflight.summarize(outcomes)
+
+    assert GHCR_REF not in summary
+    assert LOCAL_REF in summary
+
+
+# --- Mapping real container-tool failures onto causes (design D3) ------------------------
+
+
+@pytest.mark.parametrize(
+    "stderr, expected",
+    [
+        ("unauthorized: authentication required", preflight.Cause.UNAUTHORIZED),
+        ("denied: permission_denied: read_package", preflight.Cause.UNAUTHORIZED),
+        (
+            "Error response from daemon: Head ...: 403 Forbidden",
+            preflight.Cause.UNAUTHORIZED,
+        ),
+        ("manifest unknown", preflight.Cause.UNKNOWN_TAG),
+        ("manifest for ghcr.io/x:y not found", preflight.Cause.UNKNOWN_TAG),
+        ("no space left on device", preflight.Cause.NO_DISK),
+        ("write /var/lib/docker: no space left on device", preflight.Cause.NO_DISK),
+        ("dial tcp: lookup ghcr.io: no such host", preflight.Cause.UNREACHABLE),
+        ("connection refused", preflight.Cause.UNREACHABLE),
+        ("i/o timeout", preflight.Cause.UNREACHABLE),
+        (
+            "docker: 'manifest' is not a docker command",
+            preflight.Cause.PROBE_UNSUPPORTED,
+        ),
+        ('unknown command "manifest" for "podman"', preflight.Cause.PROBE_UNSUPPORTED),
+    ],
+)
+def test_pull_errors_map_to_the_cause_that_names_the_right_remedy(stderr, expected):
+    assert preflight.classify_fetch_error(stderr) is expected
+
+
+def test_an_unrecognised_failure_is_unreachable_not_a_pass():
+    """Availability has no unknown outcome. An unfamiliar error must not become success."""
+    cause = preflight.classify_fetch_error("something nobody has seen before")
+
+    assert cause is not None
+    assert cause is preflight.Cause.UNREACHABLE
+
+
+# --- The orchestrator (design D1, D5, D7) ------------------------------------------------
+
+
+class FakeProbe:
+    """Stands in for the container tool. Every test injects one; none shells out."""
+
+    def __init__(
+        self,
+        runtime=True,
+        present=(),
+        fetch_error=None,
+        version="Python 3.11.9",
+        tool="docker",
+    ):
+        self.runtime = runtime
+        self.present = set(present)
+        self.fetch_error = fetch_error
+        self.version = version
+        self.container_tool = tool
+        self.pulled = []
+        self.reachability_checked = []
+        self.versions_read = []
+
+    def runtime_available(self):
+        return self.runtime
+
+    def image_present(self, reference):
+        return reference in self.present
+
+    def pull(self, reference):
+        self.pulled.append(reference)
+        if self.fetch_error is None:
+            self.present.add(reference)
+        return self.fetch_error
+
+    def reachable(self, reference):
+        self.reachability_checked.append(reference)
+        return self.fetch_error
+
+    def python_version(self, reference):
+        self.versions_read.append(reference)
+        return self.version
+
+
+def test_a_real_create_pulls_an_absent_image_and_checks_its_version():
+    probe = FakeProbe(present=())
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=False
+    )
+
+    assert probe.pulled == [GHCR_REF]
+    assert probe.versions_read == [GHCR_REF]
+    assert all(o.verdict is preflight.Verdict.AVAILABLE for o in outcomes)
+
+
+def test_a_present_image_is_not_pulled_but_is_still_version_checked():
+    probe = FakeProbe(present=(GHCR_REF,))
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=False
+    )
+
+    assert probe.pulled == []
+    assert probe.versions_read == [GHCR_REF]
+    assert outcomes[0].verdict is preflight.Verdict.AVAILABLE
+
+
+def test_a_freshly_pulled_image_below_the_floor_refuses():
+    """The clean-host case #266 was filed about: nothing cached, image incompatible."""
+    probe = FakeProbe(present=(), version="Python 3.10.20")
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=False
+    )
+
+    assert outcomes[0].verdict is preflight.Verdict.REFUSED
+    assert outcomes[0].cause is preflight.Cause.VERSION_BELOW_FLOOR
+
+
+def test_a_dry_run_never_pulls():
+    probe = FakeProbe(present=())
+    preflight.run_preflight([GHCR_REF], probe=probe, floor=">=3.11", dry=True)
+
+    assert probe.pulled == []
+    assert probe.reachability_checked == [GHCR_REF]
+
+
+def test_a_dry_run_checks_the_floor_for_an_image_already_present():
+    """A cached-but-incompatible base must not be reported as ready.
+
+    Reading a present image's version needs no pull, so declining to check it here was a
+    real false-confidence hole, not an unavoidable limit of dry runs.
+    """
+    probe = FakeProbe(present=(GHCR_REF,), version="Python 3.10.20")
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=True
+    )
+
+    assert probe.pulled == []
+    assert outcomes[0].verdict is preflight.Verdict.REFUSED
+    assert outcomes[0].cause is preflight.Cause.VERSION_BELOW_FLOOR
+
+
+def test_a_dry_run_refuses_what_the_real_create_would_refuse():
+    probe = FakeProbe(present=(), fetch_error=preflight.Cause.UNAUTHORIZED)
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=True
+    )
+
+    assert outcomes[0].verdict is preflight.Verdict.REFUSED
+    assert outcomes[0].cause is preflight.Cause.UNAUTHORIZED
+
+
+def test_a_dry_run_with_no_runtime_is_unverified_and_reads_no_version():
+    probe = FakeProbe(runtime=False)
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=True
+    )
+
+    assert outcomes[0].verdict is preflight.Verdict.UNVERIFIED
+    assert outcomes[0].cause is preflight.Cause.NO_RUNTIME
+    assert probe.versions_read == []
+
+
+def test_a_real_create_with_no_runtime_refuses():
+    probe = FakeProbe(runtime=False)
+    outcomes = preflight.run_preflight(
+        [GHCR_REF], probe=probe, floor=">=3.11", dry=False
+    )
+
+    assert outcomes[0].verdict is preflight.Verdict.REFUSED
+    assert outcomes[0].cause is preflight.Cause.NO_RUNTIME
+
+
+def test_the_version_probe_is_never_run_on_an_image_that_is_not_present():
+    """Reading a version requires the image. Attempting it otherwise would mask the real cause."""
+    probe = FakeProbe(present=(), fetch_error=preflight.Cause.UNKNOWN_TAG)
+    preflight.run_preflight([GHCR_REF], probe=probe, floor=">=3.11", dry=False)
+
+    assert probe.versions_read == []
+
+
+# --- The probe seam itself (design D2, D6) -----------------------------------------------
+
+
+class _FakeCompleted:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _stub_subprocess(monkeypatch, handler):
+    """Replace subprocess.run so the probe's own command construction is what gets tested."""
+    import subprocess
+
+    calls = []
+
+    def _run(args, **kwargs):
+        calls.append(list(args))
+        return handler(list(args))
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    return calls
+
+
+def test_probe_uses_the_configured_container_tool(monkeypatch):
+    """A podman deployment must not shell out to docker."""
+    calls = _stub_subprocess(monkeypatch, lambda args: _FakeCompleted(0))
+    probe = preflight.ContainerProbe("podman")
+
+    probe.image_present(GHCR_REF)
+
+    assert calls[0][0] == "podman", calls
+
+
+def test_probe_image_present_follows_the_exit_status(monkeypatch):
+    _stub_subprocess(monkeypatch, lambda args: _FakeCompleted(0))
+    assert preflight.ContainerProbe("docker").image_present(GHCR_REF) is True
+
+    _stub_subprocess(
+        monkeypatch, lambda args: _FakeCompleted(1, stderr="No such image")
+    )
+    assert preflight.ContainerProbe("docker").image_present(GHCR_REF) is False
+
+
+def test_probe_pull_returns_none_on_success_and_a_cause_on_failure(monkeypatch):
+    _stub_subprocess(monkeypatch, lambda args: _FakeCompleted(0))
+    assert preflight.ContainerProbe("docker").pull(GHCR_REF) is None
+
+    _stub_subprocess(
+        monkeypatch,
+        lambda args: _FakeCompleted(1, stderr="unauthorized: authentication required"),
+    )
+    assert (
+        preflight.ContainerProbe("docker").pull(GHCR_REF)
+        is preflight.Cause.UNAUTHORIZED
+    )
+
+
+def test_probe_reachability_reports_an_unsupported_subcommand(monkeypatch):
+    _stub_subprocess(
+        monkeypatch,
+        lambda args: _FakeCompleted(
+            1, stderr="docker: 'manifest' is not a docker command"
+        ),
+    )
+
+    assert (
+        preflight.ContainerProbe("docker").reachable(GHCR_REF)
+        is preflight.Cause.PROBE_UNSUPPORTED
+    )
+
+
+def test_probe_reads_the_python_version_from_either_stream(monkeypatch):
+    _stub_subprocess(
+        monkeypatch, lambda args: _FakeCompleted(0, stdout="Python 3.11.9\n")
+    )
+    assert (
+        preflight.ContainerProbe("docker").python_version(GHCR_REF) == "Python 3.11.9"
+    )
+
+    # Older CPython builds print the banner on stderr.
+    _stub_subprocess(
+        monkeypatch, lambda args: _FakeCompleted(0, stderr="Python 3.11.9\n")
+    )
+    assert (
+        preflight.ContainerProbe("docker").python_version(GHCR_REF) == "Python 3.11.9"
+    )
+
+
+def test_probe_version_read_returns_none_when_the_command_fails(monkeypatch):
+    _stub_subprocess(monkeypatch, lambda args: _FakeCompleted(127, stderr="not found"))
+
+    assert preflight.ContainerProbe("docker").python_version(GHCR_REF) is None
+
+
+def test_probe_never_raises_when_the_tool_is_absent(monkeypatch):
+    """A missing binary must surface as "no runtime", not as a traceback out of `create`."""
+
+    def _explode(args, **kwargs):
+        raise OSError("no such executable")
+
+    import subprocess
+
+    monkeypatch.setattr(subprocess, "run", _explode)
+    probe = preflight.ContainerProbe("docker")
+
+    assert probe.runtime_available() is False
+    assert probe.image_present(GHCR_REF) is False
+    assert probe.pull(GHCR_REF) is preflight.Cause.UNREACHABLE
+    assert probe.reachable(GHCR_REF) is preflight.Cause.PROBE_UNSUPPORTED
+    assert probe.python_version(GHCR_REF) is None
+
+
+def test_probe_runtime_available_falls_back_to_version_flag(monkeypatch):
+    """Some tools do not implement `version --format`; the fallback keeps them usable."""
+
+    def _handler(args):
+        if "--format" in args:
+            return _FakeCompleted(1, stderr="unknown flag")
+        return _FakeCompleted(0, stdout="podman version 5.4.0")
+
+    _stub_subprocess(monkeypatch, _handler)
+
+    assert preflight.ContainerProbe("podman").runtime_available() is True
+
+
+# --- Remaining diagnostics and the entry point ------------------------------------------
+
+
+def test_unreachable_and_no_runtime_messages_name_their_own_causes():
+    unreachable = preflight.Outcome(
+        GHCR_REF, preflight.Verdict.REFUSED, preflight.Cause.UNREACHABLE
+    )
+    assert "network" in preflight.compose_message(unreachable).lower()
+
+    no_runtime = preflight.Outcome(
+        GHCR_REF, preflight.Verdict.REFUSED, preflight.Cause.NO_RUNTIME
+    )
+    assert "podman" in preflight.compose_message(no_runtime, "podman")
+
+
+def test_unreadable_version_message_quotes_what_it_actually_got():
+    outcome = preflight.Outcome(
+        GHCR_REF,
+        preflight.Verdict.REFUSED,
+        preflight.Cause.VERSION_UNREADABLE,
+        detail="Pythonn 3",
+    )
+
+    assert "Pythonn 3" in preflight.compose_message(outcome)
+
+
+def test_a_causeless_outcome_still_renders():
+    """Defensive: a message is never allowed to crash the refusal it is explaining."""
+    outcome = preflight.Outcome(GHCR_REF, preflight.Verdict.AVAILABLE)
+
+    assert GHCR_REF in preflight.compose_message(outcome)
+
+
+def test_base_reference_returns_none_for_an_image_no_template_names(tmp_path):
+    (tmp_path / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base:x\n"
+    )
+
+    assert preflight.base_reference("a2rchi-nonesuch-base", tmp_path) is None
+
+
+def test_base_references_returns_all_distinct_references_across_templates(tmp_path):
+    aaaa_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    bbbb_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "b" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {aaaa_ref}\n")
+    (tmp_path / "Dockerfile-piazza").write_text(f"FROM {bbbb_ref}\n")
+
+    assert preflight.base_references(preflight.PYTHON_BASE, tmp_path) == [
+        aaaa_ref,
+        bbbb_ref,
+    ]
+
+
+def test_required_base_images_raises_for_divergent_base_references(tmp_path):
+    """When two service templates pin the same required base image at different references,
+    ``required_base_images`` must refuse rather than silently returning one of them.
+
+    Before the guard, the call returned ``[aaaa_ref]`` -- the first match -- leaving the
+    divergent pin invisible.
+    """
+    aaaa_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    bbbb_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "b" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {aaaa_ref}\n")
+    (tmp_path / "Dockerfile-piazza").write_text(f"FROM {bbbb_ref}\n")
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.required_base_images(
+            gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+        )
+
+    msg = str(exc_info.value)
+    assert "Dockerfile-chat" in msg
+    assert "Dockerfile-piazza" in msg
+    assert aaaa_ref in msg
+    assert bbbb_ref in msg
+
+
+def test_required_base_images_refuses_when_no_template_declares_a_base_reference(
+    tmp_path,
+):
+    """A service template with no a2rchi-*-base reference is uncoverable; the preflight
+    refuses rather than returning an empty list and passing silently on an assumption.
+    """
+    (tmp_path / "Dockerfile-chat").write_text("FROM docker.io/library/python:3.11\n")
+
+    with pytest.raises(preflight.BaseImagePreflightError):
+        preflight.required_base_images(None, False, tmp_path)
+
+
+def test_declared_python_floor_reads_the_projects_own_pyproject(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nrequires-python = ">=3.12"\n')
+
+    assert preflight.declared_python_floor(pyproject) == ">=3.12"
+
+
+class _Plan:
+    def __init__(self, gpu_ids=None, grader=False, raises=False):
+        self.gpu_ids = gpu_ids
+        self._grader = grader
+        self._raises = raises
+
+    def get_service(self, name):
+        if self._raises:
+            raise ValueError(f"Unknown service: {name}")
+        return type("S", (), {"enabled": self._grader})()
+
+
+def test_enforce_raises_with_the_operator_message_when_a_reference_is_refused():
+    probe = FakeProbe(present=(), fetch_error=preflight.Cause.UNAUTHORIZED)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.enforce_base_images(_Plan(), probe=probe)
+
+    assert "read:packages" in str(excinfo.value)
+
+
+def test_enforce_names_podman_in_the_remedy_for_a_podman_deployment():
+    probe = FakeProbe(present=(), fetch_error=preflight.Cause.UNAUTHORIZED)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.enforce_base_images(_Plan(), probe=probe, use_podman=True)
+
+    assert "podman login" in str(excinfo.value)
+
+
+def test_enforce_treats_an_unknown_grader_service_as_disabled():
+    """A plan without a grader must not crash the preflight looking for one."""
+    probe = FakeProbe(present=())
+
+    outcomes = preflight.enforce_base_images(_Plan(raises=True), probe=probe)
+
+    assert all(preflight.PYTORCH_BASE not in o.reference for o in outcomes)
+
+
+def test_enforce_checks_the_pytorch_base_when_the_grader_is_enabled():
+    probe = FakeProbe(present=())
+
+    outcomes = preflight.enforce_base_images(_Plan(grader=True), probe=probe)
+
+    assert any(preflight.PYTORCH_BASE in o.reference for o in outcomes)
+
+
+def test_unverified_notes_lists_only_unverified_references():
+    outcomes = [
+        preflight.Outcome(GHCR_REF, preflight.Verdict.AVAILABLE),
+        preflight.Outcome(
+            LOCAL_REF, preflight.Verdict.UNVERIFIED, preflight.Cause.NO_RUNTIME
+        ),
+    ]
+
+    notes = preflight.unverified_notes(outcomes)
+
+    assert len(notes) == 1
+    assert LOCAL_REF in notes[0]
+
+
+# --- Reading the declared floor without depending on a source checkout -------------------
+
+
+def test_declared_floor_prefers_the_source_pyproject_over_installed_metadata():
+    """Installed metadata can be stale, and here it demonstrably is.
+
+    This environment's `archi` distribution advertises `Requires-Python: >=3.7`, left over
+    from before the floor was corrected to `>=3.11`. A preflight that trusted that number
+    would accept the very Python 3.10 base image this whole change exists to reject, and it
+    would do so silently. The source tree is the authority whenever it is available.
+    """
+    floor = preflight.declared_python_floor()
+
+    from packaging.specifiers import SpecifierSet
+    from packaging.version import Version
+
+    assert not SpecifierSet(floor).contains(Version("3.10.20")), (
+        f"declared floor {floor!r} admits Python 3.10, which is the interpreter "
+        f"fasrc/archi#266 is about"
+    )
+
+
+def test_declared_floor_raises_a_named_error_when_nothing_declares_it(monkeypatch):
+    """Better an explicit failure than a silently permissive floor."""
+    monkeypatch.setattr(
+        preflight, "_source_pyproject", lambda: Path("/nonexistent/pyproject.toml")
+    )
+    monkeypatch.setattr(preflight, "_metadata_python_floor", lambda: None)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.declared_python_floor()
+
+    assert "requires-python" in str(excinfo.value).lower()
+
+
+# --- Timeouts are not the same thing as an unsupported command ---------------------------
+
+
+def test_a_reachability_timeout_is_unreachable_not_unsupported(monkeypatch):
+    """A wedged `manifest inspect` is a registry problem, not a missing subcommand.
+
+    Reporting it as "this container tool does not support the probe" sends the operator to
+    look for a tooling fix that does not exist, and hides a degraded registry.
+    """
+    import subprocess
+
+    def _timeout(args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args, timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", _timeout)
+
+    assert (
+        preflight.ContainerProbe("docker").reachable(GHCR_REF)
+        is preflight.Cause.UNREACHABLE
+    )
+
+
+def test_a_pull_timeout_is_unreachable(monkeypatch):
+    import subprocess
+
+    def _timeout(args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args, timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", _timeout)
+
+    assert (
+        preflight.ContainerProbe("docker").pull(GHCR_REF) is preflight.Cause.UNREACHABLE
+    )
+
+
+# --- A base the rule requires but no template declares (round 2 finding) ------------------
+
+
+def test_enforce_refuses_when_a_required_base_cannot_be_resolved(tmp_path):
+    """An unresolvable reference must refuse, not quietly shrink the checked set.
+
+    Dropping it was a silent bypass: a template rename, a packaging mistake, or drift in the
+    `FROM` regex would disable the preflight, and `create --force` would then tear down a
+    working deployment having proved nothing at all. That is precisely the assumption-passing
+    this module forbids.
+    """
+    # Names the pytorch base, not the python base this deployment requires: the template is
+    # coverable, so the uncoverable-template guard passes and the unresolved-reference
+    # refusal is what gets tested. A third-party FROM would trip the earlier guard instead.
+    (tmp_path / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4\n"
+    )
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert preflight.PYTHON_BASE in str(excinfo.value)
+
+
+def test_enforce_refuses_when_only_the_pytorch_base_is_missing(tmp_path):
+    """A partially resolvable set is still a bypass for the part that went missing."""
+    (tmp_path / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4\n"
+    )
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.enforce_base_images(
+            _Plan(grader=True), probe=probe, template_dir=tmp_path
+        )
+
+    assert preflight.PYTORCH_BASE in str(excinfo.value)
+
+
+def test_enforce_refuses_a_missing_reference_on_a_dry_run_too(tmp_path):
+    (tmp_path / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-pytorch-base:dev-4314ac4\n"
+    )
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.enforce_base_images(
+            _Plan(), probe=FakeProbe(), template_dir=tmp_path, dry=True
+        )
+
+    # Names the image, so this cannot pass on the uncoverable-template refusal instead --
+    # which is what a third-party `FROM` in the fixture would have made it do, silently.
+    assert preflight.PYTHON_BASE in str(excinfo.value)
+
+
+def test_a_grader_lookup_failure_is_not_silently_treated_as_disabled():
+    """Only "no such service" may be tolerated; anything else is a real bug worth surfacing.
+
+    Swallowing every exception here would skip the pytorch check for a grader deployment,
+    landing on exactly the teardown-then-fail behaviour this change removes.
+    """
+
+    class _Exploding:
+        gpu_ids = None
+
+        def get_service(self, name):
+            raise RuntimeError("plan is corrupt")
+
+    with pytest.raises(RuntimeError):
+        preflight.enforce_base_images(_Exploding(), probe=FakeProbe())
+
+
+def test_a_grader_lookup_keyerror_is_not_silently_treated_as_disabled():
+    """A `KeyError` is plan corruption, not evidence that the grader is absent.
+
+    Both `ComposeConfig.get_service` implementations signal an unknown name with
+    `ValueError` (`service_registry.py:213`, `service_builder.py:110`), so nothing on the
+    tolerated path raises `KeyError`. A `KeyError` reaching here means a dict-backed plan
+    lost a key -- and turning that into `grader_enabled = False` drops the pytorch base
+    from the checked set, so a `--force` create tears the deployment down and only then
+    fails building the grader.
+    """
+
+    class _MissingKey:
+        gpu_ids = None
+
+        def get_service(self, name):
+            raise KeyError(name)
+
+    with pytest.raises(KeyError):
+        preflight.enforce_base_images(_MissingKey(), probe=FakeProbe())
+
+
+def test_an_absent_grader_service_is_still_tolerated():
+    """The case the catch actually exists for: a plan that has no grader at all."""
+    outcomes = preflight.enforce_base_images(_Plan(raises=True), probe=FakeProbe())
+
+    assert all(preflight.PYTORCH_BASE not in o.reference for o in outcomes)
+
+
+# --- A present but unreadable pyproject must fail closed (round 3 finding) ---------------
+
+
+def test_a_malformed_source_pyproject_refuses_rather_than_using_stale_metadata(
+    tmp_path, monkeypatch
+):
+    """Falling back here would re-authorize the very interpreter this module rejects.
+
+    Installed metadata in this environment still says `>=3.7`. If a truncated file, a merge
+    artifact, or a permissions problem made the checkout's pyproject unreadable, silently
+    reaching for that stale number would approve a Python 3.10 base image -- the precise
+    failure fasrc/archi#266 exists to prevent, arrived at by a different route.
+    """
+    broken = tmp_path / "pyproject.toml"
+    broken.write_text("[project\nrequires-python = ")
+    monkeypatch.setattr(preflight, "_source_pyproject", lambda: broken)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.declared_python_floor()
+
+    assert str(broken) in str(excinfo.value)
+
+
+def test_a_source_pyproject_without_a_declared_floor_refuses(tmp_path, monkeypatch):
+    valid_but_silent = tmp_path / "pyproject.toml"
+    valid_but_silent.write_text('[project]\nname = "archi"\n')
+    monkeypatch.setattr(preflight, "_source_pyproject", lambda: valid_but_silent)
+
+    with pytest.raises(preflight.BaseImagePreflightError):
+        preflight.declared_python_floor()
+
+
+def test_an_explicitly_supplied_pyproject_that_is_malformed_refuses(tmp_path):
+    """An explicit path is a caller's assertion about where the floor lives. Honour it."""
+    broken = tmp_path / "pyproject.toml"
+    broken.write_text("nonsense {{{")
+
+    with pytest.raises(preflight.BaseImagePreflightError):
+        preflight.declared_python_floor(broken)
+
+
+def test_metadata_is_used_only_when_there_is_no_source_pyproject(monkeypatch):
+    """The fallback stays available for a genuine installed CLI, which has no checkout.
+
+    Both sides are stubbed on purpose. An earlier version of this test asserted that *some*
+    floor came back without stubbing the metadata lookup, which only held where `archi`
+    happens to be installed as a distribution -- true locally, false on CI, where the gate
+    installs no archi package and pytest runs straight from the checkout. A test that reads
+    ambient environment state is not testing the fallback.
+    """
+    monkeypatch.setattr(
+        preflight, "_source_pyproject", lambda: Path("/nonexistent/pyproject.toml")
+    )
+    monkeypatch.setattr(preflight, "_metadata_python_floor", lambda: ">=3.11")
+
+    assert preflight.declared_python_floor() == ">=3.11"
+
+
+# --- The released tree is a legitimate state (review round 1) ----------------------------
+
+
+def _materialize_release_retargeted_tree(tmp_path):
+    """A copy of the templates after the release workflow's retarget step.
+
+    ``update_service_base_images.py`` resolves its target directory from its own
+    location (``scripts/dev/...`` -> ``parents[2]``), so copying the script and
+    the templates into a temporary tree with the same relative layout runs the
+    REAL rewrite against throwaway files. Re-implementing the rewrite here would
+    only test the re-implementation.
+    """
+    scripts_dir = tmp_path / "scripts" / "dev"
+    templates_dir = tmp_path / "src" / "cli" / "templates" / "dockerfiles"
+    scripts_dir.mkdir(parents=True)
+    templates_dir.mkdir(parents=True)
+    shutil.copy(UPDATER, scripts_dir / UPDATER.name)
+    for path in TEMPLATE_DIR.glob("Dockerfile-*"):
+        shutil.copy(path, templates_dir / path.name)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(scripts_dir / UPDATER.name),
+            "--tag",
+            "v2026.08.0",
+            "--switch-source",
+            "ghcr",
+            "--orig-tag",
+            "all",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return templates_dir
+
+
+def test_the_guards_accept_a_release_retargeted_tree(tmp_path):
+    """A released tree must not turn the unit suite red.
+
+    ``test-and-build-tag.yml:158`` rewrites all 15 templates to
+    ``ghcr.io/fasrc/...:<release-tag>`` and the step at :207 commits them to the
+    dispatched branch. That state is deliberate -- the next step verifies it, and
+    the release smoke test builds against it. A guard that calls it mutable makes
+    the released branch red and starts every follow-up PR against it red too.
+    """
+    templates_dir = _materialize_release_retargeted_tree(tmp_path)
+
+    references = _base_references(templates_dir)
+    assert len(references) == len(preflight.service_templates(templates_dir))
+
+    mutable = [name for name, ref in references if _pin_state(ref) == "mutable"]
+    assert not mutable, f"release-retargeted templates read as mutable: {mutable}"
+    assert {_pin_state(ref) for _name, ref in references} == {"release"}
+
+    # Shape is not enough. A rewrite that pointed every template at one base
+    # would satisfy every assertion above and ship a deployment building the CPU
+    # services on the GPU image. Compare the identity map against the tree the
+    # rewrite started from, so the check is "unchanged except for the pin".
+    assert _image_map(templates_dir) == _image_map()
+
+    tags = {_RELEASE_TAG.match(ref).group(1) for _name, ref in references}
+    assert tags == {"v2026.08.0"}
+
+
+def test_the_release_guard_detects_a_rewrite_to_the_wrong_base(tmp_path):
+    """Proof that the identity comparison above discriminates.
+
+    One template flipped from the python base to the pytorch base: every
+    shape-level assertion still holds, and the identity map has to catch it.
+    """
+    templates_dir = _materialize_release_retargeted_tree(tmp_path)
+    victim = templates_dir / "Dockerfile-chat"
+    victim.write_text(
+        victim.read_text().replace(preflight.PYTHON_BASE, preflight.PYTORCH_BASE)
+    )
+
+    references = _base_references(templates_dir)
+    assert {_pin_state(ref) for _name, ref in references} == {"release"}
+    assert len(references) == len(preflight.service_templates(templates_dir))
+
+    assert _image_map(templates_dir) != _image_map()
+
+
+# --- The declared service-template set (tasks.md 1.1) ------------------------------------
+
+
+def test_stale_template_exclusions_reports_absent_exclusions_not_present_ones(tmp_path):
+    """An exclusion key with no matching file is stale; one with a file is honest."""
+    (tmp_path / "Dockerfile-base").write_text("FROM scratch\n")
+    # Only Dockerfile-base exists; Dockerfile-base-gpu does not.
+    stale = preflight.stale_template_exclusions(tmp_path)
+    assert "Dockerfile-base-gpu" in stale
+    assert "Dockerfile-base" not in stale
+
+
+def test_stale_template_exclusions_on_the_real_directory_is_empty():
+    """Every key in NON_SERVICE_TEMPLATES must name an actual file on disk."""
+    stale = preflight.stale_template_exclusions()
+    assert not stale, (
+        f"NON_SERVICE_TEMPLATES contains stale entries (no matching file): "
+        + ", ".join(sorted(stale))
+    )
+
+
+def test_stale_template_exclusions_reports_a_bogus_relative_path_key(monkeypatch):
+    """stale_template_exclusions resolves keys by joining with the directory, so a nested
+    relative-path key like 'subdir/Dockerfile-bogus' is reported when the file does not
+    exist -- the join is what makes relative-path keys resolve correctly."""
+    bogus = "no-such-subdir/Dockerfile-bogus"
+    monkeypatch.setattr(preflight, "NON_SERVICE_TEMPLATES", {bogus: "does not exist"})
+    stale = preflight.stale_template_exclusions()
+    assert stale == [
+        bogus
+    ], f"expected bogus relative-path key to be stale, got {stale!r}"
+
+
+def test_service_templates_has_15_of_21_and_excluded_relative_paths_match_the_declaration():
+    """service_templates() returns 15 of the 21 Dockerfile* files; the 6 excluded relative
+    paths are exactly the keys of NON_SERVICE_TEMPLATES."""
+    template_dir = preflight.TEMPLATE_DIR
+    all_dockerfiles = sorted(template_dir.rglob("Dockerfile*"))
+    services = preflight.service_templates()
+    assert (
+        len(all_dockerfiles) == 21
+    ), f"expected 21 Dockerfile* files, found {len(all_dockerfiles)}: " + ", ".join(
+        p.relative_to(template_dir).as_posix() for p in all_dockerfiles
+    )
+    assert (
+        len(services) == 15
+    ), f"expected 15 service templates, got {len(services)}: " + ", ".join(
+        p.relative_to(template_dir).as_posix() for p in services
+    )
+    excluded = {p.relative_to(template_dir).as_posix() for p in all_dockerfiles} - {
+        p.relative_to(template_dir).as_posix() for p in services
+    }
+    assert excluded == set(preflight.NON_SERVICE_TEMPLATES.keys()), (
+        f"excluded paths {sorted(excluded)!r} do not match "
+        f"NON_SERVICE_TEMPLATES keys {sorted(preflight.NON_SERVICE_TEMPLATES.keys())!r}"
+    )
+
+
+def test_base_image_subdirs_are_excluded_from_service_templates_on_real_directory():
+    """base-python-image/Dockerfile and base-pytorch-image/Dockerfile live in subdirectories
+    that the recursive rglob picks up. Asserting against the real TEMPLATE_DIR confirms those
+    files are excluded from service_templates() -- a tmp_path fixture would only prove the
+    mechanism, not that the actual files are handled."""
+    services = preflight.service_templates()
+    template_dir = preflight.TEMPLATE_DIR
+    service_rel_paths = {p.relative_to(template_dir).as_posix() for p in services}
+    assert (
+        "base-python-image/Dockerfile" not in service_rel_paths
+    ), "base-python-image/Dockerfile must not appear in service_templates()"
+    assert (
+        "base-pytorch-image/Dockerfile" not in service_rel_paths
+    ), "base-pytorch-image/Dockerfile must not appear in service_templates()"
+
+
+# --- Service templates without a base reference (tasks.md 1.2) ---------------------------
+
+_PINNED_FROM = (
+    "FROM ghcr.io/fasrc/a2rchi-python-base"
+    "@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"
+)
+_THIRD_PARTY_FROM = "FROM docker.io/library/python:3.11\n"
+
+
+def test_templates_missing_base_reference_reports_replaced_line(tmp_path):
+    """A template whose FROM names a third-party image is reported; a correctly pinned
+    one is not."""
+    (tmp_path / "Dockerfile-service-a").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-service-b").write_text(_THIRD_PARTY_FROM)
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert len(missing) == 1
+    assert (
+        missing[0] == tmp_path / "Dockerfile-service-b"
+    ), f"expected Dockerfile-service-b to be reported, got {missing}"
+
+
+def test_templates_missing_base_reference_detects_nested_template(tmp_path):
+    """A nested service template on a third-party base is reported by its full path."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "Dockerfile-svc").write_text(_THIRD_PARTY_FROM)
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        nested / "Dockerfile-svc"
+    ], f"expected the nested template to be reported, got {missing}"
+
+
+def test_templates_missing_base_reference_reports_deleted_line(tmp_path):
+    """A template with no FROM line at all (base removed, not replaced) is also reported."""
+    (tmp_path / "Dockerfile-service-a").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-service-b").write_text("RUN echo hello\n")
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert len(missing) == 1
+    assert (
+        missing[0] == tmp_path / "Dockerfile-service-b"
+    ), f"expected Dockerfile-service-b to be reported, got {missing}"
+
+
+def test_templates_missing_base_reference_reports_unknown_a2rchi_base(tmp_path):
+    """A template whose FROM names an a2rchi base outside the placeable set is reported.
+
+    The preflight can only probe bases it knows about; an unknown base (e.g. node-base)
+    must be treated as uncoverable so the caller can refuse before any teardown.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-node").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-node-base@sha256:" + "b" * 64 + "\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert len(missing) == 1
+    assert (
+        missing[0] == tmp_path / "Dockerfile-node"
+    ), f"expected Dockerfile-node to be reported, got {missing}"
+
+
+def test_enforce_base_images_refuses_template_with_unknown_a2rchi_base(tmp_path):
+    """`enforce_base_images` refuses when a service template names an a2rchi base outside
+    the placeable set — a base the preflight cannot probe.
+
+    A base outside the known set cannot be checked for Python version compatibility;
+    passing silently would violate the governing invariant.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-node").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-node-base@sha256:" + "b" * 64 + "\n"
+    )
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert str(tmp_path / "Dockerfile-node") in str(exc_info.value), (
+        "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
+    )
+    assert probe.pulled == [], (
+        "the refusal must come before any image work; " f"probe pulled {probe.pulled}"
+    )
+
+
+def test_templates_missing_base_reference_on_real_directory_is_empty():
+    """Every service template must reference an a2rchi-*-base image."""
+    missing = preflight.templates_missing_base_reference()
+    assert (
+        not missing
+    ), "Service templates without an a2rchi-*-base FROM reference: " + ", ".join(
+        str(p) for p in missing
+    )
+
+
+# --- Deploy preflight: refusing an uncoverable service template (tasks.md 3.1) ----------
+
+
+def test_required_base_images_refuses_and_names_a_template_with_no_base_reference(
+    tmp_path,
+):
+    """A service template carrying no a2rchi-*-base FROM line causes required_base_images
+    to refuse; the refusal names the template so the next reader has the diagnosis."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-broken").write_text("FROM docker.io/library/python:3.11\n")
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.required_base_images(
+            gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+        )
+
+    assert str(tmp_path / "Dockerfile-broken") in str(exc_info.value), (
+        "exception message must name the uncoverable template; "
+        f"got: {exc_info.value}"
+    )
+
+
+def test_required_base_images_returns_unchanged_references_when_all_templates_covered(
+    tmp_path,
+):
+    """A directory where every service template carries an a2rchi-*-base reference returns
+    exactly the references it returned before the uncoverable-template guard — a correct
+    tree's deploy behavior is provably unchanged."""
+    python_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    pytorch_ref = "ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "b" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {python_ref}\nRUN pip install .\n")
+    (tmp_path / "Dockerfile-grader").write_text(
+        f"FROM {pytorch_ref}\nRUN pip install .\n"
+    )
+
+    refs = preflight.required_base_images(
+        gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+    )
+    assert refs == [python_ref]
+
+    refs_gpu = preflight.required_base_images(
+        gpu_ids="all", grader_enabled=True, template_dir=tmp_path
+    )
+    assert refs_gpu == [python_ref, pytorch_ref]
+
+
+# --- Multistage templates: final-stage resolution (tasks.md 2.1) -------------------------
+
+_MULTISTAGE_THIRD_PARTY_FINAL = (
+    "FROM ghcr.io/fasrc/a2rchi-python-base@sha256:" + "c" * 64 + " AS builder\n"
+    "RUN pip wheel .\n"
+    "FROM docker.io/library/debian:12\n"
+    "COPY --from=builder /wheels /wheels\n"
+)
+
+
+def test_templates_missing_base_reference_reports_multistage_with_third_party_final(
+    tmp_path,
+):
+    """A multistage template whose final stage uses a third-party image is reported.
+
+    Even though the first stage uses an a2rchi base, the deployed container runs the
+    final stage — which here is a third-party image the preflight cannot probe.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-multi").write_text(_MULTISTAGE_THIRD_PARTY_FINAL)
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert len(missing) == 1
+    assert (
+        missing[0] == tmp_path / "Dockerfile-multi"
+    ), f"expected Dockerfile-multi to be reported, got {missing}"
+
+
+def test_enforce_base_images_refuses_multistage_with_third_party_final(tmp_path):
+    """`enforce_base_images` refuses when a service template's final stage is third-party.
+
+    The preflight cannot verify compatibility of the final stage, so it must refuse
+    before any deployment work begins.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-multi").write_text(_MULTISTAGE_THIRD_PARTY_FINAL)
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert str(tmp_path / "Dockerfile-multi") in str(exc_info.value), (
+        "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
+    )
+    assert probe.pulled == [], (
+        "the refusal must come before any image work; " f"probe pulled {probe.pulled}"
+    )
+
+
+def test_templates_missing_base_reference_does_not_report_multistage_back_on_a2rchi(
+    tmp_path,
+):
+    """A multistage template whose final stage is FROM <a2rchi-alias> is not reported.
+
+    Copying build output back onto the a2rchi base is the ordinary reason to write a
+    multistage service template; this guard confirms the check does not over-refuse it.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-multi").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base@sha256:" + "d" * 64 + " AS build\n"
+        "RUN pip wheel .\n"
+        "FROM build\n"
+        "COPY --from=build /wheels /wheels\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert (
+        not missing
+    ), f"a multistage template ending on an a2rchi stage must not be reported, got {missing}"
+
+
+# --- The deploy path itself refuses an uncoverable service template (fasrc/archi#381) ----
+
+
+def test_enforce_base_images_refuses_an_uncoverable_service_template(tmp_path):
+    """`enforce_base_images` is the entry point `archi create` calls, so the refusal has to
+    fire there and not only in `required_base_images`, which no production path calls.
+
+    The fixture is the case that hides the fault: `Dockerfile-chat` supplies the one
+    reference this deployment requires, so `base_reference` resolves it and the broken
+    template is masked. Before this guard ran here, the preflight returned AVAILABLE and
+    `create --force` went on to `remove_existing_deployment()` before failing in the build --
+    the ordering `cli_main.py:283-291` exists to prevent.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-broken").write_text(_THIRD_PARTY_FROM)
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert str(tmp_path / "Dockerfile-broken") in str(exc_info.value), (
+        "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
+    )
+    assert probe.pulled == [], (
+        "the refusal must come before any image work, so it also comes before the "
+        f"--force teardown; probe pulled {probe.pulled}"
+    )
+
+
+def test_enforce_base_images_refuses_an_uncoverable_template_on_a_dry_run_too(tmp_path):
+    """A dry run reporting nothing wrong about an uncoverable template is the same lie."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-broken").write_text(_THIRD_PARTY_FROM)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(
+            _Plan(), probe=FakeProbe(), template_dir=tmp_path, dry=True
+        )
+
+    assert str(tmp_path / "Dockerfile-broken") in str(exc_info.value), (
+        "the refusal must name the uncoverable template; " f"got: {exc_info.value}"
+    )
+
+
+def test_enforce_base_images_refuses_divergent_base_references(tmp_path):
+    """When two service templates pin the same required base image at different digests,
+    ``enforce_base_images`` must refuse before any image work.
+
+    Before the guard, the call returned outcomes and the probe had pulled -- the divergent
+    pin was invisible at the entry point ``archi create`` calls.
+    """
+    aaaa_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    bbbb_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "b" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {aaaa_ref}\n")
+    (tmp_path / "Dockerfile-piazza").write_text(f"FROM {bbbb_ref}\n")
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    msg = str(exc_info.value)
+    assert "Dockerfile-chat" in msg, f"message must name Dockerfile-chat; got: {msg}"
+    assert (
+        "Dockerfile-piazza" in msg
+    ), f"message must name Dockerfile-piazza; got: {msg}"
+    assert probe.pulled == [], (
+        "the refusal must come before any image work; " f"probe pulled {probe.pulled}"
+    )
+
+
+def test_enforce_base_images_refuses_a_nested_uncoverable_service_template(tmp_path):
+    """`enforce_base_images` must refuse when a nested service template is on a third-party
+    base, not only when the uncoverable template is at the top level.
+
+    The fixture mirrors the gap from fasrc/archi#383: `Dockerfile-chat` supplies the
+    reference this deployment needs, so `base_reference` resolves it — but the nested
+    `nested/Dockerfile-svc` on a third-party base is still in the declared service set and
+    must cause a refusal before any image work begins.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "Dockerfile-svc").write_text(_THIRD_PARTY_FROM)
+    probe = FakeProbe()
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert str(nested / "Dockerfile-svc") in str(exc_info.value), (
+        "the refusal must name the nested uncoverable template; "
+        f"got: {exc_info.value}"
+    )
+    assert probe.pulled == [], (
+        "the refusal must come before any image work; " f"probe pulled {probe.pulled}"
+    )
+
+
+def test_enforce_base_images_refuses_divergent_references_on_a_dry_run_too(tmp_path):
+    """A dry run reporting nothing wrong about a split pin is the same lie."""
+    aaaa_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    bbbb_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "b" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {aaaa_ref}\n")
+    (tmp_path / "Dockerfile-piazza").write_text(f"FROM {bbbb_ref}\n")
+
+    with pytest.raises(preflight.BaseImagePreflightError):
+        preflight.enforce_base_images(
+            _Plan(), probe=FakeProbe(), template_dir=tmp_path, dry=True
+        )
+
+
+# --- Boundary tests: scope, the agreeing case, and D3 (tasks.md 1.4) ---------------------
+
+
+def test_divergent_pytorch_base_not_refused_when_gpu_and_grader_not_required(tmp_path):
+    """A split pytorch-base pin is not refused when the deployment does not need pytorch.
+
+    Scope decision (design D2): the check covers only required_base_image_names, so a split
+    pin on a base this deployment will not build stays hidden until a deployment that needs
+    that base.
+    """
+    python_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    pytorch_ref_1 = "ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "c" * 64
+    pytorch_ref_2 = "ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "d" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {python_ref}\n")
+    (tmp_path / "Dockerfile-service-b").write_text(f"FROM {python_ref}\n")
+    (tmp_path / "Dockerfile-grader").write_text(f"FROM {pytorch_ref_1}\n")
+    (tmp_path / "Dockerfile-service-c").write_text(f"FROM {pytorch_ref_2}\n")
+
+    refs = preflight.required_base_images(
+        gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+    )
+    assert refs == [python_ref]
+
+
+def test_divergent_pytorch_base_refused_when_grader_enabled(tmp_path):
+    """The same split pytorch-base pin IS refused when the deployment requires pytorch."""
+    python_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    pytorch_ref_1 = "ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "c" * 64
+    pytorch_ref_2 = "ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "d" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {python_ref}\n")
+    (tmp_path / "Dockerfile-service-b").write_text(f"FROM {python_ref}\n")
+    (tmp_path / "Dockerfile-grader").write_text(f"FROM {pytorch_ref_1}\n")
+    (tmp_path / "Dockerfile-service-c").write_text(f"FROM {pytorch_ref_2}\n")
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.required_base_images(
+            gpu_ids=None, grader_enabled=True, template_dir=tmp_path
+        )
+
+    assert preflight.PYTORCH_BASE in str(
+        exc_info.value
+    ), f"message must name {preflight.PYTORCH_BASE}; got: {exc_info.value}"
+
+
+def test_agreeing_base_references_are_returned_without_refusal(tmp_path):
+    """When all templates agree on references, required_base_images returns them unchanged
+    for both the python-only and the python+pytorch selections."""
+    python_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    pytorch_ref = "ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "b" * 64
+    (tmp_path / "Dockerfile-chat").write_text(f"FROM {python_ref}\nRUN pip install .\n")
+    (tmp_path / "Dockerfile-grader").write_text(
+        f"FROM {pytorch_ref}\nRUN pip install .\n"
+    )
+
+    refs = preflight.required_base_images(
+        gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+    )
+    assert refs == [python_ref]
+
+    refs_gpu = preflight.required_base_images(
+        gpu_ids="all", grader_enabled=True, template_dir=tmp_path
+    )
+    assert refs_gpu == [python_ref, pytorch_ref]
+
+
+def test_multistage_template_two_from_lines_for_same_base_is_not_refused(tmp_path):
+    """A single template with two FROM lines for the same base is not a disagreement.
+
+    Design D3: the walk asks each template for *the one reference it declares* for an image,
+    so a builder stage and a shipping stage in one file cannot diverge with each other.  Only
+    a second template can.
+
+    The assertion is deliberately seam-independent -- one reference back, no refusal, and it
+    is one of the two the file names -- rather than naming the stage the seam happens to read.
+    Which stage a template contributes is PR #387's decision (`_final_stage_base`), not this
+    change's: #387 reads the *final* stage, so pinning the builder's reference here would
+    turn that merge red at runtime.  The two PRs already conflict textually at the end of
+    this file, and the natural resolution -- keep both sets of added tests -- would not
+    surface a pinned-stage assertion as anything a reviewer has to re-read.
+    """
+    python_ref = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+    python_ref_stage2 = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "e" * 64
+    (tmp_path / "Dockerfile-multistage").write_text(
+        f"FROM {python_ref} AS builder\n"
+        f"RUN echo stage1\n"
+        f"FROM {python_ref_stage2}\n"
+        f"RUN echo stage2\n"
+    )
+
+    refs = preflight.required_base_images(
+        gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+    )
+    assert len(refs) == 1
+    assert refs[0] in {python_ref, python_ref_stage2}
+
+
+def test_base_references_returns_one_reference_per_base_in_real_directory():
+    """The real template directory must declare exactly one reference per required base.
+
+    A single reference means every template that uses that base agrees on its digest; a split
+    pin would produce two references and be caught here before it reaches production.
+    """
+    python_refs = preflight.base_references(preflight.PYTHON_BASE)
+    assert len(python_refs) == 1, (
+        f"Expected exactly one reference for {preflight.PYTHON_BASE}, "
+        f"got {len(python_refs)}: {python_refs}"
+    )
+
+    pytorch_refs = preflight.base_references(preflight.PYTORCH_BASE)
+    assert len(pytorch_refs) == 1, (
+        f"Expected exactly one reference for {preflight.PYTORCH_BASE}, "
+        f"got {len(pytorch_refs)}: {pytorch_refs}"
+    )
+
+
+# --- Review round 2 (PR #388): the recursive service set and its non-recursive readers ---
+
+
+def test_base_reference_reads_a_nested_service_template(tmp_path):
+    """`base_reference` must read the same file set `service_templates` declares.
+
+    With the traversal recursive on one side and a top-level glob on the other, a nested
+    template's own base reference is invisible to the preflight: the check that decides
+    which image to probe reads a different set of files than the check that decided the
+    template is covered.
+    """
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "Dockerfile-svc").write_text(_PINNED_FROM)
+    assert (
+        preflight.base_reference(preflight.PYTHON_BASE, tmp_path)
+        == _PINNED_FROM.split()[1]
+    )
+
+
+def test_nested_service_templates_reports_a_template_below_the_top_level(tmp_path):
+    """The declared service set may recurse; two of its readers still cannot.
+
+    `update_service_base_images.py` rewrites and `--verify`-checks only the `Dockerfile*`
+    files at the top of the template directory, so a nested service template would never be
+    retargeted by the release workflow and never proved by `--verify` -- it would ship on
+    whatever base it was committed with, silently.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "Dockerfile-svc").write_text(_PINNED_FROM)
+    assert preflight.nested_service_templates(tmp_path) == [
+        tmp_path / "sub" / "Dockerfile-svc"
+    ]
+
+
+def test_nested_service_templates_is_empty_for_a_flat_directory(tmp_path):
+    """An excluded nested file is not a nested *service* template."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "base-python-image").mkdir()
+    (tmp_path / "base-python-image" / "Dockerfile").write_text(
+        "FROM docker.io/library/python:3.11\n"
+    )
+    assert preflight.nested_service_templates(tmp_path) == []
+
+
+def test_no_service_template_is_nested_while_the_release_rewriter_is_top_level_only():
+    """The repo-wide guard. Passing today is the point: it fails the day that changes.
+
+    Adding a nested service template is not wrong in itself -- it is wrong while
+    `update_service_base_images.py` reads `DOCKERFILES_DIR.glob("Dockerfile*")` at
+    `:322` and `:382`. Failing here is what forces the two changes to land together
+    instead of a release shipping one service on an unretargeted base image.
+    """
+    nested = preflight.nested_service_templates()
+    assert not nested, (
+        f"nested service template(s) {nested} are in the declared service set, but "
+        f"scripts/dev/update_service_base_images.py rewrites and --verify-checks only the "
+        f"top level -- make that script recursive in the same change, or exclude these "
+        f"files in NON_SERVICE_TEMPLATES"
+    )
+
+
+# --- Review round 1 (PR #387): the coverage check must name bases at image boundaries ----
+
+_LOOKALIKE_FROM = (
+    "FROM ghcr.io/other/a2rchi-python-base-custom"
+    "@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"
+)
+
+
+def test_templates_missing_base_reference_reports_a_lookalike_base(tmp_path):
+    """`a2rchi-python-base-custom` is a different image from `a2rchi-python-base`.
+
+    A substring test calls the lookalike covered, and `base_reference` then hands
+    `enforce_base_images` that unrelated image to probe -- so the deployment proceeds on an
+    image the preflight never established. The name has to match at image boundaries.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-lookalike").write_text(_LOOKALIKE_FROM)
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-lookalike"
+    ], f"expected Dockerfile-lookalike to be reported, got {missing}"
+
+
+def test_base_reference_ignores_a_lookalike_image_name(tmp_path):
+    """`base_reference` must not return a reference whose name merely contains the image.
+
+    It is the same boundary rule as the coverage check, and it has to hold here too:
+    returning the lookalike would send the probe at an image no template builds from.
+    """
+    (tmp_path / "Dockerfile-lookalike").write_text(_LOOKALIKE_FROM)
+    assert (
+        preflight.base_reference(preflight.PYTHON_BASE, tmp_path) is None
+    ), "a lookalike image name must not satisfy a request for the python base"
+
+
+def test_base_reference_still_matches_a_registry_prefixed_digest_pin(tmp_path):
+    """The boundary rule must keep matching what the templates actually declare."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    reference = preflight.base_reference(preflight.PYTHON_BASE, tmp_path)
+    assert reference == _PINNED_FROM.split()[1], f"got {reference}"
+
+
+# --- Review round 1 (PR #387): heredoc payloads are not build stages --------------------
+
+
+def test_templates_missing_base_reference_ignores_a_from_inside_a_heredoc(tmp_path):
+    """A `RUN <<EOF` payload line beginning with FROM is shell text, not a build stage.
+
+    Reading it as the final stage refuses a template that is in fact correctly based --
+    the preflight would block a valid deployment.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-heredoc").write_text(
+        _PINNED_FROM + "RUN <<EOF\nFROM docker.io/library/debian:12\nEOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert (
+        not missing
+    ), f"a FROM inside a heredoc body must not be read as a stage, got {missing}"
+
+
+def test_templates_missing_base_reference_reports_third_party_final_despite_heredoc(
+    tmp_path,
+):
+    """The same gap the other way round is the dangerous one.
+
+    A third-party final stage followed by a heredoc payload that mentions an a2rchi base
+    reads as covered, and the preflight passes silently on an assumption -- the exact
+    fail-open this module exists to remove.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-heredoc").write_text(
+        "FROM docker.io/library/debian:12\nRUN <<EOF\n" + _PINNED_FROM + "EOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-heredoc"
+    ], f"expected Dockerfile-heredoc to be reported, got {missing}"
+
+
+def test_shell_shift_operators_do_not_open_a_heredoc(tmp_path):
+    """`1<<n` and `a << b` are not heredoc openers; blanking after them would refuse a
+    correctly based template."""
+    (tmp_path / "Dockerfile-shift").write_text(
+        'FROM docker.io/library/debian:12 AS builder\nRUN x=$((1<<n)) && echo "a << b"\n'
+        + _PINNED_FROM
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert (
+        not missing
+    ), f"a shift operator must not swallow the following FROM line, got {missing}"
+
+
+# --- Review round 1 (PR #387): the refusal has to state the actual reason ---------------
+
+
+def test_refusal_names_the_unsupported_base_rather_than_claiming_none_is_declared(
+    tmp_path,
+):
+    """A template that names an a2rchi base outside the placeable set *does* declare one.
+
+    Telling the operator it declares no a2rchi base sends them looking for a missing FROM
+    line that is right there. The diagnostic has to name the base it cannot probe.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-node").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-node-base@sha256:" + "b" * 64 + "\n"
+    )
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.required_base_images(
+            gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+        )
+
+    message = str(exc_info.value)
+    assert "a2rchi-node-base" in message, f"the base must be named; got: {message}"
+    assert (
+        "declare no" not in message
+    ), f"the template does declare a base; got: {message}"
+
+
+def test_refusal_says_a_template_with_no_from_line_declares_none(tmp_path):
+    """The no-FROM case keeps the diagnosis it had -- the reason genuinely is absence."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-empty").write_text("RUN echo hello\n")
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.required_base_images(
+            gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+        )
+
+    message = str(exc_info.value)
+    assert "Dockerfile-empty" in message, f"got: {message}"
+    assert (
+        "no FROM" in message
+    ), f"the reason must be the absent FROM line; got: {message}"
+
+
+def test_refusal_names_a_third_party_final_stage_as_the_reason(tmp_path):
+    """A multistage template whose final stage is third-party is refused for that reason."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-multi").write_text(_MULTISTAGE_THIRD_PARTY_FINAL)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.required_base_images(
+            gpu_ids=None, grader_enabled=False, template_dir=tmp_path
+        )
+
+    message = str(exc_info.value)
+    assert "debian:12" in message, f"the final-stage base must be named; got: {message}"
+
+
+# --- Review round 1 (PR #387): the two-image rule must read the final stage -------------
+
+
+def test_two_image_rule_offenders_catches_a_pytorch_final_stage_behind_a_python_builder(
+    tmp_path,
+):
+    """The drift the first-FROM reading cannot see.
+
+    `FROM <python-base> AS builder` ... `FROM <pytorch-base>` is a non-GPU template that
+    deploys on pytorch. `required_base_image_names` would ask for python only, and
+    `base_reference` would resolve the builder line, so the image the container actually
+    runs on is never probed. The rule check has to judge the stage that ships.
+    """
+    (tmp_path / "Dockerfile-drift").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64 + " AS builder\n"
+        "RUN pip wheel .\n"
+        "FROM ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "b" * 64 + "\n"
+    )
+    offenders = preflight.two_image_rule_offenders(tmp_path)
+    assert any(
+        "Dockerfile-drift" in offender for offender in offenders
+    ), f"expected the drifted template to be reported, got {offenders}"
+
+
+def test_two_image_rule_offenders_accepts_the_conforming_shapes(tmp_path):
+    """The rule itself is unchanged: python for a plain service, pytorch for -gpu."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-chat-gpu").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-pytorch-base@sha256:" + "b" * 64 + "\n"
+    )
+    assert preflight.two_image_rule_offenders(tmp_path) == []
+
+
+def test_every_placeable_base_is_reachable_from_the_two_image_rule():
+    """A base the coverage check accepts but the rule never asks for is never probed.
+
+    `required_base_image_names` cannot be derived from `PLACEABLE_BASES` mechanically --
+    which base a deployment needs depends on the GPU and grader flags, not on set
+    membership. This is what keeps the two declarations from drifting instead: adding a
+    third member without giving it a rule fails here.
+    """
+    reachable = set(preflight.required_base_image_names(None, False)) | set(
+        preflight.required_base_image_names("all", True)
+    )
+    assert reachable == set(preflight.PLACEABLE_BASES), (
+        "every placeable base must be reachable from the two-image rule, or the coverage "
+        f"check accepts a base nothing probes; reachable={sorted(reachable)} "
+        f"placeable={sorted(preflight.PLACEABLE_BASES)}"
+    )
+
+
+def test_two_image_rule_offenders_reports_a_gpu_variant_on_the_python_base(tmp_path):
+    """The other half of the rule: a `-gpu` template must not deploy on the python base."""
+    (tmp_path / "Dockerfile-chat-gpu").write_text(_PINNED_FROM)
+    assert preflight.two_image_rule_offenders(tmp_path) == [
+        "Dockerfile-chat-gpu: -gpu variant on the python base"
+    ]
+
+
+def test_two_image_rule_offenders_leaves_an_unresolvable_template_to_the_coverage_check(
+    tmp_path,
+):
+    """A template with no resolvable base is not a rule offender -- it is uncoverable.
+
+    Reporting it twice, under two different diagnoses, would send the operator to design D4
+    for a template that simply lost its FROM line.
+    """
+    (tmp_path / "Dockerfile-empty").write_text("RUN echo hello\n")
+    assert preflight.two_image_rule_offenders(tmp_path) == []
+    assert preflight.templates_missing_base_reference(tmp_path) == [
+        tmp_path / "Dockerfile-empty"
+    ]
+
+
+def test_a_cyclic_alias_chain_is_reported_as_unresolvable(tmp_path):
+    """`FROM b AS a` / `FROM a AS b` must refuse, not hang and not pass.
+
+    The cycle guard is the fail-closed half of stage resolution and had no test, so
+    nothing held it in place. A malformed template ends up in the same bucket as one with
+    no FROM line: the preflight cannot resolve a base, so it refuses.
+    """
+    (tmp_path / "Dockerfile-cycle").write_text(
+        "FROM stage-b AS stage-a\nFROM stage-a AS stage-b\n"
+    )
+    reasons = preflight.uncoverable_template_reasons(tmp_path)
+    assert [path.name for path, _ in reasons] == ["Dockerfile-cycle"]
+    assert "no FROM line the preflight can resolve" in reasons[0][1]
+
+
+# --- Review round 2 (PR #387): probe the reference the shipped stage names -------------
+
+_SPLIT_DIGEST_BUILDER = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "a" * 64
+_SPLIT_DIGEST_FINAL = "ghcr.io/fasrc/a2rchi-python-base@sha256:" + "b" * 64
+_SPLIT_DIGEST_TEMPLATE = (
+    f"FROM {_SPLIT_DIGEST_BUILDER} AS builder\n"
+    "RUN pip wheel .\n"
+    f"FROM {_SPLIT_DIGEST_FINAL}\n"
+    "COPY --from=builder /wheels /wheels\n"
+)
+
+
+def test_base_reference_returns_the_final_stage_pin_not_the_builder_pin(tmp_path):
+    """Judging coverage by the final stage is worth nothing if the probe reads another line.
+
+    A template that names the same placeable base twice -- one digest in a builder stage,
+    another in the stage that ships -- is covered on the strength of the final stage and
+    then probed on the builder's digest. The preflight would establish an image the build
+    never uses, and the real one can still be stale or below the Python floor.
+    """
+    (tmp_path / "Dockerfile-chat").write_text(_SPLIT_DIGEST_TEMPLATE)
+    assert preflight.base_reference(preflight.PYTHON_BASE, tmp_path) == (
+        _SPLIT_DIGEST_FINAL
+    ), "the reference probed must be the one the final stage names"
+
+
+def test_enforce_base_images_pulls_the_final_stage_digest(tmp_path):
+    """The same claim at the entry point `archi create` actually calls."""
+    (tmp_path / "Dockerfile-chat").write_text(_SPLIT_DIGEST_TEMPLATE)
+    probe = FakeProbe()
+
+    preflight.enforce_base_images(_Plan(), probe=probe, template_dir=tmp_path)
+
+    assert probe.pulled == [_SPLIT_DIGEST_FINAL], (
+        "the preflight must materialize the image the final stage names, not the "
+        f"builder's; pulled {probe.pulled}"
+    )
+
+
+def test_base_reference_skips_a_template_excluded_from_the_service_set(tmp_path):
+    """A base-defining or third-party template is not what the services build from.
+
+    `Dockerfile-postgres` is excluded by name, so a reference inside it must not become the
+    probe target for a service base.
+    """
+    (tmp_path / "Dockerfile-postgres").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base@sha256:" + "c" * 64 + "\n"
+    )
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    assert preflight.base_reference(preflight.PYTHON_BASE, tmp_path) == (
+        _PINNED_FROM.split()[1]
+    )
+
+
+# --- Review round 3 (PR #387): only an instruction line starts a stage -----------------
+
+_THIRD_PARTY_FINAL = "FROM docker.io/library/debian:12\n"
+
+
+def test_a_heredoc_opener_inside_a_comment_does_not_blank_the_real_stages(tmp_path):
+    """`# Example: RUN <<EOF` is prose, not a heredoc opener.
+
+    Treating it as one blanks every line after it until an `EOF` line that may never come,
+    so a third-party final stage disappears and the template reads as covered on the
+    strength of an earlier builder stage -- a silent pass on an assumption.
+    """
+    (tmp_path / "Dockerfile-comment").write_text(
+        _PINNED_FROM + "# Example: RUN <<EOF\nRUN pip wheel .\n" + _THIRD_PARTY_FINAL
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-comment"
+    ], f"the third-party final stage must still be seen, got {missing}"
+
+
+def test_a_from_on_a_continuation_line_is_not_a_build_stage(tmp_path):
+    """`RUN echo hello \\` followed by a `FROM` line is one command to Docker.
+
+    Reading the continuation as a stage lets a template with a third-party final stage
+    report an a2rchi base and pass the coverage check.
+    """
+    (tmp_path / "Dockerfile-cont").write_text(
+        _THIRD_PARTY_FINAL + "RUN echo hello \\\n" + _PINNED_FROM
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-cont"
+    ], f"a continuation line must not be read as a stage, got {missing}"
+
+
+def test_a_multi_line_continuation_is_skipped_to_its_end(tmp_path):
+    """The continuation runs to the first line that does not end in a backslash."""
+    (tmp_path / "Dockerfile-cont").write_text(
+        _THIRD_PARTY_FINAL + "RUN echo a \\\n  echo b \\\n" + _PINNED_FROM
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == [
+        tmp_path / "Dockerfile-cont"
+    ]
+
+
+def test_a_real_stage_after_a_continuation_is_still_read(tmp_path):
+    """Skipping continuations must not swallow the stage that follows them."""
+    (tmp_path / "Dockerfile-ok").write_text(
+        _THIRD_PARTY_FINAL + "RUN echo hello \\\n  && echo bye\n" + _PINNED_FROM
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+def test_a_heredoc_still_opens_on_a_real_run_instruction(tmp_path):
+    """The narrowing must not undo round 1: a genuine payload is still not a stage."""
+    (tmp_path / "Dockerfile-heredoc").write_text(
+        _THIRD_PARTY_FINAL + "RUN <<EOF\n" + _PINNED_FROM + "EOF\n"
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == [
+        tmp_path / "Dockerfile-heredoc"
+    ]
+
+
+def test_a_comment_ending_in_a_backslash_does_not_start_a_continuation(tmp_path):
+    """Docker strips comments before joining continuations, so one cannot continue."""
+    (tmp_path / "Dockerfile-chat").write_text(
+        _PINNED_FROM + "# a trailing backslash in prose \\\nRUN pip install .\n"
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+# --- Review round 4 (PR #387): every heredoc on an instruction, and FROM flags ----------
+
+
+def test_a_second_heredoc_on_one_instruction_is_also_a_payload(tmp_path):
+    """`RUN <<ONE <<TWO` opens two payloads; both are shell text.
+
+    Tracking only the first delimiter resumes stage scanning inside the second payload, so a
+    `FROM <a2rchi>` line there hides a third-party final stage and the template reads as
+    covered. Fail-open, in the direction that matters.
+    """
+    (tmp_path / "Dockerfile-two").write_text(
+        _THIRD_PARTY_FINAL + "RUN <<ONE <<TWO\necho one\nONE\n" + _PINNED_FROM + "TWO\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-two"
+    ], f"the third-party final stage must still be seen, got {missing}"
+
+
+def test_a_second_heredoc_payload_does_not_falsely_refuse_a_valid_template(tmp_path):
+    """The same gap the other way: a third-party line in the second payload is not a stage."""
+    (tmp_path / "Dockerfile-two").write_text(
+        _PINNED_FROM + "RUN <<ONE <<TWO\necho one\nONE\n" + _THIRD_PARTY_FINAL + "TWO\n"
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+def test_an_indented_final_stage_is_still_a_build_stage(tmp_path):
+    """Docker accepts a leading-whitespace instruction; anchoring `FROM` at column zero does not.
+
+    An unindented a2rchi builder followed by an indented third-party final stage reads as
+    covered on the builder's strength, and the deployment proceeds without probing the image
+    that actually ships.
+    """
+    (tmp_path / "Dockerfile-indented").write_text(
+        _PINNED_FROM.replace("FROM", "FROM", 1).rstrip("\n")
+        + " AS builder\nRUN echo hi\n  "
+        + _THIRD_PARTY_FINAL
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-indented"
+    ], f"an indented final stage must still be seen, got {missing}"
+
+
+def test_a_space_indented_heredoc_terminator_does_not_close_the_payload(tmp_path):
+    """`<<EOF` ends only on a line that is exactly the delimiter.
+
+    Docker requires the terminator at column zero for `<<EOF` (`<<-EOF` strips leading tabs,
+    never spaces). Closing on a space-indented `  EOF` ends the payload early, so the rest of
+    the heredoc body is scanned as instructions and an a2rchi `FROM` inside it hides the real
+    third-party final stage.
+    """
+    (tmp_path / "Dockerfile-terminator").write_text(
+        _THIRD_PARTY_FINAL.rstrip("\n")
+        + " AS base\nRUN <<EOF\n  EOF\n"
+        + _PINNED_FROM
+        + "EOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-terminator"
+    ], f"a space-indented line must not close a <<EOF payload, got {missing}"
+
+
+def test_a_heredoc_opened_on_a_continuation_line_still_blanks_its_payload(tmp_path):
+    """`RUN \\` then `<<EOF` is one instruction that opens a heredoc.
+
+    Blanking the continuation without recording its delimiter leaves the payload scanned as
+    instructions, so an a2rchi `FROM` inside the payload masks the third-party final stage.
+    """
+    (tmp_path / "Dockerfile-contheredoc").write_text(
+        _THIRD_PARTY_FINAL + "RUN \\\n  <<EOF\n" + _PINNED_FROM + "EOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-contheredoc"
+    ], f"a heredoc opened on a continuation must blank its payload, got {missing}"
+
+
+def test_an_unterminated_heredoc_fails_closed_instead_of_hiding_the_final_stage(
+    tmp_path,
+):
+    """A delimiter that never arrives means the parser could not tell -- so it must refuse.
+
+    `RUN echo "example <<EOF here"` is quoted shell text, not a heredoc opener, but reading it
+    as one blanks every line to the end of the file. Without this, the blanked final stage
+    leaves an earlier a2rchi builder as the last stage standing and the template reads as
+    covered: a silent pass on an assumption, which this module may not do.
+
+    Failing closed is the module's third option -- say out loud that it could not tell -- and
+    it costs a correct template nothing, because a correct template terminates its heredocs.
+    """
+    (tmp_path / "Dockerfile-unterminated").write_text(
+        _PINNED_FROM.rstrip("\n")
+        + ' AS builder\nRUN echo "example <<EOF here"\n'
+        + _THIRD_PARTY_FINAL
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-unterminated"
+    ], f"an unterminated heredoc must fail closed, got {missing}"
+
+    reasons = dict(preflight.uncoverable_template_reasons(tmp_path))
+    assert "resolve" in reasons[tmp_path / "Dockerfile-unterminated"]
+
+
+def test_a_heredoc_opener_with_a_space_after_the_operator_is_still_an_opener(tmp_path):
+    """`RUN << EOF` is the same redirection as `RUN <<EOF`.
+
+    Requiring the delimiter to touch the operator leaves the payload scanned as
+    instructions, so an a2rchi `FROM` inside it hides the third-party final stage.
+    """
+    (tmp_path / "Dockerfile-spaced").write_text(
+        _THIRD_PARTY_FINAL + "RUN << XEOF\n" + _PINNED_FROM + "XEOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-spaced"
+    ], f"`<< XEOF` must open a heredoc, got {missing}"
+
+
+def test_a_file_descriptor_numbered_heredoc_is_still_an_opener(tmp_path):
+    """`RUN 3<<EOF` redirects on fd 3 and still opens a heredoc.
+
+    The digits sit between the whitespace and the operator, so a pattern anchored on
+    whitespace-then-`<<` misses it and scans the payload as instructions.
+    """
+    (tmp_path / "Dockerfile-fd").write_text(
+        _THIRD_PARTY_FINAL + "RUN 3<<XEOF\n" + _PINNED_FROM + "XEOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-fd"
+    ], f"`3<<XEOF` must open a heredoc, got {missing}"
+
+
+def test_a_dash_heredoc_with_a_space_after_the_operator_is_still_an_opener(tmp_path):
+    """`RUN <<- EOF` combines both forms and must still open a heredoc."""
+    (tmp_path / "Dockerfile-dashspace").write_text(
+        _THIRD_PARTY_FINAL + "RUN <<- XEOF\n" + _PINNED_FROM + "\tXEOF\n"
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-dashspace"
+    ], f"`<<- XEOF` must open a heredoc, got {missing}"
+
+
+def test_the_escape_parser_directive_changes_the_continuation_character(tmp_path):
+    """The `escape` parser directive makes the backtick continue lines, and the backslash not.
+
+    Reading a backtick-continued `RUN` as a completed instruction leaves the `FROM` under it
+    looking like a build stage, so a third-party final stage is hidden behind an a2rchi one.
+    """
+    (tmp_path / "Dockerfile-escape").write_text(
+        "# escape=`\n" + _THIRD_PARTY_FINAL + "RUN echo hello `\n" + _PINNED_FROM
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-escape"
+    ], f"a backtick continuation must be honored under `# escape=`, got {missing}"
+
+
+def test_the_escape_directive_is_only_read_at_the_top_of_the_file(tmp_path):
+    """Docker stops looking for parser directives at the first comment or instruction.
+
+    An `# escape=` line below a `FROM` is an ordinary comment, so the backslash is still the
+    continuation character: the `FROM` under `RUN echo hello \\` is continuation text, the
+    a2rchi builder remains the final stage, and the template is covered.
+
+    Honoring the late directive would make the backslash an ordinary character, promote that
+    continuation line to a stage, and refuse a template that is in fact correctly based.
+    """
+    (tmp_path / "Dockerfile-late").write_text(
+        _PINNED_FROM.rstrip("\n")
+        + " AS builder\n# escape=`\nRUN echo hello \\\n"
+        + _THIRD_PARTY_FINAL
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert (
+        not missing
+    ), f"a late `# escape=` must not change the continuation character, got {missing}"
+
+
+def test_the_syntax_directive_does_not_stop_the_escape_directive_being_read(tmp_path):
+    """`# syntax=` precedes `# escape=` in every real template; both are parser directives.
+
+    Stopping at the first directive would silently fall back to the backslash on exactly the
+    files this repo ships.
+    """
+    (tmp_path / "Dockerfile-both").write_text(
+        "# syntax=docker/dockerfile:1\n# escape=`\n"
+        + _THIRD_PARTY_FINAL
+        + "RUN echo hello `\n"
+        + _PINNED_FROM
+    )
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-both"
+    ], f"`# escape=` after `# syntax=` must still be read, got {missing}"
+
+
+def test_heredoc_delimiters_are_consumed_in_declaration_order(tmp_path):
+    """Docker feeds the payloads in the order the instruction declares them.
+
+    Consuming `TWO` first would end the skip early and expose `ONE`'s remaining lines.
+    """
+    (tmp_path / "Dockerfile-order").write_text(
+        _PINNED_FROM
+        + "RUN <<ONE <<TWO\nTWO\n"
+        + _THIRD_PARTY_FINAL
+        + "ONE\necho after\nTWO\n"
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+def test_a_platform_flag_on_from_does_not_hide_the_base_image(tmp_path):
+    """`FROM --platform=$BUILDPLATFORM <image>` is a supported form, not an unknown base.
+
+    The repository's own rewriter recognizes it
+    (`scripts/dev/update_service_base_images.py:105`), so a preflight that reads the flag as
+    the image name refuses a template the rest of the toolchain supports.
+    """
+    (tmp_path / "Dockerfile-plat").write_text(
+        "FROM --platform=$BUILDPLATFORM " + _PINNED_FROM.split(maxsplit=1)[1]
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+    assert preflight.base_reference(preflight.PYTHON_BASE, tmp_path) == (
+        _PINNED_FROM.split()[1]
+    )
+
+
+def test_a_flagged_from_still_yields_its_stage_alias(tmp_path):
+    """The flag must not swallow the `AS <alias>` that follows the reference."""
+    (tmp_path / "Dockerfile-plat").write_text(
+        "FROM --platform=$BUILDPLATFORM "
+        + _PINNED_FROM.split()[1]
+        + " AS build\nRUN pip wheel .\nFROM build\n"
+    )
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+# --- Nightly review round 1 (PR #387): two silent passes in the instruction walk ---------
+
+
+def test_a_comment_inside_a_continuation_does_not_end_the_continuation(tmp_path):
+    """Docker removes a full-line comment *before* it joins a continuation.
+
+    `RUN echo x \\`, a comment, then `FROM <a2rchi base>` is one `RUN` instruction to
+    Docker, so the template's final stage is the third-party image above it. Ending the
+    continuation at the comment promotes that `FROM` to a build stage and marks the
+    template covered -- a silent pass that ships an image the preflight never probed,
+    which is the one thing this module may not do.
+    """
+    (tmp_path / "Dockerfile-comment-continuation").write_text(
+        _THIRD_PARTY_FINAL + "RUN echo x \\\n# an ordinary comment\n" + _PINNED_FROM
+    )
+
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-comment-continuation"
+    ], f"a comment must not end a continuation and expose the next line, got {missing}"
+
+
+def test_a_comment_inside_a_continuation_cannot_open_a_heredoc(tmp_path):
+    """The removed comment is not shell text, so a `<<EOF` inside it opens nothing.
+
+    Reading it as an opener blanks every instruction after it up to a delimiter that never
+    arrives, which fails the whole template closed for a line Docker discarded.
+    """
+    (tmp_path / "Dockerfile-comment-heredoc").write_text(
+        _PINNED_FROM.rstrip("\n")
+        + " AS builder\nRUN echo x \\\n# Example: RUN <<EOF\nRUN true\n"
+        + _PINNED_FROM
+    )
+
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+def test_an_empty_line_inside_a_continuation_does_not_end_the_continuation(tmp_path):
+    """Docker joins across an empty continuation line; `NoEmptyContinuation` is a warning.
+
+    `RUN echo x \\`, an empty line, then `FROM <a2rchi base>` is one `RUN` to Docker.
+    Measured with `docker build --check` (Docker 29.5.1, `docker/dockerfile:1`): only the
+    third-party stage above loads metadata and the `FROM` below is swallowed. Ending the
+    continuation at the empty line promotes that `FROM` to a build stage and marks the
+    template covered, so the image that actually ships is never probed.
+    """
+    (tmp_path / "Dockerfile-empty-continuation").write_text(
+        _THIRD_PARTY_FINAL + "RUN echo x \\\n\n" + _PINNED_FROM
+    )
+
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-empty-continuation"
+    ], f"an empty line must not end a continuation and expose the next line, got {missing}"
+
+
+def test_a_whitespace_only_line_inside_a_continuation_does_not_end_it(tmp_path):
+    """Docker swallows a whitespace-only line the same way, not as the joined text.
+
+    Measured on the same frontend: `RUN echo x \\`, a line of three spaces, then a `FROM`
+    naming an unresolvable registry warns `NoEmptyContinuation` and never resolves it.
+    """
+    (tmp_path / "Dockerfile-blank-continuation").write_text(
+        _THIRD_PARTY_FINAL + "RUN echo x \\\n   \n" + _PINNED_FROM
+    )
+
+    assert preflight.templates_missing_base_reference(tmp_path) == [
+        tmp_path / "Dockerfile-blank-continuation"
+    ]
+
+
+def test_an_empty_line_inside_a_heredoc_payload_does_not_end_the_payload(tmp_path):
+    """The empty-line rule is the continuation's alone -- a payload ends at its delimiter.
+
+    This is the edge the continuation fix could plausibly break. An empty line inside
+    `RUN <<EOF` keeps the payload open, so an a2rchi-looking `FROM` below it stays shell
+    text and the third-party stage above it is still what ships.
+    """
+    (tmp_path / "Dockerfile-heredoc-empty-line").write_text(
+        _THIRD_PARTY_FINAL + "RUN <<EOF\necho a\n\n" + _PINNED_FROM + "EOF\n"
+    )
+
+    assert preflight.templates_missing_base_reference(tmp_path) == [
+        tmp_path / "Dockerfile-heredoc-empty-line"
+    ]
+
+
+def test_an_onbuild_wrapped_instruction_still_opens_its_heredoc(tmp_path):
+    """`ONBUILD` takes another instruction as its argument, heredoc and all.
+
+    Measured with `docker build --check` (Docker 29.5.1, `docker/dockerfile:1`) for each of
+    the three wrappers: a `FROM` naming an unresolvable registry inside an `ONBUILD RUN`,
+    `ONBUILD COPY` or `ONBUILD ADD` payload is never resolved, so Docker read it as payload
+    and the third-party stage above it is what ships. Requiring a bare `RUN|COPY|ADD` left
+    the payload scanned as instructions, so the a2rchi-looking `FROM` inside it became the
+    final stage and the template read as covered -- a silent pass.
+    """
+    for wrapper in ("RUN", "COPY", "ADD"):
+        name = f"Dockerfile-onbuild-{wrapper.lower()}"
+        (tmp_path / name).write_text(
+            _THIRD_PARTY_FINAL + f"ONBUILD {wrapper} <<EOF\n" + _PINNED_FROM + "EOF\n"
+        )
+
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-onbuild-add",
+        tmp_path / "Dockerfile-onbuild-copy",
+        tmp_path / "Dockerfile-onbuild-run",
+    ], f"an ONBUILD-wrapped payload must not be scanned as instructions, got {missing}"
+
+
+def test_an_onbuild_wrapper_that_cannot_open_a_heredoc_opens_nothing(tmp_path):
+    """The `ONBUILD` allowance stops at the instructions that take a heredoc.
+
+    `ONBUILD LABEL note="RUN <<EOF"` is one label whose value happens to contain `<<EOF`.
+    Measured on the same frontend: the `FROM` below it *is* resolved, so it is a real stage.
+    Treating every `ONBUILD` line as a potential opener would blank the rest of the file
+    hunting a delimiter that never comes and fail a working template closed.
+    """
+    (tmp_path / "Dockerfile-onbuild-label").write_text(
+        _THIRD_PARTY_FINAL + 'ONBUILD LABEL note="RUN <<EOF"\n' + _PINNED_FROM
+    )
+
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+def test_a_numeric_heredoc_delimiter_is_still_an_opener(tmp_path):
+    """Docker's heredoc delimiter is any word, digits included -- `RUN cat <<123`.
+
+    A delimiter pattern that demands a leading letter leaves the payload scanned as
+    instructions, so an a2rchi-looking `FROM` inside shell text hides the third-party
+    final stage above it and the template reads as covered.
+    """
+    (tmp_path / "Dockerfile-numeric-heredoc").write_text(
+        _THIRD_PARTY_FINAL + "RUN cat <<123\n" + _PINNED_FROM + "123\n"
+    )
+
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-numeric-heredoc"
+    ], f"a numeric heredoc delimiter must open a payload, got {missing}"
+
+
+def test_a_punctuated_heredoc_delimiter_is_still_an_opener(tmp_path):
+    """`RUN cat <<EOF.txt` is a real heredoc -- Docker's delimiter is a whole word.
+
+    Verified against `docker build --check` (Docker 29.5.1, `docker/dockerfile:1`): the
+    payload under it is swallowed, so a delimiter class that stops at the dot leaves that
+    payload scanned as instructions and lets a supported-looking `FROM` inside it hide the
+    third-party final stage above.
+    """
+    (tmp_path / "Dockerfile-dotted").write_text(
+        _THIRD_PARTY_FINAL + "RUN cat <<EOF.txt\n" + _PINNED_FROM + "EOF.txt\n"
+    )
+
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-dotted"
+    ], f"a punctuated heredoc delimiter must open a payload, got {missing}"
+
+
+def test_a_quoted_punctuated_heredoc_delimiter_is_still_an_opener(tmp_path):
+    """Docker strips the quotes, so `<<"EOF.txt"` is terminated by a bare `EOF.txt`."""
+    (tmp_path / "Dockerfile-dotted-quoted").write_text(
+        _THIRD_PARTY_FINAL + 'RUN cat <<"EOF.txt"\n' + _PINNED_FROM + "EOF.txt\n"
+    )
+
+    missing = preflight.templates_missing_base_reference(tmp_path)
+    assert missing == [
+        tmp_path / "Dockerfile-dotted-quoted"
+    ], f"a quoted punctuated delimiter must open a payload, got {missing}"
+
+
+def test_a_quoted_delimiter_does_not_swallow_the_closing_quote(tmp_path):
+    """The terminator Docker matches is the *unquoted* word, so the tag must exclude quotes.
+
+    Carrying the closing quote into the delimiter leaves it unterminated, which fails a
+    correct template closed instead of reading its real final stage.
+    """
+    (tmp_path / "Dockerfile-quoted-plain").write_text(
+        _PINNED_FROM.rstrip("\n")
+        + ' AS builder\nRUN cat <<"EOF"\nsome payload\nEOF\n'
+        + _PINNED_FROM
+    )
+
+    assert preflight.templates_missing_base_reference(tmp_path) == []
+
+
+def _recorded_checkout(tmp_path):
+    """A checkout shaped like the one `copy_source_code()` ships from.
+
+    It copies `src`, `pyproject.toml` and `LICENSE` from the recorded root
+    (`templates_manager.py:1201-1205`), so a checkout the preflight accepts must carry
+    all three plus the dockerfiles directory.
+    """
+    checkout = tmp_path / "checkout"
+    checkout.joinpath("src", "cli", "templates", "dockerfiles").mkdir(parents=True)
+    (checkout / "pyproject.toml").write_text('[project]\nname = "archi"\n')
+    (checkout / "LICENSE").write_text("MIT\n")
+    return checkout
+
+
+def test_the_default_template_dir_is_the_checkout_the_build_ships_from(
+    tmp_path, monkeypatch
+):
+    """The preflight must read the Dockerfile the build will actually use.
+
+    `base-compose.yaml:675` builds the benchmarking service from
+    `archi_code/cli/templates/dockerfiles/...`, and `archi_code` is what
+    `TemplateManager.copy_source_code()` fills by copying `src` from the *recorded
+    checkout* (`templates_manager.py:1191-1193`). Under a non-editable `pip install .`
+    the installed module -- which is what `TEMPLATE_DIR` is derived from -- is a
+    different tree. Checking the installed copy and then building the checkout's copy
+    is the fail-open this module exists to remove: the preflight passes, `--force`
+    removes the runtime, and the build fails on the base nobody probed.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    dockerfiles = checkout.joinpath("src", "cli", "templates", "dockerfiles")
+    (dockerfiles / "Dockerfile-only-in-the-checkout").write_text(_PINNED_FROM)
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    assert preflight.build_template_dir() == dockerfiles
+    assert [p.name for p in preflight.service_templates()] == [
+        "Dockerfile-only-in-the-checkout"
+    ], "service_templates() must read the recorded checkout, not the installed package"
+
+
+def test_the_default_template_dir_falls_back_to_the_installed_package(
+    tmp_path, monkeypatch
+):
+    """An editable install records no checkout path, and that is not an error.
+
+    `_repository_info` is generated by `setup.py` at install time and is absent from
+    the working tree, so `_recorded_repo_root()` raises there. The installed template
+    dir is then the tree the build ships from too, so it is the right answer.
+    """
+    from src.cli.managers import source_version
+
+    def _no_recorded_checkout():
+        raise ModuleNotFoundError("no module named 'src.cli.utils._repository_info'")
+
+    monkeypatch.setattr(source_version, "_recorded_repo_root", _no_recorded_checkout)
+
+    assert preflight.build_template_dir() == preflight.TEMPLATE_DIR
+
+
+def test_a_recorded_checkout_that_is_gone_refuses_instead_of_falling_back(
+    tmp_path, monkeypatch
+):
+    """A recorded checkout the operator deleted must refuse, not fall back.
+
+    Falling back to the installed templates here is a fail-open, and the worst kind:
+    it establishes nothing about the build, because the build does not read them.
+    `_stage_source_copy` (`templates_manager.py:704`) calls `copy_source_code()`, which
+    copies from this same recorded checkout and raises `FileNotFoundError` when its
+    `src` tree is absent (`templates_manager.py:1217-1220`) -- and that stage runs
+    *below* the teardown (`cli_main.py:906` then `:923`). So the fallback would pass the
+    preflight, `--force` would destroy the operator's runtime, and the deploy would
+    then die copying a checkout that is not there. Refusing first is the whole point of
+    this module.
+    """
+    from src.cli.managers import source_version
+
+    deleted = tmp_path / "deleted"
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: deleted)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_template_dir()
+
+    assert str(deleted) in str(
+        excinfo.value
+    ), "the refusal must name the checkout it could not read, so the operator can act"
+
+
+def test_a_recorded_checkout_missing_what_the_source_copy_needs_refuses(
+    tmp_path, monkeypatch
+):
+    """A partially present checkout must refuse too, not pass on its Dockerfiles alone.
+
+    `is_dir()` on the dockerfiles directory is not enough: a checkout can hold a
+    complete template tree and still be missing something `copy_source_code()` demands.
+    It copies `src`, `pyproject.toml` and `LICENSE` (`templates_manager.py:1201-1205`)
+    and raises on any one of them, below the teardown. So the preflight refuses unless
+    all three are readable.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    (checkout / "pyproject.toml").unlink()
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_template_dir()
+
+    assert "pyproject.toml" in str(
+        excinfo.value
+    ), "the refusal must name what was missing, not just that something was"
+
+
+def test_a_recorded_checkout_whose_template_dir_is_a_file_refuses(
+    tmp_path, monkeypatch
+):
+    """A non-directory at the template path is a broken checkout, not a fallback cue."""
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    dockerfiles = checkout.joinpath("src", "cli", "templates", "dockerfiles")
+    shutil.rmtree(dockerfiles)
+    dockerfiles.write_text("not a directory\n")
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    with pytest.raises(preflight.BaseImagePreflightError):
+        preflight.build_template_dir()
+
+
+def test_build_template_dir_outranks_a_patched_template_dir(tmp_path, monkeypatch):
+    """`build_template_dir()` is the seam, and `TEMPLATE_DIR` alone is not.
+
+    This precedence is deliberate -- the recorded checkout is the tree the build
+    ships from -- but it is invisible, and it bit exactly once: two ordering
+    tests in `test_cli_create_dev_smoke.py` patched `TEMPLATE_DIR` and passed in
+    a bare worktree (no `_repository_info`, so the fallback returned the patched
+    constant) while failing in CI, where `pip install .` writes
+    `_repository_info` and the recorded checkout wins. They did not merely fail
+    there; the refusal never fired at all, so the tests were vacuous.
+
+    Pinning the precedence here means a future reader patching the constant
+    finds this test instead of an hour of local-versus-CI divergence.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    dockerfiles = checkout.joinpath("src", "cli", "templates", "dockerfiles")
+    (dockerfiles / "Dockerfile-from-the-checkout").write_text(_PINNED_FROM)
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    ignored = tmp_path / "ignored"
+    ignored.mkdir()
+    (ignored / "Dockerfile-from-the-patched-constant").write_text(_PINNED_FROM)
+    monkeypatch.setattr(preflight, "TEMPLATE_DIR", ignored)
+
+    assert [p.name for p in preflight.service_templates()] == [
+        "Dockerfile-from-the-checkout"
+    ], "the recorded checkout must win; patch build_template_dir to override it"
+
+    monkeypatch.setattr(preflight, "build_template_dir", lambda: ignored)
+    assert [p.name for p in preflight.service_templates()] == [
+        "Dockerfile-from-the-patched-constant"
+    ], "patching the resolver is the supported override"
+
+
+def test_the_python_floor_is_read_from_the_checkout_the_dockerfiles_came_from(
+    tmp_path, monkeypatch
+):
+    """One recorded root answers both questions, or the preflight passes on an assumption.
+
+    `build_template_dir()` reads the Dockerfiles from the recorded checkout, but
+    `declared_python_floor()` resolved `pyproject.toml` from *this module's* location
+    (`_source_pyproject`) and fell through to the installed distribution's metadata.
+    Under a non-editable `pip install .` those are different trees, and the metadata is
+    frozen at install time. So an operator who raises `requires-python` in the checkout
+    after installing got a preflight that read the checkout's Dockerfiles against the
+    *installed* floor: a Python 3.11 base passed, `--force` tore down the working
+    deployment, and the `pip install .` from the copied checkout then rejected the
+    interpreter (fasrc/archi#436 review).
+
+    Both arms below are driven by the temporary checkout's own `pyproject.toml`, so this
+    test does not depend on what the running environment's metadata happens to declare.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    dockerfiles = checkout.joinpath("src", "cli", "templates", "dockerfiles")
+    (dockerfiles / "Dockerfile-chat").write_text(_PINNED_FROM)
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    (checkout / "pyproject.toml").write_text(
+        '[project]\nname = "archi"\nrequires-python = ">=3.99"\n'
+    )
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.enforce_base_images(
+            _Plan(), probe=FakeProbe(present=(), version="Python 3.11.9")
+        )
+    assert "3.99" in str(
+        excinfo.value
+    ), "the floor must come from the recorded checkout, not the installed metadata"
+
+    (checkout / "pyproject.toml").write_text(
+        '[project]\nname = "archi"\nrequires-python = ">=3.0"\n'
+    )
+    outcomes = preflight.enforce_base_images(
+        _Plan(), probe=FakeProbe(present=(), version="Python 3.11.9")
+    )
+    assert all(
+        o.verdict is preflight.Verdict.AVAILABLE for o in outcomes
+    ), "the same checkout with a floor the image meets must pass"
+
+
+def test_an_explicit_template_dir_does_not_drag_in_the_recorded_pyproject(
+    tmp_path, monkeypatch
+):
+    """A caller that pins the tree pins both halves of it.
+
+    `template_dir` and `pyproject_path` are the two seams a caller uses to say "check
+    *this* tree". Defaulting the pyproject to the recorded checkout while honouring an
+    explicitly passed `template_dir` would recreate the very split this fix closes, just
+    with the trees swapped -- so the recorded-checkout default applies only when the
+    caller left both to the resolver.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    (checkout / "pyproject.toml").write_text(
+        '[project]\nname = "archi"\nrequires-python = ">=3.99"\n'
+    )
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    pinned = tmp_path / "pinned"
+    pinned.mkdir()
+    (pinned / "Dockerfile-chat").write_text(_PINNED_FROM)
+
+    outcomes = preflight.enforce_base_images(
+        _Plan(),
+        probe=FakeProbe(present=(), version="Python 3.11.9"),
+        template_dir=pinned,
+    )
+
+    assert all(
+        o.verdict is preflight.Verdict.AVAILABLE for o in outcomes
+    ), "an explicit template_dir must not pull the floor from the recorded checkout"
+
+
+def test_build_pyproject_path_is_none_without_a_recorded_checkout(monkeypatch):
+    """No recorded checkout means no override, and `declared_python_floor` keeps its order.
+
+    Returning `TEMPLATE_DIR`'s sibling here instead would make the resolver assert a
+    `pyproject.toml` that a site-packages install does not ship, turning the documented
+    metadata fallback into a hard failure on every `archi create`.
+    """
+    from src.cli.managers import source_version
+
+    def _no_recorded_checkout():
+        raise ModuleNotFoundError("no module named 'src.cli.utils._repository_info'")
+
+    monkeypatch.setattr(source_version, "_recorded_repo_root", _no_recorded_checkout)
+
+    assert preflight.build_pyproject_path() is None
+
+
+def test_a_package_root_that_cannot_ship_its_source_refuses_too(tmp_path, monkeypatch):
+    """ "No checkout recorded" must be established, not assumed.
+
+    Round 3 taught the source copy to fall back to the package root, and taught this
+    module to accept `TEMPLATE_DIR` when no checkout is recorded. Together those close
+    the common case -- archi run from a source tree that was never installed, where the
+    package root really is the build tree. They leave one hole, found by attacking the
+    fix rather than by a reviewer: the fallback root is accepted *without being checked*.
+
+    Under a site-packages install whose `_repository_info` is absent, `TEMPLATE_DIR`
+    exists (the templates ship inside the package) while `pyproject.toml` and `LICENSE`
+    do not. So the preflight passed on templates it could read, `--force` removed the
+    runtime, and `copy_source_code` then raised on the very first path it could not find
+    -- the same teardown-then-fail, one branch over.
+
+    The governing invariant of this module admits no third option: establish, refuse, or
+    say out loud that it could not tell. Accepting an unverified root is none of those.
+    """
+    hollow = tmp_path / "site-packages"
+    hollow.joinpath("src", "cli", "templates", "dockerfiles").mkdir(parents=True)
+    monkeypatch.setattr(preflight, "PACKAGE_ROOT", hollow)
+
+    def _no_recorded_checkout():
+        raise ModuleNotFoundError("no module named 'src.cli.utils._repository_info'")
+
+    from src.cli.managers import source_version
+
+    monkeypatch.setattr(source_version, "_recorded_repo_root", _no_recorded_checkout)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_template_dir()
+
+    message = str(excinfo.value)
+    assert "pyproject.toml" in message and "LICENSE" in message, (
+        "the refusal must name every path the source copy will need, so the operator "
+        f"can act on it. got: {message}"
+    )
+    assert str(hollow) in message, "the refusal must name the root it judged"
+
+
+def test_a_complete_package_root_is_still_accepted_without_a_recorded_checkout(
+    monkeypatch,
+):
+    """The verification must not break the case it is guarding.
+
+    An archi run from a source tree that was never installed has no `_repository_info`
+    and a package root carrying `src`, `pyproject.toml` and `LICENSE` -- the shape this
+    repository itself has. That must keep resolving to `TEMPLATE_DIR`, or the new check
+    refuses every such run instead of the broken one.
+    """
+    from src.cli.managers import source_version
+
+    def _no_recorded_checkout():
+        raise ModuleNotFoundError("no module named 'src.cli.utils._repository_info'")
+
+    monkeypatch.setattr(source_version, "_recorded_repo_root", _no_recorded_checkout)
+
+    assert preflight.build_template_dir() == preflight.TEMPLATE_DIR
+    assert preflight.build_pyproject_path() is None
+
+
+def test_the_package_root_is_the_root_template_dir_is_derived_from(monkeypatch):
+    """`PACKAGE_ROOT` and `TEMPLATE_DIR` are two derivations that must not drift.
+
+    If they disagree, the check above judges one tree and the preflight then reads
+    another -- which is the failure this whole review round is about, reintroduced at
+    the level of the guard.
+    """
+    assert (
+        preflight.PACKAGE_ROOT.joinpath(*preflight._TEMPLATE_SUBPATH).resolve()
+        == preflight.TEMPLATE_DIR.resolve()
+    )

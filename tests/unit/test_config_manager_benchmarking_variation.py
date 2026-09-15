@@ -39,9 +39,9 @@ def test_configs_differing_only_in_benchmarking_load():
     mgr = _manager()
     base = _base_config()
     variant = copy.deepcopy(base)
-    variant["services"]["benchmarking"]["agent_md_file"] = (
-        "config/agents/archive/fasrc-cannon-v2-lean.md"
-    )
+    variant["services"]["benchmarking"][
+        "agent_md_file"
+    ] = "config/agents/archive/fasrc-cannon-v2-lean.md"
     variant["services"]["benchmarking"]["name"] = "fasrc-cannon-v2-lean"
 
     mgr._append(base)
@@ -57,7 +57,9 @@ def test_differing_global_still_rejected():
     variant["global"]["DATA_PATH"] = "/somewhere/else/"
 
     mgr._append(base)
-    with pytest.raises(ValueError, match="must be consistent across all configurations"):
+    with pytest.raises(
+        ValueError, match="must be consistent across all configurations"
+    ):
         mgr._append(variant)
 
 
@@ -69,7 +71,9 @@ def test_differing_non_benchmarking_service_still_rejected():
     variant["services"]["chat_app"]["default_model"] = "different-model"
 
     mgr._append(base)
-    with pytest.raises(ValueError, match="must be consistent across all configurations"):
+    with pytest.raises(
+        ValueError, match="must be consistent across all configurations"
+    ):
         mgr._append(variant)
 
 

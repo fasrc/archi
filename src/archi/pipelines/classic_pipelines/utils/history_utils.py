@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.utils.config_access import get_global_config
 
+
 def stringify_history(chat_history: List[Tuple[str, str]]) -> str:
     """
     Format chat history from a list of tuples
@@ -11,7 +12,7 @@ def stringify_history(chat_history: List[Tuple[str, str]]) -> str:
     """
     if chat_history is None or type(chat_history) is not list:
         return chat_history
-    
+
     buffer = ""
     roles = get_global_config().get("ROLES", [])
     for dialogue in chat_history:
@@ -21,14 +22,14 @@ def stringify_history(chat_history: List[Tuple[str, str]]) -> str:
             buffer += identity + ": " + message + "\n"
         else:
             raise ValueError(
-                "Error loading the chat history. Possible causes: " + 
-                f"Unsupported chat history format: {type(dialogue)}."
+                "Error loading the chat history. Possible causes: "
+                + f"Unsupported chat history format: {type(dialogue)}."
                 f"Unsupported role: {dialogue[0]}."
-
                 f" Full chat history: {chat_history} "
             )
 
     return buffer
+
 
 def tuplize_history(chat_history: str) -> List[Tuple[str, str]]:
     """
@@ -37,12 +38,14 @@ def tuplize_history(chat_history: str) -> List[Tuple[str, str]]:
     """
     if chat_history is None or type(chat_history) is not str or len(chat_history) == 0:
         return chat_history
-    
+
     roles = get_global_config().get("ROLES", [])
     history = []
     for line in chat_history.strip().splitlines():
         if ": " not in line:
-            raise ValueError(f"Line does not contain valid format 'role: message': {line}")
+            raise ValueError(
+                f"Line does not contain valid format 'role: message': {line}"
+            )
         role, message = line.split(": ", 1)
         if role not in roles:
             raise ValueError(f"Unsupported role: {role}. Full line: {line}")

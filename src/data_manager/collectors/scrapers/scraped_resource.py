@@ -1,8 +1,8 @@
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Dict, Union, List, Optional
 import hashlib
 import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 from src.data_manager.collectors.resource_base import BaseResource
@@ -47,7 +47,9 @@ class ScrapedResource(BaseResource):
         return self.content
 
     def get_metadata(self) -> ResourceMetadata:
-        extra = {str(k): str(v) for k, v in (self.metadata or {}).items() if k != "file_name"}
+        extra = {
+            str(k): str(v) for k, v in (self.metadata or {}).items() if k != "file_name"
+        }
         extra.setdefault("url", self.url)
         extra.setdefault("suffix", self.suffix)
         extra.setdefault("source_type", self.source_type)
@@ -57,12 +59,12 @@ class ScrapedResource(BaseResource):
         if display_name:
             extra["display_name"] = str(display_name)
         return ResourceMetadata(file_name=self.get_filename(), extra=extra)
-    
+
     @staticmethod
     def _format_link_display(link: str) -> str:
         parsed_link = urlparse(link)
         display_name = parsed_link.hostname or link
-        if parsed_link.path and parsed_link.path != '/':
+        if parsed_link.path and parsed_link.path != "/":
             display_name += f"/{parsed_link.path.strip('/')}"
         return display_name
 
@@ -74,13 +76,16 @@ class ScrapedResource(BaseResource):
             return None
         return rel_path
 
+
 @dataclass
 class BrowserIntermediaryResult:
-    """ 
+    """
     this class is meant to provide a layer of abstraction for browser based scrapers (i.e selenium)
-    it will format everything into a single class so that more complicated scraping results which may hit 
-    multiple tabs or pages at once can be handled in a uniform way by the LinkScraper class. 
+    it will format everything into a single class so that more complicated scraping results which may hit
+    multiple tabs or pages at once can be handled in a uniform way by the LinkScraper class.
     """
 
-    artifacts: List[Dict] # list of scraper results for each page produced by a seelnium navigation
-    links: List[str] # links reached
+    artifacts: List[
+        Dict
+    ]  # list of scraper results for each page produced by a seelnium navigation
+    links: List[str]  # links reached

@@ -24,17 +24,17 @@ logger = get_logger(__name__)
 @dataclass
 class DocumentSelection:
     """Document selection state for a document."""
-    
+
     document_id: int
     resource_hash: str
     display_name: str
     source_type: str
-    
+
     # Selection state at each tier
     system_default: bool = True  # Always True (system default = enabled)
     user_default: Optional[bool] = None  # None = use system default
     conversation_override: Optional[bool] = None  # None = use user/system default
-    
+
     # Computed effective state
     @property
     def enabled(self) -> bool:
@@ -49,12 +49,12 @@ class DocumentSelection:
 class DocumentSelectionService:
     """
     Service for managing document selection in the 3-tier system.
-    
+
     Tier precedence (highest to lowest):
     1. Conversation override (per-conversation setting)
     2. User default (user's global preference)
     3. System default (all documents enabled)
-    
+
     Example:
         >>> service = DocumentSelectionService(pg_config)
         >>> # Disable a document globally for a user
@@ -64,18 +64,20 @@ class DocumentSelectionService:
         >>> # Get effective document set for search
         >>> enabled_ids = service.get_enabled_document_ids(user_id, conversation_id)
     """
-    
-    def __init__(self, pg_config: Optional[Dict[str, Any]] = None, *, connection_pool=None):
+
+    def __init__(
+        self, pg_config: Optional[Dict[str, Any]] = None, *, connection_pool=None
+    ):
         """
         Initialize DocumentSelectionService.
-        
+
         Args:
             pg_config: PostgreSQL connection parameters (fallback)
             connection_pool: ConnectionPool instance (preferred)
         """
         self._pool = connection_pool
         self._pg_config = pg_config
-    
+
     def _get_connection(self) -> psycopg2.extensions.connection:
         """Get a database connection."""
         if self._pool:
@@ -84,18 +86,18 @@ class DocumentSelectionService:
             return psycopg2.connect(**self._pg_config)
         else:
             raise ValueError("No connection pool or pg_config provided")
-    
+
     def _release_connection(self, conn) -> None:
         """Release connection back to pool or close it."""
         if self._pool:
             self._pool.release_connection(conn)
         else:
             conn.close()
-    
+
     # =========================================================================
     # User Document Defaults
     # =========================================================================
-    
+
     def get_user_defaults(
         self,
         user_id: str,
@@ -104,14 +106,14 @@ class DocumentSelectionService:
     ) -> List[DocumentSelection]:
         """
         Get user's document default selections.
-        
+
         Implements: GET user document defaults
-        
+
         Args:
             user_id: The user's ID
             include_enabled: If True, include documents with no explicit setting
                            (showing system default = enabled)
-                           
+
         Returns:
             List of DocumentSelection objects
         """
@@ -134,7 +136,7 @@ class DocumentSelectionService:
                         WHERE d.is_deleted = FALSE
                         ORDER BY d.display_name
                         """,
-                        (user_id,)
+                        (user_id,),
                     )
                 else:
                     # Only return documents with explicit user settings
@@ -152,11 +154,11 @@ class DocumentSelectionService:
                         WHERE d.is_deleted = FALSE
                         ORDER BY d.display_name
                         """,
-                        (user_id,)
+                        (user_id,),
                     )
-                
+
                 rows = cursor.fetchall()
-                
+
                 return [
                     DocumentSelection(
                         document_id=row["document_id"],
@@ -169,7 +171,7 @@ class DocumentSelectionService:
                 ]
         finally:
             self._release_connection(conn)
-    
+
     def set_user_default(
         self,
         user_id: str,
@@ -178,17 +180,17 @@ class DocumentSelectionService:
     ) -> DocumentSelection:
         """
         Set user's default selection for a document.
-        
+
         Implements: PUT user document default
-        
+
         Args:
             user_id: The user's ID
             document_id: The document ID
             enabled: Whether the document should be enabled by default
-            
+
         Returns:
             Updated DocumentSelection
-            
+
         Raises:
             ValueError: If document not found
         """
@@ -204,9 +206,9 @@ class DocumentSelectionService:
                         enabled = EXCLUDED.enabled,
                         updated_at = NOW()
                     """,
-                    (user_id, document_id, enabled)
+                    (user_id, document_id, enabled),
                 )
-                
+
                 # Get document details
                 cursor.execute(
                     """
@@ -214,16 +216,18 @@ class DocumentSelectionService:
                     FROM documents
                     WHERE id = %s AND is_deleted = FALSE
                     """,
-                    (document_id,)
+                    (document_id,),
                 )
                 doc = cursor.fetchone()
                 conn.commit()
-                
+
                 if doc is None:
                     raise ValueError(f"Document not found: {document_id}")
-                
-                logger.debug(f"Set user default: user={user_id}, doc={document_id}, enabled={enabled}")
-                
+
+                logger.debug(
+                    f"Set user default: user={user_id}, doc={document_id}, enabled={enabled}"
+                )
+
                 return DocumentSelection(
                     document_id=doc["id"],
                     resource_hash=doc["resource_hash"],
@@ -233,7 +237,7 @@ class DocumentSelectionService:
                 )
         finally:
             self._release_connection(conn)
-    
+
     def clear_user_default(
         self,
         user_id: str,
@@ -241,11 +245,11 @@ class DocumentSelectionService:
     ) -> bool:
         """
         Clear user's default selection for a document (revert to system default).
-        
+
         Args:
             user_id: The user's ID
             document_id: The document ID
-            
+
         Returns:
             True if a record was deleted
         """
@@ -257,29 +261,29 @@ class DocumentSelectionService:
                     DELETE FROM user_document_defaults
                     WHERE user_id = %s AND document_id = %s
                     """,
-                    (user_id, document_id)
+                    (user_id, document_id),
                 )
                 conn.commit()
                 return cursor.rowcount > 0
         finally:
             self._release_connection(conn)
-    
+
     # =========================================================================
     # Conversation Document Overrides
     # =========================================================================
-    
+
     def get_conversation_overrides(
         self,
         conversation_id: str,
     ) -> List[DocumentSelection]:
         """
         Get conversation-specific document overrides.
-        
+
         Implements: GET conversation document overrides
-        
+
         Args:
             conversation_id: The conversation ID
-            
+
         Returns:
             List of DocumentSelection objects with overrides
         """
@@ -300,11 +304,11 @@ class DocumentSelectionService:
                     WHERE d.is_deleted = FALSE
                     ORDER BY d.display_name
                     """,
-                    (conversation_id,)
+                    (conversation_id,),
                 )
-                
+
                 rows = cursor.fetchall()
-                
+
                 return [
                     DocumentSelection(
                         document_id=row["document_id"],
@@ -317,7 +321,7 @@ class DocumentSelectionService:
                 ]
         finally:
             self._release_connection(conn)
-    
+
     def set_conversation_override(
         self,
         conversation_id: str,
@@ -326,17 +330,17 @@ class DocumentSelectionService:
     ) -> DocumentSelection:
         """
         Set conversation-specific document override.
-        
+
         Implements: PUT conversation document override
-        
+
         Args:
             conversation_id: The conversation ID
             document_id: The document ID
             enabled: Whether the document should be enabled for this conversation
-            
+
         Returns:
             Updated DocumentSelection
-            
+
         Raises:
             ValueError: If document not found
         """
@@ -352,9 +356,9 @@ class DocumentSelectionService:
                         enabled = EXCLUDED.enabled,
                         updated_at = NOW()
                     """,
-                    (conversation_id, document_id, enabled)
+                    (conversation_id, document_id, enabled),
                 )
-                
+
                 # Get document details
                 cursor.execute(
                     """
@@ -362,18 +366,18 @@ class DocumentSelectionService:
                     FROM documents
                     WHERE id = %s AND is_deleted = FALSE
                     """,
-                    (document_id,)
+                    (document_id,),
                 )
                 doc = cursor.fetchone()
                 conn.commit()
-                
+
                 if doc is None:
                     raise ValueError(f"Document not found: {document_id}")
-                
+
                 logger.debug(
                     f"Set conversation override: conv={conversation_id}, doc={document_id}, enabled={enabled}"
                 )
-                
+
                 return DocumentSelection(
                     document_id=doc["id"],
                     resource_hash=doc["resource_hash"],
@@ -383,7 +387,7 @@ class DocumentSelectionService:
                 )
         finally:
             self._release_connection(conn)
-    
+
     def clear_conversation_override(
         self,
         conversation_id: str,
@@ -391,11 +395,11 @@ class DocumentSelectionService:
     ) -> bool:
         """
         Clear conversation-specific override (revert to user/system default).
-        
+
         Args:
             conversation_id: The conversation ID
             document_id: The document ID
-            
+
         Returns:
             True if a record was deleted
         """
@@ -407,17 +411,17 @@ class DocumentSelectionService:
                     DELETE FROM conversation_document_overrides
                     WHERE conversation_id = %s AND document_id = %s
                     """,
-                    (conversation_id, document_id)
+                    (conversation_id, document_id),
                 )
                 conn.commit()
                 return cursor.rowcount > 0
         finally:
             self._release_connection(conn)
-    
+
     # =========================================================================
     # Effective Document Selection (for search queries)
     # =========================================================================
-    
+
     def get_enabled_document_ids(
         self,
         user_id: Optional[str] = None,
@@ -425,15 +429,15 @@ class DocumentSelectionService:
     ) -> Set[int]:
         """
         Get IDs of documents enabled for search using 3-tier precedence.
-        
+
         Implements: Effective selection query
-        
+
         The query uses: COALESCE(conversation_override, user_default, TRUE)
-        
+
         Args:
             user_id: Optional user ID for user default lookup
             conversation_id: Optional conversation ID for override lookup
-            
+
         Returns:
             Set of enabled document IDs
         """
@@ -453,13 +457,13 @@ class DocumentSelectionService:
                     WHERE d.is_deleted = FALSE
                       AND COALESCE(co.enabled, ud.enabled, TRUE) = TRUE
                     """,
-                    (user_id, conversation_id)
+                    (user_id, conversation_id),
                 )
-                
+
                 return {row[0] for row in cursor.fetchall()}
         finally:
             self._release_connection(conn)
-    
+
     def get_enabled_resource_hashes(
         self,
         user_id: Optional[str] = None,
@@ -467,14 +471,14 @@ class DocumentSelectionService:
     ) -> Set[str]:
         """
         Get resource hashes of documents enabled for search.
-        
+
         This is useful when filtering document_chunks by resource_hash
         in the PostgresVectorStore search.
-        
+
         Args:
             user_id: Optional user ID for user default lookup
             conversation_id: Optional conversation ID for override lookup
-            
+
         Returns:
             Set of enabled resource hashes
         """
@@ -494,13 +498,13 @@ class DocumentSelectionService:
                     WHERE d.is_deleted = FALSE
                       AND COALESCE(co.enabled, ud.enabled, TRUE) = TRUE
                     """,
-                    (user_id, conversation_id)
+                    (user_id, conversation_id),
                 )
-                
+
                 return {row[0] for row in cursor.fetchall()}
         finally:
             self._release_connection(conn)
-    
+
     def get_full_selection_state(
         self,
         user_id: str,
@@ -508,13 +512,13 @@ class DocumentSelectionService:
     ) -> List[DocumentSelection]:
         """
         Get full selection state for all documents showing all tiers.
-        
+
         Useful for UI that displays document selection controls.
-        
+
         Args:
             user_id: The user's ID
             conversation_id: Optional conversation ID
-            
+
         Returns:
             List of DocumentSelection objects with full tier information
         """
@@ -538,11 +542,11 @@ class DocumentSelectionService:
                     WHERE d.is_deleted = FALSE
                     ORDER BY d.display_name
                     """,
-                    (user_id, conversation_id)
+                    (user_id, conversation_id),
                 )
-                
+
                 rows = cursor.fetchall()
-                
+
                 return [
                     DocumentSelection(
                         document_id=row["document_id"],
@@ -556,11 +560,11 @@ class DocumentSelectionService:
                 ]
         finally:
             self._release_connection(conn)
-    
+
     # =========================================================================
     # Bulk Operations
     # =========================================================================
-    
+
     def set_user_defaults_bulk(
         self,
         user_id: str,
@@ -568,25 +572,24 @@ class DocumentSelectionService:
     ) -> int:
         """
         Set multiple user defaults at once.
-        
+
         Args:
             user_id: The user's ID
             selections: Dict of {document_id: enabled}
-            
+
         Returns:
             Number of records upserted
         """
         if not selections:
             return 0
-        
+
         conn = self._get_connection()
         try:
             with conn.cursor() as cursor:
                 data = [
-                    (user_id, doc_id, enabled)
-                    for doc_id, enabled in selections.items()
+                    (user_id, doc_id, enabled) for doc_id, enabled in selections.items()
                 ]
-                
+
                 psycopg2.extras.execute_values(
                     cursor,
                     """
@@ -600,12 +603,12 @@ class DocumentSelectionService:
                     template="(%s, %s, %s)",
                 )
                 conn.commit()
-                
+
                 logger.info(f"Bulk set {len(selections)} user defaults for {user_id}")
                 return len(selections)
         finally:
             self._release_connection(conn)
-    
+
     def set_conversation_overrides_bulk(
         self,
         conversation_id: str,
@@ -613,17 +616,17 @@ class DocumentSelectionService:
     ) -> int:
         """
         Set multiple conversation overrides at once.
-        
+
         Args:
             conversation_id: The conversation ID
             selections: Dict of {document_id: enabled}
-            
+
         Returns:
             Number of records upserted
         """
         if not selections:
             return 0
-        
+
         conn = self._get_connection()
         try:
             with conn.cursor() as cursor:
@@ -631,7 +634,7 @@ class DocumentSelectionService:
                     (conversation_id, doc_id, enabled)
                     for doc_id, enabled in selections.items()
                 ]
-                
+
                 psycopg2.extras.execute_values(
                     cursor,
                     """
@@ -645,8 +648,10 @@ class DocumentSelectionService:
                     template="(%s, %s, %s)",
                 )
                 conn.commit()
-                
-                logger.info(f"Bulk set {len(selections)} conversation overrides for {conversation_id}")
+
+                logger.info(
+                    f"Bulk set {len(selections)} conversation overrides for {conversation_id}"
+                )
                 return len(selections)
         finally:
             self._release_connection(conn)

@@ -1,0 +1,5 @@
+# Revisions to ignore in `git blame` (GitHub honors this file automatically;
+# locally run: git config blame.ignoreRevsFile .git-blame-ignore-revs).
+#
+# Tree-wide isort + black normalization — mechanical, no logic changes (#34, PR A / #69).
+4304fa0a7d77250fd1c96d1f0ffab8c54c4e9b2d

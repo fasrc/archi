@@ -62,10 +62,10 @@ DEFAULT_ANTHROPIC_MODELS = [
 
 class AnthropicProvider(BaseProvider):
     """Provider for Anthropic Claude models."""
-    
+
     provider_type = ProviderType.ANTHROPIC
     display_name = "Anthropic"
-    
+
     def __init__(self, config: Optional[ProviderConfig] = None):
         if config is None:
             config = ProviderConfig(
@@ -75,7 +75,7 @@ class AnthropicProvider(BaseProvider):
                 default_model="claude-sonnet-4-20250514",
             )
         super().__init__(config)
-    
+
     def get_chat_model(self, model_name: str, **kwargs) -> ChatAnthropic:
         """Get an Anthropic chat model instance."""
         model_kwargs = {
@@ -84,10 +84,10 @@ class AnthropicProvider(BaseProvider):
             **self.config.extra_kwargs,
             **kwargs,
         }
-        
+
         if self._api_key:
             model_kwargs["api_key"] = self._api_key
-        
+
         # Anthropic requires max_tokens to be set
         if "max_tokens" not in model_kwargs:
             model_info = self.get_model_info(model_name)
@@ -95,9 +95,9 @@ class AnthropicProvider(BaseProvider):
                 model_kwargs["max_tokens"] = model_info.max_output_tokens
             else:
                 model_kwargs["max_tokens"] = 8192
-            
+
         return ChatAnthropic(**model_kwargs)
-    
+
     def list_models(self) -> List[ModelInfo]:
         """List available Anthropic models."""
         if self.config.models:

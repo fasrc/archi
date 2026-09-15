@@ -60,10 +60,10 @@ DEFAULT_GEMINI_MODELS = [
 
 class GeminiProvider(BaseProvider):
     """Provider for Google Gemini models."""
-    
+
     provider_type = ProviderType.GEMINI
     display_name = "Google Gemini"
-    
+
     def __init__(self, config: Optional[ProviderConfig] = None):
         if config is None:
             config = ProviderConfig(
@@ -73,7 +73,7 @@ class GeminiProvider(BaseProvider):
                 default_model="gemini-2.0-flash",
             )
         super().__init__(config)
-    
+
     def get_chat_model(self, model_name: str, **kwargs):
         """Get a Gemini chat model instance."""
         try:
@@ -83,19 +83,19 @@ class GeminiProvider(BaseProvider):
                 "langchain-google-genai is required for Gemini provider. "
                 "Install with: pip install langchain-google-genai"
             )
-        
+
         model_kwargs = {
             "model": model_name,
             "streaming": True,
             **self.config.extra_kwargs,
             **kwargs,
         }
-        
+
         if self._api_key:
             model_kwargs["google_api_key"] = self._api_key
-            
+
         return ChatGoogleGenerativeAI(**model_kwargs)
-    
+
     def list_models(self) -> List[ModelInfo]:
         """List available Gemini models."""
         if self.config.models:

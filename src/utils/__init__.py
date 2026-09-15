@@ -4,6 +4,14 @@ archi utilities module.
 Exports core utility services for PostgreSQL-consolidated architecture.
 """
 
+# Configuration services
+from src.utils.config_service import (
+    ConfigService,
+    ConfigValidationError,
+    DynamicConfig,
+    StaticConfig,
+)
+
 # PostgreSQL connection pooling
 from src.utils.connection_pool import (
     ConnectionPool,
@@ -11,31 +19,17 @@ from src.utils.connection_pool import (
     ConnectionTimeoutError,
 )
 
-# Configuration services
-from src.utils.config_service import (
-    ConfigService,
-    StaticConfig,
-    DynamicConfig,
-    ConfigValidationError,
-)
-
-# User management
-from src.utils.user_service import (
-    UserService,
-    User,
+# Conversation tracking
+from src.utils.conversation_service import (
+    ABComparison,
+    ConversationService,
+    Message,
 )
 
 # Document selection (3-tier system)
 from src.utils.document_selection_service import (
-    DocumentSelectionService,
     DocumentSelection,
-)
-
-# Conversation tracking
-from src.utils.conversation_service import (
-    ConversationService,
-    Message,
-    ABComparison,
+    DocumentSelectionService,
 )
 
 # Service factory
@@ -44,28 +38,33 @@ from src.utils.postgres_service_factory import (
     create_services,
 )
 
+# User management
+from src.utils.user_service import (
+    User,
+    UserService,
+)
+
 __all__ = [
     # Connection pool
-    'ConnectionPool',
-    'ConnectionPoolError', 
-    'ConnectionTimeoutError',
+    "ConnectionPool",
+    "ConnectionPoolError",
+    "ConnectionTimeoutError",
     # Config
-    'ConfigService',
-    'StaticConfig',
-    'DynamicConfig',
-    'ConfigValidationError',
+    "ConfigService",
+    "StaticConfig",
+    "DynamicConfig",
+    "ConfigValidationError",
     # Users
-    'UserService',
-    'User',
+    "UserService",
+    "User",
     # Document selection
-    'DocumentSelectionService',
-    'DocumentSelection',
+    "DocumentSelectionService",
+    "DocumentSelection",
     # Conversations
-    'ConversationService',
-    'Message',
-    'ABComparison',
+    "ConversationService",
+    "Message",
+    "ABComparison",
     # Factory
-    'PostgresServiceFactory',
-    'create_services',
+    "PostgresServiceFactory",
+    "create_services",
 ]
-

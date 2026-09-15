@@ -1,8 +1,8 @@
 [project]
 name = "archi"
-version = "1.2.4"
+version = "2026.8.0"
 description = "An AI Augmented Research Chat Intelligence (archi)"
-requires-python = ">=3.7"
+requires-python = ">=3.11"
 authors = [
     {name="Pietro Lugato", email="pmlugato@mit.edu"},
     {name="Julius Heitkoetter", email="juliush@mit.edu"},
@@ -20,6 +20,13 @@ dependencies = [
     "podman-compose==1.4.0",
     "python-dotenv>=0.19.0",
     "mkdocs==1.6.1",
+    # glossary: docs/mkdocs.yml enables the `pymdownx.snippets` extension (acronym
+    # tooltips auto-appended to every page). It ships in pymdown-extensions, which
+    # reaches the PR-preview build only transitively via mkdocs-material in
+    # requirements-base.txt. The deploy-docs workflow builds with `pip install .`
+    # (no requirements-base), so it MUST be declared here or `mkdocs build --strict`
+    # aborts with ModuleNotFoundError: pymdownx. Version matches requirements-base.txt.
+    "pymdown-extensions==11.0.1",
     "ipykernel==6.30.1",
     "ipython==8.18.0",
     "matplotlib==3.9.4",
@@ -34,7 +41,49 @@ dependencies = [
     # in requirements/requirements-base.txt (which the gate/CI and base-image build
     # use). Versions match requirements-base.txt.
     "llama-index-core==0.14.19",
-    "flashrank==0.2.10"
+    "flashrank==0.2.10",
+    # port-live-eval-trial: the QA evaluator (src/evaluation/qa/) imports the mcp
+    # SDK directly (ClientSession, stdio/streamable-http clients) and streams
+    # Dataset V2 files with ijson. Deployment images install via `pip install .`,
+    # so both MUST be declared here. Versions match requirements-base.txt.
+    "mcp==1.27.2",
+    "ijson==3.5.1",
+    # html-markdown-categorize-ingest: HTML->Markdown conversion at the persist
+    # seam. Built on the already-present beautifulsoup4. Pin matches
+    # requirements/requirements-base.txt.
+    "markdownify==1.2.2",
+    # add-sources-build-command: the `archi sources build` crawl path imports
+    # bs4. beautifulsoup4 was declared only in requirements/requirements-base.txt,
+    # so a fresh `pip install .`/editable install and the deployment images would
+    # lack it and the crawl path would ImportError. Version matches
+    # requirements-base.txt.
+    "beautifulsoup4==4.12.3",
+    # add-opentelemetry-tracing: default-off OpenTelemetry tracing. See
+    # docs/docs/proposals/opentelemetry-readiness.md and
+    # openspec/changes/add-opentelemetry-tracing/. Core packages are pinned at 1.44.0 and
+    # instrumentation packages at 0.65b0. The two numbering schemes move together, so
+    # bump all nine in lockstep.
+    #
+    # This suite is the reason the protobuf pin above moved to 7.x. The last suite that
+    # accepts protobuf 4 is 1.27.0 / 0.48b0, and it is not installable today: its
+    # `opentelemetry-instrumentation` imports `pkg_resources` at module scope, which
+    # setuptools 82 removed, and it declares only `setuptools>=16.0`. A fresh image build
+    # therefore installs the newest setuptools and every instrumentor import fails.
+    # Measured on 2026-09-09 in a clean virtual environment.
+    #
+    # openinference-instrumentation-langchain is NOT part of the suite. It carries its own
+    # version line and it gives Phoenix the span kinds (LLM, TOOL, RETRIEVER, CHAIN) that
+    # plain OpenTelemetry spans lack.
+    "opentelemetry-sdk==1.44.0",
+    "opentelemetry-exporter-otlp-proto-http==1.44.0",
+    "opentelemetry-instrumentation-flask==0.65b0",
+    "opentelemetry-instrumentation-requests==0.65b0",
+    "opentelemetry-instrumentation-httpx==0.65b0",
+    "opentelemetry-instrumentation-urllib==0.65b0",
+    "opentelemetry-instrumentation-psycopg2==0.65b0",
+    "opentelemetry-instrumentation-sqlite3==0.65b0",
+    "opentelemetry-instrumentation-logging==0.65b0",
+    "openinference-instrumentation-langchain==0.1.74"
 ]
 
 [project.scripts]
@@ -56,6 +105,9 @@ build-backend = "setuptools.build_meta"
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 addopts = "-v --tb=short"
+markers = [
+    "integration: marks tests that need a live database or external services (deselect with '-m \"not integration\"')",
+]
 
 [tool.pyright]
 pythonVersion = "3.11"

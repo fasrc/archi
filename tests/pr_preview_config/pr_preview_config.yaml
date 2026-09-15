@@ -37,7 +37,7 @@ data_manager:
           device: cpu
         encode_kwargs:
           normalize_embeddings: true
-      similarity_score_reference: 10
+      similarity_score_reference: 0.0
   # PostgreSQL with pgvector is the only supported vector backend
   use_hybrid_search: true
   sources:

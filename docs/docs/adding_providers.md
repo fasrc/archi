@@ -241,7 +241,7 @@ Example: For OpenAI
 
 ### 3. **Development Environment**
 
-- Python 3.7+
+- Python 3.11+
 - Archi source code cloned locally
 - Dependencies installed (`pip install -r requirements/requirements-base.txt`)
 - IDE with Python support (VS Code, PyCharm)

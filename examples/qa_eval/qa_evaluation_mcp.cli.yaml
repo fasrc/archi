@@ -1,0 +1,19 @@
+# Evaluator MCP registry (qa-evaluation-mcp-v1) for the QA eval trial, CLI variant.
+#
+# The `capacity` alias is the only server the trial dataset's live rows name
+# (dataset.json items with time_sensitive: true). Pass this file to the CLI with
+# --mcp-config; the CLI process itself starts the stdio subprocess, so the args
+# path below is repo-relative and resolved from wherever the CLI is invoked.
+#
+# CONVENTION: run the CLI smoke from the repository root (task 7.1) so this
+# relative path resolves. For any other working directory, edit `args` to an
+# absolute path to the same file.
+schema_version: qa-evaluation-mcp-v1
+servers:
+  capacity:
+    transport: stdio
+    command: python3
+    args:
+      - tests/unit/evaluation/qa/fake_mcp_server.py
+    authentication:
+      mode: inherited_environment

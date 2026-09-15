@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
-from langchain_core.documents import Document
 from langchain_community.document_loaders import (
     BSHTMLLoader,
+    NotebookLoader,
     PyPDFLoader,
     PythonLoader,
 )
 from langchain_community.document_loaders.text import TextLoader
+from langchain_core.documents import Document
+
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -24,10 +26,56 @@ def select_loader(file_path: str | Path):
     path = Path(file_path)
     _, file_extension = path.suffix, path.suffix
     file_extension = file_extension.lower()
-    if file_extension in {".txt", ".c", ".C", ".sh", ".h", ".php", ".yaml", ".yml", ".json", ".csv", ".tsv", ".log", ".rst", ".md"}:
+    if file_extension in {
+        ".txt",
+        ".c",
+        ".C",
+        ".sh",
+        ".h",
+        ".php",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".csv",
+        ".tsv",
+        ".log",
+        ".rst",
+        ".md",
+        # Long Markdown suffix: accepted as Markdown by the chunking dispatch
+        # (node_parsing._MARKDOWN_SUFFIXES), so it must load too.
+        ".markdown",
+        # Shipped-default git code suffixes the loader was missing — collected by
+        # default (see git_scraper.py `code_suffixes`) but previously unloadable.
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".java",
+        ".go",
+        ".rs",
+        ".sql",
+        ".cpp",
+        ".hpp",
+        ".toml",
+        # FASRC HPC/scientific additions: Slurm job scripts, Fortran, CUDA, R,
+        # MATLAB, Julia, Singularity defs.
+        ".sbatch",
+        ".slurm",
+        ".f90",
+        ".f",
+        ".f95",
+        ".cu",
+        ".r",
+        ".rmd",
+        ".m",
+        ".jl",
+        ".def",
+    }:
         return TextLoader(str(path))
     if file_extension == ".py":
         return PythonLoader(str(path))
+    if file_extension == ".ipynb":
+        return NotebookLoader(str(path), include_outputs=False)
     if file_extension in {".html", ".htm"}:
         return BSHTMLLoader(str(path), bs_kwargs={"features": "html.parser"})
     if file_extension == ".pdf":
@@ -52,6 +100,7 @@ def load_doc_from_path(file_path: str | Path) -> Optional[Document]:
         logger.warning("Failed to load document from %s: %s", file_path, exc)
         return None
 
+
 def load_text_from_path(file_path: str | Path) -> Optional[str]:
     """Attempt to extract text from a file using an appropriate loader.
 
@@ -62,7 +111,20 @@ def load_text_from_path(file_path: str | Path) -> Optional[str]:
     path = Path(file_path)
     try:
         # For simple text files prefer direct read for speed and encoding handling
-        if path.suffix.lower() in {".txt", ".md", ".rst", ".log", ".json", ".yaml", ".yml", ".toml", ".csv", ".tsv", ".html", ".htm"}:
+        if path.suffix.lower() in {
+            ".txt",
+            ".md",
+            ".rst",
+            ".log",
+            ".json",
+            ".yaml",
+            ".yml",
+            ".toml",
+            ".csv",
+            ".tsv",
+            ".html",
+            ".htm",
+        }:
             return path.read_text(encoding="utf-8", errors="ignore")
 
         loader = select_loader(path)

@@ -9,18 +9,21 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+
 class SecretsManager:
     """Manages secret loading and validation using .env files"""
 
-    def __init__(self, env_file_path: str = None, config_manager = None):
+    def __init__(self, env_file_path: str = None, config_manager=None):
         if not env_file_path:
             env_file_path = "src/cli/managers/secrets_dummy.env"
-            logger.warning(f"No .env file specified, defaulting to a dummy .env file with only PG_PASSWORD: {env_file_path}.")
-        
+            logger.warning(
+                f"No .env file specified, defaulting to a dummy .env file with only PG_PASSWORD: {env_file_path}."
+            )
+
         self.env_file_path = Path(env_file_path)
         if not self.env_file_path.exists():
             raise FileNotFoundError(f"Environment file not found: {self.env_file_path}")
-        
+
         self.registry = service_registry
         self.secrets = self._load_env_file()
 
@@ -36,10 +39,14 @@ class SecretsManager:
 
         except Exception as e:
             raise ValueError(f"Error parsing .env file {self.env_file_path}: {e}")
-        
-    def get_secrets(self, services: Set[str], sources: Set[str]) -> Tuple[Set[str], Set[str]]:
+
+    def get_secrets(
+        self, services: Set[str], sources: Set[str]
+    ) -> Tuple[Set[str], Set[str]]:
         """Return both secrets required by services/sources and the full list"""
-        required = self.get_required_secrets_for_services(services) | self.get_required_secrets_for_sources(sources)
+        required = self.get_required_secrets_for_services(
+            services
+        ) | self.get_required_secrets_for_sources(sources)
         all_secrets = set(self.secrets.keys())
         return required, all_secrets
 
@@ -77,16 +84,22 @@ class SecretsManager:
         models_configs = self.config_manager.get_models_configs()
 
         for models_config in models_configs:
-            for _ , section_models in models_config.items():
+            for _, section_models in models_config.items():
                 if not isinstance(section_models, dict):
                     continue
-                for _ , model_name in section_models.items():
+                for _, model_name in section_models.items():
                     if "OpenAI" in model_name:
                         model_secrets.add("OPENAI_API_KEY")
                     elif "Anthropic" in model_name:
                         model_secrets.add("ANTHROPIC_API_KEY")
-                    elif "HuggingFace" in model_name or "Llama" in model_name or "VLLM" in model_name:
-                        logger.warning("You are using open source models; make sure to include a HuggingFace token if required for usage, it won't be explicitly enforced")
+                    elif (
+                        "HuggingFace" in model_name
+                        or "Llama" in model_name
+                        or "VLLM" in model_name
+                    ):
+                        logger.warning(
+                            "You are using open source models; make sure to include a HuggingFace token if required for usage, it won't be explicitly enforced"
+                        )
 
         # Scan loaded yaml configs for the huit_bedrock provider, either as the
         # SUT provider or as the RAGAS evaluator_provider. When found, require
@@ -94,12 +107,18 @@ class SecretsManager:
         # the compose template mounts it into the benchmarks container.
         for config in self.config_manager.get_configs():
             services = config.get("services", {}) if isinstance(config, dict) else {}
-            benchmarking = services.get("benchmarking", {}) if isinstance(services, dict) else {}
+            benchmarking = (
+                services.get("benchmarking", {}) if isinstance(services, dict) else {}
+            )
             if not isinstance(benchmarking, dict):
                 continue
             sut_provider = str(benchmarking.get("provider", "")).lower()
-            ragas_settings = (benchmarking.get("mode_settings") or {}).get("ragas_settings") or {}
-            evaluator_provider = str(ragas_settings.get("evaluator_provider", "")).lower()
+            ragas_settings = (benchmarking.get("mode_settings") or {}).get(
+                "ragas_settings"
+            ) or {}
+            evaluator_provider = str(
+                ragas_settings.get("evaluator_provider", "")
+            ).lower()
             if "huit_bedrock" in (sut_provider, evaluator_provider):
                 model_secrets.add("HUIT_API_KEY")
 
@@ -110,16 +129,18 @@ class SecretsManager:
         """Extract required secrets for embedding models"""
         embedding_secrets = set()
         configs = self.config_manager.get_configs()
-        
+
         for config in configs:
             embedding_name = config.get("data_manager", {}).get("embedding_name", "")
             if "OpenAI" in embedding_name:
                 embedding_secrets.add("OPENAI_API_KEY")
             elif "HuggingFace" in embedding_name:
-                logger.warning("You are using an embedding model from HuggingFace; make sure to include a HuggingFace token if required for usage, it won't be explicitly enforced")
-        
+                logger.warning(
+                    "You are using an embedding model from HuggingFace; make sure to include a HuggingFace token if required for usage, it won't be explicitly enforced"
+                )
+
         return embedding_secrets
-    
+
     def validate_secrets(self, required_secrets: Set[str]) -> None:
         """Validate that all required secrets are available in the .env file"""
         missing_secrets = set()
@@ -139,13 +160,13 @@ class SecretsManager:
                 f"OPENAI_API_KEY=sk-...\n"
                 f"GRAFANA_PG_PASSWORD=grafana123\n"
             )
-        
+
     def get_secret(self, key: str) -> str:
         """Get a secret value by exact key match"""
         if key not in self.secrets:
             raise KeyError(f"Secret '{key}' not found in .env file")
         return self.secrets[key]
-    
+
     def write_secrets_to_files(self, target_dir: Path, secrets: Set[str]) -> None:
         """Write required secrets to individual files in the target directory"""
         secrets_dir = target_dir / "secrets"
@@ -156,31 +177,33 @@ class SecretsManager:
                 secret_value = self.get_secret(secret_name)
                 # lowercase for compose
                 secret_file = secrets_dir / f"{secret_name.lower()}.txt"
-                with open(secret_file, 'w') as f:
+                with open(secret_file, "w") as f:
                     f.write(secret_value)
             except KeyError:
                 # should never happen if validate_secrets() was called first...
-                raise ValueError(f"Secret '{secret_name}' is required but not found in .env file")
-        
+                raise ValueError(
+                    f"Secret '{secret_name}' is required but not found in .env file"
+                )
+
         # Also write a .env file for compose environment variable interpolation
         # This is needed for Podman compatibility (Docker secrets don't work reliably with podman-compose)
         self.write_env_file(target_dir, secrets)
-            
+
     def write_env_file(self, target_dir: Path, secrets: Set[str]) -> None:
         """Write a .env file for compose environment variable interpolation"""
         env_file = target_dir / ".env"
-        with open(env_file, 'w') as f:
+        with open(env_file, "w") as f:
             for secret_name in secrets:
                 try:
                     secret_value = self.get_secret(secret_name)
                     f.write(f"{secret_name}={secret_value}\n")
                 except KeyError:
                     pass  # Skip secrets not in the env file
-            
+
     def list_available_secrets(self) -> List[str]:
         """List all secrets available in the .env file (for debugging)"""
         return list(self.secrets.keys())
-    
+
     def get_env_file_path(self) -> Path:
         """Get the path to the .env file being used"""
         return self.env_file_path

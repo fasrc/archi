@@ -8,33 +8,126 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
+from urllib.parse import urlsplit, urlunsplit
 
-import pandas as pd
 import yaml
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+from src.archi.archi import archi
+from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
+from src.archi.providers import get_model
+from src.archi.providers.local_provider import normalize_base_url
+from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
+from src.utils.benchmark_provenance import (
+    asserted_config_divergence,
+    collect_code_version,
+    config_version,
+    corpus_fingerprint,
+)
+from src.utils.benchmark_resilience import (
+    OK,
+    build_failure_entry,
+    build_ragas_aggregates,
+    build_source_aggregates,
+    classify_metadata,
+    is_scorable,
+    scorable_items,
+    source_hits,
+)
+from src.utils.benchmark_schema import (
+    DEFAULT_ENABLED_METRICS,
+    json_safe,
+    normalize_bank,
+    required_fields_for_modes,
+    score_metrics_per_eligibility,
+)
+from src.utils.config_access import get_static_config
+from src.utils.env import read_secret
+from src.utils.generate_benchmark_report import (
+    format_markdown_output,
+    parse_benchmark_results,
+)
+from src.utils.logging import get_logger, setup_logging
+from src.utils.postgres_service_factory import PostgresServiceFactory
+
 # NOTE: `datasets` and `ragas` are heavy, benchmark-only deps that live in the
 # benchmarking Docker image but NOT the lean unit-test environment. They are
 # imported lazily inside the methods that use them (get_ragas_results, run)
 # so that importing this module for its pure helpers (e.g. ResultHandler.
 # build_leaderboard / dump, exercised by unit tests) does not require them.
 
-from src.archi.archi import archi
-from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
-from src.archi.providers import get_model
-from src.utils.env import read_secret
-from src.utils.logging import get_logger, setup_logging
-from src.utils.generate_benchmark_report import parse_benchmark_results, format_html_output
-from src.utils.postgres_service_factory import PostgresServiceFactory
 
 CONFIG_PATH = "/root/archi/config.yaml"
 OUTPUT_PATH = "/root/archi/benchmarks"
 EXTRA_METADATA_PATH = "/root/archi/git_info.yaml"
+
+# The `src` package as installed in this image. The benchmark builds the agent
+# in-process, so these files ARE the code under test -- and they are the baked
+# site-packages copy, not a bind mount, which is exactly the code a deploy-time
+# commit fails to identify. Derived from this module's own location so it follows
+# the package wherever the image puts it.
+PACKAGE_DIR = str(Path(__file__).resolve().parent.parent)
 OUTPUT_DIR = Path(OUTPUT_PATH)
+
+# The corpus's retrievable state, as opaque (key, value) pairs for
+# `corpus_fingerprint`. Every row is keyed by `documents.resource_hash`, never by
+# a SERIAL row id: two ingests of an identical corpus -- a rebuilt deployment, a
+# re-seeded database -- get different serials, so keying by `document_id` made the
+# cross-run comparison this field exists for impossible, rejecting runs that were
+# in fact comparable.
+#
+# Three kinds of row, because retrieval reads all three:
+#
+#   doc     the live document list and byte sizes.
+#   chunk   per-chunk content digests. `resource_hash` is `md5(url)`, an identity
+#           hash deliberately stable across content updates, so the document list
+#           alone would miss an edit that preserved the byte count. Hashing per
+#           chunk index also catches re-chunking.
+#   parent  `document_parent_nodes.parent_text`, plus the ordered list of child
+#           chunk indexes grouped under it. Under `hierarchical_rerank` -- enabled
+#           for every chunk in the FASRC deployment -- what reaches the agent is
+#           the parent text, not the leaf chunks, and parents are neither embedded
+#           nor indexed so no other part of this query sees them. Hashing leaves
+#           alone would certify two arms as having seen the same corpus while the
+#           context they were given differed. The child list is folded in because
+#           re-grouping children changes that context even when every individual
+#           text is untouched.
+#
+# Deleted documents are excluded from all three: soft-deleted rows stay in the
+# tables but are not part of the corpus.
+CORPUS_STATE_QUERY = """
+SELECT 'doc:' || d.resource_hash, d.size_bytes::text
+FROM documents d
+WHERE d.is_deleted = FALSE
+UNION ALL
+SELECT 'chunk:' || d.resource_hash || ':' || c.chunk_index::text,
+       md5(c.chunk_text)
+FROM document_chunks c
+JOIN documents d ON d.id = c.document_id
+WHERE d.is_deleted = FALSE
+UNION ALL
+SELECT 'parent:' || d.resource_hash || ':' || p.parent_index::text,
+       md5(
+           p.parent_text || '|' ||
+           COALESCE(
+               string_agg(c.chunk_index::text, ',' ORDER BY c.chunk_index), ''
+           )
+       )
+FROM document_parent_nodes p
+JOIN documents d ON d.id = p.document_id
+LEFT JOIN document_chunks c ON c.metadata->>'parent_id' = p.id::text
+WHERE d.is_deleted = FALSE
+GROUP BY d.resource_hash, p.parent_index, p.parent_text
+"""
+
+#: Distinguishes a provenance field that was never recorded (a result file
+#: written before provenance existed) from one recorded as undetermined.
+_NOT_RECORDED = object()
 
 setup_logging()
 logger = get_logger(__name__)
@@ -48,18 +141,21 @@ def _init_runtime() -> None:
     build_leaderboard, exercised by unit tests) must not require live secrets or
     a reachable database.
     """
-    os.environ['OPENAI_API_KEY'] = read_secret("OPENAI_API_KEY")
-    os.environ['ANTHROPIC_API_KEY'] = read_secret("ANTHROPIC_API_KEY")
-    os.environ['HUGGING_FACE_HUB_TOKEN'] = read_secret("HUGGING_FACE_HUB_TOKEN")
-    os.environ['HUIT_API_KEY'] = read_secret("HUIT_API_KEY")
+    os.environ["OPENAI_API_KEY"] = read_secret("OPENAI_API_KEY")
+    os.environ["ANTHROPIC_API_KEY"] = read_secret("ANTHROPIC_API_KEY")
+    os.environ["HUGGING_FACE_HUB_TOKEN"] = read_secret("HUGGING_FACE_HUB_TOKEN")
+    os.environ["HUIT_API_KEY"] = read_secret("HUIT_API_KEY")
 
-    factory = PostgresServiceFactory.from_env(password_override=os.environ.get("PG_PASSWORD"))
+    factory = PostgresServiceFactory.from_env(
+        password_override=os.environ.get("PG_PASSWORD")
+    )
     PostgresServiceFactory.set_instance(factory)
 
 
 @dataclass
 class ABResult:
     """Paired A/B comparison result for a single question."""
+
     question: str
     reference_answer: str
     answer_a: str
@@ -81,9 +177,15 @@ class ABResult:
 class ResultHandler:
     results = []  # store the results for each config
     metadata = {}  # store the metadata about the benchmark run
-    ab_comparison: Dict[str, Any] = {}  # single-pair compat (populated only in ab_mode with 2 configs)
-    ab_comparisons: List[Dict[str, Any]] = []  # multi-pair: list of pair comparison dicts
-    leaderboard: Dict[str, Any] = {}  # prompt-sweep leaderboard (populated only when 2+ configs run)
+    ab_comparison: Dict[str, Any] = (
+        {}
+    )  # single-pair compat (populated only in ab_mode with 2 configs)
+    ab_comparisons: List[Dict[str, Any]] = (
+        []
+    )  # multi-pair: list of pair comparison dicts
+    leaderboard: Dict[str, Any] = (
+        {}
+    )  # prompt-sweep leaderboard (populated only when 2+ configs run)
     # Per-invocation identifier shared by every config in this archi-evaluate run.
     # Stamped onto Argilla records as metadata so the analysis notebook can refuse
     # to compute primary-outcome statistics across configs that were NOT run
@@ -100,6 +202,123 @@ class ResultHandler:
             override = os.environ.get("ARCHI_CORPUS_SNAPSHOT_ID")
             ResultHandler._corpus_snapshot_id = override or str(uuid.uuid4())
         return ResultHandler._corpus_snapshot_id
+
+    #: Prefix of a fingerprint that records why the corpus could not be read.
+    CORPUS_UNAVAILABLE = "<unavailable:"
+
+    @staticmethod
+    def corpus_reading_failed(fingerprint: Optional[str]) -> bool:
+        """Is *fingerprint* a non-observation rather than a corpus state?"""
+        return fingerprint is None or str(fingerprint).startswith(
+            ResultHandler.CORPUS_UNAVAILABLE
+        )
+
+    @staticmethod
+    def arms_comparable(records: List[Dict[str, Any]]) -> bool:
+        """Can these arms' scores be set against each other?
+
+        Only when, for every arm, the corpus provenance is established, they all
+        observed the same corpus, and the arm actually ran the settings it was
+        selected to run. A diverged arm did not test its intended condition, so
+        ranking it against the others asserts a controlled comparison that did
+        not happen.
+
+        Note what is NOT checked: arm identity (name, model, provider,
+        agent_md_file). The harness reads those from the selected file's
+        ``services.benchmarking`` and passes them to ``archi()`` as explicit
+        keyword arguments, so the file is authoritative for them and the labels
+        are accurate. Only ``services.chat_app`` and the rest of what the agent
+        reads from Postgres can diverge.
+
+        Used by BOTH comparison artifacts -- the leaderboard and the pairwise
+        A/B dump -- because a guard on one of them still lets a reader draw the
+        unsupported conclusion from the other.
+
+        Records with no provenance keys at all predate provenance and are left
+        comparable: historical sweeps are not retroactively invalidated.
+        """
+        fingerprints = set()
+        for record in records:
+            stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
+            if stability is not _NOT_RECORDED and stability is not True:
+                return False
+            if record.get("configuration_divergence"):
+                return False
+            fingerprint = record.get("corpus_fingerprint")
+            if fingerprint is not None:
+                fingerprints.add(fingerprint)
+        return len(fingerprints) <= 1
+
+    @staticmethod
+    def ab_summary_line(
+        name_a: str,
+        name_b: str,
+        question_count: int,
+        aggregate: Dict[str, Any],
+    ) -> str:
+        """One operator-facing line for a pair, withheld winners included.
+
+        Withholding sets the tallies to ``None``, and the caller's format string
+        was left as ``Wins A=%d, B=%d, Ties=%d``. ``'%d' % None`` raises;
+        ``logging`` catches that in ``handleError`` rather than aborting the run,
+        so the effect is not a crash but a *lost* line -- the operator gets
+        "--- Logging error ---" and a traceback where the pair summary should be,
+        in exactly the incomparable case the guard was added to report.
+
+        ``0`` is a tally, not an absence: only ``None`` means withheld.
+        """
+        head = f"  {name_a} vs {name_b}: {question_count} questions."
+        if aggregate.get("wins_a") is None:
+            return f"{head} Winners withheld: the arms are not comparable."
+        return (
+            f"{head} Wins A={aggregate['wins_a']}, "
+            f"B={aggregate['wins_b']}, Ties={aggregate['ties']}"
+        )
+
+    @staticmethod
+    def get_corpus_fingerprint() -> str:
+        """Digest of the live corpus, or a marker explaining why it is missing.
+
+        Unlike the per-invocation nonce above, equal digests mean equal corpora,
+        so "these arms were scored against the same documents" becomes a
+        checkable claim.
+
+        Covers the retrievable state, not just the document list -- see
+        ``CORPUS_STATE_QUERY`` for what is hashed and why. Re-embedding the same
+        text with a different model is NOT covered; that appears as a divergence
+        on ``data_manager.embedding_name`` in the recorded configuration.
+
+        Reads through the pool the run actually opened -- the one `_init_runtime`
+        installed on PostgresServiceFactory -- and NOT `ConnectionPool.get_instance`.
+        The two are unrelated singletons: the factory builds its pools directly
+        (`from_config`, and the lazy `connection_pool` property), so nothing ever
+        populates `ConnectionPool._instance`, and asking it for the pool raised
+        `ValueError` on every real run. Because provenance failure is swallowed
+        below, that filed an unavailable-marker instead of crashing, so the field
+        was inert wherever it was consumed while the unit tests stayed green --
+        they monkeypatched the very call that could not work (#273).
+
+        Never raises: a finished benchmark must not lose its scores because
+        provenance could not be collected. It does now warn, because an artifact
+        key nobody thinks to check is how the inert version survived review.
+        """
+        try:
+            factory = PostgresServiceFactory.get_instance()
+            if factory is None:
+                raise RuntimeError(
+                    "PostgresServiceFactory is not initialized; _init_runtime() "
+                    "installs it when this module is run as a script"
+                )
+            rows = factory.connection_pool.execute(CORPUS_STATE_QUERY)
+            return corpus_fingerprint(rows)
+        except Exception as exc:  # noqa: BLE001 - provenance is never fatal
+            logger.warning(
+                "Corpus provenance unavailable: %s. This run cannot be shown to "
+                "have scored against the same corpus as any other, so comparisons "
+                "involving it will be withheld.",
+                exc,
+            )
+            return f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
 
     @staticmethod
     def map_prompts(config: Dict[str, Any]):
@@ -119,61 +338,229 @@ class ResultHandler:
                     prompt_str = f.read()
                 section[prompt_name] = prompt_str
 
-
     @staticmethod
-    def handle_results(config_path: Path, results: Dict, total_results: Dict):
-        with open(config_path, "r") as f: 
+    def handle_results(
+        config_path: Path,
+        results: Dict,
+        total_results: Dict,
+        *,
+        running_config: Optional[Dict[str, Any]],
+        corpus_before: Optional[str] = None,
+        ingest_wall_seconds: Optional[float] = None,
+    ):
+        with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
 
         ResultHandler.map_prompts(config)
 
-        current_results = { 
-            "single_question_results": results, 
-            "total_results": total_results, 
+        # The file above is what the operator SELECTED. The agent reads its
+        # configuration from Postgres, and load_new_configuration writes the
+        # selected file to CONFIG_PATH -- which archi() never reads. Recording
+        # only the file therefore labels the run with settings it may never have
+        # used.
+        #
+        # `running_config` is the snapshot archi.__init__ took when it built the
+        # chain (src/archi/archi.py). It is passed in rather than re-queried
+        # here: the query would run AFTER the arm's questions, so a config change
+        # during the arm would certify settings the chain never held -- and would
+        # clear the divergence list while doing it.
+        #
+        # Scoped to what the file ASSERTS, not the two dicts whole. get_full_config
+        # returns the configuration after seeding, defaulting and reshaping, so a
+        # whole-dict comparison reported ~192 differences on a deployment seeded
+        # from the very file being compared -- making arms_comparable() False on
+        # every arm of every run. See asserted_config_divergence.
+        if running_config is None:
+            divergence = ["<unavailable: the run reported no configuration>"]
+        else:
+            divergence = asserted_config_divergence(config, running_config)
+
+        if divergence:
+            logger.warning(
+                "This report may not describe the run: the selected configuration "
+                "(%s) and the configuration the agent read disagree at %d "
+                "setting(s): %s",
+                config_path,
+                len(divergence),
+                ", ".join(divergence),
+            )
+
+        corpus_after = ResultHandler.get_corpus_fingerprint()
+        # None, not False, when either reading is missing or failed. A failure is
+        # not an observation: get_corpus_fingerprint reports one as
+        # "<unavailable: ...>", and two identical failures compare equal, so
+        # plain equality would certify the corpus as stable at exactly the moment
+        # nothing about it was actually observed.
+        if ResultHandler.corpus_reading_failed(
+            corpus_before
+        ) or ResultHandler.corpus_reading_failed(corpus_after):
+            corpus_unchanged_at_endpoints = None
+        else:
+            corpus_unchanged_at_endpoints = corpus_before == corpus_after
+        if corpus_unchanged_at_endpoints is False:
+            logger.warning(
+                "The corpus changed while this arm was running (%s -> %s); its "
+                "questions were not all scored against the same documents",
+                corpus_before,
+                corpus_after,
+            )
+
+        current_results = {
+            "single_question_results": results,
+            "total_results": total_results,
             "configuration_file": str(config_path),
-            "configuration": config, 
+            "configuration": config,
+            "running_configuration": running_config,
+            "configuration_divergence": divergence,
+            # Sampled around the arm, not once per sweep. Ingestion runs
+            # continuously in this deployment, so an arm can straddle a
+            # re-ingest and score different questions against different
+            # corpora; a single reading taken afterwards would report the final
+            # state as though it had covered the whole arm.
+            "corpus_fingerprint_before": corpus_before,
+            "corpus_fingerprint": corpus_after,
+            "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
+            # What the corpus above COST to build, in harness-observed seconds.
+            # Three readings, kept distinct on purpose: key absent = artifact
+            # predates the field; null = no ingest was observed (the run reused
+            # an existing corpus); a float = seconds. Never 0.0 for "not
+            # measured". Recorded per arm and nowhere else -- a sweep runs
+            # several arms, so a run-level copy would label them all with one.
+            "ingest_wall_seconds": ingest_wall_seconds,
+            # Per arm, not per file. One invocation runs every config in the
+            # sweep directory (the `while self.all_config_files` loop), so a
+            # single version on the metadata block would label every arm with
+            # whichever ran last; bench-sweep-20260610 holds three arms.
+            #
+            # Divergence above catches a mislabel while both sources are in
+            # hand. This digest answers the other question -- "was this the same
+            # configuration as that other run?" -- from the finished artifact
+            # alone, long after Postgres has moved on.
+            "config_version": config_version(
+                running=running_config,
+                selected=config,
+                selected_file=str(config_path),
+            ),
         }
 
         ResultHandler.results.append(current_results)
 
     @staticmethod
     def add_metadata():
-        with open(EXTRA_METADATA_PATH, "r") as f:
-            additional_info = yaml.safe_load(f)
+        try:
+            with open(EXTRA_METADATA_PATH, "r") as f:
+                additional_info = yaml.safe_load(f)
+        except OSError as exc:  # noqa: BLE001 - provenance is never fatal
+            logger.warning("Could not read %s: %s", EXTRA_METADATA_PATH, exc)
+            additional_info = None
+
+        host = (
+            additional_info.pop("host", None)
+            if isinstance(additional_info, dict)
+            else None
+        )
 
         meta_data = {
             "time": str(datetime.now(timezone.utc)),
             "git_info": additional_info,
+            # git_info.yaml is written by `archi create` and then frozen. Re-running
+            # the benchmark container against an existing deployment reports the
+            # commit that was checked out at DEPLOY time, not the code in the image
+            # -- every arm of a campaign reports the same commit even when the arms
+            # ran different code. Say so in the artifact rather than in a comment.
+            "git_info_captured_at": "deploy (`archi create`), not the running image",
+            "host": host,
+            # host is recorded at deploy time from the machine running `archi create`.
+            # A container cannot move to another host, so a --rerun necessarily ran
+            # on the same machine. Say so in the artifact rather than in a comment.
+            #
+            # Conditional, because the sentence is an assertion about a machine and
+            # there is no machine to assert when `host` is null -- either the deploy
+            # predates the field, or `archi create` refused to capture because the
+            # container engine was not provably local. Leaving the same-machine text
+            # beside `host: null` keeps exactly the false claim this change exists to
+            # remove: the reports guard their host line on `host`, so it never shows
+            # there, and it survives in the raw artifact that consumers parse.
+            "host_captured_at": (
+                "deploy (`archi create`), on the machine this stack runs on"
+                " — a container cannot move hosts, so a --rerun ran here too"
+                if host
+                # Every cause, because this function cannot tell them apart: it
+                # reads a git_info.yaml that does not record which one applied.
+                # Naming a subset would be a fresh exhaustive claim that is false on
+                # the paths it omits — the same overclaim the conditional removed.
+                else "no host recorded — the deployment predates the field, or its"
+                " hostname was unreadable or blank, or git_info.yaml could not be"
+                " read, or `archi create` refused to capture because the container"
+                " engine was not provably local"
+            ),
+            # What the frozen commit above cannot provide: an identity for the
+            # code this run actually executed. Digested from the `src` package
+            # files in the image, so it is per invocation (one image runs every
+            # arm) and independent of which code paths the run happened to take.
+            "code_version": collect_code_version(PACKAGE_DIR, additional_info),
+            # The config version is per arm and lives on each result record; this
+            # only summarises their digests, in the order the arms ran.
+            "config_versions": [
+                (record.get("config_version") or {}).get("digest")
+                for record in ResultHandler.results
+            ],
             "corpus_snapshot_id": ResultHandler.get_corpus_snapshot_id(),
+            "corpus_fingerprint": ResultHandler.get_corpus_fingerprint(),
         }
 
         ResultHandler.metadata.update(meta_data)
 
+    @staticmethod
+    def dump_artifacts(benchmark_name: Path):
+        """Write the run's JSON artifact and its markdown report.
 
-    @staticmethod 
-    def dump_html(benchmark_name: Path):
+        The timestamp is captured ONCE so the report is always the JSON's
+        `_report.md` sibling — the invariant the backfill script's bulk
+        re-render path locates reports by. The JSON is written first (it is
+        the source of truth); a report failure is logged and swallowed, and
+        `--regenerate-md` on the backfill script rebuilds the report later.
+        """
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        json_path = ResultHandler.dump(benchmark_name, timestamp)
+        try:
+            ResultHandler.dump_report(benchmark_name, timestamp)
+        except Exception:
+            # The hint names the exact artifact: the backfill script's default
+            # glob is the repo's bench_out/, which is NOT where OUTPUT_DIR
+            # points inside the benchmark container.
+            logger.exception(
+                f"Markdown report generation failed — the JSON artifact was "
+                f"still dumped to {json_path}; rebuild the report with "
+                f"scripts/benchmarking/backfill_report_provenance.py "
+                f"--regenerate-md {json_path}"
+            )
 
-        config_data, config_name, timestamp, questions, total_results = parse_benchmark_results(ResultHandler.results, ResultHandler.metadata)
+    @staticmethod
+    def dump_report(benchmark_name: Path, timestamp: str):
+
+        config_data, config_name, run_time, questions, total_results, provenance = (
+            parse_benchmark_results(ResultHandler.results, ResultHandler.metadata)
+        )
 
         logger.info(config_data)
 
-        html_content = format_html_output(config_data, config_name, timestamp,questions, total_results)
+        markdown_content = format_markdown_output(
+            config_data, config_name, run_time, questions, total_results, provenance
+        )
 
-        filename = f"{benchmark_name}-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_report.html"
-        file_path = OUTPUT_DIR / filename
+        file_path = OUTPUT_DIR / f"{benchmark_name}-{timestamp}_report.md"
 
         logger.info(f"Dumping results to {file_path}")
 
-        with open(file_path, 'w') as f:
-            f.write(html_content)
+        with open(file_path, "w") as f:
+            f.write(markdown_content)
 
-        logger.info(f"✅ HTML report generated: {file_path}")
-
-            
+        logger.info(f"✅ Markdown report generated: {file_path}")
 
     @staticmethod
-    def dump(benchmark_name: Path):
-        filename = f"{benchmark_name}-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+    def dump(benchmark_name: Path, timestamp: str):
+        filename = f"{benchmark_name}-{timestamp}.json"
         file_path = OUTPUT_DIR / filename
         logger.info(f"Dumping results to {file_path}")
         logger.debug(f"Full results: {ResultHandler.results}")
@@ -189,7 +576,16 @@ class ResultHandler:
         if ResultHandler.leaderboard:
             output["leaderboard"] = ResultHandler.leaderboard
         with open(file_path, "w") as f:
-            json.dump(output, f, indent=4)
+            # An artifact that a standard JSON reader refuses to open is not
+            # usable as evidence, which is the whole point of the provenance
+            # work it carries. `json_safe` copies every non-finite float to
+            # `null`; `allow_nan=False` then makes a bare `NaN` impossible
+            # rather than merely unlikely — if anything ever slips past the
+            # copy, the harness raises here instead of writing invalid JSON.
+            # The copy is why `ResultHandler.results` is still NaN-bearing for
+            # `pair_ab_results` and `build_leaderboard` afterwards.
+            json.dump(json_safe(output), f, indent=4, allow_nan=False)
+        return file_path
 
     @staticmethod
     def pair_ab_results(idx_a: int = 0, idx_b: int = 1) -> List[ABResult]:
@@ -202,22 +598,48 @@ class ResultHandler:
         results_a = ResultHandler.results[idx_a]["single_question_results"]
         results_b = ResultHandler.results[idx_b]["single_question_results"]
 
-        ragas_metrics = ["answer_relevancy", "faithfulness", "context_precision", "context_recall"]
+        ragas_metrics = [
+            "answer_relevancy",
+            "faithfulness",
+            "context_precision",
+            "context_recall",
+            "answer_correctness",
+        ]
 
         paired: List[ABResult] = []
         all_keys = list(results_a.keys()) + [k for k in results_b if k not in results_a]
         for key in all_keys:
             if key not in results_a:
-                logger.warning("Question key %s not found in config A results, skipping.", key)
+                logger.warning(
+                    "Question key %s not found in config A results, skipping.", key
+                )
                 continue
             if key not in results_b:
-                logger.warning("Question key %s not found in config B results, skipping.", key)
+                logger.warning(
+                    "Question key %s not found in config B results, skipping.", key
+                )
                 continue
             qa = results_a[key]
             qb = results_b[key]
 
-            ragas_a = {m: qa.get(m, float("nan")) for m in ragas_metrics if m in qa}
-            ragas_b = {m: qb.get(m, float("nan")) for m in ragas_metrics if m in qb}
+            # Never pair a failed/degraded row: it carries no real answer and would
+            # skew the A/B comparison (blank-answer or truncated-context result).
+            if not is_scorable(qa) or not is_scorable(qb):
+                logger.warning(
+                    "Question key %s is a failed/degraded row in a config; skipping A/B pairing.",
+                    key,
+                )
+                continue
+
+            # Only metrics BOTH arms scored can be compared. Reading a missing
+            # side as NaN published a "tie" verdict on a metric one arm never
+            # measured, and the aggregate then fabricated a 0.0 mean for it — the
+            # WORST possible score — reading as "this arm is bad at it" rather
+            # than "this arm did not measure it". Present-but-NaN on both sides is
+            # a different case: that is scored-and-failed, and stays a tie.
+            shared_metrics = [m for m in ragas_metrics if m in qa and m in qb]
+            ragas_a = {m: qa.get(m, float("nan")) for m in shared_metrics}
+            ragas_b = {m: qb.get(m, float("nan")) for m in shared_metrics}
 
             winner_by_metric: Dict[str, str] = {}
             for m in ragas_a:
@@ -231,23 +653,33 @@ class ResultHandler:
                 else:
                     winner_by_metric[m] = "b"
 
-            paired.append(ABResult(
-                question=qa["question"],
-                reference_answer=qa.get("reference_answer", ""),
-                answer_a=qa.get("answer", ""),
-                answer_b=qb.get("answer", ""),
-                time_a=qa.get("time_elapsed", 0.0),
-                time_b=qb.get("time_elapsed", 0.0),
-                ragas_a=ragas_a,
-                ragas_b=ragas_b,
-                sources_a=qa.get("sources_metadata", []),
-                sources_b=qb.get("sources_metadata", []),
-                messages_a=qa.get("messages", []),
-                messages_b=qb.get("messages", []),
-                winner_by_metric=winner_by_metric,
-                llm_judge_a={k.replace("llm_judge_", ""): v for k, v in qa.items() if k.startswith("llm_judge_")},
-                llm_judge_b={k.replace("llm_judge_", ""): v for k, v in qb.items() if k.startswith("llm_judge_")},
-            ))
+            paired.append(
+                ABResult(
+                    question=qa["question"],
+                    reference_answer=qa.get("reference_answer", ""),
+                    answer_a=qa.get("answer", ""),
+                    answer_b=qb.get("answer", ""),
+                    time_a=qa.get("time_elapsed", 0.0),
+                    time_b=qb.get("time_elapsed", 0.0),
+                    ragas_a=ragas_a,
+                    ragas_b=ragas_b,
+                    sources_a=qa.get("sources_metadata", []),
+                    sources_b=qb.get("sources_metadata", []),
+                    messages_a=qa.get("messages", []),
+                    messages_b=qb.get("messages", []),
+                    winner_by_metric=winner_by_metric,
+                    llm_judge_a={
+                        k.replace("llm_judge_", ""): v
+                        for k, v in qa.items()
+                        if k.startswith("llm_judge_")
+                    },
+                    llm_judge_b={
+                        k.replace("llm_judge_", ""): v
+                        for k, v in qb.items()
+                        if k.startswith("llm_judge_")
+                    },
+                )
+            )
 
         return paired
 
@@ -280,7 +712,17 @@ class ResultHandler:
 
         per_question = [asdict(r) for r in paired]
 
-        wins_a, wins_b, ties = 0, 0, 0
+        # Same guard as the leaderboard's: a per-metric winner is a claim that
+        # the two arms were measured under the same conditions. Guarding only
+        # the leaderboard would still let a reader draw the unsupported
+        # conclusion from this artifact.
+        comparable = ResultHandler.arms_comparable(
+            [ResultHandler.results[idx_a], ResultHandler.results[idx_b]]
+        )
+
+        wins_a: Optional[int] = 0
+        wins_b: Optional[int] = 0
+        ties: Optional[int] = 0
         all_metrics = set()
         for r in paired:
             for m, w in r.winner_by_metric.items():
@@ -292,17 +734,42 @@ class ResultHandler:
                 else:
                     ties += 1
 
+        if not comparable:
+            # Withhold the verdict, keep the measurements: per-question ragas_a
+            # and ragas_b stay so an operator can still inspect the run.
+            for row in per_question:
+                row["winner_by_metric"] = {}
+            wins_a = wins_b = ties = None
+            logger.warning(
+                "A/B winners withheld for '%s' vs '%s': corpus provenance does "
+                "not establish that both arms were scored against the same "
+                "documents",
+                config_a_meta["name"],
+                config_b_meta["name"],
+            )
+
         mean_scores_a: Dict[str, float] = {}
         mean_scores_b: Dict[str, float] = {}
         for m in all_metrics:
-            vals_a = [r.ragas_a[m] for r in paired if r.ragas_a.get(m) is not None and not math.isnan(r.ragas_a.get(m, float("nan")))]
-            vals_b = [r.ragas_b[m] for r in paired if r.ragas_b.get(m) is not None and not math.isnan(r.ragas_b.get(m, float("nan")))]
+            vals_a = [
+                r.ragas_a[m]
+                for r in paired
+                if r.ragas_a.get(m) is not None
+                and not math.isnan(r.ragas_a.get(m, float("nan")))
+            ]
+            vals_b = [
+                r.ragas_b[m]
+                for r in paired
+                if r.ragas_b.get(m) is not None
+                and not math.isnan(r.ragas_b.get(m, float("nan")))
+            ]
             mean_scores_a[m] = sum(vals_a) / len(vals_a) if vals_a else 0.0
             mean_scores_b[m] = sum(vals_b) / len(vals_b) if vals_b else 0.0
 
         comparison = {
             "config_a": config_a_meta,
             "config_b": config_b_meta,
+            "comparable": comparable,
             "per_question": per_question,
             "aggregate": {
                 "wins_a": wins_a,
@@ -330,6 +797,7 @@ class ResultHandler:
         ("faithfulness", "aggregate_faithfulness"),
         ("context_precision", "aggregate_context_precision"),
         ("context_recall", "aggregate_context_recall"),
+        ("answer_correctness", "aggregate_answer_correctness"),
     ]
 
     @staticmethod
@@ -358,7 +826,8 @@ class ResultHandler:
             logger.warning(
                 "Leaderboard primary_metric '%s' is not a known RAGAS metric %s; "
                 "falling back to 'faithfulness'.",
-                primary_metric, metric_names,
+                primary_metric,
+                metric_names,
             )
             primary_metric = "faithfulness"
 
@@ -370,18 +839,37 @@ class ResultHandler:
             )
 
         rows: List[Dict[str, Any]] = []
+        primary_was_enabled = False
         # Accumulate shared-context candidates to detect drift across configs.
         ctx_fields: Dict[str, set] = {
-            "model": set(), "provider": set(),
-            "evaluator_model": set(), "queries_path": set(),
+            "model": set(),
+            "provider": set(),
+            "evaluator_model": set(),
+            "queries_path": set(),
+            "corpus_fingerprint": set(),
         }
+        corpus_warnings: List[str] = []
 
         for record in ResultHandler.results:
             bench = _benchmarking(record)
             total = record.get("total_results", {}) or {}
 
             agent_md_file = bench.get("agent_md_file", "") or ""
-            name = bench.get("name") or (Path(agent_md_file).stem if agent_md_file else "")
+            name = bench.get("name") or (
+                Path(agent_md_file).stem if agent_md_file else ""
+            )
+
+            # ``incomplete`` means "a metric this run was SUPPOSED to produce is
+            # missing" — it flags the row in the console table and sorts it last.
+            # LEADERBOARD_METRICS is a static SUPERSET of what any one run scores,
+            # so judge only the metrics this run actually enabled; otherwise every
+            # run that declines an optional metric reads as a defective run. A
+            # config that omits the list runs the template default, which
+            # DEFAULT_ENABLED_METRICS mirrors.
+            ragas_settings = (bench.get("mode_settings") or {}).get(
+                "ragas_settings"
+            ) or {}
+            expected = ragas_settings.get("enabled_metrics") or DEFAULT_ENABLED_METRICS
 
             metrics: Dict[str, Optional[float]] = {}
             incomplete = False
@@ -389,9 +877,25 @@ class ResultHandler:
                 value = total.get(agg_key)
                 if value is None or (isinstance(value, float) and math.isnan(value)):
                     metrics[metric_name] = None
-                    incomplete = True
+                    if metric_name in expected:
+                        incomplete = True
                 else:
                     metrics[metric_name] = float(value)
+
+            # A rank is a claim about the metric being ranked BY, so a row with no
+            # value for the primary metric cannot be ordered against one that has
+            # it — whatever the run enabled. The sort reads a None primary score
+            # as 0.0, so without this the row would take a normal numeric rank in
+            # the complete tier instead of sorting last.
+            if metrics[primary_metric] is None:
+                incomplete = True
+
+            # A record with no metric list but a real score for the primary metric
+            # demonstrably ran it, so an observed score counts as evidence. Warning
+            # "never enabled" there would be false, and a false warning teaches the
+            # operator to ignore the real one.
+            if primary_metric in expected or metrics[primary_metric] is not None:
+                primary_was_enabled = True
 
             # Per-metric sample size actually behind each mean. The RAGAS block
             # computes aggregate_* via pandas .mean(), which skips NaN, so a
@@ -403,6 +907,15 @@ class ResultHandler:
             single_question_results = record.get("single_question_results") or {}
             scored_counts: Dict[str, int] = {}
             for metric_name, _agg_key in ResultHandler.LEADERBOARD_METRICS:
+                # Publish a sample size unless we are making no claim at all
+                # about this metric: not enabled AND no score. A static list would
+                # report 0 for a metric nobody enabled, which reads identically to
+                # an enabled metric whose every judge call failed. A metric that
+                # DID produce a score always keeps its count, even when it is
+                # absent from `expected` (which falls back to the template
+                # default when a record carries no metric list).
+                if metric_name not in expected and metrics[metric_name] is None:
+                    continue
                 count = 0
                 for q in single_question_results.values():
                     if not isinstance(q, dict):
@@ -415,54 +928,112 @@ class ResultHandler:
             if incomplete:
                 logger.warning(
                     "Leaderboard: variant '%s' (%s) is incomplete — missing/NaN metrics: %s",
-                    name, agent_md_file,
-                    [m for m in metric_names if metrics[m] is None],
+                    name,
+                    agent_md_file,
+                    [m for m in metric_names if metrics[m] is None and m in expected],
                 )
             # Surface under-sampling even when the aggregate is a valid float.
             answered = len(single_question_results)
             undersampled = [
-                f"{m}={scored_counts[m]}/{answered}"
+                f"{m}={scored_counts.get(m, 0)}/{answered}"
                 for m in metric_names
-                if metrics[m] is not None and scored_counts[m] < answered
+                if metrics[m] is not None and scored_counts.get(m, 0) < answered
             ]
             if undersampled:
                 logger.warning(
                     "Leaderboard: variant '%s' (%s) has under-sampled metrics "
                     "(mean over fewer than %d answered questions): %s",
-                    name, agent_md_file, answered, undersampled,
+                    name,
+                    agent_md_file,
+                    answered,
+                    undersampled,
                 )
 
-            rows.append({
-                "name": name,
-                "agent_md_file": agent_md_file,
-                "metrics": metrics,
-                "primary_score": metrics[primary_metric],
-                "incomplete": incomplete,
-                "query_count": answered,
-                "scored_counts": scored_counts,
-            })
+            rows.append(
+                {
+                    "name": name,
+                    "agent_md_file": agent_md_file,
+                    "metrics": metrics,
+                    "primary_score": metrics[primary_metric],
+                    "incomplete": incomplete,
+                    "query_count": answered,
+                    "scored_counts": scored_counts,
+                }
+            )
 
-            ragas_settings = (bench.get("mode_settings", {}) or {}).get("ragas_settings", {}) or {}
             ctx_fields["model"].add(bench.get("model"))
             ctx_fields["provider"].add(bench.get("provider"))
             ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
             ctx_fields["queries_path"].add(bench.get("queries_path"))
+            # The corpus is a swept-context field like any other: ranking arms
+            # scored against different documents asserts controlled conditions
+            # the run cannot support.
+            ctx_fields["corpus_fingerprint"].add(record.get("corpus_fingerprint"))
+            # An ABSENT key means the record predates corpus provenance and has
+            # nothing to say; a key present and None means provenance ran and
+            # came back undetermined. Only the latter is a finding.
+            stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
+            if stability is False:
+                corpus_warnings.append(
+                    f"the corpus changed while variant '{name}' was running; its "
+                    "questions were not all scored against the same documents"
+                )
+            elif stability is None:
+                corpus_warnings.append(
+                    f"corpus stability is unknown for variant '{name}'; it was "
+                    "not observed before and after the run"
+                )
+            divergence = record.get("configuration_divergence") or []
+            if divergence:
+                corpus_warnings.append(
+                    f"variant '{name}' did not run the settings it was selected "
+                    f"to run; these differ: {', '.join(divergence)}"
+                )
 
         # Complete rows first, then by descending primary score; incomplete last.
-        rows.sort(key=lambda r: (
-            1 if r["incomplete"] else 0,
-            -(r["primary_score"] if r["primary_score"] is not None else 0.0),
-        ))
+        rows.sort(
+            key=lambda r: (
+                1 if r["incomplete"] else 0,
+                -(r["primary_score"] if r["primary_score"] is not None else 0.0),
+            )
+        )
+
+        # A rank is a machine-readable claim that these variants were measured
+        # under the same conditions. When corpus provenance says they were not,
+        # withhold the ranking rather than manufacture an ordering a consumer
+        # would read from rows[*].rank without ever seeing the warnings. The
+        # metrics stay, so an operator can still inspect the run.
+        comparable = ResultHandler.arms_comparable(ResultHandler.results)
+
+        # Withholding every rank is correct but silent on its own; say why, or the
+        # only symptom an operator sees is a leaderboard of null ranks.
+        if rows and not primary_was_enabled:
+            logger.warning(
+                "Leaderboard: primary_metric '%s' was not enabled by any swept "
+                "config, so no variant scored it and every rank is withheld "
+                "(null). Add it to "
+                "services.benchmarking.mode_settings.ragas_settings.enabled_metrics, "
+                "or rank by a metric the run actually scored.",
+                primary_metric,
+            )
 
         # Dense ranking: equal primary scores share a rank.
         rank = 0
         prev_score: Any = object()
         for row in rows:
             score = row["primary_score"]
+            if score is None:
+                # A rank is a claim ABOUT the primary metric, so a row with no
+                # score for it carries no rank — not a number a consumer would
+                # compare. Sorting it last is not enough: the number itself is
+                # what gets read out of the JSON. It also does not consume a rank,
+                # so the scored rows keep 1..n.
+                row["rank"] = None
+                continue
             if score != prev_score:
                 rank += 1
                 prev_score = score
-            row["rank"] = rank
+            row["rank"] = rank if comparable else None
 
         warnings: List[str] = []
         shared_context: Dict[str, Any] = {
@@ -477,6 +1048,7 @@ class ResultHandler:
                 warnings.append(
                     f"{field_name} differs across swept configs: {sorted(str(v) for v in present)}"
                 )
+        warnings.extend(corpus_warnings)
         if warnings:
             for w in warnings:
                 logger.warning("Leaderboard shared-context drift: %s", w)
@@ -485,66 +1057,182 @@ class ResultHandler:
         ResultHandler.leaderboard = {
             "shared_context": shared_context,
             "primary_metric": primary_metric,
+            "comparable": comparable,
             "rows": rows,
         }
         return ResultHandler.leaderboard
 
 
+class _IngestWaitBudgets(NamedTuple):
+    """The three knobs that bound the benchmark's wait for the data-manager.
+
+    ``stall_seconds`` is time since the *last successful* status poll, not total
+    runtime -- an ingest that keeps answering can take as long as it needs.
+    ``max_wait_seconds`` is the absolute backstop for an ingest that is alive
+    but stuck; ``0`` disables it.
+    """
+
+    stall_seconds: int
+    max_wait_seconds: int
+    poll_interval_seconds: int
+
+
+#: States that can count as evidence the ingest is working. Deliberately
+#: narrow: `ingestion_status.py:29-33` starts the endpoint at "pending" and
+#: only the ingestion thread moves it on, so an endpoint answering "pending"
+#: (or anything unrecognized) forever means the ingest never got going.
+_INGEST_PROGRESS_STATES = frozenset({"running"})
+
+#: The step published *before* `ingestion_lock` is acquired
+#: (`ingestion_status.py:46-48`). Every later step comes from inside the lock
+#: (`data_manager.py:90-109`), so this is the one step that proves work has NOT
+#: started.
+_INGEST_PRELOCK_STEP = "initializing"
+
+
+def _ingest_is_progressing(state: str, step: Any) -> bool:
+    """Is this status payload evidence the ingest is actually doing work?
+
+    Only payloads this accepts restart the stall budget. Two shapes are
+    excluded on purpose, because both are indistinguishable from a healthy
+    long run if you look only at "did the endpoint answer":
+
+    - any state but "running" -- notably the initial "pending", which persists
+      forever if the ingestion thread never starts;
+    - "running" at step "initializing" -- published before `ingestion_lock` is
+      taken, so it is also exactly what a benchmark sees while its own ingest
+      is queued behind a scheduled task or an upload-triggered vectorstore
+      update, neither of which touches this status dict
+      (`service_data_manager.py:70-83`).
+    """
+    if state not in _INGEST_PROGRESS_STATES:
+        return False
+    return str(step).strip().lower() != _INGEST_PRELOCK_STEP
+
+
+def _ingest_wait_budgets() -> _IngestWaitBudgets:
+    return _IngestWaitBudgets(
+        stall_seconds=int(os.environ.get("BENCH_INGEST_WAIT_TIMEOUT", "7200")),
+        max_wait_seconds=int(os.environ.get("BENCH_INGEST_MAX_WAIT", "21600")),
+        poll_interval_seconds=int(os.environ.get("BENCH_INGEST_POLL_INTERVAL", "5")),
+    )
+
+
+def _fetch_ingestion_status(url: str) -> Dict[str, Any]:
+    """Read one ingestion-status payload. The injection seam for the wait loop."""
+    with url_request.urlopen(url, timeout=5) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _ingest_wait_timeout_message(
+    reason: str,
+    *,
+    candidate_urls: List[str],
+    last_ok_url: Optional[str],
+    last_state: Optional[str],
+    last_step: Any,
+    errors_by_url: Dict[str, BaseException],
+) -> str:
+    """Explain an ingest timeout in terms of what the harness actually observed.
+
+    Errors are kept per URL and reported against the URL they belong to, which
+    is what issue #378's defect 2 needed in both its forms. The first form was
+    a single `last_error` surviving a later candidate's success, so a timeout
+    quoted a connection failure from a URL that was working around it. The
+    second is subtler: when the URL that *had* been serving status goes down,
+    the loop falls through the remaining candidates too, and one shared
+    `last_error` ends up holding whatever the final fallback raised -- often an
+    unrelated DNS failure for `host.containers.internal`. The operator needs
+    the failure of the endpoint that was working, so that is what this reports.
+    """
+    if last_ok_url is None:
+        # Nothing ever answered, so every candidate's error is current and each
+        # one is a distinct fact about a distinct host. Label them.
+        tried = "; ".join(
+            f"{url}: {errors_by_url[url]}"
+            for url in dict.fromkeys(candidate_urls)
+            if url in errors_by_url
+        )
+        observed = f"none of the candidate status URLs ever answered ({tried})"
+        return f"Timed out waiting for data-manager ingestion: {reason}. {observed}."
+
+    observed = (
+        f"last successful poll was {last_ok_url} -> "
+        f"state={last_state} step={last_step}"
+    )
+    message = f"Timed out waiting for data-manager ingestion: {reason}. {observed}."
+    serving_error = errors_by_url.get(last_ok_url)
+    if serving_error is not None:
+        message = f"{message} That URL now fails with: {serving_error}"
+    return message
+
+
 class Benchmarker:
 
     def __init__(self, configs: Path, q_to_a: dict[str, str]):
-        self.queries_to_answers = q_to_a 
-        self.required_fields = ['question']
-        self.benchmark_name = os.environ['container_name']
+        self.queries_to_answers = normalize_bank(q_to_a)
+        self.required_fields = ["user_input"]
+        self.benchmark_name = os.environ["container_name"]
         self.all_config_files = self.get_all_configs(configs)
-        self.all_config_files.append('FINISHED')
+        self.all_config_files.append("FINISHED")
         self.previous_input_list = []
-        self.chain = None 
-        self.config = None 
-        self.current_config = None 
+        self.chain = None
+        self.config = None
+        self.current_config = None
 
         self.load_new_configuration()
         self.data_path = self.config["global"]["DATA_PATH"]
-    
+
     def get_all_configs(self, configs_dir):
         all_paths = []
         for root, _, filenames in os.walk(configs_dir):
-            for file in filenames: 
+            for file in filenames:
                 full_path = os.path.join(root, file)
                 all_paths.append(full_path)
         return all_paths
 
     def load_new_configuration(self):
         self.current_config = self.all_config_files.pop(0)
-        if self.current_config == 'FINISHED': return
+        if self.current_config == "FINISHED":
+            return
         with open(self.current_config, "r") as f:
             config = yaml.safe_load(f)
 
-        with open(CONFIG_PATH, 'w') as f: 
+        with open(CONFIG_PATH, "w") as f:
             yaml.dump(config, stream=f)
 
         del self.chain
-        self.config = config 
-        self.benchmarking_configs = config['services']['benchmarking']
-        if 'SOURCES' in self.benchmarking_configs:
-            self.required_fields += ['sources']
-        elif 'RAGAS' in self.benchmarking_configs:
-            self.required_fields += ['answer']
+        self.config = config
+        self.benchmarking_configs = config["services"]["benchmarking"]
+        # Schema validation is per-mode and SEPARATE from metric eligibility:
+        # user_input is always required, SOURCES additionally requires `sources`,
+        # and RAGAS requires nothing extra (an empty `reference` is a valid draft
+        # row that per-metric eligibility, not load validation, excludes from the
+        # context metrics). Recomputed fresh per config (never accumulated).
+        self.required_fields = required_fields_for_modes(self.benchmarking_configs)
 
         # for now it only uses one pipeline (the first one) but maybe later we make this work for mulitple
         logger.info(f"loaded new configuration: {self.current_config}")
-        benchmark_cfg = config.get("services", {}).get("benchmarking", {}) if isinstance(config, dict) else {}
+        benchmark_cfg = (
+            config.get("services", {}).get("benchmarking", {})
+            if isinstance(config, dict)
+            else {}
+        )
         pipeline = benchmark_cfg.get("agent_class")
         provider = benchmark_cfg.get("provider")
         model = benchmark_cfg.get("model")
         agent_md_file = benchmark_cfg.get("agent_md_file")
         ollama_url = benchmark_cfg.get("ollama_url")
-        missing = [k for k, v in {
-            "agent_class": pipeline,
-            "provider": provider,
-            "model": model,
-            "agent_md_file": agent_md_file,
-        }.items() if not v]
+        missing = [
+            k
+            for k, v in {
+                "agent_class": pipeline,
+                "provider": provider,
+                "model": model,
+                "agent_md_file": agent_md_file,
+            }.items()
+            if not v
+        ]
         if missing:
             raise ValueError(
                 f"Missing required benchmarking runtime fields in services.benchmarking: {', '.join(missing)}"
@@ -556,11 +1244,19 @@ class Benchmarker:
         if ollama_url:
             os.environ["OLLAMA_HOST"] = str(ollama_url)
 
+        # Bridge a `provider: local` SUT into the config the agent reads
+        # (services.chat_app.providers.local), so an OpenAI-compatible endpoint
+        # (e.g. the FASRC vLLM at .../v1) builds a ChatOpenAI client instead of the
+        # Ollama client. No-op for non-local providers. See issue #73.
+        apply_sut_local_provider(benchmark_cfg, get_static_config())
+
         agent_spec = None
         try:
             agent_spec = load_agent_spec(Path(str(agent_md_file)))
         except AgentSpecError as exc:
-            raise ValueError(f"Failed to load benchmark agent spec '{agent_md_file}': {exc}") from exc
+            raise ValueError(
+                f"Failed to load benchmark agent spec '{agent_md_file}': {exc}"
+            ) from exc
 
         self._chain_kwargs = dict(
             pipeline=pipeline,
@@ -597,18 +1293,27 @@ class Benchmarker:
         chains = [self.chain]
         kw = self._chain_kwargs
         for _ in range(n_workers - 1):
-            chains.append(archi(
-                kw["pipeline"],
-                agent_spec=kw["agent_spec"],
-                default_provider=kw["default_provider"],
-                default_model=kw["default_model"],
-                prompt_overrides=kw["prompt_overrides"],
-            ))
-        logger.info("Created pool of %d chain instances for parallel execution.", n_workers)
+            chains.append(
+                archi(
+                    kw["pipeline"],
+                    agent_spec=kw["agent_spec"],
+                    default_provider=kw["default_provider"],
+                    default_model=kw["default_model"],
+                    prompt_overrides=kw["prompt_overrides"],
+                )
+            )
+        logger.info(
+            "Created pool of %d chain instances for parallel execution.", n_workers
+        )
         return chains
 
     def _prefetch_questions_parallel(
-        self, n_workers, config_num, total_configs, total_questions, run_start,
+        self,
+        n_workers,
+        config_num,
+        total_configs,
+        total_questions,
+        run_start,
     ):
         """Run all questions in parallel using a pool of independent chain instances.
 
@@ -620,7 +1325,11 @@ class Benchmarker:
                 f"only n_workers=1 is safe today (see _create_chain_pool comment)."
             )
         chains = self._create_chain_pool(n_workers)
-        logger.info("Prefetching %d questions with %d parallel workers...", total_questions, n_workers)
+        logger.info(
+            "Prefetching %d questions with %d parallel workers...",
+            total_questions,
+            n_workers,
+        )
 
         def _ask(chain, question_id, question_text):
             formatted = [("User", question_text)]
@@ -629,7 +1338,11 @@ class Benchmarker:
             elapsed = time.perf_counter() - start
             logger.info(
                 "[Config %d/%d] Question %d/%d finished (%.2fs)",
-                config_num, total_configs, question_id, total_questions, elapsed,
+                config_num,
+                total_configs,
+                question_id,
+                total_questions,
+                elapsed,
             )
             return question_id, result, elapsed
 
@@ -643,7 +1356,7 @@ class Benchmarker:
                     continue
                 qid = idx + 1
                 chain = chains[idx % n_workers]
-                future = executor.submit(_ask, chain, qid, question_item["question"])
+                future = executor.submit(_ask, chain, qid, question_item["user_input"])
                 futures[future] = qid
 
             for future in as_completed(futures):
@@ -658,48 +1371,119 @@ class Benchmarker:
         mins, secs = divmod(int(wall_elapsed), 60)
         logger.info(
             "Parallel prefetch complete: %d/%d questions in %dm%02ds wall time.",
-            len(results), total_questions, mins, secs,
+            len(results),
+            total_questions,
+            mins,
+            secs,
         )
         return results
 
-
     def get_ragas_llm_evaluator(self):
-        ragas_configs = self.config['services']['benchmarking']['mode_settings']['ragas_settings']
+        ragas_configs = self.config["services"]["benchmarking"]["mode_settings"][
+            "ragas_settings"
+        ]
         benchmark_cfg = self.config.get("services", {}).get("benchmarking", {})
         # Judge/SUT config split: when ragas_settings.evaluator_* is set, the RAGAS judge
         # uses an independent model from the system under test. Falls back to the SUT
         # provider/model when the evaluator_* keys are absent.
-        provider = ragas_configs.get("evaluator_provider") or benchmark_cfg.get("provider")
+        provider = ragas_configs.get("evaluator_provider") or benchmark_cfg.get(
+            "provider"
+        )
         model_name = ragas_configs.get("evaluator_model") or benchmark_cfg.get("model")
-        ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get("ollama_url")
+        ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get(
+            "ollama_url"
+        )
 
         match str(provider).lower():
             case "openai":
                 return ChatOpenAI(model=model_name)
             case "ollama":
                 from langchain_ollama import ChatOllama
+
                 base_url = ollama_url
-                return ChatOllama(model=model_name, base_url=base_url,num_predict=-2,model_kwargs={'format': 'json'})
+                return ChatOllama(
+                    model=model_name,
+                    base_url=base_url,
+                    num_predict=-2,
+                    model_kwargs={"format": "json"},
+                )
             case "local":
+                # Mirror the SUT bridge (#73): a /v1 judge endpoint is
+                # OpenAI-compatible, so build a ChatOpenAI client instead of
+                # ChatOllama (which 404s against /v1). An explicit provider_mode
+                # (judge-specific or inherited from the SUT) overrides the
+                # /v1 auto-detection.
+                #
+                # Selected by presence, not by truthiness: YAML decodes
+                # `evaluator_provider_mode: false` to False and `: 0` to 0, and an
+                # `or` here discarded both in favour of the SUT's mode — so the
+                # judge scored in a dialect nobody configured and
+                # `resolve_local_mode`'s refusal of a non-string never fired on
+                # this path. The empty string stays the one "not configured"
+                # spelling that still inherits.
+                evaluator_mode = ragas_configs.get("evaluator_provider_mode")
+                explicit_mode = (
+                    evaluator_mode
+                    if evaluator_mode not in (None, "")
+                    else benchmark_cfg.get("provider_mode")
+                )
+                if resolve_local_mode(ollama_url, explicit_mode) == "openai_compat":
+                    # base_url twice: see the huggingface arm below — in openai_compat
+                    # mode LocalProvider now honors the configured base_url instead of
+                    # OLLAMA_HOST, so the keyword agrees with the config copy instead
+                    # of outranking it. Only when there is one, though: the keyword
+                    # lands last, so a None would erase the provider's own local
+                    # default and send the judge to the public OpenAI endpoint. An
+                    # override with nothing to override with is not an override.
+                    override = (
+                        {"base_url": normalize_base_url(ollama_url)}
+                        if ollama_url
+                        else {}
+                    )
+                    return get_model(
+                        "local",
+                        model_name,
+                        {"base_url": ollama_url, "mode": "openai_compat"},
+                        **override,
+                    )
                 from langchain_ollama import ChatOllama
-                base_url = ollama_url
-                return ChatOllama(model=model_name, base_url=base_url,num_predict=-2,model_kwargs={'format': 'json'})
+
+                return ChatOllama(
+                    model=model_name,
+                    base_url=ollama_url,
+                    num_predict=-2,
+                    model_kwargs={"format": "json"},
+                )
             case "huggingface":
                 base_url = ollama_url or "http://localhost:8000/v1"
-                return get_model("local", model_name, base_url=base_url, local_mode="openai_compat")
+                # base_url twice, on purpose. load_new_configuration exports the SUT
+                # url as OLLAMA_HOST, but in openai_compat mode LocalProvider now
+                # honors the configured base_url instead of OLLAMA_HOST, so the
+                # keyword agrees with the config copy instead of outranking it.
+                return get_model(
+                    "local",
+                    model_name,
+                    {"base_url": base_url, "mode": "openai_compat"},
+                    base_url=normalize_base_url(base_url),
+                )
             case "anthropic":
                 from langchain_anthropic import ChatAnthropic
+
                 return ChatAnthropic(model=model_name)
             case "huit_bedrock":
-                base_url = benchmark_cfg.get("base_url") or "https://go.apis.huit.harvard.edu/ais-bedrock-llm/v2"
+                base_url = (
+                    benchmark_cfg.get("base_url")
+                    or "https://go.apis.huit.harvard.edu/ais-bedrock-llm/v2"
+                )
                 return get_model("huit_bedrock", model_name, {"base_url": base_url})
             case _:
                 return ChatOpenAI(model=model_name)
 
-
     def get_ragas_embedding_model(self):
-        ragas_configs = self.config['services']['benchmarking']['mode_settings']['ragas_settings']
-        embedding_model = ragas_configs['embedding_model']
+        ragas_configs = self.config["services"]["benchmarking"]["mode_settings"][
+            "ragas_settings"
+        ]
+        embedding_model = ragas_configs["embedding_model"]
 
         match embedding_model.lower():
             case "openai":
@@ -708,23 +1492,31 @@ class Benchmarker:
                 return HuggingFaceEmbeddings()
             case _:
                 return OpenAIEmbeddings()
-            
 
     def prepare_match_fields(self, question_item):
 
         # either grab the match field(s) from the question item or use the default
-        match_fields = question_item.get('source_match_field')
+        match_fields = question_item.get("source_match_field")
         if not match_fields:
-            match_fields = self.benchmarking_configs['mode_settings']['sources_settings']['default_match_field']
+            match_fields = self.benchmarking_configs["mode_settings"][
+                "sources_settings"
+            ]["default_match_field"]
 
         # make it to a list if it's passed as a string
         if isinstance(match_fields, str):
             match_fields = [match_fields] if match_fields else []
 
-        n_sources = len(question_item.get('sources', []))
+        n_sources = len(question_item.get("sources", []))
+        if n_sources == 0:
+            # Nothing to pair. A zero-reference row (e.g. a `should_refuse` anchor)
+            # declares no sources, so a declared match field has nothing to match
+            # against — that is not the count mismatch the raise below guards. See
+            # `source_hits`, which already scores an empty match list as a clean
+            # row rather than a failure.
+            return []
         if not match_fields:
             # hardcode a default if nothing is provided
-            match_fields = ['file_name'] * n_sources
+            match_fields = ["file_name"] * n_sources
         elif len(match_fields) == 1 and n_sources > 1:
             # expand single field to all sources
             match_fields = match_fields * n_sources
@@ -734,10 +1526,28 @@ class Benchmarker:
                 len(match_fields),
                 n_sources,
             )
-            raise ValueError("Mismatch between number of match fields and reference sources.")
-        
+            raise ValueError(
+                "Mismatch between number of match fields and reference sources."
+            )
+
         return match_fields
 
+    def _resolve_reference_match_fields(
+        self, question_item, reference_sources, modes_being_run
+    ):
+        """Reference source match fields, computed only when SOURCES mode runs.
+
+        ``prepare_match_fields`` requires the per-question match-field count to
+        equal the number of reference sources. RAGAS-only banks legitimately
+        carry zero-source rows (e.g. ``should_refuse`` questions), so computing
+        match fields for them would raise even though SOURCES scoring is off.
+        Returning empty lists for non-SOURCES runs keeps such banks consumable.
+        """
+        if "SOURCES" not in modes_being_run:
+            return [], []
+        match_fields_list = self.prepare_match_fields(question_item)
+        formatted = self.prepare_reference_sources(reference_sources, match_fields_list)
+        return match_fields_list, formatted
 
     def prepare_reference_sources(self, reference_sources, match_fields):
 
@@ -745,10 +1555,10 @@ class Benchmarker:
         raw_references: List[str] = []
         if isinstance(reference_sources, str):
             cleaned = reference_sources.strip()
-            if cleaned and cleaned != 'N/A':
+            if cleaned and cleaned != "N/A":
                 raw_references = [reference_sources]
         elif isinstance(reference_sources, list):
-            raw_references = [ref for ref in reference_sources if ref not in (None, '')]
+            raw_references = [ref for ref in reference_sources if ref not in (None, "")]
         elif reference_sources is None:
             raw_references = []
         else:
@@ -756,7 +1566,7 @@ class Benchmarker:
         reference_sources_list: List[str] = []
         for ref in raw_references:
             ref_str = str(ref).strip()
-            if ref_str and ref_str != 'N/A':
+            if ref_str and ref_str != "N/A":
                 reference_sources_list.append(ref_str)
 
         formatted_reference_sources = []
@@ -765,6 +1575,29 @@ class Benchmarker:
 
         return formatted_reference_sources
 
+    @staticmethod
+    def _canonical_source(value: Any) -> str:
+        """Canonical form of a gold/retrieved source value, for comparison only.
+
+        Strips surrounding whitespace and a single trailing ``/`` from the URL
+        *path* — the one difference that actually occurs between an authored bank
+        URL and the ingested ``documents.url``. Deliberately conservative: it does
+        NOT lowercase (paths are case-sensitive), normalize the scheme, or drop the
+        query/fragment, because over-matching would silently conflate distinct
+        pages — a worse failure than the miss it fixes, and an invisible one.
+
+        The slash is stripped from the path only, so a query or fragment that
+        legitimately ends in ``/`` (e.g. ``...?redirect=/kb/foo/``) is preserved.
+        A value with no scheme (e.g. a ``file_name`` match field) parses as a bare
+        path, so the same one-trailing-slash rule applies without special-casing.
+        """
+        text = str(value).strip()
+        parts = urlsplit(text)
+        path = parts.path
+        if len(path) > 1 and path.endswith("/"):
+            path = path[:-1]
+            return urlunsplit(parts._replace(path=path))
+        return text
 
     def prepare_messages(self, raw_messages):
         """Format the langchain Messages into something we can store and view later."""
@@ -773,20 +1606,30 @@ class Benchmarker:
             if type(msg) is AIMessage:
                 # there are two types of AI messages, content and tool calls
                 # e.g. tool_calls=[{'name': 'search_vectorstore', 'args': {'query': 'CMSTRANSF-1078'}, 'id': '4a73724f-db40-41eb-9843-7f325df76f58', 'type': 'tool_call'}]
-                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tool_call in msg.tool_calls:
-                        formatted_messages.append({
-                            'type': 'tool_call',
-                            'tool_name': tool_call.get('name'),
-                            'tool_args': tool_call.get('args',{}).get('query', 'No query found.'),
-                            'total_duration': getattr(msg, 'response_metadata', {}).get('total_duration', None),
-                        })
-                elif hasattr(msg, 'content'):
-                    formatted_messages.append({
-                        'type': 'ai_message',
-                        'content': msg.content,
-                        'total_duration': getattr(msg, 'response_metadata', {}).get('total_duration', None),
-                    })
+                        formatted_messages.append(
+                            {
+                                "type": "tool_call",
+                                "tool_name": tool_call.get("name"),
+                                "tool_args": tool_call.get("args", {}).get(
+                                    "query", "No query found."
+                                ),
+                                "total_duration": getattr(
+                                    msg, "response_metadata", {}
+                                ).get("total_duration", None),
+                            }
+                        )
+                elif hasattr(msg, "content"):
+                    formatted_messages.append(
+                        {
+                            "type": "ai_message",
+                            "content": msg.content,
+                            "total_duration": getattr(msg, "response_metadata", {}).get(
+                                "total_duration", None
+                            ),
+                        }
+                    )
             elif type(msg) is HumanMessage:
                 # we don't store these...
                 pass
@@ -798,38 +1641,52 @@ class Benchmarker:
                 logger.warning(f"Unexpected message type: {type(msg)}")
         return formatted_messages
 
-
     def get_source_results(
-            self,
-            result: Dict,
-            formatted_reference_sources: List[Dict[str, str]],
-        ) -> List[bool]:
+        self,
+        result: Dict,
+        formatted_reference_sources: List[Dict[str, str]],
+    ) -> List[bool]:
         """
         For each reference source, check the specified metadata field in the retrieved documents.
         The reference sources and match fields are paired one-to-one; a single string field is
         expanded to cover all provided sources. Returns summary information and whether all
         reference sources were found.
+
+        Comparison is on the canonical form of both sides (see ``_canonical_source``):
+        banks author the canonical page URL with a trailing slash, while the
+        sitemap-driven ingest stores it without one, and an exact compare scored
+        every gold source as a miss regardless of retrieval quality.
         """
-        sources = result.get('source_documents', [])
+        sources = result.get("source_documents", [])
         logger.info("Agent found %s sources.", len(sources))
-        
+
         matches: List[bool] = []
         for source in formatted_reference_sources:
             field, reference = list(source.items())[0]
-            logger.debug("Checking for reference source '%s' in field '%s'", reference, field)
+            canonical_reference = self._canonical_source(reference)
+            logger.debug(
+                "Checking for reference source '%s' in field '%s'", reference, field
+            )
             for document in sources:
-                metadata = getattr(document, 'metadata', {}) or {}
+                metadata = getattr(document, "metadata", {}) or {}
                 value = metadata.get(field)
                 if value is None:
                     continue
                 if isinstance(value, list):
-                    values = [str(v).strip() for v in value if v is not None]
+                    values = [self._canonical_source(v) for v in value if v is not None]
                 else:
-                    values = [str(value).strip()]
+                    values = [self._canonical_source(value)]
                 logger.info("Returned source '%s': %s", field, values)
-                logger.debug("Checking reference '%s' against document metadata field '%s': %s", reference, field, values)
-                if reference in values:
-                    logger.debug("Matched reference source '%s' in document metadata.", reference)
+                logger.debug(
+                    "Checking reference '%s' against document metadata field '%s': %s",
+                    reference,
+                    field,
+                    values,
+                )
+                if canonical_reference in values:
+                    logger.debug(
+                        "Matched reference source '%s' in document metadata.", reference
+                    )
                     matches.append(True)
                     break
             else:
@@ -839,64 +1696,327 @@ class Benchmarker:
         logger.info("Source matching result: %s", matches)
         return matches
 
+    def get_ragas_results(self, rows, keys, results_by_key):
+        """Score each enabled RAGAS metric over its OWN eligible subset, attaching
+        each per-row score back to its question by key.
 
-    def get_ragas_results(self, data, to_add):
-        """WARNING: this method modifies the to_add dictionary to add the relevant scores to the relevant questions"""
+        ``rows`` are the modern-dialect ragas records
+        (``user_input``/``retrieved_contexts``/``response``/``reference``) for the
+        scorable questions; ``keys`` are their per-question keys (from #92's
+        ``scorable_items``) in the same order; ``results_by_key`` is the keyed
+        result dict each score is written onto. A context metric skips rows whose
+        ``reference`` is empty (a draft row) and a metric with no eligible row
+        records ``n/a`` WITHOUT invoking ragas — so each aggregate is a mean over
+        real rows, not a skip-NaN mean over a hidden partial denominator. Returns
+        the per-metric ``aggregate_<metric>`` + ``<metric>_scored`` dict.
+
+        WARNING: mutates ``results_by_key`` in place (adds each metric's score to
+        the matching question entry).
+        """
         # Lazy import: ragas (and its transitive `datasets` dep) is benchmark-only
         # and absent from the unit-test environment. See the module-header note.
-        from ragas import RunConfig, evaluate
+        from ragas import EvaluationDataset, RunConfig, evaluate
         from ragas.embeddings import LangchainEmbeddingsWrapper
         from ragas.llms import LangchainLLMWrapper
-        from ragas.metrics import (answer_relevancy, context_precision,
-                                   context_recall, faithfulness)
+        from ragas.metrics import (
+            answer_correctness,
+            answer_relevancy,
+            context_precision,
+            context_recall,
+            faithfulness,
+        )
 
-        all_metrics_dict = {
-                'answer_relevancy': answer_relevancy, 
-                'faithfulness': faithfulness, 
-                'context_precision': context_precision, 
-                'context_recall': context_recall
-                }
+        # Use the PRE-INSTANTIATED ``answer_correctness`` rather than building a
+        # FactualCorrectness: scores are read back as ``to_pandas()[metric]``, and
+        # only the pre-instantiated object's result column is named exactly after
+        # the metric (FactualCorrectness's can carry a mode suffix).
+        all_metrics = {
+            "answer_relevancy": answer_relevancy,
+            "faithfulness": faithfulness,
+            "context_precision": context_precision,
+            "context_recall": context_recall,
+            "answer_correctness": answer_correctness,
+        }
+        enabled_metrics = self.benchmarking_configs["mode_settings"]["ragas_settings"][
+            "enabled_metrics"
+        ]
+        metrics = [name for name in all_metrics if name in enabled_metrics]
 
-        enabled_metrics = self.benchmarking_configs['mode_settings']['ragas_settings']['enabled_metrics']
-
-        metrics_dict = {k: v for k, v in all_metrics_dict.items() if k in enabled_metrics}
-                       
-        res = pd.DataFrame()
-
-        ragas_settings = self.config['services']['benchmarking']['mode_settings']['ragas_settings']
+        ragas_settings = self.config["services"]["benchmarking"]["mode_settings"][
+            "ragas_settings"
+        ]
         # The archi config-render pipeline can strip global.verbosity; tolerate
         # missing key (verbosity 4 enables tenacity retry logging in ragas).
-        log_tenacity = self.config.get('global', {}).get('verbosity', 0) >= 4
-        timeout = ragas_settings['timeout']
-        batch_settings = ragas_settings['batch_size']
-        if not batch_settings: 
-            batch_settings = None
-        
-        runconfig = RunConfig(timeout=timeout, log_tenacity=log_tenacity)
-        # going one metric at a time prevents errors 
-        for metric_name, metric in metrics_dict.items():
-            evaluation_results = evaluate(data, 
-                                          metrics=[metric],
-                                          llm=LangchainLLMWrapper(self.get_ragas_llm_evaluator()),
-                                          embeddings=LangchainEmbeddingsWrapper(self.get_ragas_embedding_model()),
-                                          run_config=runconfig,
-                                          batch_size=batch_settings
-                                          )
+        log_tenacity = self.config.get("global", {}).get("verbosity", 0) >= 4
+        batch_size = ragas_settings["batch_size"] or None
+        runconfig = RunConfig(
+            timeout=ragas_settings["timeout"], log_tenacity=log_tenacity
+        )
+        llm = LangchainLLMWrapper(self.get_ragas_llm_evaluator())
+        embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
 
-            metric_results = evaluation_results.to_pandas()
-            res[metric_name] = metric_results[metric_name]
+        def score_fn(metric, eligible_rows):
+            # One metric at a time over its own eligible subset: keeps a single
+            # bad metric from failing the batch and preserves per-metric
+            # denominators (the modern EvaluationDataset replaces the legacy
+            # datasets.Dataset + column names).
+            dataset = EvaluationDataset.from_list(eligible_rows)
+            evaluation = evaluate(
+                dataset,
+                metrics=[all_metrics[metric]],
+                llm=llm,
+                embeddings=embeddings,
+                run_config=runconfig,
+                batch_size=batch_size,
+            )
+            return evaluation.to_pandas()[metric].tolist()
 
-        for question_idx, question in enumerate(to_add.values()):
-            for metric in metrics_dict.keys():
-                question[metric] = res.at[question_idx, metric]
+        return score_metrics_per_eligibility(
+            rows, keys, metrics, results_by_key, score_fn
+        )
 
-        return res
+    def _source_scorable_count(self) -> int:
+        """The source-accuracy denominator: questions that declare expected sources.
 
+        A zero-source row — the `should_refuse` anchor is the reason this exists —
+        has nothing to retrieve, so it is neither a hit nor a miss and must not sit
+        in the denominator. Every other row does, so a failed retrieval still
+        registers as a miss rather than quietly vanishing from the average.
+        """
+        return sum(
+            1
+            for q in self.queries_to_answers
+            if isinstance(q, dict) and q.get("sources")
+        )
+
+    def _process_config(self, modes_being_run):
+        """Answer + score every question for the current config.
+
+        Returns ``(question_wise_results, total_results)``. Per-question failures
+        are isolated (see ``_answer_and_score_question``) so one bad question never
+        aborts the run; an all-failed config yields ``n/a`` aggregates rather than
+        an empty RAGAS dataset.
+        """
+        question_id = 0
+        question_wise_results: Dict[str, Any] = {}
+        total_results: Dict[str, Any] = {}
+        ragas_input: List[Dict[str, Any]] = []
+        relative_source_accuracy = 0.0
+        source_accuracy = 0.0
+
+        for question_item in self.queries_to_answers:
+
+            logger.info("")
+            logger.info("====================================")
+            logger.info(f"Answering question: {question_id + 1}")
+
+            if type(question_item) is not dict:
+                logger.error(
+                    f"Each item in the question to answer list must be a dictionary, but got {type(question_item)}"
+                )
+                continue
+            if not all(field in question_item for field in self.required_fields):
+                logger.error(
+                    f"Each item in the question to answer list must contain the following fields: {self.required_fields}, but got {question_item.keys()}"
+                )
+                continue
+
+            logger.info(f"Question: {question_item['user_input']}")
+            logger.info(f"Reference Answer: {question_item.get('reference') or 'N/A'}")
+            logger.info(f"Reference Sources: {question_item.get('sources', 'N/A')}")
+
+            question_id += 1
+            # Answer + score is isolated: a failure returns a marked entry instead
+            # of aborting the run (see _answer_and_score_question).
+            bundle = self._answer_and_score_question(
+                question_item, question_id, modes_being_run
+            )
+            q_results = bundle["q_results"]
+            question_wise_results[f"question_{question_id}"] = q_results
+
+            # Only clean successes contribute RAGAS input and source matches;
+            # failed/degraded rows return None for both.
+            if bundle["dataset_result"] is not None:
+                ragas_input.append(bundle["dataset_result"])
+
+            rel_hit, strict_hit = source_hits(
+                bundle["matches"], q_results.get("reference_sources_metadata", [])
+            )
+            relative_source_accuracy += rel_hit
+            source_accuracy += strict_hit
+
+            logger.info("====================================")
+            logger.info("")
+
+        if "RAGAS" in modes_being_run:
+            if ragas_input:
+                logger.info("Starting to collect RAGAS results")
+                # scorable_items carries #92's per-question keys in ragas_input
+                # order; get_ragas_results scores each metric over its own
+                # eligible subset and attaches scores back BY KEY (never
+                # positionally — Codex #93 F5).
+                scorable = scorable_items(question_wise_results)
+                total_results.update(
+                    self.get_ragas_results(ragas_input, list(scorable.keys()), scorable)
+                )
+            else:
+                # No scorable input (all failed/degraded): #92's config-level n/a
+                # guard emits NaN for every metric, with no empty-Dataset ragas call.
+                # Tolerant read: this is the FAILURE path, so an unreadable or
+                # absent metric list must not turn a degraded run into a crash.
+                # None falls back to emitting every known metric, the behaviour
+                # before the list was threaded through.
+                enabled = (
+                    (
+                        (getattr(self, "benchmarking_configs", None) or {}).get(
+                            "mode_settings"
+                        )
+                        or {}
+                    ).get("ragas_settings")
+                    or {}
+                ).get("enabled_metrics")
+                total_results.update(
+                    build_ragas_aggregates(
+                        None, enabled_metrics=enabled or DEFAULT_ENABLED_METRICS
+                    )
+                )
+
+        if "SOURCES" in modes_being_run:
+            # Denominator is the questions that DECLARE expected sources, not the
+            # total count. A failed/degraded row still counts as a miss, but a
+            # zero-source row (a `should_refuse` anchor) has no source to hit or
+            # miss — counting it would either fabricate a hit or dilute the score.
+            # The count is emitted alongside so the report stops re-deriving it
+            # from len(questions).
+            total_results.update(
+                build_source_aggregates(
+                    relative_source_accuracy,
+                    source_accuracy,
+                    self._source_scorable_count(),
+                )
+            )
+
+        return question_wise_results, total_results
+
+    def _answer_and_score_question(self, question_item, question_id, modes_being_run):
+        """Answer and score one question, isolating failures.
+
+        Isolation boundary (openspec harden-benchmark-and-agent-resilience): any
+        exception from answering OR per-question scoring is caught and returned as a
+        marked failure entry, so one bad question never aborts the whole run. A
+        context-overflow *degraded* answer (marked by the agent in
+        ``PipelineOutput.metadata``) is recorded with ``status="degraded"`` and
+        excluded from the RAGAS input and source scoring, so it is never counted as a
+        clean success.
+
+        Returns a dict with keys ``q_results`` (always), ``dataset_result`` (RAGAS
+        input for this question, or ``None``), and ``matches`` (source-match booleans,
+        or ``None``).
+        """
+        question = question_item["user_input"]
+        reference_answer = question_item.get("reference", "")
+        reference_sources = question_item.get("sources", "N/A")
+        try:
+            formatted_question = [("User", question)]
+            start = time.perf_counter()
+            result = self.chain(history=formatted_question)
+            end = time.perf_counter()
+            logger.info(
+                f"Finished answering question: {question_id} ({end - start:.2f}s)"
+            )
+
+            status = classify_metadata(
+                result.get("metadata") if hasattr(result, "get") else None
+            )
+
+            q_results: Dict[str, Any] = {}
+            q_results["time_elapsed"] = end - start
+            q_results["question"] = question
+            # reference_answer is "" for a draft row (empty reference). That raw
+            # empty drives context-metric eligibility in dataset_result below, but
+            # the human-facing result / Argilla record needs a non-empty value
+            # (its reference_answer field is a required TextField), so store an
+            # "N/A" sentinel for display while the ragas payload keeps the raw "".
+            q_results["reference_answer"] = reference_answer or "N/A"
+            q_results["answer"] = result["answer"]
+            q_results["status"] = status
+            q_results["messages"] = self.prepare_messages(result.get("messages", []))
+
+            match_fields_list, formatted_reference_sources = (
+                self._resolve_reference_match_fields(
+                    question_item, reference_sources, modes_being_run
+                )
+            )
+            q_results["reference_sources_match_fields"] = match_fields_list
+            q_results["reference_sources_metadata"] = formatted_reference_sources
+
+            # A degraded (context-overflow) answer must not be scored as a clean
+            # success: skip source matching AND RAGAS input for it, so it neither
+            # stamps `matched` onto its sources (Codex F4) nor feeds aggregates.
+            scorable = status == OK
+
+            matches = None
+            if "SOURCES" in modes_being_run and scorable:
+                matches = self.get_source_results(result, formatted_reference_sources)
+                for idx, source in enumerate(q_results["reference_sources_metadata"]):
+                    source["matched"] = matches[idx]
+
+            sources_metadata: List[Dict[str, Any]] = []
+            sources_trunc_content: List[str] = []
+            for document in result["source_documents"]:
+                metadata = getattr(document, "metadata", {}) or {}
+                sources_metadata.append(metadata)
+                sources_trunc_content.append(
+                    getattr(document, "page_content", "")[:300]
+                )
+            q_results["sources_metadata"] = sources_metadata
+            q_results["sources_trunc_content"] = sources_trunc_content
+            q_results["anchor_type"] = (
+                question_item.get("anchor_type", "")
+                if isinstance(question_item, dict)
+                else ""
+            )
+            if isinstance(question_item, dict) and "difficulty" in question_item:
+                q_results["difficulty"] = question_item["difficulty"]
+
+            dataset_result = None
+            if "RAGAS" in modes_being_run and scorable:
+                contexts = [s.page_content for s in result["source_documents"]]
+                # ragas 0.3.5 modern dialect: the agent's answer is `response`;
+                # the bank's ground-truth answer is `reference` (never `response`).
+                dataset_result = {
+                    "user_input": question,
+                    "retrieved_contexts": contexts,
+                    "response": result["answer"],
+                    "reference": reference_answer,
+                }
+
+            return {
+                "q_results": q_results,
+                "dataset_result": dataset_result,
+                "matches": matches,
+            }
+        except Exception as exc:  # isolate: one question must not abort the run
+            logger.error(
+                "Question %s failed; recording a failure entry and continuing: %s",
+                question_id,
+                exc,
+            )
+            return {
+                "q_results": build_failure_entry(
+                    question=question,
+                    reference_answer=reference_answer,
+                    error=exc,
+                    question_item=question_item,
+                ),
+                "dataset_result": None,
+                "matches": None,
+            }
 
     def run(self):
-        self.wait_for_ingestion_completion()
+        ingest_wall_seconds = self.wait_for_ingestion_completion()
 
-        modes_being_run = set(self.benchmarking_configs['modes'])
+        modes_being_run = set(self.benchmarking_configs["modes"])
 
         # Merge anchor questions, if any. Anchors live in a separate JSON so
         # they can be versioned independently of the per-round query bank.
@@ -909,143 +2029,34 @@ class Benchmarker:
         logger.info("")
         logger.info("====== Starting benchmark: %s ======", self.benchmark_name)
         logger.info("Modes being run: %s", modes_being_run)
-        logger.info(f"Processing {len(self.queries_to_answers)} questions and {len(self.all_config_files)} configuration(s).")
+        logger.info(
+            f"Processing {len(self.queries_to_answers)} questions and {len(self.all_config_files)} configuration(s)."
+        )
         logger.info("")
 
-        while self.all_config_files: 
-
-            question_id = 0
-
-            # results for each question
-            question_wise_results = {}
-
-            # results for all of the questions in this config
-            total_results = {}
-
-            # RAGAS mode: ragas inputs
-            ragas_input = []
-
-            # SOUCES mode: sources accuracy
-            relative_source_accuracy = 0.0 
-            source_accuracy = 0.0
-
-            for question_item in self.queries_to_answers:
-
-                logger.info("")
-                logger.info("====================================")
-                logger.info(f"Answering question: {question_id + 1}")
-
-                if type(question_item) is not dict:
-                    logger.error(f"Each item in the question to answer list must be a dictionary, but got {type(question_item)}")
-                    continue
-                if not all(field in question_item for field in self.required_fields):
-                    logger.error(f"Each item in the question to answer list must contain the following fields: {self.required_fields}, but got {question_item.keys()}")
-                    continue
-
-                question = question_item['question']
-                reference_answer = question_item.get('answer', 'N/A')
-                reference_sources = question_item.get('sources', 'N/A')
-
-                logger.info(f"Question: {question}")
-                logger.info(f"Reference Answer: {reference_answer}")
-                logger.info(f"Reference Sources: {reference_sources}")
-
-                question_id +=1
-                formatted_question = [("User", question)]
-                start = time.perf_counter()
-                result = self.chain(history=formatted_question)
-                end = time.perf_counter()
-                logger.info(f"Finished answering question: {question_id} ({end - start:.2f}s)")
-                q_results = {}
-
-                # prepare info to store for this question
-                q_results["time_elapsed"] = end - start
-                q_results["question"] = question
-                q_results["reference_answer"] = reference_answer
-                q_results["answer"] = result['answer']
-
-                # format the messages
-                q_results['messages'] = self.prepare_messages(result.get("messages", []))
-
-                # format the reference sources
-                match_fields_list = self.prepare_match_fields(question_item)
-                formatted_reference_sources = self.prepare_reference_sources(reference_sources, match_fields_list)
-                q_results["reference_sources_match_fields"] = match_fields_list
-                q_results["reference_sources_metadata"] = formatted_reference_sources
-
-                if "RAGAS" in modes_being_run:
-                    # we collect the necessary info for ragas evaluation
-                    # TODO this is likely broken now
-                    contexts = [s.page_content for s in result['source_documents']]
-                    dataset_result = {
-                            "question": question,
-                            "contexts": contexts,
-                            "answer": result['answer'],
-                            "ground_truth": reference_answer,
-                            }
-                    ragas_input.append(dataset_result)
-
-                if "SOURCES" in modes_being_run: 
-                    # sources evaluation is done on the fly -- check if each of the given sources was found                  
-                    matches = self.get_source_results(
-                        result,
-                        formatted_reference_sources,
-                    )
-                    # we count accuracy via any of the sources matching
-                    if any(matches): 
-                        relative_source_accuracy += 1.0
-                    if len(matches) == len(formatted_reference_sources) and all(matches):
-                        source_accuracy += 1.0
-                    # but we still store the match of each reference source in its metadata
-                    for idx, source in enumerate(q_results["reference_sources_metadata"]):
-                        source['matched'] = matches[idx]
-                    logger.info(f"Current relative accuracy: {relative_source_accuracy / question_id if question_id > 0 else 0.0}")
-                    logger.info(f"Current strict accuracy: {source_accuracy / question_id if question_id > 0 else 0.0}")
-
-                # store the sources metadata and truncated content
-                sources_metadata: List[Dict[str, Any]] = []
-                sources_trunc_content: List[str] = []
-                for document in result['source_documents']:
-                    metadata = getattr(document, 'metadata', {}) or {}
-                    sources_metadata.append(metadata)
-                    sources_trunc_content.append(getattr(document, 'page_content', '')[:300])  # first 300 chars
-                q_results['sources_metadata'] = sources_metadata
-                q_results['sources_trunc_content'] = sources_trunc_content
-                # Forward the anchor marker so the Argilla push can stamp it
-                # onto record metadata. Empty string means "not an anchor"
-                # (Argilla TermsMetadataProperty accepts any string).
-                q_results['anchor_type'] = question_item.get('anchor_type', '') if isinstance(question_item, dict) else ''
-                logger.debug("Sources returned: %s", sources_metadata)
-
-                # store the results for this question
-                question_wise_results[f"question_{question_id}"] = q_results
-                
-                logger.info("====================================")
-                logger.info("")
-
-            if "RAGAS" in modes_being_run:
-                # TODO this is likely broken now
-                logger.info(f"Starting to collect RAGAS results")
-                from datasets import Dataset  # lazy: benchmark-only dep (see module header)
-                data = Dataset.from_list(ragas_input)
-                # were modifying final_addition here to add ragas results by question
-                ragas_results = self.get_ragas_results(data, question_wise_results)
-
-                answer_relevancy = ragas_results['answer_relevancy'].mean()
-                faithfulness = ragas_results['faithfulness'].mean()
-                context_precision = ragas_results['context_precision'].mean()
-                context_recall = ragas_results['context_recall'].mean()
-
-                total_results['aggregate_answer_relevancy'] = answer_relevancy
-                total_results['aggregate_faithfulness'] = faithfulness
-                total_results['aggregate_context_precision'] = context_precision
-                total_results['aggregate_context_recall'] = context_recall
-
-            if "SOURCES" in modes_being_run:
-                total_results['relative_source_accuracy'] = relative_source_accuracy / len(self.queries_to_answers)
-                total_results['source_accuracy'] = source_accuracy / len(self.queries_to_answers)
-
-            ResultHandler.handle_results(Path(self.current_config), question_wise_results, total_results)
+        while self.all_config_files:
+            # Read the corpus BEFORE the arm's questions, so the report can show
+            # whether they were all scored against the same documents.
+            corpus_before = ResultHandler.get_corpus_fingerprint()
+            question_wise_results, total_results = self._process_config(modes_being_run)
+            ResultHandler.handle_results(
+                Path(self.current_config),
+                question_wise_results,
+                total_results,
+                corpus_before=corpus_before,
+                # The chain's own snapshot, taken by archi.__init__ before these
+                # questions ran -- not a fresh query, which would report the
+                # config as it stands now rather than as the arm used it.
+                running_config=getattr(self.chain, "config", None),
+                # Measured once, before the sweep, and stamped on every arm --
+                # there is one ingest wait per invocation, not one per arm.
+                # Ingestion can continue in the background, so a later arm may
+                # score a corpus this number did not build. The signal for that
+                # is `corpus_fingerprint` differing ACROSS arms, not
+                # `corpus_unchanged_at_endpoints`: a re-ingest landing wholly
+                # between two arms leaves that boolean True on both sides.
+                ingest_wall_seconds=ingest_wall_seconds,
+            )
             self.load_new_configuration()
 
         ResultHandler.add_metadata()
@@ -1054,7 +2065,9 @@ class Benchmarker:
         # Auto-enabled — no explicit flag — because there's no useful "skip
         # pairing" case when the user gave us multiple configs.
         if len(ResultHandler.results) >= 2:
-            pairs = ResultHandler.generate_pairwise_combinations(len(ResultHandler.results))
+            pairs = ResultHandler.generate_pairwise_combinations(
+                len(ResultHandler.results)
+            )
             logger.info("Generating %d pairwise A/B comparisons...", len(pairs))
             for idx_a, idx_b in pairs:
                 paired = ResultHandler.pair_ab_results(idx_a, idx_b)
@@ -1063,11 +2076,9 @@ class Benchmarker:
                 name_a = comp["config_a"].get("name", f"config_{idx_a}")
                 name_b = comp["config_b"].get("name", f"config_{idx_b}")
                 logger.info(
-                    "  %s vs %s: %d questions. Wins A=%d, B=%d, Ties=%d",
-                    name_a, name_b, len(paired),
-                    comp["aggregate"]["wins_a"],
-                    comp["aggregate"]["wins_b"],
-                    comp["aggregate"]["ties"],
+                    ResultHandler.ab_summary_line(
+                        name_a, name_b, len(paired), comp["aggregate"]
+                    )
                 )
 
         # Prompt-sweep leaderboard: rank every config by mean RAGAS metric.
@@ -1075,18 +2086,32 @@ class Benchmarker:
         # directly). Only meaningful with 2+ variants.
         if len(ResultHandler.results) >= 2:
             primary_metric = str(
-                self.config.get("services", {}).get("benchmarking", {}).get("primary_metric", "faithfulness")
+                self.config.get("services", {})
+                .get("benchmarking", {})
+                .get("primary_metric", "faithfulness")
             )
             leaderboard = ResultHandler.build_leaderboard(primary_metric)
-            logger.info("Prompt-sweep leaderboard (ranked by %s):", leaderboard["primary_metric"])
             logger.info(
-                "  %-4s %-28s %-10s %-10s %-10s %-10s %-10s %s",
-                "rank", "name", "ans_rel", "faith", "ctx_prec", "ctx_rec", "n_q", "prompt",
+                "Prompt-sweep leaderboard (ranked by %s):",
+                leaderboard["primary_metric"],
+            )
+            logger.info(
+                "  %-4s %-28s %-10s %-10s %-10s %-10s %-10s %-10s %s",
+                "rank",
+                "name",
+                "ans_rel",
+                "faith",
+                "ctx_prec",
+                "ctx_rec",
+                "ans_corr",
+                "n_q",
+                "prompt",
             )
             for row in leaderboard["rows"]:
                 m = row["metrics"]
                 answered = row["query_count"]
                 scored = row.get("scored_counts", {})
+
                 # Annotate a metric with @<n> when its mean is over fewer than
                 # the answered questions (judge timeouts), so an under-sampled
                 # score can't masquerade as fully-backed.
@@ -1096,34 +2121,53 @@ class Benchmarker:
                         return "    n/a"
                     n = scored.get(metric_name, answered)
                     return f"{v:.4f}@{n}" if n < answered else f"{v:.4f}"
+
                 flag = "  (incomplete)" if row["incomplete"] else ""
                 logger.info(
-                    "  %-4d %-28s %-12s %-12s %-12s %-12s %-10d %s%s",
-                    row["rank"], row["name"][:28],
-                    _fmt("answer_relevancy"), _fmt("faithfulness"),
-                    _fmt("context_precision"), _fmt("context_recall"),
-                    answered, row["agent_md_file"], flag,
+                    "  %-4d %-28s %-12s %-12s %-12s %-12s %-12s %-10d %s%s",
+                    row["rank"],
+                    row["name"][:28],
+                    _fmt("answer_relevancy"),
+                    _fmt("faithfulness"),
+                    _fmt("context_precision"),
+                    _fmt("context_recall"),
+                    _fmt("answer_correctness"),
+                    answered,
+                    row["agent_md_file"],
+                    flag,
                 )
 
         # Push to Argilla when ARCHI_ARGILLA=1 in the benchmarks container env.
         # The CLI flag --argilla on `archi evaluate` sets this (see Task 2.5).
-        argilla_enabled = os.environ.get("ARCHI_ARGILLA", "").strip().lower() in ("1", "true", "yes")
+        argilla_enabled = os.environ.get("ARCHI_ARGILLA", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         if argilla_enabled:
             try:
                 from src.utils.benchmark_argilla import (
                     generate_dataset_name,
                     push_ab_results_to_argilla,
-                    push_single_results_to_argilla,
                     push_multi_ab_results_to_argilla,
+                    push_single_results_to_argilla,
                     write_state_file,
                 )
 
                 corpus_id = ResultHandler.get_corpus_snapshot_id()
                 # services.benchmarking.argilla.min_submitted (default 2) drives
                 # inter-rater reliability sample size by configuring rg.TaskDistribution.
-                argilla_cfg = self.config.get("services", {}).get("benchmarking", {}).get("argilla", {}) or {}
+                argilla_cfg = (
+                    self.config.get("services", {})
+                    .get("benchmarking", {})
+                    .get("argilla", {})
+                    or {}
+                )
                 min_submitted = int(argilla_cfg.get("min_submitted", 2))
-                if ResultHandler.ab_comparisons and len(ResultHandler.ab_comparisons) > 1:
+                if (
+                    ResultHandler.ab_comparisons
+                    and len(ResultHandler.ab_comparisons) > 1
+                ):
                     dataset_names = push_multi_ab_results_to_argilla(
                         ResultHandler.ab_comparisons,
                         self.benchmark_name,
@@ -1138,7 +2182,8 @@ class Benchmarker:
                     logger.info(
                         "Argilla export complete. %d datasets created (corpus_snapshot_id=%s). "
                         "Open Argilla to grade: archi grade --serve",
-                        len(dataset_names), corpus_id,
+                        len(dataset_names),
+                        corpus_id,
                     )
                 elif ResultHandler.ab_comparison:
                     argilla_dataset_name = generate_dataset_name(self.benchmark_name)
@@ -1157,7 +2202,8 @@ class Benchmarker:
                     logger.info(
                         "Argilla export complete. Dataset: '%s' (corpus_snapshot_id=%s). "
                         "Open Argilla to grade: archi grade --serve",
-                        argilla_dataset_name, corpus_id,
+                        argilla_dataset_name,
+                        corpus_id,
                     )
                 else:
                     argilla_dataset_name = generate_dataset_name(self.benchmark_name)
@@ -1175,13 +2221,15 @@ class Benchmarker:
                     logger.info(
                         "Argilla export complete. Dataset: '%s' (corpus_snapshot_id=%s). "
                         "Open Argilla to grade: archi grade --serve",
-                        argilla_dataset_name, corpus_id,
+                        argilla_dataset_name,
+                        corpus_id,
                     )
             except Exception:
-                logger.exception("Argilla push failed — results were still dumped to disk.")
+                logger.exception(
+                    "Argilla push failed — results were still dumped to disk."
+                )
 
-        ResultHandler.dump(self.benchmark_name)
-        ResultHandler.dump_html(self.benchmark_name)
+        ResultHandler.dump_artifacts(self.benchmark_name)
         return
 
     def _merge_anchor_questions(self) -> None:
@@ -1207,7 +2255,9 @@ class Benchmarker:
             logger.info("Anchor merging disabled by config; skipping.")
             return
 
-        path_str = anchor_cfg.get("path") or "examples/benchmarking/anchor_questions.json"
+        path_str = (
+            anchor_cfg.get("path") or "examples/benchmarking/anchor_questions.json"
+        )
         anchor_path = Path(path_str)
         if not anchor_path.is_absolute():
             # Resolve relative to the data path (matches how queries_path is read).
@@ -1231,28 +2281,85 @@ class Benchmarker:
             logger.warning("Anchor file %s is empty or malformed.", anchor_path)
             return
 
+        # The anchor file is a load path separate from queries_path; normalize it
+        # onto the modern dialect so migrated (or legacy) anchors dedup and merge
+        # on `user_input` rather than being silently skipped (Codex #93 F1).
+        anchors = normalize_bank(anchors)
+
         existing_questions = {
-            q.get("question") for q in self.queries_to_answers
-            if isinstance(q, dict) and q.get("question")
+            q.get("user_input")
+            for q in self.queries_to_answers
+            if isinstance(q, dict) and q.get("user_input")
         }
         merged = list(self.queries_to_answers)
         added = 0
         for a in anchors:
-            if not isinstance(a, dict) or not a.get("question"):
+            if not isinstance(a, dict) or not a.get("user_input"):
                 continue
-            if a["question"] in existing_questions:
+            if a["user_input"] in existing_questions:
                 continue  # Anchor already in the bank — don't duplicate.
             merged.append(a)
             added += 1
         self.queries_to_answers = merged
         logger.info(
             "Merged %d anchor questions from %s (%d total questions).",
-            added, anchor_path, len(merged),
+            added,
+            anchor_path,
+            len(merged),
         )
 
-    def wait_for_ingestion_completion(self):
-        timeout_seconds = int(os.environ.get("BENCH_INGEST_WAIT_TIMEOUT", "3600"))
-        poll_interval_seconds = int(os.environ.get("BENCH_INGEST_POLL_INTERVAL", "5"))
+    def wait_for_ingestion_completion(
+        self,
+        *,
+        fetch: Optional[Callable[[str], Dict[str, Any]]] = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> Optional[float]:
+        """Block until the data-manager reports ingestion complete.
+
+        Returns the wall-clock seconds this ingest was observed working, or
+        `None` when it was never observed working at all -- the run found the
+        corpus already built. Never `0.0`: that would put a fabricated
+        measurement where "not measured" belongs (issue #417).
+
+        The span runs from the first poll `_ingest_is_progressing` accepts to
+        the one reporting `completed`, so queue time behind another holder of
+        `ingestion_lock` is excluded but everything after work starts is
+        included. It approximates the ingest rather than measuring it, and errs
+        in both directions: ingestion that ran before this container started
+        polling cannot be seen at all, and non-ingest time after polling began
+        is counted. An exact figure needs `started_at`/`finished_at` in the
+        status payload, which is a data-manager change (#428).
+
+        `fetch`, `clock` and `sleep` are injection seams for the tests only;
+        production calls this with no arguments.
+
+        Neither bound on this wait is a total-runtime deadline on a *healthy*
+        ingest. `BENCH_INGEST_WAIT_TIMEOUT` is a **stall** budget: it restarts
+        on every poll reporting `state=running`, so an ingest that keeps
+        reporting progress is never killed merely for being slow. That was
+        issue #378 -- a 106-minute embedding phase aborted at exactly 7200s
+        while all 1433 of its status polls were succeeding, two minutes short
+        of finishing. `BENCH_INGEST_MAX_WAIT` is the absolute backstop for the
+        other failure: an ingest that reports progress forever without ever
+        completing.
+
+        Two judgement calls, both deliberate:
+
+        - Restart on any *running* poll, not on a **changing `step`**.
+          `data_manager.py:108-109` emits "Updating vectorstore" once for the
+          whole embedding phase, so the step string is constant for hours on a
+          healthy run; a step-change rule would kill exactly the runs this
+          exists to protect.
+        - Restart on *progress* only, not on any **answered** poll --
+          `_ingest_is_progressing` decides. An endpoint stuck at `pending`, or
+          at `running`/`initializing` because this ingest is queued behind
+          another holder of `ingestion_lock`, is answering happily while
+          nothing of ours is happening; the stall budget must end those,
+          exactly as the old absolute deadline did.
+        """
+        budgets = _ingest_wait_budgets()
+        fetch = fetch or _fetch_ingestion_status
         dm_cfg = self.config.get("services", {}).get("data_manager", {})
         # external_port is the HOST-side mapping (e.g. 7881 for benchmarks);
         # internal_port is what the data-manager listens on INSIDE the compose
@@ -1270,53 +2377,127 @@ class Benchmarker:
             f"http://localhost:{dm_external_port}/api/ingestion/status",
             f"http://host.containers.internal:{dm_external_port}/api/ingestion/status",
         ]
-        start_time = time.monotonic()
+        start_time = clock()
+        last_ok_at = start_time
+        last_ok_url: Optional[str] = None
+        last_state: Optional[str] = None
+        last_step: Any = None
+        # Per URL, not one shared "last error": an error belongs to the host
+        # that raised it, and only the serving URL's failure explains a timeout.
+        errors_by_url: Dict[str, BaseException] = {}
+        # When this ingest was first seen actually working -- NOT when the
+        # waiting started. A run queued behind another holder of
+        # `ingestion_lock` sits at `running`/`initializing` while nothing of its
+        # own happens, and charging that queue time to the corpus would make the
+        # campaign's cost table depend on what else the data-manager was doing.
+        # Still None at the completed poll = no ingest was observed at all (#417).
+        ingest_started_at: Optional[float] = None
         attempt = 0
 
-        logger.info("Waiting for data-manager ingestion to complete before benchmarking...")
+        logger.info(
+            "Waiting for data-manager ingestion to complete before benchmarking..."
+        )
+        if not budgets.max_wait_seconds:
+            # The status payload carries no progress counter (only state/step,
+            # `ingestion_status.py:29-33`), so an ingest wedged *inside*
+            # `update_vectorstore()` still answers "running" forever and only
+            # the ceiling can end it. Disabling the ceiling is a legitimate
+            # choice for a corpus larger than the default 6h -- but an
+            # unattended run that hangs silently burns its allocation, so it
+            # must not be a quiet one.
+            logger.warning(
+                "BENCH_INGEST_MAX_WAIT=0: no absolute ceiling on this wait. An "
+                "ingest that wedges while still reporting state=running will "
+                "block the benchmark indefinitely."
+            )
         while True:
             attempt += 1
-            last_error = None
             for status_url in status_urls:
                 try:
-                    with url_request.urlopen(status_url, timeout=5) as response:
-                        payload = json.loads(response.read().decode("utf-8"))
-                    state = str(payload.get("state", "")).lower()
-                    step = payload.get("step")
-                    err = payload.get("error")
-                    logger.info(
-                        "Ingestion status check #%s via %s -> state=%s step=%s",
-                        attempt,
-                        status_url,
-                        state,
-                        step,
-                    )
-                    if state == "completed":
-                        logger.info("Data-manager ingestion completed; starting benchmark.")
-                        return
-                    if state == "error":
-                        raise RuntimeError(f"Data-manager ingestion failed at step '{step}': {err}")
-                    break
-                except (url_error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
-                    last_error = exc
+                    payload = fetch(status_url)
+                except (
+                    url_error.URLError,
+                    TimeoutError,
+                    ValueError,
+                    json.JSONDecodeError,
+                ) as exc:
+                    errors_by_url[status_url] = exc
                     continue
 
-            elapsed = time.monotonic() - start_time
-            if elapsed >= timeout_seconds:
-                if last_error:
-                    raise TimeoutError(
-                        f"Timed out after {timeout_seconds}s waiting for ingestion status endpoint. Last error: {last_error}"
-                    )
-                raise TimeoutError(f"Timed out after {timeout_seconds}s waiting for ingestion completion.")
+                state = str(payload.get("state", "")).lower()
+                step = payload.get("step")
+                logger.info(
+                    "Ingestion status check #%s via %s -> state=%s step=%s",
+                    attempt,
+                    status_url,
+                    state,
+                    step,
+                )
+                # THIS URL answered, so only ITS own recorded failure is stale.
+                # Another candidate's error is still that candidate's business
+                # and stays on the books against it (defect 2). Reachability
+                # facts update on any answer; the stall budget restarts only on
+                # evidence of actual progress.
+                errors_by_url.pop(status_url, None)
+                last_ok_url = status_url
+                last_state = state
+                last_step = step
+                if _ingest_is_progressing(state, step):
+                    last_ok_at = clock()
+                    if ingest_started_at is None:
+                        ingest_started_at = last_ok_at
 
-            time.sleep(poll_interval_seconds)
+                if state == "completed":
+                    logger.info("Data-manager ingestion completed; starting benchmark.")
+                    if ingest_started_at is None:
+                        return None
+                    return clock() - ingest_started_at
+                if state == "error":
+                    raise RuntimeError(
+                        f"Data-manager ingestion failed at step '{step}': "
+                        f"{payload.get('error')}"
+                    )
+                break
+
+            now = clock()
+            stalled_for = now - last_ok_at
+            elapsed = now - start_time
+            if stalled_for >= budgets.stall_seconds:
+                raise TimeoutError(
+                    _ingest_wait_timeout_message(
+                        f"no progress reported for {stalled_for:.0f}s "
+                        f"(BENCH_INGEST_WAIT_TIMEOUT={budgets.stall_seconds}s; "
+                        "the budget restarts whenever the ingest reports "
+                        "progress, never on total runtime)",
+                        candidate_urls=status_urls,
+                        last_ok_url=last_ok_url,
+                        last_state=last_state,
+                        last_step=last_step,
+                        errors_by_url=errors_by_url,
+                    )
+                )
+            if budgets.max_wait_seconds and elapsed >= budgets.max_wait_seconds:
+                raise TimeoutError(
+                    _ingest_wait_timeout_message(
+                        f"still not complete after {elapsed:.0f}s "
+                        f"(BENCH_INGEST_MAX_WAIT={budgets.max_wait_seconds}s)",
+                        candidate_urls=status_urls,
+                        last_ok_url=last_ok_url,
+                        last_state=last_state,
+                        last_step=last_step,
+                        errors_by_url=errors_by_url,
+                    )
+                )
+
+            sleep(budgets.poll_interval_seconds)
+
 
 if __name__ == "__main__":
 
     _init_runtime()
 
     query_file = Path("QandA.txt")
-    configs_folder = Path('configs')
+    configs_folder = Path("configs")
 
     with open(Path(query_file), "r") as f:
         question_to_answer = json.load(f)

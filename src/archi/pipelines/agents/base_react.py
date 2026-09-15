@@ -1,11 +1,26 @@
-from typing import Any, Callable, Dict, List, Optional, Sequence, Iterator, AsyncIterator, Set, Tuple
+import contextvars
 import re
+import threading
 import time
 import uuid
+import weakref
+from typing import (
+    Any,
+    AsyncIterator,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 
 from langchain.agents import create_agent
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+
 try:
     from langchain_core.messages import BaseMessageChunk
 except ImportError:
@@ -13,25 +28,80 @@ except ImportError:
 from langgraph.errors import GraphRecursionError
 from langgraph.graph.state import CompiledStateGraph
 
-from src.archi.pipelines.agents.utils.prompt_utils import get_role_context, read_prompt
+from src.archi.pipelines.agents.tools import initialize_mcp_client
+from src.archi.pipelines.agents.utils.context_budget import positive_int
+from src.archi.pipelines.agents.utils.context_middleware import (
+    build_context_middleware,
+)
 from src.archi.pipelines.agents.utils.history_utils import infer_speaker
+from src.archi.pipelines.agents.utils.mcp_utils import AsyncLoopThread
+from src.archi.pipelines.agents.utils.prompt_utils import get_role_context, read_prompt
+from src.archi.pipelines.agents.utils.run_memory import RunMemory
+from src.archi.pipelines.agents.utils.thinking_gate import (
+    hold_visible,
+    provider_emits_thinking,
+)
 from src.archi.providers import get_model
 from src.archi.providers.base import ProviderType
 from src.archi.utils.output_dataclass import PipelineOutput
-from src.archi.pipelines.agents.utils.run_memory import RunMemory
-from src.archi.pipelines.agents.utils.mcp_utils import AsyncLoopThread
-from src.archi.pipelines.agents.tools import initialize_mcp_client
+from src.utils.local_mode import apply_local_mode
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Maps pipeline instance → RunMemory for the current execution context.
+# Per-thread (or per-async-task) isolation is provided by the ContextVar;
+# per-instance isolation within a single thread (e.g. source vs. view) is
+# provided by the keys of the map.
+#
+# The key is the agent OBJECT, in a WeakKeyDictionary, not ``id(self)``. Two
+# reasons, both consequences of a ContextVar value outliving the request that set
+# it on a reused worker thread:
+#
+#   Retention — an ``id``-keyed plain dict has no lifecycle boundary at which an
+#   entry is dropped. Every request-local view (a ``copy.copy`` of the shared
+#   pipeline, one per overridden request) left its RunMemory, and every document
+#   that memory accumulated, pinned for the life of the thread.
+#
+#   Aliasing — ``id()`` is the object's address, and CPython reuses addresses.
+#   A view allocated where a dead view used to live would inherit the dead one's
+#   entry: ``active_memory`` would return the previous request's documents, and a
+#   callback firing before ``start_run_memory()`` would mutate that stale memory
+#   instead of failing open on ``None``. That is the cross-request attribution
+#   bug #123 exists to close, reintroduced through the key.
+#
+# Weak keys fix both: the entry disappears when the agent is collected, so no
+# orphaned slot survives for a recycled address to land on. Keying on the object
+# also needs no cooperation from ``__init__`` — which matters, because views are
+# built by ``copy.copy`` and never run it, so any key stored in ``__dict__``
+# would be inherited by the view and silently shared with its source.
+_ACTIVE_MEMORY: contextvars.ContextVar[
+    Optional["weakref.WeakKeyDictionary[Any, RunMemory]"]
+] = contextvars.ContextVar("_ACTIVE_MEMORY", default=None)
+
 
 class BaseReActAgent:
     """
     BaseReActAgent provides a foundational structure for building pipeline classes that
     process user queries using configurable language models and prompts.
     """
+
     DEFAULT_RECURSION_LIMIT = 50
     DEFAULT_TOOL_BUDGETS: Dict[str, int] = {"search_vectorstore_hybrid": 2}
+
+    # Set by ``adopt_request_local_model`` on a request-local view only. Class
+    # attributes rather than ``__init__`` assignments because views are built by
+    # ``copy.copy`` and subclasses/test doubles routinely bypass ``__init__``;
+    # a default here is inherited by every instance however it was constructed.
+    _request_local_window: Optional[int] = None
+    _is_request_local: bool = False
+
+    # Normally set in ``__init__`` from config. Defaulted here for the same
+    # reason: ``adopt_request_local_model`` compares against them to tell a real
+    # model change from the UI re-sending the configured one, and it must not
+    # raise on a view whose class never ran ``__init__``.
+    default_provider: Optional[str] = None
+    default_model: Optional[str] = None
 
     def __init__(
         self,
@@ -45,8 +115,16 @@ class BaseReActAgent:
         self.config = config
         self.archi_config = self.config.get("archi") or {}
         self.dm_config = self.config.get("data_manager", {})
-        pipeline_map = self.archi_config.get("pipeline_map", {}) if isinstance(self.archi_config, dict) else {}
-        self.pipeline_config = pipeline_map.get(self.__class__.__name__, {}) if isinstance(pipeline_map, dict) else {}
+        pipeline_map = (
+            self.archi_config.get("pipeline_map", {})
+            if isinstance(self.archi_config, dict)
+            else {}
+        )
+        self.pipeline_config = (
+            pipeline_map.get(self.__class__.__name__, {})
+            if isinstance(pipeline_map, dict)
+            else {}
+        )
         self.agent_spec = agent_spec
         self.default_provider = default_provider
         self.default_model = default_model
@@ -57,6 +135,10 @@ class BaseReActAgent:
         self._tool_budgets_cache: Optional[Dict[str, int]] = None
         self._static_tools: Optional[List[Callable]] = None
         self._mcp_tools: Optional[List[Callable]] = None
+        # Guards the lazy, idempotent MCP-tool memoization in refresh_agent so
+        # concurrent request-local view builds (issue #86, design D6) yield
+        # exactly one _build_mcp_tools() call per pipeline instance.
+        self._mcp_lock = threading.Lock()
         self._active_tools: List[Callable] = []
         self._static_middleware: Optional[List[Callable]] = None
         self._active_middleware: List[Callable] = []
@@ -66,14 +148,17 @@ class BaseReActAgent:
 
         self.mcp_client = None
 
-
         self._init_llms()
         self._init_prompts()
 
         if self.agent_llm is None:
             if not self.llms:
-                raise ValueError(f"No LLMs configured for agent {self.__class__.__name__}")
-            self.agent_llm = self.llms.get("chat_model") or next(iter(self.llms.values()))
+                raise ValueError(
+                    f"No LLMs configured for agent {self.__class__.__name__}"
+                )
+            self.agent_llm = self.llms.get("chat_model") or next(
+                iter(self.llms.values())
+            )
         if self.agent_prompt is None:
             self.agent_prompt = self.prompts.get("agent_prompt")
 
@@ -84,13 +169,28 @@ class BaseReActAgent:
     def start_run_memory(self) -> RunMemory:
         """Create and store the active memory for the current run."""
         memory = self.create_run_memory()
+        current = _ACTIVE_MEMORY.get()
+        # Copy-on-write rather than mutating in place: the value may be shared by
+        # reference with a parent context (a thread or task that forked from this
+        # one), and writing through would leak this run's memory into it.
+        updated: "weakref.WeakKeyDictionary[Any, RunMemory]" = (
+            weakref.WeakKeyDictionary()
+            if current is None
+            else weakref.WeakKeyDictionary(current)
+        )
+        updated[self] = memory
+        _ACTIVE_MEMORY.set(updated)
+        # Keep instance attribute for backward-compat callers that read it directly.
         self._active_memory = memory
         return memory
 
     @property
     def active_memory(self) -> Optional[RunMemory]:
         """Return the memory currently associated with the run, if any."""
-        return self._active_memory
+        current = _ACTIVE_MEMORY.get()
+        if current is None:
+            return None
+        return current.get(self)
 
     def finalize_output(
         self,
@@ -129,7 +229,9 @@ class BaseReActAgent:
             final=final,
         )
 
-    def _extract_usage_from_metadata(self, response_metadata: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
+    def _extract_usage_from_metadata(
+        self, response_metadata: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, int]]:
         """Normalize token usage from response_metadata when available."""
         if not response_metadata:
             return None
@@ -137,12 +239,17 @@ class BaseReActAgent:
         usage = response_metadata.get("usage") or response_metadata.get("token_usage")
         if usage:
             return {
-                "prompt_tokens": usage.get("prompt_tokens") or usage.get("input_tokens", 0),
-                "completion_tokens": usage.get("completion_tokens") or usage.get("output_tokens", 0),
+                "prompt_tokens": usage.get("prompt_tokens")
+                or usage.get("input_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens")
+                or usage.get("output_tokens", 0),
                 "total_tokens": usage.get("total_tokens", 0),
             }
         # Ollama format
-        if "prompt_eval_count" in response_metadata or "eval_count" in response_metadata:
+        if (
+            "prompt_eval_count" in response_metadata
+            or "eval_count" in response_metadata
+        ):
             prompt_tokens = response_metadata.get("prompt_eval_count", 0)
             completion_tokens = response_metadata.get("eval_count", 0)
             return {
@@ -152,7 +259,9 @@ class BaseReActAgent:
             }
         return None
 
-    def _extract_model_from_metadata(self, response_metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+    def _extract_model_from_metadata(
+        self, response_metadata: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
         """Extract model name from response_metadata when available."""
         if not response_metadata:
             return None
@@ -161,27 +270,46 @@ class BaseReActAgent:
     def _parse_thinking_content(self, text: str) -> Tuple[str, str]:
         """
         Parse text to separate thinking content from visible content.
-        
+
         Handles <think>...</think> tags used by models like Qwen3.
         Returns (visible_content, thinking_content).
         """
         if not text:
             return "", ""
-        
+
         # Extract all thinking blocks
-        thinking_pattern = re.compile(r'<think>(.*?)</think>', re.DOTALL)
+        thinking_pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
         thinking_matches = thinking_pattern.findall(text)
         thinking_content = "\n".join(thinking_matches)
-        
+
         # Remove thinking blocks from visible content
-        visible_content = thinking_pattern.sub('', text).strip()
-        
+        visible_content = thinking_pattern.sub("", text)
+
+        # Handle orphan </think> closing tags (no matching <think>): some models
+        # emit reasoning terminated only by a bare closing tag. Everything up to
+        # and including the LAST remaining </think> is reasoning; keep only what
+        # follows it as visible content, and preserve the reasoning in thinking.
+        last_close = visible_content.rfind("</think>")
+        if last_close != -1:
+            orphan_reasoning = visible_content[:last_close].strip()
+            if orphan_reasoning:
+                thinking_content = (
+                    f"{thinking_content}\n{orphan_reasoning}"
+                    if thinking_content
+                    else orphan_reasoning
+                )
+            visible_content = visible_content[last_close + len("</think>") :]
+
+        visible_content = visible_content.strip()
+
         return visible_content, thinking_content
 
-    def _extract_usage_from_messages(self, messages: List[BaseMessage]) -> Optional[Dict[str, int]]:
+    def _extract_usage_from_messages(
+        self, messages: List[BaseMessage]
+    ) -> Optional[Dict[str, int]]:
         """
         Sum token usage across ALL AI messages in the turn.
-        
+
         In a multi-step agent loop, the LLM is called multiple times
         (thinking, tool decisions, final answer). Each call reports its
         own prompt_tokens and completion_tokens. We sum them to show
@@ -190,33 +318,40 @@ class BaseReActAgent:
         total_prompt = 0
         total_completion = 0
         found_any = False
-        
+
         for msg in messages:
             msg_type = str(getattr(msg, "type", "")).lower()
-            if msg_type not in {"ai", "assistant"} and "ai" not in type(msg).__name__.lower():
+            if (
+                msg_type not in {"ai", "assistant"}
+                and "ai" not in type(msg).__name__.lower()
+            ):
                 continue
             usage = self._extract_usage_from_message(msg)
             if usage:
                 total_prompt += usage.get("prompt_tokens", 0)
                 total_completion += usage.get("completion_tokens", 0)
                 found_any = True
-        
+
         if not found_any:
             return None
-        
+
         return {
             "prompt_tokens": total_prompt,
             "completion_tokens": total_completion,
             "total_tokens": total_prompt + total_completion,
         }
 
-    def _extract_usage_from_message(self, message: BaseMessage) -> Optional[Dict[str, int]]:
+    def _extract_usage_from_message(
+        self, message: BaseMessage
+    ) -> Optional[Dict[str, int]]:
         """Extract normalized usage from a single message or chunk."""
         usage_metadata = getattr(message, "usage_metadata", None)
         if isinstance(usage_metadata, dict):
             prompt_tokens = usage_metadata.get("input_tokens", 0)
             completion_tokens = usage_metadata.get("output_tokens", 0)
-            total_tokens = usage_metadata.get("total_tokens", prompt_tokens + completion_tokens)
+            total_tokens = usage_metadata.get(
+                "total_tokens", prompt_tokens + completion_tokens
+            )
             if prompt_tokens or completion_tokens or total_tokens:
                 return {
                     "prompt_tokens": int(prompt_tokens or 0),
@@ -227,11 +362,16 @@ class BaseReActAgent:
         response_metadata = getattr(message, "response_metadata", None)
         return self._extract_usage_from_metadata(response_metadata)
 
-    def _extract_model_from_messages(self, messages: List[BaseMessage]) -> Optional[str]:
+    def _extract_model_from_messages(
+        self, messages: List[BaseMessage]
+    ) -> Optional[str]:
         """Extract model name from the last AI message with response_metadata."""
         for msg in reversed(messages):
             msg_type = str(getattr(msg, "type", "")).lower()
-            if msg_type not in {"ai", "assistant"} and "ai" not in type(msg).__name__.lower():
+            if (
+                msg_type not in {"ai", "assistant"}
+                and "ai" not in type(msg).__name__.lower()
+            ):
                 continue
             response_metadata = getattr(msg, "response_metadata", None)
             model = self._extract_model_from_metadata(response_metadata)
@@ -243,7 +383,10 @@ class BaseReActAgent:
         """Extract reasoning content from the last AI message, if present."""
         for msg in reversed(messages):
             msg_type = str(getattr(msg, "type", "")).lower()
-            if msg_type not in {"ai", "assistant"} and "ai" not in type(msg).__name__.lower():
+            if (
+                msg_type not in {"ai", "assistant"}
+                and "ai" not in type(msg).__name__.lower()
+            ):
                 continue
             additional_kwargs = getattr(msg, "additional_kwargs", None) or {}
             reasoning_content = additional_kwargs.get("reasoning_content", "")
@@ -251,16 +394,31 @@ class BaseReActAgent:
                 return str(reasoning_content)
         return ""
 
-    def invoke(self, **kwargs) -> PipelineOutput:
-        """Synchronously invoke the agent graph and return the final output."""
+    def invoke(
+        self,
+        *,
+        callbacks: Optional[Sequence[Any]] = None,
+        **kwargs,
+    ) -> PipelineOutput:
+        """Synchronously invoke the agent graph and return the final output.
+
+        ``callbacks`` are LangChain callback handlers, forwarded to the compiled
+        agent so a caller can observe the run (the QA evaluation collects its
+        tool trace this way). Keyword-only on purpose: ``Archi.invoke`` relays
+        positional arguments, so a positional history must stay a TypeError
+        rather than silently bind to ``callbacks``.
+        """
         logger.debug("Invoking %s", self.__class__.__name__)
         agent_inputs = self._prepare_agent_inputs(**kwargs)
         if self.agent is None:
             self.refresh_agent(force=True)
         logger.debug("Agent refreshed, invoking now")
         recursion_limit = self._recursion_limit()
+        invoke_config: Dict[str, Any] = {"recursion_limit": recursion_limit}
+        if callbacks is not None:
+            invoke_config["callbacks"] = list(callbacks)
         try:
-            answer_output = self.agent.invoke(agent_inputs, {"recursion_limit": recursion_limit})
+            answer_output = self.agent.invoke(agent_inputs, invoke_config)
             logger.debug("Agent invocation completed")
             logger.debug(answer_output)
             messages = self._extract_messages(answer_output)
@@ -280,6 +438,83 @@ class BaseReActAgent:
                 latest_messages=[],
                 agent_inputs=agent_inputs,
             )
+        except Exception as exc:
+            # A context-window overflow must degrade gracefully rather than crash,
+            # mirroring stream()/astream(). Only genuine context-length overflows
+            # are degraded; any other error re-raises so real bugs still surface.
+            if not self._is_context_overflow_error(exc):
+                raise
+            logger.warning(
+                "Context overflow during invoke for %s: %s",
+                self.__class__.__name__,
+                exc,
+            )
+            return self._handle_context_overflow(
+                error=exc,
+                agent_inputs=agent_inputs,
+                latest_messages=[],
+            )
+
+    def _effective_provider_model(self) -> Tuple[Optional[str], Optional[str]]:
+        """The provider and model id of the LLM this instance will actually call.
+
+        ``_init_llms()`` uses ``default_provider``/``default_model`` when they are
+        set, and otherwise builds from ``archi.pipeline_map.<agent>.models``,
+        parsing each ``provider/model`` reference and forwarding that provider's
+        ``extra_kwargs``. A pipeline constructed the second way leaves **both**
+        attributes at ``None``, so a caller that reads them directly has no
+        identity for a model that very much exists.
+
+        Two features need that identity and each broke the same way without it.
+        The streamed-reasoning gate resolved no provider, failed open, and
+        streamed reasoning despite the flag (issue #122). The per-model window
+        map is looked up by model id, so every entry missed on this path and the
+        agents a declaration exists for — self-hosted models no provider can
+        resolve by name — installed no bound at all (issue #262).
+
+        Returns ``(None, None)`` when no reference can be parsed, which leaves
+        each caller exactly where it stood without this.
+        """
+        if self.default_provider:
+            return self.default_provider, self.default_model
+        # Read through `getattr`, and deliberately not from a class-level
+        # default: `adopt_request_local_model` reaches this on shallow-copied
+        # views and on instances that never ran `__init__`, and one mutable
+        # mapping shared by all of them would let an in-place write on any
+        # instance answer for every later request.
+        pipeline_config = getattr(self, "pipeline_config", None)
+        models_config = (
+            pipeline_config.get("models", {})
+            if isinstance(pipeline_config, dict)
+            else {}
+        )
+        if not isinstance(models_config, dict):
+            return None, None
+        references: Dict[str, Any] = {}
+        for group in ("required", "optional"):
+            block = models_config.get(group)
+            if isinstance(block, dict):
+                references.update(block)
+        # `_init_llms()` binds `agent_llm` to "chat_model" when present, and to
+        # the first initialised model otherwise; mirror that order.
+        reference = references.get("chat_model")
+        if reference is None:
+            reference = next(iter(references.values()), None)
+        try:
+            provider, model = self._parse_provider_model(reference)
+        except ValueError:
+            return None, None
+        return provider, model
+
+    def _streamed_provider(self) -> Optional[str]:
+        """The provider whose kwargs built the model this stream will call.
+
+        Only the provider half of ``_effective_provider_model()`` matters here:
+        ``enable_thinking`` is declared on the provider block. ``None`` leaves
+        the gate off and streaming unchanged (issue #122).
+        """
+        provider, _ = self._effective_provider_model()
+        return provider
 
     def stream(self, **kwargs) -> Iterator[PipelineOutput]:
         """Stream agent updates synchronously with structured trace events."""
@@ -294,14 +529,27 @@ class BaseReActAgent:
         latest_messages: List[BaseMessage] = []
         accumulated_content = ""  # Accumulated raw content from streaming
         emitted_tool_starts: Set[str] = set()
-        
+
         # Thinking state tracking
         thinking_step_id: Optional[str] = None
         thinking_start_time: Optional[float] = None
         accumulated_thinking = ""  # Captured thinking content from <think> tags
         last_visible_content = ""  # Last visible content emitted (without thinking)
         last_response_metadata: Optional[Dict[str, Any]] = None
-        
+        # Whether this provider can emit reasoning at all (issue #122). The
+        # provider cannot change mid-stream, so resolve it once here.
+        thinking_possible = provider_emits_thinking(
+            self.config, self._streamed_provider()
+        )
+        # Where the current reasoning phase starts in accumulated_content. A
+        # ReAct loop makes one LLM call per tool round and, with thinking on,
+        # each call opens its own block, so the gate is scoped to the current
+        # phase rather than to the whole stream.
+        phase_start = 0
+        # Set once the provider reports reasoning on its own channel, which
+        # means its answer never carries a closing tag to wait for.
+        structured_reasoning = False
+
         try:
             for event in self.agent.stream(
                 agent_inputs,
@@ -329,15 +577,29 @@ class BaseReActAgent:
                     try:
                         self.active_memory.record_tool_calls_from_message(message)
                     except Exception as exc:
-                        logger.debug("Failed to record tool calls from stream message: %s", exc)
-                
+                        logger.debug(
+                            "Failed to record tool calls from stream message: %s", exc
+                        )
+
                 # Track all non-chunk messages
                 if "chunk" not in msg_class:
                     all_messages.extend(messages)
 
                 # Detect tool call start (AIMessage with tool_calls)
                 if hasattr(message, "tool_calls") and message.tool_calls:
-                    logger.debug("Received stream event type=%s: %s", type(event).__name__, str(event)[:1000])
+                    # This message ends the current reasoning phase: the model
+                    # call that follows the tool opens its own block. Keyed on
+                    # the presence of tool calls and never on their ids, because
+                    # a meaningful id-less call is a supported shape here
+                    # (`chat_app/app.py:2414` synthesizes an id for one), and a
+                    # boundary that missed it would leave the next phase checked
+                    # against this one's closing tag (issue #122).
+                    phase_start = len(accumulated_content)
+                    logger.debug(
+                        "Received stream event type=%s: %s",
+                        type(event).__name__,
+                        str(event)[:1000],
+                    )
                     new_tool_call = False
                     for tc in message.tool_calls:
                         tc_id = tc.get("id", "")
@@ -347,7 +609,11 @@ class BaseReActAgent:
                     if new_tool_call:
                         # End thinking phase if active before tool execution
                         if thinking_step_id is not None:
-                            duration_ms = int((time.time() - thinking_start_time) * 1000) if thinking_start_time else 0
+                            duration_ms = (
+                                int((time.time() - thinking_start_time) * 1000)
+                                if thinking_start_time
+                                else 0
+                            )
                             yield self.finalize_output(
                                 answer="",
                                 memory=self.active_memory,
@@ -363,7 +629,7 @@ class BaseReActAgent:
                             thinking_step_id = None
                             thinking_start_time = None
                             accumulated_thinking = ""
-                        
+
                         yield self.finalize_output(
                             answer="",
                             memory=self.active_memory,
@@ -375,7 +641,11 @@ class BaseReActAgent:
                 # Detect tool result (ToolMessage with tool_call_id)
                 tool_call_id = getattr(message, "tool_call_id", None)
                 if tool_call_id:
-                    logger.debug("Received stream event type=%s: %s", type(event).__name__, str(event)[:1000])
+                    logger.debug(
+                        "Received stream event type=%s: %s",
+                        type(event).__name__,
+                        str(event)[:1000],
+                    )
                     yield self.finalize_output(
                         answer="",
                         memory=self.active_memory,
@@ -390,8 +660,12 @@ class BaseReActAgent:
                 if msg_type in {"ai", "assistant"} or "ai" in msg_class:
                     if not getattr(message, "tool_calls", None):
                         content = self._message_content(message)
-                        additional_kwargs = getattr(message, "additional_kwargs", None) or {}
-                        reasoning_content = additional_kwargs.get("reasoning_content", "")
+                        additional_kwargs = (
+                            getattr(message, "additional_kwargs", None) or {}
+                        )
+                        reasoning_content = additional_kwargs.get(
+                            "reasoning_content", ""
+                        )
                         if content or reasoning_content:
                             # Start thinking phase if not already active
                             if thinking_step_id is None:
@@ -407,7 +681,7 @@ class BaseReActAgent:
                                     },
                                     final=False,
                                 )
-                            
+
                             if content:
                                 # For chunks, content is delta; for full messages, content is cumulative
                                 if "chunk" in msg_class:
@@ -415,19 +689,36 @@ class BaseReActAgent:
                                 else:
                                     # Full message - use its content directly
                                     accumulated_content = content
+                                    # The buffer was replaced, so an offset into
+                                    # the old one means nothing: this message is
+                                    # the whole current phase (issue #122).
+                                    phase_start = 0
 
                             if reasoning_content:
                                 # Ollama sends thinking as deltas, so accumulate
                                 accumulated_thinking += reasoning_content
                                 visible_content = accumulated_content
+                                # This provider keeps reasoning on its own field,
+                                # so its answer carries no closing tag and must
+                                # not be gated on one (issue #122).
+                                structured_reasoning = True
                             else:
                                 # Parse thinking vs visible content
-                                visible_content, thinking_content = self._parse_thinking_content(accumulated_content)
+                                visible_content, thinking_content = (
+                                    self._parse_thinking_content(accumulated_content)
+                                )
                                 if not accumulated_thinking:
                                     accumulated_thinking = thinking_content
-                            
-                            # Only emit if visible content changed
-                            if visible_content != last_visible_content:
+
+                            # Emit only when the visible content changed AND the
+                            # provider's reasoning block is known to be closed
+                            # (issue #122). `last_visible_content` is left alone
+                            # while text is held, so nothing is skipped on release.
+                            held = hold_visible(
+                                thinking_possible and not structured_reasoning,
+                                accumulated_content[phase_start:],
+                            )
+                            if visible_content != last_visible_content and not held:
                                 last_visible_content = visible_content
                                 yield self.finalize_output(
                                     answer=visible_content,
@@ -444,7 +735,11 @@ class BaseReActAgent:
                 exc,
             )
             if thinking_step_id is not None:
-                duration_ms = int((time.time() - thinking_start_time) * 1000) if thinking_start_time else 0
+                duration_ms = (
+                    int((time.time() - thinking_start_time) * 1000)
+                    if thinking_start_time
+                    else 0
+                )
                 yield self.finalize_output(
                     answer="",
                     memory=self.active_memory,
@@ -474,7 +769,11 @@ class BaseReActAgent:
                 exc,
             )
             if thinking_step_id is not None:
-                duration_ms = int((time.time() - thinking_start_time) * 1000) if thinking_start_time else 0
+                duration_ms = (
+                    int((time.time() - thinking_start_time) * 1000)
+                    if thinking_start_time
+                    else 0
+                )
                 yield self.finalize_output(
                     answer="",
                     memory=self.active_memory,
@@ -496,14 +795,23 @@ class BaseReActAgent:
             return
 
         # Final output
-        logger.debug("Stream finished. accumulated_content='%s', all_messages count=%d",
-                 accumulated_content[:100] if accumulated_content else "", len(all_messages))
-        
+        logger.debug(
+            "Stream finished. accumulated_content='%s', all_messages count=%d",
+            accumulated_content[:100] if accumulated_content else "",
+            len(all_messages),
+        )
+
         # End thinking phase if still active
         if thinking_step_id is not None:
             if not accumulated_thinking and all_messages:
-                accumulated_thinking = self._extract_reasoning_from_messages(all_messages)
-            duration_ms = int((time.time() - thinking_start_time) * 1000) if thinking_start_time else 0
+                accumulated_thinking = self._extract_reasoning_from_messages(
+                    all_messages
+                )
+            duration_ms = (
+                int((time.time() - thinking_start_time) * 1000)
+                if thinking_start_time
+                else 0
+            )
             yield self.finalize_output(
                 answer="",
                 memory=self.active_memory,
@@ -516,23 +824,47 @@ class BaseReActAgent:
                 },
                 final=False,
             )
-        
+
+        # Text still held when the stream ends belongs to the newest reasoning
+        # phase, so it is newer than any full message already in all_messages.
+        # Prefer it: otherwise the final answer is a stale earlier message — the
+        # narration before a tool call, say — and the real answer is dropped with
+        # nothing shown in its place, which is worse than the leak (issue #122).
+        holding_at_end = hold_visible(
+            thinking_possible and not structured_reasoning,
+            accumulated_content[phase_start:],
+        )
+
         final_answer = ""
-        if all_messages:
+        if all_messages and not holding_at_end:
             # Find the last AI message with content
             for msg in reversed(all_messages):
                 msg_type = str(getattr(msg, "type", "")).lower()
-                if msg_type in {"ai", "assistant"} or "ai" in type(msg).__name__.lower():
+                if (
+                    msg_type in {"ai", "assistant"}
+                    or "ai" in type(msg).__name__.lower()
+                ):
                     content = self._message_content(msg)
                     if content:
                         # Strip thinking from final answer
                         final_answer, _ = self._parse_thinking_content(content)
-                        logger.debug("Found final answer from AI message: %s", final_answer[:100] if final_answer else "")
+                        logger.debug(
+                            "Found final answer from AI message: %s",
+                            final_answer[:100] if final_answer else "",
+                        )
                         break
         if not final_answer:
-            # Strip thinking from accumulated content
-            final_answer, _ = self._parse_thinking_content(accumulated_content)
-        
+            # Strip thinking from the held phase, not the whole buffer: an
+            # earlier phase's text is still in there and its closing tag is the
+            # LAST one, so parsing everything would return that earlier text run
+            # together with this phase's (issue #122). The boundary that decides
+            # the hold has to decide the extraction too.
+            final_answer, _ = self._parse_thinking_content(
+                accumulated_content[phase_start:]
+                if holding_at_end
+                else accumulated_content
+            )
+
         # Extract usage and model info for final event
         usage = self._extract_usage_from_messages(usage_messages or all_messages)
         model = self._extract_model_from_messages(all_messages)
@@ -545,7 +877,7 @@ class BaseReActAgent:
             "usage": usage,
             "model": model,
         }
-        
+
         if final_answer:
             yield self.finalize_output(
                 answer=final_answer,
@@ -555,8 +887,10 @@ class BaseReActAgent:
                 final=True,
             )
         else:
-            logger.warning("No final answer found from stream. Messages: %s",
-                          [self._format_message(m) for m in all_messages[:5]])
+            logger.warning(
+                "No final answer found from stream. Messages: %s",
+                [self._format_message(m) for m in all_messages[:5]],
+            )
             output = self._build_output_from_messages(all_messages)
             output.metadata.update(final_metadata)
             yield output
@@ -574,14 +908,27 @@ class BaseReActAgent:
         latest_messages: List[BaseMessage] = []
         accumulated_content = ""
         emitted_tool_starts: Set[str] = set()
-        
+
         # Thinking state tracking
         thinking_step_id: Optional[str] = None
         thinking_start_time: Optional[float] = None
         accumulated_thinking = ""  # Captured thinking content from <think> tags
         last_visible_content = ""  # Last visible content emitted (without thinking)
         last_response_metadata: Optional[Dict[str, Any]] = None
-        
+        # Whether this provider can emit reasoning at all (issue #122). The
+        # provider cannot change mid-stream, so resolve it once here.
+        thinking_possible = provider_emits_thinking(
+            self.config, self._streamed_provider()
+        )
+        # Where the current reasoning phase starts in accumulated_content. A
+        # ReAct loop makes one LLM call per tool round and, with thinking on,
+        # each call opens its own block, so the gate is scoped to the current
+        # phase rather than to the whole stream.
+        phase_start = 0
+        # Set once the provider reports reasoning on its own channel, which
+        # means its answer never carries a closing tag to wait for.
+        structured_reasoning = False
+
         try:
             async for event in self.agent.astream(
                 agent_inputs,
@@ -599,7 +946,7 @@ class BaseReActAgent:
 
                 if msg_type in {"ai", "assistant"} or "ai" in msg_class:
                     usage_messages.append(message)
-                
+
                 response_metadata = getattr(message, "response_metadata", None)
                 if response_metadata:
                     last_response_metadata = response_metadata
@@ -608,14 +955,25 @@ class BaseReActAgent:
                     try:
                         self.active_memory.record_tool_calls_from_message(message)
                     except Exception as exc:
-                        logger.debug("Failed to record tool calls from async stream message: %s", exc)
-                
+                        logger.debug(
+                            "Failed to record tool calls from async stream message: %s",
+                            exc,
+                        )
+
                 # Track all non-chunk messages
                 if "chunk" not in msg_class:
                     all_messages.extend(messages)
 
                 # Detect tool call start
                 if hasattr(message, "tool_calls") and message.tool_calls:
+                    # This message ends the current reasoning phase: the model
+                    # call that follows the tool opens its own block. Keyed on
+                    # the presence of tool calls and never on their ids, because
+                    # a meaningful id-less call is a supported shape here
+                    # (`chat_app/app.py:2414` synthesizes an id for one), and a
+                    # boundary that missed it would leave the next phase checked
+                    # against this one's closing tag (issue #122).
+                    phase_start = len(accumulated_content)
                     new_tool_call = False
                     for tc in message.tool_calls:
                         tc_id = tc.get("id", "")
@@ -625,7 +983,11 @@ class BaseReActAgent:
                     if new_tool_call:
                         # End thinking phase if active before tool execution
                         if thinking_step_id is not None:
-                            duration_ms = int((time.time() - thinking_start_time) * 1000) if thinking_start_time else 0
+                            duration_ms = (
+                                int((time.time() - thinking_start_time) * 1000)
+                                if thinking_start_time
+                                else 0
+                            )
                             yield self.finalize_output(
                                 answer="",
                                 memory=self.active_memory,
@@ -641,7 +1003,7 @@ class BaseReActAgent:
                             thinking_step_id = None
                             thinking_start_time = None
                             accumulated_thinking = ""
-                        
+
                         yield self.finalize_output(
                             answer="",
                             messages=[message],
@@ -665,8 +1027,12 @@ class BaseReActAgent:
                 if msg_type in {"ai", "assistant"} or "ai" in msg_class:
                     if not getattr(message, "tool_calls", None):
                         content = self._message_content(message)
-                        additional_kwargs = getattr(message, "additional_kwargs", None) or {}
-                        reasoning_content = additional_kwargs.get("reasoning_content", "")
+                        additional_kwargs = (
+                            getattr(message, "additional_kwargs", None) or {}
+                        )
+                        reasoning_content = additional_kwargs.get(
+                            "reasoning_content", ""
+                        )
                         if content or reasoning_content:
                             # Start thinking phase if not already active
                             if thinking_step_id is None:
@@ -682,25 +1048,42 @@ class BaseReActAgent:
                                     },
                                     final=False,
                                 )
-                            
+
                             if content:
                                 if "chunk" in msg_class:
                                     accumulated_content += content
                                 else:
                                     accumulated_content = content
+                                    # The buffer was replaced, so an offset into
+                                    # the old one means nothing: this message is
+                                    # the whole current phase (issue #122).
+                                    phase_start = 0
 
                             if reasoning_content:
                                 # Ollama sends thinking as deltas, so accumulate
                                 accumulated_thinking += reasoning_content
                                 visible_content = accumulated_content
+                                # This provider keeps reasoning on its own field,
+                                # so its answer carries no closing tag and must
+                                # not be gated on one (issue #122).
+                                structured_reasoning = True
                             else:
                                 # Parse thinking vs visible content
-                                visible_content, thinking_content = self._parse_thinking_content(accumulated_content)
+                                visible_content, thinking_content = (
+                                    self._parse_thinking_content(accumulated_content)
+                                )
                                 if not accumulated_thinking:
                                     accumulated_thinking = thinking_content
-                            
-                            # Only emit if visible content changed
-                            if visible_content != last_visible_content:
+
+                            # Emit only when the visible content changed AND the
+                            # provider's reasoning block is known to be closed
+                            # (issue #122). `last_visible_content` is left alone
+                            # while text is held, so nothing is skipped on release.
+                            held = hold_visible(
+                                thinking_possible and not structured_reasoning,
+                                accumulated_content[phase_start:],
+                            )
+                            if visible_content != last_visible_content and not held:
                                 last_visible_content = visible_content
                                 yield self.finalize_output(
                                     answer=visible_content,
@@ -716,7 +1099,11 @@ class BaseReActAgent:
                 exc,
             )
             if thinking_step_id is not None:
-                duration_ms = int((time.time() - thinking_start_time) * 1000) if thinking_start_time else 0
+                duration_ms = (
+                    int((time.time() - thinking_start_time) * 1000)
+                    if thinking_start_time
+                    else 0
+                )
                 yield self.finalize_output(
                     answer="",
                     memory=self.active_memory,
@@ -746,7 +1133,11 @@ class BaseReActAgent:
                 exc,
             )
             if thinking_step_id is not None:
-                duration_ms = int((time.time() - thinking_start_time) * 1000) if thinking_start_time else 0
+                duration_ms = (
+                    int((time.time() - thinking_start_time) * 1000)
+                    if thinking_start_time
+                    else 0
+                )
                 yield self.finalize_output(
                     answer="",
                     memory=self.active_memory,
@@ -768,14 +1159,23 @@ class BaseReActAgent:
             return
 
         # Final output
-        logger.debug("Async stream finished. accumulated_content='%s', all_messages count=%d",
-                 accumulated_content[:100] if accumulated_content else "", len(all_messages))
-        
+        logger.debug(
+            "Async stream finished. accumulated_content='%s', all_messages count=%d",
+            accumulated_content[:100] if accumulated_content else "",
+            len(all_messages),
+        )
+
         # End thinking phase if still active
         if thinking_step_id is not None:
             if not accumulated_thinking and all_messages:
-                accumulated_thinking = self._extract_reasoning_from_messages(all_messages)
-            duration_ms = int((time.time() - thinking_start_time) * 1000) if thinking_start_time else 0
+                accumulated_thinking = self._extract_reasoning_from_messages(
+                    all_messages
+                )
+            duration_ms = (
+                int((time.time() - thinking_start_time) * 1000)
+                if thinking_start_time
+                else 0
+            )
             yield self.finalize_output(
                 answer="",
                 memory=self.active_memory,
@@ -788,22 +1188,46 @@ class BaseReActAgent:
                 },
                 final=False,
             )
-        
+
+        # Text still held when the stream ends belongs to the newest reasoning
+        # phase, so it is newer than any full message already in all_messages.
+        # Prefer it: otherwise the final answer is a stale earlier message — the
+        # narration before a tool call, say — and the real answer is dropped with
+        # nothing shown in its place, which is worse than the leak (issue #122).
+        holding_at_end = hold_visible(
+            thinking_possible and not structured_reasoning,
+            accumulated_content[phase_start:],
+        )
+
         final_answer = ""
-        if all_messages:
+        if all_messages and not holding_at_end:
             for msg in reversed(all_messages):
                 msg_type = str(getattr(msg, "type", "")).lower()
-                if msg_type in {"ai", "assistant"} or "ai" in type(msg).__name__.lower():
+                if (
+                    msg_type in {"ai", "assistant"}
+                    or "ai" in type(msg).__name__.lower()
+                ):
                     content = self._message_content(msg)
                     if content:
                         # Strip thinking from final answer
                         final_answer, _ = self._parse_thinking_content(content)
-                        logger.debug("Found final answer from AI message: %s", final_answer[:100] if final_answer else "")
+                        logger.debug(
+                            "Found final answer from AI message: %s",
+                            final_answer[:100] if final_answer else "",
+                        )
                         break
         if not final_answer:
-            # Strip thinking from accumulated content
-            final_answer, _ = self._parse_thinking_content(accumulated_content)
-        
+            # Strip thinking from the held phase, not the whole buffer: an
+            # earlier phase's text is still in there and its closing tag is the
+            # LAST one, so parsing everything would return that earlier text run
+            # together with this phase's (issue #122). The boundary that decides
+            # the hold has to decide the extraction too.
+            final_answer, _ = self._parse_thinking_content(
+                accumulated_content[phase_start:]
+                if holding_at_end
+                else accumulated_content
+            )
+
         # Extract usage and model info for final event
         usage = self._extract_usage_from_messages(usage_messages or all_messages)
         model = self._extract_model_from_messages(all_messages)
@@ -816,7 +1240,7 @@ class BaseReActAgent:
             "usage": usage,
             "model": model,
         }
-        
+
         if final_answer:
             yield self.finalize_output(
                 answer=final_answer,
@@ -826,8 +1250,10 @@ class BaseReActAgent:
                 final=True,
             )
         else:
-            logger.warning("No final answer found from async stream. Messages: %s",
-                          [self._format_message(m) for m in all_messages[:5]])
+            logger.warning(
+                "No final answer found from async stream. Messages: %s",
+                [self._format_message(m) for m in all_messages[:5]],
+            )
             output = self._build_output_from_messages(all_messages)
             output.metadata.update(final_metadata)
             yield output
@@ -838,24 +1264,48 @@ class BaseReActAgent:
         self.llms: Dict[str, Any] = {}
         providers_config = {}
         if isinstance(self.config, dict):
-            services_cfg = self.config.get("services", {}) if isinstance(self.config.get("services", {}), dict) else {}
-            chat_cfg = services_cfg.get("chat_app", {}) if isinstance(services_cfg, dict) else {}
-            providers_config = chat_cfg.get("providers", {}) if isinstance(chat_cfg, dict) else {}
+            services_cfg = (
+                self.config.get("services", {})
+                if isinstance(self.config.get("services", {}), dict)
+                else {}
+            )
+            chat_cfg = (
+                services_cfg.get("chat_app", {})
+                if isinstance(services_cfg, dict)
+                else {}
+            )
+            providers_config = (
+                chat_cfg.get("providers", {}) if isinstance(chat_cfg, dict) else {}
+            )
 
         if self.default_provider and not self.default_model:
-            raise ValueError("default_model is required when default_provider is set for agent pipelines.")
+            raise ValueError(
+                "default_model is required when default_provider is set for agent pipelines."
+            )
         if self.default_model and not self.default_provider:
-            raise ValueError("default_provider is required when default_model is set for agent pipelines.")
+            raise ValueError(
+                "default_provider is required when default_model is set for agent pipelines."
+            )
 
         if self.default_provider and self.default_model:
-            provider_config = self._build_provider_config(self.default_provider, providers_config)
-            instance = get_model(self.default_provider, self.default_model, provider_config)
+            provider_config = self._build_provider_config(
+                self.default_provider, providers_config
+            )
+            instance = get_model(
+                self.default_provider, self.default_model, provider_config
+            )
             self.llms["chat_model"] = instance
             self.agent_llm = instance
             return
 
-        models_config = self.pipeline_config.get("models", {}) if isinstance(self.pipeline_config, dict) else {}
-        all_models = dict(models_config.get("required", {}), **models_config.get("optional", {}))
+        models_config = (
+            self.pipeline_config.get("models", {})
+            if isinstance(self.pipeline_config, dict)
+            else {}
+        )
+        all_models = dict(
+            models_config.get("required", {}), **models_config.get("optional", {})
+        )
         initialised_models: Dict[str, Any] = {}
 
         for model_name, model_class_name in all_models.items():
@@ -877,17 +1327,21 @@ class BaseReActAgent:
     @staticmethod
     def _build_provider_config(provider: str, providers_config: Dict[str, Any]) -> dict:
         provider_key = provider.lower() if isinstance(provider, str) else str(provider)
-        cfg = providers_config.get(provider_key, {}) if isinstance(providers_config, dict) else {}
+        cfg = (
+            providers_config.get(provider_key, {})
+            if isinstance(providers_config, dict)
+            else {}
+        )
         if not cfg:
             return {}
 
         extra = dict(cfg.get("extra_kwargs", {}) or {})
         try:
             provider_type = ProviderType(provider_key)
-            if provider_type == ProviderType.LOCAL and cfg.get("mode"):
-                extra["local_mode"] = cfg.get("mode")
-        except Exception:
-            pass
+        except ValueError:
+            provider_type = None
+        if provider_type == ProviderType.LOCAL:
+            apply_local_mode(extra, cfg.get("mode"))
 
         return {
             "base_url": cfg.get("base_url"),
@@ -897,10 +1351,26 @@ class BaseReActAgent:
         }
 
     @staticmethod
+    def _provider_key(value: Any) -> Any:
+        """The form the provider layer resolves a provider name by.
+
+        ``get_model()`` builds ``ProviderType(value.lower())`` and
+        ``_build_provider_config()`` lowercases its lookup key, so two spellings
+        differing only in case name one runtime provider. An identity comparison
+        has to agree with that, or it reports a model change where none happened
+        — and a reported change withdraws the operator's declared window. The
+        model id is compared as written: a model id is case-sensitive to the
+        provider serving it, and ``context_windows`` matches it exactly.
+        """
+        return value.lower() if isinstance(value, str) else value
+
+    @staticmethod
     def _parse_provider_model(model_ref: str) -> Tuple[str, str]:
         """Expect model_ref as 'provider/model'. Raise if malformed."""
         if not isinstance(model_ref, str) or "/" not in model_ref:
-            raise ValueError(f"Model reference must be 'provider/model', got '{model_ref}'")
+            raise ValueError(
+                f"Model reference must be 'provider/model', got '{model_ref}'"
+            )
         provider, model_id = model_ref.split("/", 1)
         if not provider or not model_id:
             raise ValueError(f"Invalid model reference '{model_ref}'")
@@ -914,7 +1384,11 @@ class BaseReActAgent:
             self.agent_prompt = getattr(self.agent_spec, "prompt", None)
             return
 
-        prompts_config = self.pipeline_config.get("prompts", {}) if isinstance(self.pipeline_config, dict) else {}
+        prompts_config = (
+            self.pipeline_config.get("prompts", {})
+            if isinstance(self.pipeline_config, dict)
+            else {}
+        )
         required = prompts_config.get("required", {})
         optional = prompts_config.get("optional", {})
         all_prompts = {**optional, **required}
@@ -937,7 +1411,9 @@ class BaseReActAgent:
                     exc,
                 )
                 continue
-            self.prompts[name] = str(prompt_template) # TODO at some point, make a validated prompt class to check these?
+            self.prompts[name] = str(
+                prompt_template
+            )  # TODO at some point, make a validated prompt class to check these?
 
     def get_tool_registry(self) -> Dict[str, Callable[[], Any]]:
         """Return a mapping of tool names to callables that build tools."""
@@ -955,7 +1431,11 @@ class BaseReActAgent:
         for name in tool_names:
             builder = registry.get(name)
             if not builder:
-                logger.warning("Tool '%s' not found in registry for %s", name, self.__class__.__name__)
+                logger.warning(
+                    "Tool '%s' not found in registry for %s",
+                    name,
+                    self.__class__.__name__,
+                )
                 continue
             built = builder()
             if isinstance(built, (list, tuple)):
@@ -993,6 +1473,11 @@ class BaseReActAgent:
         """Explicitly set the static tools cache."""
         self._static_tools = list(value)
 
+    @property
+    def loaded_mcp_tools(self) -> List[Callable]:
+        """Return the MCP tools successfully loaded for this agent."""
+        return list(self._mcp_tools or [])
+
     def refresh_agent(
         self,
         *,
@@ -1007,8 +1492,12 @@ class BaseReActAgent:
 
         if "mcp" in self.selected_tool_names:
             if self._mcp_tools is None:
-                built = self._build_mcp_tools()
-                self._mcp_tools = list(built or [])
+                with self._mcp_lock:
+                    # Double-checked: another thread may have built it while we
+                    # waited for the lock.
+                    if self._mcp_tools is None:
+                        built = self._build_mcp_tools()
+                        self._mcp_tools = list(built or [])
             toolset.extend(self._mcp_tools)
 
         if extra_tools:
@@ -1032,7 +1521,7 @@ class BaseReActAgent:
     def _build_system_prompt(self) -> str:
         """
         Build the full system prompt, appending role context if enabled.
-        
+
         Role context is appended when SSO auth with auth_roles is configured
         and pass_descriptions_to_agent is set to true.
         """
@@ -1040,7 +1529,9 @@ class BaseReActAgent:
         role_context = get_role_context()
         return base_prompt + role_context
 
-    def _create_agent(self, tools: Sequence[Callable], middleware: Sequence[Callable]) -> CompiledStateGraph:
+    def _create_agent(
+        self, tools: Sequence[Callable], middleware: Sequence[Callable]
+    ) -> CompiledStateGraph:
         """Create the LangGraph agent with the specified LLM, tools, and system prompt."""
         system_prompt = self._build_system_prompt()
         logger.debug("Creating agent %s with:", self.__class__.__name__)
@@ -1087,7 +1578,9 @@ class BaseReActAgent:
 
                 def sync_wrapper(*args, **kwargs):
                     if runner.in_loop_thread():
-                        raise RuntimeError("sync_wrapper called from MCP loop thread; would deadlock")
+                        raise RuntimeError(
+                            "sync_wrapper called from MCP loop thread; would deadlock"
+                        )
                     # Run on the background loop - NOT a new loop!
                     return runner.run(async_tool.coroutine(*args, **kwargs))
 
@@ -1098,7 +1591,9 @@ class BaseReActAgent:
             # Apply the patch to all fetched tools
             if mcp_tools:
                 synchronous_mcp_tools = [make_synchronous(t) for t in mcp_tools]
-                logger.info(f"Loaded and patched {len(synchronous_mcp_tools)} MCP tools for sync execution.")
+                logger.info(
+                    f"Loaded and patched {len(synchronous_mcp_tools)} MCP tools for sync execution."
+                )
                 return synchronous_mcp_tools
 
         except Exception as e:
@@ -1106,7 +1601,21 @@ class BaseReActAgent:
 
     def _build_static_middleware(self) -> List[Callable]:
         """Build and returns static middleware defined in the config."""
-        return []
+        # Not `default_provider`/`default_model`: those are `None` on the
+        # pipeline-map initialisation path, which would miss every
+        # `context_windows` entry and label the absent-bound warning `None/None`
+        # — the one message an operator gets when nothing is installed.
+        provider, model_id = self._effective_provider_model()
+        return build_context_middleware(
+            model=self.agent_llm,
+            context_window=self._get_model_context_window(),
+            config=self.config,
+            pipeline_config=self.pipeline_config,
+            tool_budgets=self._tool_budgets(),
+            model_label=f"{provider}/{model_id}" if provider and model_id else None,
+            model_id=model_id,
+            declared_window_applies=not self._is_request_local,
+        )
 
     def _store_documents(self, stage: str, docs: Sequence[Document]) -> None:
         """Centralised helper used by tools to record documents into the active memory."""
@@ -1115,7 +1624,11 @@ class BaseReActAgent:
             return
         # Prefer memory convenience method if available
         try:
-            logger.debug("Recording %d documents from stage '%s' via record_documents", len(docs), stage)
+            logger.debug(
+                "Recording %d documents from stage '%s' via record_documents",
+                len(docs),
+                stage,
+            )
             memory.record_documents(stage, docs)
         except Exception:
             # fallback to explicit record + note
@@ -1175,8 +1688,8 @@ class BaseReActAgent:
                 # Guard against None or invalid values
                 if not isinstance(context_window, int) or context_window <= 0:
                     logger.debug(
-                    "Invalid context window (%s), skipping trimming.",
-                    context_window,
+                        "Invalid context window (%s), skipping trimming.",
+                        context_window,
                     )
                     return {"messages": self._inject_forced_retrieval(history_messages)}
 
@@ -1187,7 +1700,9 @@ class BaseReActAgent:
                 logger.debug("Context window: %d", context_window)
                 logger.debug("Prompt token budget: %d", max_prompt_tokens)
 
-                token_count = self.agent_llm.get_num_tokens_from_messages(history_messages)
+                token_count = self.agent_llm.get_num_tokens_from_messages(
+                    history_messages
+                )
 
                 # Soft compression phase
                 compression_round = 0
@@ -1205,17 +1720,27 @@ class BaseReActAgent:
                         logger.warning("Exceeded max compression rounds.")
                         break
 
-                   # Hard safeguard: crop if still too large
+                # Hard safeguard: crop if still too large
                 if token_count >= max_prompt_tokens:
-                    logger.warning("History still exceeds token limit (%d >= %d). Forcibly cropping.",token_count,max_prompt_tokens,)
+                    logger.warning(
+                        "History still exceeds token limit (%d >= %d). Forcibly cropping.",
+                        token_count,
+                        max_prompt_tokens,
+                    )
                     keep_last_n = 4
                     history_messages = history_messages[-keep_last_n:]
-                    token_count = self.agent_llm.get_num_tokens_from_messages(history_messages)
+                    token_count = self.agent_llm.get_num_tokens_from_messages(
+                        history_messages
+                    )
 
                     # --- Brutal safeguard: truncate content ---
-                    while (token_count >= max_prompt_tokens and len(history_messages) > 1):
+                    while (
+                        token_count >= max_prompt_tokens and len(history_messages) > 1
+                    ):
                         history_messages.pop(0)
-                        token_count = self.agent_llm.get_num_tokens_from_messages(history_messages)
+                        token_count = self.agent_llm.get_num_tokens_from_messages(
+                            history_messages
+                        )
 
                 logger.debug("Final trimmed token count: %d", token_count)
 
@@ -1224,7 +1749,9 @@ class BaseReActAgent:
 
         return {"messages": self._inject_forced_retrieval(history_messages)}
 
-    def _inject_forced_retrieval(self, messages: List[BaseMessage]) -> List[BaseMessage]:
+    def _inject_forced_retrieval(
+        self, messages: List[BaseMessage]
+    ) -> List[BaseMessage]:
         """Hook for subclasses to force a retrieval before the model's first turn.
 
         Base implementation is a no-op; agents with a vector retriever override
@@ -1233,7 +1760,9 @@ class BaseReActAgent:
         """
         return messages
 
-    def _metadata_from_agent_output(self, answer_output: Dict[str, Any]) -> Dict[str, Any]:
+    def _metadata_from_agent_output(
+        self, answer_output: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Hook for subclasses to enrich metadata returned to callers."""
         return {}
 
@@ -1245,11 +1774,21 @@ class BaseReActAgent:
 
         if isinstance(payload, message_types):
             return [payload]
-        if isinstance(payload, list) and all(isinstance(msg, message_types) for msg in payload):
+        if isinstance(payload, list) and all(
+            isinstance(msg, message_types) for msg in payload
+        ):
             return list(payload)
-        if isinstance(payload, tuple) and payload and isinstance(payload[0], message_types):
+        if (
+            isinstance(payload, tuple)
+            and payload
+            and isinstance(payload[0], message_types)
+        ):
             return [payload[0]]
-        if isinstance(payload, tuple) and len(payload) > 1 and isinstance(payload[1], message_types):
+        if (
+            isinstance(payload, tuple)
+            and len(payload) > 1
+            and isinstance(payload[1], message_types)
+        ):
             return [payload[1]]
         if (
             isinstance(payload, tuple)
@@ -1258,10 +1797,13 @@ class BaseReActAgent:
             and all(isinstance(msg, message_types) for msg in payload[1])
         ):
             return list(payload[1])
+
         def _messages_from_container(container: Any) -> List[BaseMessage]:
             if isinstance(container, dict):
                 messages = container.get("messages")
-                if isinstance(messages, list) and all(isinstance(msg, message_types) for msg in messages):
+                if isinstance(messages, list) and all(
+                    isinstance(msg, message_types) for msg in messages
+                ):
                     return messages
             return []
 
@@ -1290,8 +1832,54 @@ class BaseReActAgent:
             content = f"{content[:397]}..."
         return f"{role}: {content}"
 
+    def adopt_request_local_model(
+        self,
+        provider: Optional[str],
+        model: Optional[str],
+        context_window: Optional[int],
+    ) -> None:
+        """Bind this *view* to the model serving one request (issue #86).
+
+        The view must answer questions about the model it is about to call, not
+        the pipeline default it was copied from. That means its identity, its
+        window, and — because `_static_middleware` is a cache the shallow copy
+        carries over intact — a cleared bound for `refresh_agent` to rebuild.
+
+        *context_window* is the window resolved where the request's provider was
+        built from the deployment's YAML. `None` means it could not be resolved
+        there and the by-name lookup is the fallback, never the mechanism.
+
+        A request naming the **same** provider and model the pipeline was
+        configured with is not a model change, and is not treated as one: the
+        operator's declared window still describes the model being called. That
+        distinction is not a nicety. The chat UI posts provider and model with
+        every message, not only when the user switches, so this path is the
+        ordinary one — and on a self-hosted deployment, where nothing resolves a
+        window by name, discarding the declaration here would install no bound
+        at all on precisely the deployment the declaration exists for.
+        """
+        # Against the *effective* pair, not the raw attributes: a pipeline-map
+        # agent leaves both at None while serving a real model, so comparing
+        # them read every ordinary turn as a switch onto a different model and
+        # withdrew the operator's declared window on the normal chat path.
+        effective_provider, effective_model = self._effective_provider_model()
+        same_model = (self._provider_key(provider), model) == (
+            self._provider_key(effective_provider),
+            effective_model,
+        )
+        self.default_provider = provider
+        self.default_model = model
+        self._request_local_window = positive_int(context_window)
+        self._is_request_local = not same_model
+        self._static_middleware = None
 
     def _get_model_context_window(self) -> Optional[int]:
+        """The context window of the model this instance will call."""
+        if self._request_local_window is not None:
+            return self._request_local_window
+        return self._resolve_provider_context_window()
+
+    def _resolve_provider_context_window(self) -> Optional[int]:
         """
         Retrieve context_window from the configured provider + model
         using the provider abstraction layer.
@@ -1339,9 +1927,10 @@ class BaseReActAgent:
         chunk = older[:chunk_size]
 
         summary = self._summarize_messages(chunk)
-        summary_message = AIMessage(content="Summary of earlier conversation:\n" + summary)
+        summary_message = AIMessage(
+            content="Summary of earlier conversation:\n" + summary
+        )
         return [summary_message] + older[chunk_size:] + recent
-
 
     def _summarize_messages(self, messages):
 
@@ -1357,13 +1946,15 @@ class BaseReActAgent:
             return "Previous conversation summarized."
 
         try:
-            response = self.agent_llm.invoke([
-                SystemMessage(
-                    content="Summarize the following conversation concisely, "
-                            "preserving important facts and decisions."
-                ),
-                HumanMessage(content=combined_text),
-            ])
+            response = self.agent_llm.invoke(
+                [
+                    SystemMessage(
+                        content="Summarize the following conversation concisely, "
+                        "preserving important facts and decisions."
+                    ),
+                    HumanMessage(content=combined_text),
+                ]
+            )
 
             if isinstance(response, BaseMessage):
                 return self._message_content(response)
@@ -1374,8 +1965,6 @@ class BaseReActAgent:
             logger.warning("Summarization failed: %s", e)
             return "Earlier conversation summarized due to length constraints."
 
-
-
     def _build_output_from_messages(
         self,
         messages: Sequence[BaseMessage],
@@ -1385,7 +1974,14 @@ class BaseReActAgent:
     ) -> PipelineOutput:
         """Create a PipelineOutput from the agent's message history."""
         if messages:
-            answer_text = self._message_content(messages[-1]) or "No answer generated by the agent."
+            raw = self._message_content(messages[-1])
+            # Strip reasoning (balanced <think>…</think> AND orphan </think>) so the
+            # stored/final answer never leaks chain-of-thought. Both the non-streaming
+            # invoke() path and the stream empty-answer fallback build the answer here,
+            # bypassing the earlier parse (issue #84 / PR #121 review). Orphan-only
+            # reasoning strips to empty → placeholder, never the raw reasoning.
+            visible, _ = self._parse_thinking_content(raw) if raw else ("", "")
+            answer_text = visible or "No answer generated by the agent."
         else:
             answer_text = "No answer generated by the agent."
         safe_metadata = dict(metadata or {})
@@ -1414,7 +2010,9 @@ class BaseReActAgent:
             limit = int(value)
             if limit <= 0:
                 raise ValueError("recursion_limit must be positive")
-            logger.info("Using recursion_limit=%s for %s", limit, self.__class__.__name__)
+            logger.info(
+                "Using recursion_limit=%s for %s", limit, self.__class__.__name__
+            )
             return limit
         except Exception:
             logger.warning(
@@ -1449,7 +2047,9 @@ class BaseReActAgent:
                             except (TypeError, ValueError):
                                 logger.warning(
                                     "Invalid services.chat_app.tool_budgets[%r]=%r for %s; ignored",
-                                    name, val, self.__class__.__name__,
+                                    name,
+                                    val,
+                                    self.__class__.__name__,
                                 )
                                 continue
                             if parsed <= 0:
@@ -1457,7 +2057,9 @@ class BaseReActAgent:
                                     "Ignoring non-positive services.chat_app.tool_budgets[%r]=%r for %s; "
                                     "a cap must be >= 1 (0/negative would silently disable the cap). "
                                     "Keeping the default.",
-                                    name, val, self.__class__.__name__,
+                                    name,
+                                    val,
+                                    self.__class__.__name__,
                                 )
                                 continue
                             merged[str(name)] = parsed
@@ -1470,7 +2072,9 @@ class BaseReActAgent:
                     except (TypeError, ValueError):
                         logger.warning(
                             "Invalid pipeline_config.tool_budgets[%r]=%r for %s; ignored",
-                            name, val, self.__class__.__name__,
+                            name,
+                            val,
+                            self.__class__.__name__,
                         )
                         continue
                     if parsed <= 0:
@@ -1478,7 +2082,9 @@ class BaseReActAgent:
                             "Ignoring non-positive pipeline_config.tool_budgets[%r]=%r for %s; "
                             "a cap must be >= 1 (0/negative would silently disable the cap). "
                             "Keeping the default.",
-                            name, val, self.__class__.__name__,
+                            name,
+                            val,
+                            self.__class__.__name__,
                         )
                         continue
                     merged[str(name)] = parsed
@@ -1512,7 +2118,9 @@ class BaseReActAgent:
             f"this case. Do not call {tool_name} again on this turn."
         )
 
-    def _last_user_message_content(self, messages: Sequence[BaseMessage]) -> Optional[str]:
+    def _last_user_message_content(
+        self, messages: Sequence[BaseMessage]
+    ) -> Optional[str]:
         """Extract content of the most recent user/human message."""
         for msg in reversed(list(messages or [])):
             role = getattr(msg, "type", "").lower()
@@ -1520,7 +2128,9 @@ class BaseReActAgent:
                 return self._message_content(msg)
         return None
 
-    def _recursion_metadata(self, recursion_limit: int, error: Exception) -> Dict[str, Any]:
+    def _recursion_metadata(
+        self, recursion_limit: int, error: Exception
+    ) -> Dict[str, Any]:
         metadata: Dict[str, Any] = {
             "event_type": "final",
             "recursion_exhausted": True,
@@ -1537,11 +2147,16 @@ class BaseReActAgent:
         """Return True if *exc* is a context-window / token-limit overflow error."""
         exc_type = type(exc).__name__
         exc_str = str(exc)
+        exc_lower = exc_str.lower()
         return (
             "ContextOverflow" in exc_type
             or "context_length_exceeded" in exc_str
             or "Input tokens exceed" in exc_str
-            or "maximum context length" in exc_str.lower()
+            or "maximum context length" in exc_lower
+            # OpenAI-compatible servers (e.g. vLLM) phrase it differently:
+            # "the model's context length is only N, resulting in a maximum input length of N".
+            or "context length is only" in exc_lower
+            or "maximum input length" in exc_lower
         )
 
     def _handle_context_overflow(
@@ -1558,9 +2173,23 @@ class BaseReActAgent:
         """
         # Try a lightweight retry with just the last human message
         if agent_inputs and "messages" in agent_inputs:
-            original_messages: List[BaseMessage] = list(agent_inputs.get("messages") or [])
-            # Keep only the last human message to stay well within context
-            trimmed: List[BaseMessage] = [m for m in original_messages[-1:] if True]
+            original_messages: List[BaseMessage] = list(
+                agent_inputs.get("messages") or []
+            )
+            # Keep only the last human message to stay well within context. Selecting
+            # the last *human* message (not simply the last message) matters for agents
+            # with forced initial retrieval (e.g. FASRCDocsAgent): their message list
+            # ends with a large ToolMessage of retrieved chunks — often the very payload
+            # that overflowed — so retrying with messages[-1:] would resend it and
+            # overflow again. Fall back to the last message only if no human message
+            # is present.
+            last_human = next(
+                (m for m in reversed(original_messages) if isinstance(m, HumanMessage)),
+                None,
+            )
+            trimmed: List[BaseMessage] = (
+                [last_human] if last_human is not None else original_messages[-1:]
+            )
             if trimmed:
                 try:
                     trimmed_inputs = {**agent_inputs, "messages": trimmed}
@@ -1568,12 +2197,17 @@ class BaseReActAgent:
                         trimmed_inputs, {"recursion_limit": 10}
                     )
                     messages_out: List[BaseMessage] = list(
-                        answer_output.get("messages", []) if isinstance(answer_output, dict) else []
+                        answer_output.get("messages", [])
+                        if isinstance(answer_output, dict)
+                        else []
                     )
                     answer_text = ""
                     for msg in reversed(messages_out):
                         msg_type = str(getattr(msg, "type", "")).lower()
-                        if msg_type in {"ai", "assistant"} or "ai" in type(msg).__name__.lower():
+                        if (
+                            msg_type in {"ai", "assistant"}
+                            or "ai" in type(msg).__name__.lower()
+                        ):
                             answer_text = self._message_content(msg)
                             if answer_text:
                                 break
@@ -1586,7 +2220,10 @@ class BaseReActAgent:
                             answer=answer_text,
                             memory=self.active_memory,
                             messages=messages_out,
-                            metadata={"event_type": "final", "context_overflow_retry": True},
+                            metadata={
+                                "event_type": "final",
+                                "context_overflow_retry": True,
+                            },
                             final=True,
                         )
                 except Exception as retry_exc:
@@ -1691,7 +2328,9 @@ class BaseReActAgent:
         agent_inputs: Optional[Dict[str, Any]],
     ) -> Optional[BaseMessage]:
         """Perform a single LLM-only wrap-up to summarize steps and answer."""
-        prompt = self._build_wrap_up_prompt(recursion_limit, error, latest_messages, agent_inputs)
+        prompt = self._build_wrap_up_prompt(
+            recursion_limit, error, latest_messages, agent_inputs
+        )
         try:
             response = self.agent_llm.invoke(
                 [
@@ -1703,7 +2342,9 @@ class BaseReActAgent:
                 return response
             return AIMessage(content=str(response))
         except Exception as exc:
-            logger.error("Failed to generate wrap-up message after recursion limit: %s", exc)
+            logger.error(
+                "Failed to generate wrap-up message after recursion limit: %s", exc
+            )
             return AIMessage(
                 content=(
                     f"Recursion limit {recursion_limit} reached and wrap-up generation failed: {exc}"
@@ -1719,7 +2360,9 @@ class BaseReActAgent:
         agent_inputs: Optional[Dict[str, Any]],
     ) -> Optional[BaseMessage]:
         """Async LLM-only wrap-up to summarize steps and answer."""
-        prompt = self._build_wrap_up_prompt(recursion_limit, error, latest_messages, agent_inputs)
+        prompt = self._build_wrap_up_prompt(
+            recursion_limit, error, latest_messages, agent_inputs
+        )
         try:
             if hasattr(self.agent_llm, "ainvoke"):
                 response = await self.agent_llm.ainvoke(
@@ -1739,7 +2382,10 @@ class BaseReActAgent:
                 return response
             return AIMessage(content=str(response))
         except Exception as exc:
-            logger.error("Failed to generate async wrap-up message after recursion limit: %s", exc)
+            logger.error(
+                "Failed to generate async wrap-up message after recursion limit: %s",
+                exc,
+            )
             return AIMessage(
                 content=(
                     f"Recursion limit {recursion_limit} reached and wrap-up generation failed: {exc}"
@@ -1758,7 +2404,9 @@ class BaseReActAgent:
         input_messages = []
         if agent_inputs and isinstance(agent_inputs, dict):
             input_messages = agent_inputs.get("messages") or []
-        user_question = self._last_user_message_content(messages or input_messages) or "Unavailable"
+        user_question = (
+            self._last_user_message_content(messages or input_messages) or "Unavailable"
+        )
 
         conversation_snippets = []
         for msg in messages[-6:]:
@@ -1789,11 +2437,18 @@ class BaseReActAgent:
             f"User request or latest message:\n{user_question}",
         ]
         if conversation_snippets:
-            prompt_sections.append("Recent conversation (latest last):\n" + "\n".join(conversation_snippets))
+            prompt_sections.append(
+                "Recent conversation (latest last):\n"
+                + "\n".join(conversation_snippets)
+            )
         if notes:
-            prompt_sections.append("Notes / steps recorded:\n" + "\n".join(f"- {n}" for n in notes))
+            prompt_sections.append(
+                "Notes / steps recorded:\n" + "\n".join(f"- {n}" for n in notes)
+            )
         if document_summaries:
-            prompt_sections.append("Retrieved documents (truncated):\n" + "\n".join(document_summaries))
+            prompt_sections.append(
+                "Retrieved documents (truncated):\n" + "\n".join(document_summaries)
+            )
         error_text = str(error) if error else ""
         if error_text:
             prompt_sections.append(f"Error detail: {error_text}")

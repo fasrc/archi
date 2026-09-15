@@ -1,6 +1,22 @@
 
 # Repository Guidelines
 
+## Release Plan (pinned)
+All work is evaluated against `docs/docs/proposals/release-plan-2026.md` (adopted
+2026-08-18, PR #281). The canonical policy text is `CLAUDE.md` § "Release plan
+(pinned)"; the load-bearing rules for any agent are:
+- **Check the issue's milestone first.** The CalVer milestones
+  (`v2026.08.0`–`v2026.11.0`) hold the only gating issues; milestone order is the
+  work order.
+- **`parked` label = deliberately unscheduled.** Never schedule, re-triage, or
+  re-prioritize a parked issue; only a human moves an issue out of parked.
+- **`evidence-trial` label = operator-driven trial work.** Milestone-exempt while
+  the trial runs. Never schedule, triage, or drain these; the label stays until a
+  human closes the tracking issue with a recorded adopt/reject decision.
+- **New work enters a milestone only if that release's feature is
+  broken/wrong/dishonest without it**, evidenced by a file:line, a measured number,
+  or a repro. Anything end-user-visible in chat outranks track membership.
+
 ## Project Structure & Module Organization
 - `src/` holds core (`src/archi`), CLI (`src/cli`), ingestion (`src/data_manager`), interfaces (`src/interfaces`), and utilities (`src/utils`).
 - `tests/` includes `smoke/` and `pr_preview_config/`.
@@ -18,7 +34,7 @@
 - `cd docs && mkdocs serve` previews documentation locally.
 
 ## Coding Style & Naming Conventions
-- Python 3.7+; follow PEP 8 with 4-space indentation.
+- Python 3.11+; follow PEP 8 with 4-space indentation.
 - Use `snake_case` for modules/functions and `PascalCase` for classes; keep filenames descriptive (e.g., `test_interfaces.py`).
 - Import ordering is generally maintained with `isort` when formatting is applied.
 - Shell scripts under `scripts/` and `tests/smoke/` use `bash` with `set -euo pipefail`.
@@ -37,6 +53,7 @@
 ## Agent Workflow
 - When changing user-facing behavior, CLI flags, configuration, or public APIs, update the relevant docs in `docs/` and/or `README.md` in the same change.
 - If no docs change is needed, note the reason briefly in the PR description or commit message.
+- In PR and issue bodies, link the first use of a project term to the glossary (`https://github.com/fasrc/archi/blob/dev/docs/docs/glossary.md#<slug>`) so a reader with no background can decode the jargon.
 
 ## Deployment & Validation Policy
 - **Match the real runtime path before debugging:** Verify which code path the running service imports (workspace source vs installed `site-packages`) and patch/reload the active path.

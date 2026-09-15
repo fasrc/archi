@@ -129,6 +129,32 @@ The `local` provider supports two modes:
 - **`ollama`** (default): Uses `ChatOllama`. Models are dynamically fetched from the Ollama server's `/api/tags` endpoint.
 - **`openai_compat`**: Uses `ChatOpenAI` with a custom base URL. Suitable for vLLM, LM Studio, or other OpenAI-compatible servers.
 
+The value is matched without regard to case or surrounding whitespace — `Ollama`, `OLLAMA`, and `  openai_compat  ` are all accepted. Any value other than `ollama` or `openai_compat` is rejected at startup with an error that names the valid values.
+
+#### Local provider endpoint precedence
+
+The two modes speak different dialects on different default ports, so each resolves its
+endpoint from its own mode. The `OLLAMA_HOST` environment variable names an Ollama daemon,
+so it applies in `ollama` mode only.
+
+In **`ollama`** mode, in order:
+
+1. `OLLAMA_HOST`, if set and non-empty — it overrides a configured `base_url`.
+2. The configured `base_url`.
+3. `http://localhost:11434`.
+
+In **`openai_compat`** mode, in order:
+
+1. The configured `base_url`. `OLLAMA_HOST` is ignored — pointing an OpenAI-dialect client
+   at an Ollama daemon would send requests to a route it does not serve.
+2. `http://localhost:8000/v1`.
+
+An endpoint with no scheme gets `http://` prefixed in both modes, so `gpu-host:8000/v1`
+resolves to `http://gpu-host:8000/v1`.
+
+The mode is fixed when the provider is built, and the endpoint is resolved once from it.
+Set `mode` in the provider config; it cannot be changed per request.
+
 > **Note:** For GPU setup with local models, see [Advanced Setup & Deployment](advanced_setup_deploy.md#running-llms-locally-on-your-gpus).
 
 ---
@@ -147,10 +173,10 @@ data_manager:
       class: OpenAIEmbeddings
       kwargs:
         model: text-embedding-3-small
-      similarity_score_reference: 10
+      similarity_score_reference: 0.0
 ```
 
-Requires `OPENAI_API_KEY` in your secrets file.
+`similarity_score_reference` is a minimum cosine similarity in the range `0..1`; `0.0` means cite everything retrieved. Requires `OPENAI_API_KEY` in your secrets file.
 
 ### HuggingFace Embeddings
 
@@ -166,10 +192,10 @@ data_manager:
           device: cpu
         encode_kwargs:
           normalize_embeddings: true
-      similarity_score_reference: 10
+      similarity_score_reference: 0.0
 ```
 
-Uses HuggingFace models locally. Optionally requires `HUGGINGFACEHUB_API_TOKEN` for private models.
+`similarity_score_reference` is a minimum cosine similarity in the range `0..1`; `0.0` means cite everything retrieved. Uses HuggingFace models locally. Optionally requires `HUGGINGFACEHUB_API_TOKEN` for private models.
 
 ---
 

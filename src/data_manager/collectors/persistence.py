@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
-from typing import Any, Dict, TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Dict, Union
 
 from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogService
 from src.utils.logging import get_logger
@@ -21,19 +22,60 @@ class PersistenceService:
 
         self.catalog = PostgresCatalogService(self.data_path, pg_config=self.pg_config)
 
-    def persist_resource(self, resource: "BaseResource", target_dir: Path, overwrite:bool = False) -> Path:
+        # One lock per resource hash, created on demand — see persist_resource.
+        # The registry grows to at most one small lock per distinct resource the
+        # process has persisted, which is strictly bounded by the corpus already
+        # held on disk and in the catalog.
+        self._resource_locks: Dict[str, threading.Lock] = {}
+        self._resource_locks_guard = threading.Lock()
+
+    def _lock_for_resource(self, resource_hash: str) -> threading.Lock:
+        with self._resource_locks_guard:
+            lock = self._resource_locks.get(resource_hash)
+            if lock is None:
+                lock = threading.Lock()
+                self._resource_locks[resource_hash] = lock
+            return lock
+
+    def persist_resource(
+        self, resource: "BaseResource", target_dir: Path, overwrite: bool = False
+    ) -> Path:
         """
         Write a resource and its metadata to disk,
         updating the catalog with the unique hash of the file and its metadata.
+
+        Serialised per resource hash. One ``PersistenceService`` is shared by every
+        worker in the parallel scrape phase, and ``LinkScraper`` deduplicates only
+        within a single crawl — so overlapping seed graphs (a site root and one of
+        its own child pages both listed as seeds) hand two workers the same URL at
+        the same moment. Same URL means same ``md5`` hash, same filename, same
+        catalog row. The body below is a read-modify-write over all three: it tests
+        ``exists()``, writes, ``stat()``s the result for ``size_bytes``, then upserts.
+        Interleaved, both callers can see the file absent, both truncate and write
+        it, and one can ``stat()`` the other's half-written file — committing a
+        ``size_bytes`` that matches neither version and two catalog rows ordered
+        independently of the bytes that survived on disk.
+
+        The lock is per hash rather than global so unrelated resources still persist
+        concurrently; only genuine duplicates queue, and the second one then takes
+        the cheap already-exists path.
         """
+        with self._lock_for_resource(resource.get_hash()):
+            return self._persist_resource_locked(resource, target_dir, overwrite)
+
+    def _persist_resource_locked(
+        self, resource: "BaseResource", target_dir: Path, overwrite: bool
+    ) -> Path:
         target_dir.mkdir(parents=True, exist_ok=True)
         file_path = resource.get_file_path(target_dir)
-        
+
         # Check if file already exists
         file_existed = file_path.exists()
-        
+
         if file_existed and not overwrite:
-            logger.debug("Skipping existing resource %s -> %s", resource.get_hash(), file_path)
+            logger.debug(
+                "Skipping existing resource %s -> %s", resource.get_hash(), file_path
+            )
         else:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             content = resource.get_content()
@@ -53,7 +95,9 @@ class PersistenceService:
         try:
             metadata_dict["size_bytes"] = str(file_path.stat().st_size)
         except OSError as exc:
-            logger.warning("Could not stat resource file %s for size_bytes: %s", file_path, exc)
+            logger.warning(
+                "Could not stat resource file %s for size_bytes: %s", file_path, exc
+            )
 
         try:
             relative_path = file_path.relative_to(self.data_path).as_posix()
@@ -65,8 +109,8 @@ class PersistenceService:
         self.catalog.upsert_resource(resource_hash, relative_path, metadata_dict)
 
         return file_path
-    
-    def delete_resource(self, resource_hash:str, flush: bool = True) -> Path:
+
+    def delete_resource(self, resource_hash: str, flush: bool = True) -> Path:
         """
         Delete a resource and its metadata from disk,
         updating the catalog accordingly.
@@ -86,9 +130,9 @@ class PersistenceService:
         if flush:
             self.flush_index()
 
-        logger.debug(f"Deleted resource {resource_hash} -> {file_path}")  
+        logger.debug(f"Deleted resource {resource_hash} -> {file_path}")
         return file_path
-    
+
     def delete_by_metadata_filter(self, key: str, value: str) -> None:
         """
         Remove any resource matching the given metadata key-value pair.
@@ -172,7 +216,7 @@ class PersistenceService:
             "resources must return str or bytes"
         )
 
-    def _delete_content(self,file_path: Path) -> None:
+    def _delete_content(self, file_path: Path) -> None:
         file_path.unlink()
 
     @staticmethod

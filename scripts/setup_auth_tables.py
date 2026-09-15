@@ -4,16 +4,17 @@
 import psycopg2
 
 conn = psycopg2.connect(
-    host='localhost',
+    host="localhost",
     port=5433,
-    database='benchmark',
-    user='benchmark',
-    password='benchmark'
+    database="benchmark",
+    user="benchmark",
+    password="benchmark",
 )
 cur = conn.cursor()
 
 # Create users table
-cur.execute('''
+cur.execute(
+    """
 CREATE TABLE IF NOT EXISTS users (
     id VARCHAR(256) PRIMARY KEY,
     email VARCHAR(256) UNIQUE,
@@ -41,10 +42,12 @@ CREATE TABLE IF NOT EXISTS users (
     api_key_openai BYTEA,
     api_key_anthropic BYTEA
 )
-''')
+"""
+)
 
 # Create sessions table
-cur.execute('''
+cur.execute(
+    """
 CREATE TABLE IF NOT EXISTS sessions (
     id VARCHAR(64) PRIMARY KEY,
     user_id VARCHAR(256) REFERENCES users(id) ON DELETE CASCADE,
@@ -52,15 +55,20 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL
 )
-''')
+"""
+)
 
-cur.execute('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)')
-cur.execute('CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)')
+cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)")
+cur.execute(
+    "CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)"
+)
 
 conn.commit()
-print('Auth tables created successfully!')
+print("Auth tables created successfully!")
 
-cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+cur.execute(
+    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+)
 tables = cur.fetchall()
-print('Tables now:', [t[0] for t in tables])
+print("Tables now:", [t[0] for t in tables])
 conn.close()

@@ -104,15 +104,15 @@ DEFAULT_OPENROUTER_MODELS = [
 class OpenRouterProvider(BaseProvider):
     """
     Provider for OpenRouter, which provides access to many models via a unified API.
-    
+
     OpenRouter uses an OpenAI-compatible API, so we use ChatOpenAI with a custom base URL.
     """
-    
+
     provider_type = ProviderType.OPENROUTER
     display_name = "OpenRouter"
-    
+
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-    
+
     def __init__(self, config: Optional[ProviderConfig] = None):
         if config is None:
             config = ProviderConfig(
@@ -123,7 +123,7 @@ class OpenRouterProvider(BaseProvider):
                 default_model="anthropic/claude-3.5-sonnet",
             )
         super().__init__(config)
-    
+
     def get_chat_model(self, model_name: str, **kwargs) -> ChatOpenAI:
         """Get an OpenRouter chat model instance."""
         model_kwargs = {
@@ -133,10 +133,10 @@ class OpenRouterProvider(BaseProvider):
             **self.config.extra_kwargs,
             **kwargs,
         }
-        
+
         if self._api_key:
             model_kwargs["api_key"] = self._api_key
-        
+
         # Add OpenRouter-specific headers
         headers = {}
         site_url = os.getenv("OPENROUTER_SITE_URL")
@@ -147,9 +147,9 @@ class OpenRouterProvider(BaseProvider):
             headers["X-Title"] = app_name
         if headers:
             model_kwargs["default_headers"] = headers
-            
+
         return ChatOpenAI(**model_kwargs)
-    
+
     def list_models(self) -> List[ModelInfo]:
         """List available OpenRouter models."""
         if self.config.models:

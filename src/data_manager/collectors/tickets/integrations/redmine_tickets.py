@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterator, Optional, List
+from typing import Any, Dict, Iterator, List, Optional
 
 from redminelib import Redmine
 
@@ -29,7 +29,9 @@ class RedmineClient:
         self.redmine_projects = redmine_config.get("projects", [])
         self.visible = bool(redmine_config.get("visible", True))
         if not self.redmine_url or not self.redmine_projects:
-            logger.warning("Redmine config missing url/projects; skipping Redmine collection")
+            logger.warning(
+                "Redmine config missing url/projects; skipping Redmine collection"
+            )
             return
 
         try:
@@ -105,7 +107,9 @@ class RedmineClient:
 
                 if answer and question != answer:
                     issue_id = str(full_issue.id)
-                    content = self._format_ticket_content(issue_id, subject, question, answer)
+                    content = self._format_ticket_content(
+                        issue_id, subject, question, answer
+                    )
 
                     metadata: Dict[str, Any] = {
                         "subject": subject,
@@ -133,7 +137,9 @@ class RedmineClient:
 
         logger.info(f"Successfully processed {processed_count} redmine tickets")
 
-    def _format_ticket_content(self, issue_id: str, subject: str, question: str, answer: str) -> str:
+    def _format_ticket_content(
+        self, issue_id: str, subject: str, question: str, answer: str
+    ) -> str:
         lines = [
             f"Redmine issue ID/ticket number: {issue_id}",
             f"Subject: {subject}",
@@ -146,7 +152,12 @@ class RedmineClient:
     def _verify(self) -> bool:
         """Check if necessary secrets are provided to access Redmine."""
         if not all(
-            [self.redmine_url, self.redmine_user, self.redmine_pw, self.redmine_projects]
+            [
+                self.redmine_url,
+                self.redmine_user,
+                self.redmine_pw,
+                self.redmine_projects,
+            ]
         ):
             logger.debug(
                 "Redmine configuration or credentials missing; skipping Redmine collection"
@@ -183,7 +194,9 @@ class RedmineClient:
         for record in journals[::-1]:
             note = record.notes
             if note:
-                answer = "\n".join(line for line in note.splitlines() if "ISSUE_ID" not in line)
+                answer = "\n".join(
+                    line for line in note.splitlines() if "ISSUE_ID" not in line
+                )
                 answer = answer.replace("\n", " ")
                 if self.anonymizer:
                     answer = self.anonymizer.anonymize(answer)

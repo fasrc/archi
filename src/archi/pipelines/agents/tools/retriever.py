@@ -1,31 +1,66 @@
 from __future__ import annotations
 
+import math
 from typing import Callable, Iterable, Optional, Sequence, Tuple
 
 from langchain.tools import tool
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
-from src.utils.logging import get_logger
 from src.archi.pipelines.agents.tools.base import require_tool_permission
+from src.archi.pipelines.agents.tools.result_limits import clamp_result
+from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+# Metadata key the hierarchical retriever records its cross-encoder score under
+# (``hierarchical_retriever.py``). A retriever that returns bare ``Document``
+# objects has nowhere else to put a score: ``BaseRetriever.invoke()`` is
+# contractually ``List[Document]``, so it cannot hand back tuples the way
+# ``HybridRetriever`` does.
+_METADATA_SCORE_KEY = "rerank_score"
+
+
+def _coerce_score(value: object) -> Optional[float]:
+    """Return ``value`` as a float, or None if it cannot be rendered as one.
+
+    ``bool`` is excluded deliberately: it subclasses ``int``, so True would
+    otherwise render as ``Score: 1.0000``. Non-finite floats are excluded too,
+    so a NaN never reaches the model as if it were a relevance score.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    score = float(value)
+    return score if math.isfinite(score) else None
 
 
 def _normalize_results(
     results: Iterable[object],
 ) -> Sequence[Tuple[Document, Optional[float]]]:
-    """Coerce retriever outputs into (Document, score) tuples."""
+    """Coerce retriever outputs into (Document, score) tuples.
+
+    A retriever states its score either by returning a ``(Document, score)``
+    tuple or by recording it on document metadata. An explicit tuple score wins
+    over a metadata one; the metadata score is read only when the tuple states
+    nothing, so the default hierarchical-rerank path stops rendering
+    ``Score: n/a`` for every document (issue #464).
+    """
     normalized: list[Tuple[Document, Optional[float]]] = []
+    doc: Document
+    stated: Optional[float]
     for item in results:
         if isinstance(item, Document):
-            normalized.append((item, None))
+            doc, stated = item, None
         elif (
-            isinstance(item, tuple)
-            and len(item) >= 2
-            and isinstance(item[0], Document)
+            isinstance(item, tuple) and len(item) >= 2 and isinstance(item[0], Document)
         ):
-            normalized.append((item[0], item[1]))
+            doc, stated = item[0], _coerce_score(item[1])
+        else:
+            continue
+        if stated is None:
+            stated = _coerce_score(doc.metadata.get(_METADATA_SCORE_KEY))
+        normalized.append((doc, stated))
     return normalized
 
 
@@ -41,22 +76,36 @@ def _format_documents_for_llm(
 
     snippets = []
     for idx, (doc, score) in enumerate(docs[:max_documents], start=1):
-        source = (
-            doc.metadata.get("filename")
-            or "unknown source"
+        filename = doc.metadata.get("filename") or "unknown source"
+        # Human-readable citation text the model can hyperlink: prefer the clean
+        # title, fall back to the URL-slug display_name, then the filename. Never
+        # the resource hash (that is a content fingerprint, not a label).
+        title = (
+            doc.metadata.get("title") or doc.metadata.get("display_name") or filename
         )
-        hash = (
-            doc.metadata.get("resource_hash")
-            or "n/a"
-        )
+        url = doc.metadata.get("url")
+        hash = doc.metadata.get("resource_hash") or "n/a"
         text = doc.page_content.strip()
         if len(text) > max_chars:
             text = f"{text[:max_chars].rstrip()}..."
-        header = f"[{idx}] {source} (hash={hash})"
-        footer = f"Score: {score:.4f}" if isinstance(score, (float, int)) else "Score: n/a"
+        # Surface title + url so the agent can cite inline as [title](url); keep
+        # the hash for the fetch_catalog_document companion tool.
+        url_part = f" <{url}>" if url else ""
+        header = f"[{idx}] {title}{url_part} (hash={hash})"
+        footer = (
+            f"Score: {score:.4f}" if isinstance(score, (float, int)) else "Score: n/a"
+        )
         snippets.append(f"{header}\n{footer}\n{text}")
 
     return "\n\n".join(snippets)
+
+
+# Enforced ceiling on the complete serialized retrieval result (issue #235).
+# ``max_chars`` bounds ``doc.page_content`` only; the snippet header interpolates
+# ``title``/``url``/``resource_hash`` straight from document metadata with no cap,
+# so one document with pathological metadata can produce an arbitrarily large
+# result. A default result is 4 documents x 800 chars plus headers.
+DEFAULT_RETRIEVER_RESULT_CHARS = 8000
 
 
 def create_retriever_tool(
@@ -66,6 +115,7 @@ def create_retriever_tool(
     description: Optional[str] = None,
     max_documents: int = 4,
     max_chars: int = 800,
+    max_result_chars: int = DEFAULT_RETRIEVER_RESULT_CHARS,
     store_docs: Optional[Callable[[str, Sequence[Document]], None]] = None,
     required_permission: Optional[str] = None,
     store_tool_input: Optional[Callable[[str, object], None]] = None,
@@ -78,13 +128,16 @@ def create_retriever_tool(
     so the calling agent can ground its responses in the vector store content.
     If ``store_docs`` is provided, it will be invoked with the tool name and
     the list of retrieved ``Document`` objects before formatting the response.
-    
+
     Args:
         retriever: The LangChain retriever instance to wrap.
         name: The name of the tool.
         description: Human-readable description of the tool.
         max_documents: Maximum number of documents to return.
         max_chars: Maximum characters per document snippet.
+        max_result_chars: Enforced ceiling on the *complete serialized output*
+            (issue #235). ``max_chars`` bounds page content only, leaving the
+            metadata-derived header uncapped.
         store_docs: Optional callback to store retrieved documents.
         required_permission: Optional RBAC permission required to use this tool.
             If None, no permission check is performed (allow all).
@@ -97,14 +150,11 @@ def create_retriever_tool(
             returning None allows the call to proceed.
     """
 
-    tool_description = (
-        description
-        or (
-            "Search the indexed knowledge base for relevant passages.\n"
-            "Input: query string.\n"
-            "Output: ranked snippets with source filename, resource hash, and score.\n"
-            "Example input: \"transfer errors in CMS\"."
-        )
+    tool_description = description or (
+        "Search the indexed knowledge base for relevant passages.\n"
+        "Input: query string.\n"
+        "Output: ranked snippets with source filename, resource hash, and score.\n"
+        'Example input: "transfer errors in CMS".'
     )
 
     @tool(name, description=tool_description)
@@ -114,7 +164,8 @@ def create_retriever_tool(
             budget_msg = enforce_budget()
             if budget_msg is not None:
                 logger.info(
-                    "Retriever tool '%s' over budget; returning synthetic response", name,
+                    "Retriever tool '%s' over budget; returning synthetic response",
+                    name,
                 )
                 return budget_msg
         logger.debug("Retriever tool '%s' called with query=%r", name, query)
@@ -122,13 +173,18 @@ def create_retriever_tool(
             try:
                 store_tool_input(name, {"query": query})
             except Exception:
-                logger.debug("Failed to store runtime input for tool '%s'", name, exc_info=True)
+                logger.debug(
+                    "Failed to store runtime input for tool '%s'", name, exc_info=True
+                )
         if query is None or not str(query).strip():
             logger.warning("Retriever tool '%s' received empty query", name)
         results = retriever.invoke(query)
         docs = _normalize_results(results or [])
         if store_docs:
             store_docs(f"{name}: {query}", [doc for doc, _ in docs])
-        return _format_documents_for_llm(docs, max_documents=max_documents, max_chars=max_chars)
+        rendered = _format_documents_for_llm(
+            docs, max_documents=max_documents, max_chars=max_chars
+        )
+        return clamp_result(rendered, max_result_chars)
 
     return _retriever_tool

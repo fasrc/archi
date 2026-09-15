@@ -11,11 +11,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+from src.utils.benchmark_resilience import is_scorable
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-RAGAS_METRICS = ["answer_relevancy", "faithfulness", "context_precision", "context_recall"]
+# NOTE: currently unused — the export declares and serializes each metric by name
+# (see the ``metadata=[...]`` blocks below). Kept in sync anyway so it cannot hand
+# a future reader a short metric list.
+RAGAS_METRICS = [
+    "answer_relevancy",
+    "faithfulness",
+    "context_precision",
+    "context_recall",
+    "answer_correctness",
+]
 
 # Inline style fragments applied directly to elements because Argilla's
 # markdown renderer strips <style> tags.
@@ -41,7 +51,9 @@ def _collapsible(summary_text: str, content: str) -> str:
     )
 
 
-def _format_trace_html(messages: List[Dict[str, Any]], label: str = "Show agent steps") -> str:
+def _format_trace_html(
+    messages: List[Dict[str, Any]], label: str = "Show agent steps"
+) -> str:
     """Render prepared messages as a collapsible HTML trace block.
 
     Uses <details>/<summary> so the trace is collapsed by default
@@ -52,7 +64,7 @@ def _format_trace_html(messages: List[Dict[str, Any]], label: str = "Show agent 
         return (
             f'<details><summary style="{_SUMMARY_STYLE}">\u25b6 {_html_escape(label)}</summary>'
             '<p style="color:#999;font-style:italic;">No trace data available.</p>'
-            '</details>'
+            "</details>"
         )
 
     steps: List[str] = []
@@ -82,7 +94,7 @@ def _format_trace_html(messages: List[Dict[str, Any]], label: str = "Show agent 
             steps.append(
                 f'<div style="{_STEP_TOOL}">'
                 f'{dur_str}<span style="{_LABEL_STYLE}">Tool Call</span><br>'
-                f'<strong>{name}</strong>{nested}</div>'
+                f"<strong>{name}</strong>{nested}</div>"
             )
         elif msg_type == "ai_message":
             content = _html_escape(str(msg.get("content", "")))
@@ -103,7 +115,7 @@ def _format_trace_html(messages: List[Dict[str, Any]], label: str = "Show agent 
             steps.append(
                 f'<div style="{_STEP_AI}">'
                 f'{dur_str}<span style="{_LABEL_STYLE}">AI Message</span><br>'
-                f'{content}</div>'
+                f"{content}</div>"
             )
         else:
             content = _html_escape(str(msg.get("content", msg)))
@@ -112,8 +124,8 @@ def _format_trace_html(messages: List[Dict[str, Any]], label: str = "Show agent 
     inner = "\n".join(steps)
     return (
         f'<details><summary style="{_SUMMARY_STYLE}">\u25b6 {_html_escape(label)}</summary>'
-        f'{inner}'
-        f'</details>'
+        f"{inner}"
+        f"</details>"
     )
 
 
@@ -230,17 +242,41 @@ def push_ab_results_to_argilla(
             ),
         ],
         metadata=[
-            rg.FloatMetadataProperty(name="ragas_relevancy_a", title="RAGAS Relevancy (A)"),
-            rg.FloatMetadataProperty(name="ragas_relevancy_b", title="RAGAS Relevancy (B)"),
-            rg.FloatMetadataProperty(name="ragas_faithfulness_a", title="RAGAS Faithfulness (A)"),
-            rg.FloatMetadataProperty(name="ragas_faithfulness_b", title="RAGAS Faithfulness (B)"),
-            rg.FloatMetadataProperty(name="ragas_precision_a", title="RAGAS Context Precision (A)"),
-            rg.FloatMetadataProperty(name="ragas_precision_b", title="RAGAS Context Precision (B)"),
-            rg.FloatMetadataProperty(name="ragas_recall_a", title="RAGAS Context Recall (A)"),
-            rg.FloatMetadataProperty(name="ragas_recall_b", title="RAGAS Context Recall (B)"),
+            rg.FloatMetadataProperty(
+                name="ragas_relevancy_a", title="RAGAS Relevancy (A)"
+            ),
+            rg.FloatMetadataProperty(
+                name="ragas_relevancy_b", title="RAGAS Relevancy (B)"
+            ),
+            rg.FloatMetadataProperty(
+                name="ragas_faithfulness_a", title="RAGAS Faithfulness (A)"
+            ),
+            rg.FloatMetadataProperty(
+                name="ragas_faithfulness_b", title="RAGAS Faithfulness (B)"
+            ),
+            rg.FloatMetadataProperty(
+                name="ragas_precision_a", title="RAGAS Context Precision (A)"
+            ),
+            rg.FloatMetadataProperty(
+                name="ragas_precision_b", title="RAGAS Context Precision (B)"
+            ),
+            rg.FloatMetadataProperty(
+                name="ragas_recall_a", title="RAGAS Context Recall (A)"
+            ),
+            rg.FloatMetadataProperty(
+                name="ragas_recall_b", title="RAGAS Context Recall (B)"
+            ),
+            rg.FloatMetadataProperty(
+                name="ragas_correctness_a", title="RAGAS Answer Correctness (A)"
+            ),
+            rg.FloatMetadataProperty(
+                name="ragas_correctness_b", title="RAGAS Answer Correctness (B)"
+            ),
             rg.FloatMetadataProperty(name="time_a", title="Response Time (A)"),
             rg.FloatMetadataProperty(name="time_b", title="Response Time (B)"),
-            rg.TermsMetadataProperty(name="corpus_snapshot_id", title="Corpus snapshot id"),
+            rg.TermsMetadataProperty(
+                name="corpus_snapshot_id", title="Corpus snapshot id"
+            ),
         ],
         distribution=rg.TaskDistribution(min_submitted=max(1, int(min_submitted))),
     )
@@ -249,7 +285,8 @@ def push_ab_results_to_argilla(
     dataset.create()
     logger.info(
         "Created Argilla dataset: %s (min_submitted=%d)",
-        dataset_name, max(1, int(min_submitted)),
+        dataset_name,
+        max(1, int(min_submitted)),
     )
 
     per_question = ab.get("per_question", [])
@@ -283,6 +320,12 @@ def push_ab_results_to_argilla(
         brc = ragas_b.get("context_recall")
         if brc is not None and brc == brc:
             metadata["ragas_recall_b"] = float(brc)
+        aac = ragas_a.get("answer_correctness")
+        if aac is not None and aac == aac:
+            metadata["ragas_correctness_a"] = float(aac)
+        bac = ragas_b.get("answer_correctness")
+        if bac is not None and bac == bac:
+            metadata["ragas_correctness_b"] = float(bac)
         ta = item.get("time_a")
         if ta is not None:
             metadata["time_a"] = float(ta)
@@ -311,7 +354,9 @@ def push_ab_results_to_argilla(
         )
 
     dataset.records.log(records)
-    logger.info("Logged %d records to Argilla dataset '%s'.", len(records), dataset_name)
+    logger.info(
+        "Logged %d records to Argilla dataset '%s'.", len(records), dataset_name
+    )
     return dataset_name
 
 
@@ -390,11 +435,20 @@ def push_single_results_to_argilla(
         ],
         metadata=[
             rg.FloatMetadataProperty(name="ragas_relevancy", title="RAGAS Relevancy"),
-            rg.FloatMetadataProperty(name="ragas_faithfulness", title="RAGAS Faithfulness"),
-            rg.FloatMetadataProperty(name="ragas_precision", title="RAGAS Context Precision"),
+            rg.FloatMetadataProperty(
+                name="ragas_faithfulness", title="RAGAS Faithfulness"
+            ),
+            rg.FloatMetadataProperty(
+                name="ragas_precision", title="RAGAS Context Precision"
+            ),
             rg.FloatMetadataProperty(name="ragas_recall", title="RAGAS Context Recall"),
+            rg.FloatMetadataProperty(
+                name="ragas_correctness", title="RAGAS Answer Correctness"
+            ),
             rg.FloatMetadataProperty(name="time_elapsed", title="Response Time"),
-            rg.TermsMetadataProperty(name="corpus_snapshot_id", title="Corpus snapshot id"),
+            rg.TermsMetadataProperty(
+                name="corpus_snapshot_id", title="Corpus snapshot id"
+            ),
             rg.TermsMetadataProperty(name="anchor_type", title="Anchor type"),
         ],
         distribution=rg.TaskDistribution(min_submitted=max(1, int(min_submitted))),
@@ -404,11 +458,20 @@ def push_single_results_to_argilla(
     dataset.create()
     logger.info(
         "Created Argilla dataset: %s (min_submitted=%d)",
-        dataset_name, max(1, int(min_submitted)),
+        dataset_name,
+        max(1, int(min_submitted)),
     )
 
     records = []
     for i, (q_key, item) in enumerate(sorted(questions.items())):
+        # A failed/degraded question has no real answer; exporting it as a blank
+        # gradeable record would corrupt human evaluation. Skip it.
+        if not is_scorable(item):
+            logger.info(
+                "Skipping failed/degraded question %s from Argilla human-eval export.",
+                q_key,
+            )
+            continue
         metadata = {}
         ar = item.get("answer_relevancy")
         if ar is not None and ar == ar:
@@ -422,6 +485,9 @@ def push_single_results_to_argilla(
         cr = item.get("context_recall")
         if cr is not None and cr == cr:
             metadata["ragas_recall"] = float(cr)
+        ac = item.get("answer_correctness")
+        if ac is not None and ac == ac:
+            metadata["ragas_correctness"] = float(ac)
         te = item.get("time_elapsed")
         if te is not None:
             metadata["time_elapsed"] = float(te)
@@ -447,7 +513,9 @@ def push_single_results_to_argilla(
         )
 
     dataset.records.log(records)
-    logger.info("Logged %d records to Argilla dataset '%s'.", len(records), dataset_name)
+    logger.info(
+        "Logged %d records to Argilla dataset '%s'.", len(records), dataset_name
+    )
     return dataset_name
 
 
@@ -469,7 +537,9 @@ def pull_grades_from_argilla(
         raise ValueError(f"Could not find Argilla dataset '{dataset_name}': {e}")
 
     if dataset is None:
-        raise ValueError(f"Argilla dataset '{dataset_name}' not found in workspace '{workspace}'.")
+        raise ValueError(
+            f"Argilla dataset '{dataset_name}' not found in workspace '{workspace}'."
+        )
 
     grades: Dict[str, Any] = {}
     for record in dataset.records(with_responses=True):
@@ -503,7 +573,10 @@ def pull_grades_from_argilla(
                 by_user[user_key] = {"user": str(user_id) if user_id else None}
             qname = getattr(response, "question_name", None)
             value = getattr(response, "value", None)
-            if qname in ("winner", "quality", "notes", "correctness", "failure_modes") and value is not None:
+            if (
+                qname in ("winner", "quality", "notes", "correctness", "failure_modes")
+                and value is not None
+            ):
                 by_user[user_key][qname] = value
         item_grades["responses"].extend(by_user.values())
 
@@ -512,11 +585,16 @@ def pull_grades_from_argilla(
     annotated = sum(1 for g in grades.values() if g.get("responses"))
     logger.info(
         "Pulled grades for dataset '%s': %d/%d questions annotated.",
-        dataset_name, annotated, len(grades),
+        dataset_name,
+        annotated,
+        len(grades),
     )
 
     if annotated == 0:
-        logger.warning("No annotations found in dataset '%s'. Grade in Argilla first.", dataset_name)
+        logger.warning(
+            "No annotations found in dataset '%s'. Grade in Argilla first.",
+            dataset_name,
+        )
 
     if output_path:
         out = Path(output_path)
@@ -571,7 +649,11 @@ def push_multi_ab_results_to_argilla(
         except Exception:
             logger.exception("Failed to push pair %s vs %s to Argilla.", name_a, name_b)
 
-    logger.info("Created %d Argilla datasets for %d pairs.", len(dataset_names), len(ab_comparisons))
+    logger.info(
+        "Created %d Argilla datasets for %d pairs.",
+        len(dataset_names),
+        len(ab_comparisons),
+    )
     return dataset_names
 
 
@@ -630,7 +712,11 @@ def assert_single_sweep(grades_dict: Dict[str, Any]) -> Optional[str]:
     snapshot ids (treated as exploratory; primary outcomes should not be
     published from such a run).
     """
-    ids = {g.get("corpus_snapshot_id") for g in grades_dict.values() if g.get("corpus_snapshot_id")}
+    ids = {
+        g.get("corpus_snapshot_id")
+        for g in grades_dict.values()
+        if g.get("corpus_snapshot_id")
+    }
     if not ids:
         logger.warning(
             "No corpus_snapshot_id metadata found on any record. Treating as exploratory; "
@@ -652,10 +738,10 @@ def assert_single_sweep(grades_dict: Dict[str, Any]) -> Optional[str]:
 # -- State file utilities (shared with benchmark_grading.py) --
 
 _BENCHMARKS_BIND_PATH = "/root/archi/benchmarks"  # bind-mount target in the
-                                                  # benchmark container; the host
-                                                  # sees the same dir via the
-                                                  # services.benchmarking.out_dir
-                                                  # config (bench_out/ by default).
+# benchmark container; the host
+# sees the same dir via the
+# services.benchmarking.out_dir
+# config (bench_out/ by default).
 
 
 def _benchmarks_bind_is_accessible() -> bool:

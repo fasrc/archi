@@ -3,7 +3,7 @@ import types
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Minimal stub so tests can run without langchain-core installed.
 if "langchain_core" not in sys.modules:
@@ -35,12 +35,25 @@ if "langchain_community.document_loaders" not in sys.modules:
 
 if "langchain_community.document_loaders.text" not in sys.modules:
     text_module = types.ModuleType("langchain_community.document_loaders.text")
-    text_module.TextLoader = sys.modules["langchain_community.document_loaders"].TextLoader if hasattr(sys.modules["langchain_community.document_loaders"], "TextLoader") else type("TextLoader", (), {"__init__": lambda self, *_a, **_k: None, "load": lambda self: []})
+    text_module.TextLoader = (
+        sys.modules["langchain_community.document_loaders"].TextLoader
+        if hasattr(sys.modules["langchain_community.document_loaders"], "TextLoader")
+        else type(
+            "TextLoader",
+            (),
+            {"__init__": lambda self, *_a, **_k: None, "load": lambda self: []},
+        )
+    )
     # Ensure TextLoader exists on both modules for imports.
     if not hasattr(sys.modules["langchain_community.document_loaders"], "TextLoader"):
-        setattr(sys.modules["langchain_community.document_loaders"], "TextLoader", text_module.TextLoader)
+        setattr(
+            sys.modules["langchain_community.document_loaders"],
+            "TextLoader",
+            text_module.TextLoader,
+        )
     sys.modules["langchain_community.document_loaders.text"] = text_module
 
+from src.data_manager.collectors import persistence as persistence_module
 from src.data_manager.collectors.persistence import PersistenceService
 
 
@@ -61,14 +74,20 @@ class _FakeResource:
 
     def get_metadata(self):
         # No size_bytes provided by resource metadata on purpose.
-        return SimpleNamespace(as_dict=lambda: {"source_type": "ticket", "display_name": "Test Doc"})
+        return SimpleNamespace(
+            as_dict=lambda: {"source_type": "ticket", "display_name": "Test Doc"}
+        )
 
 
 def test_persist_resource_sets_size_bytes_from_written_file():
     with TemporaryDirectory() as tmp_dir:
-        service = PersistenceService.__new__(PersistenceService)
-        service.data_path = Path(tmp_dir)
-        service.catalog = MagicMock()
+        # Construct through __init__ (with the catalog stubbed out) rather than
+        # __new__, so the service gets all of its instance state — including the
+        # per-resource-hash lock registry persist_resource takes.
+        with patch.object(
+            persistence_module, "PostgresCatalogService", return_value=MagicMock()
+        ):
+            service = PersistenceService(Path(tmp_dir), pg_config={})
 
         resource = _FakeResource("hash-1", "doc.txt", "hello persistence")
         target_dir = service.data_path / "tickets"

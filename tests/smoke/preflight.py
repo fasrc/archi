@@ -173,7 +173,9 @@ def _check_ollama_model() -> None:
     _info("Ollama model OK")
 
 
-def _check_config_ollama(config_path: str, pipeline_name: str, ollama_model: str) -> None:
+def _check_config_ollama(
+    config_path: str, pipeline_name: str, ollama_model: str
+) -> None:
     _info(f"Validating config at {config_path} uses Ollama for {pipeline_name} ...")
     try:
         with open(config_path, "r", encoding="utf-8") as handle:
@@ -196,10 +198,14 @@ def _check_config_ollama(config_path: str, pipeline_name: str, ollama_model: str
     local_cfg = (chat_cfg.get("providers") or {}).get("local") or {}
     local_default = local_cfg.get("default_model")
     if local_default and local_default != ollama_model:
-        _fail(f"Local provider default_model '{local_default}' does not match OLLAMA_MODEL '{ollama_model}'")
+        _fail(
+            f"Local provider default_model '{local_default}' does not match OLLAMA_MODEL '{ollama_model}'"
+        )
     models = local_cfg.get("models") or []
     if models and models[0] != ollama_model:
-        _fail(f"Local provider model '{models[0]}' does not match OLLAMA_MODEL '{ollama_model}'")
+        _fail(
+            f"Local provider model '{models[0]}' does not match OLLAMA_MODEL '{ollama_model}'"
+        )
     _info("Config Ollama settings OK")
 
 

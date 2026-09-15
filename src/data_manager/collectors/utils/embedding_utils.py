@@ -12,9 +12,11 @@ def sliding_window(text, window_size, stride):
         yield " ".join(tokens[window_start:window_end])
         window_start += stride
 
+
 @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
 def embedding_with_backoff(**kwargs):
     return openai.Embedding.create(**kwargs)
+
 
 def get_embedding(text, model="text-embedding-ada-002", api_key=None):
     if api_key is None:

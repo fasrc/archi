@@ -216,7 +216,9 @@ class TestRevokeApiToken:
         service._get_connection = MagicMock(return_value=conn)
 
         service.revoke_api_token("user1")
-        mock_log.assert_called_once_with("user1", "api_token_revoke", success=True, method="bearer_token")
+        mock_log.assert_called_once_with(
+            "user1", "api_token_revoke", success=True, method="bearer_token"
+        )
 
     def test_revoke_no_token_returns_false(self, service):
         conn = MagicMock()

@@ -36,7 +36,7 @@ BYOK_PROVIDERS = ("openrouter", "openai", "anthropic")
 @dataclass
 class User:
     """User data model."""
-    
+
     id: str
     display_name: Optional[str] = None
     email: Optional[str] = None
@@ -47,10 +47,10 @@ class User:
     theme: str = "system"
     preferred_model: Optional[str] = None
     preferred_temperature: Optional[float] = None
-    
+
     # BYOK API keys (decrypted values, only populated when explicitly requested)
     api_keys: Dict[str, Optional[str]] = field(default_factory=dict)
-    
+
     # Timestamps
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -59,17 +59,17 @@ class User:
 class UserService:
     """
     Service for managing user data in PostgreSQL.
-    
+
     Handles user creation, preferences, and encrypted BYOK API key storage.
     Uses pgcrypto for symmetric encryption of API keys.
-    
+
     Example:
         >>> service = UserService(pg_config={'host': 'localhost', ...})
         >>> user = service.get_or_create_user("client_123")
         >>> service.update_preferences("client_123", theme="dark", preferred_model="gpt-4")
         >>> service.set_api_key("client_123", "openai", "sk-...")
     """
-    
+
     def __init__(
         self,
         pg_config: Optional[Dict[str, Any]] = None,
@@ -79,7 +79,7 @@ class UserService:
     ):
         """
         Initialize UserService.
-        
+
         Args:
             pg_config: PostgreSQL connection parameters (fallback)
             connection_pool: ConnectionPool instance (preferred)
@@ -87,13 +87,15 @@ class UserService:
         """
         self._pool = connection_pool
         self._pg_config = pg_config
-        self._encryption_key = encryption_key or read_secret("BYOK_ENCRYPTION_KEY", default="")
-        
+        self._encryption_key = encryption_key or read_secret(
+            "BYOK_ENCRYPTION_KEY", default=""
+        )
+
         if not self._encryption_key:
             logger.warning(
                 "BYOK_ENCRYPTION_KEY not set - API key storage will be disabled"
             )
-    
+
     def _get_connection(self) -> psycopg2.extensions.connection:
         """Get a database connection."""
         if self._pool:
@@ -102,21 +104,21 @@ class UserService:
             return psycopg2.connect(**self._pg_config)
         else:
             raise ValueError("No connection pool or pg_config provided")
-    
+
     def _release_connection(self, conn) -> None:
         """Release connection back to pool or close it."""
         if self._pool:
             self._pool.release_connection(conn)
         else:
             conn.close()
-    
+
     def get_user(self, user_id: str) -> Optional[User]:
         """
         Get user by ID.
-        
+
         Args:
             user_id: The user's unique identifier
-            
+
         Returns:
             User object if found, None otherwise
         """
@@ -131,13 +133,13 @@ class UserService:
                     FROM users
                     WHERE id = %s
                     """,
-                    (user_id,)
+                    (user_id,),
                 )
                 row = cursor.fetchone()
-                
+
                 if row is None:
                     return None
-                
+
                 return User(
                     id=row["id"],
                     display_name=row["display_name"],
@@ -146,7 +148,11 @@ class UserService:
                     is_admin=row["is_admin"],
                     theme=row["theme"],
                     preferred_model=row["preferred_model"],
-                    preferred_temperature=float(row["preferred_temperature"]) if row["preferred_temperature"] else None,
+                    preferred_temperature=(
+                        float(row["preferred_temperature"])
+                        if row["preferred_temperature"]
+                        else None
+                    ),
                     created_at=str(row["created_at"]) if row["created_at"] else None,
                     updated_at=str(row["updated_at"]) if row["updated_at"] else None,
                 )
@@ -163,32 +169,32 @@ class UserService:
     ) -> User:
         """
         Get existing user or create new one.
-        
+
         Implements:
         - User creation on first interaction
         - Anonymous user identification (generates user_id if not provided)
-        
+
         Args:
             user_id: User ID (generated if None for anonymous users)
             auth_provider: Authentication method ('anonymous', 'basic', 'sso')
             display_name: Optional display name
             email: Optional email address
-            
+
         Returns:
             User object (existing or newly created)
         """
         if auth_provider not in AUTH_PROVIDERS:
             raise ValueError(f"auth_provider must be one of {AUTH_PROVIDERS}")
-        
+
         # Generate user_id for anonymous users
         if user_id is None:
             user_id = f"anon_{uuid.uuid4().hex[:16]}"
-        
+
         # Check if user exists
         existing = self.get_user(user_id)
         if existing is not None:
             return existing
-        
+
         # Create new user
         conn = self._get_connection()
         try:
@@ -204,7 +210,7 @@ class UserService:
                     RETURNING id, display_name, email, auth_provider, is_admin, theme,
                               preferred_model, preferred_temperature, created_at, updated_at
                     """,
-                    (user_id, display_name, email, auth_provider)
+                    (user_id, display_name, email, auth_provider),
                 )
                 row = cursor.fetchone()
                 conn.commit()
@@ -219,13 +225,17 @@ class UserService:
                     is_admin=row["is_admin"],
                     theme=row["theme"],
                     preferred_model=row["preferred_model"],
-                    preferred_temperature=float(row["preferred_temperature"]) if row["preferred_temperature"] else None,
+                    preferred_temperature=(
+                        float(row["preferred_temperature"])
+                        if row["preferred_temperature"]
+                        else None
+                    ),
                     created_at=str(row["created_at"]) if row["created_at"] else None,
                     updated_at=str(row["updated_at"]) if row["updated_at"] else None,
                 )
         finally:
             self._release_connection(conn)
-    
+
     def update_preferences(
         self,
         user_id: str,
@@ -236,46 +246,46 @@ class UserService:
     ) -> User:
         """
         Update user preferences.
-        
+
         Implements: User preferences persistence
-        
+
         Args:
             user_id: User ID
             theme: UI theme preference ('system', 'light', 'dark')
             preferred_model: Preferred model identifier
             preferred_temperature: Preferred temperature setting
-            
+
         Returns:
             Updated User object
-            
+
         Raises:
             ValueError: If user not found
         """
         updates = []
         params: List[Any] = []
-        
+
         if theme is not None:
             updates.append("theme = %s")
             params.append(theme)
-        
+
         if preferred_model is not None:
             updates.append("preferred_model = %s")
             params.append(preferred_model)
-        
+
         if preferred_temperature is not None:
             updates.append("preferred_temperature = %s")
             params.append(preferred_temperature)
-        
+
         if not updates:
             # No updates, just return current user
             user = self.get_user(user_id)
             if user is None:
                 raise ValueError(f"User not found: {user_id}")
             return user
-        
+
         updates.append("updated_at = NOW()")
         params.append(user_id)
-        
+
         conn = self._get_connection()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
@@ -287,16 +297,16 @@ class UserService:
                     RETURNING id, display_name, email, auth_provider, theme,
                               preferred_model, preferred_temperature, created_at, updated_at
                     """,
-                    params
+                    params,
                 )
                 row = cursor.fetchone()
                 conn.commit()
-                
+
                 if row is None:
                     raise ValueError(f"User not found: {user_id}")
-                
+
                 logger.debug(f"Updated preferences for user: {user_id}")
-                
+
                 return User(
                     id=row["id"],
                     display_name=row["display_name"],
@@ -304,13 +314,17 @@ class UserService:
                     auth_provider=row["auth_provider"],
                     theme=row["theme"],
                     preferred_model=row["preferred_model"],
-                    preferred_temperature=float(row["preferred_temperature"]) if row["preferred_temperature"] else None,
+                    preferred_temperature=(
+                        float(row["preferred_temperature"])
+                        if row["preferred_temperature"]
+                        else None
+                    ),
                     created_at=str(row["created_at"]) if row["created_at"] else None,
                     updated_at=str(row["updated_at"]) if row["updated_at"] else None,
                 )
         finally:
             self._release_connection(conn)
-    
+
     def set_api_key(
         self,
         user_id: str,
@@ -319,28 +333,30 @@ class UserService:
     ) -> bool:
         """
         Store encrypted BYOK API key for a user.
-        
+
         Implements: BYOK API key storage with pgcrypto encryption
-        
+
         Args:
             user_id: User ID
             provider: API provider ('openrouter', 'openai', 'anthropic')
             api_key: The API key to encrypt and store
-            
+
         Returns:
             True if successful
-            
+
         Raises:
             ValueError: If provider invalid or encryption key not configured
         """
         if provider not in BYOK_PROVIDERS:
             raise ValueError(f"provider must be one of {BYOK_PROVIDERS}")
-        
+
         if not self._encryption_key:
-            raise ValueError("BYOK_ENCRYPTION_KEY not configured - cannot store API keys")
-        
+            raise ValueError(
+                "BYOK_ENCRYPTION_KEY not configured - cannot store API keys"
+            )
+
         column = f"api_key_{provider}"
-        
+
         conn = self._get_connection()
         try:
             with conn.cursor() as cursor:
@@ -352,18 +368,20 @@ class UserService:
                         updated_at = NOW()
                     WHERE id = %s
                     """,
-                    (api_key, self._encryption_key, user_id)
+                    (api_key, self._encryption_key, user_id),
                 )
                 conn.commit()
-                
+
                 if cursor.rowcount == 0:
                     raise ValueError(f"User not found: {user_id}")
-                
-                logger.info(f"Stored encrypted API key for user {user_id}, provider {provider}")
+
+                logger.info(
+                    f"Stored encrypted API key for user {user_id}, provider {provider}"
+                )
                 return True
         finally:
             self._release_connection(conn)
-    
+
     def get_api_key(
         self,
         user_id: str,
@@ -371,25 +389,27 @@ class UserService:
     ) -> Optional[str]:
         """
         Retrieve and decrypt BYOK API key for a user.
-        
+
         Args:
             user_id: User ID
             provider: API provider ('openrouter', 'openai', 'anthropic')
-            
+
         Returns:
             Decrypted API key, or None if not set
-            
+
         Raises:
             ValueError: If provider invalid or encryption key not configured
         """
         if provider not in BYOK_PROVIDERS:
             raise ValueError(f"provider must be one of {BYOK_PROVIDERS}")
-        
+
         if not self._encryption_key:
-            raise ValueError("BYOK_ENCRYPTION_KEY not configured - cannot retrieve API keys")
-        
+            raise ValueError(
+                "BYOK_ENCRYPTION_KEY not configured - cannot retrieve API keys"
+            )
+
         column = f"api_key_{provider}"
-        
+
         conn = self._get_connection()
         try:
             with conn.cursor() as cursor:
@@ -400,13 +420,13 @@ class UserService:
                     FROM users
                     WHERE id = %s AND {column} IS NOT NULL
                     """,
-                    (self._encryption_key, user_id)
+                    (self._encryption_key, user_id),
                 )
                 row = cursor.fetchone()
-                
+
                 if row is None:
                     return None
-                
+
                 # pgp_sym_decrypt returns bytes, decode to string
                 decrypted = row[0]
                 if isinstance(decrypted, (bytes, memoryview)):
@@ -414,7 +434,7 @@ class UserService:
                 return decrypted
         finally:
             self._release_connection(conn)
-    
+
     def delete_api_key(
         self,
         user_id: str,
@@ -422,19 +442,19 @@ class UserService:
     ) -> bool:
         """
         Remove a stored API key.
-        
+
         Args:
             user_id: User ID
             provider: API provider ('openrouter', 'openai', 'anthropic')
-            
+
         Returns:
             True if key was deleted
         """
         if provider not in BYOK_PROVIDERS:
             raise ValueError(f"provider must be one of {BYOK_PROVIDERS}")
-        
+
         column = f"api_key_{provider}"
-        
+
         conn = self._get_connection()
         try:
             with conn.cursor() as cursor:
@@ -445,15 +465,15 @@ class UserService:
                         updated_at = NOW()
                     WHERE id = %s
                     """,
-                    (user_id,)
+                    (user_id,),
                 )
                 conn.commit()
-                
+
                 logger.info(f"Deleted API key for user {user_id}, provider {provider}")
                 return cursor.rowcount > 0
         finally:
             self._release_connection(conn)
-    
+
     def generate_api_token(self, user_id: str) -> str:
         """
         Generate an API token for /v1 endpoint access.
@@ -482,7 +502,7 @@ class UserService:
                     SET api_token_hash = %s, api_token_created_at = NOW(), updated_at = NOW()
                     WHERE id = %s
                     """,
-                    (token_hash, user_id)
+                    (token_hash, user_id),
                 )
                 conn.commit()
 
@@ -494,7 +514,9 @@ class UserService:
         finally:
             self._release_connection(conn)
 
-    def get_user_by_api_token(self, token: str, *, token_ttl_days: Optional[int] = None) -> Optional[User]:
+    def get_user_by_api_token(
+        self, token: str, *, token_ttl_days: Optional[int] = None
+    ) -> Optional[User]:
         """
         Look up a user by their API token.
 
@@ -522,7 +544,7 @@ class UserService:
                     FROM users
                     WHERE api_token_hash = %s
                     """,
-                    (token_hash,)
+                    (token_hash,),
                 )
                 row = cursor.fetchone()
 
@@ -530,12 +552,17 @@ class UserService:
                     return None
 
                 # Check token expiry when TTL is configured
-                if token_ttl_days is not None and row["api_token_created_at"] is not None:
+                if (
+                    token_ttl_days is not None
+                    and row["api_token_created_at"] is not None
+                ):
                     age = datetime.now(timezone.utc) - row["api_token_created_at"]
                     if age > timedelta(days=token_ttl_days):
                         logger.warning(
                             "Expired API token for user %s (age: %s, ttl: %d days)",
-                            row["id"], age, token_ttl_days,
+                            row["id"],
+                            age,
+                            token_ttl_days,
                         )
                         return None
 
@@ -547,7 +574,11 @@ class UserService:
                     is_admin=row["is_admin"],
                     theme=row["theme"],
                     preferred_model=row["preferred_model"],
-                    preferred_temperature=float(row["preferred_temperature"]) if row["preferred_temperature"] else None,
+                    preferred_temperature=(
+                        float(row["preferred_temperature"])
+                        if row["preferred_temperature"]
+                        else None
+                    ),
                     created_at=str(row["created_at"]) if row["created_at"] else None,
                     updated_at=str(row["updated_at"]) if row["updated_at"] else None,
                 )
@@ -569,7 +600,7 @@ class UserService:
             with conn.cursor() as cursor:
                 cursor.execute(
                     "SELECT api_token_hash IS NOT NULL FROM users WHERE id = %s",
-                    (user_id,)
+                    (user_id,),
                 )
                 row = cursor.fetchone()
                 return bool(row and row[0])
@@ -595,13 +626,15 @@ class UserService:
                     SET api_token_hash = NULL, api_token_created_at = NULL, updated_at = NOW()
                     WHERE id = %s AND api_token_hash IS NOT NULL
                     """,
-                    (user_id,)
+                    (user_id,),
                 )
                 conn.commit()
 
                 revoked = cursor.rowcount > 0
                 if revoked:
-                    log_authentication_event(user_id, "api_token_revoke", success=True, method="bearer_token")
+                    log_authentication_event(
+                        user_id, "api_token_revoke", success=True, method="bearer_token"
+                    )
                 return revoked
         finally:
             self._release_connection(conn)
@@ -617,25 +650,25 @@ class UserService:
     ) -> User:
         """
         Link an anonymous user to an authenticated identity.
-        
+
         Implements: Anonymous user can later be linked to an authenticated identity
-        
+
         This migrates preferences and API keys from the anonymous user
         to the authenticated user, then deletes the anonymous record.
-        
+
         Args:
             anonymous_id: The anonymous user ID to migrate from
             authenticated_id: The authenticated user ID to migrate to
             auth_provider: The authentication provider ('basic', 'sso')
             display_name: Display name for the authenticated user
             email: Email for the authenticated user
-            
+
         Returns:
             The authenticated User object
         """
         if auth_provider == "anonymous":
             raise ValueError("Cannot link to anonymous auth provider")
-        
+
         conn = self._get_connection()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
@@ -647,10 +680,10 @@ class UserService:
                     FROM users
                     WHERE id = %s AND auth_provider = 'anonymous'
                     """,
-                    (anonymous_id,)
+                    (anonymous_id,),
                 )
                 anon_data = cursor.fetchone()
-                
+
                 if anon_data is None:
                     logger.warning(f"Anonymous user not found: {anonymous_id}")
                     # Just create/return the authenticated user
@@ -660,7 +693,7 @@ class UserService:
                         display_name=display_name,
                         email=email,
                     )
-                
+
                 # Create/update authenticated user with merged data
                 cursor.execute(
                     """
@@ -695,10 +728,10 @@ class UserService:
                         anon_data["api_key_openrouter"],
                         anon_data["api_key_openai"],
                         anon_data["api_key_anthropic"],
-                    )
+                    ),
                 )
                 row = cursor.fetchone()
-                
+
                 # Update conversation_metadata to point to new user
                 cursor.execute(
                     """
@@ -706,9 +739,9 @@ class UserService:
                     SET client_id = %s
                     WHERE client_id = %s
                     """,
-                    (authenticated_id, anonymous_id)
+                    (authenticated_id, anonymous_id),
                 )
-                
+
                 # Update user_document_defaults to point to new user
                 cursor.execute(
                     """
@@ -717,21 +750,18 @@ class UserService:
                     WHERE user_id = %s
                     ON CONFLICT (user_id, document_id) DO NOTHING
                     """,
-                    (authenticated_id, anonymous_id)
+                    (authenticated_id, anonymous_id),
                 )
-                
+
                 # Delete anonymous user
-                cursor.execute(
-                    "DELETE FROM users WHERE id = %s",
-                    (anonymous_id,)
-                )
-                
+                cursor.execute("DELETE FROM users WHERE id = %s", (anonymous_id,))
+
                 conn.commit()
-                
+
                 logger.info(
                     f"Linked anonymous user {anonymous_id} to authenticated user {authenticated_id}"
                 )
-                
+
                 return User(
                     id=row["id"],
                     display_name=row["display_name"],
@@ -739,13 +769,17 @@ class UserService:
                     auth_provider=row["auth_provider"],
                     theme=row["theme"],
                     preferred_model=row["preferred_model"],
-                    preferred_temperature=float(row["preferred_temperature"]) if row["preferred_temperature"] else None,
+                    preferred_temperature=(
+                        float(row["preferred_temperature"])
+                        if row["preferred_temperature"]
+                        else None
+                    ),
                     created_at=str(row["created_at"]) if row["created_at"] else None,
                     updated_at=str(row["updated_at"]) if row["updated_at"] else None,
                 )
         finally:
             self._release_connection(conn)
-    
+
     def list_users(
         self,
         *,
@@ -755,12 +789,12 @@ class UserService:
     ) -> List[User]:
         """
         List users with optional filtering.
-        
+
         Args:
             auth_provider: Filter by auth provider
             limit: Maximum results to return
             offset: Offset for pagination
-            
+
         Returns:
             List of User objects
         """
@@ -778,7 +812,7 @@ class UserService:
                         ORDER BY created_at DESC
                         LIMIT %s OFFSET %s
                         """,
-                        (auth_provider, limit, offset)
+                        (auth_provider, limit, offset),
                     )
                 else:
                     cursor.execute(
@@ -790,11 +824,11 @@ class UserService:
                         ORDER BY created_at DESC
                         LIMIT %s OFFSET %s
                         """,
-                        (limit, offset)
+                        (limit, offset),
                     )
-                
+
                 rows = cursor.fetchall()
-                
+
                 return [
                     User(
                         id=row["id"],
@@ -803,9 +837,17 @@ class UserService:
                         auth_provider=row["auth_provider"],
                         theme=row["theme"],
                         preferred_model=row["preferred_model"],
-                        preferred_temperature=float(row["preferred_temperature"]) if row["preferred_temperature"] else None,
-                        created_at=str(row["created_at"]) if row["created_at"] else None,
-                        updated_at=str(row["updated_at"]) if row["updated_at"] else None,
+                        preferred_temperature=(
+                            float(row["preferred_temperature"])
+                            if row["preferred_temperature"]
+                            else None
+                        ),
+                        created_at=(
+                            str(row["created_at"]) if row["created_at"] else None
+                        ),
+                        updated_at=(
+                            str(row["updated_at"]) if row["updated_at"] else None
+                        ),
                     )
                     for row in rows
                 ]

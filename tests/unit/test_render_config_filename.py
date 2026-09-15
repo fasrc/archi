@@ -10,13 +10,17 @@ from src.cli.managers.templates_manager import _render_config_target_name
 
 
 def test_single_mode_is_config_yaml():
-    assert _render_config_target_name(True, "ragas-bench", None, 0, set()) == "config.yaml"
+    assert (
+        _render_config_target_name(True, "ragas-bench", None, 0, set()) == "config.yaml"
+    )
 
 
 def test_multi_uses_benchmarking_name():
     used = set()
     assert (
-        _render_config_target_name(False, "ragas-bench", "fasrc-cannon-v1-strict", 0, used)
+        _render_config_target_name(
+            False, "ragas-bench", "fasrc-cannon-v1-strict", 0, used
+        )
         == "fasrc-cannon-v1-strict.yaml"
     )
 
@@ -52,5 +56,6 @@ def test_repeated_collisions_stay_unique():
 def test_multi_falls_back_to_top_level_name_when_no_benchmarking_name():
     used = set()
     assert (
-        _render_config_target_name(False, "ragas-bench", None, 0, used) == "ragas-bench.yaml"
+        _render_config_target_name(False, "ragas-bench", None, 0, used)
+        == "ragas-bench.yaml"
     )

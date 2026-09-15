@@ -4,9 +4,9 @@ from unittest.mock import patch
 
 import jwt as pyjwt
 import pytest
-from src.utils.rbac.registry import RBACRegistry
-from src.utils.rbac.jwt_parser import extract_roles_from_token, get_user_roles
 
+from src.utils.rbac.jwt_parser import extract_roles_from_token, get_user_roles
+from src.utils.rbac.registry import RBACRegistry
 
 # ---------------------------------------------------------------------------
 # Shared config + registry
@@ -40,11 +40,7 @@ def _mock_registry():
 
 class TestExtractRolesFromToken:
     def test_roles_in_resource_access(self):
-        token = {
-            "resource_access": {
-                "test-app": {"roles": ["admin", "base-user"]}
-            }
-        }
+        token = {"resource_access": {"test-app": {"roles": ["admin", "base-user"]}}}
         assert extract_roles_from_token(token) == ["admin", "base-user"]
 
     def test_no_resource_access(self):
@@ -52,11 +48,7 @@ class TestExtractRolesFromToken:
         assert extract_roles_from_token(token) == []
 
     def test_wrong_app_name(self):
-        token = {
-            "resource_access": {
-                "other-app": {"roles": ["admin"]}
-            }
-        }
+        token = {"resource_access": {"other-app": {"roles": ["admin"]}}}
         assert extract_roles_from_token(token) == []
 
     def test_id_token_fallback(self):
@@ -64,9 +56,7 @@ class TestExtractRolesFromToken:
         access_payload = {"sub": "user@test.com"}
         id_payload = {
             "sub": "user@test.com",
-            "resource_access": {
-                "test-app": {"roles": ["admin"]}
-            },
+            "resource_access": {"test-app": {"roles": ["admin"]}},
         }
         token = {
             "access_token": pyjwt.encode(access_payload, "secret", algorithm="HS256"),
@@ -83,20 +73,12 @@ class TestExtractRolesFromToken:
 class TestGetUserRoles:
     @patch("src.utils.rbac.jwt_parser.log_role_assignment")
     def test_valid_roles_returned(self, _mock_log):
-        token = {
-            "resource_access": {
-                "test-app": {"roles": ["admin", "base-user"]}
-            }
-        }
+        token = {"resource_access": {"test-app": {"roles": ["admin", "base-user"]}}}
         result = get_user_roles(token, "user@test.com")
         assert result == ["admin", "base-user"]
 
     @patch("src.utils.rbac.jwt_parser.log_role_assignment")
     def test_no_valid_roles_returns_default(self, _mock_log):
-        token = {
-            "resource_access": {
-                "test-app": {"roles": ["unknown-role"]}
-            }
-        }
+        token = {"resource_access": {"test-app": {"roles": ["unknown-role"]}}}
         result = get_user_roles(token, "user@test.com")
         assert result == ["base-user"]
