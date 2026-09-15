@@ -122,6 +122,23 @@ anyio==4.8.0
 catalogue==2.0.9
 aiohttp==3.9.5
 nltk==3.9.1
+# Pinned 2026-09-15 (#472) because it was previously UNPINNED and floating, which made
+# the GPU image's importability depend on whatever PyPI published most recently.
+#
+# The ceiling is vllm's, and it is NOT declared anywhere: vllm 0.9.0 asks only for
+# `transformers>=4.51.1`, but transformers 4.54.0 added a native `aimv2` config while
+# vllm 0.9.0 registers its own shim under that name, so `import vllm` dies with
+# "ValueError: 'aimv2' is already used by a Transformers config". The requirement set
+# RESOLVES either way — this is only visible from a real image build. Measured by
+# importing vllm inside the built image: 4.52.4 and 4.53.3 work, 4.54.1 / 4.55.4 /
+# 4.56.2 all collide. 4.53.3 is the newest 4.53.x, so it is the highest working pin.
+#
+# Every other consumer accepts it: sentence-transformers 5.1.2 asks for
+# `transformers<5.0.0,>=4.41.0`, langchain-huggingface 1.0.0 for `<5.0.0,>=4.39.0`,
+# and peft/unstructured/qwen-vl-utils declare no upper bound.
+#
+# Raise this only together with vllm, and prove it by importing vllm in a built image.
+transformers==4.53.3
 sentence-transformers==5.1.2
 rank_bm25==0.2.2
 markitdown[pdf,pptx]==0.1.5

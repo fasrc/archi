@@ -33,9 +33,23 @@ files, which catches transitive conflicts nobody predicted and costs seconds:
     pip install --dry-run -r src/cli/templates/dockerfiles/base-pytorch-image/requirements.txt
     pip install --dry-run -r src/cli/templates/dockerfiles/base-python-image/requirements.txt
 
-Neither the net nor the resolve proves the packages *import*. ``requirements-base.txt``
-records a clean resolution whose every instrumentor then failed on ``pkg_resources``.
-Only a real image build proves that, which is what #473 asks CI to do.
+Neither the net nor the resolve proves the packages *import*, and that is not a
+theoretical caveat either. Building the GPU image on 2026-09-15 — the first successful
+build of it since PR #453 — produced an image that resolved cleanly and then died on
+``import vllm``:
+
+    ValueError: 'aimv2' is already used by a Transformers config, pick another name.
+
+``transformers`` was unpinned, vllm 0.9.0 declares no ceiling on it, and every
+transformers release from 4.54.0 on collides with vllm's own ``aimv2`` shim. **No
+resolver can reach that conclusion**, because every colliding version satisfies the
+declared range. ``VLLM_TRANSFORMERS_SPEC`` below is therefore the one table here NOT
+measured from ``requires_dist`` — it was measured by importing vllm in a built image.
+
+So the tiers are: this module catches known pairwise traps, a resolve catches
+unpredicted version conflicts, and only a real image build catches import-time
+collisions. #473 asks CI for the last two. Until it has them, the release dispatch is
+the first thing that builds the GPU image.
 """
 
 import re
@@ -108,6 +122,23 @@ XFORMERS_TORCH_SPEC = {
     (0, 0, 30): (("==", (2, 7, 0)),),
     (0, 0, 31): (("==", (2, 7, 1)),),
     (0, 0, 33): (("==", (2, 9, 0)),),
+}
+
+# vllm -> the ``transformers`` range it actually WORKS with, which is narrower than the
+# range it declares. This table is the one exception to "measured from requires_dist":
+# vllm 0.9.0 declares only ``transformers>=4.51.1``, with no ceiling, but transformers
+# 4.54.0 added a native ``aimv2`` config and vllm 0.9.0 registers its own shim under
+# that name, so ``import vllm`` raises at module scope:
+#
+#   ValueError: 'aimv2' is already used by a Transformers config, pick another name.
+#
+# Measured by importing vllm inside the built GPU image on 2026-09-15: 4.52.4 and
+# 4.53.3 import, 4.54.1 / 4.55.4 / 4.56.2 all carry native aimv2. **No resolver can
+# find this** — every one of those versions satisfies the declared range. It took a
+# real image build, which is why #473 matters and why an unpinned transformers is a
+# latent break rather than a convenience.
+VLLM_TRANSFORMERS_SPEC = {
+    (0, 9, 0): ((">=", (4, 51, 1)), ("<", (4, 54, 0))),
 }
 
 # ``torch`` -> its ``sympy`` specifier. This coupling crosses the header/base boundary
@@ -327,6 +358,49 @@ class TestPytorchBaseImageMatchesTheTorchPin:
             f"native extensions, so the pair has to agree. Move the FROM tag to a "
             f"torch {torch} image whose CUDA matches the nvidia-*-cu12 wheels the "
             f"requirement set resolves to."
+        )
+
+
+class TestTransformersIsPinnedWithinWhatVllmImportsWith:
+    """``transformers`` must be pinned, and pinned below vllm's import-time ceiling.
+
+    Leaving it unpinned is the defect, not a style choice. vllm declares no ceiling, so
+    pip takes the newest transformers, and every version from 4.54.0 on breaks
+    ``import vllm`` on a name collision that no resolver can see. An unpinned
+    transitive dependency here means the GPU image's importability changes with
+    whatever PyPI published most recently.
+    """
+
+    def test_transformers_is_pinned(self, base_pins):
+        assert "transformers" in base_pins, (
+            "requirements-base.txt must pin transformers. It is unpinned today, so "
+            "pip resolves whatever is newest and vllm 0.9.0 fails to import against "
+            "anything from 4.54.0 on — a break that appears with no change to this "
+            "repository at all. See VLLM_TRANSFORMERS_SPEC."
+        )
+
+    def test_transformers_is_within_vllms_import_range(self, gpu_pins, base_pins):
+        vllm = gpu_pins.get("vllm")
+        transformers = base_pins.get("transformers")
+        if vllm is None:
+            pytest.skip("this guard only applies while the GPU header pins vllm")
+        assert transformers is not None, "requirements-base.txt must pin transformers"
+
+        clauses = VLLM_TRANSFORMERS_SPEC.get(_release(vllm))
+        if clauses is None:
+            pytest.fail(
+                f"vllm {vllm} is not in VLLM_TRANSFORMERS_SPEC. This range cannot be "
+                f"read off PyPI metadata — vllm declares no ceiling. Import vllm "
+                f"inside a built GPU image against candidate transformers versions, "
+                f"record what actually works with today's date, then re-run."
+            )
+
+        assert _satisfies(_release(transformers), clauses), (
+            f"vllm {vllm} imports only with transformers{_describe(clauses)}, but "
+            f"requirements-base.txt pins transformers=={transformers}. The image will "
+            f"BUILD and then fail at ``import vllm`` with \"'aimv2' is already used by "
+            f'a Transformers config". Resolution cannot catch this; only an import in '
+            f"a built image can."
         )
 
 
