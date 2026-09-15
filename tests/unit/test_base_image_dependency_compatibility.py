@@ -63,43 +63,88 @@ _PYTORCH_FROM_PATTERN = re.compile(
     r"^FROM\s+\S*pytorch/pytorch:(\d+(?:\.\d+)*)-cuda(\d+(?:\.\d+)*)", re.MULTILINE
 )
 
-# ``vllm`` capped the OpenTelemetry SDK from below its own floor until 0.9.0 dropped
-# the upper bound. Measured from PyPI ``requires_dist`` on 2026-09-15:
+# Every table below maps a measured release to the specifier that release actually
+# DECLARES, as a tuple of ``(operator, release)`` clauses that must all hold. ``None``
+# means the release declares no dependency on that package at all.
 #
-#   vllm 0.8.5  -> opentelemetry-sdk<1.27.0,>=1.26.0   <- the cap
-#   vllm 0.9.0  -> opentelemetry-sdk>=1.26.0           <- no upper bound
-#   vllm 0.19.0 -> opentelemetry-sdk>=1.27.0
+# The uniform shape is deliberate. The first version of this module used one-sided
+# comparisons — "vllm at least 0.9.0", "sympy at least the floor" — and review on
+# 2026-09-15 found three separate holes in that shortcut, because dependency
+# constraints are neither monotonic across releases nor always one-sided:
 #
-# The trap is that the only range vllm 0.8.5 accepts is itself uninstallable: that
-# suite's ``opentelemetry-instrumentation`` imports ``pkg_resources`` at module
-# scope, which setuptools 82 removed (see requirements-base.txt). So no
-# ``opentelemetry-sdk`` pin satisfies both vllm 0.8.5 and a working exporter, and
-# the fix has to be the vllm bump.
-VLLM_OTEL_CAP_LIFTED_AT = (0, 9, 0)
-VLLM_OTEL_CAP_CEILING = (1, 27, 0)
+#   * vllm 0.19.0 RAISED its floor to 1.27.0, so "newer vllm is always fine" is false.
+#   * vllm 0.9.0 still has a floor of 1.26.0, so an SDK DOWNGRADE breaks it.
+#   * torch 2.6.0 pins sympy EXACTLY, so a higher sympy is as wrong as a lower one.
+#
+# Unknown releases fail rather than pass. A guard that silently accepts an unmeasured
+# version is worse than no guard: it reports confidence it does not have.
 
-# ``xformers`` pins ``torch`` to one exact version per release, so a torch bump that
-# leaves xformers behind produces a conflict rather than a fallback. Measured from
-# PyPI ``requires_dist`` on 2026-09-15.
-XFORMERS_TORCH = {
-    (0, 0, 29): (2, 6, 0),
-    (0, 0, 30): (2, 7, 0),
-    (0, 0, 31): (2, 7, 1),
-    (0, 0, 33): (2, 9, 0),
+# vllm -> its ``opentelemetry-sdk`` specifier. Measured from PyPI ``requires_dist``
+# on 2026-09-15.
+#
+# The trap behind #472 is that the only range vllm 0.8.5 accepts is itself
+# uninstallable: that suite's ``opentelemetry-instrumentation`` imports
+# ``pkg_resources`` at module scope, which setuptools 82 removed (see
+# ``requirements-base.txt``). So no SDK pin satisfies both vllm 0.8.5 and a working
+# exporter, and the fix had to be the vllm bump.
+VLLM_OTEL_SPEC = {
+    (0, 8, 5): ((">=", (1, 26, 0)), ("<", (1, 27, 0))),
+    (0, 9, 0): ((">=", (1, 26, 0)),),
+    (0, 10, 0): None,
+    (0, 11, 0): None,
+    (0, 12, 0): None,
+    (0, 15, 0): None,
+    (0, 19, 0): ((">=", (1, 27, 0)),),
+    (0, 22, 0): ((">=", (1, 27, 0)),),
+    (0, 25, 0): ((">=", (1, 27, 0)),),
+    (0, 27, 0): ((">=", (1, 27, 0)),),
+    (0, 29, 0): ((">=", (1, 27, 0)),),
 }
 
-# ``torch`` constrains ``sympy``, which the SHARED base pins — so the coupling crosses
-# the header/base boundary and is invisible in either file alone. This is the conflict
-# the first pass at #472 missed: bumping torch to 2.7.0 left ``sympy==1.13.1`` in place
-# and the set still would not resolve. Measured from PyPI ``requires_dist`` on
-# 2026-09-15, as an inclusive floor per torch release:
-#
-#   torch 2.6.0 -> sympy==1.13.1 (exact, which is where the old pin came from)
-#   torch 2.7.0 -> sympy>=1.13.3
-TORCH_SYMPY_FLOOR = {
-    (2, 6, 0): (1, 13, 1),
-    (2, 7, 0): (1, 13, 3),
+# ``xformers`` -> its ``torch`` specifier. One exact torch per release, so a torch bump
+# that leaves xformers behind conflicts rather than falling back. Measured 2026-09-15.
+XFORMERS_TORCH_SPEC = {
+    (0, 0, 29): (("==", (2, 6, 0)),),
+    (0, 0, 30): (("==", (2, 7, 0)),),
+    (0, 0, 31): (("==", (2, 7, 1)),),
+    (0, 0, 33): (("==", (2, 9, 0)),),
 }
+
+# ``torch`` -> its ``sympy`` specifier. This coupling crosses the header/base boundary
+# (torch is pinned in the headers, sympy in the shared base), so neither file shows it
+# alone — which is how the first pass at #472 missed it. Measured 2026-09-15.
+TORCH_SYMPY_SPEC = {
+    (2, 6, 0): (("==", (1, 13, 1)),),
+    (2, 7, 0): ((">=", (1, 13, 3)),),
+}
+
+
+def _satisfies(candidate: tuple, clauses: tuple) -> bool:
+    """Does ``candidate`` satisfy every ``(operator, release)`` clause?
+
+    Only the operators the measured tables actually use are implemented. An
+    unrecognized operator raises rather than silently passing, so a future table row
+    cannot weaken a guard by typo.
+    """
+    for operator, bound in clauses:
+        if operator == "==":
+            if candidate != bound:
+                return False
+        elif operator == ">=":
+            if candidate < bound:
+                return False
+        elif operator == "<":
+            if candidate >= bound:
+                return False
+        else:
+            raise ValueError(f"unsupported operator {operator!r} in a measured table")
+    return True
+
+
+def _describe(clauses: tuple) -> str:
+    """Render clauses the way the package declares them, for failure messages."""
+    return ",".join(f"{operator}{_fmt(bound)}" for operator, bound in clauses)
+
 
 _PIN_PATTERN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;#]+)")
 
@@ -169,20 +214,27 @@ class TestVllmAcceptsThePinnedOpenTelemetrySdk:
                 "shared base pins opentelemetry-sdk"
             )
 
-        if _release(sdk) < VLLM_OTEL_CAP_CEILING:
-            pytest.skip(
-                f"opentelemetry-sdk {sdk} is below {_fmt(VLLM_OTEL_CAP_CEILING)}, "
-                "so no vllm release caps it"
+        if _release(vllm) not in VLLM_OTEL_SPEC:
+            pytest.fail(
+                f"vllm {vllm} is not in VLLM_OTEL_SPEC. Read its ``requires_dist`` on "
+                f"PyPI, add the row with today's date, then re-run. Do not widen this "
+                f"to a version comparison: vllm 0.19.0 RAISED its opentelemetry-sdk "
+                f"floor to 1.27.0, so 'newer is always safe' is false and an "
+                f"unmeasured release can reintroduce #472."
             )
 
-        assert _release(vllm) >= VLLM_OTEL_CAP_LIFTED_AT, (
-            f"vllm {vllm} requires opentelemetry-sdk<{_fmt(VLLM_OTEL_CAP_CEILING)}, "
-            f"but requirements-base.txt pins opentelemetry-sdk=={sdk}. pip cannot "
-            f"resolve the PyTorch image's requirement set, so the release build "
-            f"fails at the build step (#472). vllm {_fmt(VLLM_OTEL_CAP_LIFTED_AT)} "
-            f"is the first release that drops the upper bound. Bumping the SDK down "
-            f"instead does NOT work: that range is uninstallable on current "
-            f"setuptools, as requirements-base.txt records."
+        clauses = VLLM_OTEL_SPEC[_release(vllm)]
+        if clauses is None:
+            return  # this vllm declares no opentelemetry-sdk dependency at all
+
+        assert _satisfies(_release(sdk), clauses), (
+            f"vllm {vllm} requires opentelemetry-sdk{_describe(clauses)}, but "
+            f"requirements-base.txt pins opentelemetry-sdk=={sdk}. pip cannot resolve "
+            f"the PyTorch image's requirement set, so the release build fails at the "
+            f"build step (#472). Note the constraint has a FLOOR as well as any "
+            f"ceiling, so downgrading the SDK is not a fix — and for vllm 0.8.5 the "
+            f"whole accepted range is uninstallable on current setuptools, as "
+            f"requirements-base.txt records."
         )
 
 
@@ -219,19 +271,19 @@ class TestXformersMatchesTheTorchPin:
         if xformers is None or torch is None:
             pytest.skip("this guard only applies while the GPU header pins both")
 
-        expected_torch = XFORMERS_TORCH.get(_release(xformers))
-        if expected_torch is None:
+        clauses = XFORMERS_TORCH_SPEC.get(_release(xformers))
+        if clauses is None:
             pytest.fail(
-                f"xformers {xformers} is not in XFORMERS_TORCH. Read its "
+                f"xformers {xformers} is not in XFORMERS_TORCH_SPEC. Read its "
                 f"``requires_dist`` on PyPI, add the row with today's date, then "
                 f"re-run. Do not delete this guard to get past it: xformers pins "
                 f"torch exactly, so an unverified pair is a build failure waiting "
                 f"for the next release (#472)."
             )
 
-        assert _release(torch) == expected_torch, (
-            f"xformers {xformers} requires torch=={_fmt(expected_torch)}, but the "
-            f"GPU header pins torch=={torch}. xformers ships one build per torch "
+        assert _satisfies(_release(torch), clauses), (
+            f"xformers {xformers} requires torch{_describe(clauses)}, but the GPU "
+            f"header pins torch=={torch}. xformers ships one build per torch "
             f"release, so this set cannot resolve."
         )
 
@@ -246,8 +298,8 @@ class TestPytorchBaseImageMatchesTheTorchPin:
     specific torch and CUDA pair.
 
     This guard needs no measured table and no network: both values live in this
-    repository, so it cannot rot the way ``XFORMERS_TORCH`` and
-    ``TORCH_SYMPY_FLOOR`` can. It compares only the torch version. Whether the
+    repository, so it cannot rot the way ``XFORMERS_TORCH_SPEC`` and
+    ``TORCH_SYMPY_SPEC`` can. It compares only the torch version. Whether the
     image's CUDA matches the ``nvidia-*-cu12`` wheels the set resolves to is a
     resolver question, not a text question — see the module docstring.
     """
@@ -299,23 +351,82 @@ class TestSympySatisfiesTheTorchPin:
                 "base pins sympy"
             )
 
-        floor = TORCH_SYMPY_FLOOR.get(_release(torch))
-        if floor is None:
+        clauses = TORCH_SYMPY_SPEC.get(_release(torch))
+        if clauses is None:
             pytest.fail(
-                f"torch {torch} is not in TORCH_SYMPY_FLOOR. Read its "
+                f"torch {torch} is not in TORCH_SYMPY_SPEC. Read its "
                 f"``requires_dist`` on PyPI, add the row with today's date, then "
                 f"re-run. Do not delete this guard to get past it: torch pinned sympy "
-                f"exactly at 2.6.0 and moved the floor at 2.7.0, so an unverified "
+                f"exactly at 2.6.0 and moved to a floor at 2.7.0, so an unverified "
                 f"pair is a base-image build failure (#472)."
             )
 
-        assert _release(sympy) >= floor, (
+        assert _satisfies(_release(sympy), clauses), (
             f"{header_name}-requirementsHEADER.txt pins torch=={torch}, which requires "
-            f"sympy>={_fmt(floor)}, but requirements-base.txt pins sympy=={sympy}. The "
-            f"base-image requirement set cannot resolve. sympy is in the SHARED base "
-            f"while torch is in the headers, so neither file shows this on its own — "
-            f"bump sympy whenever torch moves."
+            f"sympy{_describe(clauses)}, but requirements-base.txt pins "
+            f"sympy=={sympy}. The base-image requirement set cannot resolve. Note "
+            f"torch 2.6.0 pins sympy EXACTLY, so on a torch downgrade a higher sympy "
+            f"is as wrong as a lower one. sympy is in the SHARED base while torch is "
+            f"in the headers, so neither file shows this on its own — move them "
+            f"together."
         )
+
+
+class TestSatisfiesModelsTheWholeDeclaredRange:
+    """The comparison helper must honour every clause a release declares.
+
+    Three holes in the first version of this module, all found by review on
+    2026-09-15 and all the same mistake: a one-sided comparison standing in for a
+    declared range. Each case below is green under the correct helper and was green
+    under the broken guards too — which is the point, since the broken guards were
+    green while the pair could not resolve.
+    """
+
+    @pytest.mark.parametrize(
+        "candidate, clauses, expected, why",
+        [
+            (
+                (1, 26, 0),
+                ((">=", (1, 26, 0)), ("<", (1, 27, 0))),
+                True,
+                "the lower bound is inclusive",
+            ),
+            (
+                (1, 44, 0),
+                ((">=", (1, 26, 0)), ("<", (1, 27, 0))),
+                False,
+                "vllm 0.8.5's ceiling excludes 1.44.0 — the original #472 conflict",
+            ),
+            (
+                (1, 25, 0),
+                ((">=", (1, 26, 0)),),
+                False,
+                "a floor-only range still has a floor: vllm 0.9.0 needs >=1.26.0, so "
+                "an SDK downgrade must not pass",
+            ),
+            (
+                (1, 26, 0),
+                ((">=", (1, 27, 0)),),
+                False,
+                "vllm 0.19.0 raised the floor to 1.27.0, so constraints are not "
+                "monotonic across releases",
+            ),
+            (
+                (1, 13, 3),
+                (("==", (1, 13, 1)),),
+                False,
+                "torch 2.6.0 pins sympy exactly, so a HIGHER sympy is still wrong",
+            ),
+            (
+                (1, 13, 1),
+                (("==", (1, 13, 1)),),
+                True,
+                "the exact pin is satisfied only by itself",
+            ),
+        ],
+    )
+    def test_every_clause_is_enforced(self, candidate, clauses, expected, why):
+        assert _satisfies(candidate, clauses) is expected, why
 
 
 def _fmt(release: tuple) -> str:
