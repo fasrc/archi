@@ -1,8 +1,28 @@
-torch==2.6.0
+# GPU-only pins, prepended to requirements-base.txt for the PyTorch base image.
+#
+# torch, vllm and xformers move as ONE unit and cannot be bumped separately:
+# vllm pins torch exactly, and xformers ships one build per torch release. Measured
+# from PyPI requires_dist on 2026-09-15; tests/unit/test_base_image_dependency_compatibility.py
+# holds the constraint tables and fails if this set drifts apart.
+#
+# vllm was 0.8.5 until 2026-09-15 (#472). That release requires
+# opentelemetry-sdk<1.27.0,>=1.26.0, which cannot coexist with the
+# opentelemetry-sdk==1.44.0 that requirements-base.txt pins for the OTLP exporter,
+# so pip reported ResolutionImpossible and the first v2026.08.0 release build died
+# in the build step. Pinning the SDK down to satisfy vllm 0.8.5 is NOT an option:
+# the whole <1.27.0 range imports pkg_resources at module scope, which setuptools 82
+# removed — see the OpenTelemetry block in requirements-base.txt. vllm 0.9.0 is the
+# first release that drops the upper bound, so the bump is the only route that keeps
+# both local inference and a working exporter.
+#
+# torch stays equal to cpu-requirementsHEADER.txt on purpose. The conflict lived
+# only here, so the minimal fix would have left the two base images on different
+# torch versions while the CPU image serves embedding and reranking.
+torch==2.7.0
 bitsandbytes==0.46.1
 peft==0.5.0
-vllm==0.8.5
-xformers==0.0.29.post2
+vllm==0.9.0
+xformers==0.0.30
 # Base Python dependencies shared by all service images.
 # Changes here trigger a base-image rebuild in CI.
 backoff==2.2.1
@@ -56,7 +76,11 @@ python-dotenv==1.2.2
 python-redmine==2.4.0
 regex==2023.12.25
 sentencepiece==0.2.0
-sympy==1.13.1
+# Coupled to the torch pin in BOTH header files, not chosen independently. torch
+# 2.6.0 required `sympy==1.13.1` exactly, which is where this pin came from; torch
+# 2.7.0 requires `sympy>=1.13.3`, so the 2.7.0 bump on 2026-09-15 (#472) forced this
+# one. Bump it with torch or the base-image build fails ResolutionImpossible.
+sympy==1.13.3
 tiktoken==0.7.0
 uvloop==0.19.0
 watchfiles==0.21.0
@@ -114,6 +138,23 @@ anyio==4.8.0
 catalogue==2.0.9
 aiohttp==3.9.5
 nltk==3.9.1
+# Pinned 2026-09-15 (#472) because it was previously UNPINNED and floating, which made
+# the GPU image's importability depend on whatever PyPI published most recently.
+#
+# The ceiling is vllm's, and it is NOT declared anywhere: vllm 0.9.0 asks only for
+# `transformers>=4.51.1`, but transformers 4.54.0 added a native `aimv2` config while
+# vllm 0.9.0 registers its own shim under that name, so `import vllm` dies with
+# "ValueError: 'aimv2' is already used by a Transformers config". The requirement set
+# RESOLVES either way — this is only visible from a real image build. Measured by
+# importing vllm inside the built image: 4.52.4 and 4.53.3 work, 4.54.1 / 4.55.4 /
+# 4.56.2 all collide. 4.53.3 is the newest 4.53.x, so it is the highest working pin.
+#
+# Every other consumer accepts it: sentence-transformers 5.1.2 asks for
+# `transformers<5.0.0,>=4.41.0`, langchain-huggingface 1.0.0 for `<5.0.0,>=4.39.0`,
+# and peft/unstructured/qwen-vl-utils declare no upper bound.
+#
+# Raise this only together with vllm, and prove it by importing vllm in a built image.
+transformers==4.53.3
 sentence-transformers==5.1.2
 rank_bm25==0.2.2
 markitdown[pdf,pptx]==0.1.5

@@ -1,0 +1,507 @@
+"""Pins in the base-image requirement sets must be installable together.
+
+``scripts/dev/build_docker_images.sh`` builds each base image's requirement set by
+concatenating a header with ``requirements/requirements-base.txt``. Neither file
+knows what the other pins, so two independently reasonable pins can produce a set
+``pip`` cannot resolve — and the only build path that assembles the GPU set is the
+release workflow (#473), so the failure surfaces during a release rather than on a
+PR.
+
+That is not hypothetical. It happened on 2026-09-15 (#472): PR #453 added
+``opentelemetry-sdk==1.44.0`` to the shared base while
+``gpu-requirementsHEADER.txt`` pinned ``vllm==0.8.5``, whose metadata requires
+``opentelemetry-sdk<1.27.0``. The first ``v2026.08.0`` release dispatch died with
+``ResolutionImpossible`` in the build step.
+
+These guards encode the pairwise constraints that a reader of either file alone
+cannot see. They are deliberately offline and data-driven: each constraint carries
+the date it was measured from PyPI metadata, because a guard asserting a
+dependency fact without saying where the fact came from is unmaintainable. Re-measure
+before changing a table here.
+
+Known boundary, and it is a large one: **these guards do not prove the set resolves.**
+Each encodes one pairwise constraint somebody already knew to look for, so the module
+is green exactly when the known traps are absent — not when ``pip`` succeeds. Fixing
+#472 demonstrated the gap: the vllm guard below went green while the real GPU set
+still failed ``ResolutionImpossible``, because ``torch==2.7.0`` also needs
+``sympy>=1.13.3`` and the shared base pinned ``1.13.1``. Every constraint in this
+module was added *after* a resolver found it.
+
+So this module is a regression net, not a gate. The gate is resolving both generated
+files, which catches transitive conflicts nobody predicted and costs seconds:
+
+    pip install --dry-run -r src/cli/templates/dockerfiles/base-pytorch-image/requirements.txt
+    pip install --dry-run -r src/cli/templates/dockerfiles/base-python-image/requirements.txt
+
+Neither the net nor the resolve proves the packages *import*, and that is not a
+theoretical caveat either. Building the GPU image on 2026-09-15 — the first successful
+build of it since PR #453 — produced an image that resolved cleanly and then died on
+``import vllm``:
+
+    ValueError: 'aimv2' is already used by a Transformers config, pick another name.
+
+``transformers`` was unpinned, vllm 0.9.0 declares no ceiling on it, and every
+transformers release from 4.54.0 on collides with vllm's own ``aimv2`` shim. **No
+resolver can reach that conclusion**, because every colliding version satisfies the
+declared range. ``VLLM_TRANSFORMERS_SPEC`` below is therefore the one table here NOT
+measured from ``requires_dist`` — it was measured by importing vllm in a built image.
+
+So the tiers are: this module catches known pairwise traps, a resolve catches
+unpredicted version conflicts, and only a real image build catches import-time
+collisions. #473 asks CI for the last two. Until it has them, the release dispatch is
+the first thing that builds the GPU image.
+"""
+
+import re
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+CPU_HEADER = REPO_ROOT / "requirements" / "cpu-requirementsHEADER.txt"
+GPU_HEADER = REPO_ROOT / "requirements" / "gpu-requirementsHEADER.txt"
+BASE_REQUIREMENTS = REPO_ROOT / "requirements" / "requirements-base.txt"
+PYTORCH_BASE_DOCKERFILE = (
+    REPO_ROOT
+    / "src"
+    / "cli"
+    / "templates"
+    / "dockerfiles"
+    / "base-pytorch-image"
+    / "Dockerfile"
+)
+
+# ``FROM docker.io/pytorch/pytorch:2.7.0-cuda12.6-cudnn9-devel`` -> ("2.7.0", "12.6")
+_PYTORCH_FROM_PATTERN = re.compile(
+    r"^FROM\s+\S*pytorch/pytorch:(\d+(?:\.\d+)*)-cuda(\d+(?:\.\d+)*)", re.MULTILINE
+)
+
+# Every table below maps a measured release to the specifier that release actually
+# DECLARES, as a tuple of ``(operator, release)`` clauses that must all hold. ``None``
+# means the release declares no dependency on that package at all.
+#
+# The uniform shape is deliberate. The first version of this module used one-sided
+# comparisons — "vllm at least 0.9.0", "sympy at least the floor" — and review on
+# 2026-09-15 found three separate holes in that shortcut, because dependency
+# constraints are neither monotonic across releases nor always one-sided:
+#
+#   * vllm 0.19.0 RAISED its floor to 1.27.0, so "newer vllm is always fine" is false.
+#   * vllm 0.9.0 still has a floor of 1.26.0, so an SDK DOWNGRADE breaks it.
+#   * torch 2.6.0 pins sympy EXACTLY, so a higher sympy is as wrong as a lower one.
+#
+# Unknown releases fail rather than pass. A guard that silently accepts an unmeasured
+# version is worse than no guard: it reports confidence it does not have.
+
+# vllm -> its ``opentelemetry-sdk`` specifier. Measured from PyPI ``requires_dist``
+# on 2026-09-15.
+#
+# The trap behind #472 is that the only range vllm 0.8.5 accepts is itself
+# uninstallable: that suite's ``opentelemetry-instrumentation`` imports
+# ``pkg_resources`` at module scope, which setuptools 82 removed (see
+# ``requirements-base.txt``). So no SDK pin satisfies both vllm 0.8.5 and a working
+# exporter, and the fix had to be the vllm bump.
+VLLM_OTEL_SPEC = {
+    (0, 8, 5): ((">=", (1, 26, 0)), ("<", (1, 27, 0))),
+    (0, 9, 0): ((">=", (1, 26, 0)),),
+    (0, 10, 0): None,
+    (0, 11, 0): None,
+    (0, 12, 0): None,
+    (0, 15, 0): None,
+    (0, 19, 0): ((">=", (1, 27, 0)),),
+    (0, 22, 0): ((">=", (1, 27, 0)),),
+    (0, 25, 0): ((">=", (1, 27, 0)),),
+    (0, 27, 0): ((">=", (1, 27, 0)),),
+    (0, 29, 0): ((">=", (1, 27, 0)),),
+}
+
+# ``xformers`` -> its ``torch`` specifier. One exact torch per release, so a torch bump
+# that leaves xformers behind conflicts rather than falling back. Measured 2026-09-15.
+XFORMERS_TORCH_SPEC = {
+    (0, 0, 29): (("==", (2, 6, 0)),),
+    (0, 0, 30): (("==", (2, 7, 0)),),
+    (0, 0, 31): (("==", (2, 7, 1)),),
+    (0, 0, 33): (("==", (2, 9, 0)),),
+}
+
+# vllm -> the ``transformers`` range it actually WORKS with, which is narrower than the
+# range it declares. This table is the one exception to "measured from requires_dist":
+# vllm 0.9.0 declares only ``transformers>=4.51.1``, with no ceiling, but transformers
+# 4.54.0 added a native ``aimv2`` config and vllm 0.9.0 registers its own shim under
+# that name, so ``import vllm`` raises at module scope:
+#
+#   ValueError: 'aimv2' is already used by a Transformers config, pick another name.
+#
+# Measured by importing vllm inside the built GPU image on 2026-09-15: 4.52.4 and
+# 4.53.3 import, 4.54.1 / 4.55.4 / 4.56.2 all carry native aimv2. **No resolver can
+# find this** — every one of those versions satisfies the declared range. It took a
+# real image build, which is why #473 matters and why an unpinned transformers is a
+# latent break rather than a convenience.
+VLLM_TRANSFORMERS_SPEC = {
+    (0, 9, 0): ((">=", (4, 51, 1)), ("<", (4, 54, 0))),
+}
+
+# ``torch`` -> its ``sympy`` specifier. This coupling crosses the header/base boundary
+# (torch is pinned in the headers, sympy in the shared base), so neither file shows it
+# alone — which is how the first pass at #472 missed it. Measured 2026-09-15.
+TORCH_SYMPY_SPEC = {
+    (2, 6, 0): (("==", (1, 13, 1)),),
+    (2, 7, 0): ((">=", (1, 13, 3)),),
+}
+
+
+def _satisfies(candidate: tuple, clauses: tuple) -> bool:
+    """Does ``candidate`` satisfy every ``(operator, release)`` clause?
+
+    Only the operators the measured tables actually use are implemented. An
+    unrecognized operator raises rather than silently passing, so a future table row
+    cannot weaken a guard by typo.
+    """
+    for operator, bound in clauses:
+        if operator == "==":
+            if candidate != bound:
+                return False
+        elif operator == ">=":
+            if candidate < bound:
+                return False
+        elif operator == "<":
+            if candidate >= bound:
+                return False
+        else:
+            raise ValueError(f"unsupported operator {operator!r} in a measured table")
+    return True
+
+
+def _describe(clauses: tuple) -> str:
+    """Render clauses the way the package declares them, for failure messages."""
+    return ",".join(f"{operator}{_fmt(bound)}" for operator, bound in clauses)
+
+
+_PIN_PATTERN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;#]+)")
+
+
+def _release(version: str) -> tuple:
+    """Leading numeric components of ``version``, as ints.
+
+    ``0.0.29.post2`` yields ``(0, 0, 29)``. Comparison here only ever needs the
+    release segment, so trailing ``.postN``/``rcN`` parts are dropped rather than
+    ordered — this module never has to distinguish two builds of one release.
+    """
+    parts = []
+    for component in version.split("."):
+        if not component.isdigit():
+            break
+        parts.append(int(component))
+    return tuple(parts)
+
+
+def _pins(path: Path) -> dict:
+    """Map normalized project name to pinned version for every ``name==version``.
+
+    Comments, blanks and option lines such as ``--extra-index-url`` carry no pin and
+    are skipped. Only ``==`` pins are read: this module asserts against exact pins,
+    and a range would make every constraint below ambiguous.
+    """
+    pins = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("-"):
+            continue
+        match = _PIN_PATTERN.match(line)
+        if match:
+            name = re.sub(r"[-_.]+", "-", match.group(1)).lower()
+            pins[name] = match.group(2)
+    return pins
+
+
+@pytest.fixture(scope="module")
+def cpu_pins():
+    return _pins(CPU_HEADER)
+
+
+@pytest.fixture(scope="module")
+def gpu_pins():
+    return _pins(GPU_HEADER)
+
+
+@pytest.fixture(scope="module")
+def base_pins():
+    return _pins(BASE_REQUIREMENTS)
+
+
+class TestVllmAcceptsThePinnedOpenTelemetrySdk:
+    """The GPU set pins both ``vllm`` and, via the shared base, ``opentelemetry-sdk``.
+
+    Only the GPU header carries ``vllm``, so this conflict can only ever appear in
+    the PyTorch image — the one image no pre-merge job builds (#473).
+    """
+
+    def test_vllm_does_not_cap_the_pinned_opentelemetry_sdk(self, gpu_pins, base_pins):
+        vllm = gpu_pins.get("vllm")
+        sdk = base_pins.get("opentelemetry-sdk")
+        if vllm is None or sdk is None:
+            pytest.skip(
+                "this guard only applies while the GPU header pins vllm and the "
+                "shared base pins opentelemetry-sdk"
+            )
+
+        if _release(vllm) not in VLLM_OTEL_SPEC:
+            pytest.fail(
+                f"vllm {vllm} is not in VLLM_OTEL_SPEC. Read its ``requires_dist`` on "
+                f"PyPI, add the row with today's date, then re-run. Do not widen this "
+                f"to a version comparison: vllm 0.19.0 RAISED its opentelemetry-sdk "
+                f"floor to 1.27.0, so 'newer is always safe' is false and an "
+                f"unmeasured release can reintroduce #472."
+            )
+
+        clauses = VLLM_OTEL_SPEC[_release(vllm)]
+        if clauses is None:
+            return  # this vllm declares no opentelemetry-sdk dependency at all
+
+        assert _satisfies(_release(sdk), clauses), (
+            f"vllm {vllm} requires opentelemetry-sdk{_describe(clauses)}, but "
+            f"requirements-base.txt pins opentelemetry-sdk=={sdk}. pip cannot resolve "
+            f"the PyTorch image's requirement set, so the release build fails at the "
+            f"build step (#472). Note the constraint has a FLOOR as well as any "
+            f"ceiling, so downgrading the SDK is not a fix — and for vllm 0.8.5 the "
+            f"whole accepted range is uninstallable on current setuptools, as "
+            f"requirements-base.txt records."
+        )
+
+
+class TestBothBaseImagesAgreeOnTorch:
+    """The CPU and GPU images must pin the same ``torch``.
+
+    Decided 2026-09-15 while fixing #472. The conflict lived only in the GPU header,
+    so the minimal fix would have moved that one and left the images on different
+    torch versions — while the CPU image runs the embedding and reranking work. They
+    move together instead, so a reader never has to wonder which image a torch-shaped
+    bug came from.
+    """
+
+    def test_cpu_and_gpu_headers_pin_the_same_torch(self, cpu_pins, gpu_pins):
+        cpu_torch = cpu_pins.get("torch")
+        gpu_torch = gpu_pins.get("torch")
+        assert cpu_torch is not None, "cpu-requirementsHEADER.txt must pin torch"
+        assert gpu_torch is not None, "gpu-requirementsHEADER.txt must pin torch"
+        assert cpu_torch == gpu_torch, (
+            f"cpu-requirementsHEADER.txt pins torch=={cpu_torch} and "
+            f"gpu-requirementsHEADER.txt pins torch=={gpu_torch}. Both base images "
+            f"must carry the same torch: the CPU image runs embedding and reranking, "
+            f"so a divergence makes a torch-shaped bug depend on which image served "
+            f"the request. Move both, or record here why they diverge."
+        )
+
+
+class TestXformersMatchesTheTorchPin:
+    """``xformers`` pins one exact ``torch`` per release, so the two move together."""
+
+    def test_xformers_release_matches_the_pinned_torch(self, gpu_pins):
+        xformers = gpu_pins.get("xformers")
+        torch = gpu_pins.get("torch")
+        if xformers is None or torch is None:
+            pytest.skip("this guard only applies while the GPU header pins both")
+
+        clauses = XFORMERS_TORCH_SPEC.get(_release(xformers))
+        if clauses is None:
+            pytest.fail(
+                f"xformers {xformers} is not in XFORMERS_TORCH_SPEC. Read its "
+                f"``requires_dist`` on PyPI, add the row with today's date, then "
+                f"re-run. Do not delete this guard to get past it: xformers pins "
+                f"torch exactly, so an unverified pair is a build failure waiting "
+                f"for the next release (#472)."
+            )
+
+        assert _satisfies(_release(torch), clauses), (
+            f"xformers {xformers} requires torch{_describe(clauses)}, but the GPU "
+            f"header pins torch=={torch}. xformers ships one build per torch "
+            f"release, so this set cannot resolve."
+        )
+
+
+class TestPytorchBaseImageMatchesTheTorchPin:
+    """The ``FROM`` image already ships a torch, and ``pip`` then installs the pin.
+
+    When the two disagree, ``pip`` replaces the base image's torch with a PyPI wheel
+    while the image keeps the older CUDA and cuDNN system libraries underneath. The
+    build still succeeds, so nothing fails until a GPU import or a kernel launch —
+    and ``vllm`` and ``xformers`` both carry native extensions compiled against one
+    specific torch and CUDA pair.
+
+    This guard needs no measured table and no network: both values live in this
+    repository, so it cannot rot the way ``XFORMERS_TORCH_SPEC`` and
+    ``TORCH_SYMPY_SPEC`` can. It compares only the torch version. Whether the
+    image's CUDA matches the ``nvidia-*-cu12`` wheels the set resolves to is a
+    resolver question, not a text question — see the module docstring.
+    """
+
+    def test_from_image_declares_the_pinned_torch(self, gpu_pins):
+        torch = gpu_pins.get("torch")
+        assert torch is not None, "gpu-requirementsHEADER.txt must pin torch"
+
+        content = PYTORCH_BASE_DOCKERFILE.read_text(encoding="utf-8")
+        match = _PYTORCH_FROM_PATTERN.search(content)
+        assert match, (
+            f"{PYTORCH_BASE_DOCKERFILE} has no recognizable "
+            f"``FROM .../pytorch/pytorch:<torch>-cuda<ver>`` line. If the base image "
+            f"moved to a different publisher, update _PYTORCH_FROM_PATTERN rather "
+            f"than deleting this guard."
+        )
+        image_torch, image_cuda = match.group(1), match.group(2)
+
+        assert _release(image_torch) == _release(torch), (
+            f"the PyTorch base image is built FROM pytorch/pytorch:{image_torch}-"
+            f"cuda{image_cuda}, but gpu-requirementsHEADER.txt pins torch=={torch}. "
+            f"pip would install the pinned wheel over the image's torch and leave "
+            f"CUDA {image_cuda} underneath it, so the build succeeds and the failure "
+            f"lands at GPU import or kernel launch instead. vllm and xformers carry "
+            f"native extensions, so the pair has to agree. Move the FROM tag to a "
+            f"torch {torch} image whose CUDA matches the nvidia-*-cu12 wheels the "
+            f"requirement set resolves to."
+        )
+
+
+class TestTransformersIsPinnedWithinWhatVllmImportsWith:
+    """``transformers`` must be pinned, and pinned below vllm's import-time ceiling.
+
+    Leaving it unpinned is the defect, not a style choice. vllm declares no ceiling, so
+    pip takes the newest transformers, and every version from 4.54.0 on breaks
+    ``import vllm`` on a name collision that no resolver can see. An unpinned
+    transitive dependency here means the GPU image's importability changes with
+    whatever PyPI published most recently.
+    """
+
+    def test_transformers_is_pinned(self, base_pins):
+        assert "transformers" in base_pins, (
+            "requirements-base.txt must pin transformers. It is unpinned today, so "
+            "pip resolves whatever is newest and vllm 0.9.0 fails to import against "
+            "anything from 4.54.0 on — a break that appears with no change to this "
+            "repository at all. See VLLM_TRANSFORMERS_SPEC."
+        )
+
+    def test_transformers_is_within_vllms_import_range(self, gpu_pins, base_pins):
+        vllm = gpu_pins.get("vllm")
+        transformers = base_pins.get("transformers")
+        if vllm is None:
+            pytest.skip("this guard only applies while the GPU header pins vllm")
+        assert transformers is not None, "requirements-base.txt must pin transformers"
+
+        clauses = VLLM_TRANSFORMERS_SPEC.get(_release(vllm))
+        if clauses is None:
+            pytest.fail(
+                f"vllm {vllm} is not in VLLM_TRANSFORMERS_SPEC. This range cannot be "
+                f"read off PyPI metadata — vllm declares no ceiling. Import vllm "
+                f"inside a built GPU image against candidate transformers versions, "
+                f"record what actually works with today's date, then re-run."
+            )
+
+        assert _satisfies(_release(transformers), clauses), (
+            f"vllm {vllm} imports only with transformers{_describe(clauses)}, but "
+            f"requirements-base.txt pins transformers=={transformers}. The image will "
+            f"BUILD and then fail at ``import vllm`` with \"'aimv2' is already used by "
+            f'a Transformers config". Resolution cannot catch this; only an import in '
+            f"a built image can."
+        )
+
+
+class TestSympySatisfiesTheTorchPin:
+    """``torch`` constrains ``sympy``, and the two live in different files.
+
+    The GPU header pins torch; the shared base pins sympy. Neither file shows the
+    other, so this is the coupling the first attempt at #472 missed — the vllm and
+    xformers guards were green while the set still failed to resolve.
+    """
+
+    @pytest.mark.parametrize("header_name", ["cpu", "gpu"])
+    def test_sympy_meets_the_floor_that_the_pinned_torch_requires(
+        self, header_name, cpu_pins, gpu_pins, base_pins
+    ):
+        pins = cpu_pins if header_name == "cpu" else gpu_pins
+        torch = pins.get("torch")
+        sympy = base_pins.get("sympy")
+        if torch is None or sympy is None:
+            pytest.skip(
+                "this guard only applies while the header pins torch and the shared "
+                "base pins sympy"
+            )
+
+        clauses = TORCH_SYMPY_SPEC.get(_release(torch))
+        if clauses is None:
+            pytest.fail(
+                f"torch {torch} is not in TORCH_SYMPY_SPEC. Read its "
+                f"``requires_dist`` on PyPI, add the row with today's date, then "
+                f"re-run. Do not delete this guard to get past it: torch pinned sympy "
+                f"exactly at 2.6.0 and moved to a floor at 2.7.0, so an unverified "
+                f"pair is a base-image build failure (#472)."
+            )
+
+        assert _satisfies(_release(sympy), clauses), (
+            f"{header_name}-requirementsHEADER.txt pins torch=={torch}, which requires "
+            f"sympy{_describe(clauses)}, but requirements-base.txt pins "
+            f"sympy=={sympy}. The base-image requirement set cannot resolve. Note "
+            f"torch 2.6.0 pins sympy EXACTLY, so on a torch downgrade a higher sympy "
+            f"is as wrong as a lower one. sympy is in the SHARED base while torch is "
+            f"in the headers, so neither file shows this on its own — move them "
+            f"together."
+        )
+
+
+class TestSatisfiesModelsTheWholeDeclaredRange:
+    """The comparison helper must honour every clause a release declares.
+
+    Three holes in the first version of this module, all found by review on
+    2026-09-15 and all the same mistake: a one-sided comparison standing in for a
+    declared range. Each case below is green under the correct helper and was green
+    under the broken guards too — which is the point, since the broken guards were
+    green while the pair could not resolve.
+    """
+
+    @pytest.mark.parametrize(
+        "candidate, clauses, expected, why",
+        [
+            (
+                (1, 26, 0),
+                ((">=", (1, 26, 0)), ("<", (1, 27, 0))),
+                True,
+                "the lower bound is inclusive",
+            ),
+            (
+                (1, 44, 0),
+                ((">=", (1, 26, 0)), ("<", (1, 27, 0))),
+                False,
+                "vllm 0.8.5's ceiling excludes 1.44.0 — the original #472 conflict",
+            ),
+            (
+                (1, 25, 0),
+                ((">=", (1, 26, 0)),),
+                False,
+                "a floor-only range still has a floor: vllm 0.9.0 needs >=1.26.0, so "
+                "an SDK downgrade must not pass",
+            ),
+            (
+                (1, 26, 0),
+                ((">=", (1, 27, 0)),),
+                False,
+                "vllm 0.19.0 raised the floor to 1.27.0, so constraints are not "
+                "monotonic across releases",
+            ),
+            (
+                (1, 13, 3),
+                (("==", (1, 13, 1)),),
+                False,
+                "torch 2.6.0 pins sympy exactly, so a HIGHER sympy is still wrong",
+            ),
+            (
+                (1, 13, 1),
+                (("==", (1, 13, 1)),),
+                True,
+                "the exact pin is satisfied only by itself",
+            ),
+        ],
+    )
+    def test_every_clause_is_enforced(self, candidate, clauses, expected, why):
+        assert _satisfies(candidate, clauses) is expected, why
+
+
+def _fmt(release: tuple) -> str:
+    return ".".join(str(part) for part in release)
