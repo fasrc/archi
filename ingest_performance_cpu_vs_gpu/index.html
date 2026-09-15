@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Ingest Performance: CPU vs GPU Embedding - Archi Docs</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Ingest Performance: CPU vs GPU Embedding";
+        var mkdocs_page_input_path = "ingest_performance_cpu_vs_gpu.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Ingest Performance: CPU vs GPU Embedding</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/ingest_performance_cpu_vs_gpu.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="ingest-performance-cpu-vs-gpu-embedding">Ingest Performance: CPU vs GPU Embedding</h1>
+<p>Measured on fasrc-dev (<code>holygpu7c0717.rc.fas.harvard.edu</code>) on 2026-08-06.
+Tracking issue: fasrc/archi#215.</p>
+<h2 id="hardware">Hardware</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Host</td>
+<td>holygpu7c0717 (archi.rc.fas.harvard.edu)</td>
+</tr>
+<tr>
+<td>GPUs</td>
+<td>4× Tesla V100-PCIE-32GB</td>
+</tr>
+<tr>
+<td>GPU 0</td>
+<td>idle → embedding (824 MiB / 32,768 MiB = 2.5%)</td>
+</tr>
+<tr>
+<td>GPU 1</td>
+<td>idle</td>
+</tr>
+<tr>
+<td>GPU 2–3</td>
+<td><abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> Qwen 3.6 (30,260 MiB each)</td>
+</tr>
+<tr>
+<td>Embedding model</td>
+<td>all-MiniLM-L6-v2 (22M params, 384-dim, ~80 MB)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="cpu-baseline">CPU Baseline</h2>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>torch</td>
+<td>2.6.0+cpu (CPU-only build)</td>
+</tr>
+<tr>
+<td>Visible cores</td>
+<td>1 (<code>nproc</code> inside the container)</td>
+</tr>
+<tr>
+<td><code>parallel_workers</code></td>
+<td>32 (contending on 1 core)</td>
+</tr>
+<tr>
+<td><code>scrape_workers</code></td>
+<td>8</td>
+</tr>
+<tr>
+<td>Files embedded</td>
+<td>817</td>
+</tr>
+<tr>
+<td>Vectorstore chunks</td>
+<td>6,023</td>
+</tr>
+<tr>
+<td>NLTK errors</td>
+<td>10 (WordListCorpusReader race, #119)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="phase-timing-cpu">Phase Timing (CPU)</h3>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Start (UTC)</th>
+<th>End (UTC)</th>
+<th>Duration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Scrape (8 workers)</td>
+<td>15:58:37</td>
+<td>16:07:10</td>
+<td>8m 33s</td>
+</tr>
+<tr>
+<td>Git clone + <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> categorize</td>
+<td>16:07:10</td>
+<td>16:16:03</td>
+<td>8m 53s</td>
+</tr>
+<tr>
+<td>Chunk + parse (32 threads)</td>
+<td>16:16:03</td>
+<td>16:16:34</td>
+<td>0m 31s</td>
+</tr>
+<tr>
+<td><strong>Embed (CPU)</strong></td>
+<td><strong>16:16:34</strong></td>
+<td><strong>17:00:37</strong></td>
+<td><strong>44m 03s</strong></td>
+</tr>
+<tr>
+<td><strong>TOTAL</strong></td>
+<td><strong>15:58:33</strong></td>
+<td><strong>17:00:37</strong></td>
+<td><strong>62m 04s</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Per-file embed: <strong>3.23s</strong> (2,643s / 817 files).
+Embed phase is <strong>71%</strong> of total wall clock.</p>
+<h2 id="gpu-result">GPU Result</h2>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>torch</td>
+<td>2.6.0+cu124 (CUDA 12.4)</td>
+</tr>
+<tr>
+<td>Device</td>
+<td>cuda:0 (Tesla V100-PCIE-32GB, compute cap 7.0)</td>
+</tr>
+<tr>
+<td><code>parallel_workers</code></td>
+<td>32</td>
+</tr>
+<tr>
+<td><code>scrape_workers</code></td>
+<td>8</td>
+</tr>
+<tr>
+<td>Files embedded</td>
+<td>1,116 (+299 from code_suffixes fix)</td>
+</tr>
+<tr>
+<td>Vectorstore chunks</td>
+<td>6,854 (+831)</td>
+</tr>
+<tr>
+<td>NLTK errors</td>
+<td>6</td>
+</tr>
+<tr>
+<td>Disallowed suffix warnings</td>
+<td>772 (legitimate: .png, .rst, .out, .dat, etc.)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="phase-timing-gpu">Phase Timing (GPU)</h3>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Start (UTC)</th>
+<th>End (UTC)</th>
+<th>Duration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Scrape (8 workers)</td>
+<td>17:58:31</td>
+<td>18:06:13</td>
+<td>7m 42s</td>
+</tr>
+<tr>
+<td>Git clone + <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> categorize</td>
+<td>18:06:13</td>
+<td>18:19:04</td>
+<td>12m 51s</td>
+</tr>
+<tr>
+<td><strong>Chunk + parse + embed (GPU)</strong></td>
+<td><strong>18:19:04</strong></td>
+<td><strong>18:20:23</strong></td>
+<td><strong>1m 19s</strong></td>
+</tr>
+<tr>
+<td><strong>TOTAL</strong></td>
+<td><strong>17:58:27</strong></td>
+<td><strong>18:20:23</strong></td>
+<td><strong>21m 56s</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Per-file embed: <strong>0.07s</strong> (79s / 1,116 files).
+Embed phase is <strong>6%</strong> of total wall clock (was 71%).</p>
+<h2 id="comparison">Comparison</h2>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>CPU (817 files)</th>
+<th>GPU (1,116 files)</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Embed phase</td>
+<td>44m 03s (2,643s)</td>
+<td>1m 19s (79s)</td>
+<td><strong>33.5×</strong></td>
+</tr>
+<tr>
+<td>Per-file embed</td>
+<td>3.23s</td>
+<td>0.07s</td>
+<td><strong>46×</strong></td>
+</tr>
+<tr>
+<td>Total ingest</td>
+<td>62m 04s (3,724s)</td>
+<td>21m 56s (1,316s)</td>
+<td><strong>2.8×</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The GPU run embedded <strong>37% more files</strong> (1,116 vs 817) in <strong>1/33 the time</strong>.</p>
+<h2 id="two-blockers-found-and-resolved">Two Blockers Found and Resolved</h2>
+<h3 id="1-tei-incompatible-with-v100">1. TEI incompatible with V100</h3>
+<p>HuggingFace Text Embeddings Inference (TEI) default image is compiled for Ampere
+(sm_80). V100 is Volta (sm_70):</p>
+<pre><code>ERROR: Could not start Candle backend: Runtime compute cap 70 is not compatible
+with compile time compute cap 80
+</code></pre>
+<p>No official Volta tag exists. The solution was to skip TEI entirely and give the
+data-manager container direct GPU access.</p>
+<h3 id="2-torch-cpu-only-in-the-data-manager-image">2. torch CPU-only in the data-manager image</h3>
+<p>The data-manager container shipped <code>torch 2.6.0+cpu</code>. Even with Docker GPU
+passthrough (<code>deploy.resources.reservations.devices</code>) and <code>device: cuda:0</code>, torch
+raised <code>Torch not compiled with CUDA enabled</code>.</p>
+<p><strong>Solution:</strong> created <code>Dockerfile-data-manager-gpu</code>, following the existing
+pattern where <code>Dockerfile-chat-gpu</code> differs from <code>Dockerfile-chat</code> only in the
+base image (<code>FROM a2rchi-pytorch-base</code> instead of <code>FROM a2rchi-python-base</code>).
+Extended the compose template (<code>base-compose.yaml</code>) to select the GPU Dockerfile
+and add the NVIDIA deploy block when <code>--gpu-ids</code> is set.</p>
+<h2 id="bonus-find-code_suffixes-template-bug">Bonus Find: code_suffixes Template Bug</h2>
+<p>The deploy config set 23 HPC-specific code suffixes for git ingest:</p>
+<pre><code class="language-yaml">code_suffixes: [.py, .sh, .c, .cpp, .h, .hpp, .f90, .f, .f95, .cu, .R, .Rmd,
+                .m, .jl, .sbatch, .slurm, .def, .json, .yaml, .yml, .md, .ipynb, .toml]
+</code></pre>
+<p>But <code>base-config.yaml</code> never rendered <code>code_suffixes</code> into the git source block —
+it only rendered <code>enabled</code>, <code>visible</code>, and <code>schedule</code>. The git scraper fell back
+to its hardcoded web-app-centric default (<code>.py</code>, <code>.js</code>, <code>.ts</code>, <code>.java</code>, <code>.go</code>,
+<code>.rs</code>, <code>.c</code>, <code>.cpp</code>, etc.), which lacks every HPC-specific suffix.</p>
+<p><strong>Silent since PR #108</strong> (loader/collector parity). Every ingest dropped 1,013
+files with no visible error — just warnings:</p>
+<table>
+<thead>
+<tr>
+<th>Suffix</th>
+<th>Files dropped per ingest</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>.sbatch</td>
+<td>139</td>
+</tr>
+<tr>
+<td>.f90</td>
+<td>53</td>
+</tr>
+<tr>
+<td>.R</td>
+<td>21</td>
+</tr>
+<tr>
+<td>.m</td>
+<td>19</td>
+</tr>
+<tr>
+<td>.cu</td>
+<td>18</td>
+</tr>
+<tr>
+<td>.slurm</td>
+<td>18</td>
+</tr>
+<tr>
+<td>.ipynb</td>
+<td>12</td>
+</tr>
+<tr>
+<td>.def</td>
+<td>9</td>
+</tr>
+<tr>
+<td>.Rmd</td>
+<td>2</td>
+</tr>
+<tr>
+<td>.jl</td>
+<td>1</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Fix:</strong> 2-line conditional in <code>base-config.yaml</code> that renders <code>code_suffixes</code>
+when defined in the deploy config.</p>
+<h2 id="corpus-impact">Corpus Impact</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Before (suffix bug)</th>
+<th>After (suffix fix)</th>
+<th>Delta</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Files embedded</td>
+<td>817</td>
+<td>1,116</td>
+<td>+299 (+37%)</td>
+</tr>
+<tr>
+<td>Vectorstore chunks</td>
+<td>6,023</td>
+<td>6,854</td>
+<td>+831 (+14%)</td>
+</tr>
+</tbody>
+</table>
+<p>The +299 files are Fortran (.f90), CUDA (.cu), R (.R/.Rmd), SLURM job scripts
+(.sbatch/.slurm), Singularity definitions (.def), Jupyter notebooks (.ipynb),
+Julia (.jl), and MATLAB (.m) — HPC examples now retrievable for the first time.</p>
+<h2 id="configuration">Configuration</h2>
+<h3 id="enable-gpu-embedding-deploy-config">Enable GPU embedding (deploy config)</h3>
+<pre><code class="language-yaml"># deploy/fasrc-dev/config.yaml
+data_manager:
+  embedding_class_map:
+    HuggingFaceEmbeddings:
+      kwargs:
+        model_kwargs:
+          device: cuda:0
+</code></pre>
+<pre><code class="language-bash"># deploy/scripts/host.env — per-host, git-ignored. NOT lib.sh: that file is
+# tracked and shared by every host, so a committed GPU_IDS would reach hosts
+# with no NVIDIA runtime, where the deploy dies AFTER recreating the chatbot.
+GPU_IDS=0
+</code></pre>
+<h3 id="revert-to-cpu">Revert to CPU</h3>
+<p>Remove the <code>embedding_class_map</code> override from the deploy config (the template
+defaults to <code>device: cpu</code>) and either delete the <code>GPU_IDS</code> line from this host's
+<code>deploy/scripts/host.env</code> or set it to the explicit empty disable, <code>GPU_IDS=</code>.
+Redeploy — it will use <code>Dockerfile-data-manager</code> (CPU) instead of
+<code>Dockerfile-data-manager-gpu</code>.</p>
+<h3 id="gpu-memory">GPU memory</h3>
+<p>GPU 0 went from 0 MiB to 824 MiB (2.5% of 32 GB). The model is 80 MB; the rest
+is CUDA runtime overhead.</p>
+<h2 id="what-changed-code">What Changed (code)</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Dockerfile-data-manager-gpu</code></td>
+<td>New. <code>FROM a2rchi-pytorch-base</code> (torch+CUDA).</td>
+</tr>
+<tr>
+<td><code>base-compose.yaml</code></td>
+<td>GPU Dockerfile selection + NVIDIA env/deploy block for data-manager when <code>gpu_ids</code> set.</td>
+</tr>
+<tr>
+<td><code>base-config.yaml</code></td>
+<td>Render <code>code_suffixes</code> when defined in the deploy config.</td>
+</tr>
+<tr>
+<td><code>deploy/scripts/lib.sh</code></td>
+<td><code>GPU_IDS</code> variable, passed as <code>--gpu-ids</code> to <code>archi create</code>.</td>
+</tr>
+<tr>
+<td><code>deploy/fasrc-dev/config.yaml</code></td>
+<td><code>device: cuda:0</code> override in <code>embedding_class_map</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="next-steps">Next Steps</h2>
+<ol>
+<li><strong>New bottleneck: Git clone + <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> categorize</strong> (12m 51s, was 8m 53s — more
+   files). Scales linearly with file count; batching the categorization <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> calls
+   would help.</li>
+<li><strong>Incremental embedding:</strong> skip files whose content hash already has vectors in
+   Postgres. A no-change re-ingest would be near-instant instead of 22 minutes.</li>
+<li><strong>772 remaining "disallowed suffix" warnings</strong> are legitimate (.png, .rst,
+   .out, .dat, .tif, .pdf, etc.) — not actionable but could be quieted to DEBUG.</li>
+<li><strong>NLTK WordListCorpusReader race</strong> (#119): 6 files failed (was 10 on CPU).
+   Known lazy-load collision under parallel tokenization.</li>
+</ol>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

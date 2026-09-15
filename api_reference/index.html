@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -91,6 +95,12 @@
     <li class="toctree-l2"><a class="reference internal" href="#chat">Chat</a>
         <ul>
     <li class="toctree-l3"><a class="reference internal" href="#post-apiget_chat_response">POST /api/get_chat_response</a>
+        <ul>
+    <li class="toctree-l4"><a class="reference internal" href="#fields-the-non-streaming-endpoint-ignores">Fields the non-streaming endpoint ignores</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#overriding-provider-and-model">Overriding provider and model</a>
+    </li>
+        </ul>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#post-apiget_chat_response_stream">POST /api/get_chat_response_stream</a>
     </li>
@@ -240,6 +250,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -249,6 +267,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -290,13 +312,314 @@
 <li>Most <code>/api/*</code> endpoints require an authenticated session.</li>
 <li>Endpoints marked <strong>Admin only</strong> require an admin user.</li>
 <li>Authentication routes (<code>/login</code>, <code>/logout</code>, <code>/auth/user</code>) are not under <code>/api/</code>.</li>
+<li><strong>Lists of events, error statuses and failure modes describe categories and the cases you
+  will meet — they are not closed enumerations.</strong> The chat handler has behaviour that varies
+  by pipeline and by provider, so this page documents the <em>mechanism</em> that decides an outcome
+  and gives examples. Build clients that tolerate an event type or status they have not seen
+  before, and prefer reading what the response reports over inferring it from the request.</li>
 </ul>
 <hr />
 <h2 id="chat">Chat</h2>
 <h3 id="post-apiget_chat_response"><code>POST /api/get_chat_response</code></h3>
 <p>Send a message and receive a complete response.</p>
+<p><strong>Request body</strong> (JSON). Both chat endpoints accept the same payload, but they do not
+honour all of it — the last four fields are read only by the streaming endpoint. See
+<a href="#fields-the-non-streaming-endpoint-ignores">Fields the non-streaming endpoint ignores</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>last_message</code></td>
+<td>list of <code>[sender, message]</code> pairs</td>
+<td>yes</td>
+<td>The user's turn. A list <strong>containing</strong> the pair, not the pair itself — see below. Only the first pair is read. A malformed value is rejected with <strong>HTTP 400</strong>.</td>
+</tr>
+<tr>
+<td><code>client_id</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Identifies the calling client; the request is rejected without it.</td>
+</tr>
+<tr>
+<td><code>client_sent_msg_ts</code></td>
+<td>int (ms since epoch)</td>
+<td>no</td>
+<td>The time you send the request (milliseconds since epoch); used for latency accounting and as the start of the deadline window when <code>client_timeout</code> is also supplied. Generate this value at send time — a stale timestamp paired with a live <code>client_timeout</code> looks like an already-expired deadline. Omitting it costs you only the client→server half of the latency profile: the request is still timed and still recorded, but the <code>timing.client_sent_msg_ts</code> column stores <code>1970-01-01T00:00:00Z</code> as a sentinel meaning <em>"the client declared no send time"</em> (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4770"><code>app.py:4770</code></a>). Exclude that value when computing client→server latency; every other milestone on the row is a real measurement. Send it as a JSON number of milliseconds naming a date the server can represent — years 1 through 9999; a date outside that window is rejected with <strong>400</strong> before the pipeline runs, rather than failing later at persistence. What happens to everything else is decided mechanically, not by type, and in this order. A JSON boolean is refused first: <code>true</code> and <code>false</code> both get a <strong>400</strong>, so <code>false</code> is <em>not</em> a way to omit the field. Of what survives that, any <strong>falsey</strong> value — <code>null</code>, <code>0</code>, <code>""</code>, <code>[]</code>, <code>{}</code> — is treated exactly like omitting the field, and any other value that cannot be divided by 1000 or that divides to a non-finite result — a non-empty string such as a <em>quoted</em> <code>"1700000000000"</code>, a non-empty array or object, or a non-finite literal (<code>Infinity</code>, <code>-Infinity</code>, <code>NaN</code>) — is rejected with <strong>400</strong>. A negative or fractional value does not need to be refused — within years 1-9999 it is a perfectly ordinary pre-1970 or sub-millisecond timestamp.</td>
+</tr>
+<tr>
+<td><code>client_timeout</code></td>
+<td>int (ms)</td>
+<td>no</td>
+<td>How long the client is willing to wait (milliseconds). Two deadlines read it. When both this and <code>client_sent_msg_ts</code> are supplied, the server rejects a request that <em>arrives</em> after the window has already elapsed with <strong>408</strong>. On the streaming endpoint it is additionally checked <strong>as each event is produced</strong>, measured server-side from the moment the stream opens — so supplying <code>client_timeout</code> alone, with no <code>client_sent_msg_ts</code>, still ends an over-long stream with the in-band 408 event even though the arrival check cannot run. The declared deadline ends the client's wait whether the stream is slow or the provider is silent — the bound is on client-visible latency; the server may still be occupied by the abandoned provider call after the 408. <strong>Send it as a plain positive integer.</strong> The same mechanical rule as <code>client_sent_msg_ts</code> decides acceptance, in the same order — a JSON boolean is refused first, so neither <code>true</code> nor <code>false</code> declares "no deadline"; both get a <strong>400</strong>. Of what survives that, falsey values (<code>null</code>, <code>0</code>, <code>""</code>, <code>[]</code>, <code>{}</code>) read as <em>no deadline declared</em>, and anything else that cannot be divided by 1000 is rejected with <strong>400</strong> — but there is no date range to satisfy here, because the value is only ever compared against an elapsed interval, so a large <em>finite</em> timeout is accepted and simply means no deadline in practice. Any non-finite literal (<code>Infinity</code>, <code>-Infinity</code>, <code>NaN</code>) is rejected with <strong>400</strong> too. A negative number expires the deadline immediately; send a plain positive integer.</td>
+</tr>
+<tr>
+<td><code>conversation_id</code></td>
+<td>int or <code>null</code></td>
+<td>no</td>
+<td>Existing conversation to append to. <code>null</code> (or omitted) starts a new one.</td>
+</tr>
+<tr>
+<td><code>config_name</code></td>
+<td>string</td>
+<td>no</td>
+<td>Named configuration to answer under.</td>
+</tr>
+<tr>
+<td><code>is_refresh</code></td>
+<td>bool</td>
+<td>no, but <strong>needs a prior user turn</strong></td>
+<td>Re-answer the previous turn instead of adding a new one. Not an independent switch — a refresh does not add your message to the conversation, so it needs an earlier turn to work from. If none survives (no <code>conversation_id</code> and no supplied history; a named conversation holding no turns; or a history of assistant turns only, which the refresh trim empties), the request is <strong>rejected with <code>400</code></strong> (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1695"><code>app.py:1695</code></a>) and no conversation is created.</td>
+</tr>
+<tr>
+<td><code>provider</code></td>
+<td>string</td>
+<td>stream only, <strong>with <code>model</code></strong></td>
+<td>Override the <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> provider. Has no effect unless <code>model</code> is sent too — see <a href="#overriding-provider-and-model">Overriding provider and model</a>. Ignored entirely by <code>POST /api/get_chat_response</code>.</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td>string</td>
+<td>stream only, <strong>with <code>provider</code></strong></td>
+<td>Override the model. Has no effect unless <code>provider</code> is sent too — see <a href="#overriding-provider-and-model">Overriding provider and model</a>. Ignored entirely by <code>POST /api/get_chat_response</code>.</td>
+</tr>
+<tr>
+<td><code>include_agent_steps</code></td>
+<td>bool</td>
+<td>stream only</td>
+<td>Include the incremental <strong>answer text</strong> — the <code>chunk</code> events (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2438"><code>app.py:2438</code></a>). Default <code>true</code>. Does <strong>not</strong> gate reasoning. Ignored by <code>POST /api/get_chat_response</code>.</td>
+</tr>
+<tr>
+<td><code>include_tool_steps</code></td>
+<td>bool</td>
+<td>stream only</td>
+<td>Include tool events (<code>tool_start</code>, <code>tool_output</code>, <code>tool_end</code>) <strong>and reasoning events</strong> (<code>thinking_start</code>, <code>thinking_end</code>, <a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2418"><code>app.py:2418</code></a>). Default <code>true</code>. Ignored by <code>POST /api/get_chat_response</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>last_message</code> is nested.</strong> It is a list whose first element is the
+<code>[sender, message]</code> pair — <code>[["User", "How do I submit a job?"]]</code>, <strong>not</strong>
+<code>["User", "How do I submit a job?"]</code>. The handler reads <code>last_message[0]</code> and unpacks
+it as <code>(sender, content)</code>.</p>
+<p>Both endpoints validate the shape before the request proceeds. A well-formed value is a
+non-empty list or tuple whose first element is itself a list or tuple of exactly two strings.
+Every other value — a flat list, an empty list, <code>null</code>, a non-pair first element, or non-string
+members — is rejected with <strong>HTTP 400</strong> and an error body naming the expected shape, e.g.:</p>
+<pre><code class="language-json">{&quot;error&quot;: &quot;last_message must be a list containing a [sender, message] pair of two strings, e.g. [[\&quot;User\&quot;, \&quot;hello\&quot;]]&quot;}
+</code></pre>
+<p>The check exists because the flat form <code>["AI", "hello"]</code> is a two-character string sequence,
+and without validation <code>tuple("AI")</code> yields <code>sender="A"</code>, <code>content="I"</code> — a request that
+returns HTTP 200 while silently discarding the caller's message. Both endpoints now reject it
+before the pipeline is invoked, so no conversation row is created for the rejected request.</p>
+<p><strong>A request you can run.</strong> Both timing fields are optional; when both are present,
+<code>client_sent_msg_ts</code> must be generated at send time — a stale literal paired with a live
+<code>client_timeout</code> is an already-expired deadline and returns <strong>408</strong>. This example computes
+it rather than hard-coding one:</p>
+<pre><code class="language-bash">curl -sS http://localhost:7861/api/get_chat_response \
+  -H 'Content-Type: application/json' \
+  -d &quot;$(jq -nc --argjson ts &quot;$(date +%s000)&quot; '{
+        last_message: [[&quot;User&quot;, &quot;How do I submit a job?&quot;]],
+        conversation_id: null,
+        client_id: &quot;web-3f2a91&quot;,
+        client_sent_msg_ts: $ts,
+        client_timeout: 600000
+      }')&quot;
+</code></pre>
+<div class="admonition note">
+<p class="admonition-title">It runs as-is only where authentication is disabled</p>
+<p>Every chat route is registered through <code>require_auth</code> (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2806"><code>app.py:2806</code></a>), so with
+<code>services.chat_app.auth.enabled: true</code> this command gets <code>401</code> — or a <code>302</code> to the login
+page when SSO is on and anonymous access is blocked — instead of an answer. Nothing about
+the request body is wrong in that case; it never reaches the handler.</p>
+<p>Against a deployment with <strong>basic auth</strong> enabled, log in first and reuse the session
+cookie (<code>/login</code> accepts a form-encoded <code>username</code> and <code>password</code>,
+<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L3290"><code>app.py:3290</code></a>, and exists only when auth is enabled):</p>
+<p><code>bash
+curl -sS -c jar.txt -X POST http://localhost:7861/login \
+  -d 'username=&lt;user&gt;&amp;password=&lt;password&gt;'
+curl -sS -b jar.txt http://localhost:7861/api/get_chat_response \
+  -H 'Content-Type: application/json' -d '&lt;body as above&gt;'</code></p>
+<p>With <strong>SSO</strong> the login is a browser redirect flow that curl cannot complete; copy the
+session cookie out of an already-logged-in browser session instead.</p>
+</div>
+<p>The body it builds has this shape. This is a <strong>template, not valid JSON</strong> — the placeholder
+is deliberately unquoted so that pasting it unedited fails in your own JSON parser rather
+than reaching the server, where a non-integer would surface as an opaque HTTP 500. Replace
+it with the current time in milliseconds, as an integer:</p>
+<pre><code class="language-text">{
+  &quot;last_message&quot;: [[&quot;User&quot;, &quot;How do I submit a job?&quot;]],
+  &quot;conversation_id&quot;: null,
+  &quot;client_id&quot;: &quot;web-3f2a91&quot;,
+  &quot;client_sent_msg_ts&quot;: &lt;epoch ms at send time&gt;,
+  &quot;client_timeout&quot;: 600000
+}
+</code></pre>
+<h4 id="fields-the-non-streaming-endpoint-ignores">Fields the non-streaming endpoint ignores</h4>
+<p><code>provider</code>, <code>model</code>, <code>include_agent_steps</code> and <code>include_tool_steps</code> are accepted by both
+endpoints but <strong>only acted on by <code>POST /api/get_chat_response_stream</code></strong>. The non-streaming
+handler never reads them off the parsed payload, so it cannot select a provider or model
+and always applies the defaults for step inclusion. Sending them there is silently
+ignored — no error, no warning.</p>
+<p>To override the provider or model, or to control step inclusion, use the streaming
+endpoint.</p>
+<h4 id="overriding-provider-and-model">Overriding provider and model</h4>
+<p><code>provider</code> and <code>model</code> are <strong>jointly required</strong>. The streaming path builds a request-local
+pipeline only under <code>if provider and model</code> (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2102"><code>app.py:2102</code></a>), so sending one
+without the other is not a partial override — it is no override at all, and the request is
+answered by the default pipeline. This is silent: there is no error and no warning, and the
+answer looks normal, so a caller who sends <code>model</code> alone can receive a reply from a model
+they did not ask for.</p>
+<table>
+<thead>
+<tr>
+<th>Sent</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>provider</code> + <code>model</code></td>
+<td>override <strong>attempted</strong> for this request only — may still fall back, see below</td>
+</tr>
+<tr>
+<td><code>provider</code> alone</td>
+<td><strong>ignored</strong>, default pipeline answers</td>
+</tr>
+<tr>
+<td><code>model</code> alone</td>
+<td><strong>ignored</strong>, default pipeline answers</td>
+</tr>
+</tbody>
+</table>
+<p>Sending both is necessary but not sufficient. <strong>Treat the override as a request, not a
+setting</strong>: the only reliable way to know which model answered is to read it back off the
+<code>final</code> event's <strong><code>model_used</code></strong> field (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2611"><code>app.py:2611</code></a>). Note that <code>final</code> carries
+<em>two</em> model fields — <code>model</code> comes from the pipeline output's metadata, while <code>model_used</code> is
+the request-local identity that reflects whether the override actually took. Comparing against
+<code>model</code> will not tell you that. Everything below is why it matters.</p>
+<p>The override is applied only if the <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> is constructed <em>and</em> a request-local pipeline view is
+built from it, under a guard that also requires the active pipeline to expose an <code>agent_llm</code>
+(<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2121"><code>app.py:2121</code></a>). Failures divide into two kinds — those that let the <strong>default
+pipeline</strong> answer, and those that <strong>end the stream with no answer at all</strong> — and how you find
+out differs again:</p>
+<table>
+<thead>
+<tr>
+<th>Do you still get an answer?</th>
+<th>How you find out</th>
+<th>Examples (not exhaustive)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>No</strong> — the stream ends</td>
+<td><code>{"type": "error", "status": 400}</code></td>
+<td>a construction-time <code>ValueError</code> — overrides disabled, or a provider name that does not resolve (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2112"><code>app.py:2112</code></a>)</td>
+</tr>
+<tr>
+<td><strong>No</strong> — the stream ends mid-answer</td>
+<td>in-band <code>{"type": "error", "status": 500}</code></td>
+<td>a model string the provider builds happily and rejects on use — <code>get_chat_model</code> does not check the provider's catalogue, so an unknown model ID for OpenAI or OpenRouter surfaces at invocation, not at construction (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2645"><code>app.py:2645</code></a>)</td>
+</tr>
+<tr>
+<td><strong>Yes</strong> — from the default pipeline</td>
+<td><code>{"type": "warning", "message": "Using default model: …"}</code></td>
+<td>most construction failures, and a failed request-local pipeline build (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2118"><code>app.py:2118</code></a>, <a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2138"><code>:2138</code></a>)</td>
+</tr>
+<tr>
+<td><strong>Yes</strong> — from the default pipeline</td>
+<td><strong>nothing at all</strong>: no <code>error</code>, no <code>warning</code></td>
+<td>an active pipeline with no <code>agent_llm</code> (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2121"><code>app.py:2121</code></a>)</td>
+</tr>
+</tbody>
+</table>
+<p>So "the override failed" does <strong>not</strong> imply "the default answered" — the first two rows
+terminate rather than fall back, and a client that assumes an answer is always coming will wait
+for a <code>final</code> event that never arrives.</p>
+<p>Two more consequences worth designing for. <strong>A silent fallback is a normal-looking success</strong> —
+the answer arrives, nothing is flagged, and only <code>model_used</code> differs from what you asked for.
+And <strong><code>400</code> is not the failure mode for a bad model ID</strong>; a typo'd model name typically reaches
+the provider and comes back as an in-band <code>500</code> partway through the stream.</p>
+<p>So do not infer the answering model from your own request. Read <code>final.model_used</code>, and treat a
+<code>warning</code> event as "my override did not take".</p>
 <h3 id="post-apiget_chat_response_stream"><code>POST /api/get_chat_response_stream</code></h3>
 <p>Send a message and receive a streaming response via NDJSON (<code>application/x-ndjson</code>).</p>
+<p>Takes the same request body as <code>POST /api/get_chat_response</code> above, including the
+nested <code>last_message</code> shape and the two optional timing fields.</p>
+<p>This is the endpoint that honours <code>provider</code>, <code>model</code>, <code>include_agent_steps</code> and
+<code>include_tool_steps</code>; the non-streaming one ignores all four. <code>provider</code> and <code>model</code> must
+be sent <a href="#overriding-provider-and-model">together</a> or neither takes effect.</p>
+<div class="admonition warning">
+<p class="admonition-title">Once the stream opens, failures arrive as events — not as status codes</p>
+<p>This endpoint has <strong>two</strong> error channels. Which one you get depends on whether the
+failure happens before or after the response is constructed at
+<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4864"><code>app.py:4864</code></a> — not on the kind of error.</p>
+<p><strong>Before the stream opens — an ordinary HTTP status.</strong> Check these as you would on any
+endpoint:</p>
+<table>
+<thead>
+<tr>
+<th>Failure</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Not authenticated, SSO on and anonymous access blocked</td>
+<td><strong>302</strong> redirect to login</td>
+</tr>
+<tr>
+<td>Not authenticated, otherwise</td>
+<td><strong>401</strong> <code>{"error": "Unauthorized"}</code></td>
+</tr>
+<tr>
+<td><code>client_id</code> missing (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L4820"><code>app.py:4820</code></a>)</td>
+<td><strong>400</strong> <code>{"error": "client_id missing"}</code></td>
+</tr>
+<tr>
+<td>Malformed <code>last_message</code> (not a nested pair of two strings)</td>
+<td><strong>400</strong> <code>{"error": "..."}</code> naming the expected shape</td>
+</tr>
+</tbody>
+</table>
+<p><strong>After the stream opens — HTTP 200 plus an event.</strong> The status line is already on the
+wire, so a failure inside the generator can only be reported in-band: the opening <code>meta</code>
+line, then</p>
+<p><code>json
+{"type": "error", "status": 408, "message": "..."}</code></p>
+<p>When both <code>client_sent_msg_ts</code> and <code>client_timeout</code> are supplied and the declared
+deadline has elapsed by the time the request is processed, the 408 rejection is in this
+second group — the check runs inside <code>_prepare_chat_context</code>, which runs after the
+response is constructed. <strong>How that rejection reaches you differs by endpoint:</strong> on
+<code>POST /api/get_chat_response</code> it is a real <strong>HTTP 408</strong> with <code>{"error": ...}</code>; here it
+arrives as <strong>HTTP 200</strong> followed by the in-band event
+<code>{"type": "error", "status": 408, "message": ...}</code> (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2085"><code>app.py:2085</code></a>). A
+streaming client that checks only the HTTP status sees success and must inspect the
+events. The <code>400</code> for a refresh with nothing to refresh (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1695"><code>app.py:1695</code></a>)
+follows the same pattern — also decided inside <code>_prepare_chat_context</code> — and is the
+clearest illustration of why this section exists: identical rejection, two different
+channels.</p>
+<p>Note that <code>400</code> appears in <strong>both</strong> groups on this endpoint, so the status alone does not
+tell you which one you are in: a malformed <code>last_message</code> is rejected in the route and
+arrives as a real HTTP <code>400</code>, while a refresh with nothing to refresh is decided inside the
+generator and arrives as an in-band event under HTTP <code>200</code>. What separates them is <em>where</em>
+the check runs, not the status it returns.</p>
+<p>A correct client therefore does <strong>both</strong>: check the HTTP status first, and — when it is
+<code>200</code> — still inspect the events for <code>type: "error"</code>, whose <code>status</code> field is the status of
+the <strong>failed streaming operation</strong>. Treating <code>200 OK</code> alone as success misses the second
+group; ignoring the status code misses the first.</p>
+<p>Read that <code>status</code> as this endpoint's own result, not as a prediction of what
+<code>POST /api/get_chat_response</code> would have done with the same body. Some failures exist only
+on this endpoint — an override rejected with an in-band <code>400</code> (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2112"><code>app.py:2112</code></a>)
+has no counterpart there, because the non-streaming handler ignores <code>provider</code> and <code>model</code>
+altogether and would answer normally.</p>
+</div>
 <p>Each line is a JSON object with a <code>type</code> field. Event types:</p>
 <table>
 <thead>
@@ -307,39 +630,124 @@
 </thead>
 <tbody>
 <tr>
-<td><code>meta</code></td>
-<td>Stream metadata (sent first, includes padding)</td>
+<td>Type</td>
+<td>Gated by</td>
 </tr>
 <tr>
-<td><code>text</code></td>
-<td>Response text delta</td>
+<td>------</td>
+<td>---</td>
+</tr>
+<tr>
+<td><code>meta</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>chunk</code></td>
+<td><code>include_agent_steps</code></td>
 </tr>
 <tr>
 <td><code>tool_start</code></td>
-<td>Agent is invoking a tool</td>
+<td><code>include_tool_steps</code></td>
 </tr>
 <tr>
 <td><code>tool_output</code></td>
-<td>Tool result</td>
+<td><code>include_tool_steps</code></td>
+</tr>
+<tr>
+<td><code>tool_end</code></td>
+<td><code>include_tool_steps</code></td>
 </tr>
 <tr>
 <td><code>thinking_start</code></td>
-<td>Reasoning model thinking begins</td>
+<td><code>include_tool_steps</code></td>
 </tr>
 <tr>
 <td><code>thinking_end</code></td>
-<td>Reasoning model thinking ends</td>
+<td><code>include_tool_steps</code></td>
+</tr>
+<tr>
+<td><code>step</code></td>
+<td><code>include_tool_steps</code></td>
 </tr>
 <tr>
 <td><code>final</code></td>
-<td>Final response with full message and metadata</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>warning</code></td>
+<td>—</td>
 </tr>
 <tr>
 <td><code>error</code></td>
-<td>Error occurred</td>
+<td>—</td>
 </tr>
 </tbody>
 </table>
+<p>That table is <strong>derived from the handler rather than maintained by hand</strong> — it is every
+<code>"type"</code> the streaming generator yields. To re-derive it after a change, list the yielded
+dict literals and exclude the ones appended to <code>trace_events</code>:</p>
+<pre><code class="language-bash">grep -n '&quot;type&quot;:' src/interfaces/chat_app/app.py
+</code></pre>
+<p>A match reaches the wire only if its dict is <code>yield</code>ed. Two cases the grep does not settle on
+its own: a dict appended to <code>trace_events</code> is trace-only (<code>text</code>, <code>usage</code>), and a dict bound to
+a variable first — <code>start_event = {...}</code> … <code>yield start_event</code> for <code>tool_start</code> — is on the
+wire despite no <code>yield</code> on the matching line. Check the enclosing statement for each hit.</p>
+<p>Even so, <strong>ignore unknown <code>type</code> values rather than failing on them</strong> — a pipeline may emit
+something not listed here — while still handling <code>chunk</code>, which is where the answer arrives.</p>
+<div class="admonition note">
+<p class="admonition-title"><code>text</code> and <code>usage</code> are trace events, not stream events</p>
+<p>Two types are recorded in the request trace and <strong>never</strong> emitted on the NDJSON stream, so
+you read them back through <code>GET /api/trace/&lt;trace_id&gt;</code> rather than by parsing the response:</p>
+<ul>
+<li><code>text</code> — the pipeline's <em>internal</em> output type. The dispatch converts it into the <code>chunk</code>
+  event on the wire (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2441"><code>app.py:2435-2441</code></a>) and records <code>text</code> separately in the
+  trace (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2450"><code>:2450</code></a>).</li>
+<li><code>usage</code> — token accounting (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2572"><code>:2572</code></a>).</li>
+</ul>
+<p>Earlier revisions of this table listed <code>text</code> and omitted <code>chunk</code>, which is the wrong way
+round for anyone parsing the stream. If you are matching the handler's
+<code>elif event_type == "text"</code> branch against this table, note that the branch names the
+<em>input</em> it consumes, not the event it emits.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">The two step flags do not group events the way their names suggest</p>
+<p>Read this before using either flag to filter the stream. The grouping is by
+<strong>flag</strong>, not by the sense of the flag's name:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Actually gates</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>include_agent_steps</code></td>
+<td>the incremental answer text — <code>chunk</code> events (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2438"><code>app.py:2438</code></a>, <a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2472"><code>:2472</code></a>)</td>
+</tr>
+<tr>
+<td><code>include_tool_steps</code></td>
+<td>tool activity (<code>tool_start</code>, <code>tool_output</code>, <code>tool_end</code>), reasoning (<code>thinking_start</code> / <code>thinking_end</code>, <a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2418"><code>app.py:2418</code></a>, <a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2432"><code>:2432</code></a>), <strong>and</strong> the legacy <code>step</code> events that non-agent pipelines emit (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2459"><code>app.py:2459</code></a> → <a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L1767"><code>:1767</code></a>)</td>
+</tr>
+</tbody>
+</table>
+<p>Those are the event types the streaming dispatch recognizes by name. Anything else falls
+through to legacy conversion (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2459"><code>app.py:2459</code></a>), where what reaches you depends
+on the <em>shape</em> of the underlying message rather than on the category you would expect —
+that path is entered with <code>include_agent_steps=False</code>, and answer content in it is gated by
+<code>include_agent_steps</code> further down (<a href="https://github.com/fasrc/archi/blob/dev/src/interfaces/chat_app/app.py#L2472"><code>:2472</code></a>).</p>
+<p>So do not treat either flag as a suppression guarantee for an event type not listed above.
+<strong>If there is content you must not surface, filter on what you actually receive</strong> rather
+than relying on a flag to have withheld it.</p>
+<p>So reasoning events are controlled by the <strong>tool</strong> flag. Setting
+<code>include_agent_steps: false</code> to suppress reasoning does the opposite of what you
+want twice over: the <code>thinking_*</code> events still arrive, and you silently stop
+receiving streamed answer text. The <code>final</code> event still carries the complete
+answer, so the loss shows up as an answer that appears all at once at the end
+rather than as an error.</p>
+<p>To suppress reasoning, set <code>include_tool_steps: false</code> — accepting that tool
+events go with it. The two are not separable through this API.</p>
+</div>
 <h3 id="post-apicancel_stream"><code>POST /api/cancel_stream</code></h3>
 <p>Cancel an in-progress streaming response.</p>
 <h3 id="get-apitracetrace_id"><code>GET /api/trace/&lt;trace_id&gt;</code></h3>
@@ -383,11 +791,11 @@
 }
 </code></pre>
 <h3 id="put-apiusersmeapi-keysprovider"><code>PUT /api/users/me/api-keys/{provider}</code></h3>
-<p>Set a BYOK API key. Provider: <code>openrouter</code>, <code>openai</code>, <code>anthropic</code>.</p>
+<p>Set a <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr> API key. Provider: <code>openrouter</code>, <code>openai</code>, <code>anthropic</code>.</p>
 <h3 id="delete-apiusersmeapi-keysprovider"><code>DELETE /api/users/me/api-keys/{provider}</code></h3>
-<p>Delete a BYOK API key.</p>
+<p>Delete a <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr> API key.</p>
 <hr />
-<h2 id="provider-keys-byok">Provider Keys (BYOK)</h2>
+<h2 id="provider-keys-byok">Provider Keys (<abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr>)</h2>
 <h3 id="get-apiproviderskeys"><code>GET /api/providers/keys</code></h3>
 <p>Get status of all provider API keys.</p>
 <h3 id="post-apiproviderskeysset"><code>POST /api/providers/keys/set</code></h3>
@@ -554,6 +962,17 @@
 <p>Health check with database connectivity status.</p>
 <h3 id="get-apiinfo"><code>GET /api/info</code></h3>
 <p>Get API version and available features.</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>

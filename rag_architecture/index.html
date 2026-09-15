@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -92,6 +96,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -101,6 +113,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -131,9 +147,9 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
             <div class="section" itemprop="articleBody">
               
-                <h1 id="archi-rag-architecture-dev-spike-handoff">Archi RAG Architecture — Dev-Spike Handoff</h1>
+                <h1 id="archi-rag-architecture-dev-spike-handoff">Archi <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> Architecture — Dev-Spike Handoff</h1>
 <p>A brief, opinionated map of archi's retrieval-augmented-generation pipeline,
-written to orient someone prototyping <strong>new RAG approaches</strong>. It emphasizes the
+written to orient someone prototyping <strong>new <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> approaches</strong>. It emphasizes the
 extension seams and the current defaults you'd vary in a spike. Paths are
 relative to the repo root; cite the listed files for ground truth.</p>
 <h2 id="pipeline-at-a-glance">Pipeline at a glance</h2>
@@ -165,28 +181,31 @@ can't swap to a different-dim model without re-ingest.</p>
 <p><strong>3. Storage</strong> — Postgres + pgvector. <code>documents</code> (file-level) and
 <code>document_chunks</code> (<code>chunk_text</code>, <code>embedding</code>, JSONB <code>metadata</code>). Chunk metadata
 carries <code>filename</code>, <code>resource_hash</code>, <code>collection</code>, <code>chunk_index</code>, plus all parent
-<code>extra_json</code> fields. Vector index: HNSW (m=16, ef=64). Full-text: pg_textsearch
-BM25 index on <code>chunk_text</code> (GIN tsvector fallback). Distance: cosine
+<code>extra_json</code> fields. Vector index: <abbr title="The approximate-nearest-neighbor index type archi uses to find similar embeddings quickly.">HNSW</abbr> (m=16, ef=64). Full-text: pg_textsearch
+<abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr> index on <code>chunk_text</code> (GIN tsvector fallback). Distance: cosine
 (<code>postgres_vectorstore.py</code>).</p>
 <p><strong>4. Retrieval</strong> — <code>data_manager/vectorstore/retrievers/</code>. Production default is
-<strong>HybridRetriever</strong>: <code>semantic_weight=0.4</code>, <code>bm25_weight=0.6</code>, <code>k=5</code>. Score =
-<code>(1 − cosine_distance)·0.4 + bm25·0.6</code> (<code>postgres_vectorstore.hybrid_search</code>).
-<code>hybrid_search</code> <strong>already accepts a <code>filter</code> dict</strong> over any JSONB metadata key —
-so metadata-scoped retrieval (e.g. by category/source_type) needs no schema
-change, just a populated key + a caller that passes the filter. BM25-empty falls
-back to semantic-only. No re-ranking stage exists.</p>
+<strong>HybridRetriever</strong>: <code>semantic_weight=0.4</code>, <code>bm25_weight=0.6</code>, <code>k=5</code>.
+Both semantic and <abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr> components are min-max normalized to <code>0..1</code> over
+each query's candidate set before weighting (<code>postgres_vectorstore.hybrid_search</code>).
+The <abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr> <code>&lt;@&gt;</code> term is negated so higher = better; <code>combined_score</code> is
+query-relative and not comparable across queries. <code>hybrid_search</code> <strong>already
+accepts a <code>filter</code> dict</strong> over any JSONB metadata key — so metadata-scoped
+retrieval (e.g. by category/source_type) needs no schema change, just a
+populated key + a caller that passes the filter. <abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr>-empty falls back to
+semantic-only (with a structured warning). No re-ranking stage exists.</p>
 <p><strong>5. Agent &amp; generation</strong> — <code>src/archi/pipelines/agents/</code>. LangGraph ReAct loop
 (<code>base_react.py</code>); production agent <code>CMSCompOpsAgent</code> (<code>cms_comp_ops_agent.py</code>).
 Tools: <code>search_vectorstore_hybrid</code>, <code>search_metadata_index</code>,
 <code>list_metadata_schema</code>, <code>search_local_files</code>, <code>fetch_catalog_document</code> (+ optional
-MCP/MONIT). Two behaviors matter for RAG experiments:
+MCP/MONIT). Two behaviors matter for <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> experiments:
 - <strong>Forced initial retrieval</strong> (<code>force_initial_retrieval</code>, default on): a
   <code>search_vectorstore_hybrid</code> round is prefilled before the model's first turn,
   so retrieval always happens even if the model wouldn't call it. Toggle for
   prompt-only vs retrieval A/B.
 - <strong>Per-turn search budget</strong> (default <code>search_vectorstore_hybrid: 2</code>): caps
   searches/turn; over-budget returns a synthetic "reuse prior results" message.</p>
-<p>LLM: vLLM serving <code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code> at <code>localhost:8001/v1</code>.
+<p><abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr>: <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> serving <code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code> at <code>localhost:8001/v1</code>.
 Agent behavior (tool list, citation rules, first-action) is declared in a
 <strong>markdown spec</strong> with YAML frontmatter under <code>config/agents/*.md</code>, live
 bind-mounted; the active one is <code>dynamic_config.active_agent_name</code> (runtime
@@ -241,8 +260,181 @@ mutable). See <code>fasrc_archi.md</code> for the model-server ops.</p>
 <td><code>tool_budgets.search_vectorstore_hybrid</code></td>
 <td>2/turn</td>
 </tr>
+<tr>
+<td>in-loop context bound</td>
+<td><code>services.chat_app.context_editing</code></td>
+<td>on (see below)</td>
+</tr>
 </tbody>
 </table>
+<h2 id="in-loop-context-budget">In-loop context budget</h2>
+<p>The agent reads documents <em>during</em> its reasoning loop, and those results
+accumulate in the prompt. Left unbounded they exhaust the model's context window
+and the run ends in a canned apology instead of an answer (issue #235). The
+pre-loop token budget in <code>_prepare_agent_inputs</code> cannot help: it runs once,
+before the loop, over conversation history only.</p>
+<p><code>src/archi/pipelines/agents/utils/context_budget.py</code> decides the numbers; a
+middleware wrapper applies them on <strong>every</strong> model call inside the loop, clearing
+the oldest tool results once the prompt crosses the budget.</p>
+<h3 id="how-the-budget-is-derived">How the budget is derived</h3>
+<pre><code>trigger = context_window − generation_reserve − counting_margin
+</code></pre>
+<p><code>context_window</code> is the model's <em>total</em> sequence length — prompt <strong>and</strong>
+generation — so both subtractions are load-bearing:</p>
+<ul>
+<li><strong>generation reserve</strong> — room for the answer, <code>max(15%, effective output cap)</code>.
+  The percentage alone is unsafe: a model declaring a 200K window and a 64K
+  output cap would be handed a 170K prompt budget while separately being
+  permitted 64K of generation, and the provider rejects that before the trigger
+  is ever consulted.</li>
+<li><strong>counting margin</strong> — room for the token counter being approximate rather than
+  exact. Deliberately <em>not</em> a share of the reserve: a reserve fully spent on the
+  answer has nothing left to absorb an undercount, and there is no later model
+  call at which to correct it.</li>
+</ul>
+<p>The <strong>effective</strong> output cap is read from the bound model, not from
+<code>ModelInfo.max_output_tokens</code> — the declared value is wrong in both directions
+(Anthropic applies it only when the caller sets no <code>max_tokens</code>; the local
+provider never passes its own).</p>
+<p>No context length is hard-coded. If the window cannot be determined, or the
+reserve and margin would consume it, <strong>no bound is installed</strong> and the agent
+behaves as it did before.</p>
+<h4 id="most-deployments-must-declare-the-window">Most deployments must declare the window</h4>
+<p>The window is found by matching the configured model <em>name</em> against a list of
+models compiled into the provider. That match is exact, so a self-hosted model
+is never found, and a hosted one stops being found the moment a vendor ships a
+name newer than the pinned list. Measured against this repository's own dev
+config, both the configured provider and its documented fallback report nothing:</p>
+<pre><code>local      palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4  -&gt; None
+anthropic  claude-sonnet-4-6                     -&gt; None
+anthropic  claude-sonnet-4-20250514              -&gt; 200000
+</code></pre>
+<p>Set <code>context_window</code> explicitly unless the model is a stock hosted one you have
+confirmed resolves. When nothing is installed the runtime logs a warning naming
+the provider and model, so an unprotected deployment is visible in the logs
+rather than silently indistinguishable from a healthy one.</p>
+<h4 id="a-request-that-picks-a-different-model">A request that picks a different model</h4>
+<p>The chat UI lets a request override the provider and model. That request is
+served by a <em>view</em> of the pipeline bound to the overriding model, and the view
+derives its own budget from that model — never the pipeline default's. A request
+that switches to a smaller model gets the smaller budget.</p>
+<p>Two consequences are worth knowing before you set <code>context_window</code>:</p>
+<ul>
+<li><strong>A declared window does not follow an override.</strong> It describes the model
+  <em>this deployment serves</em>, so it is not applied to a model the operator never
+  named. Otherwise a deployment declaring a small window would hand that number
+  to a large model — and, paired with that model's output cap, can make the
+  reserve exceed the declared window and disable the bound entirely.</li>
+<li><strong>An override the provider cannot resolve gets no bound.</strong> The window is
+  resolved from the provider built out of your own config, which is the only
+  place a self-hosted or custom model ID has metadata at all. Where neither that
+  nor the name lookup yields a window, no bound is installed for that request
+  rather than one derived from a different model's window. The per-tool result
+  clamps still apply, so this is a weaker guarantee, not an absent one.</li>
+</ul>
+<h3 id="settings">Settings</h3>
+<p>Under <code>services.chat_app.context_editing</code>, overridable per pipeline via
+<code>pipeline_config.context_editing</code> — the same three-layer lookup as <code>tool_budgets</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td><code>true</code></td>
+<td>Install the in-loop bound</td>
+</tr>
+<tr>
+<td><code>context_window</code></td>
+<td><em>(derived)</em></td>
+<td>Declare the model's context window, overriding the provider's. Required for any model the provider cannot resolve</td>
+</tr>
+<tr>
+<td><code>context_windows</code></td>
+<td><em>(none)</em></td>
+<td>Declare windows per model id (<code>{model_id: tokens}</code>). An entry beats <code>context_window</code> for that model only, and is the sole declaration that survives a request-local model override — which withdraws the single window because it describes a different model. Entries merge per key across the layers, and an invalid entry is logged and dropped without affecting the others. An entry applies to its model id under every provider (<a href="https://github.com/fasrc/archi/issues/344">#344</a>)</td>
+</tr>
+<tr>
+<td><code>reserve_fraction</code></td>
+<td><code>0.15</code></td>
+<td>Generation reserve floor, as a share of the window</td>
+</tr>
+<tr>
+<td><code>margin_fraction</code></td>
+<td><code>0.25</code></td>
+<td>Counting margin, as a share of the window — see <a href="#why-the-counting-margin-is-25">why 25%</a></td>
+</tr>
+<tr>
+<td><code>keep</code></td>
+<td><code>3</code></td>
+<td>Most recent tool results preserved unreduced</td>
+</tr>
+<tr>
+<td><code>per_result_tokens</code></td>
+<td><code>2100</code></td>
+<td>Per-result token ceiling on any retained tool result</td>
+</tr>
+<tr>
+<td><code>exemption_fraction</code></td>
+<td><code>0.33</code></td>
+<td>Largest share of the budget the unclearable content may occupy</td>
+</tr>
+</tbody>
+</table>
+<p>An invalid value is logged and replaced by its own default; it never disables the
+bound. <code>context_window</code> is the exception to the "own default" part — it has none,
+so an invalid value falls back to the provider-derived window.</p>
+<blockquote>
+<p><strong><code>enabled: false</code> is not a full rollback.</strong> It disables in-loop editing only.
+The per-tool result clamps in <code>tools/result_limits.py</code> are unconditional — one
+of them fixes <code>max_chars=0</code> returning an entire document, which is a defect
+rather than a behaviour worth restoring.</p>
+</blockquote>
+<h3 id="the-per-result-ceiling">The per-result ceiling</h3>
+<p>Every retained tool result is capped at <code>per_result_tokens</code>, whatever tool
+produced it. The cap is deliberately <em>universal</em>: results are preserved by
+recency across all tools, so a ceiling enforced per-tool stops bounding anything
+as soon as another tool is enabled — an MCP tool, a caller-supplied one.</p>
+<p>Two properties keep it from destroying evidence:</p>
+<ul>
+<li>It is a <strong>backstop above</strong> the tuned clamps the retriever and fetch tools
+  already apply to their own output, never below them. Below, it would silently
+  re-truncate every full-size result and override the tuning.</li>
+<li>It is <strong>pressure-triggered</strong>. Nothing is truncated while the request is under
+  budget, so reading a large document costs nothing until the budget is actually
+  at risk.</li>
+</ul>
+<p>MCP tools return a <em>list</em> of content blocks rather than a string; the text
+inside each block is truncated and the block structure is left intact.</p>
+<h3 id="retrieval-evidence">Retrieval evidence</h3>
+<p>Retrieval results are exempt from clearing, because they carry the grounding
+evidence the answer cites — but the exemption is <strong>best-effort</strong>, never
+absolute, and it holds only while it is provably cheap.</p>
+<p>The static guard sizes what the clearing pass cannot touch — the exempt results
+<em>and</em> the <code>keep</code> preserved ones — against <code>exemption_fraction</code> of the budget. If
+it exceeds that, the exemption is <strong>dropped with a warning</strong>. Raising
+<code>tool_budgets.search_vectorstore_hybrid</code> far enough switches it off on its own.</p>
+<p>At runtime the exemption also yields under pressure. With the shipped call
+budget of 2 and <code>keep</code> of 3, an ordinary five-result turn makes the exempt set
+<em>identical</em> to the clearable set, so honouring it unconditionally would reclaim
+nothing at all. Exempt results are given back one at a time until the request
+fits.</p>
+<p>Ordering runs both ways and for the same reason. Exempt results are the
+<strong>earliest</strong>, and the ones shed first are the <strong>newest of those</strong>: once the
+per-turn search budget is spent the retrieval tool returns a synthetic refusal
+under the same tool name, so the earliest results are the evidence and the later
+ones trend toward refusals — the cheapest thing to give up.</p>
+<h3 id="when-it-cannot-fit">When it cannot fit</h3>
+<p>If the request is still over budget after clearing, the middleware logs the
+measured overage and sends it anyway; the pre-existing reactive overflow handler
+remains the last-resort net. It also <strong>fails open</strong> — any error in the bound
+itself is logged and the request goes through unreduced, because a middleware
+that exists to prevent a failed turn must not become the cause of one.</p>
 <h2 id="extension-seams-for-new-approaches">Extension seams (for new approaches)</h2>
 <ul>
 <li><strong>New retriever</strong>: subclass LangChain <code>BaseRetriever</code>, implement
@@ -263,7 +455,7 @@ mutable). See <code>fasrc_archi.md</code> for the model-server ops.</p>
   relations table) is the seam for link-graph / GraphRAG experiments.</li>
 </ul>
 <p><strong>Hardcoded (would need real changes):</strong> Postgres-only vector backend; pgvector
-metrics only; single <code>CharacterTextSplitter</code>; ReAct loop shape; BM25 via
+metrics only; single <code>CharacterTextSplitter</code>; ReAct loop shape; <abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr> via
 pg_textsearch only.</p>
 <h2 id="known-gaps-opportunities">Known gaps / opportunities</h2>
 <ul>
@@ -275,12 +467,12 @@ pg_textsearch only.</p>
 <li><code>chunk_overlap=0</code> and char-based splitting can sever context mid-thought.</li>
 </ul>
 <h2 id="how-to-evaluate-a-change">How to evaluate a change</h2>
-<p>RAGAS leaderboard sweep: <code>archi evaluate --config-dir &lt;dir&gt;</code> ranks variants on
+<p><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> leaderboard sweep: <code>archi evaluate --config-dir &lt;dir&gt;</code> ranks variants on
 faithfulness / context-precision / relevance (judge = Harvard HUIT Bedrock
 Claude; see <code>docs/docs/benchmarking.md</code>). <strong>Caveat:</strong> the benchmark question set
 is currently ~9 queries — too few to measure retrieval deltas with confidence.
 <strong>Expanding the question set (to ~40–60, incl. multi-hop and
-category-confusable items) is a prerequisite</strong> for trusting any RAG-change
+category-confusable items) is a prerequisite</strong> for trusting any <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr>-change
 numbers. Corpus is on the order of a few hundred docs / a few thousand chunks
 (query <code>document_chunks</code> for the exact live count) — at this scale the problem is
 usually precision/steering, not recall, which is worth keeping in mind when
@@ -340,6 +532,111 @@ choosing what to prototype.</p>
 </tr>
 </tbody>
 </table>
+<h3 id="what-clearing-cannot-reclaim">What clearing cannot reclaim</h3>
+<p>Clearing replaces a tool result's content with a placeholder; it does not delete
+the message. The framing, the tool-call id, and the model's own call arguments
+all survive, which is what keeps the sequence well-formed and stops the model
+re-fetching what was cleared. So there is a floor:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>tokens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>a full-size tool round, unreduced</td>
+<td>1543</td>
+</tr>
+<tr>
+<td>the same round once cleared</td>
+<td>51.9</td>
+</tr>
+<tr>
+<td>reclaimed by clearing</td>
+<td>96.6%</td>
+</tr>
+</tbody>
+</table>
+<p>At a 32768-token window (trigger 19661) that residue would need roughly <strong>379
+tool rounds</strong> to exhaust the budget on its own, against a <code>recursion_limit</code> of
+50 — about a tenth of the budget at that ceiling. Clearing is therefore
+sufficient, and whole tool rounds are never removed from the middle of a trace.</p>
+<p>If the residue ever does matter, the runtime says so: the wrapper re-measures
+after reducing and logs the overage in the message text, rather than declaring a
+budget met that is not.</p>
+<h3 id="why-the-counting-margin-is-25">Why the counting margin is 25%</h3>
+<p>The counter is an approximation — 4 characters per token — chosen so that
+bounding a request costs no provider round trip and no tokenizer dependency on
+the hot path of every model call. The counting margin is what absorbs its error,
+and 20% is a measured figure rather than a guess:</p>
+<p>Measured over 557 real 800-character chunks of this repository's own
+documentation, each behind a retrieval header, as real tokens ÷ counted tokens:</p>
+<table>
+<thead>
+<tr>
+<th>percentile</th>
+<th>real vs. counted</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>p50</td>
+<td>1.14x</td>
+</tr>
+<tr>
+<td>p90</td>
+<td>1.26x</td>
+</tr>
+<tr>
+<td>p95</td>
+<td>1.29x</td>
+</tr>
+<tr>
+<td>p99</td>
+<td>1.35x</td>
+</tr>
+<tr>
+<td>max</td>
+<td>1.72x</td>
+</tr>
+</tbody>
+</table>
+<p>Plain prose runs 0.9–1.1x, so the counter over-counts it and errs safe.</p>
+<p>Retrieval results are the dense case because every snippet header carries a URL,
+a 32-hex resource hash, a file path and a float score. At the original 5% the
+gap was not covered: a 32768-token window resolved a 26215-token trigger, and a
+prompt filled to it with corpus-average retrieval content really cost 31046
+tokens — 3193 past the window once the answer reserve is added, so the provider
+rejected the request the budget had declared safe.</p>
+<p>25% covers drift up to 1.42x — above the p99 of individual chunks, and well
+above what a <em>prompt</em> reaches, since a filled prompt averages a dozen or more
+chunks and so concentrates near the p50–p75 mean rather than at any one chunk's
+maximum. A single dense chunk cannot carry the whole prompt past the bound.</p>
+<p>Not covered, by choice: text with no prose at all. A passage of pure command
+lines and paths measures 1.80x, and covering that would take a 38% margin —
+spending half the window to insure against something a real 800-character
+documentation chunk does not reach. Those rely on the reactive overflow handler.
+Replacing the character ratio with a real tokenizer is tracked as issue #263.</p>
+<blockquote>
+<p><strong>Raising the margin lowers the trigger</strong>, which can push the retrieval
+exemption past the irreducible-floor guard. At a 32768 window the trigger
+moved 26215 → 19661, and <code>keep</code> has to drop from 3 to 1 for the exemption to
+survive. Re-derive <code>keep</code> whenever <code>margin_fraction</code> changes;
+<code>TestTheTrackedExampleConfigInstallsABound</code> fails if the shipped example drifts.</p>
+</blockquote>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>

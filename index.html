@@ -58,6 +58,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="install/">Install</a>
                 </li>
               </ul>
@@ -106,6 +110,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -115,6 +127,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -146,7 +162,7 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="archi">Archi</h1>
-<p>Archi (AI Augmented Research Chat Intelligence) is a retrieval-augmented generation (RAG) framework designed to be a low-barrier, open-source, private, and customizable AI solution for research and educational support.</p>
+<p>Archi (AI Augmented Research Chat Intelligence) is a retrieval-augmented generation (<abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr>) framework designed to be a low-barrier, open-source, private, and customizable AI solution for research and educational support.</p>
 <p>Archi makes it easy to deploy AI assistants with a suite of tools that connect to</p>
 <ul>
 <li>knowledge bases such as web links, files, JIRA tickets, and documentation</li>
@@ -162,7 +178,7 @@
 </ol>
 <h2 id="about">About</h2>
 <p>Archi is developed by Prof. Paus (MIT Physics), Prof. Kraska (MIT EECS), and their students. It has already been successfully deployed as a user chatbot and technical assistant at SubMIT (the MIT Physics Department's computing cluster) and as an educational assistant for several MIT courses, including 8.01 and 8.511.</p>
-<p>What sets Archi apart is that it is fully open source, configurable across foundational models and LLM libraries, and designed for private deployment. Under the hood, Archi is a highly configurable RAG system tailored for educational and scientific support. Given its success, the scope now spans additional MIT classes, CERN, Harvard, and internal deployments such as CSAIL's support staff.</p>
+<p>What sets Archi apart is that it is fully open source, configurable across foundational models and <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> libraries, and designed for private deployment. Under the hood, Archi is a highly configurable <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> system tailored for educational and scientific support. Given its success, the scope now spans additional MIT classes, CERN, Harvard, and internal deployments such as CSAIL's support staff.</p>
 <h3 id="research-resource-support">Research Resource Support</h3>
 <p>Archi serves technical support teams and end users. At SubMIT, it functions both as a user-facing chatbot and as a ticket assistant. Integration with Redmine enables Archi to prepare draft responses to support tickets that staff can review before sending. In both roles, Archi accesses the corpus of tickets and documentation, citing relevant sources in its answers.</p>
 <h3 id="educational-support">Educational Support</h3>
@@ -199,7 +215,7 @@
 </tr>
 <tr>
 <td><a href="models_providers/">Models &amp; Providers</a></td>
-<td>LLM providers (OpenAI, Anthropic, Gemini, OpenRouter, Local), embeddings, BYOK</td>
+<td><abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> providers (OpenAI, Anthropic, Gemini, OpenRouter, Local), embeddings, <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr></td>
 </tr>
 <tr>
 <td><a href="agents_tools/">Agents &amp; Tools</a></td>
@@ -222,6 +238,10 @@
 <td>Evaluate retrieval and response quality</td>
 </tr>
 <tr>
+<td><a href="evaluation/">Evaluation Guide</a></td>
+<td>Evaluate complete agent answers against reviewed gold atoms</td>
+</tr>
+<tr>
 <td><a href="developer_guide/">Developer Guide</a></td>
 <td>Architecture, contributing, extending the stack</td>
 </tr>
@@ -235,11 +255,22 @@
 </tr>
 </tbody>
 </table>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>
     <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
-        <a href="install/" class="btn btn-neutral float-right" title="Install">Next <span class="icon icon-circle-arrow-right"></span></a>
+        <a href="glossary/" class="btn btn-neutral float-right" title="Glossary">Next <span class="icon icon-circle-arrow-right"></span></a>
     </div>
 
   <hr/>
@@ -267,7 +298,7 @@
     
     
     
-      <span><a href="install/" style="color: #fcfcfc">Next &raquo;</a></span>
+      <span><a href="glossary/" style="color: #fcfcfc">Next &raquo;</a></span>
     
   </span>
 </div>
@@ -287,5 +318,5 @@
 
 <!--
 MkDocs version : 1.6.1
-Build Date UTC : 2026-06-24 18:08:55.484103+00:00
+Build Date UTC : 2026-09-15 18:13:37.724501+00:00
 -->

@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -70,7 +74,21 @@
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#sso-protected-links">SSO-Protected Links</a>
     </li>
+    <li class="toctree-l3"><a class="reference internal" href="#sitemap-sources">Sitemap sources</a>
+    </li>
     <li class="toctree-l3"><a class="reference internal" href="#running">Running</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#building-a-sourceslist-from-a-manifest">Building a sources.list from a manifest</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#where-the-manifest-lives">Where the manifest lives</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#manifest-format">Manifest format</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#output-normalization-and-manual-extras">Output, normalization, and manual extras</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#build-redeploy-workflow">Build → redeploy workflow</a>
     </li>
         </ul>
     </li>
@@ -156,6 +174,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -165,6 +191,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -249,8 +279,159 @@ https://example.com/page2
 <pre><code class="language-bash">SSO_USERNAME=username
 SSO_PASSWORD=password
 </code></pre>
+<h3 id="sitemap-sources">Sitemap sources</h3>
+<p>To track a site that publishes an XML sitemap, list the sitemap itself with a
+<code>sitemap-</code> prefix instead of hand-listing every page. It is expanded <strong>at ingest
+time</strong> — each <code>&lt;loc&gt;</code> becomes a page URL scraped exactly as if hand-listed — so
+newly published pages are discovered automatically on every <strong>full ingest</strong>
+(<code>archi create</code> / a redeploy, i.e. <code>collect_all_from_config</code>):</p>
+<pre><code>sitemap-https://docs.rc.fas.harvard.edu/kb/epkb_post_type_1-sitemap.xml
+</code></pre>
+<p>A <code>&lt;urlset&gt;</code> contributes its pages; a <code>&lt;sitemapindex&gt;</code> is followed <strong>one</strong> level
+(each child fetched once; a child that is itself an index is not followed). An
+individual document that fails to fetch or parse is skipped with a warning
+(fail-open), and emitted URLs are normalized to the hand-list form (trailing
+slash collapsed) so they cannot create slash-variant duplicates.</p>
+<blockquote>
+<p><strong>Note:</strong> a <em>scheduled</em> <code>links</code> refresh (<code>data_manager.sources.links.schedule</code>)
+<strong>does</strong> re-read the input lists and re-expand the sitemap, so a <code>&lt;lastmod&gt;</code> that
+advances between full ingests reaches the catalog. What it re-scrapes is only the
+set of URLs <em>already in the catalog</em>. A page published to the sitemap <em>after</em> the
+last full ingest is therefore still picked up only by the next full
+ingest/redeploy, not by the scheduled refresh.</p>
+<p><strong>If the sitemap cannot be expanded</strong> — unreachable, or its page count falls
+outside the configured <code>min_pages</code>/<code>max_pages</code> bounds — the scheduled refresh
+<strong>still runs</strong>. It crawls the catalog using whatever <code>&lt;lastmod&gt;</code> values were
+cached from the last successful expansion, or none if there has never been one.
+Timestamps already stored are preserved; the only gap is that a page first seen
+during such a pass carries no <code>last_modified</code> until a later pass with a working
+sitemap supplies one.</p>
+<p>In the logs this appears as an <code>ERROR</code> naming the rejected sitemap source
+(<code>failing ingest</code>), followed by a <code>WARNING</code> from the scheduled pass reporting how
+many cached <code>&lt;lastmod&gt;</code> entries it is using and whether they came from a complete
+expansion. The error describes the <em>source</em>; the warning describes the <em>pass</em>,
+which completes. A suppressed refresh would be the worse outcome: it would leave
+the catalog stale for a whole cycle while still being recorded as a clean run.</p>
+</blockquote>
+<p>Because the emitted list comes from a live remote document that no human reviews,
+expansion is trust-constrained and bounded per source — configured under
+<code>data_manager.sources.links.sitemap</code>:</p>
+<pre><code class="language-yaml">data_manager:
+  sources:
+    links:
+      sitemap:
+        allowed_hosts: []      # extra hosts (besides the sitemap's own) allowed
+        min_pages: 1           # floor: a source below this FAILS the ingest
+        max_pages: 20000       # cap: a source above this FAILS deterministically
+</code></pre>
+<p>Only <code>http</code>/<code>https</code> URLs on the sitemap's own host (or an <code>allowed_hosts</code> entry)
+are fetched or emitted; IP-literal loopback/private/link-local targets and
+cross-host redirects are rejected. The <code>min_pages</code> floor runs on <strong>every</strong> ingest
+— a transient sitemap outage fails the run loudly rather than silently shipping
+an empty knowledge base (this matters most on a fresh install or after a <code>nuke</code>).</p>
+<blockquote>
+<p><strong>Scope (v1):</strong> these defaults target a <strong>trusted first-party</strong> sitemap. Before
+pointing <code>sitemap-</code> at any untrusted/third-party sitemap, adopt the stronger
+SSRF defenses (DNS resolve-to-global + connection pinning) and fetch-work
+budgets described in the change's design <em>§Deferred hardening (v2)</em>.</p>
+</blockquote>
+<p>The <code>sitemap-</code> prefix (runtime, automatic) and <code>archi sources build</code>'s
+build-time <code>sitemap</code> seed (operator-run, writes a committed list) are
+complementary — see <a href="#building-a-sourceslist-from-a-manifest">Building a <code>sources.list</code> from a manifest</a>.</p>
 <h3 id="running">Running</h3>
 <p>Link scraping is controlled by your config (<code>data_manager.sources.links.enabled</code>).</p>
+<hr />
+<h2 id="building-a-sourceslist-from-a-manifest">Building a <code>sources.list</code> from a manifest</h2>
+<p>Instead of curating a web link list by hand, you can generate it from a typed
+<strong>manifest</strong> with <a href="../cli_reference/#archi-sources-build"><code>archi sources build</code></a>.
+The manifest declares <em>where the URLs come from</em>; the command fetches and expands
+them into the same one-URL-per-line <code>sources.list</code> the scraper already consumes.</p>
+<h3 id="where-the-manifest-lives">Where the manifest lives</h3>
+<p>The manifest is just a file path you pass to <code>archi sources build &lt;manifest&gt;</code> — there
+is <strong>no fixed or default location</strong> and no auto-discovery. Keep it wherever suits you:</p>
+<ul>
+<li><strong>Alongside the deployment it describes</strong> (recommended) — e.g.
+  <code>deploy/&lt;name&gt;/sources.manifest.yaml</code>, so the manifest travels with that deployment's
+  config. The <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> dev deployment uses <code>deploy/fasrc-dev/sources.manifest.yaml</code>.</li>
+<li><strong>Version-controlled in the repo</strong> if you want it reviewable and reproducible — the
+  shipped template is <a href="https://github.com/fasrc/archi/blob/dev/examples/sources.manifest.yaml"><code>examples/sources.manifest.yaml</code></a>.</li>
+</ul>
+<p>Don't confuse the two files: the <strong>manifest</strong> is the <em>input</em> (operator-chosen location);
+the generated <strong><code>sources.list</code></strong> is the <em>output</em>, whose location is resolved from the
+config's <code>data_manager.sources.links.input_lists</code> (see <a href="#build-redeploy-workflow">Build → redeploy workflow</a>).</p>
+<h3 id="manifest-format">Manifest format</h3>
+<p>The manifest is a YAML list of seed entries. Every entry has a <code>type</code> and a
+<code>url</code>:</p>
+<pre><code class="language-yaml"># sources.manifest.yaml
+- type: sitemap          # fetch the sitemap XML and emit every &lt;loc&gt;
+  url: https://docs.rc.fas.harvard.edu/kb/epkb_post_type_1-sitemap.xml
+  include: [&quot;*/kb/*&quot;]    # optional URL globs (fnmatch); keep only matches
+  exclude: [&quot;*/author/*&quot;]# optional URL globs; drop matches
+
+- type: crawl            # fetch an index page and extract its same-host links
+  url: https://slurm.schedmd.com/archive/slurm-25.11.5/
+  depth: 1               # optional, default 1
+  include: []
+  exclude: []
+
+- type: literal          # emit a URL verbatim, never fetched or crawled
+  url: https://en.wikipedia.org/wiki/Annie_Jump_Cannon
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sitemap</code></td>
+<td>Fetches the sitemap XML and emits every <code>&lt;loc&gt;</code>. Follows <strong>one</strong> level of <code>&lt;sitemapindex&gt;</code> nesting (each child sitemap is fetched once); a child that is itself an index is not followed. An empty sitemap is valid and contributes nothing. Honors <code>include</code>/<code>exclude</code> globs.</td>
+</tr>
+<tr>
+<td><code>crawl</code></td>
+<td>Fetches the index page, extracts anchor links, resolves relative links against the seed URL, and keeps only <strong>same-host</strong> links. Honors an optional <code>depth</code> (default 1) and <code>include</code>/<code>exclude</code> globs. Output is sorted for deterministic diffs.</td>
+</tr>
+<tr>
+<td><code>literal</code></td>
+<td>Emits the URL verbatim — never fetched, crawled, or glob-filtered. The URL is still normalized like every other entry (see below).</td>
+</tr>
+</tbody>
+</table>
+<p>An unknown <code>type</code>, a missing <code>url</code>, or invalid YAML makes the command exit
+non-zero without writing anything.</p>
+<h3 id="output-normalization-and-manual-extras">Output, normalization, and manual extras</h3>
+<p>The target list is regenerated <strong>wholesale</strong> every run. Every URL is normalized
+(fragment dropped, scheme/host lowercased, a single trailing path slash
+collapsed) and deduplicated preserving first-seen order, so <code>--dry-run</code> diffs
+stay small and meaningful.</p>
+<p>To keep hand-added entries — including prefixed lines like <code>git-…</code>, <code>sso-…</code>,
+<code>elog-…</code>, <code>indico-…</code> — put them in a <code>manual-extras.list</code> beside the output.
+Its non-comment, non-blank entries are appended verbatim after the generated
+block. The generated block wins position: an extras line that duplicates a
+generated URL is dropped so the URL appears exactly once.</p>
+<h3 id="build-redeploy-workflow">Build → redeploy workflow</h3>
+<pre><code class="language-bash"># 1. Preview the diff against the current list
+archi sources build sources.manifest.yaml -c config.yaml --dry-run
+
+# 2. Write the regenerated list (resolves the single input_lists entry)
+archi sources build sources.manifest.yaml -c config.yaml
+
+# 3. Write, then print the redeploy command to ingest it
+archi sources build sources.manifest.yaml -c config.yaml \
+  --name dev --env-file .secrets.env --import
+</code></pre>
+<p><code>--import</code> is <strong>advisory</strong>: after a successful write it prints a copy-pasteable
+redeploy command — <code>archi create --name &lt;deployment&gt; [--config &lt;config&gt;]
+[--env-file &lt;env&gt;] --force</code> — and reminds you to append your usual flags
+(<code>--services …</code>, <code>--podman</code>, host/gpu/tag). It <strong>runs nothing</strong>: auto-executing a
+forced recreate is unsafe because it removes the deployment directory and
+re-renders compose for only the named services (dropping others) while ignoring
+the deployment's runtime flags, so you run the redeploy yourself after reviewing
+the regenerated list. If <code>--output</code> points outside the config's <code>input_lists</code>,
+the command warns that the redeploy will not ingest that file. See the
+<a href="../cli_reference/#archi-sources-build">CLI Reference</a> for every flag.</p>
 <hr />
 <h2 id="git-scraping">Git Scraping</h2>
 <p>Ingest content from MkDocs-based git repositories using the <code>GitScraper</code> class, which extracts Markdown content directly instead of scraping rendered HTML.</p>
@@ -352,7 +533,7 @@ python -u src/bin/service_create_account.py
 </code></pre>
 <p>Run the script from the <code>/root/archi</code> directory inside the container. After creating an account, visit the chat UI to log in and upload documents.</p>
 <h3 id="directly-copying-files">Directly Copying Files</h3>
-<p>Documents used for RAG live in the container at <code>/root/data/&lt;directory&gt;/</code>. You can copy files directly:</p>
+<p>Documents used for <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> live in the container at <code>/root/data/&lt;directory&gt;/</code>. You can copy files directly:</p>
 <pre><code class="language-bash">docker cp myfile.pdf &lt;container-id&gt;:/root/data/my_docs/
 </code></pre>
 <p>To create a new directory inside the container:</p>
@@ -366,7 +547,7 @@ python -u src/bin/service_create_account.py
 <li><strong>Browse documents</strong>: View all ingested documents with metadata (source, file type, chunk count)</li>
 <li><strong>Search and filter</strong>: Filter documents by name or source type</li>
 <li><strong>View content</strong>: Click a document to see its full content and individual chunks</li>
-<li><strong>Enable/disable documents</strong>: Toggle whether specific documents are included in RAG retrieval</li>
+<li><strong>Enable/disable documents</strong>: Toggle whether specific documents are included in <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> retrieval</li>
 <li><strong>Bulk operations</strong>: Enable or disable multiple documents at once</li>
 </ul>
 <h3 id="document-states">Document States</h3>
@@ -396,6 +577,17 @@ python -u src/bin/service_create_account.py
 <li>The <code>visible</code> flag on a source (<code>sources.&lt;name&gt;.visible</code>) controls whether content from that source appears in chat citations and user-facing listings. It defaults to <code>true</code>.</li>
 <li>All sources can be listed with <code>archi list-services</code>.</li>
 </ul>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>

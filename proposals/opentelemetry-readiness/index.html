@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>OpenTelemetry Readiness - Archi Docs</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "OpenTelemetry Readiness";
+        var mkdocs_page_input_path = "proposals/opentelemetry-readiness.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../.." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">OpenTelemetry Readiness</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/proposals/opentelemetry-readiness.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="opentelemetry-readiness">OpenTelemetry Readiness</h1>
+<p><strong>Author:</strong> Austin Swinney, <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> — Harvard University
+<strong>Date:</strong> September 2026
+<strong>Status:</strong> Assessment, not scheduled. Observability is parked under the
+<a href="../release-plan-2026/">release plan</a>. This document records what the work needs so a
+plan decision can rest on evidence.
+<strong>Code anchors:</strong> verified against <code>dev</code> at <code>85e93e3a</code> (2026-09-09)</p>
+<hr />
+<h2 id="tldr">TL;DR</h2>
+<ul>
+<li>archi emits no OpenTelemetry today. No archi package, import, or config key enables
+  it. One exception to the categorical claim: the shipped Grafana config carries
+  upstream's own <code>[tracing.jaeger]</code> and <code>[tracing.opentelemetry]</code> sections, OTLP
+  exporter address included (<code>src/cli/templates/grafana/grafana.ini:1272-1322</code>). They
+  are commented out and are Grafana's internal tracing, not archi's — but they exist
+  under <code>src/</code>, so a grep does return them. Every other hit is the word "summarize" or
+  archi's own <code>agent_traces</code> table.</li>
+<li>Six things are required, in this order: a plan decision, a version choice for the
+  OpenTelemetry suite, dependencies in <strong>four</strong> files with one base-image rebuild, one
+  default-off bootstrap module at five seams, a receiver that stores traces, and
+  redaction as a code default.</li>
+<li>The base requirements pin <code>protobuf==4.25.8</code>. Two options looked coherent on
+  paper. Only one of them installs. <strong>Correction, 2026-09-09: option A is dead</strong> —
+  see 2.2. The suite that accepts protobuf 4 cannot import under a current
+  setuptools, so protobuf must move to 7.x and the suite to 1.44.0 / 0.65b0. An
+  unpinned install picks neither: pip pairs the 1.44 SDK with a December 2022
+  exporter.</li>
+<li>Recommendation: traces first, exporter endpoint from environment variables, default
+  off, fail open, content hidden unless a second flag turns it on. Metrics and a
+  collector come later.</li>
+</ul>
+<hr />
+<h2 id="1-current-state">1. Current state</h2>
+<h3 id="11-logging">1.1 Logging</h3>
+<p><code>setup_logging()</code> in <code>src/utils/logging.py:23-36</code> calls <code>logging.basicConfig</code> with
+<code>force=True</code> and a plain text format string (<code>src/utils/logging.py:26</code>). There is no
+JSON formatter, no request ID, no trace ID, and no <code>extra=</code> structured field anywhere
+in <code>src/</code>. Every service entrypoint calls this function first.</p>
+<h3 id="12-web-tier">1.2 Web tier</h3>
+<p>Three processes build a Flask app: chat (<code>src/bin/service_chat.py:41</code>), grader
+(<code>src/bin/service_grader.py:25</code>), and data-manager (<code>src/bin/service_data_manager.py:189</code>,
+which mounts the uploader app). The chat app also registers blueprints for the REST
+API, the OpenAI-compatible <code>/v1</code> routes, service alerts, and the evaluation console.
+All three run on the Flask development server through <code>app.run</code>
+(<code>src/bin/service_chat.py:47-52</code>). There is no gunicorn and no uvicorn, so there is
+no pre-fork hook problem. Containers start the script directly
+(<code>src/cli/templates/dockerfiles/Dockerfile-chat:49</code>).</p>
+<p>The chat stream runs the agent in a one-worker <code>ThreadPoolExecutor</code>
+(<code>src/interfaces/chat_app/app.py:2254</code>). A raw <code>executor.submit</code> would not carry
+OpenTelemetry context across that boundary — but this path does not use one. It
+snapshots the caller's context with <code>contextvars.copy_context()</code> and advances the
+generator through <code>ctx.run</code> (<code>src/interfaces/chat_app/app.py:2245,2264</code>).
+OpenTelemetry keeps its active context in a <code>ContextVar</code>, so the request span already
+crosses this executor. Section 2.4 covers what remains, which is a test rather than an
+instrumentor.</p>
+<h3 id="13-llm-and-agent">1.3 <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> and agent</h3>
+<p>LangChain is the abstraction for every provider in <code>src/archi/providers/</code>:
+<code>ChatOpenAI</code> (OpenAI, OpenRouter, CERN LiteLLM, <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>), <code>ChatAnthropic</code>,
+<code>ChatGoogleGenerativeAI</code> (<code>gemini_provider.py:80-97</code>), <code>ChatOllama</code>
+(<code>local_provider.py:87-107</code>), and the hand-rolled <code>HuitBedrockChat</code>, a
+<code>BaseChatModel</code> subclass that calls the HUIT proxy with <code>requests</code>
+(<code>src/archi/providers/huit_bedrock_provider.py:262-270</code>). <code>LocalProvider</code> also probes
+model lists with <code>urllib.request</code> (<code>local_provider.py:153-161</code> and <code>220-231</code>).</p>
+<p>The agent loop in <code>src/archi/pipelines/agents/base_react.py</code> is LangGraph. Its
+<code>invoke</code> accepts LangChain callback handlers (<code>base_react.py:401-419</code>). It already
+computes a per-step <code>duration_ms</code> (<code>base_react.py:611-623</code>) and normalizes token usage
+(<code>base_react.py:231-259</code>).</p>
+<h3 id="14-database-and-http-clients">1.4 Database and HTTP clients</h3>
+<p>psycopg2 is the only database driver. Most access goes through <code>ConnectionPool</code>
+(<code>src/utils/connection_pool.py:36</code>). 11 modules import <code>requests</code> directly. One module
+uses <code>httpx</code> directly, and the LangChain OpenAI, Anthropic, Gemini, and Ollama clients
+use it internally. <code>urllib.request</code> appears in <code>local_provider.py</code> and
+<code>src/bin/service_benchmark.py:1105</code>.</p>
+<h3 id="15-timing-data-already-stored">1.5 Timing data already stored</h3>
+<p>The <code>timing</code>, <code>agent_traces</code>, and <code>agent_tool_calls</code> tables
+(<code>src/cli/templates/init.sql:474-539</code>) store a trace ID, per-message timestamps,
+per-step tool calls, token totals, and <code>total_duration_ms</code>. This is a hand-rolled span
+store. Grafana reads Postgres directly (<code>src/cli/templates/grafana/datasources.yaml:5</code>).
+There is no metrics emission and no <code>/metrics</code> endpoint.</p>
+<h3 id="16-plan-status">1.6 Plan status</h3>
+<p>Every current observability issue is parked: #258 and #227 (a correlation ID for the
+<code>hybrid_search</code> fallback warning), #204 and #193 (client timing columns). See the
+parked table in the release plan. This is also why the Phoenix evaluation platform
+lives outside this repo.</p>
+<hr />
+<h2 id="2-requirements">2. Requirements</h2>
+<h3 id="21-a-plan-decision">2.1 A plan decision</h3>
+<p>Under the release plan, work enters a milestone only if a release feature is broken,
+wrong, or dishonest without it. OpenTelemetry does not meet that bar today. It needs
+one of two decisions: file it as <code>parked</code> with this document as the reason, or a human
+names the feature it gates.</p>
+<h3 id="22-choose-the-suite-version">2.2 Choose the suite version</h3>
+<p>OpenTelemetry releases the SDK, the exporter, and the instrumentors in lockstep. The
+base requirements pin <code>protobuf==4.25.8</code> (<code>requirements/requirements-base.txt:81</code>),
+and OTLP exporters from 1.28 onward need protobuf 5 or newer. Pip dry runs against
+the base constraints (method in Appendix A) gave these results:</p>
+<table>
+<thead>
+<tr>
+<th>Requested suite</th>
+<th>Result with <code>protobuf==4.25.8</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>unpinned (latest)</td>
+<td>SDK 1.44.0 paired with exporter <strong>1.15.0</strong> (Dec 2022): an untested pair</td>
+</tr>
+<tr>
+<td>1.25.0 / 0.46b0</td>
+<td>no resolution</td>
+</tr>
+<tr>
+<td><strong>1.27.0 / 0.48b0</strong></td>
+<td><strong>resolves</strong>: SDK, exporter, and proto all 1.27.0</td>
+</tr>
+<tr>
+<td>1.29.0 / 0.50b0</td>
+<td>no resolution</td>
+</tr>
+<tr>
+<td>1.33.0 / 0.54b0</td>
+<td>no resolution</td>
+</tr>
+<tr>
+<td>latest, pin removed</td>
+<td>SDK, exporter, and proto all 1.44.0; protobuf 7.36.1</td>
+</tr>
+</tbody>
+</table>
+<p>Two coherent choices:</p>
+<ul>
+<li><strong>Option A. Pin the suite at 1.27.0 / 0.48b0.</strong> No protobuf change. The suite is
+  from September 2024. The OTLP wire format is stable, so any current receiver accepts
+  it. Newer GenAI semantic conventions are absent, which matters only if archi emits
+  those attributes by hand.</li>
+<li><strong>Option B. Bump protobuf and take 1.44.0 / 0.65b0.</strong> Only <code>onnxruntime</code>
+  constrains protobuf in the base set (<code>&gt;=4.25.8</code>), and it accepts 7.x. The
+  <code>pulsar-client</code> bound <code>&lt;=3.20.3</code> applies only to extras archi does not install. This
+  is resolver evidence, not runtime evidence. A three-major-version protobuf change
+  reaches every service image and must pass the preview deploy and the smoke suite
+  before it lands.</li>
+</ul>
+<p>Either way the suite must be pinned. Never leave it unpinned.</p>
+<p><strong>Correction, 2026-09-09. Option A is not installable, and this section recommended
+it.</strong> The table above is a resolver result, and Appendix A already says a dry run
+proves only that the resolver is satisfied. A runtime probe closed that gap and
+refuted option A. <code>opentelemetry-instrumentation==0.48b0</code> imports <code>pkg_resources</code> at
+module scope (<code>dependencies.py:4</code>), and setuptools 82 removed that module. The package
+declares only <code>setuptools&gt;=16.0</code>, so a fresh install takes the newest setuptools and
+every instrumentor import raises <code>ModuleNotFoundError</code>. Measured twice: in the conda
+<code>archi</code> environment at setuptools 82.0.1, and in a clean virtual environment that
+resolved setuptools 84.0.0. Under option A, archi would fail open on every start and
+emit nothing.</p>
+<p>No version between the two options exists. <code>opentelemetry-proto</code> needs protobuf 5 or
+newer from 1.28 onward, so 1.27.0 is the last core release that accepts protobuf 4.
+<code>opentelemetry-instrumentation</code> dropped <code>pkg_resources</code> in 0.50b0, which pairs with
+core 1.29.0. The ranges do not overlap. A working OTLP exporter therefore requires
+protobuf 5 or newer, which makes option B the only choice and the protobuf bump a
+prerequisite rather than a preference.</p>
+<p>The same probe installed all nine instrumentors and
+<code>openinference-instrumentation-langchain==0.1.74</code> at the 1.44.0 / 0.65b0 suite under
+setuptools 84 and imported every one. The implementation is
+<code>openspec/changes/add-opentelemetry-tracing/</code>.</p>
+<h3 id="23-declare-dependencies-in-four-files">2.3 Declare dependencies in four files</h3>
+<p>Service images run <code>pip install .</code> on top of the base image. A package must be in both
+<code>pyproject.toml</code> and <code>requirements/requirements-base.txt</code> with the same pin.
+<code>pyproject.toml:38-58</code> records this rule.</p>
+<p>Two generated files travel with them. <code>scripts/dev/build_docker_images.sh:80-86</code>
+concatenates each header with <code>requirements-base.txt</code> to rewrite
+<code>src/cli/templates/dockerfiles/base-python-image/requirements.txt</code> and
+<code>base-pytorch-image/requirements.txt</code>, and
+<code>tests/unit/test_requirements_generated_in_sync.py</code> compares the tracked copies to
+that output <strong>byte for byte</strong>. Editing <code>requirements-base.txt</code> without regenerating
+both fails the unit suite, so phase 1 commits four files, not two.</p>
+<p>Any edit to <code>requirements-base.txt</code> triggers
+a base-image rebuild (<code>.github/workflows/publish-base-images.yml:43</code>), so one rebuild
+is unavoidable under either option in 2.2. After the rebuild,
+<code>scripts/dev/update_service_base_images.py</code> bumps the digest pin in 15 service
+Dockerfiles (<code>src/cli/templates/dockerfiles/Dockerfile-chat:2-3</code> and its siblings).</p>
+<p>Packages, all at one suite version:</p>
+<ul>
+<li><code>opentelemetry-sdk</code></li>
+<li><code>opentelemetry-exporter-otlp-proto-http</code>. HTTP, not gRPC: no grpcio wheel, and
+  Phoenix accepts it.</li>
+<li><code>opentelemetry-instrumentation-flask</code></li>
+<li><code>opentelemetry-instrumentation-requests</code></li>
+<li><code>opentelemetry-instrumentation-httpx</code></li>
+<li><code>opentelemetry-instrumentation-urllib</code>, for the <code>LocalProvider</code> model probes.</li>
+<li><code>opentelemetry-instrumentation-psycopg2</code></li>
+<li><code>opentelemetry-instrumentation-logging</code></li>
+<li><code>openinference-instrumentation-langchain</code>, if Phoenix is the receiver. Phoenix
+  classifies spans by the <code>openinference.span.kind</code> attribute (<abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr>, TOOL, RETRIEVER,
+  CHAIN). Plain OpenTelemetry spans show as unknown kind.</li>
+</ul>
+<p>No threading instrumentor. The chat stream copies the caller's context and enters its
+worker through <code>ctx.run</code> (section 1.2), so the request span is already active there.</p>
+<h3 id="24-one-bootstrap-module-at-five-seams">2.4 One bootstrap module at five seams</h3>
+<p>Add one module, <code>src/utils/telemetry.py</code>, with one function
+<code>init_telemetry(service_name)</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Seam</th>
+<th>Anchor</th>
+<th>What it gives</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>setup_logging()</code></td>
+<td><code>src/utils/logging.py:23-36</code></td>
+<td>one init point for all 9 <code>src/bin/service_*.py</code> processes; the format string gains trace-ID placeholders here</td>
+</tr>
+<tr>
+<td>Flask apps</td>
+<td><code>service_chat.py:41</code>, <code>service_grader.py:25</code>, <code>service_data_manager.py:189</code></td>
+<td>one server span per request</td>
+</tr>
+<tr>
+<td>Agent worker thread</td>
+<td><code>src/interfaces/chat_app/app.py:2245,2264</code></td>
+<td>no instrumentor. The stream copies the caller's context and advances the generator through <code>ctx.run</code>, so the request span is already active in the worker. A test pins it</td>
+</tr>
+<tr>
+<td>LangChain callbacks</td>
+<td><code>base_react.py:396-419</code></td>
+<td><abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr>, tool and graph spans on the <code>invoke</code> path, with no edit inside the 2460-line file. <strong>Not sufficient for chat</strong>, which streams: <code>stream()</code> at <code>:518</code> and <code>astream()</code> at <code>:897</code> take <code>**kwargs</code> only and never forward <code>callbacks</code>. See 2.8 — either the global <code>LangChainInstrumentor</code>, or callback forwarding, which is an edit to this file <strong>and</strong> to the chat call site at <code>chat_app/app.py:2233-2237</code>, which passes no callbacks today</td>
+</tr>
+<tr>
+<td><code>ConnectionPool</code></td>
+<td><code>src/utils/connection_pool.py:36</code></td>
+<td>database spans; the instrumentor must run before the pool is created</td>
+</tr>
+</tbody>
+</table>
+<p>Rules:</p>
+<ul>
+<li><strong>Default off.</strong> The module returns at once unless <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> is
+  set or an archi flag enables it.</li>
+<li><strong>Fail open.</strong> An import error or an exporter error must log one warning and leave
+  the service up. The <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> metrics shim (<code>docs/docs/fasrc_archi.md:70-82</code>) shows a
+  metrics middleware that returned HTTP 500 on every request. Export failures must be
+  visible in the service log, because the batch processor drops spans silently.</li>
+<li><strong>Config by environment variable.</strong> The SDK reads <code>OTEL_SERVICE_NAME</code> and
+  <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> at process start, before the Postgres-seeded config
+  loads. The compose template already passes an <code>env_file</code> and a per-service
+  <code>environment</code> map (<code>src/cli/templates/base-compose.yaml:53-59</code>).</li>
+<li><strong>Content hidden by default.</strong> See 2.7. A second, separate flag is the only way to
+  export prompts, completions, or documents.</li>
+<li>
+<p><strong>Trace ID in log lines.</strong> The logging instrumentor adds <code>otelTraceID</code> and
+  <code>otelSpanID</code> to each log record. It does not change archi's format string, and its
+  own <code>basicConfig</code> call is a no-op because <code>setup_logging()</code> already installed a
+  handler with <code>force=True</code>. So <code>setup_logging()</code> must select a format string with
+  <code>%(otelTraceID)s</code> and <code>%(otelSpanID)s</code> when telemetry is on, and the plain string
+  when it is off, or the plain path raises <code>KeyError</code> on every record.</p>
+<p><strong>Order matters, and it is a fail-open requirement, not a preference.</strong> Select the
+trace-aware format only <strong>after</strong> <code>LoggingInstrumentor</code> has installed the record
+fields, and restore the plain format if it did not. Choosing the format from the
+<em>intent</em> to enable telemetry means that an import or init failure leaves
+<code>%(otelTraceID)s</code> in a handler whose records never carry it — every subsequent
+record then dies in formatting, including the one warning the fail-open rule above
+requires. The failure would silence the log that was supposed to report it.</p>
+<p>The <code>hybrid_search</code> fallback warning fires inside the worker thread. That thread
+is entered through <code>ctx.run</code> on a copied context (1.2), so the trace ID reaches it
+without a threading instrumentor; a captured-log test inside an active span is what
+proves it. This work can close #258 and #227, but only after that test passes.</p>
+</li>
+</ul>
+<h3 id="25-instrumentation-coverage">2.5 Instrumentation coverage</h3>
+<table>
+<thead>
+<tr>
+<th>Traffic</th>
+<th>Library</th>
+<th>Instrumentor</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Inbound HTTP</td>
+<td>Flask</td>
+<td>flask</td>
+<td>3 app processes; exclude the SSO routes, see 2.7</td>
+</tr>
+<tr>
+<td>Agent worker</td>
+<td><code>ThreadPoolExecutor</code> entered through <code>ctx.run</code></td>
+<td>none needed</td>
+<td>context already propagates, <code>app.py:2245,2264</code>; a test covers it, see 2.8</td>
+</tr>
+<tr>
+<td><abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> calls</td>
+<td>LangChain: <code>ChatOpenAI</code>, <code>ChatAnthropic</code>, <code>ChatGoogleGenerativeAI</code>, <code>ChatOllama</code>, <code>HuitBedrockChat</code></td>
+<td>openinference-langchain, or a callback handler</td>
+<td>all five are <code>BaseChatModel</code>, so callbacks cover them</td>
+</tr>
+<tr>
+<td><abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> egress</td>
+<td>httpx inside langchain-openai, langchain-anthropic, langchain-google-genai, langchain-ollama</td>
+<td>httpx</td>
+<td></td>
+</tr>
+<tr>
+<td>HUIT Bedrock, scrapers, Mattermost, Piazza</td>
+<td>requests</td>
+<td>requests</td>
+<td>11 modules</td>
+</tr>
+<tr>
+<td>Model discovery</td>
+<td>urllib.request</td>
+<td>urllib</td>
+<td><code>local_provider.py</code>, benchmark harness</td>
+</tr>
+<tr>
+<td>Postgres</td>
+<td>psycopg2</td>
+<td>psycopg2</td>
+<td>pooled and direct calls</td>
+</tr>
+<tr>
+<td>Logs</td>
+<td>stdlib logging</td>
+<td>logging</td>
+<td>trace ID injection; OTLP log export is optional</td>
+</tr>
+<tr>
+<td>Metrics</td>
+<td>none today</td>
+<td>none</td>
+<td>needs a MeterProvider and a receiver; see 2.6</td>
+</tr>
+</tbody>
+</table>
+<h3 id="26-a-receiver-that-stores-traces">2.6 A receiver that stores traces</h3>
+<p>Nothing in this repo accepts or stores OTLP today. A collector alone is not enough: it
+receives and forwards, and this stack has no Tempo, Jaeger, or Prometheus behind it.
+Three options:</p>
+<ul>
+<li><strong>Phoenix as an archi compose service.</strong> Copy the Grafana pattern: a compose block
+  (<code>src/cli/templates/base-compose.yaml:285-320</code>), a <code>ServiceDefinition</code>
+  (<code>src/cli/service_registry.py:115-128</code>), and the render wiring in
+  <code>src/cli/managers/templates_manager.py</code>. Phoenix stores to its own Postgres or a
+  SQLite volume and accepts OTLP over HTTP on port 6006. This is the only option that
+  works on the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> dev GPU host without a network decision.</li>
+<li><strong>Phoenix on the claw workstation.</strong> A media-composarr OpenSpec change, not yet
+  applied, plans Phoenix with OTLP on a LAN address only. This document cannot verify
+  that topology. Before the claw archi stack points at it, record the applied
+  revision and a connectivity probe from the archi host.</li>
+<li><strong>A collector sidecar.</strong> Only when more than one backend must receive the same
+  spans. It adds a hop and a config file, and it stores nothing.</li>
+</ul>
+<p>Whichever receiver is chosen, the bootstrap module must log export failures, and the
+proposal for that receiver must name its transport security and its retention.</p>
+<h3 id="27-redaction-as-a-code-default">2.7 Redaction as a code default</h3>
+<p>The OpenInference LangChain instrumentor records prompts, completions, tool arguments,
+and retrieved documents by default. Issue #258 excludes query text from logs on
+purpose, and the same rule must hold for spans. The bootstrap module must:</p>
+<ul>
+<li>Construct the OpenInference <code>TraceConfig</code> with <code>hide_inputs=True</code> and
+  <code>hide_outputs=True</code>. Environment advice is not enough; one missed variable exports
+  everything.</li>
+<li>Expose one separate flag, for example <code>ARCHI_OTEL_CAPTURE_CONTENT=true</code>, as the only
+  way to export content, and document it as a privacy decision.</li>
+<li>Exclude the SSO routes from Flask spans. The OAuth callback
+  (<code>src/interfaces/chat_app/app.py:3457-3464</code>) receives the authorization code in the
+  query string, and the catalog search (<code>src/interfaces/uploader_app/app.py:559-562</code>)
+  receives the user query in <code>?q=</code>. HTTP semantic conventions keep the query string
+  unless a span processor strips it, so add one that drops query strings from every
+  URL attribute.</li>
+<li>Leave psycopg2 parameter capture off, its default. SQL text without parameters is
+  acceptable; parameters are not.</li>
+</ul>
+<h3 id="28-tests-and-the-gate">2.8 Tests and the gate</h3>
+<ul>
+<li>Add <code>tests/unit/test_telemetry.py</code>, flat like the other <code>src/utils</code> tests. Use
+  <code>monkeypatch.setenv</code> (pattern: <code>tests/unit/test_fasrc_docs_agent.py:109</code>).</li>
+<li>Cover the off path, the fail-open path, and the on path with an in-memory span
+  exporter. The fail-open test must induce an instrumentor failure after the enable
+  flag is set and assert that a later log record still renders in the plain format.</li>
+<li>Assert spans for: one Flask request; the agent <code>invoke</code> and stream paths; one
+  <code>HuitBedrockChat</code> call; one pooled psycopg2 call; and one captured log line with a
+  trace ID, emitted from a worker thread inside an active span.</li>
+<li>Assert redaction: no prompt, document text, query string, or OAuth code appears in
+  any exported span with the default flags.</li>
+<li><code>src/interfaces/chat_app/app.py</code> is not imported by unit tests. Keep the call site
+  there to one line, per <code>CLAUDE.md</code>.</li>
+<li>
+<p>Do not edit <code>base_react.py</code> for spans <strong>on the <code>invoke</code> path</strong> — its <code>callbacks</code>
+  parameter (<code>base_react.py:396-419</code>) is enough there. It is not enough for chat.
+  Normal chat calls <code>stream()</code>, which takes <code>**kwargs</code> only, never forwards a
+  <code>callbacks</code> argument, and invokes LangGraph with <code>config={"recursion_limit":
+  recursion_limit}</code> (<code>base_react.py:518-557</code>); <code>astream()</code> at <code>:897</code> is the same shape.
+  So a callback handler alone instruments the QA evaluation and leaves streamed chat
+  with no <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr>, tool or graph spans. Decide in phase 2, not while implementing it:</p>
+<ul>
+<li><strong>Global <code>LangChainInstrumentor</code>.</strong> No edit to <code>base_react.py</code>, no edit to the chat
+  app.</li>
+<li><strong>Callback forwarding.</strong> This is <strong>two</strong> edits, not one, and the second is easy to
+  miss. <code>stream()</code> and <code>astream()</code> must accept and forward <code>callbacks</code> — an edit to
+  <code>base_react.py</code> — <em>and</em> the chat call site must actually pass a handler.
+  <code>ChatWrapper</code> calls <code>self.archi.stream(history=..., conversation_id=...,
+  pipeline=...)</code> (<code>src/interfaces/chat_app/app.py:2233-2237</code>) and supplies no
+  callbacks, so forwarding alone would plumb an argument nobody sends and streamed
+  chat would still emit nothing. Note that <code>app.py</code> is not imported by unit tests, so
+  that second edit has to stay a thin call site per <code>CLAUDE.md</code>.</li>
+</ul>
+<p>The global instrumentor is the cheaper of the two by some distance. Treat callback
+forwarding as the option that has to justify itself.</p>
+</li>
+</ul>
+<hr />
+<h2 id="3-recommendation">3. Recommendation</h2>
+<p>Phase the work. Each phase is one PR.</p>
+<ol>
+<li><strong>Dependencies.</strong> Pick option A or B from 2.2. Add the pinned packages to all four
+   files from 2.3, rebuild the base image once, bump 15 digests. Under option B this
+   PR also bumps protobuf. Validate through the preview deploy and the smoke suite
+   before merge. No OpenTelemetry code yet.</li>
+<li><strong>Traces.</strong> Bootstrap module, Flask, requests, httpx, urllib, psycopg2, the LangChain
+   decision from 2.8 (callbacks alone cover <code>invoke</code> but not streamed chat, so this phase
+   picks the instrumentor or adds callback forwarding), log format. Default off. Content
+   hidden. Exporter endpoint from environment. Redaction tests green.</li>
+<li><strong>Receiver.</strong> Phoenix as a compose service behind a flag like <code>grafana_enabled</code>.
+   Point the claw stack at its own Phoenix only after a recorded probe.</li>
+<li><strong>Metrics.</strong> MeterProvider, request and <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> histograms, Prometheus, Grafana
+   datasource. Only if someone asks for a metric the <code>timing</code> table cannot answer.</li>
+</ol>
+<p>The <code>timing</code> and <code>agent_traces</code> tables map almost one to one onto the OpenTelemetry
+GenAI semantic conventions, so a span exporter is a plausible eventual replacement
+rather than a parallel store. Do not remove them in phase 2 — and do not read
+"replace" as "drop in".</p>
+<p>Both tables are product surfaces with live consumers, not private span sinks. The chat
+history route batch-fetches <code>agent_traces</code> and attaches its <code>events</code>, status, tool
+count and duration to assistant messages
+(<code>src/interfaces/chat_app/app.py:5257-5300</code>), and the shipped Grafana dashboard runs
+SQL directly against <code>timing</code>
+(<code>src/cli/templates/grafana/archi-default-dashboard.json:105-210</code>). An OTLP exporter
+or a Phoenix store satisfies neither interface. Any replacement has to migrate both
+consumers and preserve the message linkage and the event schema, which is its own
+piece of work and is not costed here.</p>
+<hr />
+<h2 id="4-open-decisions">4. Open decisions</h2>
+<ul>
+<li>Does OpenTelemetry gate a release feature, or is it <code>parked</code>? Plan owner.</li>
+<li>Option A (suite 1.27.0, protobuf unchanged) or option B (protobuf 7.x, suite
+  1.44.0)? Owner of the base image.</li>
+<li>Phoenix inside the archi compose, or on claw, or both? Depends on which host runs
+  traces first.</li>
+<li>Do prompts and completions ever leave the host? Privacy owner. Default no.</li>
+<li>Does upstream <code>archi-physics/archi</code> want the bootstrap module? Upstream has no
+  observability code and no open issue on this topic as of 2026-09-08. A default-off
+  module is a low-conflict contribution.</li>
+</ul>
+<hr />
+<h2 id="appendix-a-dependency-resolution-method">Appendix A. Dependency resolution method</h2>
+<p>Pip dry runs on 2026-09-08 with pip from the conda <code>archi</code> env (Python 3.11.15):</p>
+<ol>
+<li>Copy <code>requirements/requirements-base.txt</code> at <code>dev</code> <code>3170498c</code>. Strip comments and
+   extras so pip accepts it as a constraints file.</li>
+<li>Run <code>pip install --dry-run --ignore-installed --report out.json -c &lt;constraints&gt;</code>
+   with the packages in section 2.3, first unpinned, then at each suite version in the
+   2.2 table.</li>
+<li>Repeat the unpinned run with the <code>protobuf</code> line removed.</li>
+<li>Resolve the whole base set with <code>protobuf</code> free. protobuf lands at 7.36.1. The only
+   non-extra constraint is <code>onnxruntime==1.29.0 requires protobuf&gt;=4.25.8</code>.</li>
+</ol>
+<p>A dry run proves that the resolver is satisfied. It does not prove that the packages
+work together at runtime. The base image installs the requirements file as-is
+(<code>src/cli/templates/dockerfiles/base-python-image/Dockerfile:11</code>), so the pin, not the
+conda env, is what the images get.</p>
+<h2 id="appendix-b-false-positives">Appendix B. False positives</h2>
+<p>A repo-wide grep for
+<code>opentelemetry|otel|prometheus|langfuse|langsmith|phoenix|sentry|tracing|traceloop|arize</code>
+returns one <strong>real</strong> vendor reference under <code>src/</code> and a crowd of false ones.</p>
+<p>The real hit is <code>src/cli/templates/grafana/grafana.ini</code>, which carries upstream
+Grafana's <code>[tracing.jaeger]</code> (<code>:1272</code>), <code>[tracing.opentelemetry]</code> (<code>:1295</code>) and
+<code>[tracing.opentelemetry.jaeger]</code> (<code>:1311</code>) sections, an OTLP exporter address
+(<code>:1317</code>) and a propagation setting (<code>:1314</code>). Every line is commented out, and all of
+it configures Grafana's own tracing, not archi's — so it does not weaken the "archi
+emits nothing today" finding. It does mean the categorical form of that claim is
+wrong, which is why this appendix now names it.</p>
+<p>Every other hit is the substring <code>arize</code> inside the ordinary English word
+"summarize" — in <code>src/archi/pipelines/agents/base_react.py</code> (nine occurrences, around
+the message-summarisation helpers at <code>:1924-1965</code> and the wrap-up at <code>:2329-2433</code>), in
+<code>src/cli/managers/base_image_preflight.py:1193</code> and <code>:1290</code>, and in
+<code>src/interfaces/chat_app/app.py:1364</code>. The Prometheus mentions in
+<code>docs/docs/fasrc_archi.md</code> describe <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>'s metrics middleware, not archi.</p>
+<p>Line numbers in this appendix were re-derived against <code>origin/dev</code> at <code>85e93e3a</code>, after</p>
+<h1 id="436-437-and-440-landed-the-base_image_preflightpy-and-base_reactpy-anchors-moved">436, #437 and #440 landed. The <code>base_image_preflight.py</code> and <code>base_react.py</code> anchors moved</h1>
+<p>between the first draft and the merge, which is the reason this note records the revision.</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

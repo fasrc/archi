@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -107,8 +111,16 @@
         </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#running">Running</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#environment-variables">Environment variables</a>
+    </li>
+        </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#results">Results</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#report-formats">Report formats</a>
+    </li>
+        </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#prompt-sweep">Prompt sweep</a>
         <ul>
@@ -122,6 +134,16 @@
     </li>
         </ul>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#hierarchical-rerank-ab">Hierarchical-rerank A/B</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#run">Run</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#measuring-the-three-deltas">Measuring the three deltas</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#sweeping-chunk-sizes">Sweeping chunk sizes</a>
+    </li>
+        </ul>
+    </li>
     <li class="toctree-l2"><a class="reference internal" href="#human-grading-via-argilla">Human grading via Argilla</a>
         <ul>
     <li class="toctree-l3"><a class="reference internal" href="#operator-loop">Operator loop</a>
@@ -129,6 +151,10 @@
     <li class="toctree-l3"><a class="reference internal" href="#cli-flags">CLI flags</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#judgesut-split">Judge/SUT split</a>
+        <ul>
+    <li class="toctree-l4"><a class="reference internal" href="#tool-calling-and-structured-output-on-huit_bedrock">Tool calling and structured output on huit_bedrock</a>
+    </li>
+        </ul>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#argilla-configuration">Argilla configuration</a>
     </li>
@@ -146,7 +172,81 @@
     </li>
         </ul>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#maintaining-the-golden-set-coverage-orphans-drift-report">Maintaining the golden set (coverage / orphans / drift / report)</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#why-the-three-passes-read-different-sources">Why the three passes read different sources</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#coverage-pages-with-no-question">coverage — pages with no question</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#coverage-propose-draft-questions-for-one-greenlit-page">coverage --propose — draft questions for one greenlit page</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#the-decision-ledger-declines-only">The decision ledger — declines only</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#orphans-questions-whose-page-is-gone">orphans — questions whose page is gone</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#drift-confirmed-answers-whose-page-changed">drift — confirmed answers whose page changed</a>
+        <ul>
+    <li class="toctree-l4"><a class="reference internal" href="#what-gets-checked">What gets checked</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#hashes-are-taken-over-extracted-text-not-markup">Hashes are taken over extracted text, not markup</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#what-drift-will-and-will-not-fetch">What drift will and will not fetch</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#seeing-the-evidence">Seeing the evidence</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#stored-hashes-carry-their-algorithm">Stored hashes carry their algorithm</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#everything-that-isnt-unchanged-or-changed-is-reported">Everything that isn't unchanged or changed is reported</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#recording-a-baseline">Recording a baseline</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#abstention">Abstention</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#advisory-always">Advisory, always</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#report-all-three-passes-for-a-cron">report — all three passes, for a cron</a>
+        <ul>
+    <li class="toctree-l4"><a class="reference internal" href="#findings-exit-zero-only-a-broken-pass-exits-non-zero">Findings exit zero; only a broken pass exits non-zero</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#the-summary-json-what-every-run-reports">The summary JSON — what every run reports</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#the-file-is-not-self-certifying">The file is not self-certifying</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#one-broken-pass-does-not-hide-the-other-two">One broken pass does not hide the other two</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#no-model-is-called-unless-you-name-one">No model is called unless you name one</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#read-only-like-every-other-pass">Read-only, like every other pass</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#preserved-permissions-on-the-files-it-does-write">Preserved permissions on the files it does write</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#the-outputs-directory-must-be-writable-which-it-did-not-have-to-be-before">The output's directory must be writable, which it did not have to be before</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#a-symlinked-output-path-is-followed-not-replaced">A symlinked output path is followed, not replaced</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#a-hard-linked-output-path-is-reported-not-followed">A hard-linked output path is reported, not followed</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#a-run-that-fails-leaves-nothing-staged">A run that fails leaves nothing staged</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#what-an-output-path-may-be">What an output path may be</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#running-it-nightly">Running it nightly</a>
+    </li>
+        </ul>
+    </li>
+        </ul>
+    </li>
     </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
                 </li>
               </ul>
               <ul>
@@ -159,6 +259,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -191,6 +295,12 @@
               
                 <h1 id="benchmarking">Benchmarking</h1>
 <p>Archi provides benchmarking functionality via the <code>archi evaluate</code> CLI command to measure retrieval and response quality.</p>
+<p>Archi also offers a separate <code>archi eval qa</code> command and browser console for
+atom-based correctness evaluation of complete agent answers: repeated
+attempts, optional manual gold-atom review, live Dataset V2 checks, and
+persisted per-attempt tool evidence. The two workflows measure different
+things and do not replace each other. See the <a href="../evaluation/">Evaluation Guide</a>
+for that workflow.</p>
 <h2 id="evaluation-modes">Evaluation Modes</h2>
 <p>Two modes are supported (can be used together):</p>
 <h3 id="sources-mode">SOURCES Mode</h3>
@@ -199,25 +309,34 @@
 <li>Default match field: <code>file_name</code> (configurable per-query)</li>
 <li>Override with <code>sources_match_field</code> in the queries file</li>
 </ul>
-<h3 id="ragas-mode">RAGAS Mode</h3>
-<p>Uses the <a href="https://docs.ragas.io/en/stable/concepts/metrics/">Ragas</a> evaluator for four metrics:</p>
+<h3 id="ragas-mode"><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> Mode</h3>
+<p>Uses the <a href="https://docs.ragas.io/en/stable/concepts/metrics/">Ragas</a> evaluator. Four
+metrics are on by default and a fifth is opt-in:</p>
 <ul>
 <li><strong>Answer relevancy</strong>: How relevant the answer is to the question</li>
 <li><strong>Faithfulness</strong>: Whether the answer is grounded in the retrieved context</li>
 <li><strong>Context precision</strong>: How relevant the retrieved documents are</li>
-<li><strong>Context relevancy</strong>: How much of the retrieved context is useful</li>
+<li><strong>Context recall</strong>: Whether retrieval found everything the reference answer needed</li>
+<li><strong>Answer correctness</strong> (opt-in): Whether the answer is <em>correct</em> against the
+  reference answer. The other four grade relevance and grounding, so none of them
+  can tell a right answer from a wrong one. Enable it by adding
+  <code>answer_correctness</code> to
+  <code>services.benchmarking.mode_settings.ragas_settings.enabled_metrics</code>.</li>
 </ul>
 <hr />
 <h2 id="preparing-the-queries-file">Preparing the Queries File</h2>
-<p>Provide questions, expected answers, and correct sources in JSON format:</p>
+<p>Provide questions, ground-truth answers, and correct sources in ragas 0.3.5's
+modern JSON schema (<code>user_input</code>/<code>reference</code>). Banks authored in the legacy
+<code>question</code>/<code>answer</code> schema are still accepted — the harness normalizes them on
+read (<code>question</code>→<code>user_input</code>, <code>answer</code>→<code>reference</code>, <code>contexts</code>→<code>retrieved_contexts</code>).</p>
 <pre><code class="language-json">[
   {
-    &quot;question&quot;: &quot;Does Jorian Benke work with the PPC?&quot;,
+    &quot;user_input&quot;: &quot;Does Jorian Benke work with the PPC?&quot;,
     &quot;sources&quot;: [
       &quot;https://ppc.mit.edu/blog/2025/07/14/welcome-our-first-ever-in-house-masters-student/&quot;,
       &quot;CMSPROD-42&quot;
     ],
-    &quot;answer&quot;: &quot;Yes, Jorian works with the PPC and her topic is Lorentz invariance.&quot;,
+    &quot;reference&quot;: &quot;Yes, Jorian works with the PPC and her topic is Lorentz invariance.&quot;,
     &quot;source_match_field&quot;: [&quot;url&quot;, &quot;ticket_id&quot;]
   }
 ]
@@ -232,27 +351,36 @@
 </thead>
 <tbody>
 <tr>
-<td><code>question</code></td>
+<td><code>user_input</code></td>
 <td>Yes</td>
-<td>The question to ask</td>
+<td>The question to ask (ragas <code>user_input</code>)</td>
 </tr>
 <tr>
 <td><code>sources</code></td>
-<td>Yes</td>
+<td>SOURCES mode</td>
 <td>List of source identifiers (URLs, ticket IDs, etc.)</td>
 </tr>
 <tr>
-<td><code>answer</code></td>
-<td>Yes</td>
-<td>Expected answer (used for RAGAS evaluation)</td>
+<td><code>reference</code></td>
+<td>No¹</td>
+<td>Ground-truth answer (ragas <code>reference</code>, used for <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> evaluation)</td>
 </tr>
 <tr>
 <td><code>source_match_field</code></td>
 <td>No</td>
 <td>Metadata fields to match sources against (defaults to config value)</td>
 </tr>
+<tr>
+<td><code>difficulty</code></td>
+<td>No</td>
+<td>Optional bank label; copied verbatim into <code>single_question_results</code> when present, so <code>compare_runs.py</code> can slice by it.</td>
+</tr>
 </tbody>
 </table>
+<p>¹ Only <code>user_input</code> is required at load (plus <code>sources</code> for SOURCES mode). An
+empty <code>reference</code> is a valid draft row: it is skipped by every metric that needs
+the ground truth (<code>context_precision</code>, <code>context_recall</code> and <code>answer_correctness</code>)
+but still scored by <code>answer_relevancy</code> and <code>faithfulness</code>.</p>
 <p>See <code>examples/benchmarking/queries.json</code> for a complete example.</p>
 <hr />
 <h2 id="configuration">Configuration</h2>
@@ -306,12 +434,17 @@
 <tr>
 <td><code>ollama_url</code></td>
 <td>—</td>
-<td>Ollama base URL when <code>provider: local</code></td>
+<td><abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> base URL when <code>provider: local</code> (e.g. an Ollama server, or an OpenAI-compatible <code>/v1</code> endpoint such as a <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>)</td>
+</tr>
+<tr>
+<td><code>provider_mode</code></td>
+<td><em>auto</em></td>
+<td>Local <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> client mode: <code>openai_compat</code> (ChatOpenAI) or <code>ollama</code> (ChatOllama). Auto-detected from <code>ollama_url</code> — a <code>/v1</code> endpoint → <code>openai_compat</code>, otherwise <code>ollama</code>. Set explicitly to override</td>
 </tr>
 <tr>
 <td><code>queries_path</code></td>
 <td>—</td>
-<td>Path to the queries JSON file</td>
+<td>Path to the queries JSON file (ragas modern dialect <code>user_input</code>/<code>reference</code>; legacy <code>question</code>/<code>answer</code> banks are normalized on read)</td>
 </tr>
 <tr>
 <td><code>out_dir</code></td>
@@ -326,7 +459,7 @@
 <tr>
 <td><code>mode_settings.ragas_settings.timeout</code></td>
 <td><code>180</code></td>
-<td>Max seconds per QA pair for RAGAS evaluation</td>
+<td>Max seconds per QA pair for <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> evaluation</td>
 </tr>
 <tr>
 <td><code>mode_settings.ragas_settings.batch_size</code></td>
@@ -337,7 +470,7 @@
 </table>
 <p><code>archi evaluate</code> now requires benchmark runtime fields under <code>services.benchmarking</code>.
 <code>services.chat_app</code> fields are not used for benchmark runtime configuration.</p>
-<h3 id="ragas-settings">RAGAS Settings</h3>
+<h3 id="ragas-settings"><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> Settings</h3>
 <table>
 <thead>
 <tr>
@@ -365,9 +498,100 @@ archi evaluate -n benchmark -cd configs/ -e .secrets.env
 archi evaluate -n benchmark -c config.yaml -e .secrets.env --gpu-ids all
 </code></pre>
 <p>Make sure the <code>out_dir</code> exists before running.</p>
+<h3 id="environment-variables">Environment variables</h3>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BENCH_INGEST_WAIT_TIMEOUT</code></td>
+<td><code>7200</code></td>
+<td><strong>Stall</strong> budget: seconds allowed since the ingest last reported progress. It restarts on every poll reporting work in progress (<code>state=running</code> at any step past <code>initializing</code>), so an ingest that is working is never cut off for taking a long time — only one that goes silent, or never starts, is.</td>
+</tr>
+<tr>
+<td><code>BENCH_INGEST_MAX_WAIT</code></td>
+<td><code>21600</code></td>
+<td>Absolute ceiling on the whole wait, in seconds — the backstop for an ingest that reports <code>running</code> forever without finishing. <code>0</code> disables it and logs a warning; prefer a large finite value for unattended runs.</td>
+</tr>
+<tr>
+<td><code>BENCH_INGEST_POLL_INTERVAL</code></td>
+<td><code>5</code></td>
+<td>Seconds between ingestion-status polls.</td>
+</tr>
+</tbody>
+</table>
+<p>The two budgets answer three different failures, which is why neither one is a
+plain "give up after N seconds":</p>
+<ul>
+<li><strong>The endpoint went away.</strong> No status URL answers any more.
+  <code>BENCH_INGEST_WAIT_TIMEOUT</code> ends the run after that much silence. Errors are
+  kept per candidate URL, so the message names the URL that <em>had</em> been serving
+  status and quotes <strong>that URL's own</strong> failure — never one from a candidate the
+  harness merely fell through on its way there, and never the last fallback's
+  unrelated DNS error. If nothing ever answered, each candidate is listed with
+  its own error instead, since then they are all separate facts.</li>
+<li><strong>The ingest never started.</strong> The endpoint answers, but with <code>state=pending</code>,
+  with a state the harness does not recognize, or with <code>state=running
+  step=initializing</code> — the last of which means this ingest is queued behind
+  something else holding the data-manager's ingestion lock (a scheduled source
+  refresh, or a vectorstore update triggered by an upload). None of those is
+  progress, so none restarts the stall budget, and <code>BENCH_INGEST_WAIT_TIMEOUT</code>
+  ends the wait on the same schedule as a dead endpoint — naming the state and
+  step, so the queued case is obvious from the error alone.</li>
+<li><strong>The ingest is alive but stuck.</strong> Polls keep reporting <code>running</code> and the
+  state never reaches <code>completed</code>. <code>BENCH_INGEST_MAX_WAIT</code> ends that, and the
+  error reports the last observed <code>state</code> and <code>step</code> rather than a connection
+  problem. Only the ceiling can catch this one: the status payload carries just
+  <code>state</code>, <code>step</code> and <code>error</code>, with no counter or timestamp, so a wedged ingest
+  is byte-for-byte indistinguishable from a working one. Tightening it needs a
+  progress signal from the data-manager itself (issue #428).</li>
+</ul>
+<p>What this wait does <strong>not</strong> cover: a corpus change that starts <em>after</em> the
+initial ingest reports <code>completed</code> — a scheduled source refresh, or a
+vectorstore update triggered by an upload. Those hold the same lock but never
+touch this status endpoint, so the harness cannot block on them. It detects
+them after the fact instead, by fingerprinting the corpus on both sides of each
+arm and recording <code>corpus_unchanged_at_endpoints</code> in the results.</p>
+<p>A long-but-healthy ingest hits none of them. CPU-only ingest of the full <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr>
+corpus takes ~64 min; with <code>processing.categorization.enabled: true</code> it runs one
+extra <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> call per document before embedding, and has been measured at over two
+hours on a loaded host. Under the old absolute deadline that run was killed at
+exactly 7200s while every one of its 1433 status polls was succeeding, two
+minutes short of finishing (issue #378).</p>
+<p>However long the wait turns out to be, it is recorded: every arm of the run
+carries <code>ingest_wall_seconds</code>, and both report formats show it in the <strong>Run
+provenance</strong> block as "Time to ingest". A run that finds the corpus already
+built records <code>null</code> there rather than <code>0</code> — see
+<a href="../interpreting_benchmark_results/">Interpreting benchmark results</a>.</p>
 <hr />
 <h2 id="results">Results</h2>
 <p>Results are saved in a timestamped subdirectory of <code>out_dir</code> (e.g., <code>bench_out/2042-10-01_12-00-00/</code>).</p>
+<h3 id="report-formats">Report formats</h3>
+<p>Each run writes two artifacts with one shared timestamp: the JSON results
+(<code>&lt;name&gt;-&lt;timestamp&gt;.json</code>, the source of truth) and a human-readable
+<strong>markdown</strong> report (<code>&lt;name&gt;-&lt;timestamp&gt;_report.md</code>), rendered from the JSON.
+Markdown is the default report format: it renders on GitHub, diffs cleanly,
+and pastes into issues and PRs.</p>
+<p>The report CLI re-renders a report from any saved JSON:</p>
+<pre><code class="language-bash"># Markdown (default): writes &lt;stem&gt;_report.md next to the JSON
+python src/utils/generate_benchmark_report.py bench_out/&lt;run&gt;.json
+
+# Name the markdown path, or opt into the HTML report instead
+python src/utils/generate_benchmark_report.py bench_out/&lt;run&gt;.json --markdown_output report.md
+python src/utils/generate_benchmark_report.py bench_out/&lt;run&gt;.json --html_output report.html
+</code></pre>
+<p>To bulk re-render markdown reports after a renderer fix — or to recreate a
+report whose write failed after the JSON landed — use the backfill script:</p>
+<pre><code class="language-bash">python scripts/benchmarking/backfill_report_provenance.py --regenerate-md
+</code></pre>
+<p><code>--regenerate-md</code> re-renders an existing <code>_report.md</code> sibling and creates a
+missing one for a valid artifact; <code>--regenerate-html</code> still re-renders only
+HTML reports that already exist.</p>
 <p>To analyze results, see <code>scripts/benchmarking/</code> which contains:</p>
 <ul>
 <li>Plotting functions</li>
@@ -376,15 +600,15 @@ archi evaluate -n benchmark -c config.yaml -e .secrets.env --gpu-ids all
 </ul>
 <hr />
 <h2 id="prompt-sweep">Prompt sweep</h2>
-<p>A <em>prompt sweep</em> runs N agent prompts through the RAGAS harness with everything
-but the prompt held fixed — model, queries, retriever, and the RAGAS judge all
+<p>A <em>prompt sweep</em> runs N agent prompts through the <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> harness with everything
+but the prompt held fixed — model, queries, retriever, and the <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> judge all
 come from one base config — and ranks the prompts on a <strong>leaderboard</strong> by mean
-RAGAS metric. It generalizes a 2-way A/B to the whole prompt field, which is how
+<abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> metric. It generalizes a 2-way A/B to the whole prompt field, which is how
 we settle "which support prompt do we ship?" with data rather than by eyeballing
 one pair at a time (the open question Q5 / Decision 3 in
 <code>docs/docs/notes_response_tuning.md</code>).</p>
 <p>Only <code>services.benchmarking.agent_md_file</code> varies across variants. The model and
-RAGAS judge are deliberately held fixed; the leaderboard's <code>shared_context</code>
+<abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> judge are deliberately held fixed; the leaderboard's <code>shared_context</code>
 cross-checks this and flags any drift.</p>
 <h3 id="1-write-a-manifest">1. Write a manifest</h3>
 <p>A manifest names one base config and the prompts to sweep. See
@@ -399,9 +623,13 @@ prompts:
   - config/agents/fasrc-cannon-v4-linked.md
 </code></pre>
 <p><code>primary_metric</code> is one of <code>answer_relevancy</code>, <code>faithfulness</code>,
-<code>context_precision</code>, <code>context_recall</code> (default <code>faithfulness</code> — grounding is the
-load-bearing property for a "never guess" support bot). All four metrics are
-reported per variant regardless; this only sets the ranking key.</p>
+<code>context_precision</code>, <code>context_recall</code>, <code>answer_correctness</code> (default
+<code>faithfulness</code> — grounding is the load-bearing property for a "never guess"
+support bot). Every enabled metric is reported per variant regardless; this only
+sets the ranking key.</p>
+<p>Ranking by a metric the run did not enable is not silently tolerated: a variant
+with no score for the primary metric is marked <code>incomplete</code> and left unranked
+rather than being ordered as if it had scored zero.</p>
 <h3 id="2-generate-the-per-prompt-configs">2. Generate the per-prompt configs</h3>
 <pre><code class="language-bash">python scripts/benchmarking/generate_prompt_sweep.py -m config/benchmarking/prompt_sweep.yaml
 </code></pre>
@@ -417,22 +645,94 @@ because 2+ configs ran, emits a <code>leaderboard</code> block in the dump JSON.
 <h3 id="reading-the-leaderboard">Reading the leaderboard</h3>
 <p>The dump JSON gains a <code>leaderboard</code> key:</p>
 <ul>
-<li><code>rows</code> — one per variant: <code>name</code>, <code>agent_md_file</code>, the four mean RAGAS
-  <code>metrics</code>, <code>primary_score</code>, <code>rank</code>, <code>query_count</code>, and <code>incomplete</code>. Rows are
-  ranked best-first by <code>primary_metric</code>; ties share a rank. A variant that
-  failed to produce a metric (missing/NaN) has <code>None</code> for it, is marked
-  <code>incomplete: true</code>, and sorts after all complete variants — it is never
-  treated as a zero.</li>
-<li><code>shared_context</code> — the model, provider, judge <code>evaluator_model</code>,
+<li>
+<p><code>rows</code> — one per variant: <code>name</code>, <code>agent_md_file</code>, the mean <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> <code>metrics</code>,
+  <code>primary_score</code>, <code>rank</code>, <code>query_count</code>, <code>scored_counts</code>, and <code>incomplete</code>. Rows
+  are ranked best-first by <code>primary_metric</code>; ties share a rank. A metric the
+  variant produced no score for (missing or NaN) reads <code>None</code> and is never
+  treated as a zero.</p>
+<p><code>incomplete: true</code> means a metric this run was <em>supposed</em> to produce is
+missing, and such rows sort after all complete ones. It is judged against the
+run's own <code>enabled_metrics</code>, so declining an optional metric does not flag the
+run as defective.</p>
+<p>A variant with no score for the <strong>primary</strong> metric is always <code>incomplete</code>
+<em>and</em> gets <code>rank: null</code> — a rank is a claim about the metric being ranked by,
+so there is nothing to claim. Handle a null <code>rank</code>: if no variant scored the
+primary metric, every row has one. Unranked rows do not consume rank numbers,
+so the scored variants still read 1..n.
+- <code>shared_context</code> — the model, provider, judge <code>evaluator_model</code>,
   <code>queries_path</code>, and <code>corpus_snapshot_id</code> shared by all variants. If any of
   these differ across the swept configs, the discrepancy is recorded in
-  <code>shared_context.warnings</code> (the sweep is no longer apples-to-apples).</li>
+  <code>shared_context.warnings</code> (the sweep is no longer apples-to-apples).</p>
+</li>
 </ul>
 <p>The pairwise <code>ab_comparisons</code> are still produced alongside the leaderboard; the
 leaderboard is computed independently from each config's aggregates.</p>
 <hr />
+<h2 id="hierarchical-rerank-ab">Hierarchical-rerank A/B</h2>
+<p>A two-arm benchmark that measures what the hierarchical-rerank retriever buys
+over the baseline — across <strong>three</strong> deltas: answer quality (<abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr>), per-query
+latency, and deployment image size. The config pair and grounded question bank
+live under <code>examples/benchmarking/hierarchical_rerank_ab/</code> (see its <code>README.md</code>
+for the full A/B contract).</p>
+<ul>
+<li><strong>Baseline arm</strong> — <code>CharacterTextSplitter</code> (flat <code>character</code> chunking) +
+  <code>HybridRetriever</code>.</li>
+<li><strong>Treatment arm</strong> — <code>sentence</code> hierarchical chunking + the hierarchical-rerank
+  retriever (FlashRank rerank returning parent context).</li>
+</ul>
+<p>Only the chunking strategy, retriever selection, arm name, and data path differ
+between the two configs. The embedding model, candidate-generation weights
+(<code>bm25_weight</code>/<code>semantic_weight</code>), system-under-test model, <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> judge, and
+question bank are held identical, so any measured difference is attributable to
+the retrieval treatment.</p>
+<blockquote>
+<p><strong>Why two runs, not one <code>-cd</code> directory.</strong> Unlike the prompt sweep above, this
+A/B varies <em>ingestion and retrieval</em> config (chunking strategy + retriever),
+not the prompt. The <code>archi evaluate -cd</code> mode sweeps only <code>services.benchmarking</code>
+over a <strong>single, once-ingested corpus</strong> — its loader requires <code>global</code> (incl.
+<code>DATA_PATH</code>) to be identical across configs, and runtime retriever/chunking come
+from the once-seeded Postgres config. So each arm must be run as its <strong>own</strong>
+deploy + ingest + evaluate pass, and the two results compared offline.</p>
+</blockquote>
+<h3 id="run">Run</h3>
+<p>Run each arm as a separate deployment, re-ingesting between them:</p>
+<pre><code class="language-bash"># Arm 1 — baseline: deploy + ingest with the baseline config, then evaluate
+archi evaluate -n hr-ab-baseline -c examples/benchmarking/hierarchical_rerank_ab/baseline_character_hybrid.yaml --hostmode
+
+# Arm 2 — treatment: redeploy + re-ingest with the treatment config, then evaluate
+archi evaluate -n hr-ab-treatment -c examples/benchmarking/hierarchical_rerank_ab/treatment_hierarchical_rerank.yaml --hostmode
+</code></pre>
+<p><code>--name</code>/<code>-n</code> is required by the <code>evaluate</code> CLI (it names the deployment). Each
+pass ingests its own corpus at its own <code>DATA_PATH</code> and writes its own dump JSON;
+compare the two runs' <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> aggregates offline to get the baseline-vs-treatment
+delta.</p>
+<h3 id="measuring-the-three-deltas">Measuring the three deltas</h3>
+<ul>
+<li><strong>Quality</strong> — the <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> metrics per arm, reported overall and (using the
+  typed <code>fasrc_ragas_queries.json</code> bank) sliced by <code>anchor_type</code>
+  (<code>easy_retrieve</code> / <code>reasoning</code> / <code>should_refuse</code>). The hypothesis is that
+  returning parent context helps multi-step <code>reasoning</code> questions more than
+  simple lookups.</li>
+<li><strong>Latency</strong> — the treatment's <strong>first</strong> query pays a one-time FlashRank ONNX
+  model load (~45s on dev vs ~8s baseline). Report that cold-load cost
+  separately and compute <strong>warm</strong> latency by excluding the first treatment query
+  (or prepend a throwaway warm-up question), so the steady-state number is honest.</li>
+<li><strong>Image size</strong> — record the built deployment image size with and without the
+  treatment's dependencies (<code>llama-index-core</code> + <code>flashrank</code>); the difference is
+  the image-size delta the feature introduces.</li>
+</ul>
+<h3 id="sweeping-chunk-sizes">Sweeping chunk sizes</h3>
+<p>The hierarchical parent/child target sizes are configurable via
+<a href="../configuration/#chunking"><code>data_manager.chunking.parent_chunk_size</code>/<code>child_chunk_size</code></a>.
+To recommend defaults from data rather than assumption, clone the treatment
+config into variants that differ <strong>only</strong> in those two keys (e.g. 1024/256,
+2048/512, 4096/512) and run each as its own deploy+ingest+evaluate pass (same
+two-run protocol — chunk size changes ingestion), comparing the aggregates
+offline. The same pattern sweeps <code>retrievers.hybrid_retriever.bm25_weight</code>.</p>
+<hr />
 <h2 id="human-grading-via-argilla">Human grading via Argilla</h2>
-<p><code>archi evaluate --argilla</code> pushes benchmark results to a self-hosted <a href="https://argilla.io/">Argilla</a> instance for independent human grading. This is the platform we use to answer the question "is config A better than config B for FASRC users?" with data we trust — RAGAS scores alone can't decide prompt or model choices because the judge LLM has its own biases.</p>
+<p><code>archi evaluate --argilla</code> pushes benchmark results to a self-hosted <a href="https://argilla.io/">Argilla</a> instance for independent human grading. This is the platform we use to answer the question "is config A better than config B for <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> users?" with data we trust — <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> scores alone can't decide prompt or model choices because the judge <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> has its own biases.</p>
 <h3 id="operator-loop">Operator loop</h3>
 <pre><code>1. Edit questions in   config/benchmarking/queries.json          (or a per-round bank)
 2. Run                 archi evaluate --argilla -cd configs/     (sweeps all configs in one snapshot)
@@ -455,8 +755,8 @@ archi grade --export -o grades.json
 archi grade --serve
 </code></pre>
 <p><code>archi grade --export</code> reads the last-run dataset name from <code>~/.archi/.last-benchmark</code> if <code>--dataset</code> isn't specified.</p>
-<h3 id="judgesut-split">Judge/SUT split</h3>
-<p>The RAGAS judge LLM and the system under test (SUT) are decoupled. By default the same model judges itself; this is a known bias problem (a model rates its own style higher). Set <code>mode_settings.ragas_settings.evaluator_*</code> to break the symmetry — typically run local Qwen as the SUT and HUIT Bedrock Claude as the judge:</p>
+<h3 id="judgesut-split">Judge/<abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> split</h3>
+<p>The <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> judge <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> and the system under test (<abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr>) are decoupled. By default the same model judges itself; this is a known bias problem (a model rates its own style higher). Set <code>mode_settings.ragas_settings.evaluator_*</code> to break the symmetry — typically run local Qwen as the <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> and HUIT Bedrock Claude as the judge:</p>
 <pre><code class="language-yaml">services:
   benchmarking:
     # SUT
@@ -470,6 +770,29 @@ archi grade --serve
         evaluator_model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
 </code></pre>
 <p>The <code>huit_bedrock</code> provider is Harvard's Anthropic-compatible Bedrock proxy. Pinning Sonnet 4.5 (rather than the rolling-alias 4.6) makes scores reproducible across rounds. Requires <code>HUIT_API_KEY</code> in <code>~/.archi/.env.benchmark</code>.</p>
+<p>The <code>huggingface</code> provider names an <strong>unauthenticated</strong> OpenAI-compatible judge endpoint — the convention <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> and Text Generation Inference (TGI) serve. The endpoint URL is read from <code>evaluator_ollama_url</code>; if that key is absent, the provider falls back to the system-under-test <code>ollama_url</code>, and then to <code>http://localhost:8000/v1</code>. Because the provider always builds an OpenAI-compatible client, it must not be pointed at a native Ollama port (which speaks a different protocol).</p>
+<p>There is no way to give this provider a credential: the client is built through the local provider seam, which sends the placeholder token <code>not-needed</code>. An endpoint behind bearer authentication rejects every score request. Use <code>huit_bedrock</code> for an authenticated judge.</p>
+<p><code>huggingface</code> is an evaluator-only provider name. Setting <code>services.benchmarking.provider: huggingface</code> for the system under test fails at startup, because the agent providers do not include it.</p>
+<h4 id="tool-calling-and-structured-output-on-huit_bedrock">Tool calling and structured output on <code>huit_bedrock</code></h4>
+<p>The provider supports <strong>bound tools for a single request-and-response round</strong>, which is
+what <code>with_structured_output</code> needs. That is why the same judge pinned above can also be
+named in a QA evaluation console evaluator profile: the console's scorer classifies each
+gold atom through <code>with_structured_output</code>, so before tool support existed it could not use
+this provider at all. <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> never hit that limit because it parses judge output itself.</p>
+<p>Two limits are deliberate and worth knowing:</p>
+<ul>
+<li><strong>Multi-turn tool loops do not work yet.</strong> An assistant turn is serialized back to the
+  proxy as plain text, so an <code>AIMessage</code> carrying <code>tool_calls</code> loses its <code>tool_use</code> blocks
+  and the following <code>tool_result</code> references an id the proxy cannot match. Single-shot
+  structured output is unaffected; an agent tool loop is not.</li>
+<li><strong><code>supports_tools</code> stays <code>false</code> in the model catalog</strong> for exactly that reason. The flag
+  is what the chat app's model picker shows an operator choosing a model <em>for the agent</em>,
+  and the agent is the caller whose tool use still breaks. It flips when history
+  serialization is fixed, not before.</li>
+</ul>
+<p>A profile's <code>timeout</code> is honored, fractional values included: <code>get_chat_model</code> accepts it as an alias for the
+transport's <code>request_timeout</code>, so a judge profile asking for 300 seconds gets 300 rather
+than silently keeping the 120-second default. An explicit <code>request_timeout</code> still wins.</p>
 <h3 id="argilla-configuration">Argilla configuration</h3>
 <pre><code class="language-yaml">services:
   benchmarking:
@@ -483,27 +806,1003 @@ archi grade --serve
 <hr />
 <h2 id="scientific-rigor-conventions">Scientific-rigor conventions</h2>
 <p>These exist to make eval rounds trustworthy as an adoption signal, not just a vibes check.</p>
+<blockquote>
+<p><strong>Before you report a result as an improvement, read
+<a href="../interpreting_benchmark_results/">Interpreting Benchmark Results</a>.</strong> This page
+covers how to <em>run</em> a benchmark; that one covers how to tell whether the number
+that came out means anything. It defines a mandatory gate for any result used to
+justify shipping a change.</p>
+</blockquote>
 <h3 id="pre-registration">Pre-registration</h3>
 <p>Before each eval round, write a pre-reg using the template at <code>docs/eval/preregs/_template.md</code>. Capture: primary hypothesis, the metric that decides, the decision rule (incl. what would make us NOT adopt the change), and any planned secondary analyses. <strong>Lock the pre-reg before running the eval</strong> — committing it on the benchmarking branch is the time-stamp.</p>
 <p>The pre-reg defends against running the eval, seeing the results, and then post-hoc choosing whichever metric makes the preferred config look best.</p>
 <h3 id="anchor-questions">Anchor questions</h3>
 <p><code>examples/benchmarking/anchor_questions.json</code> holds 3-5 questions of three types that are run on <strong>every</strong> round:</p>
 <ul>
-<li><strong>Easy-retrieve:</strong> specific FASRC fact like a partition name or a quota. Should always score high; if it regresses, the retrieval pipeline broke.</li>
+<li><strong>Easy-retrieve:</strong> specific <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> fact like a partition name or a quota. Should always score high; if it regresses, the retrieval pipeline broke.</li>
 <li><strong>Reasoning:</strong> a multi-step troubleshooting question that needs synthesis across multiple docs. Best signal for prompt/model changes.</li>
-<li><strong>Should-refuse:</strong> an out-of-scope question (e.g. about a non-FASRC system). The right answer is "I don't know" or a referral, not a hallucination.</li>
+<li><strong>Should-refuse:</strong> an out-of-scope question (e.g. about a non-<abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> system). The right answer is "I don't know" or a referral, not a hallucination.</li>
 </ul>
 <p>Anchors detect cross-round regressions and ground the comparison. They should NOT be in the main question bank — that's a separate per-round set.</p>
 <h3 id="annotation-rubric-and-calibration">Annotation rubric and calibration</h3>
 <p>See <code>docs/eval/rubric.md</code> for the four-widget annotation rubric (winner / quality / failure-mode tags / notes), the binary-vs-Likert rationale, and the calibration-round protocol (group-grade the first 10 records, discuss, then go independent).</p>
 <h3 id="inter-rater-reliability">Inter-rater reliability</h3>
 <p>The analysis notebook computes pairwise Cohen's kappa (per pair of graders), Fleiss' kappa (overall), and per-grader bias distribution. Aim for κ ≥ 0.4 ("moderate agreement") before treating round-N's winner as decisive.</p>
+<hr />
+<h2 id="maintaining-the-golden-set-coverage-orphans-drift-report">Maintaining the golden set (<code>coverage</code> / <code>orphans</code> / <code>drift</code> / <code>report</code>)</h2>
+<p>The question bank falls out of step with the knowledge base in three directions: the KB grows
+pages nobody wrote a question for, it removes pages some question still cites, and it rewrites
+pages a confirmed answer was checked against. Three read-only subcommands find each:</p>
+<pre><code class="language-bash"># Which ingested pages does no bank row ground against?
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn &quot;postgresql://archi@localhost/archi-db&quot;
+
+# Which bank rows cite a page the live KB no longer publishes?
+python scripts/benchmarking/goldenset_maintenance.py orphans \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
+    --sources config/lists/sources.list \
+    --min-pages 150
+
+# Which confirmed rows were grounded in a page that has since changed?
+python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
+    --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com \
+    --tripwire-only
+</code></pre>
+<p><code>--min-pages</code> is the sitemap <strong>completeness floor</strong> and must match the deployment's
+<code>data_manager.sources.links.sitemap.min_pages</code> (<abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr>: 150). It is <strong>required</strong> whenever the
+source list contains a <code>sitemap-</code> line, and the command refuses to run without it: the library
+default is 1, under which a truncated sitemap expands "successfully" and every bank URL absent
+from that partial response is reported as an orphan. <code>--max-pages</code> and <code>--allowed-hosts</code> take
+the same values as the deployment config.</p>
+<p><strong>All three are proposal-only.</strong> They print work lists and leave the bank file byte-unchanged;
+adding a question, locking a reference, re-baselining a drifted row, or pruning an orphan is a
+separate step you take deliberately. Findings <strong>exit zero</strong> — a gap is work to do, not a broken
+run — so a cron job only alarms on an operational failure: an unreadable bank, corpus, or source
+list, a missing sitemap floor, or an <strong>abstained</strong> run (below).</p>
+<h3 id="why-the-three-passes-read-different-sources">Why the three passes read different sources</h3>
+<p>They look inconsistent side by side, and the difference is deliberate — each pass asks a
+different question, and the right oracle follows from the question:</p>
+<table>
+<thead>
+<tr>
+<th>Pass</th>
+<th>Reads</th>
+<th>Because</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>coverage</code>, <code>--propose</code></td>
+<td>the <strong>persisted corpus</strong></td>
+<td>A golden question must be answerable from the text the retriever actually serves.</td>
+</tr>
+<tr>
+<td><code>orphans</code></td>
+<td>the <strong>live source inventory</strong></td>
+<td>The corpus never prunes, so a removed page still has a row in it.</td>
+</tr>
+<tr>
+<td><code>drift</code></td>
+<td>a <strong>live re-fetch</strong></td>
+<td>The corpus lags in-place edits, so it would agree with a stale reference and call it clean.</td>
+</tr>
+</tbody>
+</table>
+<p>The corpus is trustworthy for <em>which URLs were ingested</em> and for <em>what the index holds</em>, and for
+nothing else. Ingestion is URL-keyed and skips the content write for a page it already has
+(<code>persist_resource(..., overwrite=False)</code>), so a page edited in place keeps its old stored text
+until someone forces a re-ingest. That single fact is why <code>drift</code> must re-fetch and why
+<code>--propose</code> must not.</p>
+<h3 id="coverage-pages-with-no-question"><code>coverage</code> — pages with no question</h3>
+<p>Coverage is re-derived from the bank on <strong>every</strong> run. Drafting candidate questions for a page
+does not mark it covered; only an applied bank row citing that URL does. So a page you
+greenlit but never finished writing up keeps showing as a gap, which is the honest answer.</p>
+<p>Gaps are grouped by <strong>parent source</strong> (the host for a web source, the repository for a git
+one) and can be narrowed, so one large git source contributing thousands of per-file URLs
+does not bury a handful of real KB gaps:</p>
+<pre><code class="language-bash">--source-type web                     # only web sources
+--parent https://docs.rc.fas.harvard.edu
+--path-glob 'https://docs.rc.fas.harvard.edu/kb/*'
+</code></pre>
+<p>Coverage reads only <strong>retrievable</strong> documents — not soft-deleted, and
+<code>ingestion_status = 'embedded'</code>. A document still <code>pending</code>/<code>embedding</code>, or one that <code>failed</code>,
+has no chunks for the retriever, so a golden question written against it would be unanswerable
+and would score as a benchmark failure. A page stuck outside <code>embedded</code> is an <em>ingestion</em>
+problem, not a golden-set gap.</p>
+<p>Use <code>--corpus-json &lt;file&gt;</code> instead of <code>--pg-dsn</code> to run against a JSON dump of the
+<code>documents</code> rows — useful offline, or to reproduce a report without database access. <strong>Both
+inputs apply the same retrievability filter</strong>, so an offline run reproduces the live one rather
+than inventing gaps the live report never shows. A dumped row that omits <code>ingestion_status</code>
+entirely is <em>kept</em>: the column cannot be judged if it isn't there, and dropping such rows would
+empty the report and read as "fully covered" — a silent false clean. Dump the column if you want
+the offline run filtered.</p>
+<h3 id="coverage-propose-draft-questions-for-one-greenlit-page"><code>coverage --propose</code> — draft questions for one greenlit page</h3>
+<p>A gap is a suggestion, not an order. Nothing drafts a question until you name a page — <strong>one page
+per invocation, deliberately</strong>. The filters above narrow what you <em>review</em>; they never batch a
+decision. Drafting for every page under a path glob is the auto-covering this design rejects: a
+golden set's value is signal per question, not count, and a hundred machine-drafted rows on a
+low-value source is debt someone has to read. Working through a large source is a loop over
+single greenlights — which is what the conversational skill does on your behalf.</p>
+<pre><code class="language-bash">python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn &quot;postgresql://archi@localhost/archi-db&quot; \
+    --propose https://docs.rc.fas.harvard.edu/kb/running-jobs \
+    --model anthropic/claude-sonnet-5 \
+    --data-path ~/.archi/archi-fasrc-dev/data \
+    --count 3
+</code></pre>
+<p>Candidates are grounded in the <strong>persisted document</strong> — the converted text on disk at
+<code>documents.file_path</code>, which is what got chunked, embedded, and is served at query time — and
+<strong>never in a live re-fetch</strong>. That distinction is the whole point: ingestion is URL-keyed and
+skips the content write for a page it already holds, so the live page can be <em>ahead</em> of the
+index. Grounding in live text would author a question about a fact the retriever cannot serve —
+the same unanswerable-question trap the retrievability filter closes, one layer down. <code>--data-path</code>
+is the deployment's data root, which <code>file_path</code> resolves against; <code>--propose</code> refuses without it
+rather than falling back to a fetch.</p>
+<p>The drafts print as a JSON array ready to paste into the bank — <strong>the run writes nothing</strong>.
+Applying a candidate is your edit, and reviewing it before that edit is the point.</p>
+<p>Three properties are imposed by the tool, not accepted from the model:</p>
+<ul>
+<li><strong><code>status</code> is always <code>draft</code>.</strong> There is no code path that emits a locked candidate, so a
+  confused or hostile reply cannot smuggle one in. Locking stays a human act on an applied row.</li>
+<li><strong><code>sources</code> is always the page you greenlit.</strong> Whatever URL the model cites, the row cites
+  the page you named — grounding is the tool's guarantee.</li>
+<li><strong><code>anchor_type</code> must be <code>easy_retrieve</code> or <code>reasoning</code>.</strong> Anything else is rejected with a
+  reason printed to stderr rather than silently relabeled. <code>should_refuse</code> is rejected too: those
+  rows carry <strong>no</strong> <code>sources</code> by design, so one "grounded in" a page is a contradiction.</li>
+</ul>
+<p><code>--propose</code> drafts for a <strong>gap</strong>, and refuses anything else:</p>
+<ul>
+<li>a URL <strong>already covered</strong> by a bank row — a second question on a covered page adds count, not
+  signal, and reads as valid once pasted in;</li>
+<li>a URL that is a <strong>slug near-miss</strong> for a covered one — the tool has said it cannot tell whether
+  the page is covered, so drafting on top of that unknown is how a duplicate gets authored under
+  the moved slug. Reconcile first;</li>
+<li>a URL not in the <strong>retrievable</strong> corpus, one whose row carries no <code>file_path</code>, and one whose
+  persisted document is missing or empty.</li>
+</ul>
+<p>Every one of those refusals exits non-zero instead of degrading to a live fetch.</p>
+<p>It also refuses any <code>file_path</code> that resolves <strong>outside <code>--data-path</code></strong> — absolute, <code>..</code>-relative,
+or via a symlink — before reading a byte. <code>file_path</code> comes from the catalog or from a
+<code>--corpus-json</code> dump you were handed, and its contents are sent to an external model provider, so
+an unchecked path is a file-disclosure channel off the machine. The same check catches the dull
+case: a stale path that would silently ground a question in an unrelated file. Absolute paths
+<em>inside</em> the data root are still fine, matching what the catalog itself stores.</p>
+<p>Containment is not the only way a <code>file_path</code> gets refused. The guard asks the kernel to traverse
+the pathname <strong>exactly as the row spelled it</strong>, so a row can name a real, contained, readable file
+and still be rejected because that particular <em>spelling</em> is not traversable. The case you will
+actually meet is a trailing separator or a trailing <code>.</code> on a regular file — <code>safe.md/</code> or
+<code>safe.md/.</code> — which the operating system refuses with <code>ENOTDIR</code> because only a directory may be
+named that way:</p>
+<pre><code>persisted document '/path/to/data/safe.md/' cannot be resolved: Not a directory
+</code></pre>
+<p>Read that as a <strong>malformed row, not a missing file</strong>: <code>safe.md</code> itself is fine, and dropping the
+trailing <code>/</code> or <code>/.</code> from the catalog or <code>--corpus-json</code> row fixes it. The guard cannot quietly
+normalize the spelling away, because the same erasure is what lets a genuinely dangerous pathname
+resolve to an innocent neighbour. Spellings that <em>are</em> traversable are unaffected — <code>./safe.md</code>,
+<code>web/./a.md</code> and <code>web/../web/a.md</code> all still resolve — and a trailing separator on <code>--data-path</code>
+itself is fine, since the root is always a directory.</p>
+<p>If every candidate is rejected the run also exits <strong>non-zero</strong> — a propose run that produced
+nothing is a failed run, not a finding, which is the opposite of how gaps and orphans exit.</p>
+<h3 id="the-decision-ledger-declines-only">The decision ledger — declines only</h3>
+<p>Some pages will never earn a question. Record that once instead of re-reading it every run:</p>
+<pre><code class="language-bash"># dismiss a page
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn &quot;postgresql://archi@localhost/archi-db&quot; \
+    --decline https://docs.rc.fas.harvard.edu/kb/contact \
+    --reason &quot;contact page — nothing to ask&quot; \
+    --ledger .ralph/log/goldenset-declines.json
+
+# change your mind — the supported reversal
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
+    --undecline https://docs.rc.fas.harvard.edu/kb/contact \
+    --ledger .ralph/log/goldenset-declines.json
+
+# later runs suppress it
+python scripts/benchmarking/goldenset_maintenance.py coverage \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn &quot;postgresql://archi@localhost/archi-db&quot; \
+    --ledger .ralph/log/goldenset-declines.json
+</code></pre>
+<p><code>--decline</code> obeys the <strong>same gap rule as <code>--propose</code></strong>: it needs a corpus, and it refuses a page
+that is already covered, is a slug near-miss, or is not in the retrievable corpus. The two flags
+are the two dispositions of one decision — "this gap earns a question" and "it does not" — and
+neither is a claim you are in a position to make about a page you never reviewed as a gap.
+Recording a typo'd or covered URL would sit in the ledger and silently suppress that page if it
+ever <em>became</em> a gap.</p>
+<p><code>--propose</code> <strong>refuses</strong> a page whose decline still stands, pointing you at <code>--undecline</code>.
+Overriding the decline for just that one run would be worse than useless: the
+drafts start out unapplied, so nothing covers the page, and the stale entry would keep hiding it
+from every later report — a permanent false-clean with no recovery but hand-editing the file.</p>
+<p>The ledger records <strong>declines only</strong> — never "drafted" or "covered". That asymmetry is
+deliberate: covered-ness is re-derived from the bank every run, so a page whose candidates you
+drafted and then abandoned stays a visible gap until a row actually lands. A ledger that also
+suppressed drafted URLs would make that abandoned page read as clean forever.</p>
+<p>Suppressed pages are <strong>counted and listed</strong>, not silently filtered — a report that hides pages
+without saying so reads as clean when it isn't. Declining is idempotent (declining twice keeps
+the first entry and its reason), and undeclining a page that was never declined is a no-op that
+says so.</p>
+<p>The ledger is the <strong>only</strong> file this tool ever writes, and unlike coverage a decline cannot be
+re-derived from anything, so the update is protected twice over:</p>
+<ul>
+<li><strong>Atomic and durable</strong> — written to a temp file in the same directory, fsynced, <code>os.replace</code>d
+  over the target, and then the parent directory is fsynced too. A truncate-then-write would lose
+  every decline the file held if the write were interrupted; syncing only the file leaves the
+  <em>rename</em> unpersisted, so a host crash right after an apparently successful run could resurrect
+  every dismissed page. Errors are reported relative to that commit point: a failure <strong>before</strong>
+  the replace says the ledger could not be written and is safe to retry, while a failure to sync
+  the directory <strong>after</strong> it says the change <em>was</em> made but is unconfirmed — do not redo it.</li>
+<li><strong>Locked</strong> — read, merge and replace run under an exclusive lock on a <code>&lt;ledger&gt;.lock</code> sidecar,
+  so two operators (or two agent sessions) declining at once cannot each read the same state and
+  have the second replacement erase the first. The lock is a sidecar rather than the ledger itself
+  because <code>os.replace</code> swaps the ledger's inode, and a lock on the old inode would not block the
+  next writer. Where the platform cannot provide that lock (<code>fcntl</code> is POSIX-only), <code>--decline</code>
+  and <code>--undecline</code> <strong>refuse</strong> rather than proceed with a warning — the lost update would happen
+  either way and you would have no way to notice. The read-only passes are unaffected.</li>
+</ul>
+<p>A missing ledger reads as "nothing declined yet". Anything <strong>malformed fails the run</strong> — bad JSON,
+not an array, or a single entry without a usable <code>url</code>. That includes one broken entry among good
+ones: a dropped decline fails in the visible direction (the page just reappears as a gap) but it
+does so silently on an otherwise green run, and a decline is the one record here that cannot be
+re-derived from the bank. Declining into a ledger the tool cannot fully read is refused for the
+same reason.</p>
+<h3 id="orphans-questions-whose-page-is-gone"><code>orphans</code> — questions whose page is gone</h3>
+<p>Orphan detection compares the bank against a <strong>freshly expanded live source inventory</strong>, not
+against the ingested corpus. This matters: the ingest never prunes. A page deleted upstream
+still has a corpus row forever, so "it's still in the corpus" is no evidence the page exists,
+and "it's missing from the corpus" is no evidence it was removed. <code>sitemap-</code> lines in the
+source list are expanded live (the same expansion the ingest uses); every other line is a
+hand-listed page. A <code>URL,depth</code> suffix is stripped exactly as the ingest strips it, so the
+oracle and the corpus agree on what a source line means — otherwise a line like <code>…/kb/a,2</code>
+would inventory a URL the corpus never stored and its bank row would read as removed.</p>
+<p>The full set of typed source prefixes is mirrored from the ingest's router. <code>sitemap-</code> expands;
+<code>sso-</code> is stripped (it only tells the ingest to authenticate, so the line is still one page).
+<code>git-</code>, <code>elog-</code> and <code>indico-</code> — plus an unprefixed ELOG/Indico URL the ingest would auto-detect
+— <strong>fan out</strong> into many sub-documents (a git source ingests one document <em>per file</em>) that this
+read-only tool cannot enumerate without cloning or crawling. Those sources contribute no URLs
+and are reported as <strong>not enumerable</strong>, which keeps their hosts out of scope so their bank rows
+are never proposed for prune. Without that, <code>git-https://github.com/org/repo</code> would parse as
+host <code>github.com</code>, put that host in scope, and turn every bank row citing the repo into a false
+orphan.</p>
+<p>Three guards keep the pass from crying wolf. Each shows up as its own bucket in the output:</p>
+<ul>
+<li><strong>Abstention.</strong> Sitemap expansion <em>fails open</em> — a sitemap that will not fetch or parse
+  contributes zero URLs with only a warning. If any source document failed, the expansion fell
+  below its configured floor (<code>--min-pages</code>), or the inventory came back empty, the run reports
+  <code>ABSTAINED</code> on stderr and flags nothing. A partial inventory would make every unlisted page
+  look deleted. Abstention <strong>exits non-zero</strong>: no analysis happened, so it is an operational
+  failure, not a clean bill of health — a cron that treated it as success would hide a broken
+  inventory indefinitely.</li>
+<li><strong>Out of scope.</strong> The inventory can only speak for the hosts it actually contains. A row
+  citing an external authority the KB never ingested — the upstream Slurm docs, say — was
+  never in the KB to be removed, so it is listed as out of scope rather than judged.</li>
+<li>
+<p><strong>Needs reconciliation.</strong> A URL that matches only by <em>slug near-miss</em> — <strong>same host</strong>, plus the
+  same final page name after ignoring the path prefix, an <code>.html</code> extension, and a
+  WordPress-style <code>-2</code> collision suffix — is neither an orphan nor a gap. A page that merely moved
+  (<code>/kb/x</code> → <code>/docs/x</code>) or picked up an alias lands here for a human to confirm. A genuine rename
+  (<code>running-jobs</code> → <code>submitting-jobs</code>) deliberately does <em>not</em> match, so it stays visible as
+  real work.</p>
+<p>The <strong>same-host</strong> requirement matters: the bank cites external authorities (the upstream
+Slurm docs). Without it, <code>slurm.schedmd.com/mpi</code> would "reconcile" a KB page <code>…/kb/mpi</code> and
+hide a genuine coverage gap behind a bogus pairing — <code>coverage</code> has no scope guard of its
+own, unlike <code>orphans</code>. When several same-host pages share a leaf slug, <strong>every</strong> candidate is
+listed rather than the pairing being narrowed to one: that ambiguity is exactly what a human
+is being asked to settle.</p>
+</li>
+</ul>
+<p>Nothing is ever deleted. An orphan is reported with its row index and the removed URL so you
+can decide whether to re-ground the question, rewrite it, or drop it.</p>
+<h3 id="drift-confirmed-answers-whose-page-changed"><code>drift</code> — confirmed answers whose page changed</h3>
+<p>A <code>locked</code> row is one a human read and vouched for against a specific page. <code>drift</code> asks whether
+that page still says what it said. It works in two stages, cheap first:</p>
+<ol>
+<li><strong>Hash tripwire.</strong> Re-fetch every <code>sources</code> URL of every locked row, extract the text, and
+   compare a hash of it against the row's stored <code>source_hashes</code> entry. Pure fetch-and-compare —
+   no model, no state file, no timestamps.</li>
+<li><strong><abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> diff.</strong> <em>Only</em> for a source whose hash moved, ask a model whether the recorded
+   <code>reference</code> still holds against the page as it reads now. The verdict is advisory.</li>
+</ol>
+<pre><code class="language-bash"># tripwire only — cheap enough to run on a schedule
+python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank &lt;bank.json&gt; --allowed-hosts docs.rc.fas.harvard.edu \
+    --tripwire-only
+
+# escalate every moved hash to a model for triage
+python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank &lt;bank.json&gt; --allowed-hosts docs.rc.fas.harvard.edu \
+    --model anthropic/claude-sonnet-5
+</code></pre>
+<p><code>drift</code> requires naming exactly one of <code>--tripwire-only</code> or <code>--model</code> — there is no implicit
+default, and running neither (or both) exits non-zero naming both flags. The tripwire alone is
+already a real finding: "this page changed" is worth knowing even before anyone decides whether
+the answer broke. The nightly cron gets this same hash-only pass without asking for it, because
+it runs through <code>report</code> (below), whose own <code>--model</code> is optional and omitted in production —
+<code>report</code> never needs <code>--tripwire-only</code> itself.</p>
+<h4 id="what-gets-checked">What gets checked</h4>
+<p>Only <strong><code>locked</code></strong> rows. A <code>draft</code> row is unconfirmed by definition — no one ever vouched for its
+answer against a page — so there is nothing for a hash to be a baseline <em>of</em>, and its sources are
+not even fetched. A locked row with no <code>sources</code> (the <code>should_refuse</code> shape) has nothing to check
+either; locking one must never require a grounding hash.</p>
+<p>A row is flagged when <strong>any</strong> of its sources moved, and the report names which one. A row
+grounded in three pages where one was rewritten is exactly as stale as a row grounded in a single
+rewritten page.</p>
+<h4 id="hashes-are-taken-over-extracted-text-not-markup">Hashes are taken over extracted text, not markup</h4>
+<p>The hash is computed over the page's text <em>after</em> the ingest's own HTML→Markdown extraction
+(<code>processing.html_to_markdown</code>, the same function the scraper persists through), then normalized
+for line endings, Unicode composition form, runs of spaces, and runs of blank lines. Wording,
+case and punctuation are left exactly as written — those are the content.</p>
+<p>This is what keeps a theme change, a reflowed paragraph, or a re-indented list from reading as a
+fact change. It is not perfect: on a <strong>non-KB</strong> page the extraction keeps site chrome, so a
+changed nav or footer can still move the hash. That is the cost of the direction this errs in —
+a false positive is one page for a human to glance at, while a false negative is a wrong answer
+that stays in the benchmark scoring as correct. The <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> diff exists to make those glances cheap.</p>
+<h4 id="what-drift-will-and-will-not-fetch">What <code>drift</code> will and will not fetch</h4>
+<p><code>drift</code> is the one pass that turns a <code>sources</code> value into an outbound request, and <code>sources</code> is
+data read out of a file. So <code>--allowed-hosts</code> is <strong>required</strong> — it is the list of hosts drift is
+authorized to contact, and there is no allow-everything default:</p>
+<pre><code class="language-bash">python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank &lt;bank.json&gt; --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com \
+    --tripwire-only
+</code></pre>
+<p>The bank legitimately grounds some questions in external authorities (the upstream Slurm docs),
+so the list is usually more than one host — but naming them is the operator's call, not the bank
+file's. Every URL is then checked against the ingest's own trust filter (<code>is_url_allowed</code>)
+<em>before</em> it is dialled. Refused unconditionally, allowlisted or not:</p>
+<ul>
+<li>any scheme that is not <code>https</code> (see <strong>TLS</strong> below — the ingest permits <code>http</code>; drift does not)</li>
+<li>a loopback, private, or link-local address (<code>127.0.0.1</code>, <code>10.0.0.5</code>, <code>169.254.169.254</code>)</li>
+<li>an obfuscated numeric host that resolvers still map to those (<code>2130706433</code>, <code>0177.0.0.1</code>)</li>
+<li>a malformed or zero port</li>
+</ul>
+<p>A refused URL is <strong>never contacted and never shown to a model</strong> — it is reported in its own
+bucket, not counted as clean. This matters because reusing the ingest's <em>fetcher</em> does not
+inherit the ingest's <em>target policy</em>: <code>fetch_sitemap_text</code> enforces transport limits (no
+cross-host redirects, a bounded body, a timeout), while the trust filter lives in
+<code>expand_sitemaps</code>. Drift applies it itself.</p>
+<p><strong>TLS is verified, and the connection may never leave HTTPS.</strong> The ingest's fetcher defaults to
+<code>verify=False</code>; drift overrides that. A network attacker who could substitute page content would
+otherwise be able to manufacture drift findings, steer the advisory verdict, and put text of their
+choosing into a prompt sent to the model provider. There is deliberately no flag to turn
+verification off — such a flag ends up in the cron line. A deployment with a private CA sets
+<code>REQUESTS_CA_BUNDLE</code>.</p>
+<p>Verification only protects a hop that is still TLS, so two plaintext routes are closed alongside
+it. A <code>sources</code> URL written as <code>http://</code> is refused by the policy above and named in the report,
+even on an allowlisted host — <code>sources</code> is repo-committed data, so writing <code>https</code> is a
+one-character edit. And an <code>https://</code> page that redirects to <code>http://</code> <strong>on its own host</strong> passes
+the fetcher's host check, which compares hosts and not schemes; drift refuses that downgrade at
+the transport. Ingestion is unaffected — it still follows such redirects, because it forwards
+nothing to a model provider.</p>
+<p><strong>Not covered:</strong> DNS-rebinding-resistant connection pinning. This layer sees only a <em>hostname</em> —
+nothing resolves DNS or inspects the address actually connected to — so a name that passes the
+filter but resolves to an internal address is not caught. That is precisely why the allowlist is
+mandatory: it narrows the exposure from "any name the bank happens to contain" to "a host the
+operator vouched for", which is the part a hostname check can enforce.</p>
+<p>The real fix is docketed against <code>fetch_sitemap_text</code> itself
+(<a href="https://github.com/fasrc/archi/issues/143">#143</a>, §Deferred hardening v2/H1) rather than
+reimplemented here, because the same gap applies to <code>expand_sitemaps</code> — which fetches URLs it
+read out of a <strong>remote</strong> document, a strictly less trusted source than a repo-committed bank —
+and a second, divergent fetch path is the failure mode this module is built to avoid.</p>
+<h4 id="seeing-the-evidence">Seeing the evidence</h4>
+<p><code>--show-text</code> prints the fetched page text behind each finding, delimited per URL:</p>
+<pre><code class="language-bash">python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank &lt;bank.json&gt; --allowed-hosts docs.rc.fas.harvard.edu \
+    --model anthropic/claude-sonnet-5 --show-text
+</code></pre>
+<p>It is opt-in because the report is a work list and a page body per changed row would bury it —
+but with <code>--model</code> you would otherwise be reading a one-sentence verdict about text you cannot
+see, which is not a review. Note this is the <strong>new</strong> page, not a diff: the tool stores only a
+hash of the old one, which is exactly what lets it keep no state between runs.</p>
+<p>A very long page is cut, and the cut is marked with <code>[... page truncated ...]</code>. The hash still
+covers the whole page — only the text kept for review is capped — but the model sees the same
+truncated copy you do, so a verdict on a long page is a verdict on its opening section.</p>
+<h4 id="stored-hashes-carry-their-algorithm">Stored hashes carry their algorithm</h4>
+<p>A <code>source_hashes</code> value looks like <code>sha256:9f86d081…</code>, not a bare hex string. The label is what
+lets the tool tell "this baseline was computed a different way" from "this page changed" — a bare
+digest cannot say how it was made, and guessing would either flag the whole bank at once or,
+worse, agree by coincidence. A stored value the tool does not recognize is reported as
+<strong>incomparable</strong> and is never counted as clean.</p>
+<h4 id="everything-that-isnt-unchanged-or-changed-is-reported">Everything that isn't <code>unchanged</code> or <code>changed</code> is reported</h4>
+<p>A page the tool could not check must never read as a page that is fine, so each unjudgeable state
+gets its own bucket in the report:</p>
+<ul>
+<li><strong>No baseline recorded</strong> — the row is locked but has no <code>source_hashes</code> entry for that URL.
+  Nothing to compare against, so it is neither drifted nor clean.</li>
+<li><strong>Incomparable baseline</strong> — the stored value is not a well-formed <code>sha256:</code> digest (see above):
+  an unrecognized algorithm label, or a hand-edited value that kept the label but lost the digest
+  (<code>sha256:9f86d0818</code>). Either way there is nothing a fresh hash could equal, so it is reported as
+  unchecked rather than as a change.</li>
+<li><strong>Unreachable</strong> — the fetch failed. Explicitly <em>not</em> evidence the page is unchanged.</li>
+<li><strong>Refused</strong> — the URL was rejected by the fetch policy above, so it was never contacted.</li>
+<li><strong>Stale baselines</strong> — a <code>source_hashes</code> entry for a URL the row no longer cites, left behind
+  when someone edited <code>sources</code>. Harmless on its own, but it means a recorded confirmation
+  refers to a page that is no longer part of that question. Reported even when <code>sources</code> was
+  emptied <em>completely</em>, which is the largest version of the same edit — that row is still counted
+  as skipped, because nothing was fetched or compared, but its orphaned baselines are named.</li>
+</ul>
+<h4 id="recording-a-baseline">Recording a baseline</h4>
+<p>The tool never writes the bank, so <code>--print-hashes</code> is how a baseline gets recorded: it prints a
+paste-ready block per row.</p>
+<p><strong>Locking a new candidate is a single edit.</strong> Use <code>--baseline-drafts</code> to compute hashes for
+<code>draft</code> rows before locking them, then paste <code>status: locked</code> and the <code>source_hashes</code> block
+together in one commit:</p>
+<pre><code class="language-bash">python scripts/benchmarking/goldenset_maintenance.py drift \
+    --bank &lt;bank.json&gt; --allowed-hosts docs.rc.fas.harvard.edu \
+    --baseline-drafts --print-hashes --tripwire-only
+</code></pre>
+<p><code>--baseline-drafts</code> <strong>requires <code>--print-hashes</code></strong> and exits <code>2</code> without it. On its own it would
+fetch every draft source and then discard every digest, since only <code>--print-hashes</code> emits them —
+a burst of requests at the KB in exchange for no output. The two stay separate flags rather than
+one implying the other, because <code>--print-hashes</code> alone also prints every locked row's block, and
+that is a wider run than asking for a draft's hashes.</p>
+<p>The output labels draft blocks so you know what to paste alongside them:</p>
+<pre><code>row 3 (draft — paste with status: locked)
+{
+  &quot;source_hashes&quot;: {
+    &quot;https://docs.rc.fas.harvard.edu/kb/gpu-computing&quot;: &quot;sha256:9f86d081884c7d65…&quot;
+  }
+}
+</code></pre>
+<p>Open the bank file, find that row, and add both fields in one edit:</p>
+<pre><code class="language-json">{
+  &quot;user_input&quot;: &quot;…&quot;,
+  &quot;status&quot;: &quot;locked&quot;,
+  &quot;source_hashes&quot;: {
+    &quot;https://docs.rc.fas.harvard.edu/kb/gpu-computing&quot;: &quot;sha256:9f86d081884c7d65…&quot;
+  }
+}
+</code></pre>
+<p>The two fields belong together: <code>status: locked</code> is you vouching for the reference against that
+page, and <code>source_hashes</code> is the record of what the page said when you vouched. Writing one
+without the other is correct but transient — a locked row with no hash shows as <em>no baseline
+recorded</em> on the next run, and a hash on a draft row is never checked. Both in one commit keeps
+the history clean and the intermediate state off the main branch.</p>
+<p>Do the same after reviewing a drifted row and deciding the answer still holds — run
+<code>--print-hashes</code> (no <code>--baseline-drafts</code> needed, since the row is already locked) and paste the
+new block to re-baseline it. The next run is quiet again. Both acts are deliberate: a tool that
+re-baselined a drifted row by itself would erase the finding before anyone read it.</p>
+<p>A run that prints no blocks says so and names the reason (e.g. no locked or draft rows with
+reachable sources were found).</p>
+<p>Pasting replaces the row's whole map, so each block is <strong>complete for its row</strong>: a source that
+could not be read this run carries its existing baseline forward rather than vanishing. Where a
+source has neither a fresh nor a stored hash there is nothing to carry, and the block is labelled
+<code>INCOMPLETE</code> — pasting it as-is would drop that source. Baselines for URLs the row no longer
+cites are deliberately not carried forward; they are reported separately as stale.</p>
+<p>Draft blocks are labelled the same way, and the label matters more there: a locked row can carry a
+failed source's stored hash forward, but a draft has none, so an unreadable source is simply absent
+from the map you are about to paste. Locking on an <code>INCOMPLETE</code> draft block leaves that source
+unbaselined — the next run reports it as <em>without a baseline</em> rather than checking it. Wait until
+the source is reachable and re-run, or lock knowing that one source is not yet covered. A draft
+whose every source failed is still listed, named <code>INCOMPLETE</code> with no block to paste, so an
+unreachable page never looks like a row with nothing to do.</p>
+<h4 id="abstention">Abstention</h4>
+<p>If <strong>no source was read at all</strong> — every one unreachable or refused — the run reports <code>ABSTAINED</code>
+on stderr and <strong>exits non-zero</strong>. Nothing was read, so "no drift" would be a clean bill of health
+for a check that never happened. Refusals count here too: a mistyped <code>--allowed-hosts</code> rejects
+every source, and that must not exit zero.</p>
+<p>A <em>single</em> unreachable page does not abstain — unlike the orphan pass, where one missing sitemap
+makes unrelated rows look deleted. A failure here is local: it affects only the rows citing that
+URL, and those rows are individually reported as unchecked. Each URL is fetched at most once per
+run, failures included, so a bank citing one page from twenty rows makes one request rather than
+twenty.</p>
+<h4 id="advisory-always">Advisory, always</h4>
+<p><code>drift</code> never edits <code>reference</code>, <code>status</code>, or <code>source_hashes</code>, and a model verdict never removes
+a row from the report. The hash mismatch is the fact; the verdict only tells you how urgently to
+look. A <code>holds</code> reply still leaves the row listed — putting a model in charge of whether a real
+change gets reviewed is exactly the failure the tripwire exists to prevent.</p>
+<h3 id="report-all-three-passes-for-a-cron"><code>report</code> — all three passes, for a cron</h3>
+<p><code>report</code> runs <code>coverage</code>, <code>orphans</code> and <code>drift</code> in one read-only pass and prints the three work
+lists together. It is the shape meant for an unattended nightly job:</p>
+<pre><code class="language-bash">python scripts/benchmarking/goldenset_maintenance.py report \
+    --bank config/benchmarking/fasrc_ragas_queries.json \
+    --pg-dsn &quot;postgresql://archi@localhost/archi-db&quot; \
+    --sources config/lists/sources.list \
+    --allowed-hosts docs.rc.fas.harvard.edu slurm.schedmd.com \
+    --min-pages 150 \
+    --ledger .ralph/goldenset-declines.json
+</code></pre>
+<p>It opens with a <strong>confirmation census</strong> — how many rows are <code>locked</code> versus <code>draft</code>, and the
+<code>anchor_type</code> distribution — read from the <code>status</code> field rather than by parsing <code>notes</code>. That is
+composition, not a finding: a mostly-draft bank is a project status, so it never triggers a
+notification on its own.</p>
+<p>The census buckets rows by <code>anchor_type</code>, so that field has to be <strong>text or absent</strong> on every row —
+a bank where one carries a number, a list, or an object is refused before the passes run, with the
+row index in the message:</p>
+<pre><code>error: cannot census bank.json: row 12 has an `anchor_type` of type int; it must be text or absent
+</code></pre>
+<p>That refusal takes the ordinary startup-failure path (<code>census: null</code>, <code>notify: true</code>, non-zero
+exit), so a monitor sees it. Left unchecked the shapes fail in three different ways and none of
+them is useful: a list is unhashable and kills the census, a number silently becomes a bucket that
+does not exist in the bank, and a number <em>mixed with</em> text kills the run at the sort — with a raw
+traceback, and before the summary file is refreshed.</p>
+<p><code>--allowed-hosts</code> serves both passes that need one — the hosts <code>drift</code> may contact and the extra
+hosts the sitemap may emit — because in practice they are the same list: hosts the operator
+vouched for.</p>
+<h4 id="findings-exit-zero-only-a-broken-pass-exits-non-zero">Findings exit zero; only a broken pass exits non-zero</h4>
+<p>A gap, an orphan and a drifted row are work to do, not a failed run. A cron that exits non-zero
+whenever it finds something teaches its reader to ignore the alert, which is worse than having no
+alert. Non-zero is reserved for a pass that <strong>could not run</strong> — an unreadable corpus or bank, a
+missing source list, or a live inventory too incomplete to judge orphans against.</p>
+<p>One case the exit code deliberately does <strong>not</strong> fail on is a <em>partly</em> complete drift pass: <code>drift</code>
+abstains (non-zero) only when nothing at all was read, so a run that reached 1 source of 50 still
+exits zero (see <a href="#abstention">Abstention</a> above). That incompleteness is not lost — it is counted
+in <code>--summary-json</code> as <code>unchecked_sources</code> and mailed in the nightly digest — but an <strong>external</strong>
+monitor must read those summary counts, not the process exit code, or it will record a
+barely-completed run as healthy. The exit code answers "did a pass break?"; the summary answers
+"how much did it actually check?", and only the second distinguishes a thorough run from a thin one.</p>
+<h4 id="the-summary-json-what-every-run-reports">The summary JSON — what every run reports</h4>
+<p><code>--summary-json &lt;path&gt;</code> is <strong>attempted</strong> on every terminating path — including when a pass <strong>fails</strong>
+and including when the bank itself fails to load. A completed run separates clean, findings, and a
+broken pass (<code>failed_passes</code> non-empty); a bank-load failure writes <code>census: null</code>, names the error
+in <code>failed_passes</code>, and sets <code>notify: true</code>. It records every count the report can take, and on a
+run that <em>completed</em> only the <strong>notify buckets</strong> decide whether a human is paged. A <strong>startup
+failure overrides that</strong>: no pass ran, so every bucket is zero, and <code>notify</code> is set <code>true</code> anyway.
+Read the <code>notify</code> field; do not re-derive it from the buckets, or a bank that failed to load reads
+as a clean night.</p>
+<p>"Attempted" is the operative word, and the reason a monitor still needs the exit code — see
+<a href="#the-file-is-not-self-certifying">the file is not self-certifying</a> below.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Type</th>
+<th style="text-align: center;">Notify?</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>census</code></td>
+<td>object</td>
+<td style="text-align: center;">no</td>
+<td>Bank composition — <code>total</code>, <code>locked</code>, <code>draft</code>, and the <code>anchor_type</code> distribution. A project status, not an alarm.</td>
+</tr>
+<tr>
+<td><code>gaps</code></td>
+<td>int</td>
+<td style="text-align: center;">✅</td>
+<td>Ingested pages no bank row grounds on.</td>
+</tr>
+<tr>
+<td><code>needs_reconciliation</code></td>
+<td>int</td>
+<td style="text-align: center;">✅</td>
+<td>Coverage slug near-misses awaiting a human pairing.</td>
+</tr>
+<tr>
+<td><code>orphans</code></td>
+<td>int</td>
+<td style="text-align: center;">✅</td>
+<td>Bank rows whose grounding page left the live inventory.</td>
+</tr>
+<tr>
+<td><code>orphans_needs_reconciliation</code></td>
+<td>int</td>
+<td style="text-align: center;">✅</td>
+<td>The same near-miss bucket from the orphan pass — its own key so neither pass's count overwrites the other.</td>
+</tr>
+<tr>
+<td><code>drifted</code></td>
+<td>int</td>
+<td style="text-align: center;">✅</td>
+<td>Locked rows whose grounding page changed.</td>
+</tr>
+<tr>
+<td><code>unchecked_sources</code></td>
+<td>int</td>
+<td style="text-align: center;">✅</td>
+<td>Sources <code>drift</code> wanted to check but could not — no baseline, malformed baseline, or unreachable.</td>
+</tr>
+<tr>
+<td><code>refused_sources</code></td>
+<td>int</td>
+<td style="text-align: center;">✅</td>
+<td>Sources refused by the URL policy or absent from <code>--allowed-hosts</code>. Notifies because an unlisted host is an omission, not a standing decision.</td>
+</tr>
+<tr>
+<td><code>drift_check</code></td>
+<td>string</td>
+<td style="text-align: center;">no</td>
+<td><code>"hash-only"</code> (tripwire alone) or <code>"reference-compared"</code> (a model was named). Marks whether a listed drift is a completed staleness check or just a page that moved.</td>
+</tr>
+<tr>
+<td><code>failed_passes</code></td>
+<td>list</td>
+<td style="text-align: center;">—</td>
+<td>Passes that could not run; non-empty ⇒ the run exits non-zero.</td>
+</tr>
+<tr>
+<td><code>notify</code></td>
+<td>bool</td>
+<td style="text-align: center;">—</td>
+<td><code>true</code> iff any notify bucket above is non-zero <strong>or the bank failed to load</strong> (<code>census: null</code>) — a startup failure has no buckets to fill, so deriving this field from them alone would silently suppress that alert. Authoritative as written: read it, never recompute it. On an <strong>exit-zero</strong> run this is what the cron wrapper reads to decide whether to speak; a non-zero run alerts on the exit status instead and never consults it.</td>
+</tr>
+</tbody>
+</table>
+<p>On an exit-zero run the nightly wrapper collapses these into one digest line —
+<code>gaps | orphans | drifted | reconcile | unchecked | refused</code>, where <code>reconcile</code> is
+<code>needs_reconciliation + orphans_needs_reconciliation</code> — and prints it only when <code>notify</code> is <code>true</code>.
+A <strong>non-zero</strong> run is a separate path: the wrapper mails the full report on stderr and never reads
+<code>notify</code>.</p>
+<h4 id="the-file-is-not-self-certifying">The file is not self-certifying</h4>
+<p><strong>A monitor must key on the exit code and on run freshness, not on the file alone.</strong> Writing the
+summary on the bank-load path closes one specific hole — a run that could not read its bank used to
+leave last night's healthy file in place, so the file said "clean" about a run that never started.
+It does not make the file self-certifying, because two states still read as success from the file
+alone:</p>
+<ul>
+<li><strong>The refresh itself failed.</strong> <code>_write_summary</code> commits with <code>os.replace</code>, and deliberately leaves
+  the previous file intact if the write cannot complete (a full disk, a denied replace) — a
+  truncated summary would be worse than a stale one. The run exits non-zero and prints
+  <code>cannot write &lt;path&gt;</code>, but the file on disk is still the previous run's, healthy and wrong. When
+  the bank <em>also</em> failed to load, both errors go to stderr, so the operator sees the bank error and
+  not only the write error.</li>
+<li><strong>The run never reached the write</strong> — killed, OOM-ed, or never scheduled. The file is simply the
+  last one written, with nothing to distinguish it from a clean run that finished a minute ago.</li>
+</ul>
+<p>So the contract is: <strong>treat a non-zero exit as failure; treat a missing summary as failure; treat a
+summary older than the schedule as failure</strong> (compare its mtime against the expected run time, or
+read the wrapper's own completion signal). Only once the run is known to have completed is the
+file's content the authority on <em>what it found</em> — which is the question the exit code cannot answer,
+since findings exit zero.</p>
+<h4 id="one-broken-pass-does-not-hide-the-other-two">One broken pass does not hide the other two</h4>
+<p>The three passes read three independent things: the corpus catalog, the live source inventory, and
+the source pages themselves. If the corpus is unreachable, orphans and drift are still perfectly
+answerable, so <code>report</code> runs all three regardless and collects the failures. It prints them
+together at the end, under <code>passes that could not run</code>, and exits non-zero — so the exit code and
+the output agree about what happened. Stopping at the first failure would throw away two working
+checks in order to report one broken one.</p>
+<h4 id="no-model-is-called-unless-you-name-one">No model is called unless you name one</h4>
+<p><code>--model</code> is accepted but omitted by default, so the nightly run is the cheap hash tripwire alone.
+That is still a real finding: the mismatch is the fact, and the <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> diff only triages how urgently
+to look. Paying a provider for every drifted row, every night, unattended, should be something an
+operator opts into rather than inherits.</p>
+<h4 id="read-only-like-every-other-pass">Read-only, like every other pass</h4>
+<p><code>report</code> writes nothing — not the bank, not the corpus, not the source list. The decision ledger
+is passed so that pages already declined stay suppressed from the nightly gap list; <code>report</code> reads
+it and never appends to it, because declining a page is an interactive decision.</p>
+<p>That contract is <strong>enforced by path, not just by intent</strong>. The tool refuses to start when a flag it
+writes (<code>--summary-json</code>, <code>--ledger</code>) names the same file as one it reads (<code>--bank</code>,
+<code>--corpus-json</code>, <code>--sources</code>, or the other output):</p>
+<pre><code>error: --summary-json and --bank are the same file (/srv/goldenset/bank.json). This run
+writes one and reads the other, so it would destroy its own input — give them separate paths.
+</code></pre>
+<p>The commit step is <code>os.replace</code>, which swaps the target's directory entry — so a <code>--summary-json</code>
+pointed at the bank does not add a summary, it <em>replaces the bank with one</em>, and the run that does
+it is the one where the bank was malformed and the operator was about to go repair it. Identity is
+compared by device and inode (and by resolved path for a target that does not exist yet), so a
+symlinked deployment directory or a second mount path is caught too, not just an exact string
+match. The refusal happens before the first read, so a rejected run has changed nothing.</p>
+<h4 id="preserved-permissions-on-the-files-it-does-write">Preserved permissions on the files it does write</h4>
+<p>The ledger and the summary are both replaced through a temp file, and <code>os.replace</code> installs that
+file's <em>metadata</em> along with its bytes. A fresh temp file is <code>0600</code>, owned by whoever ran the tool,
+with no extended attributes — so without care, the first successful write would revoke every grant
+an operator had put on the target. The mode bits, the owning user and group, and any POSIX ACL are
+therefore carried across from the existing target. This is what lets <code>0640 archi:monitor</code>, or a
+<code>setfacl -m u:monitor:r</code>, survive a nightly run: a health file the monitor cannot read is
+indistinguishable to it from a run with nothing to report.</p>
+<p>Each step is best effort — an unprivileged run cannot move a file to a different owner, and not
+every filesystem stores extended attributes — because losing the health signal over a metadata
+detail would be the worse failure. A <strong>new</strong> file keeps the temp file's <code>0600</code>: choosing a mode for
+a file that may carry error text is the operator's call, made with <code>chmod</code> once, not the tool's.</p>
+<h4 id="the-outputs-directory-must-be-writable-which-it-did-not-have-to-be-before">The output's <em>directory</em> must be writable, which it did not have to be before</h4>
+<p>Replacing a file atomically means creating a temp file beside it and renaming over it, so the run
+needs create-and-rename permission on the <strong>parent directory</strong> — not just write permission on the
+file. A plain <code>open(path, "w")</code> needed only the latter, so one deployment shape that used to work
+now fails on every run:</p>
+<pre><code># report.json is writable; the directory it lives in is not
+drwxr-xr-x  root:root    /var/lib/monitoring/
+-rw-rw-r--  archi:monitor /var/lib/monitoring/report.json
+
+error: cannot write /var/lib/monitoring/report.json: [Errno 13] Permission denied: ...
+</code></pre>
+<p>There is no way to keep the old behaviour and the atomicity: the rename is the commit. Provision
+the directory so the writing user can create in it — own it, or group-write it — and keep the file
+grants as they are (they are carried across each replacement anyway, see above). This applies to
+<code>--ledger</code> and <code>--summary-json</code> alike.</p>
+<p>The failure is loud, not silent: the run reports <code>cannot write</code> on stderr and exits non-zero, so a
+monitor left on the previous snapshot is accompanied by a failing nightly rather than a quiet one.</p>
+<h4 id="a-symlinked-output-path-is-followed-not-replaced">A symlinked output path is followed, not replaced</h4>
+<p>Point <code>--summary-json</code> or <code>--ledger</code> at a <strong>symlink</strong> — the stable path pattern, <code>current -&gt;
+releases/42/report.json</code> — and the write lands on the <em>referent</em>, leaving the link a link. That
+takes a deliberate step, because <code>os.replace</code> is the one file operation that does <strong>not</strong> follow a
+symlink on its destination: it swaps the link's own directory entry, which would turn the
+deployment's stable path into a regular file and leave the real report frozen at yesterday's
+content. So the output path is resolved before the temp file is created — before, not at the
+commit, since a temp file next to the <em>link</em> and a commit onto the <em>referent</em> would cross a mount
+whenever the link does, and <code>rename(2)</code> answers a cross-device rename with <code>EXDEV</code> instead of
+committing. A path that does not exist yet, and a dangling symlink, both resolve through their
+parent chain and get created where a plain <code>open(path, "w")</code> would have put them.</p>
+<p>The ledger's lock sidecar is named after the resolved path for the same reason: two runs reaching
+one ledger by different spellings must contend for one lock, or they serialise against nothing and
+the second write erases the first decline. That resolution happens <strong>once per transaction</strong> and is
+reused for the read and the write, so retargeting the link while a decline is being recorded cannot
+leave the command holding one file's lock while it rewrites another.</p>
+<p>Each output path is resolved exactly once for the whole run, at the alias check above, and the
+writers use that pinned result rather than looking the path up again. Otherwise the refusal would
+only describe the instant it ran: <code>report</code> spends minutes on its network passes between the check
+and the write, and a stable link retargeted at the bank inside that window would be followed by
+<code>os.replace</code> to a file the check never approved. Pinning is not a general cure for the race —
+whoever can retarget the link can swap the resolved file too — but it is what makes the refusal
+hold for the run instead of for one moment of it.</p>
+<h4 id="a-hard-linked-output-path-is-reported-not-followed">A hard-linked output path is reported, not followed</h4>
+<p>A <strong>hard link</strong> is the one output shape that cannot be honoured. Committing atomically means
+installing a new inode under the target's name, so any other name for the old inode keeps it — and
+keeps yesterday's contents. There is no resolving this the way a symlink resolves: hard links are
+not a chain to follow, they are equal names for one file, and a consumer holding the file open
+across the write goes stale in exactly the same way.</p>
+<p>Writing in place instead would reopen the partial-write window this whole section exists to close,
+and refusing the write would leave a monitor reading the last healthy summary forever — the failure
+the summary contract exists to prevent, reached by a different route. So the write commits and the
+run prints a warning naming the path it just decoupled. Point every consumer at the same path, or
+reach it through a symlink.</p>
+<h4 id="a-run-that-fails-leaves-nothing-staged">A run that fails leaves nothing staged</h4>
+<p>Whatever goes wrong between staging the temp file and committing it, the temp file is removed —
+not only the <code>OSError</code> the run reports as "cannot write". A missing platform API, a warning that
+cannot be printed, or a <code>close()</code> that fails while flushing what a full disk rejected are all
+failures of a different type, and each one would otherwise skip the cleanup on its way out and
+leave a <code>.summary.json.*.tmp</code> beside the real file. Cleanup is best-effort in turn, so a failure
+while closing or unlinking cannot replace the error that caused it.</p>
+<p>A self-referential path among the inputs is reported the same ordinary way. Resolution never
+raises, so a <code>--bank</code> symlinked to itself is refused when the file is <em>read</em>, as a failed pass with
+a summary written — not as a traceback before the run starts.</p>
+<p>An <strong>output</strong> whose path is a symlink loop is refused outright instead. Resolution gives up and
+hands the unresolved link back, and <code>os.replace</code> does not follow a symlink on its destination — so
+committing would swap the link's own directory entry and leave a plausible-looking regular file
+where the operator's broken configuration used to be. <code>open(path, "w")</code> reported <code>ELOOP</code> and
+changed nothing, and that is the behaviour kept:</p>
+<pre><code>error: cannot write the summary /srv/goldenset/current.json: the path is a symlink loop, so it
+resolves to nothing. Committing atomically would replace the link with a regular file and destroy
+the configuration silently. Repair the link, or name the file directly.
+</code></pre>
+<p>A <em>dangling</em> link is not a loop and is unaffected — it resolves through to a name that does not
+exist yet, which is exactly where <code>open</code> would have created the file.</p>
+<p>An output that is <strong>not a regular file</strong> is refused for the same reason. A FIFO used to receive the
+JSON as a stream; an atomic commit unlinks it and installs an ordinary file in its place, so the
+process reading the pipe is disconnected for good while the run reports success. A socket or a
+device node is the same question. Nothing is lost by refusing — nothing has been written yet, and
+the endpoint is still there to point somewhere else.</p>
+<h4 id="what-an-output-path-may-be">What an output path may be</h4>
+<p>Every one of these is settled <strong>before the first read</strong>, alongside the aliasing refusal, and the
+path that passes is the one the write uses:</p>
+<table>
+<thead>
+<tr>
+<th>At the output path</th>
+<th>What happens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nothing yet, or a regular file</td>
+<td>Written</td>
+</tr>
+<tr>
+<td>A symlink to a regular file, or a dangling symlink</td>
+<td>Followed; the link survives, the referent is updated</td>
+</tr>
+<tr>
+<td>A symlink loop</td>
+<td><strong>Refused</strong></td>
+</tr>
+<tr>
+<td>A FIFO, socket, or device node</td>
+<td><strong>Refused</strong></td>
+</tr>
+<tr>
+<td>A regular file with other hard links</td>
+<td>Written, with a warning naming it</td>
+</tr>
+<tr>
+<td>One of this run's own inputs</td>
+<td><strong>Refused</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Checking at the write instead would be too late twice over. A <code>--ledger</code> that is a FIFO is <em>read</em>
+before it is written, and reading a pipe with no writer never returns — so the tool would hang
+rather than refuse. And for <code>report</code>, the passes take minutes: resolving again at the write leaves
+a window in which retargeting the advertised link moves the write to a file no check ever looked at.</p>
+<h4 id="running-it-nightly">Running it nightly</h4>
+<p><code>scripts/benchmarking/goldenset_report_cron.sh</code> wraps the command above for cron. The settings
+live in an <strong>environment file</strong>, not on the cron line, because crontab has no line continuation:
+an entry ends at the newline, and a trailing backslash does not join the next line. A multi-line
+cron block would install as one truncated command plus several invalid records.</p>
+<p>Write <code>~/.ralph/goldenset-report.env</code> (the wrapper's default location — override with
+<code>GOLDENSET_ENV_FILE</code>):</p>
+<pre><code class="language-bash">GOLDENSET_PG_DSN=postgresql://archi@localhost/archi-db
+GOLDENSET_SOURCES=/home/archi/archi/config/lists/sources.list
+GOLDENSET_ALLOWED_HOSTS=&quot;docs.rc.fas.harvard.edu slurm.schedmd.com&quot;
+GOLDENSET_MIN_PAGES=150
+GOLDENSET_LEDGER=/home/archi/.ralph/goldenset-declines.json
+</code></pre>
+<p><strong>Quote any value containing spaces.</strong> The file is <em>sourced</em> by the wrapper, so an unquoted
+<code>GOLDENSET_ALLOWED_HOSTS=host-a host-b</code> is read by the shell as "run the command <code>host-b</code> with
+<code>GOLDENSET_ALLOWED_HOSTS=host-a</code>" — the allowlist is normally the only multi-value setting, and
+so the only one this bites. It fails loudly (<code>command not found</code>, exit 127) rather than running
+with half a list.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GOLDENSET_BANK</code></td>
+<td>Bank JSON (defaults to <code>config/benchmarking/fasrc_ragas_queries.json</code>)</td>
+</tr>
+<tr>
+<td><code>GOLDENSET_PG_DSN</code> / <code>GOLDENSET_CORPUS_JSON</code></td>
+<td>The corpus — exactly one of the two</td>
+</tr>
+<tr>
+<td><code>GOLDENSET_SOURCES</code></td>
+<td>Source list the KB ingests from (<strong>required</strong>)</td>
+</tr>
+<tr>
+<td><code>GOLDENSET_ALLOWED_HOSTS</code></td>
+<td>Space-separated hosts to contact (<strong>required</strong>)</td>
+</tr>
+<tr>
+<td><code>GOLDENSET_MIN_PAGES</code> / <code>GOLDENSET_MAX_PAGES</code></td>
+<td>Sitemap floor/cap — match the deployment</td>
+</tr>
+<tr>
+<td><code>GOLDENSET_LEDGER</code></td>
+<td>Decision ledger, so declined pages stay suppressed</td>
+</tr>
+<tr>
+<td><code>GOLDENSET_MODEL</code></td>
+<td>Optional advisory drift diff; unset means no provider calls</td>
+</tr>
+<tr>
+<td><code>GOLDENSET_LOG_DIR</code></td>
+<td>Where each run's dated log lands (default <code>~/.ralph/log</code>)</td>
+</tr>
+<tr>
+<td><code>GOLDENSET_LOG_MAX_BYTES</code></td>
+<td>Truncate one run's logged output past this size (default 5 MiB)</td>
+</tr>
+<tr>
+<td><code>GOLDENSET_PYTHON</code></td>
+<td>Interpreter, if <code>python</code> is not on cron's minimal <code>PATH</code></td>
+</tr>
+</tbody>
+</table>
+<p>Values in the file win over anything already in the environment, the way systemd's
+<code>EnvironmentFile=</code> behaves.</p>
+<p><strong>Install</strong> — one line, no environment on it:</p>
+<pre><code class="language-bash">crontab -e
+</code></pre>
+<pre><code class="language-cron"># nightly RAGAS golden-set maintenance report (read-only)
+15 6 * * * /home/archi/archi/scripts/benchmarking/goldenset_report_cron.sh
+</code></pre>
+<p>Use absolute paths: cron does not expand <code>$HOME</code> or <code>~</code> in the command, and runs with a minimal
+<code>PATH</code>. If <code>python</code> is not on that <code>PATH</code>, set <code>GOLDENSET_PYTHON</code> in the env file to the
+interpreter's full path.</p>
+<p><strong>Reading the results</strong> — each run writes its own file, named for the run's UTC start time, plus a
+symlink to the newest. So the usual question needs no glob and no timestamp arithmetic:</p>
+<pre><code class="language-bash">tail -n 40 ~/.ralph/log/goldenset-report-latest.log   # what did the last run say?
+ls -t ~/.ralph/log/goldenset-report-[0-9]*.log | head  # the recent history, newest first
+</code></pre>
+<pre><code>~/.ralph/log/
+  goldenset-report-20260806T061843Z.log
+  goldenset-report-20260805T204623Z.log
+  goldenset-report-latest.log -&gt; goldenset-report-20260806T061843Z.log
+</code></pre>
+<p>Files accumulate — one per run, roughly 60 KB each. That is deliberate: an automatic pruner
+would trade immaterial disk for a way to lose history to a config typo, so pruning is yours to
+do (<code>rm</code> the dates you no longer want; the symlink always names a file that still exists as long
+as you keep the newest).</p>
+<p>Two runs can start in the same second — a hand-run meeting the timer. The second one takes
+<code>…Z-2.log</code> rather than sharing the first's file, so one run is always one file. If
+<code>goldenset-report-latest.log</code> exists as something other than a symlink, the run still writes its
+dated file and warns on stderr that the pointer could not be updated; the report is never lost to
+a broken pointer.</p>
+<p><strong>Rollback</strong> — delete that line (<code>crontab -e</code>, remove, save). The wrapper holds no state, installs
+no unit, and writes only its logs, so removing the line is the whole rollback. The env file and
+the dated logs in <code>~/.ralph/log/</code> can be deleted too, or left as a record.</p>
+<p><strong>Verify without waiting for the timer</strong> by running the wrapper by hand. On a terminal it streams
+the full report; under cron it does not.</p>
+<p>These properties make it safe unattended, each pinned by
+<code>scripts/benchmarking/test_goldenset_report_cron.sh</code>:</p>
+<ul>
+<li>
+<p><strong>You hear about findings, and only about findings.</strong> There are three outcomes but cron gives
+  only two signals — it mails on <em>any</em> output and ignores the exit status entirely. So the
+  wrapper decides what to say:</p>
+<table>
+<thead>
+<tr>
+<th>Outcome</th>
+<th>Exit</th>
+<th>What cron mails</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Clean</td>
+<td>0</td>
+<td>nothing</td>
+</tr>
+<tr>
+<td>Findings</td>
+<td>0</td>
+<td>a one-line digest plus the log path</td>
+</tr>
+<tr>
+<td>A pass could not run</td>
+<td>1</td>
+<td>the full report on stderr</td>
+</tr>
+<tr>
+<td>The wrapper is misconfigured</td>
+<td>2</td>
+<td>the error, <em>before</em> anything is invoked</td>
+</tr>
+</tbody>
+</table>
+<p>"Findings" is wider than gaps, orphans and drifted rows: it also covers every source the
+drift pass could <strong>not</strong> check — no baseline, a malformed baseline, unreachable, or refused
+by the allowlist. <code>drift</code> only abstains when <em>nothing</em> was read, so one readable page makes
+the pass succeed; counting drifted rows alone would let a run that checked 1 source of 50
+summarise as perfectly clean. Refusals count too, because a host missing from
+<code>--allowed-hosts</code> is an omission rather than a decision — the operator listed the hosts they
+thought of, and a row added later citing a new host would otherwise go unchecked forever
+with nobody told.</p>
+<p>Findings exiting zero is the cron contract, so notification cannot key on the exit status —
+that would bury every actionable result in a log nobody tails, and the job would detect
+stale benchmark data indefinitely while telling no one. The wrapper reads <code>--summary-json</code>
+instead. Equally, mailing the whole report nightly is how an operator learns to filter the
+mail, which costs the one case that matters. A misconfigured wrapper refuses up front
+because a half-run report reads exactly like a clean one.</p>
+</li>
+<li>
+<p><strong>Each run is its own readable file.</strong> Keeping the history is the point — a page edited a little
+  each month only becomes visible across runs — and it lives across the dated files rather than
+  inside one growing log, so "what did last night say" is a file you open rather than a banner you
+  locate. Each file is bounded: a single run's output is truncated at <code>GOLDENSET_LOG_MAX_BYTES</code>
+  (default 5 MiB) with a marker saying so, because coverage prints every gap and drift can span
+  the whole bank, so one run really can be enormous. When a run fails, its full output still goes
+  to stderr untruncated — nothing diagnostic is lost at the moment it matters. The file <em>count</em> is
+  unbounded on purpose: no logrotate unit and no pruner, so rollback stays "delete the cron line"
+  and no config typo can delete history.</p>
+</li>
+<li><strong>The evidence is captured when it is detected.</strong> Unlike the interactive <code>drift</code> pass, where
+  page text is behind <code>--show-text</code>, <code>report</code> always includes the re-fetched content for each
+  drifted row. Interactively you can re-run to see it; unattended you cannot, and by the time
+  someone reads "3 drifted" the page may have moved again. The size cap above is what makes this
+  safe to do nightly.</li>
+<li><strong>A hash-only run says so.</strong> The nightly job runs the cheap tripwire, which establishes that a
+  source <em>moved</em> — not that the recorded answer is now wrong. When such a run lists drifted rows
+  it prints a note to that effect and records <code>"drift_check": "hash-only"</code> in the summary, so a
+  tripwire result is never mistaken for a completed staleness check. Set <code>GOLDENSET_MODEL</code> to have
+  the run compare each changed page against the stored <code>reference</code>.</li>
+<li><strong>No provider calls unless <code>GOLDENSET_MODEL</code> is set.</strong></li>
+</ul>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>
     <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
         <a href="../api_reference/" class="btn btn-neutral float-left" title="API Reference"><span class="icon icon-circle-arrow-left"></span> Previous</a>
-        <a href="../advanced_setup_deploy/" class="btn btn-neutral float-right" title="Advanced Setup">Next <span class="icon icon-circle-arrow-right"></span></a>
+        <a href="../evaluation/" class="btn btn-neutral float-right" title="Evaluation">Next <span class="icon icon-circle-arrow-right"></span></a>
     </div>
 
   <hr/>
@@ -533,7 +1832,7 @@ archi grade --serve
       <span><a href="../api_reference/" style="color: #fcfcfc">&laquo; Previous</a></span>
     
     
-      <span><a href="../advanced_setup_deploy/" style="color: #fcfcfc">Next &raquo;</a></span>
+      <span><a href="../evaluation/" style="color: #fcfcfc">Next &raquo;</a></span>
     
   </span>
 </div>

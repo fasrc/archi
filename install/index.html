@@ -43,12 +43,22 @@
                 <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
                 </li>
               </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
               <ul class="current">
                 <li class="toctree-l1 current"><a class="reference internal current" href="#">Install</a>
     <ul class="current">
     <li class="toctree-l2"><a class="reference internal" href="#system-requirements">System Requirements</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#installation">Installation</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#container-registry-access">Container registry access</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#the-token-must-be-a-classic-personal-access-token">The token must be a classic personal access token</a>
+    </li>
+        </ul>
     </li>
     </ul>
                 </li>
@@ -98,6 +108,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -107,6 +125,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -142,7 +164,7 @@
 <p>Archi is deployed using a Python-based CLI onto containers. It requires:</p>
 <ul>
 <li><code>docker</code> version 24+ or <code>podman</code> version 5.4.0+ (for containers)</li>
-<li><code>python 3.10.0+</code> (for the CLI)</li>
+<li><code>python 3.11.0+</code> (for the CLI)</li>
 </ul>
 <blockquote>
 <p><strong>Note:</strong> We support either running open-source models locally or connecting to existing APIs. If you plan to run open-source models on your machine's GPUs, see the <a href="../advanced_setup_deploy/">Advanced Setup &amp; Deployment</a> section.</p>
@@ -189,11 +211,56 @@ which archi
 
 
 </details>
+
+<h2 id="container-registry-access">Container registry access</h2>
+<p>The service images build on base images this fork publishes to the GitHub Container
+Registry (<code>ghcr.io/fasrc/</code>). Those packages have <strong>internal</strong> visibility: every member of the
+<code>fasrc</code> organization may pull them, but an anonymous pull is refused. So a machine needs to
+log in once before its first <code>archi create</code>.</p>
+<pre><code class="language-bash">echo &quot;$YOUR_TOKEN&quot; | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+</code></pre>
+<p>Use <code>podman login ghcr.io</code> instead if you deploy with <code>--podman</code>. Podman does not read
+Docker's credential store, so logging one in does not authenticate the other.</p>
+<h3 id="the-token-must-be-a-classic-personal-access-token">The token must be a classic personal access token</h3>
+<p>Create it at <strong>Settings → Developer settings → Personal access tokens → Tokens (classic)</strong>
+and give it the <strong><code>read:packages</code></strong> scope. This URL pre-selects only that scope:</p>
+<pre><code>https://github.com/settings/tokens/new?scopes=read:packages
+</code></pre>
+<p>Two things commonly go wrong here:</p>
+<ul>
+<li><strong>A fine-grained token cannot work.</strong> Fine-grained personal access tokens have no Packages
+  permission at all, so there is no way to grant them registry access. They fail with the
+  same "denied" message a correctly scoped token gives when it is simply unauthorized, which
+  makes the cause hard to see.</li>
+<li><strong>Single sign-on needs separate authorization.</strong> If your organization enforces SSO, open
+  the token's <strong>Configure SSO</strong> menu and authorize it for the organization. A correctly
+  scoped token that skips this step still fails, and the error does not mention SSO.</li>
+</ul>
+<p>Do not add the <code>repo</code> scope. The container registry uses granular permissions and does not
+need it, and the token creation form will try to select it for you.</p>
+<p><code>archi create</code> and <code>archi evaluate</code> both check the base images before they change anything, so
+a machine that is not logged in is told so up front — naming the image and the command to run —
+rather than failing part way through a build. Under <code>--force</code> this check runs before the
+existing deployment is removed, so a run that cannot obtain its base images leaves the running
+deployment alone.</p>
+<p>If you already have the base images locally, no login is required: the check accepts an image
+that is present on the host without contacting any registry.</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>
     <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
-        <a href=".." class="btn btn-neutral float-left" title="Home"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../glossary/" class="btn btn-neutral float-left" title="Glossary"><span class="icon icon-circle-arrow-left"></span> Previous</a>
         <a href="../quickstart/" class="btn btn-neutral float-right" title="Quickstart">Next <span class="icon icon-circle-arrow-right"></span></a>
     </div>
 
@@ -221,7 +288,7 @@ which archi
         </span>
     
     
-      <span><a href=".." style="color: #fcfcfc">&laquo; Previous</a></span>
+      <span><a href="../glossary/" style="color: #fcfcfc">&laquo; Previous</a></span>
     
     
       <span><a href="../quickstart/" style="color: #fcfcfc">Next &raquo;</a></span>

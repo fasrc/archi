@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>HarvardKey + Archi RBAC — decisions, and the open question that blocks them - Archi Docs</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "HarvardKey + Archi RBAC \u2014 decisions, and the open question that blocks them";
+        var mkdocs_page_input_path = "proposals/harvardkey-rbac-integration.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../.." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">HarvardKey + Archi RBAC — decisions, and the open question that blocks them</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/proposals/harvardkey-rbac-integration.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="harvardkey-archi-rbac-decisions-and-the-open-question-that-blocks-them">HarvardKey + Archi RBAC — decisions, and the open question that blocks them</h1>
+<p><strong>Status: ON HOLD as of 2026-09-01.</strong> No spec written. No code written.
+The hold exists because question 1 in
+<a href="#questions-for-harvard-iam">Questions for Harvard IAM</a> can invalidate the protocol choice.</p>
+<p><strong>What this document asks of you:</strong> confirm question 1 with Harvard IAM, or tell us if a
+decision below is wrong. Everything else is ready to turn into a spec.</p>
+<h2 id="decisions-taken-2026-09-01">Decisions taken (2026-09-01)</h2>
+<ol>
+<li><strong>Scope of protection:</strong> every user signs in with a HarvardKey to use chat. Named roles
+   gate the privileged surface — upload, config, evaluations, alerts, and admin.</li>
+<li><strong>Role source:</strong> Harvard central groups (Grouper), not a list that Archi keeps. That
+   retires the two lists Archi keeps today: <code>services.chat_app.alerts.managers</code> (defect 7)
+   and <code>users.is_admin</code> as a role source (defect 3).</li>
+<li><strong>Protocol:</strong> OpenID Connect, and Archi reads the <code>memberOf</code> claim.</li>
+<li><strong>Group-to-role map:</strong> an explicit map in <code>config.yaml</code>, read by a new
+   <code>src/utils/rbac/group_mapper.py</code>. No naming convention. No second role store in
+   Postgres, so an API bearer token carries the default role only (defect 3).</li>
+</ol>
+<p>Archi already owns the whole permission layer, so none of this builds one. <code>src/utils/rbac/</code>
+holds a role registry with inheritance, 26 permissions in a <code>Permission</code> enum, route
+decorators, and audit logs. <code>src/interfaces/chat_app/app.py:3353</code> already registers a
+generic OpenID Connect client through authlib. The layer is dormant: the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> dev
+deployment sets <code>auth.enabled: false</code>.</p>
+<p>The one thing that does not fit is the role source. <code>src/utils/rbac/jwt_parser.py</code> reads
+<code>resource_access.&lt;app&gt;.roles</code>, a Keycloak claim shape inherited from CERN SSO upstream.
+<strong>HarvardKey sends no such claim under either protocol.</strong> So this work replaces the
+role-extraction function, plus one small change in <code>sso_callback</code>. Today the callback fetches
+UserInfo into a local variable only when the ID token carries no claims (<code>app.py:3467-3470</code>),
+then calls <code>get_user_roles(token, …)</code> with the token alone (<code>:3478</code>). If IAM answers question 2
+with "UserInfo only", the mapper never sees <code>memberOf</code> unless the callback fetches UserInfo
+whenever the ID token lacks the claim and hands the result to the mapper explicitly.</p>
+<h2 id="why-the-protocol-choice-needs-confirmation">Why the protocol choice needs confirmation</h2>
+<p>Two Harvard pages disagree.</p>
+<ul>
+<li>The <strong>HarvardKey Attributes Available Table</strong> (sheet id
+  <code>1Fbv8HldQ0a9VGwEyMZevyAuqNtpv0qCJ0-iwzCOXC0c</code>, gid <code>848693615</code>) lists <code>memberOf</code>
+  (<code>urn:oid:1.3.6.1.4.1.19376.1.2.4.1.6</code>) as available in SAML <strong>and in OIDC</strong>, at all risk
+  levels, with no riders required.</li>
+<li><strong><a href="https://www.iam.harvard.edu/selecting-harvardkey-authentication-protocol">Selecting a HarvardKey Authentication Protocol</a></strong>
+  says OIDC supports only first name, last name, display name, nickname, email, profile URL,
+  and preferred username, and it directs applications that need group membership to SAML.</li>
+</ul>
+<p>If the table is right, Archi reuses the OIDC client it already has. If the article is right,
+the work grows by a Shibboleth service provider: a new container, an SP keypair with
+rotation, <code>xmlsec1</code> in the image, and metadata exchange with IAM.</p>
+<h2 id="questions-for-harvard-iam">Questions for Harvard IAM</h2>
+<p>Send to <code>iam_help@harvard.edu</code>.</p>
+<ol>
+<li>Can a HarvardKey OIDC application receive the <code>memberOf</code> attribute? The Attributes
+   Available Table says yes. The protocol-selection article implies no. Which applies to a
+   new integration?</li>
+<li>If OIDC can receive it: which scope must the client request, and does the claim arrive in
+   the ID token, from the UserInfo endpoint, or both?</li>
+<li>What is the value format? The table says "Grouper filter string". Is that a full path such
+   as <code>harvard:org:fasrc:archi-admins</code>, or a flat name? Does it arrive as a JSON array?</li>
+<li>The table populates <code>memberOf</code> only "for groups provisioned to HLDAP or UNIVAD". What is
+   the process to provision a new custom Grouper group to one of those, and how long does it
+   take?</li>
+<li>Can one application use several custom groups — one for each privilege tier, for example
+   <code>archi-admins</code> and <code>archi-operators</code> — while the application's own authorization group
+   stays broad enough that a non-privileged person still signs in?</li>
+<li>Over OIDC, which claim is the recommended stable unique identifier? The table marks
+   <code>harvardEduNetId</code> unavailable in OIDC. Archi keys <code>users.id</code> on the OIDC <code>sub</code> claim today
+   (<code>src/interfaces/chat_app/app.py:3482</code>). Is <code>sub</code> stable and unique for one person across
+   sessions and a name change? If not, is <code>eduPersonPrincipalName</code> the right key, and does it
+   stay constant across a name change?</li>
+<li>Is a <code>*.rc.fas.harvard.edu</code> host acceptable for the redirect URI? Can one registration
+   carry separate development and production redirect URIs, or do we register two
+   applications?</li>
+</ol>
+<h2 id="existing-defects-this-work-must-fix">Existing defects this work must fix</h2>
+<p>Items 1 to 3 were found 2026-09-01 against <code>origin/dev</code>. Items 4 to 7 came out of the review
+of PR #398 the same day, verified against the same tree. All seven are latent today, because
+<code>auth.enabled: false</code> on the dev deployment.</p>
+<ol>
+<li><strong>No HTTPS, no proxy trust, and an insecure session cookie.</strong> The chat app runs the bare
+   Flask server (<code>src/interfaces/chat_app/app.py:3838</code>). Harvard registers one exact HTTPS
+   redirect URI. Behind a TLS proxy, <code>url_for("sso_callback", _external=True)</code> emits
+   <code>http://</code> unless the app trusts <code>X-Forwarded-Proto</code>. Nothing in the repository does.
+   <code>docs/docs/advanced_setup_deploy.md:151</code> documents an nginx example that nothing deploys.
+   The same setup leaves <code>SESSION_COOKIE_SECURE</code> unset (<code>app.py:2797-2801</code>), so once TLS
+   terminates upstream, the HarvardKey-backed session cookie still travels in plaintext to
+   the published port. The code half of the fix is proxy trust plus that flag; the
+   infrastructure half is prerequisite 4.</li>
+<li><strong>No explanation for a refused user.</strong> <code>sso_callback</code> catches the provider error, calls
+   <code>flash("Authentication failed: …")</code>, and redirects to <code>/login</code> (<code>app.py:3536-3537</code>).
+   <code>login</code> starts SSO only when the request carries <code>?method=sso</code> (<code>:3398</code>), so there is no
+   redirect loop. But it renders <code>landing.html</code> (<code>:3426</code>), and that template has no
+   flashed-messages block — only <code>login.html</code> has one, and the chat app never renders it.
+   The user lands on the plain login page with no reason. Harvard's own page warns that OIDC
+   returns unauthorized users to the application, which must handle the error itself.</li>
+<li><strong>Two role sources disagree.</strong> The browser path reads roles from the token. The API path
+   derives them from one boolean — <code>["admin"] if user.is_admin else [default_role]</code> at
+   <code>src/interfaces/chat_app/openai_compat.py:159-161</code>. The same person gets <code>admin</code> in a
+   browser and <code>base-user</code> through an API token. A bearer request carries no OIDC token, no
+   UserInfo response, and no <code>memberOf</code> (<code>openai_compat.py:142-161</code>), so the group mapper
+   cannot serve it, and decision 4 rules out a role store in Postgres. Resolution: bearer
+   requests take the default role only, and the <code>is_admin</code> shortcut goes. <code>/v1</code> checks only
+   <code>chat:query</code> (<code>openai_compat.py:106</code>, <code>:166</code>), so no API caller loses a permission it
+   uses today. The alternative — caching the last resolved roles on the <code>users</code> row at each
+   browser login — is a second role store with a revocation lag, and decision 4 rejects it.</li>
+<li><strong>The role registry fails open.</strong> With no <code>auth_roles</code> block, <code>load_rbac_config()</code>
+   returns a <code>base-user</code> role with <code>permissions: ["*"]</code> (<code>src/utils/rbac/registry.py:465-479</code>),
+   and the rendered config carries no <code>auth_roles</code> unless the deployment supplies one
+   (<code>src/cli/templates/base-config.yaml:148-150</code>). Turn HarvardKey on in that state and every
+   signed-in user holds every permission. With <code>auth.enabled: true</code>, a missing or empty
+   registry must refuse to start, and the deployment must ship a complete <code>auth_roles</code> block
+   that names every role in the group-to-role map.</li>
+<li><strong>Agent-spec writes are gated by login alone.</strong> <code>/api/agents</code> POST and DELETE and
+   <code>/api/agents/active</code> POST are registered with <code>require_auth</code> only (<code>app.py:3088-3104</code>),
+   while every other privileged write goes through <code>require_perm</code>: <code>update_config</code> takes
+   <code>config:modify</code> (<code>:2935</code>), uploads take <code>upload:*</code>, the database viewer takes
+   <code>database:admin</code>. The three agent handlers (<code>:4181</code>, <code>:4221</code>, <code>:4340</code>) write shared agent
+   specs to disk and set the active agent in Postgres. Once every HarvardKey holder can sign
+   in, any of them can change the system prompt and tool set for everyone. These routes
+   must take <code>config:modify</code>.</li>
+<li><strong>The data-manager service sits outside the chat app's auth and fails open.</strong> It is a
+   separate Flask app with its own basic auth. <code>services.data_manager.auth.enabled</code> defaults
+   to <code>false</code> (<code>src/cli/templates/base-config.yaml:161-163</code>), <code>require_admin</code> passes every
+   request through in that state (<code>src/interfaces/uploader_app/app.py:191-203</code>), and the
+   compose template publishes its port on the host (<code>src/cli/templates/base-compose.yaml:81-82</code>).
+   HarvardKey on the chat app changes none of that: a caller who can reach the port can
+   upload and ingest with no role at all. This document keeps the data-manager outside
+   HarvardKey; production turns its own auth on and keeps the port off any reachable
+   interface (prerequisite 6).</li>
+<li><strong>A username allowlist bypasses <code>alerts:manage</code>.</strong> <code>is_alert_manager()</code> grants alert
+   management when the session username appears in <code>services.chat_app.alerts.managers</code>
+   (<code>src/interfaces/chat_app/service_alerts.py:44-61</code>), whatever the roles say. Removing a
+   person from the Grouper group would not revoke it while the name stays in the config.
+   Decision 2 retires the list: alert management flows from <code>alerts:manage</code> alone, and the
+   config key goes.</li>
+</ol>
+<h2 id="harvard-mechanics-worth-keeping">Harvard mechanics worth keeping</h2>
+<p>Harvard splits access control in two, and only one half depends on the protocol.</p>
+<ul>
+<li><strong>Authorization groups</strong> sit on the identity-provider side. They are mandatory: every
+  HarvardKey application names at least one, and Harvard tests membership before it returns
+  the user. The stated reason is that a HarvardKey keeps working after a person leaves
+  Harvard. This half needs no Archi code.</li>
+<li><strong>Attribute release</strong> is optional and privacy-reviewed. It supplies the data that drives
+  Archi roles.</li>
+</ul>
+<p>Affiliation attributes (<code>eduPersonAffiliation</code>, <code>harvardEduPersonAffiliation</code>,
+<code>eduPersonScopedAffiliation</code>) are SAML-only, and most need GDPR and personal-data riders at
+risk level 3 to 4. Group membership is not in that category. That distinction is what makes
+OIDC viable here: Archi's permissions are group-shaped, not affiliation-shaped.
+<code>config:modify</code> does not follow from "staff" or "FAS". It follows from "this named person
+operates Archi", which is a Grouper group.</p>
+<p><code>harvardEduNetId</code> and <code>displayName</code> also do not cross OIDC. Archi keys users on the OIDC <code>sub</code>
+claim today and keeps doing so until IAM answers question 6; whether <code>sub</code> or
+<code>eduPersonPrincipalName</code> is the stable key is that question, not a decision here. The display
+name falls back to <code>mail</code>.</p>
+<h2 id="prerequisites-that-no-code-change-removes">Prerequisites that no code change removes</h2>
+<ol>
+<li><strong>HKAR registration.</strong> Submit the Application Integration Form with a benefits-eligible
+   Harvard sponsor, the OIDC redirect URI, and an attribute request for the <code>memberOf</code>
+   release bundle. Annual attestation follows.</li>
+<li><strong>At least one authorization group.</strong> Mandatory. Pick IAM reference groups, or ask IAM to
+   build a custom group.</li>
+<li><strong>One Grouper group for each privileged Archi role, provisioned to HLDAP or UNIVAD.</strong> A
+   group that exists in Grouper but is not provisioned there releases nothing.</li>
+<li><strong>TLS on a registered hostname</strong> in front of the deployment. This is the infrastructure
+   half of defect 1; the code half (proxy trust and <code>SESSION_COOKIE_SECURE</code>) stays in the
+   defect list.</li>
+<li><strong>The answer to question 1.</strong> This one can invalidate the protocol choice, so it comes
+   before implementation, not during.</li>
+<li><strong>Data-manager auth on, and its port off the public interface.</strong> Set
+   <code>services.data_manager.auth.enabled: true</code>, and keep <code>data_manager_port_host</code> off any
+   interface a browser can reach (defect 6).</li>
+</ol>
+<h2 id="next-step">Next step</h2>
+<p>Send the seven questions. Then write the spec against the confirmed protocol.</p>
+<p>Milestone note: issue <a href="https://github.com/fasrc/archi/issues/81">#81</a> (production readiness)
+sits in <code>v2026.11.0</code>, and this work reads as a gate for that release.</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

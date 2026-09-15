@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -92,6 +96,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -101,6 +113,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -132,7 +148,7 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="open-webui-integration">Open WebUI Integration</h1>
-<p>archi can serve as an OpenAI-compatible backend for <a href="https://github.com/open-webui/open-webui">Open WebUI</a>, exposing its RAG pipelines via <code>/v1/models</code> and <code>/v1/chat/completions</code> endpoints.</p>
+<p>archi can serve as an OpenAI-compatible backend for <a href="https://github.com/open-webui/open-webui">Open WebUI</a>, exposing its <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> pipelines via <code>/v1/models</code> and <code>/v1/chat/completions</code> endpoints.</p>
 <h2 id="prerequisites">Prerequisites</h2>
 <ul>
 <li>A running archi deployment (Docker/Podman)</li>
@@ -180,7 +196,7 @@
 </tr>
 <tr>
 <td><code>BYPASS_EMBEDDING_AND_RETRIEVAL</code></td>
-<td>Disables Open WebUI's built-in RAG (archi handles retrieval)</td>
+<td>Disables Open WebUI's built-in <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> (archi handles retrieval)</td>
 </tr>
 <tr>
 <td><code>ENABLE_FORWARD_USER_INFO_HEADERS</code></td>
@@ -196,7 +212,7 @@
 <li>Assign group permissions as needed</li>
 </ol>
 <h2 id="docker-compose-example">Docker Compose Example</h2>
-<p>See <code>examples/deployments/openwebui/</code> for a complete example deployment with archi + Open WebUI + vLLM.</p>
+<p>See <code>examples/deployments/openwebui/</code> for a complete example deployment with archi + Open WebUI + <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>.</p>
 <h2 id="architecture">Architecture</h2>
 <pre><code>                          +-----------------+
                           |   Open WebUI    |
@@ -265,6 +281,17 @@
 <p><strong>Responses don't include sources</strong>
 - Sources appear as a markdown block at the end of responses
 - If the pipeline returns no source documents, no citation block is appended</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>

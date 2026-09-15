@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -89,6 +93,14 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
                 </li>
               </ul>
               <ul>
@@ -264,6 +276,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../troubleshooting/">Troubleshooting</a>
                 </li>
               </ul>
@@ -292,7 +308,7 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="adding-a-new-provider-to-archi">Adding a New Provider to Archi</h1>
-<p>This comprehensive guide walks you through adding a new LLM (Large Language Model) provider to Archi. It's designed for developers who may be new to Python or the Archi codebase.</p>
+<p>This comprehensive guide walks you through adding a new <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> (Large Language Model) provider to Archi. It's designed for developers who may be new to Python or the Archi codebase.</p>
 <h2 id="table-of-contents">Table of Contents</h2>
 <ol>
 <li><a href="#understanding-providers">Understanding Providers</a></li>
@@ -305,15 +321,15 @@
 </ol>
 <h2 id="understanding-providers">Understanding Providers</h2>
 <h3 id="what-is-a-provider">What is a Provider?</h3>
-<p>In Archi, a <strong>provider</strong> is an abstraction layer that connects the application to different LLM services. Think of it as a translator that allows Archi to communicate with various AI services (OpenAI, Anthropic, Google, etc.) using a single, consistent interface.</p>
+<p>In Archi, a <strong>provider</strong> is an abstraction layer that connects the application to different <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> services. Think of it as a translator that allows Archi to communicate with various AI services (OpenAI, Anthropic, Google, etc.) using a single, consistent interface.</p>
 <p><strong>Why do we need providers?</strong></p>
-<p>Different LLM services have different:
+<p>Different <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> services have different:
 - Authentication methods (API keys, tokens)
 - Model naming conventions (e.g., "gpt-4" vs "claude-3")
 - API endpoints and request formats
 - Capabilities (streaming, vision, tool usage)
 - Configuration requirements</p>
-<p>Without providers, every part of Archi that uses an LLM would need to know how to interact with each service individually. Providers solve this by providing a <strong>unified interface</strong>.</p>
+<p>Without providers, every part of Archi that uses an <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> would need to know how to interact with each service individually. Providers solve this by providing a <strong>unified interface</strong>.</p>
 <h3 id="how-archi-uses-providers">How Archi Uses Providers</h3>
 <pre><code>User Request
     ↓
@@ -371,7 +387,7 @@ class ProviderConfig:
 <p>This stores configuration for a provider:
 - <code>provider_type</code>: Which provider this is (from the enum)
 - <code>api_key_env</code>: Name of the environment variable containing the API key (e.g., "OPENAI_API_KEY")
-- <code>api_key</code>: Direct API key value (optional, used for BYOK - Bring Your Own Key)
+- <code>api_key</code>: Direct API key value (optional, used for <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr> - Bring Your Own Key)
 - <code>base_url</code>: Custom API endpoint (optional, for self-hosted or proxy services)
 - <code>enabled</code>: Is this provider turned on?
 - <code>models</code>: List of available models
@@ -483,14 +499,14 @@ class ProviderConfig:
 - Special: Standard REST API, supports streaming</p>
 <h3 id="3-development-environment">3. <strong>Development Environment</strong></h3>
 <ul>
-<li>Python 3.7+</li>
+<li>Python 3.11+</li>
 <li>Archi source code cloned locally</li>
 <li>Dependencies installed (<code>pip install -r requirements/requirements-base.txt</code>)</li>
 <li>IDE with Python support (VS Code, PyCharm)</li>
 <li>Access to the provider's API (account and API key for testing)</li>
 </ul>
 <h3 id="4-understanding-langchain">4. <strong>Understanding LangChain</strong></h3>
-<p>Archi uses <a href="https://python.langchain.com/">LangChain</a>, a framework for building LLM applications. Each provider wraps a LangChain chat model class:</p>
+<p>Archi uses <a href="https://python.langchain.com/">LangChain</a>, a framework for building <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> applications. Each provider wraps a LangChain chat model class:</p>
 <pre><code class="language-python">from langchain_openai import ChatOpenAI  # OpenAI integration
 from langchain_anthropic import ChatAnthropic  # Anthropic integration
 </code></pre>
@@ -1381,7 +1397,7 @@ nav:
 <ul>
 <li>[ ] Works in QA pipeline</li>
 <li>[ ] Works in chat interface</li>
-<li>[ ] Works with BYOK (Bring Your Own Key)</li>
+<li>[ ] Works with <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr> (Bring Your Own Key)</li>
 <li>[ ] Appears in provider listing APIs</li>
 <li>[ ] Can be set as default provider</li>
 </ul>
@@ -1688,7 +1704,7 @@ print(response.__dict__)
 <li>[ ] Code follows existing style patterns</li>
 <li>[ ] Documentation is complete and accurate</li>
 <li>[ ] No hardcoded secrets or API keys in code</li>
-<li>[ ] Provider works with BYOK (Bring Your Own Key)</li>
+<li>[ ] Provider works with <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr> (Bring Your Own Key)</li>
 <li>[ ] Error messages are clear and helpful</li>
 <li>[ ] Logging is appropriate (not too verbose, not too quiet)</li>
 <li>[ ] Type hints are correct and complete</li>
@@ -1765,7 +1781,7 @@ print(response.__dict__)
 - Performance implications</p>
 <p>Be responsive to feedback and ready to make changes.</p>
 <h2 id="conclusion">Conclusion</h2>
-<p>You've learned how to add a new LLM provider to Archi! This comprehensive guide covered:</p>
+<p>You've learned how to add a new <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> provider to Archi! This comprehensive guide covered:</p>
 <ul>
 <li>Understanding the provider architecture</li>
 <li>Implementing the provider interface</li>
@@ -1777,7 +1793,7 @@ print(response.__dict__)
 </ul>
 <h3 id="key-takeaways">Key Takeaways</h3>
 <ol>
-<li><strong>Providers abstract differences</strong> between LLM services</li>
+<li><strong>Providers abstract differences</strong> between <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> services</li>
 <li><strong>Inheritance and interfaces</strong> ensure consistency</li>
 <li><strong>Configuration flexibility</strong> supports multiple use cases</li>
 <li><strong>Testing is essential</strong> for reliability</li>
@@ -1803,6 +1819,17 @@ print(response.__dict__)
 <p><strong>Questions or feedback on this guide?</strong>
 Open an issue on GitHub or reach out to the Archi development team.</p>
 <p>Happy coding!</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>

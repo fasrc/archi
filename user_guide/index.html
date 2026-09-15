@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -128,6 +132,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -137,6 +149,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -254,7 +270,7 @@ Archi supports several data ingestion methods:</p>
 <p><strong><a href="../agents_tools/">Read more →</a></strong></p>
 <hr />
 <h2 id="models-providers">Models &amp; Providers</h2>
-<p>Archi supports five LLM provider types:</p>
+<p>Archi supports five <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> provider types:</p>
 <table>
 <thead>
 <tr>
@@ -280,12 +296,12 @@ Archi supports several data ingestion methods:</p>
 <td>Access to 100+ models via a unified API</td>
 </tr>
 <tr>
-<td>Local (Ollama/vLLM)</td>
+<td>Local (Ollama/<abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>)</td>
 <td>Any open-source model</td>
 </tr>
 </tbody>
 </table>
-<p>Users can also provide their own API keys at runtime via <strong>Bring Your Own Key (BYOK)</strong>.</p>
+<p>Users can also provide their own API keys at runtime via <strong>Bring Your Own Key (<abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr>)</strong>.</p>
 <p><strong><a href="../models_providers/">Read more →</a></strong></p>
 <hr />
 <h2 id="configuration-management">Configuration Management</h2>
@@ -352,9 +368,13 @@ Archi supports several data ingestion methods:</p>
 <p>Archi has benchmarking functionality via the <code>archi evaluate</code> CLI command:</p>
 <ul>
 <li><strong>SOURCES mode</strong>: Checks if retrieved documents contain the correct sources</li>
-<li><strong>RAGAS mode</strong>: Uses the Ragas evaluator for answer relevancy, faithfulness, context precision, and context relevancy</li>
+<li><strong><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> mode</strong>: Uses the Ragas evaluator for answer relevancy, faithfulness, context precision, and context relevancy</li>
 </ul>
 <p><strong><a href="../benchmarking/">Read more →</a></strong></p>
+<p>For repeatable evaluation of complete agent answers against fixed, reviewable
+answer obligations, use the separate <code>archi eval qa</code> workflow or browser
+console.</p>
+<p><strong><a href="../evaluation/">Evaluation guide →</a></strong></p>
 <hr />
 <h2 id="alerts-service-status-board">Alerts &amp; Service Status Board</h2>
 <p>The <strong>Service Status Board (SSB)</strong> lets operators communicate service health, outages, maintenance windows, and general announcements to all users directly in the chat app.</p>
@@ -395,6 +415,17 @@ Archi supports several data ingestion methods:</p>
 <pre><code>GET /api/config/audit?limit=50
 </code></pre>
 <p>See the <a href="../api_reference/#configuration">API Reference</a> for full endpoint documentation.</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>

@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -92,6 +96,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -101,6 +113,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -323,14 +339,50 @@ data: [DONE]
 </tr>
 </tbody>
 </table>
+<p>The native <code>final</code> event carries two answer fields: <code>response</code>, the finalized text as the
+native chat UI renders it (it ends with the UI's own appended source list), and <code>answer</code>, the
+bare pipeline answer without that list. <code>answer</code> is omitted — never emitted as an empty
+placeholder — when the pipeline produced no answer value. Non-streaming <code>/v1</code> responses build
+their message content from <code>answer</code>, so the endpoint controls citation formatting itself (see
+below).</p>
 <h2 id="source-citations">Source Citations</h2>
-<p>When the pipeline returns source documents, a citation block is appended to the response:</p>
+<p>When the pipeline returns source documents that carry a usable display name, a citation block is
+appended to the response:</p>
 <pre><code class="language-markdown">---
 **Sources:**
-- `document.md` (relevance: 0.85)
 - `guide.md` [collection-name] (relevance: 0.92)
+- `document.md` (relevance: 0.85)
 </code></pre>
+<p>Sources are ordered by relevance, highest first; a higher score means a closer match. When the
+same document contributes more than one chunk it is listed once, at its best score. Sources the
+pipeline returned without a score are listed last, without a <code>(relevance: ...)</code> suffix.</p>
 <p>Collection labels appear only when sources span multiple collections.</p>
+<p>A <code>/v1</code> response carries <strong>at most one</strong> source list appended by archi — the endpoint's citation
+block or the native chat UI's, never both. A source section the model wrote into its own answer
+text is passed through as written; the endpoint does not detect or remove it.</p>
+<p>For a non-streaming request, which text the endpoint returns depends only on whether the <code>final</code>
+event carried the bare <code>answer</code> field, never on what retrieval returned. Normally the content is
+that answer plus one citation block in the format above, and the native chat UI's own source list
+(a <code>Show all sources</code> details block) does not appear. If a <code>final</code> event ever arrives without the
+<code>answer</code> field, the endpoint returns the finalized <code>response</code> unchanged and appends no citation
+block, so the content carries at most the chat UI's own list.</p>
+<p>A streaming request never takes that branch: its content is assembled from the streamed chunks
+with one citation block appended when the <code>final</code> event arrives, whether or not that event carries
+<code>answer</code>, and the chat UI's own list is never involved.</p>
+<p>Either path can come back with no source list at all, even when retrieval found documents: the
+citation block is empty when no document carries a usable display name, and the chat UI's list is
+empty when its own relevance and visibility filtering leaves nothing to show.</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>

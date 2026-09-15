@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -184,6 +188,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -193,6 +205,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -240,7 +256,7 @@
 <li>Agent selector dropdown for switching between agents</li>
 <li>Built-in <a href="../data_sources/#data-viewer">Data Viewer</a> at <code>/data</code></li>
 <li>Settings panel for model/provider selection</li>
-<li><a href="../models_providers/#bring-your-own-key-byok">BYOK</a> support</li>
+<li><a href="../models_providers/#bring-your-own-key-byok"><abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr></a> support</li>
 <li>Conversation history</li>
 <li><a href="#service-status-board--alert-banners">Service Status Board &amp; Alert Banners</a></li>
 </ul>
@@ -515,7 +531,7 @@ MATTERMOST_CHANNEL_ID_WRITE=...
 </code></pre>
 <hr />
 <h2 id="grafana-monitoring">Grafana Monitoring</h2>
-<p>Monitor system performance and LLM usage with a pre-configured Grafana dashboard.</p>
+<p>Monitor system performance and <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> usage with a pre-configured Grafana dashboard.</p>
 <p><strong>Default port:</strong> <code>3000</code></p>
 <blockquote>
 <p><strong>Note:</strong> If redeploying with an existing name (without removing volumes), the PostgreSQL Grafana user may not have been created. Deploy a fresh instance to avoid issues.</p>
@@ -571,6 +587,17 @@ GRAFANA_PG_PASSWORD=&lt;grafana_db_password&gt;
 <h3 id="running_5">Running</h3>
 <pre><code class="language-bash">archi create [...] --services grader
 </code></pre>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>

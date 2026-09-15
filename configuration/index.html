@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -78,6 +82,20 @@
               <ul class="current">
                 <li class="toctree-l1 current"><a class="reference internal current" href="#">Configuration</a>
     <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#explicit-false-0-and-null">Explicit false, 0, and null</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#21-flags-where-an-explicit-false-was-discarded">21 flags where an explicit false was discarded</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#the-sso-source-becomes-a-source">The SSO source becomes a source</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#7-flags-where-an-explicit-null-rendered-as-the-string-none">7 flags where an explicit null rendered as the string 'None'</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#4-numeric-bounds-where-0-is-a-request-not-an-empty-value">4 numeric bounds where 0 is a request, not an empty value</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#flags-that-render-but-are-not-yet-acted-on">Flags that render but are not yet acted on</a>
+    </li>
+        </ul>
+    </li>
     <li class="toctree-l2"><a class="reference internal" href="#top-level-fields">Top-Level Fields</a>
         <ul>
     <li class="toctree-l3"><a class="reference internal" href="#name">name</a>
@@ -88,9 +106,15 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#services">services</a>
         <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#service-ports">Service ports</a>
+    </li>
     <li class="toctree-l3"><a class="reference internal" href="#serviceschat_app">services.chat_app</a>
         <ul>
+    <li class="toctree-l4"><a class="reference internal" href="#serviceschat_appauth">services.chat_app.auth</a>
+    </li>
     <li class="toctree-l4"><a class="reference internal" href="#serviceschat_appalerts">services.chat_app.alerts</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#chat-app-evaluation-configuration">Chat-app evaluation configuration</a>
     </li>
     <li class="toctree-l4"><a class="reference internal" href="#provider-configuration">Provider Configuration</a>
     </li>
@@ -116,7 +140,15 @@
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#retrieval-settings">Retrieval Settings</a>
     </li>
+    <li class="toctree-l3"><a class="reference internal" href="#chunking">Chunking</a>
+        <ul>
+    <li class="toctree-l4"><a class="reference internal" href="#the-markdown-strategy">The markdown strategy</a>
+    </li>
+        </ul>
+    </li>
     <li class="toctree-l3"><a class="reference internal" href="#sources">Sources</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#processing-html-markdown-categorization">Processing (HTML → Markdown &amp; categorization)</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#embedding-configuration">Embedding Configuration</a>
     </li>
@@ -144,6 +176,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -153,6 +193,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -188,6 +232,237 @@
 <blockquote>
 <p><strong>Tip:</strong> Start from one of the example configs in <code>examples/deployments/</code> and customize from there.</p>
 </blockquote>
+<h2 id="explicit-false-0-and-null">Explicit <code>false</code>, <code>0</code>, and <code>null</code></h2>
+<p>A value you write reaches the deployed configuration. <code>enabled: false</code> renders as <code>false</code>,
+and is not read as "unset and therefore ignorable".</p>
+<p><code>null</code> renders as that key's documented default on the flags this change converted and on
+every key whose template default is applied with <code>default(…, true)</code>, which is most of them.
+It is <strong>not</strong> a whole-file guarantee.</p>
+<p><strong>CAUTION: on these six keys, writing <code>null</code> stops the deploy.</strong> Each is iterated directly
+by the template through a bare <code>default([…])</code>, which replaces only an <em>undefined</em> value, so
+an explicit <code>null</code> reaches the loop and raises <code>TypeError: 'NoneType' object is not
+iterable</code>. <code>archi create</code> cannot render the config at all.</p>
+<ul>
+<li><code>global.ACCEPTED_FILES</code></li>
+<li><code>services.benchmarking.modes</code></li>
+<li><code>services.benchmarking.ragas_settings.enabled_metrics</code></li>
+<li><code>data_manager.utils.anonymizer.excluded_words</code></li>
+<li><code>data_manager.utils.anonymizer.greeting_patterns</code></li>
+<li><code>data_manager.utils.anonymizer.signoff_patterns</code></li>
+</ul>
+<p>Omit the key to get its default; do not write <code>null</code> on it. (Four other list-valued keys —
+<code>categorization.categories</code>, <code>jira.projects</code>, <code>redmine.projects</code> and
+<code>chat_app.alerts.managers</code> — are written the same way but sit inside a block that does not
+render when the key is absent, so <code>null</code> is harmless there.)</p>
+<p><code>0</code> is the narrowest of the three. <strong>This change converted four numeric bounds</strong>, listed in
+the table below. Three other numeric keys already preserved a configured <code>0</code> before it —
+<code>data_manager.scrape_workers</code>, <code>data_manager.scrape_per_host_workers</code> and
+<code>data_manager.sources.links.sitemap.min_pages</code>, the last of which this page tells you to set
+to <code>0</code> further down. Everywhere else a <code>0</code> still runs through the old filter and is replaced
+by that key's default: <code>data_manager.sources.jira.max_tickets: 0</code> renders as
+<code>10000000000.0</code>, and <code>services.chat_app.num_responses_until_feedback: 0</code> renders as <code>3</code>.</p>
+<p>So there is no single rule for <code>0</code>. Check the key before writing one and expecting it to
+arrive.</p>
+<p>This was not always true. Before the fix in issue #448, a set of boolean flags went through
+a Jinja filter that could not tell <code>false</code> from a missing key, so an explicit <code>false</code> was
+discarded and the default rendered in its place.</p>
+<p><strong>Rendered is not the same as honored.</strong> This change fixes the rendering. Whether a given
+consumer then acts on the value is a separate question, and for several keys the answer is
+still no — they are listed at the end of this section. Check that list before you rely on a
+flag.</p>
+<h3 id="21-flags-where-an-explicit-false-was-discarded">21 flags where an explicit <code>false</code> was discarded</h3>
+<p><code>false</code> now reaches the deployed configuration for:</p>
+<ul>
+<li><code>services.data_manager.enabled</code> and <code>data_manager.reset_collection</code></li>
+<li><code>data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.encode_kwargs.normalize_embeddings</code></li>
+<li><code>data_manager.processing.html_to_markdown.enabled</code></li>
+<li><code>enabled</code> and <code>visible</code> on the <code>local_files</code>, <code>links</code>, <code>git</code>, <code>sso</code> and <code>jira</code> sources,
+  <code>visible</code> on <code>indico</code>, and <code>enabled</code> on <code>redmine</code></li>
+<li><code>data_manager.sources.links.html_scraper.reset_data</code></li>
+<li><code>data_manager.sources.redmine.anonymize_data</code> and <code>data_manager.sources.elog.verify_ssl</code></li>
+<li>the two <code>headless</code> flags, on the CERN SSO scraper and on <code>indico.sso_kwargs</code></li>
+</ul>
+<p><code>redmine.visible</code> and <code>elog.visible</code> are <strong>not</strong> in this list. Their template expressions
+default to <code>false</code>, so an explicit <code>false</code> already rendered as <code>false</code> before this change
+and their semantics did not move.</p>
+<h3 id="the-sso-source-becomes-a-source">The SSO source becomes a source</h3>
+<p>This change fixes a second, unrelated defect in the same template, and it is the one most
+likely to change what your next deploy does.</p>
+<p>A whitespace-control marker on the line above <code>sso:</code> was pulling that key up one level, so
+the rendered config nested it inside <code>git:</code> — and the SSO block's own rows landed as
+<strong>duplicate keys inside <code>git:</code></strong>, where YAML's last-wins rule silently replaced Git's:</p>
+<pre><code class="language-yaml">    git:
+      enabled: True
+      visible: True
+      schedule: ''
+      sso:            # a null key, not a source
+      enabled: True   # SSO's rows, overwriting Git's
+      visible: True
+      schedule: ''
+</code></pre>
+<p>Two consequences, both measured against the template before and after:</p>
+<table>
+<thead>
+<tr>
+<th>Configuration</th>
+<th>Before</th>
+<th>After</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sources.git.enabled: false</code></td>
+<td>rendered <code>true</code> — <strong>discarded</strong></td>
+<td><code>false</code></td>
+</tr>
+<tr>
+<td><code>sources.git.schedule: "0 3 * * *"</code></td>
+<td>rendered <code>''</code> — <strong>discarded</strong></td>
+<td><code>0 3 * * *</code></td>
+</tr>
+<tr>
+<td><code>sources.sso.enabled: false</code></td>
+<td><code>sources.sso</code> absent entirely</td>
+<td><code>false</code></td>
+</tr>
+<tr>
+<td>nothing set</td>
+<td>no <code>sources.sso</code> key at all</td>
+<td><code>sso</code> with <code>enabled: false</code> (see below)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>CAUTION: check your Git source settings before the first deploy after this change.</strong>
+If you had <code>git.enabled: false</code> or a <code>git.schedule</code>, they were being ignored and now take
+effect — measured through the CLI's own normalised config, not just the bare template.</p>
+<p><strong>SSO does not switch itself on.</strong> The last row above says <code>false</code> rather than the
+template's <code>true</code> default because <code>archi create</code> and <code>archi evaluate</code> both call
+<code>ConfigurationManager.set_sources_enabled()</code> before rendering
+(<code>src/cli/cli_main.py:248</code> and <code>:879</code>), and that writes <code>enabled: false</code> into every managed
+source the config does not select. A <code>schedule</code> alone does not select a source, so an
+omitted <code>sso.enabled</code> reaches the template as an explicit <code>false</code>. To turn SSO on, set
+<code>sources.sso.enabled: true</code>.</p>
+<p><strong>CAUTION: <code>archi restart --config</code> does not do that normalisation.</strong> It renders the
+configuration without calling <code>set_sources_enabled()</code>, so every source whose <code>enabled</code> you
+omitted takes the template default of <code>true</code> — and its required credentials are not
+validated, because the source is absent from the enabled-source list the preflight checks.
+That applies to all six managed sources (<code>local_files</code>, <code>links</code>, <code>git</code>, <code>sso</code>, <code>jira</code>,
+<code>redmine</code>), not just SSO, and it means <code>archi create</code> and <code>archi restart --config</code> can
+produce different deployed configurations from the same input. Tracked as
+<a href="https://github.com/fasrc/archi/issues/461">issue #461</a>. Until it is fixed, write <code>enabled</code>
+explicitly on every source you care about rather than relying on the default, and prefer
+<code>archi create</code> when changing which sources are on.</p>
+<p>Of these, <code>enabled: false</code> is acted on by the <code>git</code>, <code>sso</code>, <code>indico</code>, <code>jira</code>, <code>redmine</code> and
+<code>elog</code> collectors, and by the Selenium scraper — with one exception for <code>git</code> and <code>sso</code>,
+described in the next paragraph.</p>
+<p><strong>CAUTION: a <code>git-</code> or <code>sso-</code> entry in <code>input_lists</code> overrides <code>enabled: false</code> for that
+source.</strong> <code>ScraperManager.collect_all_from_config()</code> sets <code>git_enabled = True</code> when the
+input lists yield any <code>git-</code> URL, and <code>sso_enabled = True</code> for any <code>sso-</code> URL, without
+consulting the flag. ELOG URLs are passed through as <code>extra_urls</code> and collected regardless
+of <code>elog.enabled</code>. So an ingest can fetch a source you configured as disabled — possibly
+after CLI validation skipped that source's required secrets. To disable one of these,
+remove its entries from <code>input_lists</code> as well as setting <code>enabled: false</code>. Tracked as
+<a href="https://github.com/fasrc/archi/issues/460">issue #460</a>.</p>
+<p><strong><code>anonymize_data: false</code> is the row to check first.</strong> It was silently ignored before and is
+honored now, and it widens what a reader can see. <code>visible: false</code> is the opposite
+direction — but see the list at the end of this section: for most sources it still does not
+reach chat citations, so the upgrade does not remove content there.</p>
+<h3 id="7-flags-where-an-explicit-null-rendered-as-the-string-none">7 flags where an explicit <code>null</code> rendered as the string <code>'None'</code></h3>
+<p><code>null</code> now renders that flag's documented default as a real boolean:</p>
+<ul>
+<li><code>services.benchmarking.anchors.enabled</code></li>
+<li><code>services.chat_app.flask_debug_mode</code> and <code>services.grader_app.flask_debug_mode</code></li>
+<li><code>services.data_manager.auth.enabled</code></li>
+<li><code>data_manager.retrievers.hierarchical_rerank.enabled</code></li>
+<li><code>data_manager.sources.indico.use_sso</code> and
+  <code>data_manager.sources.indico.slide_conversion.enabled</code></li>
+</ul>
+<h3 id="4-numeric-bounds-where-0-is-a-request-not-an-empty-value">4 numeric bounds where <code>0</code> is a request, not an empty value</h3>
+<p><strong>The four this change converted.</strong> They are not the only keys where a <code>0</code> survives —
+<code>data_manager.scrape_workers</code>, <code>data_manager.scrape_per_host_workers</code> and
+<code>data_manager.sources.links.sitemap.min_pages</code> already did, and still do. Those three are
+supported settings; a <code>0</code> on any of them reaches the deployment.</p>
+<p>Most other numeric keys still run through the old filter, so a <code>0</code> written there is replaced
+by the default — <code>data_manager.sources.jira.max_tickets: 0</code> renders as <code>10000000000.0</code>, and
+<code>services.chat_app.num_responses_until_feedback: 0</code> renders as <code>3</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th><code>0</code> means</th>
+<th>Unset means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>data_manager.sources.links.base_source_depth</code></td>
+<td>crawl no page at all for this seed</td>
+<td><code>1</code> — the seed page alone</td>
+</tr>
+<tr>
+<td><code>data_manager.sources.links.max_pages</code></td>
+<td>fetch no pages</td>
+<td>no cap</td>
+</tr>
+<tr>
+<td><code>data_manager.sources.links.sitemap.max_pages</code></td>
+<td>fail the ingest if the sitemap emits any page</td>
+<td><code>20000</code></td>
+</tr>
+<tr>
+<td><code>data_manager.sources.elog.max_entries</code></td>
+<td>fetch no entries</td>
+<td>no cap</td>
+</tr>
+</tbody>
+</table>
+<p>Depth counts levels of pages, so <code>base_source_depth: 1</code> is the base page on its own and <code>0</code>
+is nothing. To index the base page only, write <code>1</code>.</p>
+<p><strong>CAUTION: <code>sitemap.max_pages</code> is a validation ceiling, not a crawl budget.</strong> It is checked
+after expansion, and a sitemap that emits more pages than the ceiling fails the ingest
+rather than stopping at the limit. <code>sitemap.min_pages</code> is the matching floor and defaults to
+<code>1</code>. So <code>sitemap.max_pages: 0</code> on its own fails every expansion — a non-empty sitemap
+breaches the ceiling, and an empty one falls below the floor. If you mean "assert this
+sitemap is empty", set <code>min_pages: 0</code> alongside it. If you mean "crawl fewer pages", this is
+not the key: use <code>data_manager.sources.links.max_pages</code>, which is a real budget.</p>
+<h3 id="flags-that-render-but-are-not-yet-acted-on">Flags that render but are not yet acted on</h3>
+<p>The value reaches the deployed configuration and no consumer acts on it. Do not rely on
+these to turn anything off or to hide anything:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>What ignores it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>services.data_manager.enabled</code></td>
+<td>the data-manager service is registered <code>auto_enable=True</code>, and the service registry adds every auto-enable service unconditionally, so the container is deployed either way</td>
+</tr>
+<tr>
+<td><code>data_manager.sources.links.enabled</code></td>
+<td><code>ScraperManager</code> assigns <code>links_enabled = True</code> without reading the config, so link input lists are still crawled</td>
+</tr>
+<tr>
+<td><code>data_manager.sources.links.html_scraper.reset_data</code></td>
+<td>no consumer reads it — <code>ScraperManager</code> extracts the <code>html_scraper</code> block but reads only <code>verify_urls</code> and <code>enable_warnings</code> when it builds link scrapers</td>
+</tr>
+<tr>
+<td><code>visible</code> on <code>links</code>, <code>indico</code>, <code>jira</code>, <code>redmine</code> and <code>elog</code></td>
+<td>citations are filtered by the <code>source_type</code> stored on each document, and these sources persist <code>source_type</code> values that are not their config keys — <code>web</code> for links, Indico and ELOG, <code>ticket</code> for Jira and Redmine. The lookup misses, so the document defaults to visible (and the service logs <code>Source type … not found in config</code>). Tracked as <a href="https://github.com/fasrc/archi/issues/459">issue #459</a></td>
+</tr>
+</tbody>
+</table>
+<p><code>visible: false</code> <strong>does</strong> work for <code>git</code>, <code>sso</code> and <code>local_files</code>, whose stored
+<code>source_type</code> matches the config key.</p>
+<p>To keep a link source out of an ingest today, remove it from <code>input_lists</code> rather than
+setting <code>enabled: false</code>.</p>
+<p><code>data_manager.sources.local_files.enabled</code> is <strong>not</strong> in this list: it does have a
+consumer. <code>stage_local_files_to_volume()</code> reads it and returns without staging when it is
+<code>false</code>, logging <code>local_files disabled; skipping staging.</code> The limitation is narrower —
+staging is what it controls, so a volume already populated by an earlier deploy keeps its
+files, and the data manager still ingests whatever is in that volume.</p>
 <hr />
 <h2 id="top-level-fields">Top-Level Fields</h2>
 <h3 id="name"><code>name</code></h3>
@@ -244,6 +519,43 @@
 <hr />
 <h2 id="services"><code>services</code></h2>
 <p>Configuration for containerized services. Each service has its own subsection.</p>
+<h3 id="service-ports">Service ports</h3>
+<p>Each service that is reachable over the network takes two port keys, and which one supplies
+the host-side mapping depends on the deployment mode.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Host-side port</th>
+<th>Container-side port</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Container mode (default)</td>
+<td><code>external_port</code></td>
+<td><code>port</code></td>
+</tr>
+<tr>
+<td>Host mode (<code>--hostmode</code>)</td>
+<td><code>external_port</code> when it is set, otherwise <code>port</code></td>
+<td>same value as the host-side port</td>
+</tr>
+</tbody>
+</table>
+<p>In host mode the two sides are always the same number, because the process binds the port
+directly on the host instead of being mapped into a container. Setting <code>external_port</code> in host
+mode therefore moves <em>both</em> sides; the per-service tables below describe <code>external_port</code> as the
+host-mapped port, which is its container-mode role.</p>
+<p><code>archi create</code> validates the effective host-side port of every enabled service during
+preflight, before it tears down an existing deployment. The run is refused when a port:</p>
+<ul>
+<li>is not a whole number between 1 and 65535, or</li>
+<li>is assigned to two enabled services at once.</li>
+</ul>
+<p>The diagnostic names the exact key it validated — <code>services.&lt;service&gt;.external_port</code> in host
+mode when that key is set, and <code>services.&lt;service&gt;.port</code> otherwise — so the key the message
+names is always the key to edit.</p>
 <h3 id="serviceschat_app"><code>services.chat_app</code></h3>
 <p>The main chat interface.</p>
 <table>
@@ -272,7 +584,7 @@
 <td><code>default_provider</code></td>
 <td>string</td>
 <td><code>local</code></td>
-<td>Default LLM provider</td>
+<td>Default <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> provider</td>
 </tr>
 <tr>
 <td><code>default_model</code></td>
@@ -342,6 +654,47 @@
 </tr>
 </tbody>
 </table>
+<h4 id="serviceschat_appauth"><code>services.chat_app.auth</code></h4>
+<p>With <code>auth.enabled: false</code> (the default) every route runs for everyone and none of the rules
+below apply. With it <code>true</code>, each guarded route rejects a caller who is not logged in — and
+<em>how</em> it rejects depends on what the caller can act on. A browser gets a page it can render;
+a program gets a status code and a JSON body it can parse.</p>
+<p>Rules, evaluated in order:</p>
+<table>
+<thead>
+<tr>
+<th>Condition</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SSO is on and <code>allow_anonymous</code> is false</td>
+<td><strong>302</strong> redirect to <code>/login</code> (an <code>anonymous_redirect</code> audit event is recorded)</td>
+</tr>
+<tr>
+<td>The request path starts with <code>/api/</code>, <strong>or</strong> the request carries an <code>application/json</code> content type</td>
+<td><strong>401</strong> <code>{"error": "Unauthorized", "message": "Authentication required"}</code></td>
+</tr>
+<tr>
+<td>Anything else — a browser opening <code>/chat</code>, <code>/terms</code>, <code>/data</code>, <code>/upload</code> or <code>/admin/database</code></td>
+<td><strong>302</strong> redirect to <code>/login</code></td>
+</tr>
+</tbody>
+</table>
+<p>Because the first rule is checked first, an enforced-SSO deployment redirects <code>/api/</code> callers
+too, rather than answering them with a <code>401</code>.</p>
+<p>A JSON content type counts as a programmatic caller even on a page route, so a script posting
+JSON to <code>/chat</code> gets the <code>401</code> rather than HTML it cannot use. The <code>Accept</code> request header is
+<strong>not</strong> consulted: a caller that only sends <code>Accept: application/json</code> is treated as a browser
+and redirected. Every JSON surface lives under <code>/api/</code>, which is already covered — see
+<a href="https://github.com/fasrc/archi/issues/189">issue #189</a> if you need negotiation on a page
+route.</p>
+<p>Logging in is only half the check on the permission-guarded routes (<code>/data</code>, <code>/upload</code>,
+<code>/admin/database</code> and their <code>/api/</code> equivalents). A logged-in user whose roles lack the
+required permission gets <strong>403</strong> <code>{"error": "Forbidden", ...}</code> naming the missing permission —
+for every caller, browser included. Authorization failures are not redirected; only
+authentication failures are.</p>
 <h4 id="serviceschat_appalerts"><code>services.chat_app.alerts</code></h4>
 <p>Controls access to the <a href="../services/#service-status-board--alert-banners">Service Status Board &amp; Alert Banners</a>.</p>
 <table>
@@ -390,6 +743,77 @@ services:
             permissions:
               - alerts:manage
 </code></pre>
+<h4 id="chat-app-evaluation-configuration">Chat-app evaluation configuration</h4>
+<p>The evaluation console is opt-in. Both <code>archi create</code> and the chat runtime
+disable it when <code>enabled</code> is omitted or <code>false</code>. Set <code>enabled: true</code> explicitly
+to expose the console and its APIs. When enabled, it persists catalogs,
+atom-review drafts, jobs, and run artifacts.</p>
+<pre><code class="language-yaml">services:
+  chat_app:
+    agents_dir: ../configs/agents
+    evaluations:
+      enabled: true
+      root: /root/archi/evaluations
+      agent_config_path: /root/archi/configs/config.eval.yaml
+      mcp_config_path: ../configs/qa_evaluation_mcp.yaml
+</code></pre>
+<ul>
+<li><code>agents_dir</code> points to the host directory of Markdown agent specs that the
+  Console offers for selection.</li>
+<li><code>evaluations.enabled</code> must be exactly <code>true</code> to expose <code>/evaluations</code> and its
+  APIs; an omitted block, an omitted <code>enabled</code> field, or <code>enabled: false</code>
+  leaves the console disabled.</li>
+<li><code>evaluations.root</code> is the in-container catalog root for datasets, profiles,
+  atom-review drafts, jobs, and run artifacts. Defaults to
+  <code>/root/archi/evaluations</code>. The chat app creates this tree at start-up,
+  parent directories included.</li>
+</ul>
+<p><strong>Constraint:</strong> <code>root</code> must be <code>/root/archi/evaluations</code> or a path beneath
+  it (for example <code>/root/archi/evaluations/trial-a</code>). The compose bind mount is
+  fixed at <code>/root/archi/evaluations</code> — the host volume is attached there and
+  nowhere else. A root set outside that subtree is technically valid YAML, but
+  the path falls in ephemeral container storage: artifacts accumulate during the
+  session and are silently discarded on the next <code>archi create --force</code>.
+  <code>archi create</code> refuses configs that set <code>root</code> outside the mount, so a
+  mistyped root is reported at deploy time instead of quietly writing artifacts
+  to storage that the next redeploy drops.</p>
+<p>!!! warning "The mount is not a backup"</p>
+<pre><code>  Keeping `root` inside the mount protects the catalog when a container is
+  recreated or restarted. It does **not** protect it from
+  `archi create --force`: that path calls `remove_existing_deployment()`,
+  which deletes the whole deployment directory — and the host side of this
+  mount, `data/evaluations`, sits inside it. Copy the catalog out of
+  `${ARCHI_DIR:-$HOME/.archi}/archi-&lt;name&gt;/data/evaluations` before a force
+  redeploy if you need to keep it. `ARCHI_DIR` is usually unset, and the CLI
+  then defaults it to `~/.archi`.
+</code></pre>
+<p>If the root cannot be used at runtime — a read-only mount, or a permission
+  mismatch on the host directory — the console disables itself and chat keeps
+  serving. Look for the start-up error line naming the root, then correct this
+  setting and redeploy to re-enable the console.
+- <code>evaluations.agent_config_path</code> is the in-container path to the Archi
+  deployment YAML that defines the agent under test. This key is <strong>required</strong>
+  when <code>enabled</code> is <code>true</code>; it has <strong>no default</strong>. <code>archi create</code> refuses a
+  config that omits it or that names the live deployment config
+  (<code>/root/archi/configs/config.yaml</code>), because every evaluation run copies the
+  named file into the host-mounted run workspace the console serves — credential
+  values included. Use a redacted copy such as
+  <code>/root/archi/configs/config.eval.yaml</code> instead. Archi does not generate that
+  copy: place the redacted file in the deployment's own <code>configs/</code> directory on
+  the host (<code>~/.archi/archi-&lt;name&gt;/configs/</code>, or <code>$ARCHI_DIR/archi-&lt;name&gt;/configs/</code>),
+  which Compose mounts at <code>/root/archi/configs</code>. A run whose <code>agent_config_path</code>
+  names a file that is absent from the container starts and then fails the file
+  check, so confirm the file is in place before the first run. A relative value
+  is read inside the container and so resolves against <code>/root/archi</code>, not against
+  the directory <code>archi create</code> ran in.
+- <code>evaluations.mcp_config_path</code> is needed only for Dataset V2 live oracle
+  items. It is an absolute host path or a path relative to this deployment YAML.
+  Archi validates and stages the referenced evaluator MCP registry.</p>
+<p>Top-level <code>mcp_servers</code> configures tools available to the tested agent; it is
+not reused as the evaluator registry. See
+<a href="../evaluation/#chat-app-evaluation-configuration">Chat-app evaluation configuration</a>
+and <a href="../evaluation/#evaluator-mcp-registry">Evaluator MCP registry</a> for path
+resolution, runtime reachability, authentication, and schema rules.</p>
 <h4 id="provider-configuration">Provider Configuration</h4>
 <pre><code class="language-yaml">services:
   chat_app:
@@ -404,6 +828,7 @@ services:
       gemini:
         enabled: true
 </code></pre>
+<p>The <code>mode</code> value is matched without regard to case or surrounding whitespace. Any value other than <code>ollama</code> or <code>openai_compat</code> is rejected at startup with an error that names the valid values.</p>
 <h3 id="servicespostgres"><code>services.postgres</code></h3>
 <p>PostgreSQL database settings.</p>
 <table>
@@ -627,7 +1052,19 @@ services:
 <td><code>parallel_workers</code></td>
 <td>int</td>
 <td><code>32</code></td>
-<td>Parallel ingestion workers</td>
+<td>Parallel <strong>embedding</strong>-phase ingestion workers</td>
+</tr>
+<tr>
+<td><code>scrape_workers</code></td>
+<td>int</td>
+<td><code>8</code></td>
+<td>Parallel <strong>scrape</strong>-phase workers: how many seed URLs are crawled concurrently</td>
+</tr>
+<tr>
+<td><code>scrape_per_host_workers</code></td>
+<td>int</td>
+<td><code>4</code></td>
+<td>Cap on concurrent in-flight requests to any single host</td>
 </tr>
 <tr>
 <td><code>reset_collection</code></td>
@@ -643,6 +1080,34 @@ services:
 </tr>
 </tbody>
 </table>
+<blockquote>
+<p><strong>Note:</strong> <code>scrape_workers</code> and <code>scrape_per_host_workers</code> control the <strong>scrape
+phase</strong> only and are independent of <code>parallel_workers</code>, which governs the
+<strong>embedding phase</strong>. Both scrape knobs coerce to <code>int</code>, fall back to their
+defaults on invalid values (including YAML's non-finite <code>.inf</code> / <code>.nan</code>), and
+clamp to a minimum of <code>1</code> — so <code>scrape_workers: 0</code> is accepted and means <code>1</code>, not
+the default of <code>8</code>. Setting <code>scrape_workers: 1</code> reproduces the sequential scrape
+path exactly, in input order.</p>
+<p><strong>What "per host" means.</strong> <code>scrape_per_host_workers</code> is a budget owed to a
+<em>server</em>, so it is enforced across the whole data-manager process, not per
+collection run: a scheduled link ingest and a <code>/document_index/upload_url</code>
+request that overlap contend for the same slots rather than each spending the
+full budget. Host slots also follow redirects — a seed on <code>example.org</code> that
+redirects to <code>www.example.org</code> moves onto the destination's slot for the rest of
+its crawl, so seeds that funnel into one host cannot collectively exceed the cap
+there. A seed URL the parser cannot read at all gets its own private slot and
+fails on its own instead of aborting the run.</p>
+<p><strong>Database impact of raising <code>scrape_workers</code>.</strong> The scrape persistence path does
+<strong>not</strong> use the pooled connections in <code>src/utils/connection_pool.py</code>. Each catalog
+write goes through <code>PostgresCatalogService.upsert_resource()</code>, which opens a fresh
+<code>psycopg2.connect()</code> for the statement and closes it immediately. Workers therefore
+never block on a pool checkout — instead each in-flight write is one more <em>direct</em>
+connection, so the ceiling that matters is the Postgres server's <code>max_connections</code>.
+Failures there surface as <code>OperationalError</code> and are retried three times (2s, then
+4s backoff) before the seed is abandoned. Keep <code>scrape_workers</code> comfortably below
+<code>max_connections</code> minus whatever the chat app and other services are already
+holding.</p>
+</blockquote>
 <h3 id="retrieval-settings">Retrieval Settings</h3>
 <table>
 <thead>
@@ -664,13 +1129,13 @@ services:
 <td><code>retrievers.hybrid_retriever.bm25_weight</code></td>
 <td>float</td>
 <td><code>0.6</code></td>
-<td>BM25 keyword score weight</td>
+<td>Weight for the normalized <abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr> component (should sum to 1.0 with semantic)</td>
 </tr>
 <tr>
 <td><code>retrievers.hybrid_retriever.semantic_weight</code></td>
 <td>float</td>
 <td><code>0.4</code></td>
-<td>Semantic similarity weight</td>
+<td>Weight for the normalized semantic component</td>
 </tr>
 <tr>
 <td><code>stemming.enabled</code></td>
@@ -683,6 +1148,98 @@ services:
 <blockquote>
 <p><strong>Note:</strong> <code>use_hybrid_search</code> is a dynamic runtime setting (managed via the configuration API), not a YAML config key.</p>
 </blockquote>
+<h3 id="chunking">Chunking</h3>
+<p>Controls how the data manager splits documents at ingestion. <code>sentence</code> is the
+default: the CLI template renders it when the key is unset, and the data manager also
+falls back to it when a hand-authored config omits the key. <code>sentence</code> and the opt-in
+<code>markdown</code> strategy both build <strong>hierarchical</strong> parent-child chunks: small embedded
+child nodes linked to larger parent context nodes (the parent text is what a
+hierarchical-rerank retriever returns). The legacy <code>character</code> strategy uses the flat
+<code>chunk_size</code>/<code>chunk_overlap</code> settings above.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>chunking.strategy</code></td>
+<td>string</td>
+<td><code>sentence</code></td>
+<td><code>sentence</code> (hierarchical, sentence-aware), <code>markdown</code> (hierarchical, header-aware for Markdown files — see below), or <code>character</code> (legacy flat chunks)</td>
+</tr>
+<tr>
+<td><code>chunking.parent_chunk_size</code></td>
+<td>int</td>
+<td><code>2048</code></td>
+<td>Target size in tokens of parent context nodes (hierarchical strategies only)</td>
+</tr>
+<tr>
+<td><code>chunking.child_chunk_size</code></td>
+<td>int</td>
+<td><code>512</code></td>
+<td>Target size in tokens of embedded child leaf nodes (hierarchical strategies only)</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-yaml">data_manager:
+  chunking:
+    strategy: sentence
+    parent_chunk_size: 2048
+    child_chunk_size: 512
+</code></pre>
+<blockquote>
+<p><strong>Backward compatibility:</strong> <code>parent_chunk_size</code>/<code>child_chunk_size</code> are optional.
+Omitting them reproduces the built-in defaults (2048/512), so an existing
+deployment's chunking is unchanged. They exist so a benchmark can sweep chunk
+sizes and recommend defaults from data — see
+<a href="../benchmarking/#hierarchical-rerank-ab">Benchmarking → Hierarchical-rerank A/B</a>.</p>
+</blockquote>
+<h4 id="the-markdown-strategy">The <code>markdown</code> strategy</h4>
+<p><code>strategy: markdown</code> is header-aware chunking for Markdown sources. HTML pages that
+<code>html_to_markdown</code> converted count as Markdown. The strategy is off by default and
+adds no config keys.</p>
+<ul>
+<li><strong>Sections become parents.</strong> Each header-delimited section is one parent node. A
+  section longer than <code>parent_chunk_size</code> splits into several parents with no overlap,
+  and each parent stays within the budget, separators included. Fenced code blocks
+  stay whole: a fence larger than the budget becomes one oversized parent rather than
+  a bisected one.</li>
+<li><strong>Header hierarchy in metadata.</strong> Every parent and child carries
+  <code>metadata.header_path</code>, the section's ancestor headers (for example
+  <code>/Guide/Install/</code>; <code>/</code> for text before the first header and for top-level sections).
+  The key is always present under this strategy.</li>
+<li><strong>Per-file dispatch.</strong> Only files whose suffix is <code>md</code> or <code>markdown</code> (any case, with
+  or without the dot) take the Markdown parser. Every other file chunks with the
+  <code>sentence</code> strategy, so a mixed corpus needs no per-source setting.</li>
+<li><strong>Child overlap.</strong> Child nodes overlap by 20 tokens, clamped to <code>child_chunk_size</code>,
+  on both hierarchical strategies. A <code>child_chunk_size</code> below 200 no longer fails
+  ingestion.</li>
+</ul>
+<blockquote>
+<p><strong>A strategy change re-chunks nothing already ingested.</strong> The vectorstore diffs by
+resource hash, and <code>redeploy.sh</code> preserves the data volumes, so old and new chunks
+coexist until you force a re-ingest. Either recreate the data volumes, or delete this
+collection's rows from <code>document_chunks</code> and <code>document_parent_nodes</code> and re-run the
+data manager. Match rows the way the data manager does: <code>metadata-&gt;&gt;'collection'</code>
+equal to the collection name <strong>or <code>IS NULL</code></strong>. Rows embedded before collection
+metadata existed carry <code>NULL</code>, and the data manager counts them as this collection's.
+If they stay, it still sees their hashes as embedded and skips them. Keep the
+<code>documents</code> table: it is the source catalog the data manager reads to decide what to
+embed, and it has no collection column. If you delete its rows, the corpus becomes
+empty instead of refreshed.</p>
+</blockquote>
+<p>The collection name is <code>&lt;collection_name&gt;_with_&lt;embedding_name&gt;</code>, as logged at startup
+(<code>VectorStoreManager initialized: collection=...</code>):</p>
+<pre><code class="language-sql">DELETE FROM document_parent_nodes
+ WHERE metadata-&gt;&gt;'collection' = '&lt;collection&gt;' OR metadata-&gt;&gt;'collection' IS NULL;
+DELETE FROM document_chunks
+ WHERE metadata-&gt;&gt;'collection' = '&lt;collection&gt;' OR metadata-&gt;&gt;'collection' IS NULL;
+</code></pre>
 <h3 id="sources">Sources</h3>
 <pre><code class="language-yaml">data_manager:
   sources:
@@ -710,6 +1267,144 @@ services:
       anonymize_data: true
 </code></pre>
 <p>The <code>visible</code> flag on any source (<code>sources.&lt;name&gt;.visible</code>) controls whether content appears in chat citations (default: <code>true</code>).</p>
+<h3 id="processing-html-markdown-categorization">Processing (HTML → Markdown &amp; categorization)</h3>
+<p>A per-document processing stage runs at the persistence seam — <em>after</em> a resource is
+collected (scraped/uploaded/fetched) and <em>before</em> it is written to disk. It is built
+once from <code>data_manager.processing</code> and applied uniformly across <strong>both</strong> scheduled
+ingest and the uploader UI, so the two never produce an inconsistent corpus.</p>
+<p>Data flow per document: <strong>collect → capture (title + source category) → convert (HTML→Markdown, KB article-body slice) → categorize (optional <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr>) → persist</strong>.</p>
+<pre><code class="language-yaml">data_manager:
+  processing:
+    html_to_markdown:
+      enabled: true            # default: true (cheap, local)
+    categorization:
+      enabled: false           # default: false (one LLM call per document)
+      provider: local          # provider key under services.chat_app.providers
+      model: qwen3             # model id for that provider
+      max_chars: 4000          # content is truncated to this many chars before the call
+      max_concurrency: 1       # concurrent LLM calls; 1 = serial (default)
+      categories:              # the closed set of labels the model must choose from
+        - compute
+        - storage
+        - software
+        - policy
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>html_to_markdown.enabled</code></td>
+<td><code>true</code></td>
+<td>Convert string HTML content (suffix <code>html</code>/<code>htm</code>) to ATX Markdown via <code>markdownify</code>, flip the suffix and path fields to <code>.md</code>, and record <code>metadata.converted_from = "html"</code>. The <code>.md</code> file then loads through <code>TextLoader</code> instead of <code>BSHTMLLoader</code>, so headings, lists, tables, and links survive into chunks. For <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> KB (Echo-KB) pages, the converted Markdown is additionally sliced to the article body between the page's <code>Table of Contents</code> and <code>Bookmarkable Links</code> (or, when absent, <code>Last Updated</code>) landmarks, dropping the surrounding category-filter nav and footer; pages without those landmarks (non-KB sources) keep the full-page conversion.</td>
+</tr>
+<tr>
+<td><code>categorization.enabled</code></td>
+<td><code>false</code></td>
+<td>Assign one label from <code>categories</code> to each document via an <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> and store it under <code>metadata.llm_category</code>.</td>
+</tr>
+<tr>
+<td><code>categorization.provider</code> / <code>model</code></td>
+<td>—</td>
+<td>Which chat model to use. <code>provider</code> is a key under <code>services.chat_app.providers</code>; that block (base_url / mode / models / extra_kwargs) supplies the model's <code>provider_config</code>, so a custom local/<abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> endpoint is honored.</td>
+</tr>
+<tr>
+<td><code>categorization.max_chars</code></td>
+<td><code>4000</code></td>
+<td>Document content is truncated to this length before the model call (bounds cost/latency).</td>
+</tr>
+<tr>
+<td><code>categorization.max_concurrency</code></td>
+<td><code>1</code></td>
+<td>Upper bound on documents in an <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> call at once. Categorization runs inside <code>persist_resource</code>, which the scrape phase calls from a pool sized by <code>scrape_workers</code> — this knob keeps the request rate to the model provider decided by the model's limits rather than by a fetch-politeness setting. Anything that is not a positive integer coerces to <code>1</code>; a bad value never means "unbounded".</td>
+</tr>
+<tr>
+<td><code>categorization.categories</code></td>
+<td><code>[]</code></td>
+<td>The closed label set. An empty list (or any error / out-of-list / model-not-configured) yields <code>metadata.llm_category = "uncategorized"</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Behavior and caveats:</strong></p>
+<ul>
+<li><strong>No-op when disabled.</strong> A <strong>missing</strong> <code>processing</code> block means conversion on,
+  categorization off (the shipped default). An explicitly all-disabled block makes
+  the persistence service behave byte-for-byte identically to the unwrapped service.</li>
+<li><strong>Never blocks ingest.</strong> A conversion that raises, or that yields blank/whitespace
+  Markdown (e.g. a script-only page), keeps the original resource. A categorization
+  error never raises and defaults to <code>uncategorized</code>.</li>
+<li><strong><code>llm_category</code> is distinct from <code>category</code>.</strong> A source-provided
+  <code>metadata.category</code> is <strong>never</strong> overwritten; the <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> label is written to
+  <code>metadata.llm_category</code>. Both propagate to <code>documents.extra_json</code> and onward to
+  <code>document_chunks.metadata</code>.</li>
+<li><strong>Source category capture (KB).</strong> When conversion is enabled, an HTML page's
+  breadcrumb category is captured <em>before</em> conversion into <code>metadata.category</code> — for
+  <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> KB pages this is the site taxonomy term (<code>Home › &lt;Category&gt; › &lt;Article&gt;</code>,
+  e.g. <code>Storage</code>, <code>Cluster Usage</code>). It never overwrites a category a scraper already
+  set (e.g. the Indico event category) and is silent on pages without a breadcrumb.
+  Like the body slice, it takes effect only on <strong>newly</strong> ingested documents or when an
+  already-persisted document is force-overwritten — see <em>Applying to an existing
+  corpus</em> below.</li>
+<li><strong>Multi-line code becomes a fenced block.</strong> A <code>&lt;code&gt;</code> element with no <code>&lt;pre&gt;</code>
+  ancestor that contains a <code>&lt;br&gt;</code> is a code listing, not an inline span. The conversion
+  wraps it in a <code>&lt;pre&gt;</code> before <code>markdownify</code> runs, so it becomes a fenced code block and
+  no comment line inside it parses as a heading (issue #399). The fence gets an
+  infostring only when a class on the element is one of <code>bash</code>, <code>sh</code>, <code>spec</code>, <code>lua</code>,
+  <code>python</code>, <code>c</code>, <code>cpp</code>, <code>fortran</code>, <code>r</code>, <code>perl</code>, <code>json</code>, <code>yaml</code>, <code>text</code>; any other class
+  gives a bare fence. A source newline next to a <code>&lt;br&gt;</code> (WordPress emits <code>&lt;br /&gt;\n</code>) is
+  dropped, so the fence has no blank line between code lines. Native <code>&lt;pre&gt;</code> blocks and
+  single-line inline <code>&lt;code&gt;</code> convert as before. Like the body slice, the change reaches
+  disk only for new or force-overwritten documents — see <em>Applying to an existing
+  corpus</em> below.</li>
+<li><strong>A promoted block leaves its inline ancestors.</strong> When that multi-line <code>&lt;code&gt;</code> sits
+  inside <code>&lt;a&gt;</code>, <code>&lt;b&gt;</code>, <code>&lt;strong&gt;</code>, <code>&lt;em&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;del&gt;</code>, <code>&lt;s&gt;</code>, <code>&lt;kbd&gt;</code>, <code>&lt;samp&gt;</code>,
+  <code>&lt;sub&gt;</code> or <code>&lt;sup&gt;</code>, the conversion splits the ancestor around the block instead of
+  leaving the fence inside its markers (issue #406): the text before the block keeps its
+  markup, the fence stands on its own, and the text after the block continues in a fresh
+  copy of the same tag with the same attributes. A link therefore renders as two links
+  with the same <code>href</code> around the fence, a bold or italic run resumes after it, and an
+  ancestor left with no content is dropped. Whitespace that touches the cut is removed,
+  so no line beside the fence begins or ends with a stray space. The shape is rare in the
+  <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> KB (0 of 25 sampled multi-line code elements) and, like every item in this list,
+  it reaches disk only for new or force-overwritten documents.</li>
+<li><strong>Content after a nested list starts on its own line.</strong> <code>markdownify</code> drops the newline
+  after a list nested inside a list item, so the text, inline element, or sibling item
+  that followed it was glued onto the nested list's last line — onto a closing code fence
+  when the last nested item ends in a code block (issue #410); the conversion puts that
+  newline back when the follower does not start a new line by itself, and a following
+  paragraph, code block, heading, or list is unchanged; like the body slice, the change
+  reaches disk only for new or force-overwritten documents — see <em>Applying to an existing
+  corpus</em> below.</li>
+<li><strong>Cost.</strong> Categorization issues one <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> call per document — expensive on large
+  crawls, hence off by default.</li>
+<li><strong>Local <code>.html</code> uploads are not converted.</strong> Uploaded local files arrive as <code>bytes</code>
+  (not string content), so the conversion guard skips them; scraped/web HTML is the
+  target. (A decode-on-<code>html</code> path is future work.)</li>
+<li><strong>Applying to an existing corpus (a plain re-ingest is <em>not</em> enough).</strong> Standard-URL
+  ingest calls <code>persist_resource(resource, output_dir)</code> <strong>without</strong> <code>overwrite</code>, and the
+  persistence layer skips writing when the target path already exists. So for a document
+  already on disk (an existing deployment), re-ingesting does <strong>not</strong> rewrite its
+  persisted Markdown — the new body slice / <code>category</code> never reach disk, and the
+  vectorstore (which detects refreshes by the persisted <strong>filename</strong>, e.g.
+  <code>page.html</code> → <code>page.md</code>, not by content) keeps serving the old chunks. A content-only
+  change under the same <code>.md</code> filename and unchanged hash therefore requires a
+  <strong>force-overwrite or a nuke + re-ingest</strong> (or removing the document so it is re-added)
+  to take effect. New documents are unaffected — they are sliced/categorized on first
+  ingest.</li>
+<li><strong>Missing categorization provider fails loud, not silent.</strong> If <code>categorization.enabled</code>
+  is true but its <code>provider</code> is absent from <code>services.chat_app.providers</code>, the
+  categorizer is <strong>not</strong> built (a prominent warning is logged and no <code>llm_category</code> is
+  written) rather than falling back to a default endpoint and mislabeling every
+  document. Conversion and ingest proceed normally.</li>
+<li><strong>Out of scope:</strong> retrieval-time filtering by <code>llm_category</code> (retrievers do not read
+  metadata filters yet), and retroactive conversion of already-ingested documents that
+  are never re-ingested.</li>
+</ul>
 <h3 id="embedding-configuration">Embedding Configuration</h3>
 <pre><code class="language-yaml">data_manager:
   embedding_name: OpenAIEmbeddings
@@ -718,9 +1413,9 @@ services:
       class: OpenAIEmbeddings
       kwargs:
         model: text-embedding-3-small
-      similarity_score_reference: 10
+      similarity_score_reference: 0.0
 </code></pre>
-<p>See <a href="../models_providers/#embedding-models">Models &amp; Providers</a> for all embedding options.</p>
+<p><code>similarity_score_reference</code> is a minimum cosine similarity in the range <code>0..1</code>; <code>0.0</code> means cite everything retrieved. See <a href="../models_providers/#embedding-models">Models &amp; Providers</a> for all embedding options.</p>
 <h3 id="anonymizer">Anonymizer</h3>
 <pre><code class="language-yaml">data_manager:
   utils:
@@ -798,6 +1493,17 @@ data_manager:
 <blockquote>
 <p><strong>Tip:</strong> For the full base template with all defaults, see <code>src/cli/templates/base-config.yaml</code> in the repository.</p>
 </blockquote>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>

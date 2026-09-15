@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>Agent Search-Call Cap and the Relevance Floor - Archi Docs</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Agent Search-Call Cap and the Relevance Floor";
+        var mkdocs_page_input_path = "proposals/agent-search-call-cap.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../.." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Agent Search-Call Cap and the Relevance Floor</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/proposals/agent-search-call-cap.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="agent-search-call-cap-and-the-relevance-floor">Agent Search-Call Cap and the Relevance Floor</h1>
+<p><strong>Author:</strong> Austin Swinney, <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> — Harvard University
+<strong>Date:</strong> August 2026
+<strong>Status:</strong> Shipped — reference write-up, not a proposal
+<strong>Code anchors:</strong> verified against <code>dev</code> at <code>5a26b5a3</code></p>
+<hr />
+<h2 id="tldr">TL;DR</h2>
+<ul>
+<li>The <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> agent looped on its search tool. It called
+  <code>search_vectorstore_hybrid</code> 8 to 50 times for one question, hit the framework
+  limit <code>recursion_limit=50</code>, and returned an error wrapper instead of an answer.</li>
+<li>A prompt rule did not stop the loop. Three prompt versions failed. The rule
+  had to live in the tool layer.</li>
+<li>The fix is a <strong>per-turn call cap</strong>, enforced inside the tool. The default is
+  <strong>2 calls of <code>search_vectorstore_hybrid</code> per user turn</strong>.</li>
+<li>Past the cap the tool skips the retriever and returns a short synthetic text.
+  The model reads that text as a normal tool result and finishes the turn.</li>
+<li>The <strong>"minimum accuracy" setting is a different control</strong>. It is
+  <code>similarity_score_reference</code>, a floor on the <strong>source list under the answer</strong>.
+  It ships <strong>disabled</strong>, and it never gates a tool call.</li>
+<li>No code in archi stops an agent call because a relevance score is low. The cap
+  counts calls. It does not read scores.</li>
+</ul>
+<hr />
+<h2 id="1-why-the-cap-exists">1. Why the cap exists</h2>
+<p>We tested three versions of the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> agent prompt against
+<code>Qwen3.5-35B-A3B-GPTQ-Int4</code>. All three failed, in two opposite ways.</p>
+<table>
+<thead>
+<tr>
+<th>Prompt version</th>
+<th>Behavior</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v10</td>
+<td>Did not search at all</td>
+<td>Invented AWS CLI flags from training data</td>
+</tr>
+<tr>
+<td>v11</td>
+<td>Looped the search tool 8 to 50 times</td>
+<td>Hit <code>recursion_limit=50</code>, 125+ seconds</td>
+</tr>
+<tr>
+<td>v12</td>
+<td>Looped the search tool 8 to 50 times</td>
+<td>Same failure as v11</td>
+</tr>
+</tbody>
+</table>
+<p>The v11 and v12 turns ended in <code>_handle_recursion_limit_error</code>, which wraps the
+partial output in "Best Possible Answer / Note on Interruption" text. That text
+is an error report, not an answer.</p>
+<p><strong>The mechanism.</strong> The model judged each result set too weak to answer from, so
+it searched again with a new phrase. Nothing bounded that judgment. The model
+does not obey a prompt instruction that says "stop after N searches". Prompt
+discipline of that kind is not reliable on this model, so the stop rule moved
+into the tool itself.</p>
+<pre><code class="language-mermaid">flowchart TD
+    subgraph before[&quot;Before — unbounded&quot;]
+        B1[&quot;Model asks a question&quot;] --&gt; B2[&quot;search_vectorstore_hybrid&quot;]
+        B2 --&gt; B3{&quot;Results good&lt;br/&gt;enough?&quot;}
+        B3 --&gt;|&quot;model says no&quot;| B2
+        B3 --&gt;|&quot;never reached&quot;| B4[&quot;Answer&quot;]
+        B2 --&gt; B5[&quot;recursion_limit=50&lt;br/&gt;125+ s&lt;br/&gt;'Note on Interruption'&quot;]:::bad
+    end
+    subgraph after[&quot;After — capped at 2&quot;]
+        A1[&quot;Model asks a question&quot;] --&gt; A2[&quot;search_vectorstore_hybrid&quot;]
+        A2 --&gt; A3{&quot;Call count&lt;br/&gt;&amp;gt; cap?&quot;}
+        A3 --&gt;|&quot;no&quot;| A4[&quot;Retrieve&quot;]
+        A4 --&gt; A3
+        A3 --&gt;|&quot;yes&quot;| A5[&quot;Synthetic text:&lt;br/&gt;'budget exhausted,&lt;br/&gt;answer from prior chunks'&quot;]:::ok
+        A5 --&gt; A6[&quot;Answer&quot;]:::ok
+    end
+    classDef bad fill:#3a1414,stroke:#c55,color:#fee
+    classDef ok fill:#12361f,stroke:#3a8,color:#dfe
+</code></pre>
+<hr />
+<h2 id="2-how-the-cap-works">2. How the cap works</h2>
+<ol>
+<li>A user turn starts. <code>BaseReActAgent.start_run_memory()</code> builds a fresh
+   <code>RunMemory</code>. The per-tool counter resets with it. No separate turn hook is
+   necessary.</li>
+<li>The model calls the retriever tool. The tool closure calls the
+   <code>enforce_budget</code> callback <strong>first</strong>, before any retrieval work.</li>
+<li><code>_consume_tool_budget</code> bumps the counter for that tool name. Under the cap it
+   returns <code>None</code>, and retrieval runs as normal.</li>
+<li>Past the cap it returns a text string. The tool returns that string and skips
+   the retriever completely.</li>
+<li>The model treats the string as a normal tool result and writes its answer.
+   There is no exception, no <code>GraphRecursionError</code>, and no interruption wrapper.</li>
+</ol>
+<p>The over-budget text is deliberate. A bare marker invites a retry. This text
+names the limit, points the model at the evidence it already holds, and gives it
+a permitted exit:</p>
+<blockquote>
+<p>Search budget exhausted: you have already called <code>search_vectorstore_hybrid</code>
+the maximum number of times for this turn (limit=2). The chunks retrieved by
+your earlier calls remain available in the conversation above — answer the
+user's question from those chunks, or state that the indexed documentation
+does not appear to cover this case. Do not call
+<code>search_vectorstore_hybrid</code> again on this turn.</p>
+</blockquote>
+<h3 id="configuration">Configuration</h3>
+<p>The lookup has three layers. It mirrors the existing <code>_recursion_limit()</code>
+pattern.</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Key</th>
+<th>Precedence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Class default</td>
+<td><code>BaseReActAgent.DEFAULT_TOOL_BUDGETS</code></td>
+<td>lowest</td>
+</tr>
+<tr>
+<td>Deployment</td>
+<td><code>services.chat_app.tool_budgets</code></td>
+<td>middle</td>
+</tr>
+<tr>
+<td>Pipeline</td>
+<td><code>pipeline_config.tool_budgets</code></td>
+<td>highest</td>
+</tr>
+</tbody>
+</table>
+<p>The value is a <code>Dict[str, int]</code> keyed by tool name, so the structure extends to
+any other expensive tool. Only <code>search_vectorstore_hybrid</code> carries a cap today.</p>
+<h3 id="guards">Guards</h3>
+<ul>
+<li><strong>A non-positive cap is rejected.</strong> A value of <code>0</code> or below was read as "no
+  budget", which silently switched the cap off. Such a value now produces a
+  warning and the default stands.</li>
+<li><strong>A non-integer cap is ignored</strong>, with a warning that names the key and value.</li>
+<li><strong>The check fails open.</strong> With no active <code>RunMemory</code> — between turns, or in a
+  non-agent context — the call proceeds. A guard against a failed turn must not
+  cause one.</li>
+<li><strong>Callers that omit <code>enforce_budget</code> are unaffected.</strong> The smoke-test tool
+  factory behaves exactly as before.</li>
+</ul>
+<hr />
+<h2 id="3-the-relevance-floor-is-a-separate-control">3. The relevance floor is a separate control</h2>
+<p>The phrase "minimum accuracy" points to a different setting. The two are easy to
+confuse, so this table separates them.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Search-call cap</th>
+<th>Relevance floor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Setting</td>
+<td><code>tool_budgets.search_vectorstore_hybrid</code></td>
+<td><code>similarity_score_reference</code></td>
+</tr>
+<tr>
+<td>Unit</td>
+<td>call count, per user turn</td>
+<td>a similarity score</td>
+</tr>
+<tr>
+<td>Acts on</td>
+<td>tool calls inside the agent loop</td>
+<td>the source list under the answer</td>
+</tr>
+<tr>
+<td>Default</td>
+<td>2</td>
+<td><strong>disabled</strong></td>
+</tr>
+<tr>
+<td>Effect past the limit</td>
+<td>tool returns synthetic text</td>
+<td>source is dropped from the list</td>
+</tr>
+<tr>
+<td>Code</td>
+<td><code>base_react.py:2093</code></td>
+<td><code>similarity_threshold.py:37</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>What "accuracy" means here.</strong> <code>docs/docs/notes_response_tuning.md</code> settled this
+as Decision 1. Accuracy is <strong>(a) the retriever's own relevance score</strong> for each
+chunk — a number the retriever already computes. It is not (b) the model's
+self-reported confidence, which is not calibrated on a 35B model and reads as
+precision it does not have. It is not (c) faithfulness of a sentence to its
+cited chunk, which costs real compute and stays out of scope.</p>
+<p><strong>Why the floor ships disabled.</strong> The score scale is not comparable across
+retrieval modes, so no single number means the same thing everywhere:</p>
+<ul>
+<li>Under <code>cosine</code>, <code>1.0 - distance</code> gives a similarity in <code>-1..1</code>. An operator's
+  <code>0.3</code> means about what they expect.</li>
+<li>Under <code>l2</code> and <code>inner_product</code> the same expression is unbounded. A fixed
+  number has no shared meaning.</li>
+<li>On the classic QA path the score is the hybrid <code>combined_score</code>, a weighted
+  blend of a semantic score and an unbounded <abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr> score. The number is
+  query-dependent, not an absolute relevance.</li>
+</ul>
+<p><strong>How a configured value is read.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Configured value</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Above <code>1.0</code></td>
+<td>Warning, and <strong>no floor</strong>. Such a value is a leftover distance ceiling. Obeyed literally it drops every source and the answer cites nothing.</td>
+</tr>
+<tr>
+<td>At or below <code>0.0</code></td>
+<td><strong>No floor.</strong> This is the shipped default. A literal <code>0.0</code> would be a real floor, and a cosine score runs to <code>-1.0</code>.</td>
+</tr>
+<tr>
+<td>Above <code>0.0</code> and at or below <code>1.0</code></td>
+<td>Honoured as a floor.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>One ordering subtlety.</strong> Sources sort best-first, so the first source under the
+floor stops the scored run. A score of <code>-1.0</code> is a sentinel that means "no score
+available", not a poor match. The code partitions the sentinels out before it
+applies the floor, and appends them after the survivors. A plain <code>break</code> would
+never reach them and would drop a source that is documented to bypass the floor.</p>
+<hr />
+<h2 id="4-the-third-bound-the-in-loop-context-budget">4. The third bound: the in-loop context budget</h2>
+<p>A third control fights the same loop from another side (issue #235). Tool
+results accumulate in the prompt during the agent loop. Left unbounded they
+exhaust the context window, and the turn ends in a canned apology.</p>
+<p>The middleware clears the oldest tool results once the request crosses the
+budget. It replaces each cleared result with this text:</p>
+<blockquote>
+<p><code>[Tool result cleared to stay within the context window; do not re-request it.]</code></p>
+</blockquote>
+<p>The last clause is the point. A bare marker invites the exact retry loop that
+the budget exists to prevent.</p>
+<p>The three bounds also interact. Retrieval results are exempt from clearance
+while the exemption stays cheap, and the exempt set is sized from the call
+budget. With a cap of 2 and a <code>keep</code> of 3, an ordinary five-result turn makes the
+exempt set the same as the clearable set. Exempt results are then given back one
+at a time until the request fits. The newest exempt results go first, because
+past the call cap the retrieval tool returns refusals under the same tool name —
+the later results trend toward refusals, and a refusal is the cheapest thing to
+give up.</p>
+<hr />
+<h2 id="5-code-map">5. Code map</h2>
+<table>
+<thead>
+<tr>
+<th>Piece</th>
+<th>Location</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Cap default (<code>{"search_vectorstore_hybrid": 2}</code>)</td>
+<td><code>src/archi/pipelines/agents/base_react.py:89</code></td>
+</tr>
+<tr>
+<td>Three-layer config lookup <code>_tool_budgets()</code></td>
+<td><code>src/archi/pipelines/agents/base_react.py:2025</code></td>
+</tr>
+<tr>
+<td>Counter bump and over-budget text <code>_consume_tool_budget()</code></td>
+<td><code>src/archi/pipelines/agents/base_react.py:2093</code></td>
+</tr>
+<tr>
+<td>Per-turn counter <code>bump_tool_call_count()</code></td>
+<td><code>src/archi/pipelines/agents/utils/run_memory.py:219</code></td>
+</tr>
+<tr>
+<td>Tool short-circuit (<code>enforce_budget</code>)</td>
+<td><code>src/archi/pipelines/agents/tools/retriever.py:127</code></td>
+</tr>
+<tr>
+<td>Wiring, CMS agent</td>
+<td><code>src/archi/pipelines/agents/cms_comp_ops_agent.py:330</code></td>
+</tr>
+<tr>
+<td>Wiring, <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> docs agent</td>
+<td><code>src/archi/pipelines/agents/fasrc_docs_agent.py:231</code></td>
+</tr>
+<tr>
+<td>Relevance floor</td>
+<td><code>src/interfaces/chat_app/similarity_threshold.py:37</code></td>
+</tr>
+<tr>
+<td>In-loop context bound</td>
+<td><code>src/archi/pipelines/agents/utils/context_middleware.py</code></td>
+</tr>
+<tr>
+<td>Operator documentation</td>
+<td><code>docs/docs/rag_architecture.md:68</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="tests">Tests</h3>
+<ul>
+<li><code>tests/unit/test_react_agent_tool_budget.py</code></li>
+<li><code>tests/unit/test_retriever_tool_budget.py</code></li>
+<li><code>tests/unit/test_similarity_threshold.py</code></li>
+</ul>
+<hr />
+<h2 id="6-history">6. History</h2>
+<table>
+<thead>
+<tr>
+<th>Change</th>
+<th>Reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Cap the search tool at 2 calls per turn</td>
+<td>commit <code>38a2c55b</code>, PR #21, 2026-06-04</td>
+</tr>
+<tr>
+<td>Validate budgets, neutral over-budget text, document kwargs</td>
+<td>commit <code>60efc924</code>, PR #21, 2026-06-10</td>
+</tr>
+<tr>
+<td>Cite best sources first under a similarity convention</td>
+<td>commit <code>80765cb4</code>, issue #240</td>
+</tr>
+<tr>
+<td>Bound in-loop tool-content accumulation</td>
+<td>commit <code>ab5c20ee</code>, issue #235, PR #265</td>
+</tr>
+<tr>
+<td>Specification</td>
+<td><code>openspec/changes/agent-search-budget-cap/</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7-open-items">7. Open items</h2>
+<ul>
+<li><strong>The floor is not calibrated.</strong> <code>similarity_score_reference</code> stays disabled
+  until somebody picks a number per retrieval mode. That calibration is tracked
+  apart from the citation code, and the module cannot decide it.</li>
+<li><strong>The prompt follow-on is unverified from this repository.</strong> The original
+  specification noted that the agent prompt can drop its "do not call this tool
+  again" text once the cap is structural. The agent specs live in
+  <code>config/agents/*.md</code>, which is bind-mounted at deploy and is not in this
+  repository. Check the running deployment before you edit that text.</li>
+<li><strong>Only one tool carries a cap.</strong> <code>search_local_files</code> and the MCP tools have
+  no budget. The structure supports them; the entries do not exist yet.</li>
+</ul>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Implementation Plan — Feature 1: Per-Source Retrieval Relevance (Agent Path) - Archi Docs</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Implementation Plan \u2014 Feature 1: Per-Source Retrieval Relevance (Agent Path)";
+        var mkdocs_page_input_path = "feature1_relevance_plan.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Implementation Plan — Feature 1: Per-Source Retrieval Relevance (Agent Path)</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/feature1_relevance_plan.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="implementation-plan-feature-1-per-source-retrieval-relevance-agent-path">Implementation Plan — Feature 1: Per-Source Retrieval Relevance (Agent Path)</h1>
+<blockquote>
+<p>Planning artifact only. No code has been changed. Companion to
+<code>notes_response_tuning.md</code> (the exploration + locked decisions).</p>
+<p><strong>Partly superseded.</strong> This plan assumes classic QA stays mis-ordered and that
+the agent path therefore needs its own opt-in <code>similarity_mode</code> branch. Issue</p>
+<h1 id="208-fixed-the-shared-path-instead-get_top_sources-sorts-descending-for">208 fixed the shared path instead: <code>get_top_sources</code> sorts descending for</h1>
+<p>every caller, <code>similarity_score_reference</code> is a lower bound that ships
+disabled, and all <code>PostgresVectorStore</code> producers return <code>1.0 - distance</code>. So
+the "Q3 fix scope — agent path only now" row and <strong>Step 4</strong>'s <code>similarity_mode</code>
+flag no longer describe work that needs doing; building them now would add a
+second code path around behaviour that is already correct. The normalization
+and presentation questions (buckets vs raw score) are untouched by that fix and
+remain open.</p>
+</blockquote>
+<hr />
+<h2 id="context">Context</h2>
+<p><strong>Problem.</strong> The <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> Cannon support bot (ReAct agent, <code>CMSCompOpsAgent</code>)
+retrieves documents whose relevance score is computed by the retriever, but the
+score is discarded before it reaches the chat UI (<code>retriever.py</code> passes only
+<code>Document</code> objects to <code>store_docs</code>; <code>RunMemory</code> stores no scores — see its
+<code># TODO</code> at line 14). The agent's final <code>PipelineOutput.metadata</code> therefore
+never contains <code>retriever_scores</code>, so the existing sources box renders agent
+answers with <strong>no relevance signal and no score-driven ordering</strong>.</p>
+<blockquote>
+<p><strong>Corrected 2026-09-11 (issue #464).</strong> This section previously said the score
+was "shown to the <em>model</em>". That was true only on the non-default retrieval
+path. <code>hierarchical_rerank.enabled</code> defaults to <code>true</code>, which selects
+<code>LlamaIndexHierarchicalRetriever</code>; it returns a bare <code>List[Document]</code> because
+<code>BaseRetriever.invoke()</code> is contractually <code>List[Document]</code>, and it records its
+cross-encoder score on <code>doc.metadata["rerank_score"]</code>. Until #464 nothing read
+that key back, so the agent's tool output rendered <code>Score: n/a</code> for every
+document on the default path. Reranked <em>ordering</em> still reached the model; only
+the number did not. #464 fixed the read at the formatter seam
+(<code>_normalize_results</code>), so the score now reaches the model on both paths. The
+chat-UI half of the problem above is unaffected and remains open.</p>
+<p><strong>Caution: the three score producers are not on one scale.</strong> <code>hybrid_search</code>
+returns a min-max normalized score that <code>postgres_vectorstore.py</code> documents as
+"<strong>not</strong> comparable across queries"; the cross-encoder score is absolute. All
+are higher-is-better, but any presentation work planned from this document must
+decide what a single <code>Score:</code> label means across them.</p>
+</blockquote>
+<p><strong>What prompted this.</strong> While debugging a search-loop regression in the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr>
+bot we explored surfacing how relevant each cited document is. Investigation
+(two grounded Explore passes + pyright) confirmed the score exists end-to-end
+in the retriever but is dropped at a single, well-defined seam, and that the
+shared renderer (<code>get_top_sources</code>) is mis-oriented for the hybrid metric.</p>
+<p><strong>Intended outcome.</strong> Each source under an agent answer shows a relevance
+bucket plus the raw normalized number, e.g.:</p>
+<pre><code>Sources
+• FASRC GPU Partitions    — Strong (0.82)
+• SLURM Submission Guide  — Partial (0.61)
+• Storage Quotas FAQ      — Weak (0.34)
+</code></pre>
+<p>ordered best-first, with <strong>zero behavioral or display change to the
+classic-QA path</strong>.</p>
+<hr />
+<h2 id="locked-decisions-from-the-walkthrough">Locked Decisions (from the walkthrough)</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Scope</td>
+<td><strong>Feature 1 only</strong>, phased. Per-source relevance. No prompt changes.</td>
+</tr>
+<tr>
+<td>Accuracy</td>
+<td>= the retriever's hybrid relevance score (not model self-confidence).</td>
+</tr>
+<tr>
+<td>Presentation</td>
+<td><strong>Bucket + raw</strong> — <code>Strong/Partial/Weak (0.NN)</code>, reuse existing sources box.</td>
+</tr>
+<tr>
+<td>Q3 normalization</td>
+<td>Normalize hybrid <code>combined_score</code> → <strong>0–1 at the agent boundary</strong>; do <strong>not</strong> reuse the legacy lower-is-better <code>similarity_score_reference</code> logic for the agent path.</td>
+</tr>
+<tr>
+<td>Q3 fix scope</td>
+<td><strong>Agent path only now</strong>; classic-QA's pre-existing mis-ordering is <strong>left as-is but documented as an explicit follow-up</strong> (not silently ignored).</td>
+</tr>
+<tr>
+<td>Q4 prompt</td>
+<td>Simplified prompt is a <strong>separate A/B track</strong> — out of scope here.</td>
+</tr>
+<tr>
+<td>Feature 2</td>
+<td>Inline per-claim <code>(ref: file.html)</code> tags <strong>deferred</strong> to a robust pipeline-driven phase. Out of scope here.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="why-the-agent-path-can-be-isolated-cleanly">Why the agent path can be isolated cleanly</h2>
+<ul>
+<li><strong>Classic-QA</strong> (<code>qa.py:89</code>) calls <code>self.retriever.invoke()</code> (HybridRetriever)
+  directly, unpacks <code>(doc, score)</code>, and sets <code>metadata["retriever_scores"]</code>
+  itself (<code>qa.py:112</code>). It does <strong>not</strong> go through the agent retriever tool.</li>
+<li><strong>Agent</strong> retrieval flows through <code>retriever.py</code> <code>_retriever_tool</code> →
+  <code>_normalize_results</code> (already yields <code>(Document, Optional[float])</code>) →
+  <code>store_docs</code> → <code>RunMemory</code> → <code>base_react.finalize_output</code>.</li>
+</ul>
+<p>So <code>retriever.py</code> and <code>RunMemory</code>/<code>finalize_output</code> are an <strong>agent-only seam</strong>.
+Normalizing there cannot affect classic-QA. The only shared component is the
+renderer (<code>app.py</code> <code>get_top_sources</code> / <code>_format_source_entry</code>), so isolation
+there is achieved with a <strong>metadata flag emitted only by the agent path</strong>.</p>
+<hr />
+<h2 id="recommended-approach">Recommended Approach</h2>
+<p>Carry the score inside <code>Document.metadata</code> (least-invasive: no callback
+signature churn, no <code>RunMemory</code> storage rewrite, no <code>local_files.py</code> ripple),
+normalize at the agent boundary, and gate the renderer change on a
+metadata flag.</p>
+<h3 id="step-1-normalize-stamp-the-score-at-the-agent-boundary">Step 1 — Normalize + stamp the score at the agent boundary</h3>
+<p><strong>File:</strong> <code>src/archi/pipelines/agents/tools/retriever.py</code> (~lines 113–117)</p>
+<ul>
+<li>After <code>docs = _normalize_results(results or [])</code> (already
+  <code>Sequence[Tuple[Document, Optional[float]]]</code>), compute a normalized
+  relevance in <code>[0,1]</code> and stamp it onto each document:
+  <code>doc.metadata["retriever_score"] = relevance</code>.</li>
+<li><code>store_docs(...)</code> call stays exactly as-is (still passes <code>Document</code>s) — the
+  score now rides along in metadata. <strong>No signature changes anywhere.</strong></li>
+<li>Add a small normalization helper (new util, e.g.
+  <code>src/archi/pipelines/agents/utils/relevance.py</code>):
+  <code>normalize_relevance(combined_score: float) -&gt; float</code>.</li>
+<li><strong>v1 rule:</strong> <code>clamp(combined_score, 0.0, 1.0)</code>.</li>
+<li><strong>Documented assumption:</strong> valid because configured weights are
+    <code>semantic 0.4 / bm25 0.6</code> (sum ≈ 1) and <code>semantic_score = 1 - cosine_dist</code>
+    with normalized embeddings keeps <code>combined_score</code> in roughly <code>[0,1]</code>.
+    <abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr> can exceed 1 in rare high-frequency cases → clamp is the safety net.</li>
+<li>This single assumption is the <strong>largest residual correctness risk</strong> —
+    explicitly validate it in the verification step (eyeball displayed
+    relevance vs. match quality on real <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> queries).</li>
+</ul>
+<h3 id="step-2-surface-scores-aligned-to-deduped-documents">Step 2 — Surface scores aligned to deduped documents</h3>
+<p><strong>File:</strong> <code>src/archi/pipelines/agents/utils/run_memory.py</code></p>
+<ul>
+<li>Add <code>unique_documents_with_scores() -&gt; List[Tuple[Document, Optional[float]]]</code>
+  that mirrors <code>unique_documents()</code> (same <code>_document_key</code> dedup) but returns
+  each surviving doc paired with <code>doc.metadata.get("retriever_score")</code>.</li>
+<li>On dedup collision keep the <strong>max</strong> score (best evidence wins).</li>
+<li>Leave <code>record</code>, <code>record_documents</code>, <code>unique_documents</code> <strong>unchanged</strong>
+  (zero blast radius to their existing callers at <code>base_react.py:1117/1120/1673</code>).</li>
+</ul>
+<h3 id="step-3-emit-scores-isolation-flag-from-the-agent">Step 3 — Emit scores + isolation flag from the agent</h3>
+<p><strong>File:</strong> <code>src/archi/pipelines/agents/base_react.py</code> (<code>finalize_output</code>, ~107–128)</p>
+<ul>
+<li>Replace the <code>documents = memory.unique_documents()</code> line with
+  <code>unique_documents_with_scores()</code>, splitting into a <code>documents</code> list and a
+  parallel <code>scores</code> list (same order).</li>
+<li>Set <code>resolved_metadata["retriever_scores"] = scores</code> (reusing the exact key
+  classic-QA already uses — <code>qa.py:112</code> — so downstream consumers need no
+  changes).</li>
+<li>Set an isolation flag, e.g.
+  <code>resolved_metadata["retriever_scores_normalized"] = True</code>.</li>
+<li><code>_store_documents</code> (base_react.py:1109) needs <strong>no change</strong> (scores travel in
+  metadata, not as a new argument).</li>
+</ul>
+<h3 id="step-4-similarity-aware-opt-in-rendering">Step 4 — Similarity-aware, opt-in rendering</h3>
+<p><strong>File:</strong> <code>src/interfaces/chat_app/app.py</code></p>
+<ul>
+<li><code>get_top_sources(documents, scores)</code> (447–492): add an opt-in
+  <code>similarity_mode: bool = False</code>. When <code>True</code>:</li>
+<li>sort <strong>descending</strong> (best-first) instead of <code>np.argsort</code> ascending,</li>
+<li><strong>skip</strong> the <code>score &gt; self.similarity_score_reference</code> break (legacy
+    distance threshold is meaningless for a 0–1 similarity),</li>
+<li>keep the existing display-name dedup and <code>-1.0</code>/<code>None</code> sentinels.</li>
+<li>The shared call site (<code>app.py:1493</code>, <code>_finalize_result</code>) and the /v1
+  streaming sites (<code>2014</code>, <code>2079</code>) pass
+  <code>similarity_mode = bool(metadata.get("retriever_scores_normalized"))</code>.
+  Classic-QA never sets the flag → its path is <strong>byte-for-byte unchanged</strong>.</li>
+<li><code>_format_source_entry</code> (494–507): when in similarity_mode, render
+  <code>— {bucket} ({score:.2f})</code>; otherwise the current <code>({score:.2f})</code> exactly
+  as today (no classic-QA visual change).</li>
+<li>Add <code>_relevance_bucket(score: float) -&gt; str</code> (Strong/Partial/Weak).</li>
+</ul>
+<h3 id="step-5-bucket-thresholds-config-with-code-defaults">Step 5 — Bucket thresholds config (with code defaults)</h3>
+<p><strong>File:</strong> config under <code>data_manager.retrievers.hybrid_retriever</code></p>
+<ul>
+<li>Optional <code>bucket_thresholds: { strong: 0.70, partial: 0.40 }</code>.</li>
+<li>Code ships these defaults so it works <strong>without</strong> editing the deployed
+  config (prod config is a separate file synced via <code>archi deploy</code>).</li>
+</ul>
+<h3 id="step-6-incidental-type-hint-correction-required-by-gate">Step 6 — Incidental type-hint correction (required by gate)</h3>
+<p><strong>File:</strong> <code>src/archi/pipelines/agents/tools/local_files.py</code> (lines 215, 333)</p>
+<ul>
+<li><code>store_docs</code> param hints say <code>Sequence[Path]</code> but are actually called with
+  <code>Sequence[Document]</code>, producing the <strong>pre-existing</strong> pyright errors at
+  <code>cms_comp_ops_agent.py:204,213</code>. Correct hints to <code>Sequence[Document]</code>.
+  Pure annotation fix; clears 2 baseline errors so the "no new pyright errors"
+  gate is meaningful. (Not behavioral.)</li>
+</ul>
+<h3 id="step-7-file-the-classic-qa-follow-up-decision-documented-not-ignored">Step 7 — File the classic-QA follow-up (decision: documented, not ignored)</h3>
+<ul>
+<li>Add a code comment + <code>TODO(feature2/classic-qa-ordering)</code> near
+  <code>app.py:452</code> and a tracked issue/note: <em>classic-QA feeds the same
+  higher-is-better hybrid score into the legacy lower-is-better
+  <code>get_top_sources</code>, so its sources are ordered worst-first today.</em> Out of
+  scope for Feature 1 by explicit decision; fix by routing classic-QA through
+  the same <code>similarity_mode</code> flag in a follow-up.</li>
+</ul>
+<hr />
+<h2 id="critical-files">Critical Files</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/archi/pipelines/agents/tools/retriever.py</code></td>
+<td>normalize + stamp <code>metadata["retriever_score"]</code> (~113–117)</td>
+</tr>
+<tr>
+<td><code>src/archi/pipelines/agents/utils/relevance.py</code> <em>(new)</em></td>
+<td><code>normalize_relevance</code>, bucket helper</td>
+</tr>
+<tr>
+<td><code>src/archi/pipelines/agents/utils/run_memory.py</code></td>
+<td>add <code>unique_documents_with_scores()</code></td>
+</tr>
+<tr>
+<td><code>src/archi/pipelines/agents/base_react.py</code></td>
+<td><code>finalize_output</code>: scores + isolation flag (~107–128)</td>
+</tr>
+<tr>
+<td><code>src/interfaces/chat_app/app.py</code></td>
+<td><code>get_top_sources</code> similarity_mode (447–492); <code>_format_source_entry</code> (494–507); call sites 1493/2014/2079</td>
+</tr>
+<tr>
+<td><code>src/archi/pipelines/agents/tools/local_files.py</code></td>
+<td>type-hint fix (215, 333)</td>
+</tr>
+<tr>
+<td>config <code>data_manager.retrievers.hybrid_retriever</code></td>
+<td>optional <code>bucket_thresholds</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="reuse-dont-reinvent">Reuse (don't reinvent)</h2>
+<ul>
+<li><code>retriever.py:_normalize_results</code> (15–29) already yields <code>(Document, score)</code> —
+  do <strong>not</strong> re-parse retriever output.</li>
+<li><code>metadata["retriever_scores"]</code> key + parallel-list contract already defined
+  by classic-QA (<code>qa.py:90–112</code>) and consumed by <code>app.py:1493</code>,
+  <code>openai_compat.py:269/333</code>, <code>app.py:2014/2079</code>. Match it exactly.</li>
+<li><code>RunMemory._document_key</code> (219) dedup — reuse verbatim for score alignment.</li>
+<li>Existing <code>get_top_sources</code> dedup/sentinel logic — keep; only add the
+  similarity branch.</li>
+</ul>
+<hr />
+<h2 id="verification-end-to-end">Verification (end-to-end)</h2>
+<ol>
+<li><strong>Type gate (LSP pyright).</strong> Baseline before changes: <code>retriever.py</code> 1
+   (unresolved <code>langchain.tools</code> import), <code>run_memory.py</code> 0, <code>base_react.py</code>
+   24 (missing imports/optional-access), <code>cms_comp_ops_agent.py</code> 6 (2 of which
+   = the store_docs hint, cleared by Step 6). Gate: <strong>no new errors vs.
+   baseline</strong>; the 2 store_docs errors should disappear.</li>
+<li><strong>Unit tests</strong> (new): <code>normalize_relevance</code> clamping; <code>_relevance_bucket</code>
+   boundaries; <code>unique_documents_with_scores</code> dedup keeps max score &amp; order;
+   <code>get_top_sources(similarity_mode=True)</code> sorts descending and ignores the
+   legacy threshold; classic path (<code>similarity_mode=False</code>) output unchanged
+   (golden test).</li>
+<li><strong>Deploy</strong> (per project workflow): <code>archi deploy</code> to sync code into
+   <code>~/.archi/</code>, then <code>docker restart chatbot-archi-openai-compat</code>
+   (conda env <code>archi-openai-compat-2</code>).</li>
+<li><strong>Live check.</strong> Ask the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> bot a real Cannon question; confirm the
+   sources box shows <code>— Strong/Partial/Weak (0.NN)</code>, best-first ordering, and
+   that the displayed relevance tracks eyeballed match quality (validates the
+   Step-1 normalization assumption — the key risk).</li>
+<li><strong>Regression.</strong> Run a classic-QA query; confirm its sources render
+   <strong>identically to before</strong> (no flag → unchanged path).</li>
+<li><strong>/v1.</strong> Hit the OpenAI-compat endpoint; confirm <code>retriever_scores</code> appear
+   in citations for agent answers (previously empty).</li>
+</ol>
+<hr />
+<h2 id="out-of-scope-explicit">Out of Scope (explicit)</h2>
+<ul>
+<li>Simplified/clarifying prompt rewrite — separate A/B agent track (Q4).</li>
+<li>Inline per-claim <code>(ref: file.html)</code> attribution — deferred Feature 2
+  (robust pipeline-driven sentence→chunk mapping).</li>
+<li>Fixing classic-QA ordering — documented follow-up only (Step 7).</li>
+</ul>
+<h2 id="residual-risks">Residual Risks</h2>
+<ul>
+<li><strong>Normalization fidelity (highest).</strong> <code>clamp(combined, 0, 1)</code> assumes
+  weights ≈ sum 1 and <abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr> ≈ normalized. If real <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> scores cluster oddly,
+  buckets may misclassify. Mitigation: thresholds are config-tunable; validate
+  on real queries (verification step 4) before trusting the labels.</li>
+<li><strong>Dedup/score alignment.</strong> If <code>_document_key</code> collapses docs with divergent
+  scores, "max wins" could overstate a weak chunk. Acceptable for v1; revisit
+  with Feature 2's chunk-level attribution.</li>
+<li><strong>Shared renderer.</strong> <code>similarity_mode</code> defaults <code>False</code>; any missed call
+  site simply yields today's behavior (safe-degrading, not a new bug).</li>
+</ul>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

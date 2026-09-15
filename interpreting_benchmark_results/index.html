@@ -1,0 +1,1365 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Interpreting Results - Archi Docs</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Interpreting Results";
+        var mkdocs_page_input_path = "interpreting_benchmark_results.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Interpreting Results</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#1-what-archi-does-and-what-a-benchmark-measures">1. What Archi does, and what a benchmark measures</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#11-the-system-under-test">1.1 The system under test</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#12-what-a-benchmark-run-does">1.2 What a benchmark run does</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#13-why-a-language-model-grades-a-language-model">1.3 Why a language model grades a language model</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#2-the-metrics-in-plain-words">2. The metrics, in plain words</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#21-the-five-ragas-metrics">2.1 The five RAGAS metrics</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#22-the-two-source-metrics">2.2 The two source metrics</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#23-which-metric-responds-to-which-change">2.3 Which metric responds to which change</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#3-why-a-number-going-up-does-not-mean-the-system-got-better">3. Why a number going up does not mean the system got better</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#31-randomness-the-one-everybody-forgets">3.1 Randomness — the one everybody forgets</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#32-the-question-bank-changed">3.2 The question bank changed</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#33-the-corpus-changed">3.3 The corpus changed</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#34-denominator-drift-the-quiet-one">3.4 Denominator drift — the quiet one</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#a-worked-example-the-0017-that-meant-nothing">A worked example: the +0.017 that meant nothing</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#35-ceiling-and-floor-effects">3.5 Ceiling and floor effects</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#4-the-gate">4. The gate</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#on-g5-why-paired-comparison-and-why-it-is-free">On G5: why paired comparison, and why it is free</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#on-g8-the-anchors">On G8: the anchors</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#5-procedures-that-work-today">5. Procedures that work today</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#procedure-a-measure-the-noise-floor">Procedure A: measure the noise floor</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#procedure-b-choose-the-right-comparison-shape">Procedure B: choose the right comparison shape</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#procedure-c-compare-two-arms">Procedure C: compare two arms</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#procedure-d-reading-the-results-file">Procedure D: reading the results file</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#procedure-e-confirm-two-runs-are-comparable">Procedure E: confirm two runs are comparable</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#6-known-gaps-not-yet-implemented">6. Known gaps — NOT YET IMPLEMENTED</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#gap-1-no-comparison-tool-closed-2026-09-419">Gap 1: no comparison tool — closed (2026-09, #419)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#gap-2-the-question-bank-is-not-version-controlled">Gap 2: the question bank is not version-controlled</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#gap-3-anchors-are-averaged-into-the-bank-aggregates">Gap 3: anchors are averaged into the bank aggregates</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#gap-4-the-benchmark-sut-samples-at-temperature-03">Gap 4: the benchmark SUT samples at temperature 0.3</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#gap-5-no-held-out-question-set">Gap 5: no held-out question set</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#gap-6-difficulty-is-not-visible-in-human-grading">Gap 6: difficulty is not visible in human grading</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#gap-7-bank-coverage-is-uneven">Gap 7: bank coverage is uneven</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#gap-8-code_version-cannot-name-a-commit">Gap 8: code_version cannot name a commit</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#7-glossary">7. Glossary</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#see-also">See also</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Interpreting Results</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/interpreting_benchmark_results.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="interpreting-benchmark-results">Interpreting Benchmark Results</h1>
+<p><strong>Audience:</strong> anyone who runs an Archi benchmark round or reads its output. No
+background in retrieval systems, machine learning, or statistics is assumed.
+Every term is defined the first time it appears.</p>
+<p><strong>What this document is for.</strong> <a href="../benchmarking/"><code>benchmarking.md</code></a> tells you how
+to <em>run</em> a benchmark. This document tells you how to know whether the result
+<em>means anything</em>. Those are different skills, and the second one is where eval
+programmes usually go wrong.</p>
+<p><strong>The problem in one sentence.</strong> A number went up. Did the system get better, or
+did the number just move?</p>
+<p>Answering that is harder than it sounds, because Archi's benchmark scores move on
+their own even when nothing about the system changes. This document explains why,
+and defines the procedure that separates a real improvement from a wobble.</p>
+<div class="admonition warning">
+<p class="admonition-title">This document is a gate, not a suggestion</p>
+<p>Section 4 defines a <strong>mandatory checklist</strong>. A benchmark result may not be
+reported as an improvement, or used to justify shipping a change, unless
+every item passes. This exists because we have already made exactly this
+mistake — see <a href="#a-worked-example-the-0017-that-meant-nothing">The +0.017 that meant nothing</a>.</p>
+</div>
+<hr />
+<h2 id="1-what-archi-does-and-what-a-benchmark-measures">1. What Archi does, and what a benchmark measures</h2>
+<p>Skip this section if you already know what retrieval-augmented generation is.</p>
+<h3 id="11-the-system-under-test">1.1 The system under test</h3>
+<p>Archi answers questions about <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> documentation. It does not know those answers
+in advance. Instead, when a user asks a question, Archi:</p>
+<ol>
+<li>
+<p><strong>Searches a corpus.</strong> The <em>corpus</em> is our collection of documents — the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr>
+   documentation pages we have downloaded. Each page is split into small pieces
+   called <em>chunks</em>, because a whole page is usually too big to feed a language
+   model at once.</p>
+</li>
+<li>
+<p><strong>Retrieves the chunks that look relevant.</strong> Every chunk is converted into a
+   list of numbers called an <em>embedding</em>, which captures its meaning; chunks with
+   similar meanings have similar numbers. <em>Retrieval</em> means finding the chunks
+   whose numbers are closest to the question's numbers. Archi also <em>reranks</em> —
+   takes the top candidates and re-scores them more carefully with a slower,
+   more accurate model.</p>
+</li>
+<li>
+<p><strong>Writes an answer using those chunks.</strong> The retrieved chunks are pasted into
+   the prompt given to a language model (currently Qwen 3.6, running locally),
+   which composes the final answer.</p>
+</li>
+</ol>
+<p>Steps 1–3 together are called <strong><abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr></strong>, or retrieval-augmented generation. The
+important consequence: <strong>Archi's answer quality depends on two separable things</strong>
+— whether retrieval found the right documents, and whether the model wrote a good
+answer from them. A benchmark that cannot tell those apart cannot tell you what
+to fix.</p>
+<p>Throughout this document the thing being tested is called the <strong><abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr></strong>, for
+<em>system under test</em>.</p>
+<h3 id="12-what-a-benchmark-run-does">1.2 What a benchmark run does</h3>
+<p>A benchmark run takes a <strong>question bank</strong> — a JSON file of questions, each with a
+known-good reference answer and a list of source URLs the answer should have come
+from — and, for each question:</p>
+<ol>
+<li>asks the <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> the question and records its answer and the chunks it retrieved;</li>
+<li>hands the question, the answer, the retrieved chunks, and the reference answer
+   to a second language model called the <strong>judge</strong>;</li>
+<li>records the judge's scores.</li>
+</ol>
+<p>Our question bank is <code>config/benchmarking/ragas-jeopardy-master.json</code> (73
+questions). Our judge is Anthropic's Claude Sonnet 4.5, reached through Harvard
+HUIT's Bedrock proxy.</p>
+<h3 id="13-why-a-language-model-grades-a-language-model">1.3 Why a language model grades a language model</h3>
+<p>This looks circular, and it is worth being uneasy about. Two safeguards make it
+defensible.</p>
+<p>First, <strong>the judge is a different model from the <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr></strong>. If a model grades its own
+output it reliably rates its own writing style higher. Using Claude to grade Qwen
+breaks that symmetry. This is the <em>judge/<abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> split</em>, described in
+<a href="../benchmarking/#judgesut-split"><code>benchmarking.md</code></a>.</p>
+<p>Second, <strong>the judge is pinned to an exact version</strong>
+(<code>us.anthropic.claude-sonnet-4-5-20250929-v1:0</code>, not a rolling alias), so the
+grader does not silently change between rounds.</p>
+<p>The judge is still not perfect, and it is not deterministic — ask it the same
+question twice and it may score differently. That non-determinism is the central
+subject of Section 3.</p>
+<p>For decisions that actually matter, <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> scores are supplemented by <strong>human
+grading</strong> in Argilla. See <a href="../benchmarking/#human-grading-via-argilla"><code>benchmarking.md</code></a>.</p>
+<hr />
+<h2 id="2-the-metrics-in-plain-words">2. The metrics, in plain words</h2>
+<p>Archi reports two families of scores. All are between 0 and 1, higher is better.</p>
+<h3 id="21-the-five-ragas-metrics">2.1 The five <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> metrics</h3>
+<p><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> is the open-source library (version 0.3.5) that computes these. Each metric
+answers a different question, and — critically — <strong>each one looks at a different
+subset of the available information.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>The question it answers</th>
+<th>What it looks at</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>answer_relevancy</code></td>
+<td>Does the answer actually address the question asked?</td>
+<td>question + answer</td>
+</tr>
+<tr>
+<td><code>faithfulness</code></td>
+<td>Is every claim in the answer supported by the retrieved chunks?</td>
+<td>answer + retrieved chunks</td>
+</tr>
+<tr>
+<td><code>context_precision</code></td>
+<td>Of the chunks retrieved, how many were actually useful?</td>
+<td>chunks + reference answer</td>
+</tr>
+<tr>
+<td><code>context_recall</code></td>
+<td>Did retrieval find everything the reference answer needed?</td>
+<td>chunks + reference answer</td>
+</tr>
+<tr>
+<td><code>answer_correctness</code></td>
+<td>Is the answer <em>correct</em> against the reference answer?</td>
+<td>answer + reference answer</td>
+</tr>
+</tbody>
+</table>
+<p>Read that last column carefully, because it determines what each metric can
+detect.</p>
+<ul>
+<li>
+<p><strong><code>faithfulness</code> is our hallucination detector.</strong> It never looks at the
+  reference answer. It asks only: did the model invent things that the retrieved
+  documents do not support? A confident, well-written, completely fabricated
+  answer scores near zero here and can still score highly on <code>answer_relevancy</code>.</p>
+</li>
+<li>
+<p><strong><code>answer_relevancy</code> never looks at the retrieved chunks.</strong> An answer can be
+  perfectly relevant and entirely made up.</p>
+</li>
+<li>
+<p><strong><code>answer_correctness</code> is the only metric that compares the answer to the
+  reference answer.</strong> The other four grade <em>relevance</em> and <em>grounding</em>; none of
+  them can tell a right answer from a wrong one. A fluent answer, grounded in
+  correctly retrieved chunks, that still contradicts the reference scores well on
+  all four and poorly only here. It blends factual overlap with the reference
+  (weight 0.75) and embedding similarity (0.25).</p>
+<p>This metric is <strong>opt-in</strong>: add it to
+<code>services.benchmarking.mode_settings.ragas_settings.enabled_metrics</code>. A run
+that omits it reports the original four, so an older run's JSON carries no
+<code>aggregate_answer_correctness</code> key at all.</p>
+</li>
+<li>
+<p><strong>Three metrics require a non-empty reference answer</strong> — the two <code>context_*</code>
+  metrics and <code>answer_correctness</code>. Rows without one are silently excluded from
+  those metrics only. (In code: <code>src/utils/benchmark_schema.py</code>,
+  <code>_METRIC_REQUIRED_COLUMN</code>.) This is why the metrics can each be averaged over a
+  <em>different number of questions</em> in the same run — see
+  <a href="#34-denominator-drift-the-quiet-one">Denominator drift</a>.</p>
+</li>
+</ul>
+<h3 id="22-the-two-source-metrics">2.2 The two source metrics</h3>
+<p>These come from SOURCES mode, which checks whether the documents Archi retrieved
+include the ones the question said it should have used.</p>
+<ul>
+<li><strong><code>relative_source_accuracy</code></strong> — fraction of questions where <em>at least one</em>
+  expected source was retrieved.</li>
+<li><strong><code>source_accuracy</code></strong> — fraction of questions where <em>every</em> expected source was
+  retrieved. Strictly harder, so always lower.</li>
+</ul>
+<p>Both are averaged over the questions that actually <em>declare</em> expected sources, not
+over every question in the run. A question with no expected sources (the
+<code>should_refuse</code> anchor) has nothing to retrieve, so it can neither hit nor miss and
+is left out of both. The count that was divided by is published as
+<strong><code>source_scored_count</code></strong> — read it, because it is not the same as the number of
+questions in the run.</p>
+<h3 id="23-which-metric-responds-to-which-change">2.3 Which metric responds to which change</h3>
+<p>This table is the single most useful thing to internalise. If you change one part
+of the system, only some metrics should move. If the wrong ones move, something
+else changed too.</p>
+<table>
+<thead>
+<tr>
+<th>If you change…</th>
+<th>Expect movement in</th>
+<th>Should barely move</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>chunking, reranking, retrieval weights</td>
+<td><code>context_precision</code>, <code>context_recall</code>, both source metrics</td>
+<td><code>answer_relevancy</code></td>
+</tr>
+<tr>
+<td>the system prompt, or the <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> model</td>
+<td><code>faithfulness</code>, <code>answer_relevancy</code>, <code>answer_correctness</code></td>
+<td>the <code>context_*</code> metrics</td>
+</tr>
+</tbody>
+</table>
+<p><code>answer_correctness</code> is the one metric that can move when nothing else does. If a
+change makes the bot <em>right</em> more often without changing what it retrieved or how
+grounded it sounds, only this metric registers it. In the other direction, a
+retrieval change moves it only when retrieval was the thing standing between the
+bot and a correct answer.</p>
+<div class="admonition danger">
+<p class="admonition-title">The coupling that breaks this table</p>
+<p>Archi's agent decides <em>its own search queries</em> as it reasons. So changing the
+<strong>prompt</strong> changes what gets <strong>retrieved</strong>, which moves the <code>context_*</code>
+metrics for reasons that have nothing to do with the retriever.</p>
+<p>You therefore <strong>cannot</strong> attribute a <code>context_precision</code> change to a
+retrieval improvement unless the prompt was held fixed. Change one layer per
+experiment.</p>
+</div>
+<hr />
+<h2 id="3-why-a-number-going-up-does-not-mean-the-system-got-better">3. Why a number going up does not mean the system got better</h2>
+<p>Four things move these scores. Only one of them is "the system got better."</p>
+<h3 id="31-randomness-the-one-everybody-forgets">3.1 Randomness — the one everybody forgets</h3>
+<p>Both the <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> and the judge are <em>stochastic</em>: they sample from probability
+distributions, so they do not return identical output for identical input.</p>
+<ul>
+<li>The <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> runs at <code>temperature: 0.3</code>. Temperature controls randomness; <code>0</code> means
+  always pick the most likely next word, higher means sample more freely. At
+  <code>0.3</code> the <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> writes a slightly different answer every time.</li>
+<li>The judge samples too, and it is a remote API we cannot seed.</li>
+</ul>
+<p>The consequence: <strong>run the exact same benchmark twice, change nothing, and the
+scores will differ.</strong> How much they differ is called the <strong>noise floor</strong> (also
+the <em>minimum detectable effect</em>): the smallest change you are entitled to call
+real. A measured improvement smaller than the noise floor is indistinguishable
+from having run the same thing twice.</p>
+<div class="admonition failure">
+<p class="admonition-title">We have never measured our noise floor</p>
+<p>Every <code>(config, corpus snapshot)</code> group in <code>bench_out/</code> contains exactly
+<strong>one</strong> run. Not once have we repeated a run to see how much the number moves
+on its own. Until we do, no delta we have ever reported is interpretable.</p>
+<p>Fixing this is <a href="#procedure-a-measure-the-noise-floor">Procedure A</a>. It is the
+first thing to do, and it needs no code changes.</p>
+</div>
+<h3 id="32-the-question-bank-changed">3.2 The question bank changed</h3>
+<p>Scores are only comparable across rounds if the questions were the same. Ours have
+not been: rounds have used a 9-question documentation bank, a 27-question
+ServiceNow-ticket bank, and now the 73-question <code>ragas-jeopardy-master</code> bank.
+Numbers from different banks are <strong>different measurements of different things</strong>
+and must never be compared.</p>
+<p><strong>When the tool says a row was re-labelled.</strong> <code>compare_runs.py</code> slices each
+metric by the bank fields the arms carry — <code>anchor_type</code> and <code>difficulty</code> —
+and files every question under the value the <strong>baseline</strong> arm recorded. A
+question the arms label differently belongs to no single value, so the tool
+drops it from every slice of that field and counts it in that field's
+<code>excluded_mismatched</code>. The report turns a non-zero count into a sentence that
+names a bank edit as the cause. That counter has a precise contract, and it is
+worth reading before you go and diff the bank:</p>
+<ul>
+<li>The tool compares only an arm that <strong>ran the question to completion</strong>. It
+  skips a row whose <code>status</code> is anything other than <code>ok</code> — a failure or a
+  degraded row — and does not count it. A row that did not run is not evidence
+  of a bank edit either way: its own <code>status</code> says why it disagrees. Older
+  artifacts make this vivid, because a failure row written before the change
+  closing #431 carries no bank field at all, so an absent label used to read as
+  a changed label.</li>
+<li>The skip is per <strong>arm</strong>, never per question. A sweep expands into three or
+  more arms, and the tool pairs each arm with the baseline on its own. One
+  <strong>non-baseline</strong> arm that fails a question therefore neither hides a
+  re-labelling another arm genuinely carries, nor removes that question from the
+  other arms' slices. The baseline is the exception, and the next bullet states
+  it: the baseline supplies the group key for every pair, so a baseline row that
+  did not run takes the question out of all of them.</li>
+<li>The tool drops a question whose <strong>baseline</strong> row did not run to completion
+  from every slice of that field. The baseline's value is the group key, and a
+  key taken from a row that did not run establishes nothing. It is dropped from
+  the slices, not from the count: the count compares the arms that <em>did</em> run the
+  question against each other, so it still reports a re-labelling those arms
+  carry. That is deliberate — any arm can be the baseline, and a count that
+  moved when you passed a different <code>--baseline</code> would not be a fact about the
+  bank.</li>
+<li>Two limits on that, both being tracked in issue #447. If the baseline arm
+  records <strong>no value at all</strong> for the field on a question, the tool skips that
+  question, so a disagreement between two other arms goes uncounted. And if
+  <em>every</em> question is re-labelled, no slice survives to carry the number, and the
+  report says no slice field is present instead. A zero is therefore weaker
+  evidence than a non-zero: read a count as a reason to diff the bank, never read
+  its absence as proof the bank held still.</li>
+<li>So a non-zero <code>excluded_mismatched</code> means the label really moved between two
+  arms that both ran the question to completion. Diff the bank.</li>
+</ul>
+<h3 id="33-the-corpus-changed">3.3 The corpus changed</h3>
+<p>If documents were re-ingested between two runs, retrieval had a different haystack
+to search, and every retrieval metric moves for free.</p>
+<p>The run metadata contains a field called <code>corpus_snapshot_id</code>, and it is easy to
+misread. <strong>It is a random UUID generated once per invocation</strong> — not a fingerprint
+of the corpus contents (<code>src/bin/service_benchmark.py:126</code>). Therefore:</p>
+<ul>
+<li>Two results <strong>sharing</strong> a <code>corpus_snapshot_id</code> definitely ran against one
+  corpus, in one invocation. This is a reliable guarantee.</li>
+<li>Two results with <strong>different</strong> ids may or may not have used the same corpus.
+  The id cannot tell you. It only tells you they were separate invocations.</li>
+</ul>
+<p>You can pin the id across invocations with the <code>ARCHI_CORPUS_SNAPSHOT_ID</code>
+environment variable, when you know for certain no re-ingest occurred.</p>
+<p>Newer runs also record <strong><code>corpus_fingerprint</code></strong>, per arm, which <em>is</em> derived from
+the corpus contents — a digest over every live document and every chunk of text
+retrieval can reach. Two arms with the <strong>same</strong> fingerprint were scored against
+the same documents, whether or not they ran in the same invocation. That is the
+claim <code>corpus_snapshot_id</code> could never support, so prefer the fingerprint when
+you have it.</p>
+<p>Read it with three cautions:</p>
+<ul>
+<li>A value beginning <code>&lt;unavailable:</code> is <strong>not</strong> an observation. It means the
+  corpus could not be read, and the text after it says why. Two runs both
+  reporting the same <code>&lt;unavailable:</code> marker are not two runs over one corpus —
+  they are two runs where nothing was checked.</li>
+<li>Runs before 2026-08-17 have no fingerprint at all. Absence is not agreement.</li>
+<li>Re-embedding the same text with a different model leaves the fingerprint
+  unchanged, because the documents and chunk text did not change. That shows up
+  instead as a divergence on <code>data_manager.embedding_name</code> — see
+  <a href="#procedure-e-confirm-two-runs-are-comparable">Procedure E</a>.</li>
+</ul>
+<p>An arm whose corpus reading failed, or whose corpus differs from the others', is
+withheld from the leaderboard and the A/B winner rather than ranked, because
+ranking it would assert a controlled comparison that did not happen.</p>
+<h3 id="34-denominator-drift-the-quiet-one">3.4 Denominator drift — the quiet one</h3>
+<p>The harness protects a run from a single bad question: if a question crashes or
+overflows the model's context window, it is marked <code>degraded</code> and excluded rather
+than aborting the run. Separately, the judge sometimes fails to score one cell.
+In the artifact that cell reads <code>null</code> (a bare <code>NaN</code> in older files) — "asked for,
+not scored" — as distinct from <code>0.0</code>, which means the judge did score it and the
+score was zero.</p>
+<p>Both behaviours are correct. Both are <strong>silent</strong>, and both change <em>which questions
+were averaged</em>.</p>
+<p>So two runs reporting <code>faithfulness</code> may be averaging over different question
+sets. Comparing those two averages compares two different exams. Newer runs
+report a per-metric denominator (<code>&lt;metric&gt;_scored</code>, e.g. <code>"71 of 73"</code>) — check it.
+It counts the values that actually <strong>reached the aggregate</strong>, so an unscored cell
+lowers it. Older harness code counted the rows <em>handed to the judge</em> instead,
+which over-reported coverage whenever a cell came back unscored: one run published
+<code>context_precision_scored: "109 of 109"</code> over 108 real scores (archi#279).</p>
+<p>Do not decide which behaviour an artifact has by its date. A run executes whatever
+code is baked into the deployed image, so a stale image writes the old numbers
+today (the same trap §5.E describes for <code>git_info.last_commit</code>). <strong>Check the
+artifact instead:</strong> count the per-question cells that are real numbers and compare
+that to the string. If they disagree, the denominator is the old inflated one and
+your count is the right one. <code>metadata.code_version</code> is what identifies the
+producing code when you need to say <em>which</em> runs share a behaviour.</p>
+<h3 id="a-worked-example-the-0017-that-meant-nothing">A worked example: the +0.017 that meant nothing</h3>
+<p>On 2026-07-04 we recorded <code>faithfulness</code> at 0.594, against 0.577 on 2026-06-30,
+and <code>answer_relevancy</code> at 0.862 against 0.751. It looked like progress. It was not
+evidence of anything:</p>
+<ul>
+<li><strong>Noise floor unknown.</strong> Single run each. We had no idea whether <code>+0.017</code> was
+  larger than the wobble.</li>
+<li><strong>Different denominators.</strong> The Jul 4 run marked question 6 <code>degraded</code> and
+  averaged 8 questions; Jun 30 averaged 9.</li>
+<li><strong>Different code, and possibly a different corpus.</strong> The Jul 4 change was
+  resilience hardening, not quality work. Nothing in it should have improved
+  answers at all.</li>
+</ul>
+<p>Now re-run that same comparison <strong>properly</strong>, using <a href="#procedure-c-compare-two-arms">Procedure C</a>
+— paired per question, intersected on the 8 questions scored cleanly in both runs:</p>
+<pre><code>paired on 8 questions (9 baseline / 8 treatment)
+
+answer_relevancy     n=  8  delta=+0.1422 +/- 0.1210 (SE)   not distinguishable
+faithfulness         n=  8  delta=-0.0241 +/- 0.0845 (SE)   not distinguishable
+context_precision    n=  5  delta=-0.0254 +/- 0.0362 (SE)   not distinguishable
+context_recall       n=  8  delta=+0.1458 +/- 0.0734 (SE)   not distinguishable
+</code></pre>
+<p>Read the <code>faithfulness</code> row carefully. Comparing the two published averages says
+faithfulness <strong>improved by 0.017</strong>. Comparing the same questions to themselves says
+it <strong>got worse by 0.024</strong>. The sign flipped — because the reported averages were
+computed over different question sets (9 rows versus 8), so they were never
+measuring the same exam.</p>
+<p>Note also <code>context_precision</code>, which paired on only <strong>5</strong> of the 8 questions: the
+judge returned <code>NaN</code> for the rest, and the aggregate silently skipped them.</p>
+<p>And not one of the four deltas is distinguishable from zero, even before we bring
+the noise floor into it. The honest conclusion was "we learned nothing about
+quality." This document exists so that conclusion is reached <em>before</em> the result is
+circulated, not after.</p>
+<h3 id="35-ceiling-and-floor-effects">3.5 Ceiling and floor effects</h3>
+<p>A metric only carries information in the middle of its range, roughly 0.4 to 0.8.</p>
+<ul>
+<li>Near the <strong>ceiling</strong> (scores ~0.95+), there is no headroom; a real improvement
+  cannot show up. Our 9-question documentation bank had <code>answer_relevancy</code> at
+  0.862 with several questions above 0.95.</li>
+<li>Near the <strong>floor</strong> (scores ~0.15), everything fails and improvements are lost in
+  the rubble. Our 27-question ServiceNow bank scored roughly 0.13–0.40 across all
+  four metrics.</li>
+</ul>
+<p>Neither bank could have shown a moderate improvement. We do not yet know where the
+73-question bank lands — <a href="#procedure-a-measure-the-noise-floor">Procedure A</a> tells
+us, and that is as valuable as the noise floor itself.</p>
+<p>Our currently <em>sensitive</em> metrics — the ones with room to move in both directions
+— are <code>faithfulness</code> (0.594) and <code>context_precision</code> (0.501).</p>
+<hr />
+<h2 id="4-the-gate">4. The gate</h2>
+<p>A benchmark result <strong>may not be reported as an improvement</strong>, and <strong>may not be
+used to justify shipping a change</strong>, unless all eight items below pass. For
+exploratory runs where no decision is being made, the gate is advisory — but say
+so explicitly when you circulate the numbers.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Gate</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>G1</strong></td>
+<td>A pre-registration is committed <strong>before</strong> the run</td>
+<td>Stops post-hoc selection of whichever metric flatters the preferred config. Template: <code>docs/eval/preregs/_template.md</code></td>
+</tr>
+<tr>
+<td><strong>G2</strong></td>
+<td>The noise floor has been measured for this bank + corpus</td>
+<td>Without it, "better" is undefined. <a href="#procedure-a-measure-the-noise-floor">Procedure A</a></td>
+</tr>
+<tr>
+<td><strong>G3</strong></td>
+<td>Both arms ran against <strong>one pinned corpus</strong></td>
+<td>Otherwise retrieval metrics move for free. §3.3</td>
+</tr>
+<tr>
+<td><strong>G4</strong></td>
+<td>Both arms used the <strong>identical question bank</strong>, and you recorded which</td>
+<td>Different banks measure different things. §3.2</td>
+</tr>
+<tr>
+<td><strong>G5</strong></td>
+<td>The comparison is <strong>paired per question</strong>, joined on question text</td>
+<td>See <a href="#procedure-c-compare-two-arms">Procedure C</a>. Aggregate-vs-aggregate throws away most of your sensitivity</td>
+</tr>
+<tr>
+<td><strong>G6</strong></td>
+<td>Only questions scored cleanly <strong>in both arms</strong> are compared</td>
+<td>Guards denominator drift. §3.4</td>
+</tr>
+<tr>
+<td><strong>G7</strong></td>
+<td>The improvement exceeds <strong>2× the noise floor</strong> <em>and</em> 2× its own standard error</td>
+<td>One threshold for "bigger than the wobble", one for "not a fluke of these 73 questions"</td>
+</tr>
+<tr>
+<td><strong>G8</strong></td>
+<td>The <strong>anchors</strong> hold, and no other metric regressed by more than one noise-floor unit</td>
+<td>Catches the classic trap: raising <code>faithfulness</code> by teaching the model to hedge, while quietly tanking <code>answer_relevancy</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="on-g5-why-paired-comparison-and-why-it-is-free">On G5: why paired comparison, and why it is free</h3>
+<p>Most of the variation in these scores is <strong>between questions</strong>, not between
+systems. On our 9-question run, <code>answer_relevancy</code> ranged from 0.66 to 0.99.
+Question 5 is simply harder than question 1, in both arms.</p>
+<p>If you compare two <em>averages</em>, all of that question-to-question spread sits in
+your error bars and drowns the effect you are looking for. If instead you compute a
+<strong>per-question difference</strong> — question 1 scored 0.83 in the baseline and 0.88 in
+the treatment, so its delta is +0.05 — the question's intrinsic difficulty appears
+on both sides of the subtraction and <strong>cancels out</strong>.</p>
+<p>Same data. Far more sensitivity. This is the single largest free win available,
+and it costs one loop in a script.</p>
+<p>Two traps:</p>
+<ul>
+<li><strong>Join on the question text</strong> (<code>user_input</code>), never on the positional key
+  <code>question_&lt;n&gt;</code>. The harness drops failed rows, so <code>question_7</code> in one run is not
+  the same question as <code>question_7</code> in the other.</li>
+<li><strong>Intersect first, then average</strong> (G6).</li>
+</ul>
+<h3 id="on-g8-the-anchors">On G8: the anchors</h3>
+<p><code>examples/benchmarking/anchor_questions.json</code> holds five fixed questions that run
+every round and are <strong>never changed and never optimised against</strong>. They are a
+calibration weight: you weigh different things every day, but you also put the same
+1 kg weight on the scale each morning, so you can tell when the <em>scale</em> has drifted.</p>
+<table>
+<thead>
+<tr>
+<th>Anchor type</th>
+<th>Count</th>
+<th>How to read it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>easy_retrieve</code></td>
+<td>2</td>
+<td>Should always score high. Any drop is an <strong>alarm</strong>: retrieval broke.</td>
+</tr>
+<tr>
+<td><code>reasoning</code></td>
+<td>2</td>
+<td>Multi-document synthesis. The most sensitive <strong>trend line</strong> for prompt and model changes.</td>
+</tr>
+<tr>
+<td><code>should_refuse</code></td>
+<td>1</td>
+<td>Asks about a non-<abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> system. Correct behaviour is to decline and refer. <strong>Binary gate:</strong> a confident wrong answer fails the round outright.</td>
+</tr>
+</tbody>
+</table>
+<p>Anchors are pass/fail tripwires and trend lines. They are <strong>not</strong> a measurement —
+five questions cannot establish anything statistically. Do not average them into
+the bank's score. (Today the harness does exactly that; see
+<a href="#gap-3-anchors-are-averaged-into-the-bank-and-should_refuse-corrupts-two-metrics">Gap 3</a>.)</p>
+<hr />
+<h2 id="5-procedures-that-work-today">5. Procedures that work today</h2>
+<p>All commands assume the benchmark secrets file at <code>~/.archi/.env.benchmark</code>.</p>
+<div class="admonition note">
+<p class="admonition-title">How a benchmark run actually behaves</p>
+<p><code>archi evaluate --hostmode</code> <strong>exits as soon as the deployment is up.</strong> The
+real evaluation runs asynchronously inside the <code>benchmarking-&lt;name&gt;</code>
+container. Watch the container, not the CLI. With <code>--force</code> it re-ingests the
+corpus first, which takes roughly 50 minutes. Results land in <code>bench_out/</code>.</p>
+</div>
+<h3 id="procedure-a-measure-the-noise-floor">Procedure A: measure the noise floor</h3>
+<p>Do this <strong>once per (bank, corpus)</strong> pair, before any comparison. It needs no code
+changes.</p>
+<p>The trick: <code>archi evaluate -cd &lt;dir&gt;</code> sweeps every config in a directory over a
+<strong>single, once-ingested corpus</strong> in <strong>one invocation</strong>. Put three <em>identical
+copies</em> of your config in that directory — differing only in filename — and you
+get three independent evaluation passes on one corpus, sharing one
+<code>corpus_snapshot_id</code>.</p>
+<pre><code class="language-bash">mkdir -p configs/noise
+for i in 1 2 3; do
+  cp config/benchmarking/ragas-jeopardy-master.yaml configs/noise/rep${i}.yaml
+done
+
+archi evaluate -n bench-noise -cd configs/noise/ -e ~/.archi/.env.benchmark --hostmode
+</code></pre>
+<p>The output JSON will contain three entries under <code>benchmarking_results</code>, one per
+config file. For each metric, take the three <code>aggregate_&lt;metric&gt;</code> values and
+compute their <strong>standard deviation</strong> (a measure of how much they scatter around
+their average). That number is your noise floor, σ.</p>
+<pre><code class="language-python">import json, statistics
+
+d = json.load(open(&quot;bench_out/&lt;the-run&gt;.json&quot;))
+arms = d[&quot;benchmarking_results&quot;]
+
+for metric in [&quot;answer_relevancy&quot;, &quot;faithfulness&quot;,
+               &quot;context_precision&quot;, &quot;context_recall&quot;,
+               &quot;answer_correctness&quot;]:
+    # .get(): answer_correctness is opt-in, so a run that did not enable it has
+    # no aggregate key at all. Skip the metric rather than KeyError.
+    vals = [a[&quot;total_results&quot;][f&quot;aggregate_{metric}&quot;] for a in arms
+            if f&quot;aggregate_{metric}&quot; in a[&quot;total_results&quot;]]
+    if not vals:
+        continue
+    print(f&quot;{metric:20s} mean={statistics.fmean(vals):.4f} &quot;
+          f&quot;noise floor sigma={statistics.stdev(vals):.4f}&quot;)
+</code></pre>
+<p>Three repeats give a rough σ; five give a better one. Record the result in the
+pre-registration. <strong>Any future improvement smaller than 2σ is not an improvement.</strong></p>
+<p>This run also tells you whether the bank is stuck at a ceiling or a floor (§3.5).</p>
+<h3 id="procedure-b-choose-the-right-comparison-shape">Procedure B: choose the right comparison shape</h3>
+<table>
+<thead>
+<tr>
+<th>Your change</th>
+<th>Shape</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>prompt, <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> model, <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> settings</td>
+<td><strong>One</strong> invocation, <code>-cd</code> with both configs</td>
+<td>Retrieval config is baked into the once-ingested corpus, so both arms share it automatically. Same corpus is guaranteed.</td>
+</tr>
+<tr>
+<td>chunking, retriever, embeddings</td>
+<td><strong>Two</strong> invocations, each re-ingesting</td>
+<td>These change ingestion itself, so each arm must build its own corpus.</td>
+</tr>
+</tbody>
+</table>
+<p>For the two-invocation case you <em>cannot</em> pin the corpus, because building a
+different corpus is the point. Instead pin the <strong>inputs</strong> to ingestion: identical
+<code>config/lists/sources.list</code>, ingested from the same source state, as close together
+in time as practical. Record both <code>corpus_snapshot_id</code> values and note in the
+pre-reg that the corpora differ by design. Worked example:
+<a href="../benchmarking/#hierarchical-rerank-ab"><code>benchmarking.md</code></a>.</p>
+<h3 id="procedure-c-compare-two-arms">Procedure C: compare two arms</h3>
+<p><code>scripts/benchmarking/compare_runs.py</code> does this. It implements G3–G8 in one
+tested place, so a comparison cannot skip a gate by accident:</p>
+<pre><code class="language-bash">python scripts/benchmarking/compare_runs.py \
+  bench_out/&lt;baseline&gt;.json bench_out/&lt;treatment&gt;.json \
+  --noise-floor answer_relevancy=0.025,faithfulness=0.027,context_precision=0.016,context_recall=0.021
+</code></pre>
+<p>A single <code>-cd</code> sweep file is already a comparison: pass it alone and every arm in
+it is compared against the first. <code>path@2</code> picks one arm out of a sweep, and
+<code>--baseline LABEL</code> chooses which arm is the reference.</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>What it is for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--noise-floor METRIC=SIGMA,...</code></td>
+<td>the noise floor from <a href="#procedure-a-measure-the-noise-floor">Procedure A</a>. Without one, nothing is ever called SIGNIFICANT (G2)</td>
+</tr>
+<tr>
+<td><code>--noise-runs FILE ...</code></td>
+<td>measure sigma here instead: every arm of every file is one replicate, and sigma is the standard deviation of the <strong>recomputed</strong> means (needs two or more). Replicates face the same bank, corpus, code/config identity and divergence checks as the arms, and sigma is measured over the <em>same</em> questions the paired table uses — sigma <em>is</em> the G7 threshold, so a stale or foreign replicate would move the bar rather than describe it</td>
+</tr>
+<tr>
+<td><code>--corpus-differs-by-design</code></td>
+<td>the only way past the G3 corpus gate; prints both fingerprints and the Procedure B warning</td>
+</tr>
+<tr>
+<td><code>--ignore-config-divergence</code></td>
+<td>the only way past a non-empty <code>divergence_from_selected_file</code></td>
+</tr>
+<tr>
+<td><code>--anchors PATH</code></td>
+<td>the anchors file (default <code>examples/benchmarking/anchor_questions.json</code>). Required: the default is tracked, so a missing file means a broken checkout rather than a run without anchors. For a deliberately anchor-free comparison, point it at a file holding <code>[]</code></td>
+</tr>
+<tr>
+<td><code>--include-anchors-in-bank</code></td>
+<td>average the five anchors into the bank aggregates. Off by default — see <a href="#gap-3-anchors-are-averaged-into-the-bank-aggregates">Gap 3</a></td>
+</tr>
+<tr>
+<td><code>--qa-run LABEL=RUN_DIR</code></td>
+<td>join an <code>archi eval qa</code> run to an arm, by derived item id (repeatable). This is the one flag that needs the project's evaluation dependencies installed — the id is derived by the QA stack's own <code>derive_item_id</code>, so the two sides cannot drift apart</td>
+</tr>
+<tr>
+<td><code>--json PATH</code></td>
+<td>write the same report as JSON</td>
+</tr>
+</tbody>
+</table>
+<p>Exit codes: <code>0</code> ok, <code>1</code> usage or I/O, <code>2</code> a gate refused, <code>3</code> a config-divergence
+stop. A question-set mismatch (G4) has <strong>no</strong> override flag, on purpose.</p>
+<p>It reads finished artifacts and nothing else: no deployment, no database, and —
+apart from <code>--qa-run</code> — no project dependencies, so it runs wherever the JSON
+files are.</p>
+<p><strong>What it refuses.</strong></p>
+<ul>
+<li><strong>The question sets differ, or the same questions were graded against a
+  different <code>reference_answer</code> or a different set of declared sources</strong> — two
+  different banks measure two different things, and a bank is more than its
+  question texts: the reference is the ground truth the context metrics and
+  <code>answer_correctness</code> are scored against, and the declared sources are the
+  ground truth for source accuracy. A bank edit would otherwise read as a
+  system delta (G4). No flag overrides this.</li>
+<li><strong>The corpus fingerprints differ, were never recorded, or an arm recorded
+  <code>corpus_unchanged_at_endpoints: false</code></strong> — retrieval metrics move for free
+  across corpora (G3), and an arm that straddled a re-ingest scored its
+  questions against two of them even when it started and finished on the same
+  one. <code>--corpus-differs-by-design</code> continues and prints the Procedure B
+  warning; it does not make the arms comparable.</li>
+<li><strong><code>divergence_from_selected_file</code> is non-empty</strong> — the run did not use the
+  settings you selected (Procedure E), so its scores belong to neither arm.</li>
+</ul>
+<p><strong>What it prints.</strong> Run provenance including the three question counts (asked /
+anchors / bank rows, so the denominator is visible); the gate results; the paired
+per-metric table with n, delta, SE, sigma and the verdict; scored counts
+<strong>recomputed</strong> from the finite values and flagged <code>OVER-REPORTED</code> wherever
+<code>&lt;metric&gt;_scored</code> disagrees (§3.4); source accuracy as reported and as
+recomputed; the anchor block; slices by any field both arms carry (small slices
+marked directional, and never called SIGNIFICANT); and per-question timing —
+mean, nearest-rank p90, and warm variants that drop the first question in run
+order.</p>
+<p>G8 is reported as a gate row rather than an exit code: an anchor failing means
+<em>do not ship the change</em>, not <em>this comparison is invalid</em>, and the report is the
+evidence for that call. When none of the anchor questions appear in the arms —
+a run from before the anchors existed — the row says <code>not evaluated</code> and points
+at re-baselining, because silence there would read as a pass.</p>
+<p>The row judges the <strong>candidate</strong> arms. A baseline that fails its own
+<code>should_refuse</code> anchor is reported beside the verdict but not counted against
+it, so a run that <em>repairs</em> a broken baseline is not told "do not ship" for the
+defect it fixed. An anchor the candidate could not score — a degraded row, or
+one whose every metric cell is non-finite — is reported as <code>unscored</code> rather
+than counted as held: a tripwire that raised no alarm because there was nothing
+to compare has not passed.</p>
+<p>Giving both <code>--noise-floor</code> and <code>--noise-runs</code> a sigma for the same metric is
+refused (exit 1) rather than resolved by precedence: sigma is the threshold, and
+a declared value silently replacing a measured one would move the bar with
+nothing in the report to show it. Naming one metric twice inside <code>--noise-floor</code>
+is refused for the same reason. Declaring a metric the replicates could not
+measure is fine.</p>
+<p>A <strong>measured sigma of exactly zero is refused</strong> (exit 2). Replicates whose
+recomputed means come out identical have measured no noise floor at all rather
+than a floor of zero, and a zero threshold makes the <code>2 x sigma</code> half of G7
+vacuous. Each metric's sigma is measured over the rows every arm <em>and</em> every
+replicate could score for that metric, so the threshold and the delta it judges
+describe the same population.</p>
+<div class="admonition note">
+<p class="admonition-title">The <code>difficulty</code> slice needs a bank that carries the field</p>
+<p>The harness propagates <code>difficulty</code> from the bank row into
+<code>single_question_results</code> (<code>service_benchmark.py</code>,
+<code>_answer_and_score_question</code>) when the row carries it. A bank without the
+field still produces no <code>difficulty</code> key, so the slice is skipped rather
+than shown empty, exactly as before. The <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> bank
+(<code>fasrc_ragas_queries.json</code>) has no <code>difficulty</code> today; <code>ragas-jeopardy-master.json</code>
+does.</p>
+</div>
+<p>Two things the tool will not do for you. It never prints SIGNIFICANT without a
+noise floor, and it identifies the anchors by <strong>question text</strong> rather than by
+<code>anchor_type</code> — the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> bank sets <code>anchor_type</code> on all 109 rows, so that field
+selects the whole bank, not the five tripwires.</p>
+<p>The arithmetic underneath is the paired loop, which is worth reading once:</p>
+<pre><code class="language-python">import json, math, statistics
+
+METRICS = [&quot;answer_relevancy&quot;, &quot;faithfulness&quot;,
+           &quot;context_precision&quot;, &quot;context_recall&quot;,
+           &quot;answer_correctness&quot;]
+
+def load(path, arm=0):
+    &quot;&quot;&quot;Clean rows of one arm, keyed by question text.&quot;&quot;&quot;
+    results = json.load(open(path))[&quot;benchmarking_results&quot;][arm]
+    return {
+        row[&quot;question&quot;]: row
+        for row in results[&quot;single_question_results&quot;].values()
+        if row.get(&quot;status&quot;, &quot;ok&quot;) == &quot;ok&quot;          # drop degraded/failed rows
+    }
+
+def real(x):                        # a usable score: not null, not NaN
+    # An unscored cell reads `null` in newer artifacts and a bare `NaN` in older
+    # ones; this accepts neither. The isinstance check has to come FIRST —
+    # math.isnan raises on None. 0.0 passes both: it is a score, and a bad one.
+    return isinstance(x, (int, float)) and math.isfinite(x)
+
+baseline  = load(&quot;bench_out/&lt;baseline&gt;.json&quot;)
+treatment = load(&quot;bench_out/&lt;treatment&gt;.json&quot;)
+
+common = baseline.keys() &amp; treatment.keys()         # G6: intersect, then average
+print(f&quot;paired on {len(common)} questions &quot;
+      f&quot;({len(baseline)} baseline / {len(treatment)} treatment)&quot;)
+
+for metric in METRICS:
+    deltas = [treatment[q][metric] - baseline[q][metric]
+              for q in common
+              if real(baseline[q].get(metric)) and real(treatment[q].get(metric))]
+
+    if len(deltas) &lt; 2:
+        print(f&quot;{metric:20s} too few paired rows ({len(deltas)})&quot;)
+        continue
+
+    mean = statistics.fmean(deltas)
+    se   = statistics.stdev(deltas) / math.sqrt(len(deltas))   # standard error
+    print(f&quot;{metric:20s} n={len(deltas):3d}  delta={mean:+.4f} +/- {se:.4f} (SE)&quot;
+          f&quot;   {'SIGNIFICANT' if abs(mean) &gt; 2 * se else 'not distinguishable'}&quot;)
+</code></pre>
+<p>The <em>standard error</em> (SE) estimates how much the mean delta would wobble if you
+drew a different sample of 73 questions. <code>|delta| &gt; 2 x SE</code> means "probably not a
+fluke of these particular questions."</p>
+<p>Then apply <strong>G7 in full</strong>: the delta must clear <code>2 x SE</code> <strong>and</strong> <code>2 x σ</code> (the noise
+floor from Procedure A). The first says it is not an accident of <em>which questions</em>
+you asked; the second says it is not an accident of <em>the day you ran it</em>. Both are
+required, and they fail in different ways.</p>
+<h3 id="procedure-d-reading-the-results-file">Procedure D: reading the results file</h3>
+<p>Two artifact formats are in circulation, and the file tells you which one you have
+— its date does not, because a run executes whatever code the deployed image
+carries. Newer harness code writes strict JSON: an unscored cell is <code>null</code>, so any
+reader opens the file, <code>JSON.parse</code> in a browser included. Older artifacts contain
+the bare token <code>NaN</code>, which is <strong>not</strong> JSON (archi#279). <code>grep -c NaN &lt;file&gt;</code>
+settles it: a non-zero count means a strict reader will refuse the file. Python's
+<code>json.load</code> accepts both, so the snippets below work either way.</p>
+<pre><code>bench_out/benchmarking-&lt;name&gt;-&lt;timestamp&gt;.json
+├── metadata
+│   ├── corpus_snapshot_id     # shared =&gt; ran together (see §3.3)
+│   ├── git_info.last_commit   # the DEPLOY's commit, NOT this run's code (§5.E)
+│   ├── code_version           # which code produced this (§5.E)
+│   ├── host                   # machine that ran the deploy (§5.E)
+│   └── config_versions[]      # one config digest per arm, in run order
+└── benchmarking_results[]     # one entry per config in a -cd sweep
+    ├── configuration_file
+    ├── config_version         # this arm's config identity (§5.E)
+    ├── ingest_wall_seconds    # cost of building this corpus (§5.E)
+    │                          #   float = seconds, harness-observed
+    │                          #   null  = no ingest seen (corpus reused)
+    │                          #   absent = artifact predates the field
+    ├── total_results
+    │   ├── aggregate_&lt;metric&gt;  # null when nothing was scored; 0.0 is a real score
+    │   ├── &lt;metric&gt;_scored    # &quot;71 of 73&quot; — CHECK THIS (§3.4). Counts the values
+    │   │                      # that reached the aggregate, not the rows judged;
+    │   │                      # older harness code over-reported it (archi#279),
+    │   │                      # so re-derive it from the cells, don't date it
+    │   ├── source_accuracy
+    │   ├── relative_source_accuracy
+    │   └── source_scored_count # denominator of the two above; NOT the question count
+    └── single_question_results
+        └── question_&lt;n&gt;
+            ├── question       # join on THIS, not the key (G5)
+            ├── status         # &quot;ok&quot; | &quot;degraded&quot; | ...
+            ├── anchor_type    # anchors only: easy_retrieve|reasoning|should_refuse
+            ├── difficulty     # bank rows only: easy|medium|hard
+            │                  #   the harness started writing this in the change closing #431
+            └── answer_relevancy, faithfulness, context_precision,
+                context_recall, answer_correctness  # last one: opt-in
+</code></pre>
+<p>Report the bank sliced by <code>difficulty</code>, not as one number. A single mean over 40
+easy, 27 medium and 6 hard questions hides everything interesting. Treat the
+<code>hard</code> slice as directional only — at n=6, one question swinging moves that mean
+by 0.17.</p>
+<h3 id="procedure-e-confirm-two-runs-are-comparable">Procedure E: confirm two runs are comparable</h3>
+<p>Before comparing any two numbers, confirm the runs differed only in the thing you
+changed. The report answers this in the <strong>Run provenance</strong> block, and in these
+fields.</p>
+<p><strong>Do not use <code>git_info.last_commit</code> for this.</strong> <code>archi create</code> writes
+<code>git_info.yaml</code> once at deploy and then freezes it. Every run between 2026-08-11
+and 2026-08-17 reports the same commit (<code>0a157cdce0</code>) with an empty diff, because
+they shared one deployment — even though they ran different code. The field names
+the deploy, not the image. It is kept, and labelled, for exactly that reason.
+<code>metadata.host</code> does not share this freeze trap: a container cannot move to another
+machine, so the host recorded at deploy is the host every run in that deployment
+used. The host is written only when the container endpoint is provably local; <code>archi create</code> records <code>null</code> rather than a guess when it is not.</p>
+<p>Use the digests instead. Each is a content hash: <strong>equal digest means equal
+input</strong>, and the property is readable from the finished file forever, with no need
+for Postgres or the config file to still exist.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Scope</th>
+<th>Answers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>metadata.code_version.digest</code></td>
+<td>per invocation</td>
+<td>Did these runs execute the same code?</td>
+</tr>
+<tr>
+<td><code>metadata.host</code></td>
+<td>per invocation</td>
+<td>Did these runs execute on the same machine?</td>
+</tr>
+<tr>
+<td><code>&lt;arm&gt;.config_version.digest</code></td>
+<td>per arm</td>
+<td>Did these arms use the same settings?</td>
+</tr>
+<tr>
+<td><code>&lt;arm&gt;.config_version.key_settings</code></td>
+<td>per arm</td>
+<td>Which settings define this arm?</td>
+</tr>
+<tr>
+<td><code>&lt;arm&gt;.config_version.divergence_from_selected_file</code></td>
+<td>per arm</td>
+<td>Did the run use the config you selected?</td>
+</tr>
+<tr>
+<td><code>&lt;arm&gt;.corpus_fingerprint</code></td>
+<td>per arm</td>
+<td>Did they see the same documents? (§3.3)</td>
+</tr>
+<tr>
+<td><code>&lt;arm&gt;.ingest_wall_seconds</code></td>
+<td>per arm</td>
+<td>What did building those documents cost?</td>
+</tr>
+</tbody>
+</table>
+<p>Read them like this:</p>
+<ul>
+<li><strong>Same <code>code_version.digest</code></strong> → same code. Different → different code, and any
+  metric delta may be that rather than your change.</li>
+<li><strong><code>config_version.digest</code> differs across arms of one sweep</strong> → good, that is the
+  arm distinction. Identical across arms you meant to differ → the sweep did not
+  vary what you thought.</li>
+<li><strong><code>divergence_from_selected_file</code> non-empty</strong> → <strong>stop.</strong> The run did not use
+  the settings you selected, and the report says so at the top. This is not
+  hypothetical: <code>bench-8192-20260817_170850.json</code> was the 8192 arm and its
+  recorded configuration says <code>context_window: 32768</code>, because the agent reads
+  Postgres while the harness wrote a YAML file. Its scores (relevancy 0.681,
+  faithfulness 0.562) cannot be attributed to either setting.</li>
+<li><strong><code>ingest_wall_seconds</code></strong> → what the corpus above cost to build, in seconds.
+  Some settings — document categorization, chunking strategy — are paid for
+  almost entirely at ingest, and this is the only place that price is recorded.
+  Read the three states apart: a <strong>float</strong> is a measurement; <strong><code>null</code></strong> means no
+  ingest was observed while the run waited, which normally means it found the
+  corpus already built; an <strong>absent key</strong> means the artifact predates the field.
+  It is <em>harness-observed</em> — the span from the first status poll reporting
+  progress to the one reporting <code>completed</code> — and it is an <strong>approximation, not
+  a measurement</strong>, with error in both directions. Ingestion that ran before the
+  benchmark container started polling is missing from it, because the harness
+  cannot see backwards; non-ingest time after polling began is included in it,
+  because a phase boundary is all the status payload reports. Time queued
+  behind another data-manager task is excluded. Use it to compare arms of the
+  same shape, not as the ingest's true duration; an exact figure needs
+  <code>started_at</code>/<code>finished_at</code> from the data-manager (#428).</li>
+</ul>
+<p>There is <strong>one ingest wait per invocation</strong>, not one per arm, so every arm of
+  a <code>-cd</code> sweep carries the same number. The check that tells you whether it
+  applies to a given arm is comparing <code>corpus_fingerprint</code> <strong>across arms</strong> — if
+  they differ, a background re-ingest landed mid-sweep and this figure
+  describes only the first arm's corpus. Do <strong>not</strong> use
+  <code>corpus_unchanged_at_endpoints</code> for this: a re-ingest that lands wholly
+  between two arms leaves that boolean <code>true</code> on both sides, because each arm
+  samples the corpus only at its own two endpoints.</p>
+<p>Two caveats worth knowing:</p>
+<ul>
+<li><code>config_version</code> covers the <strong>effective</strong> configuration — what the agent read
+  from Postgres, overlaid with the <code>services.benchmarking</code> settings the harness
+  passes to <code>archi()</code> directly. Those never reach Postgres, and they are what a
+  prompt sweep varies, so a digest without them would give every arm the same
+  value.</li>
+<li><code>key_settings</code> is a convenience for reading, <strong>not</strong> the guarantee. It is a
+  fixed list and will always lag; <code>context_editing</code> did not exist when the
+  2026-08-11 runs were recorded. The digest covers every setting, so trust the
+  digest and use <code>key_settings</code> to see at a glance what you are looking at.</li>
+</ul>
+<p>Artifacts written before this existed say <code>not recorded</code> rather than showing a
+guess. Their code version is genuinely unrecoverable — nothing in the file
+identifies the image. Their config digest is reconstructed from the recorded
+configuration <em>file</em>, which is real but, per the bench-8192 case above, is not
+necessarily what ran; the field says so.</p>
+<div class="admonition warning">
+<p class="admonition-title">A backfilled digest is not a comparability verdict</p>
+<p>This is checkable in the repository rather than abstract. All four artifacts
+from 2026-08-17 — <code>bench-8192-20260817_170850.json</code> and the three <code>ragas-205</code>
+runs from that morning — carry the <strong>same</strong> <code>config_version.digest</code>
+(<code>sha256:8fb13f7f14ae…</code>), because all four recorded the same configuration
+file. Comparing digests alone would conclude they were one arm. They were not:
+the first was the 8192 arm, as its own filename says and its recorded
+configuration denies.</p>
+<p>So when <code>divergence_from_selected_file</code> is <code>null</code>, an equal digest means <em>these
+artifacts recorded the same file</em> — never <em>these runs used the same settings</em>.
+Only a run stamped by the current code, where that field is a real list, can
+support the stronger claim. Backfilled artifacts are evidence of what was
+written down, not of what happened.</p>
+</div>
+<hr />
+<h2 id="6-known-gaps-not-yet-implemented">6. Known gaps — NOT YET IMPLEMENTED</h2>
+<p>Everything above works today. Everything below does <strong>not</strong> exist yet. Do not
+follow a step that silently does nothing. A gap marked <strong>closed</strong> is the
+exception: it stays here, saying what it did and did not change, so an older note
+pointing at it still lands somewhere truthful.</p>
+<h3 id="gap-1-no-comparison-tool-closed-2026-09-419">Gap 1: no comparison tool — <strong>closed</strong> (2026-09, #419)</h3>
+<p><code>scripts/benchmarking/compare_runs.py</code> exists. It refuses to run when the
+question sets differ (G4, with no override), when the corpus fingerprints differ
+or were never recorded (G3), or when <code>divergence_from_selected_file</code> is non-empty
+(Procedure E); and it prints the paired table, the slices, and the anchor
+pass/fail block. See <a href="#procedure-c-compare-two-arms">Procedure C</a>.</p>
+<p>Two limits are worth stating rather than discovering:</p>
+<ul>
+<li><strong>The bank hash is still not checkable</strong> (<a href="#gap-2-the-question-bank-is-not-version-controlled">Gap 2</a>).
+  The tool compares the question <em>sets</em> the artifacts carry, which is as close to
+  G4 as the files allow — two runs of the same 109 texts against different
+  <em>reference answers</em> would still pass it.</li>
+<li><strong><code>corpus_fingerprint</code> is absent from every artifact written before it was
+  added</strong>, so comparing the historical <code>bench_out/</code> runs needs
+  <code>--corpus-differs-by-design</code>. That flag prints a warning; it is not a verdict
+  that the corpora matched.</li>
+</ul>
+<h3 id="gap-2-the-question-bank-is-not-version-controlled">Gap 2: the question bank is not version-controlled</h3>
+<p><code>config/benchmarking/ragas-jeopardy-master.json</code> is <strong>gitignored</strong>. The anchors
+(<code>examples/benchmarking/anchor_questions.json</code>) are tracked, but the 73 questions
+they ground are not. Nobody — including future us — can reconstruct what a past run
+actually measured.</p>
+<p><em>Fix:</em> track the bank, and stamp a hash of its contents into <code>metadata</code> beside
+<code>git_info</code>, so a comparison tool can refuse to compare across banks (G4).</p>
+<h3 id="gap-3-anchors-are-averaged-into-the-bank-aggregates">Gap 3: anchors are averaged into the bank aggregates</h3>
+<p>The harness merges the 5 anchors into the question set and averages everything
+together, rather than reporting them as their own track. Anchors are meant to be
+<em>tripwires</em> — pass/fail guards you never tune against — so folding them into the
+same averages you are trying to move is self-defeating: it both dilutes the bank's
+signal and hides the tripwire.</p>
+<p>One consequence is still live, verified in code:</p>
+<ul>
+<li><strong>A correct refusal scores near zero on the <code>context_*</code> metrics.</strong> The
+  <code>should_refuse</code> anchor's reference answer ("I don't have documentation covering
+  that") is by construction unsupported by any retrieved <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> chunk, and it has a
+  non-empty <code>reference</code>, which is what makes a row eligible for <code>context_precision</code>
+  and <code>context_recall</code>. So the anchor drags both metrics down <em>for behaving
+  correctly</em>. We penalise exactly the behaviour we are testing for.</li>
+</ul>
+<p><em>Fix:</em> report anchors as a separate track, exclude them from the bank aggregates,
+and score <code>should_refuse</code> as a binary assertion (did it decline; did it avoid
+inventing names) rather than feeding it to <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> at all.</p>
+<p><em>Already fixed — do not go looking for it:</em> <code>should_refuse</code> used to also book a
+<strong>free strict source hit</strong>. It declares zero expected sources, and <code>source_hits</code>
+computed strict success as <code>all(matches)</code>, which is vacuously true for an empty
+list — so the row returned <code>(0, 1)</code> no matter what the model said, inflating
+<code>source_accuracy</code>. Zero-source rows are now excluded from source accuracy entirely:
+they contribute to neither the numerator nor the denominator, and the denominator
+actually used is published as <code>source_scored_count</code> in the results file. A row that
+<em>declares</em> a source and misses it still counts as a miss.</p>
+<blockquote>
+<p><strong>Do not compare a run from after anchors began scoring against a baseline from
+before it.</strong> The graded set goes from 73 questions to 78, which violates G4 and
+G6. Every benchmark result recorded before this page existed — including the
+July 4 floor baseline — is a 73-question measurement. Re-baseline first.</p>
+</blockquote>
+<h3 id="gap-4-the-benchmark-sut-samples-at-temperature-03">Gap 4: the benchmark <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> samples at temperature 0.3</h3>
+<p><code>temperature: 0.3</code> adds sampling noise to every question, in both arms, for no
+measurement benefit. Benchmarking at <code>temperature: 0</code> would shrink the noise floor
+substantially.</p>
+<p>The counter-argument is real: you would then be benchmarking a configuration you do
+not ship. The resolution is to benchmark at <code>0</code> for <strong>sensitivity</strong> when comparing
+two arms, and separately confirm the winner at the production temperature. Decide
+this explicitly in the pre-reg.</p>
+<p><em>Not a gap:</em> <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> already defaults to <code>seed=42</code> and <code>max_workers=16</code>, and our
+<code>timeout: 180</code> merely restates <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr>'s own default. <code>batch_size: false</code> becomes
+"no batching", which is correct. None of these need changing, and none of them
+affect scores.</p>
+<h3 id="gap-5-no-held-out-question-set">Gap 5: no held-out question set</h3>
+<p>We have a development bank and anchors. We have no <strong>held-out</strong> set — questions
+reserved to confirm that a gain generalises rather than being tuned into those
+specific 73 items.</p>
+<p>Without it, months of iterating against a fixed bank produces a system that is
+measurably better at those 73 questions and nowhere else. This is called
+<em>overfitting</em>, and it is invisible from inside the benchmark.</p>
+<p><em>Fix:</em> a three-way split — development bank (iterate freely), held-out bank (run
+rarely, never tune against), anchors (never touched).</p>
+<h3 id="gap-6-difficulty-is-not-visible-in-human-grading">Gap 6: <code>difficulty</code> is not visible in human grading</h3>
+<p>The bank's <code>difficulty</code> field is not pushed to Argilla; only <code>anchor_type</code> is
+declared as a metadata property (<code>src/utils/benchmark_argilla.py:433</code>). Slicing
+human grades by difficulty needs a new <code>TermsMetadataProperty</code>.</p>
+<h3 id="gap-7-bank-coverage-is-uneven">Gap 7: bank coverage is uneven</h3>
+<p>Of the 73 questions, 8 draw on <code>modules-intro</code> and 6 on <code>slurm-intro</code>. Over-sampling
+a few pages means a retrieval change touching those pages swings the whole score
+disproportionately. Spread the sources when the bank is next revised.</p>
+<h3 id="gap-8-code_version-cannot-name-a-commit">Gap 8: <code>code_version</code> cannot name a commit</h3>
+<p><code>metadata.code_version.digest</code> tells you whether two runs executed the <em>same</em> code.
+It cannot tell you <em>which</em> code, because nothing stamps a commit into the image at
+build time — <code>git_info.yaml</code> is written on the host at deploy and then frozen
+(§5.E). So you can say "these two arms ran identical code" or "these two arms ran
+different code", but not "this arm ran commit abc123".</p>
+<p>Closing this needs a build-time change: bake the commit (or a <code>git describe</code>) into
+the image and have the benchmark read it from there rather than from the deploy's
+frozen file.</p>
+<hr />
+<h2 id="7-glossary">7. Glossary</h2>
+<p><strong>Anchor</strong> — a fixed question, never edited and never optimised against, run every
+round to detect drift. See §4/G8.</p>
+<p><strong>Bank</strong> — the JSON file of benchmark questions with reference answers and
+expected sources.</p>
+<p><strong>Ceiling / floor effect</strong> — when scores are so high (or so low) that a real
+improvement cannot show up in the number. §3.5.</p>
+<p><strong>Chunk</strong> — a small piece of a document; retrieval operates on chunks, not whole
+pages.</p>
+<p><strong>Corpus</strong> — the full collection of ingested documents Archi searches.</p>
+<p><strong>Denominator drift</strong> — when two runs average their scores over different numbers
+of questions, making the averages incomparable. §3.4.</p>
+<p><strong>Embedding</strong> — a list of numbers representing a piece of text's meaning, so that
+similar texts have similar numbers.</p>
+<p><strong>Ingestion</strong> — downloading, chunking, and embedding the corpus. Takes ~50 minutes.</p>
+<p><strong>Judge</strong> — the language model that scores the <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr>'s answers. Ours is Claude
+Sonnet 4.5, pinned.</p>
+<p><strong>Noise floor (σ)</strong> — how much a score moves when you re-run the identical
+benchmark and change nothing. The smallest difference you may call real is 2σ.
+Procedure A.</p>
+<p><strong>Paired comparison</strong> — comparing per-question differences rather than two overall
+averages, which cancels out how hard each question intrinsically is. §4/G5.</p>
+<p><strong>Pre-registration</strong> — writing down the hypothesis, the deciding metric, and the
+decision rule <em>before</em> running the eval, and committing it. <code>docs/eval/preregs/_template.md</code>.</p>
+<p><strong><abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr></strong> — retrieval-augmented generation: search a corpus, then write an answer
+from what you found. §1.1.</p>
+<p><strong>Reranking</strong> — re-scoring the top retrieval candidates with a slower, more
+accurate model.</p>
+<p><strong>Standard deviation</strong> — a measure of how spread out a set of numbers is around
+their average.</p>
+<p><strong>Standard error (SE)</strong> — how much an average would wobble if you had sampled a
+different set of questions. Shrinks as the bank grows.</p>
+<p><strong><abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr></strong> — system under test; the Archi configuration being benchmarked.</p>
+<p><strong>Temperature</strong> — how randomly a language model picks its next word. <code>0</code> is
+deterministic; higher is more varied.</p>
+<hr />
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="../benchmarking/"><code>benchmarking.md</code></a> — how to run a benchmark, the CLI, Argilla,
+  the prompt sweep, and the retrieval A/B.</li>
+<li><code>docs/eval/rubric.md</code> — the human annotation rubric and calibration protocol.</li>
+<li><code>docs/eval/preregs/_template.md</code> — the pre-registration template (G1).</li>
+</ul>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../evaluation/" class="btn btn-neutral float-left" title="Evaluation"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../advanced_setup_deploy/" class="btn btn-neutral float-right" title="Advanced Setup">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+      <span><a href="../evaluation/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../advanced_setup_deploy/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

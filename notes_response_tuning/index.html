@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Notes: Tuning the FASRC Cannon Prompt + Inline Accuracy &amp; Attribution - Archi Docs</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Notes: Tuning the FASRC Cannon Prompt + Inline Accuracy \u0026amp; Attribution";
+        var mkdocs_page_input_path = "notes_response_tuning.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Notes: Tuning the FASRC Cannon Prompt + Inline Accuracy &amp; Attribution</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/notes_response_tuning.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="notes-tuning-the-fasrc-cannon-prompt-inline-accuracy-attribution">Notes: Tuning the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> Cannon Prompt + Inline Accuracy &amp; Attribution</h1>
+<blockquote>
+<p>Exploration notes (thinking, not a spec). Goal: a <em>simplified</em> support prompt
+that reacts to questions, seeks clarification, and — if possible — reports
+perceived accuracy inline and highlights which catalog document each portion
+of the answer came from.</p>
+</blockquote>
+<hr />
+<h2 id="0-the-hidden-tension">0. The hidden tension</h2>
+<p>The request contains two pulls that fight each other:</p>
+<pre><code class="language-mermaid">flowchart LR
+    A[&quot;Simplified prompt&lt;br/&gt;fewer instructions for a 35B model to juggle&quot;]
+    B[&quot;Report accuracy inline +&lt;br/&gt;highlight which doc each portion came from&lt;br/&gt;(more output contract, more self-assessment)&quot;]
+    A &lt;--&gt;|&quot;tension&quot;| B
+    R[&quot;Resolution:&lt;br/&gt;Prompt governs BEHAVIOR&lt;br/&gt;Pipeline governs ATTRIBUTION &amp;amp; ACCURACY&quot;]
+    A -.-&gt; R
+    B -.-&gt; R
+</code></pre>
+<p>You can't make the <em>prompt</em> simpler by asking the <em>model</em> to do more
+bookkeeping. You <strong>can</strong> have both by splitting the concern:</p>
+<ul>
+<li>The <strong>prompt</strong> stays short and only governs behavior (ground, clarify, answer).</li>
+<li>A <strong>deterministic pipeline step</strong> — which already holds the retrieved chunks
+  and their scores — decorates the answer afterward.</li>
+</ul>
+<p>This keeps the prompt slim <em>and</em> makes the accuracy signal trustworthy instead
+of theater. This reframe drives everything below.</p>
+<hr />
+<h2 id="1-perceived-accuracy-means-three-different-things">1. "Perceived accuracy" means three different things</h2>
+<p>This is the crux. The three readings differ wildly in trust and cost:</p>
+<pre><code class="language-mermaid">flowchart TD
+    Q[&quot;'perceived accuracy'&lt;br/&gt;— three distinct meanings&quot;]
+    Q --&gt; A[&quot;(a) RETRIEVAL RELEVANCE&lt;br/&gt;cosine / hybrid score&lt;br/&gt;already computed, then dropped&lt;br/&gt;cheap • honest • objective-ish&quot;]
+    Q --&gt; B[&quot;(b) MODEL SELF-CONFIDENCE&lt;br/&gt;model writes 'conf: 0.9' inline&lt;br/&gt;NOT calibrated on Qwen3.5-35B&lt;br/&gt;decorative — actively harmful&quot;]
+    Q --&gt; C[&quot;(c) GROUNDING / FAITHFULNESS&lt;br/&gt;does this sentence actually&lt;br/&gt;follow from the cited chunk?&lt;br/&gt;most meaningful • real compute&quot;]
+    style A fill:#12361f,stroke:#3a8,color:#dfe
+    style B fill:#3a1414,stroke:#c55,color:#fee
+    style C fill:#102a3a,stroke:#48a,color:#def
+</code></pre>
+<p>The phrasing <em>"reports perceived accuracy inline"</em> sounds like <strong>(b)</strong> — the
+<strong>worst</strong> of the three. A self-reported confidence number from a 35B model is
+noise dressed as precision; users trust it <em>more</em> because it's numeric, which
+makes it dangerous for a "never guess" support bot.</p>
+<p>What is almost certainly wanted:</p>
+<ul>
+<li><strong>(a)</strong> as the cheap default — the retriever already knows how well each chunk
+  matched. That signal is computed at <code>retriever.py:56</code> and <strong>thrown away</strong> at
+  <code>retriever.py:116</code>.</li>
+<li>Optionally upgraded to <strong>(c)</strong> for real "is this sentence supported"
+  verification.</li>
+</ul>
+<blockquote>
+<p><strong>DECISION 1 — SETTLED: (a) retrieval relevance.</strong> "Perceived accuracy" =
+the retriever's own score for each chunk. Cheap, honest, already computed.
+Signals (b) and (c) are out of scope. See §3a — this is <em>not</em> a pure
+plumbing job; there is a score-orientation gotcha.</p>
+</blockquote>
+<hr />
+<h2 id="2-the-attribution-anchor-already-exists-the-mapping-is-the-hard-part">2. The attribution anchor already exists — the mapping is the hard part</h2>
+<p>Every retrieved chunk already carries a stable handle back to its catalog
+document:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Where</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>resource_hash</code></td>
+<td><code>retriever.py:48-49</code></td>
+<td>stable document id</td>
+</tr>
+<tr>
+<td><code>filename</code></td>
+<td><code>retriever.py:45-46</code></td>
+<td>human-readable label</td>
+</tr>
+</tbody>
+</table>
+<p>So the chunk → document link is <strong>free</strong>. The unsolved arrow is sentence → chunk:</p>
+<pre><code class="language-mermaid">flowchart RL
+    Sent[&quot;Answer sentence&quot;] --&gt;|&quot;?? UNSOLVED mapping&quot;| Chunk
+    Chunk[&quot;Retrieved chunk&lt;br/&gt;has resource_hash + filename + score&quot;] --&gt;|&quot;resource_hash — FREE&quot;| Doc[&quot;Catalog document&lt;br/&gt;fetch_catalog_document&quot;]
+    style Sent fill:#3a2a10,stroke:#c93,color:#fed
+</code></pre>
+<p>Two ways to draw the unsolved arrow:</p>
+<pre><code class="language-mermaid">flowchart TD
+    subgraph OptA[&quot;Option A — MODEL-DRIVEN (prompt does it)&quot;]
+        A1[&quot;Prompt instructs model to tag claims&lt;br/&gt;'...max 4 GPUs per node [doc:3]'&quot;]
+        A1 --&gt; A2[&quot;+ cheap, no extra compute&quot;]
+        A1 --&gt; A3[&quot;- Qwen3.5-35B fabricates [doc:5]&lt;br/&gt;when only 3 returned; mis-attributes&quot;]
+        A1 --&gt; A4[&quot;- bloats the prompt&lt;br/&gt;(against the simplification goal)&quot;]
+    end
+    subgraph OptB[&quot;Option B — PIPELINE-DRIVEN (post-step)&quot;]
+        B1[&quot;Model writes a clean answer&quot;]
+        B1 --&gt; B2[&quot;Embed each sentence, cosine-match&lt;br/&gt;to retrieved chunks, attach best + score&quot;]
+        B2 --&gt; B3[&quot;+ deterministic, model can't lie&quot;]
+        B2 --&gt; B4[&quot;+ prompt stays simple&quot;]
+        B2 --&gt; B5[&quot;- ambiguous when 2 chunks say&lt;br/&gt;similar things&quot;]
+    end
+    style OptB fill:#102a1c,stroke:#3a8
+    style OptA fill:#2a1414,stroke:#a55
+</code></pre>
+<p><strong>Only Option B is consistent with "simplify the prompt."</strong> Option A makes the
+prompt longer and more fragile. B also yields signal (a) for free and is the
+natural home for signal (c) later.</p>
+<hr />
+<h2 id="3-where-the-data-flow-has-to-be-cut">3. Where the data flow has to be cut</h2>
+<p>The live agent path loses the score at a single, well-defined point:</p>
+<pre><code class="language-mermaid">flowchart TD
+    R[&quot;HybridRetriever returns (Document, score)&quot;]
+    R --&gt; N[&quot;retriever.py:114 _normalize_results&quot;]
+    N --&gt; S[&quot;retriever.py:116 store_docs&lt;br/&gt;keeps docs, DROPS score&quot;]
+    S --&gt; M[&quot;run_memory.py record()&lt;br/&gt;Documents only — TODO line 14&quot;]
+    M --&gt; P[&quot;base_react.py ~107 PipelineOutput&lt;br/&gt;metadata has NO retriever_scores&quot;]
+    P --&gt; U[&quot;app.py:1493 scores → empty&lt;br/&gt;app.py:447 get_top_sources(docs, empty)&quot;]
+    Classic[&quot;classic_pipelines/qa.py:112&lt;br/&gt;DOES set retriever_scores&quot;]
+    Classic -.-&gt;|&quot;UI already supports this path&quot;| U
+    style S fill:#3a1414,stroke:#c55,color:#fee
+</code></pre>
+<p>Key point: the <strong>classic QA pipeline</strong> already sets <code>retriever_scores</code>, and the
+UI (<code>get_top_sources</code> → <code>format_links</code>, the "Show all sources (N) ▼" block)
+already renders <code>(0.78)</code>-style numbers. The signal-(a) UI <strong>exists</strong> — it is
+just starved on the agent path.</p>
+<p>So the minimum cut-point for <em>any</em> of this is three lines:
+<code>retriever.py:116</code>, <code>run_memory.py</code>, <code>base_react.py:107</code>. Everything else
+(buckets vs raw score, inline markers, faithfulness) is a layer on top of that
+one plumbing fix.</p>
+<hr />
+<h2 id="3a-gotcha-the-renderer-expects-the-opposite-score-orientation">3a. Gotcha: the renderer expects the OPPOSITE score orientation</h2>
+<blockquote>
+<p><strong>Superseded — this section describes behaviour that no longer exists.</strong> Issue</p>
+<h1 id="208-corrected-the-shared-renderer-get_top_sources-now-sorts-descending">208 corrected the shared renderer: <code>get_top_sources</code> now sorts <strong>descending</strong></h1>
+<p>(best first) and treats <code>similarity_score_reference</code> as a <em>lower</em> bound that
+ships disabled, and every <code>PostgresVectorStore</code> producer now returns
+<code>1.0 - distance</code> (higher = better) for all three distance metrics. Option 2's
+"invert to the distance convention" and "add a similarity-mode branch" are both
+obsolete — the orientation was reconciled at the producers and in the shared
+consumer instead, so there is no second code path to add. The diagnosis below
+is kept as the record of how the bug was found; read it as history, not as a
+description of the current code.</p>
+</blockquote>
+<p>Now that (a) is chosen, this is the load-bearing detail. The hybrid retriever
+emits a <strong>similarity</strong> (higher = better); the existing UI renderer was built
+for a <strong>distance</strong> (lower = better):</p>
+<pre><code class="language-mermaid">flowchart TD
+    H[&quot;Hybrid retriever&lt;br/&gt;postgres_vectorstore.py:453&lt;br/&gt;combined_score = sem*w + bm25*w&lt;br/&gt;ORDER BY combined_score DESC&quot;]
+    H --&gt;|&quot;HIGHER = more relevant&lt;br/&gt;(similarity)&quot;| Plumb[&quot;plumb into&lt;br/&gt;metadata.retriever_scores&quot;]
+    Plumb --&gt; G[&quot;app.py:447 get_top_sources&lt;br/&gt;np.argsort ASCENDING, keeps lowest,&lt;br/&gt;break when score &amp;gt; similarity_score_reference (=10)&quot;]
+    G --&gt;|&quot;assumes LOWER = more relevant&lt;br/&gt;(distance)&quot;| Bad[&quot;Bug: WORST chunks shown first,&lt;br/&gt;their small numbers printed as '(0.18)'&quot;]
+    style Bad fill:#3a1414,stroke:#c55,color:#fee
+    style H fill:#102a3a,stroke:#48a,color:#def
+</code></pre>
+<p>Why the classic-QA path "works" today: it feeds a distance-like metric, so
+ascending sort = best-first and the <code>&gt; 10</code> threshold rarely trips. The agent's
+hybrid score breaks both assumptions.</p>
+<p>So <strong>Decision 1 = (a)</strong> decomposes into work, not a one-liner:</p>
+<ol>
+<li><strong>Plumb</strong> <code>(doc, score)</code> through the 3-line cut (<code>retriever.py:116</code> →
+   <code>run_memory.py</code> → <code>base_react.py:107</code> <code>metadata["retriever_scores"]</code>).</li>
+<li><strong>Reconcile orientation</strong> — pick one:</li>
+<li>invert/normalize hybrid <code>combined_score</code> to the distance convention the
+     renderer expects, <strong>or</strong></li>
+<li>add a similarity-mode branch to <code>get_top_sources</code> (sort DESC, threshold
+     as a <em>lower</em> bound), <strong>or</strong></li>
+<li>normalize to a 0–1 relevance and bypass the legacy <code>similarity_score_reference</code>
+     semantics entirely.</li>
+<li><strong>Choose presentation</strong> — a raw <code>combined_score</code> is opaque <em>and</em> now
+   scale-ambiguous. A bucket label (Strong / Partial / Weak) is more honest
+   than <code>(0.18)</code> and sidesteps "what does 0.34 mean".</li>
+</ol>
+<h3 id="the-original-ask-splits-into-two-features">The original ask splits into two features</h3>
+<pre><code class="language-mermaid">flowchart TD
+    Ask[&quot;Original ask&quot;]
+    Ask --&gt; F1[&quot;Feature 1 — per-source relevance&lt;br/&gt;'how relevant is each cited doc'&lt;br/&gt;= signal (a), CHOSEN&lt;br/&gt;3-line plumb + orientation fix&quot;]
+    Ask --&gt; F2[&quot;Feature 2 — highlight which PORTION&lt;br/&gt;maps to which catalog doc&lt;br/&gt;still needs Option B (sentence→chunk)&lt;br/&gt;(a) is just the label it carries&quot;]
+    style F1 fill:#12361f,stroke:#3a8,color:#dfe
+    style F2 fill:#3a2a10,stroke:#c93,color:#fed
+</code></pre>
+<p>Choosing (a) fully unblocks <strong>Feature 1</strong>. It does <strong>not</strong> by itself deliver
+<strong>Feature 2</strong> ("highlight what portion relates to what document") — that still
+requires the Option B sentence→chunk mapping from §2. Once Option B exists, the
+(a) score simply rides along as each span's relevance label.</p>
+<hr />
+<h2 id="4-what-is-load-bearing-in-the-current-prompt">4. What is load-bearing in the current prompt</h2>
+<p>Simplification audit — behavioral yield vs. decoration for a capable
+instruction-follower:</p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Verdict</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Role line</td>
+<td><strong>keep</strong></td>
+<td>cheap, sets domain</td>
+</tr>
+<tr>
+<td>Grounding Rule</td>
+<td><strong>KEEP</strong></td>
+<td>load-bearing — the "never guess" spine</td>
+</tr>
+<tr>
+<td>Search Budget — Hard Limit</td>
+<td><strong>KEEP</strong></td>
+<td>this <em>is</em> the loop fix; removing it regresses the bug just fixed</td>
+</tr>
+<tr>
+<td>Core Behavior: Clarify</td>
+<td><strong>keep</strong></td>
+<td>this is the "seeks clarification" requirement</td>
+</tr>
+<tr>
+<td>Response Guidelines</td>
+<td><strong>trim</strong></td>
+<td>half is generic ("be direct", "use code blocks") — a 35B model does this anyway</td>
+</tr>
+<tr>
+<td>Search Topics</td>
+<td><strong>CUT</strong></td>
+<td>pure decoration; dilutes attention, no behavioral yield</td>
+</tr>
+<tr>
+<td>Interaction Patterns (3 scripts)</td>
+<td><strong>mostly CUT</strong></td>
+<td>three near-identical 4-step scripts; high token cost. Maybe keep ONE generic "clarify → search → answer/defer"</td>
+</tr>
+<tr>
+<td>Tone</td>
+<td><strong>trim</strong></td>
+<td>one line, not a section</td>
+</tr>
+</tbody>
+</table>
+<p>Simplified skeleton: <strong>Role → Grounding Rule → Search Budget → Clarify-first →
+one short answer-format line.</strong> ~5 short sections instead of 8, keeping every
+behaviorally critical piece. Accuracy/attribution does <strong>not</strong> go here — per §0
+it lives in the pipeline.</p>
+<blockquote>
+<p><strong>Risk to name:</strong> the Interaction Patterns scripts were probably added
+<em>because</em> the model under-clarified. Cutting them is safe <strong>only if</strong> the
+"Clarify Before You Solve" section holds on its own. Testable, not guessable.</p>
+</blockquote>
+<hr />
+<h2 id="5-where-this-leaves-us-three-independent-dials">5. Where this leaves us — three independent dials</h2>
+<pre><code class="language-mermaid">flowchart TD
+    D1[&quot;DECISION 1 — SETTLED: accuracy = (a) retrieval score&lt;br/&gt;→ Feature 1 plumb + orientation fix (§3a)&lt;br/&gt;→ Feature 2 still needs Option B&quot;]
+    D2[&quot;DECISION 2 — attribution in PIPELINE (B)&lt;br/&gt;not prompt (A); only B keeps prompt slim&quot;]
+    D3[&quot;DECISION 3 — prompt = ~5 sections&lt;br/&gt;keep grounding + search-budget spine intact&quot;]
+    style D1 fill:#12361f,stroke:#3a8,color:#dfe
+    D1 --- D2 --- D3
+    Note[&quot;Three independent dials —&lt;br/&gt;none blocks the others&quot;]
+    D1 -.-&gt; Note
+    D2 -.-&gt; Note
+    D3 -.-&gt; Note
+</code></pre>
+<h3 id="open-questions-to-steer-next">Open questions to steer next</h3>
+<ol>
+<li>~~Which meaning of "accuracy"?~~ <strong>Settled: (a) retrieval score.</strong></li>
+<li><strong>Orientation fix approach</strong> (§3a step 2) — invert hybrid score to the
+   distance convention, add a similarity-mode branch to <code>get_top_sources</code>, or
+   normalize to 0–1 and drop the legacy <code>similarity_score_reference</code> semantics?</li>
+<li><strong>Presentation form</strong> — raw number <code>(0.34)</code> (opaque, scale-ambiguous) vs a
+   bucket label (Strong / Partial / Weak)? Recommendation: bucket.</li>
+<li><strong>"Inline" = mid-sentence</strong> (<code>...4 GPUs [GPU Partitions, strong]</code>) <strong>or</strong> is
+   the existing post-answer "Show all sources" block with relevance labels
+   enough? (Mid-sentence requires Feature 2 / Option B.)</li>
+<li><strong>Replacement or A/B?</strong> Is the simplified prompt a <em>replacement</em> for
+   <code>fasrc-cannon.md</code>, or a <em>second agent</em> you A/B against the current one
+   (safer, given the loop was just stabilized)?</li>
+</ol>
+<hr />
+<p><em>Next step options: keep pulling any thread above, or capture this as an
+OpenSpec proposal once the three dials are set. No rush to formalize.</em></p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

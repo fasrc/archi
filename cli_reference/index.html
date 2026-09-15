@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -92,11 +96,29 @@
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#archi-restart">archi restart</a>
     </li>
+    <li class="toctree-l3"><a class="reference internal" href="#deployment-provenance-source_commit">Deployment provenance (SOURCE_COMMIT)</a>
+    </li>
     <li class="toctree-l3"><a class="reference internal" href="#archi-list-services">archi list-services</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#archi-list-deployments">archi list-deployments</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#archi-evaluate">archi evaluate</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#archi-eval-qa">archi eval qa</a>
+        <ul>
+    <li class="toctree-l4"><a class="reference internal" href="#1-prepare-the-dataset">1. Prepare the dataset</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#2-run-archi">2. Run Archi</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#3-score-the-answers">3. Score the answers</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#understanding-the-output">Understanding the output</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#supplying-your-own-atoms">Supplying your own atoms</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#archi-sources-build">archi sources build</a>
     </li>
         </ul>
     </li>
@@ -105,6 +127,8 @@
     <li class="toctree-l2"><a class="reference internal" href="#troubleshooting">Troubleshooting</a>
         <ul>
     <li class="toctree-l3"><a class="reference internal" href="#port-conflicts">Port Conflicts</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#rejected-port-values">Rejected port values</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#gpu-issues">GPU Issues</a>
     </li>
@@ -126,6 +150,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -135,6 +167,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -414,6 +450,25 @@ archi restart -n my-archi --service data_manager
 archi restart -n my-archi --service chatbot -e new_secrets.env --no-build
 </code></pre>
 <hr />
+<h3 id="deployment-provenance-source_commit">Deployment provenance (<code>SOURCE_COMMIT</code>)</h3>
+<p>Whenever <code>archi create</code> or <code>archi restart</code> copies the archi source into an image build,
+it records which source commit that image was built from:</p>
+<ul>
+<li>A <code>SOURCE_COMMIT</code> file is written at the deployment root
+  (<code>~/.archi/archi-&lt;name&gt;/SOURCE_COMMIT</code>) containing the short git commit of the source
+  that was copied — with a <code>-dirty</code> suffix when the checkout had uncommitted changes, or
+  <code>unknown</code> when the source is not a git checkout.</li>
+<li>The same value is emitted to the deploy log (<code>archi source commit: &lt;value&gt;</code>).</li>
+</ul>
+<p>The commit is resolved from the same checkout the source is copied from (the path
+recorded at <code>pip install</code> time), so it reflects the code that actually lands in the
+image even for a non-editable install. Because it is tied to the build, a
+<code>--no-build</code> restart leaves <code>SOURCE_COMMIT</code> untouched — it always describes the code
+running in the current image. Inspect it to confirm which commit a deployment is
+serving:</p>
+<pre><code class="language-bash">cat ~/.archi/archi-&lt;name&gt;/SOURCE_COMMIT
+</code></pre>
+<hr />
 <h3 id="archi-list-services"><code>archi list-services</code></h3>
 <p>List all available services and data sources with descriptions.</p>
 <pre><code class="language-bash">archi list-services
@@ -429,12 +484,362 @@ archi restart -n my-archi --service chatbot -e new_secrets.env --no-build
 <pre><code class="language-bash">archi evaluate --name &lt;name&gt; --env-file &lt;secrets.env&gt; --config &lt;config.yaml&gt; [OPTIONS]
 </code></pre>
 <p>Supports the same flags as <code>create</code> (<code>--podman</code>, <code>--gpu-ids</code>, <code>--tag</code>, <code>--hostmode</code>, <code>--verbosity</code>, <code>--force</code>). Configuration files should define the <code>services.benchmarking</code> section.</p>
+<p>Like <code>create</code>, <code>evaluate</code> checks its base images before it changes anything. Under <code>--force</code> the check runs before the existing benchmarking runtime is removed, so a run that cannot obtain its base images leaves that runtime alone.</p>
 <p><strong>Example:</strong></p>
 <pre><code class="language-bash">archi evaluate -n benchmark \
   -c examples/benchmarking/benchmark_configs/example_conf.yaml \
   -e .secrets.env --gpu-ids all
 </code></pre>
 <p>See <a href="../benchmarking/">Benchmarking</a> for full details on query format and evaluation modes.</p>
+<hr />
+<h3 id="archi-eval-qa"><code>archi eval qa</code></h3>
+<p>Run source-neutral, atom-based evaluation without changing the legacy
+<code>archi evaluate</code> workflow. <code>archi evaluate</code> above measures <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> and
+source-retrieval benchmarking metrics; <code>archi eval qa</code> instead judges a
+complete agent answer against explicit gold-atom obligations. The composite
+command validates and prepares the dataset, runs the selected agent
+independently for every attempt, then scores each usable answer:</p>
+<p>For prerequisites, complete input schemas, agent and evaluator examples,
+console usage, state semantics, scoring, and troubleshooting, see the
+<a href="../evaluation/">Evaluation Guide</a>.</p>
+<pre><code class="language-bash">archi eval qa \
+  --dataset questions.jsonl \
+  --agent-config agent.yaml \
+  --agent-spec agent.md \
+  --output-dir evaluation-run/ \
+  --attempts 4 \
+  --run-workers 4 \
+  --score-workers 8
+</code></pre>
+<p>Here, <code>evaluation-run/</code> is a directory used as the evaluation workspace. You
+may choose any directory name or path. The command creates it if necessary and
+stores all prepared data, Archi answers, scoring results, and reports inside
+it.</p>
+<p><code>--run-workers</code> and <code>--score-workers</code> independently control concurrent agent
+attempts and evaluator comparisons. Both default to <code>1</code> and accept <code>1</code> through
+<code>16</code>. Scoring starts only after every agent attempt finishes. Higher values can
+reduce wall-clock time for provider-bound work, but increase concurrent provider
+requests and keep up to that many agent or evaluator runtimes in memory.</p>
+<p>The YAML must define <code>services.chat_app.agent_class</code>, <code>default_provider</code>, and
+<code>default_model</code>. The Markdown frontmatter selects tools and its body is the
+agent system prompt.</p>
+<p>A minimal Dataset V2 JSON document is:</p>
+<pre><code class="language-json">{
+  &quot;schema_version&quot;: &quot;qa-dataset-v2&quot;,
+  &quot;items&quot;: [{
+    &quot;id&quot;: &quot;quota-remaining&quot;,
+    &quot;question&quot;: &quot;How much quota remains?&quot;,
+    &quot;answer&quot;: &quot;The account has 2.8 TB remaining.&quot;,
+    &quot;time_sensitive&quot;: false
+  }]
+}
+</code></pre>
+<p>The dataset uses an explicit <code>qa-dataset-v2</code> JSON envelope or JSONL version
+header. Every item requires an <code>id</code>, <code>question</code>, and <code>time_sensitive</code> value.
+Static items require a string <code>answer</code>; live items require an oracle and omit
+the unresolved answer. Optional fields include <code>category</code>, <code>answer_mode</code>,
+<code>answer_source</code>, and static-item <code>expected_atoms</code>. <code>answer_source</code> is a
+non-empty free-form string, so original Golden Set v2 values are accepted
+directly. Canonical answers and gold atoms are stored in the evaluation
+workspace and are never passed to the tested agent.</p>
+<p>For live-state questions, use Dataset V2 and an evaluator-only MCP registry:</p>
+<pre><code class="language-json">{
+  &quot;schema_version&quot;: &quot;qa-dataset-v2&quot;,
+  &quot;items&quot;: [{
+    &quot;id&quot;: &quot;current-quota&quot;,
+    &quot;question&quot;: &quot;How much quota remains?&quot;,
+    &quot;time_sensitive&quot;: true,
+    &quot;oracle&quot;: {
+      &quot;kind&quot;: &quot;mcp&quot;,
+      &quot;calls&quot;: [{
+        &quot;id&quot;: &quot;quota&quot;,
+        &quot;server&quot;: &quot;operations-readonly&quot;,
+        &quot;tool&quot;: &quot;get_quota&quot;,
+        &quot;arguments&quot;: {},
+        &quot;answer_fields&quot;: {&quot;remaining&quot;: &quot;/remaining&quot;}
+      }]
+    }
+  }]
+}
+</code></pre>
+<p>Pass <code>--mcp-config qa_evaluation_mcp.yaml</code> to the composite, <code>prepare</code>, and <code>run</code>
+commands. The registry maps the recipe alias to a deployment-owned MCP
+transport and environment-backed credentials; it is never added to the tested
+agent configuration. <code>--skip-live</code> on the composite or <code>prepare</code> command omits
+live rows without making MCP or model calls. <code>score</code> accepts neither option.</p>
+<p><code>--mcp-config</code> is a direct filesystem path for the CLI process. The browser
+console instead uses <code>services.chat_app.evaluations.mcp_config_path</code> in the
+deployment YAML; that value is a host source path, resolved relative to the
+deployment YAML and staged into the generated deployment's dedicated
+<code>evaluation_config/</code> directory. It is not an in-container path and is separate
+from the tested agent's top-level <code>mcp_servers</code> configuration.</p>
+<p>The same workflow can be run as three separate stages. This is useful when you
+want to inspect the generated atoms before running Archi or inspect Archi's
+answers before scoring them.</p>
+<h4 id="1-prepare-the-dataset">1. Prepare the dataset</h4>
+<pre><code class="language-bash">archi eval qa prepare questions.jsonl \
+  --evaluator-profile evaluator.yaml \
+  --mcp-config qa_evaluation_mcp.yaml \
+  --output-dir evaluation-run/
+</code></pre>
+<p><code>prepare</code> validates the entire input dataset and creates the fixed gold atoms
+that later stages use as the scoring reference. For each eligible row that
+does not already contain <code>expected_atoms</code>, the atoms extractor selected by
+<code>qa.atoms_extractor</code> in <code>evaluator.yaml</code> receives the row's <code>question</code> and
+<code>answer</code>. It decomposes the canonical answer into independent,
+judgeable obligations, marks each one as required or optional, and assigns it
+an ID. If <code>--evaluator-profile</code> is omitted, the built-in evaluator profile is
+used.</p>
+<p>The command snapshots the input dataset and writes exactly one terminal record
+per input item to <code>preparation.jsonl</code>. Prepared records contain the normalized
+question, hidden canonical or resolved answer, fixed atoms, and atom source;
+other records contain an intentional <code>--skip-live</code> omission or an item-scoped
+oracle/atom-extraction failure. The
+same artifact determines both run eligibility and preparation lifecycle
+counts. The command also stores the resolved evaluator profile in the run
+workspace. It does not run Archi or generate tested-agent answers.</p>
+<h4 id="2-run-archi">2. Run Archi</h4>
+<pre><code class="language-bash">archi eval qa run evaluation-run/ \
+  --agent-config agent.yaml \
+  --agent-spec agent.md \
+  --mcp-config qa_evaluation_mcp.yaml \
+  --attempts 4 \
+  --run-workers 4
+</code></pre>
+<p>The positional <code>evaluation-run/</code> argument is the prepared workspace directory created
+by <code>prepare</code>. <code>run</code> reads the questions from that directory, so it does not take
+the original dataset path again. It asks every prepared question once per
+requested attempt. Each run worker owns and reuses a separate selected Archi
+runtime, so mutable agent state is never shared by concurrent attempts. The
+canonical answer and gold atoms are not passed to Archi.
+The command stores the resolved agent configuration and spec, then writes each
+verbatim terminal answer—or an <code>execution_failed</code> record—to <code>answers.jsonl</code>.
+Each row includes total tested-agent latency and an ordered record for every
+observed tool call: ordinal, name, status, complete query, complete response or
+error when observed, and duration in milliseconds when available. Historical
+rows with timing-only records remain supported by the evaluation console.</p>
+<h4 id="3-score-the-answers">3. Score the answers</h4>
+<pre><code class="language-bash">archi eval qa score evaluation-run/ --score-workers 8
+</code></pre>
+<p>The positional <code>evaluation-run/</code> argument is the same workspace directory used by the
+previous stages. <code>score</code> reads <code>preparation.jsonl</code> and <code>answers.jsonl</code> from it.
+The evaluator selected by <code>qa.evaluator</code> compares each complete Archi
+answer directly with every fixed gold atom and classifies the atom as
+<code>entailed</code>, <code>not_mentioned</code>, or <code>contradicted</code>. Entailed atoms contribute <code>1</code>,
+unmentioned atoms <code>0</code>, and contradicted atoms <code>-1</code>; their mean, floored at zero,
+is the attempt's atom score. Required-atom recall is reported separately, and
+an attempt passes only when every required atom is entailed. Optional atoms
+affect the atom score but do not determine whether the attempt passes.</p>
+<p>The command writes the per-atom judgments and per-attempt scores to
+<code>evaluation_results.jsonl</code>, aggregate metrics to <code>summary.json</code>, and a readable
+summary to <code>report.md</code>. It does not invoke Archi again.</p>
+<h4 id="understanding-the-output">Understanding the output</h4>
+<p>Current commands write workspace schema <code>qa-v2</code>. Input datasets use
+<code>qa-dataset-v2</code>, including strict live recipes, materialized answers, and
+<code>live_checks.jsonl</code> evidence.</p>
+<p>At the end of a successful evaluation, the main result for a person to inspect
+is <code>report.md</code> in the selected output directory:</p>
+<pre><code class="language-bash">less evaluation-run/report.md
+</code></pre>
+<p>The report shows the evaluated agent, attempts per item, overall and per-item
+pass rates, mean atom score, required-atom recall, lifecycle counts, and the
+pass rate of each gold atom. It is a summary rather than a full transcript. For
+more detailed analysis or automation, the same workspace contains:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>summary.json</code></td>
+<td>Machine-readable aggregate and per-item metrics, lifecycle counts, atom pass rates, and configuration provenance hashes.</td>
+</tr>
+<tr>
+<td><code>evaluation_results.jsonl</code></td>
+<td>One terminal scoring record per attempt: the Archi answer, each atom's outcome and evaluator rationale, numeric scores and pass result, or an evaluation/execution failure.</td>
+</tr>
+<tr>
+<td><code>answers.jsonl</code></td>
+<td>The verbatim answer produced by Archi for every attempt, or its terminal execution error, plus total attempt latency and complete ordered tool-call query/response or error evidence with optional per-call latency before evaluator scoring.</td>
+</tr>
+<tr>
+<td><code>preparation.jsonl</code></td>
+<td>Exactly one terminal record per input item: normalized prepared questions with canonical or resolved answers and fixed gold atoms, intentional live omissions, or oracle/atom-extraction failures.</td>
+</tr>
+<tr>
+<td><code>live_checks.jsonl</code></td>
+<td>Ordered pre-run and post-run Dataset V2 oracle observations, answer hashes, metadata, call evidence, and item-scoped live failures. Static runs contain an empty file.</td>
+</tr>
+<tr>
+<td><code>input.snapshot.json</code> or <code>input.snapshot.jsonl</code></td>
+<td>An exact snapshot of the input dataset used for the evaluation.</td>
+</tr>
+<tr>
+<td><code>agent_config.resolved.yaml</code> and <code>agent_spec.resolved.md</code></td>
+<td>The resolved Archi configuration and exact agent spec used to generate the answers.</td>
+</tr>
+<tr>
+<td><code>evaluator_profile.resolved.yaml</code></td>
+<td>The resolved atoms-extractor and scoring-evaluator configuration.</td>
+</tr>
+<tr>
+<td><code>manifest.json</code></td>
+<td>The run ID, phase states, attempt count, artifact names, versions, and SHA-256 hashes used to detect changes to completed-phase inputs.</td>
+</tr>
+</tbody>
+</table>
+<p>The snapshot and prepared records in <code>preparation.jsonl</code> contain the hidden canonical answers or
+gold atoms, and evaluator rationales may reveal the same information. Keep the
+output directory private when those evaluation references are sensitive.</p>
+<h4 id="supplying-your-own-atoms">Supplying your own atoms</h4>
+<p>You can define the complete gold-atom set directly in a static dataset item:</p>
+<pre><code class="language-json">{
+  &quot;schema_version&quot;: &quot;qa-dataset-v2&quot;,
+  &quot;items&quot;: [{
+    &quot;id&quot;: &quot;quota-question&quot;,
+    &quot;question&quot;: &quot;How much quota remains?&quot;,
+    &quot;answer&quot;: &quot;The account has 2.8 TB remaining.&quot;,
+    &quot;time_sensitive&quot;: false,
+    &quot;expected_atoms&quot;: [
+      {
+        &quot;id&quot;: &quot;quota-remaining&quot;,
+        &quot;text&quot;: &quot;The account has 2.8 TB remaining.&quot;,
+        &quot;required&quot;: true
+      }
+    ]
+  }]
+}
+</code></pre>
+<p>Each atom must have a unique, non-empty <code>id</code>, non-empty <code>text</code>, and a boolean
+<code>required</code> value, and every row must contain at least one required atom.
+Supplying <code>expected_atoms</code> replaces automatic atom generation for that row:
+<code>prepare</code> validates and copies the supplied atoms without calling the atoms
+extractor. The composite <code>archi eval qa</code> command detects this automatically as
+well, so no separate atom-generation command is needed. It still performs the
+preparation phase to validate and snapshot the dataset before running and
+scoring it. In the staged workflow, <code>run</code> still requires that prepared
+workspace, so <code>archi eval qa prepare</code> cannot be omitted entirely.</p>
+<p>Across all three stages, <code>manifest.json</code> records phase state and SHA-256 hashes.
+Editing an artifact from a completed phase makes the next phase fail closed.</p>
+<p><code>run</code> uses the selected Archi pipeline through its normal production interface.
+The evaluation runner observes the pipeline's tool callbacks and stores complete
+ordered query, response, error, status, and available duration evidence in
+<code>answers.jsonl</code>. It does not add tool-schema preflight, secret redaction,
+automatic retries, or evaluation-specific changes to agent behavior. Treat the
+workspace as sensitive because tool evidence is not truncated or redacted.
+When the selected agent spec enables <code>mcp</code> but normal pipeline construction
+loads no MCP tools, that attempt is recorded as <code>execution_failed</code> before the
+model is invoked.</p>
+<p>Existing evaluator-owned outputs require <code>--overwrite</code>. Preparation overwrite
+invalidates run and score artifacts, run overwrite invalidates score artifacts,
+and score overwrite replaces only score/report artifacts. Execution failures
+count as failed quality attempts. Evaluation failures remain visible but are
+excluded from quality denominators. Lifecycle summaries include every defined
+state, including states whose count is zero.</p>
+<p>An evaluator profile is optional. The built-in profile is equivalent to:</p>
+<pre><code class="language-yaml">version: 1
+qa:
+  atoms_extractor: {provider: openai, model: gpt-5.6-terra}
+  evaluator: {provider: openai, model: gpt-5.6-terra}
+</code></pre>
+<p>Use <code>--evaluator-profile profile.yaml</code> on the composite command or <code>prepare</code>.
+If supplied again to <code>score</code>, its resolved content must match the prepared
+profile. Evaluator temperature is fixed at zero; selected evaluator models must
+accept <code>temperature=0</code>, otherwise the <code>archi eval qa</code> command fails.</p>
+<hr />
+<h3 id="archi-sources-build"><code>archi sources build</code></h3>
+<p>Regenerate a web <code>sources.list</code> from a typed YAML <strong>manifest</strong> of seeds. This
+replaces the manual workflow of downloading sitemaps, extracting <code>&lt;loc&gt;</code> URLs by
+hand, and concatenating per-site <code>.list</code> files.</p>
+<pre><code class="language-bash">archi sources build &lt;manifest&gt; [OPTIONS]
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;manifest&gt;</code></td>
+<td>Path to the YAML manifest of seed entries (positional, required)</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>--config</code>, <code>-c</code></td>
+<td>Deployment config; resolves the default <code>--output</code> and the <code>--import</code> hint</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>--output</code>, <code>-o</code></td>
+<td>Target <code>sources.list</code> path (overrides the config-derived default)</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>--name</code>, <code>-n</code></td>
+<td>Deployment name for the <code>--import</code> redeploy hint (required with <code>--import</code>)</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>--env-file</code>, <code>-e</code></td>
+<td>Secrets <code>.env</code> included in the <code>--import</code> redeploy hint</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>--import</code></td>
+<td>After writing, <strong>print</strong> a redeploy command to ingest the list (advisory; runs nothing). Requires <code>--name</code>; not with <code>--dry-run</code></td>
+<td>Off</td>
+</tr>
+<tr>
+<td><code>--dry-run</code></td>
+<td>Print a unified diff against the existing list and write nothing</td>
+<td>Off</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Output path resolution.</strong> With <code>--output</code> the given path is the target. Without
+it, the path is read from the config's <code>data_manager.sources.links.input_lists</code>,
+which is a list: the default is resolved <strong>only when the config declares exactly
+one</strong> <code>input_lists</code> entry. With zero or several entries the command exits
+non-zero and asks you to pass <code>--output</code>.</p>
+<p><strong>Behavior.</strong> The list is regenerated wholesale: one URL per line, every URL
+normalized (fragment dropped, scheme/host lowercased, a single trailing path
+slash collapsed) and deduplicated preserving first-seen order. If a
+<code>manual-extras.list</code> sits beside the output, its non-comment entries are appended
+verbatim — preserving <code>git-</code>/<code>sso-</code>/<code>elog-</code>/<code>indico-</code> prefixes — with the
+generated block winning position (an extras line duplicating a generated URL
+appears once). Any fetch failure (non-200, timeout, malformed XML/HTML) aborts
+the whole build and leaves the existing list untouched.</p>
+<p><strong><code>--import</code> is advisory.</strong> It does <strong>not</strong> run anything. After a successful
+write it prints a copy-pasteable redeploy command —
+<code>archi create --name &lt;deployment&gt; [--config &lt;config&gt;] [--env-file &lt;env&gt;] --force</code>
+— and reminds you to append your usual flags (<code>--services …</code>, <code>--podman</code>,
+<code>--hostmode</code>, <code>--gpu-ids</code>, <code>--tag</code>). Auto-running a forced recreate is unsafe: it
+removes the deployment directory and re-renders compose for only the named
+services (dropping others) while ignoring the runtime flags, so you run the
+redeploy yourself. If <code>--output</code> is not one of the config's <code>input_lists</code>, the
+command warns that a redeploy will not ingest the file.</p>
+<p><strong>Examples:</strong></p>
+<pre><code class="language-bash"># Preview the diff before writing anything
+archi sources build sources.manifest.yaml -c config.yaml --dry-run
+
+# Write the resolved single input_lists target
+archi sources build sources.manifest.yaml -c config.yaml
+
+# Write to an explicit path
+archi sources build sources.manifest.yaml -o ./weblists/sources.list
+
+# Write, then print a redeploy command for the `dev` deployment
+archi sources build sources.manifest.yaml -c config.yaml \
+  --name dev --env-file .secrets.env --import
+</code></pre>
+<p>See <a href="../data_sources/#building-a-sourceslist-from-a-manifest">Data Sources</a> for
+the manifest format.</p>
 <hr />
 <h2 id="environment-variables">Environment Variables</h2>
 <table>
@@ -451,7 +856,7 @@ archi restart -n my-archi --service chatbot -e new_secrets.env --no-build
 </tr>
 <tr>
 <td><code>OLLAMA_HOST</code></td>
-<td>Ollama server address (default: <code>http://localhost:11434</code>)</td>
+<td>Ollama server address (default: <code>http://localhost:11434</code>). Overrides the <code>local</code> provider's configured <code>base_url</code> in <code>ollama</code> mode only — an <code>openai_compat</code> provider ignores it. See <a href="../models_providers/#local-provider-endpoint-precedence">Local provider endpoint precedence</a>.</td>
 </tr>
 </tbody>
 </table>
@@ -465,6 +870,60 @@ archi restart -n my-archi --service chatbot -e new_secrets.env --no-build
   grafana:
     external_port: 3001  # default: 3000
 </code></pre>
+<h3 id="rejected-port-values">Rejected port values</h3>
+<p><code>archi create</code> refuses a configuration that sets a port key to a value that cannot be a port,
+rather than falling back to a default and failing later. The check runs during preflight, before
+a <code>--force</code> run tears down the existing deployment, so a typo in the configuration file costs
+nothing.</p>
+<table>
+<thead>
+<tr>
+<th>Configured value</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>port: 0</code></td>
+<td><code>Port out of range for &lt;service&gt; (services.&lt;service&gt;.port): 0</code></td>
+</tr>
+<tr>
+<td><code>port: 70000</code></td>
+<td><code>Port out of range for &lt;service&gt; (services.&lt;service&gt;.port): 70000</code></td>
+</tr>
+<tr>
+<td><code>port: ""</code></td>
+<td><code>Invalid port value '' for &lt;service&gt; (services.&lt;service&gt;.port)</code></td>
+</tr>
+<tr>
+<td><code>port: null</code> (or <code>port: ~</code>)</td>
+<td><code>Invalid port value 'None' for &lt;service&gt; (services.&lt;service&gt;.port)</code></td>
+</tr>
+<tr>
+<td><code>port: true</code> (or <code>port: on</code>, <code>port: yes</code>)</td>
+<td><code>Invalid port value 'True' for &lt;service&gt; (services.&lt;service&gt;.port)</code></td>
+</tr>
+<tr>
+<td><code>port: false</code> (or <code>port: off</code>, <code>port: no</code>)</td>
+<td><code>Invalid port value 'False' for &lt;service&gt; (services.&lt;service&gt;.port)</code></td>
+</tr>
+</tbody>
+</table>
+<p>The boolean rows are worth knowing about: YAML resolves the bare words <code>on</code>, <code>off</code>, <code>yes</code> and
+<code>no</code> to <code>true</code>/<code>false</code>, so <code>port: on</code> is a boolean rather than a port number. It is refused as an
+invalid value, not silently read as port <code>1</code>.</p>
+<p>Omitting a key is not the same as setting it. A service with no <code>port</code> key — or with no section
+of its own at all — keeps its built-in default, and nothing is refused. Only a value you wrote is
+checked.</p>
+<p><code>external_port</code> supplies the host-side port and is checked the same way, in both container mode
+and host mode, so <code>external_port: 0</code> is refused with <code>services.&lt;service&gt;.external_port</code> named in
+the message. The message always names the key it read, which is the key to edit.</p>
+<p>Under <code>--hostmode</code> the two keys interact, because host mode binds <code>external_port</code> and lets it
+override the <code>port</code> beside it. Preflight checks the key the deployment will really bind, so an
+<code>external_port</code> you wrote is checked as above. A falsy <code>port</code> sitting under a valid
+<code>external_port</code> is dead configuration that nothing reads, and preflight does not refuse it — the
+deployment starts on the <code>external_port</code> value. Leaving <code>external_port</code> empty is not a value: it
+means "do not override", and host mode falls back to checking <code>port</code>.</p>
 <h3 id="gpu-issues">GPU Issues</h3>
 <p>GPU access requires NVIDIA drivers and the NVIDIA Container Toolkit.</p>
 <p><strong>Podman:</strong></p>
@@ -480,6 +939,17 @@ nvidia-ctk cdi list
 </code></pre>
 <h3 id="multiple-deployments">Multiple Deployments</h3>
 <p>Multiple deployments can run on the same machine. Container networks are separate, but be careful with external port assignments. See <a href="../advanced_setup_deploy/#running-multiple-deployments-on-the-same-machine">Advanced Setup</a>.</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>

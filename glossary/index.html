@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Glossary - Archi Docs</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Glossary";
+        var mkdocs_page_input_path = "glossary.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Glossary</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#product-domain">Product &amp; domain</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#archi">archi</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#rag">RAG</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#retrieval">retrieval</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#ingest-ingestion">ingest / ingestion</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#chunk">chunk</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#corpus">corpus</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#embedding">embedding</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#vectorstore">vectorstore</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#pipeline">pipeline</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#orchestrator">orchestrator</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#provider">provider</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#kb-knowledge-base">KB / Knowledge Base</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#fasrc">FASRC</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#cannon">Cannon</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#fasse">FASSE</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#slurm">Slurm</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#retrieval-ranking">Retrieval &amp; ranking</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#pgvector">pgvector</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#hybrid-search">hybrid search</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#bm25">BM25</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#semantic-search">semantic search</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#cross-encoder-reranker">cross-encoder / reranker</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#flashrank">FlashRank</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#hierarchical-retrieval">hierarchical retrieval</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#parent-child-chunks">parent / child chunks</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#rerank-score-hybrid-score">rerank score / hybrid score</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#category">category</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#llm_category">llm_category</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#echo-kb-breadcrumb">Echo-KB breadcrumb</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#soft-boost-category-boost">soft boost / category boost</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#oracle-mode">oracle mode</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#gold-source">gold source</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#hitk-hit-ratek">hit@k / hit-rate@k</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#mrr">MRR</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#benchmarking-evaluation">Benchmarking &amp; evaluation</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#ragas">RAGAS</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#judge">judge</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#sut">SUT</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#arm">arm</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#anchor-anchor-questions">anchor / anchor questions</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#bank-question-bank">bank / question bank</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#noise-floor">noise floor</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#pre-registration">pre-registration</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#ceiling-floor-effect">ceiling / floor effect</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#development-workflow">Development workflow</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#the-gate">the gate</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#diff-coverage">diff coverage</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#tdd-red-green">TDD (red / green)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#openspec">OpenSpec</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#change-proposal-design-tasks-archive">change / proposal / design / tasks / archive</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#loop-1-loop-2">Loop 1 / Loop 2</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#ralph-loop-nightly-automation">Ralph loop / nightly automation</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#infrastructure-deployment">Infrastructure &amp; deployment</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#dev-deploy">dev deploy</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#redeploy">redeploy</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#re-ingest">re-ingest</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#nuke">nuke</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#vllm">vLLM</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#deployfasrc-dev">deploy/fasrc-dev</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#deployscripts">deploy/scripts</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#archi-config">archi-config</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#config-pin">config pin</a>
+    </li>
+        </ul>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Glossary</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/glossary.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="glossary">Glossary</h1>
+<p>Plain-language definitions of the terms and shorthand you'll meet around archi. <strong>No
+background in retrieval systems, machine learning, statistics, or this project's workflow is
+assumed</strong> — every entry is written to be understood cold.</p>
+<p>How to read it:</p>
+<ul>
+<li>The first three sections (<strong>Product &amp; domain</strong>, <strong>Retrieval &amp; ranking</strong>, <strong>Benchmarking &amp;
+  evaluation</strong>) are for anyone — a stakeholder, an operator, or a new engineer.</li>
+<li>The last two (<strong>Development workflow</strong>, <strong>Infrastructure &amp; deployment</strong>) are day-to-day
+  jargon for people <em>building and running</em> archi. A non-engineer can stop after Benchmarking.</li>
+<li>Acronyms are also defined as hover tooltips wherever they appear across these docs — hover a
+  dotted term like <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> to see its meaning without leaving the page.</li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Three things named almost the same — don't mix them up</p>
+<ul>
+<li><strong>archi</strong> is the product. <strong>a2rchi</strong> is the username and file path on the deployment
+  host (a historical spelling). <strong>Cannon</strong> is a compute cluster — nothing to do with
+  "canonical".</li>
+<li><strong>category</strong>, <strong>llm_category</strong>, and the <strong>Echo-KB breadcrumb</strong> are three <em>different</em>
+  notions of "category". See each entry below.</li>
+</ul>
+</div>
+<hr />
+<h2 id="product-domain">Product &amp; domain</h2>
+<h3 id="archi">archi</h3>
+<p>The product this whole repository builds: <strong>A</strong>I <strong>A</strong>ugmented <strong>R</strong>esearch <strong>C</strong>hat
+<strong>I</strong>ntelligence — a framework for building chat assistants that answer from a curated set of
+documents, for research and education groups. Developed at MIT; the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> fork is the active
+line of work.</p>
+<h3 id="rag"><abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr></h3>
+<p><strong>R</strong>etrieval-<strong>A</strong>ugmented <strong>G</strong>eneration — the core idea behind archi. Instead of trusting a
+language model to know an answer, you first <em>search</em> a document collection for relevant
+passages, then hand those passages to the model and ask it to write the answer from them. This
+keeps answers grounded in real sources.</p>
+<h3 id="retrieval">retrieval</h3>
+<p>The "search" half of <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr>: finding the pieces of the document collection whose meaning is
+closest to the user's question, so the model has the right material to answer from.</p>
+<h3 id="ingest-ingestion">ingest / ingestion</h3>
+<p>The one-time process of loading source documents into archi: downloading them, splitting them
+into chunks, turning each chunk into an embedding, and storing it. For the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> document set
+this takes roughly 50 minutes.</p>
+<h3 id="chunk">chunk</h3>
+<p>A small slice of a document (a few paragraphs), not the whole page. Retrieval works on chunks,
+because a focused passage matches a question better than an entire article does.</p>
+<h3 id="corpus">corpus</h3>
+<p>The full collection of documents archi has ingested and can search. For the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> deployment
+the corpus is the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> Knowledge Base plus the Slurm scheduler documentation.</p>
+<h3 id="embedding">embedding</h3>
+<p>A list of numbers that captures the <em>meaning</em> of a piece of text, arranged so that texts about
+similar things have similar numbers. Comparing embeddings is how archi finds passages "about
+the same thing" as a question, even when they share no exact words.</p>
+<h3 id="vectorstore">vectorstore</h3>
+<p>The database that holds every chunk's embedding and finds the closest ones to a question.
+archi's is PostgreSQL with the <code>pgvector</code> extension. (<code>VectorStore</code> is also the name of the
+archi component that wraps it.)</p>
+<h3 id="pipeline">pipeline</h3>
+<p>A configured recipe for answering, combining retrieval and a language model in a particular
+way. archi ships several (question-answering, grading, agent); a deployment picks which one it
+runs.</p>
+<h3 id="orchestrator">orchestrator</h3>
+<p>The central archi component (<code>archi.py</code>) that wires a pipeline to a vectorstore and is the
+entry point for answering a query. Think of it as the conductor.</p>
+<h3 id="provider">provider</h3>
+<p>A pluggable connection to a language-model backend — OpenAI, Anthropic, Gemini, a local
+server, etc. Models are named <code>"provider/model"</code> (e.g. <code>openai/gpt-4o</code>), so a deployment can
+swap backends by changing a string.</p>
+<h3 id="kb-knowledge-base">KB / Knowledge Base</h3>
+<p>The set of documents an archi assistant answers from. For <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> this is their user
+documentation site (the "<abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> KB").</p>
+<h3 id="fasrc"><abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr></h3>
+<p>Harvard's <strong>F</strong>aculty of <strong>A</strong>rts and <strong>S</strong>ciences <strong>R</strong>esearch <strong>C</strong>omputing group — the
+organization archi is deployed for here. The active fork lives at <code>fasrc/archi</code>.</p>
+<h3 id="cannon">Cannon</h3>
+<p><abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr>'s main large compute cluster. It's a frequent <em>topic</em> of user questions, so the assistant
+needs good documentation about it — unrelated to the word "canonical".</p>
+<h3 id="fasse"><abbr title="FAS Secure Environment — a security-hardened FASRC cluster for sensitive data.">FASSE</abbr></h3>
+<p>A separate, security-hardened <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> cluster (<strong>F</strong>AS <strong>S</strong>ecure <strong>E</strong>nvironment) for sensitive
+data. It's also one of the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> KB's category labels.</p>
+<h3 id="slurm">Slurm</h3>
+<p>The job scheduler that decides which work runs on which machines on <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr>'s clusters. Its
+official documentation (<code>slurm.schedmd.com</code>) is part of archi's corpus, so the assistant can
+answer scheduling questions.</p>
+<hr />
+<h2 id="retrieval-ranking">Retrieval &amp; ranking</h2>
+<h3 id="pgvector">pgvector</h3>
+<p>A PostgreSQL extension that stores embeddings and finds the nearest ones inside the database,
+so archi doesn't need a separate vector database.</p>
+<h3 id="hybrid-search">hybrid search</h3>
+<p>Blending two ways of ranking results — meaning-based (embeddings) and keyword-based (<abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr>) —
+into one score, so a passage can win either by being <em>about</em> the right thing or by containing
+the right words. Both components are min-max normalized to 0–1 before weighting, so neither
+raw scale dominates. archi weights these by default.</p>
+<h3 id="bm25"><abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr></h3>
+<p>A long-standing keyword-relevance formula: it scores a passage higher when it contains the
+question's words, especially rarer ones. It's the keyword half of hybrid search.</p>
+<h3 id="semantic-search">semantic search</h3>
+<p>Finding text by <em>meaning</em> rather than exact words, by comparing embeddings. The opposite pole
+from keyword (<abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr>) search.</p>
+<h3 id="cross-encoder-reranker">cross-encoder / reranker</h3>
+<p>A slower but sharper model that re-reads the top handful of candidate passages <em>together with</em>
+the question and re-scores them for relevance. archi uses one called <strong>FlashRank</strong>. It runs
+after the fast first-pass search to reorder the shortlist.</p>
+<h3 id="flashrank">FlashRank</h3>
+<p>The specific reranker archi uses — a compact cross-encoder that runs on CPU. See
+<strong>cross-encoder / reranker</strong>.</p>
+<h3 id="hierarchical-retrieval">hierarchical retrieval</h3>
+<p>A retrieval strategy that matches on small, precise "child" chunks but then returns their
+larger "parent" section for context — so the model gets a focused hit <em>and</em> enough surrounding
+text to answer well. This is the retriever the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> deployment runs.</p>
+<h3 id="parent-child-chunks">parent / child chunks</h3>
+<p>Two sizes of the same content used by hierarchical retrieval: small <strong>child</strong> chunks are what
+get matched against the question; the bigger <strong>parent</strong> section they belong to is what gets
+handed to the model.</p>
+<h3 id="rerank-score-hybrid-score">rerank score / hybrid score</h3>
+<p>The number a retriever attaches to a passage to rank it. The <em>hybrid score</em> comes from blending
+semantic and <abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr>; the <em>rerank score</em> is the cross-encoder's later, sharper judgment. Higher
+means more relevant.</p>
+<h3 id="category">category</h3>
+<p>A subject label that comes <em>from the source itself</em> (for example, a tag the source website
+already publishes). Distinct from <code>llm_category</code> below. On the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> KB it's the 19-item
+website taxonomy read from the page breadcrumb.</p>
+<h3 id="llm_category">llm_category</h3>
+<p>A subject label assigned <em>by a language model</em> at ingest time, chosen from a fixed short list —
+as opposed to <code>category</code>, which comes from the source. The two are stored separately and never
+overwrite each other.</p>
+<h3 id="echo-kb-breadcrumb">Echo-KB breadcrumb</h3>
+<p><abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr>'s documentation runs on the Echo Knowledge Base WordPress plugin ("Echo-KB" / "EPKB").
+Each article page shows a breadcrumb trail (Home › Category › Article); archi reads that trail
+to capture the article's website <strong>category</strong>.</p>
+<h3 id="soft-boost-category-boost">soft boost / category boost</h3>
+<p>A proposed (and, after evaluation, shelved) ranking tweak: nudge a passage's score up when its
+category matches the question's category. "Soft" because it only nudges rank rather than
+filtering anything out.</p>
+<h3 id="oracle-mode">oracle mode</h3>
+<p>An evaluation trick: feed the system the <em>perfect</em> answer to some sub-decision to measure the
+best case a feature could ever achieve. If even the perfect version doesn't help, the real
+version won't either — so you can kill an idea cheaply.</p>
+<h3 id="gold-source">gold source</h3>
+<p>The known-correct source page for a benchmark question — the answer key. Retrieval is scored by
+whether it surfaces the gold source. (Also called the reference source.)</p>
+<h3 id="hitk-hit-ratek">hit@k / hit-rate@k</h3>
+<p>The fraction of benchmark questions for which the gold source appears somewhere in the top <em>k</em>
+retrieved results. "hit@5" asks: did the right page make the top five?</p>
+<h3 id="mrr"><abbr title="Mean Reciprocal Rank — how high up the correct source lands in the results, averaged across questions.">MRR</abbr></h3>
+<p><strong>M</strong>ean <strong>R</strong>eciprocal <strong>R</strong>ank — a single number for how <em>high up</em> the gold source lands,
+averaged over all questions. Rank 1 scores 1.0, rank 2 scores 0.5, rank 3 scores 0.33, and so
+on; higher is better.</p>
+<hr />
+<h2 id="benchmarking-evaluation">Benchmarking &amp; evaluation</h2>
+<p>A deeper, benchmarking-specific glossary lives in
+<a href="../interpreting_benchmark_results/#7-glossary">Interpreting Results §7</a>; the entries here are
+the ones you'll meet most often.</p>
+<h3 id="ragas"><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr></h3>
+<p>The evaluation library archi uses to score answer <em>quality</em> — how relevant, faithful, and
+well-grounded an answer is — using a language model as the grader. Run via <code>archi evaluate</code>.</p>
+<h3 id="judge">judge</h3>
+<p>The separate language model that grades the assistant's answers during a benchmark (archi pins
+a specific model so scores stay comparable run to run).</p>
+<h3 id="sut"><abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr></h3>
+<p><strong>S</strong>ystem <strong>U</strong>nder <strong>T</strong>est — the exact archi configuration being benchmarked in a given
+round.</p>
+<h3 id="arm">arm</h3>
+<p>One competing variant of the system in a benchmark comparison — the word is borrowed from
+clinical trials, where each treatment group is an "arm". Every arm answers the same question
+bank under otherwise identical conditions (same corpus, same judge), so any score difference
+can be pinned on the one thing that varies — for example, the current code as a <em>baseline</em>
+arm against a proposed fix as a <em>treatment</em> arm.</p>
+<h3 id="anchor-anchor-questions">anchor / anchor questions</h3>
+<p>A small set of fixed benchmark questions, never edited and never tuned against, run every round
+to catch regressions. If an anchor's score moves, something changed.</p>
+<h3 id="bank-question-bank">bank / question bank</h3>
+<p>The file of benchmark questions, each with a reference answer and its gold source(s). The
+evaluation runs the assistant over the bank and scores the results.</p>
+<h3 id="noise-floor">noise floor</h3>
+<p>How much a score wobbles when you re-run the identical benchmark and change nothing. A
+difference smaller than the noise floor isn't real — it's just run-to-run jitter.</p>
+<h3 id="pre-registration">pre-registration</h3>
+<p>Writing down the hypothesis, the metric that decides it, and the pass/fail rule <em>before</em>
+running an evaluation — so you can't rationalize the result afterward.</p>
+<h3 id="ceiling-floor-effect">ceiling / floor effect</h3>
+<p>When scores are already so high (or so low) that a genuine improvement can't show up in the
+number, because there's no room left to move. A benchmark pinned at the ceiling can't detect
+progress.</p>
+<hr />
+<h2 id="development-workflow">Development workflow</h2>
+<p><em>Engineer-facing.</em> These are terms for people changing archi's code. A stakeholder or operator
+can skip this section.</p>
+<h3 id="the-gate">the gate</h3>
+<p>The single quality check every change must pass before it's committed: formatting, linting,
+and tests (<code>scripts/gate.sh</code>). If the gate is red, the change doesn't land. "Passing the gate"
+is the bar for done.</p>
+<h3 id="diff-coverage">diff coverage</h3>
+<p>A rule the gate enforces: at least 80% of the <em>lines your change touched</em> must be covered by
+tests — measured on the change itself, not the whole codebase. It stops new code from arriving
+untested without demanding the entire project be covered first.</p>
+<h3 id="tdd-red-green"><abbr title="Test-Driven Development — write a failing test first, then the code to pass it.">TDD</abbr> (red / green)</h3>
+<p><strong>T</strong>est-<strong>D</strong>riven <strong>D</strong>evelopment: write a failing test first (<strong>red</strong>), write the least code
+to make it pass (<strong>green</strong>), then clean up. The discipline is never writing implementation
+before a failing test exists.</p>
+<h3 id="openspec">OpenSpec</h3>
+<p>The spec-driven workflow archi uses to plan changes before coding them. Each change gets a
+folder under <code>openspec/changes/&lt;name&gt;/</code> holding its written artifacts (below).</p>
+<h3 id="change-proposal-design-tasks-archive">change / proposal / design / tasks / archive</h3>
+<p>The pieces of one OpenSpec unit of work: the <strong>change</strong> is the folder; <strong>proposal.md</strong> says
+<em>what and why</em>, <strong>design.md</strong> says <em>how</em>, <strong>tasks.md</strong> is the checklist; when it's done and
+merged the change is moved to <strong>archive/</strong>.</p>
+<h3 id="loop-1-loop-2">Loop 1 / Loop 2</h3>
+<p>The two halves of the workflow: <strong>Loop 1</strong> is planning and specification (write the OpenSpec
+artifacts); <strong>Loop 2</strong> is implementation, test-first. Plan, then build.</p>
+<h3 id="ralph-loop-nightly-automation">Ralph loop / nightly automation</h3>
+<p>An unattended agent loop that works through opted-in GitHub issues overnight, turning them into
+pull requests without a human driving each step. It stops at the PR — it never merges on its
+own.</p>
+<hr />
+<h2 id="infrastructure-deployment">Infrastructure &amp; deployment</h2>
+<p><em>Engineer/operator-facing.</em> Terms for running and updating a live archi deployment.</p>
+<h3 id="dev-deploy">dev deploy</h3>
+<p>The local <code>dev</code> deployment of archi, backed by the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> model server, managed by the scripts
+in <code>deploy/scripts/</code>. Where changes are tried before anything goes further.</p>
+<h3 id="redeploy">redeploy</h3>
+<p>Rebuilding and restarting a deployment so code or config edits take effect. archi's deployment
+container installs the code in a non-editable way, so edits are invisible until you redeploy —
+copying files into a running container does <em>nothing</em>.</p>
+<h3 id="re-ingest">re-ingest</h3>
+<p>Re-running ingestion so the search index reflects new or changed source documents. Needed after
+anything that changes how documents are chunked, embedded, or captured.</p>
+<h3 id="nuke">nuke</h3>
+<p>The destructive full teardown of the <code>dev</code> deployment — containers, stored data (database <em>and</em>
+ingested corpus), and images. Irreversible; used when a plain re-ingest isn't enough and you
+need a clean slate.</p>
+<h3 id="vllm"><abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr></h3>
+<p>The high-performance server that hosts the actual chat language model on <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr>'s GPUs,
+separately from archi. archi talks to it over an OpenAI-compatible interface.</p>
+<h3 id="deployfasrc-dev">deploy/fasrc-dev</h3>
+<p>The folder holding the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> <code>dev</code> deployment's own config and agent prompts. <code>dev</code> is the
+GPU host. The real config and secrets are deliberately kept out of version control
+(git-ignored); a sanitized example config <em>is</em> tracked and reviewed like any other code.</p>
+<h3 id="deployscripts">deploy/scripts</h3>
+<p>The management scripts that stand a deployment up, restart it, check it, and tear it down.
+They are host-neutral: every host runs the same scripts, and each host says which deployment
+it is through a small <code>host.env</code> file (git-ignored) that the scripts read. The scripts are
+tracked and reviewed like any other code.</p>
+<h3 id="archi-config">archi-config</h3>
+<p>A separate, private repository holding the operational configuration a deployment needs —
+which websites to ingest, environment settings, the assistant's instructions. Kept apart from
+the public archi code so internal details never appear in the open-source repo. Deploy scripts
+fetch it automatically (see <a href="#config-pin">config pin</a>).</p>
+<h3 id="config-pin">config pin</h3>
+<p>The exact, named version of the <a href="#archi-config">archi-config</a> repository that deployments
+install — like ordering a specific edition of a book rather than "whatever's newest". Every
+deploy checks the version it got against a recorded fingerprint and refuses to proceed if
+someone has quietly swapped what the name points to.</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href=".." class="btn btn-neutral float-left" title="Home"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../install/" class="btn btn-neutral float-right" title="Install">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+      <span><a href=".." style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../install/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

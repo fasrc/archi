@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
                 </li>
               </ul>
@@ -92,6 +96,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -101,6 +113,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -132,7 +148,7 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="openai-compatible-api-for-archi">OpenAI-Compatible API for archi</h1>
-<p><strong>Author:</strong> Austin Swinney, FASRC — Harvard University
+<p><strong>Author:</strong> Austin Swinney, <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> — Harvard University
 <strong>Date:</strong> March 2026
 <strong>Status:</strong> Proposal
 <strong>Companion:</strong> <a href="../multi-collection-routing/">Multi-Collection Routing</a> (independent, works well together)</p>
@@ -140,19 +156,19 @@
 <h2 id="tldr">TL;DR</h2>
 <ul>
 <li>
-<p><strong>Goal:</strong> Add an OpenAI-compatible <code>/v1</code> API to archi so it can serve as a headless RAG backend for any OpenAI-compatible client — Open WebUI, LibreChat, LiteLLM, Continue.dev, or custom scripts using the OpenAI Python SDK.</p>
+<p><strong>Goal:</strong> Add an OpenAI-compatible <code>/v1</code> API to archi so it can serve as a headless <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> backend for any OpenAI-compatible client — Open WebUI, LibreChat, LiteLLM, Continue.dev, or custom scripts using the OpenAI Python SDK.</p>
 </li>
 <li>
 <p><strong>Why:</strong> archi's native chat UI is one of many possible frontends. Rather than rebuilding polished multi-user UX, SSO, and group management in archi, expose archi as a standard backend and let deployers choose the frontend that fits their organization.</p>
 </li>
 <li>
-<p><strong>What already exists:</strong> NDJSON streaming, PipelineOutput dataclass, config-based routing, conversation persistence, auth + SSO, and RBAC are all implemented — the work is a thin translation layer, not new RAG logic.</p>
+<p><strong>What already exists:</strong> NDJSON streaming, PipelineOutput dataclass, config-based routing, conversation persistence, auth + SSO, and RBAC are all implemented — the work is a thin translation layer, not new <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> logic.</p>
 </li>
 <li>
 <p><strong>What's needed:</strong> Two new endpoints (<code>GET /v1/models</code>, <code>POST /v1/chat/completions</code>), a NDJSON→SSE stream translator, bearer token auth, and conversation persistence on the <code>/v1</code> path. ~10 tasks total (7 code, 3 docs).</p>
 </li>
 <li>
-<p><strong>Additive, not destructive:</strong> archi's native chat UI, all pipelines, data ingestion, BYOK, A/B testing — everything keeps working. <code>/v1</code> is a new blueprint alongside existing routes.</p>
+<p><strong>Additive, not destructive:</strong> archi's native chat UI, all pipelines, data ingestion, <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr>, A/B testing — everything keeps working. <code>/v1</code> is a new blueprint alongside existing routes.</p>
 </li>
 <li>
 <p><strong>What users lose via <code>/v1</code>:</strong> Paired A/B testing, agent step visibility, trace inspector, and feedback flowing back to archi — all due to OpenAI protocol limitations, not removal. Native UI still has everything.</p>
@@ -169,7 +185,7 @@
 </ul>
 <hr />
 <h2 id="motivation">Motivation</h2>
-<p>Archi is a powerful RAG framework — pipelines, agents, data ingestion from diverse sources, BYOK, A/B testing — but its native chat UI is one of many possible frontends. Open-source chat interfaces like <a href="https://github.com/open-webui/open-webui">Open WebUI</a> and <a href="https://github.com/danny-avila/LibreChat">LibreChat</a> offer polished multi-user UX, SSO, and group management out of the box. Rather than rebuilding these capabilities in archi, we can expose archi as an <strong>OpenAI-compatible backend</strong> and let deployers choose the frontend that fits their organization.</p>
+<p>Archi is a powerful <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> framework — pipelines, agents, data ingestion from diverse sources, <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr>, A/B testing — but its native chat UI is one of many possible frontends. Open-source chat interfaces like <a href="https://github.com/open-webui/open-webui">Open WebUI</a> and <a href="https://github.com/danny-avila/LibreChat">LibreChat</a> offer polished multi-user UX, SSO, and group management out of the box. Rather than rebuilding these capabilities in archi, we can expose archi as an <strong>OpenAI-compatible backend</strong> and let deployers choose the frontend that fits their organization.</p>
 <p>This also frees archi developer resources from maintaining a frontend — the native chat UI continues to work, but organizations that want a more polished user experience can use a dedicated frontend instead.</p>
 <hr />
 <h2 id="what-already-exists">What Already Exists</h2>
@@ -245,7 +261,7 @@
 
     classDef todo fill:#c0392b,stroke:#333,color:#000
 </code></pre>
-<p>archi has no OpenAI-compatible endpoint. Clients must use archi's native <code>/api/get_chat_response_stream</code> with its custom NDJSON format. The gap is a thin translation layer — not new RAG or pipeline logic.</p>
+<p>archi has no OpenAI-compatible endpoint. Clients must use archi's native <code>/api/get_chat_response_stream</code> with its custom NDJSON format. The gap is a thin translation layer — not new <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> or pipeline logic.</p>
 <hr />
 <h2 id="design">Design</h2>
 <h3 id="how-clients-connect">How Clients Connect</h3>
@@ -280,7 +296,7 @@
 </tr>
 <tr>
 <td><code>POST /v1/chat/completions</code></td>
-<td>Chat with RAG</td>
+<td>Chat with <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr></td>
 <td><code>ChatWrapper.stream(message=..., config_name=...)</code></td>
 </tr>
 </tbody>
@@ -296,7 +312,7 @@ stream: true                    →       ChatWrapper.stream(...)
 temperature: 0.7                →       NEW: per-request LLM parameter override
 max_tokens: 4096                →       NEW: per-request LLM parameter override
 </code></pre>
-<p><strong>Note:</strong> archi currently uses <code>config_name</code> to select a pipeline/agent and <code>provider</code> + <code>model</code> to override the LLM within that pipeline. The <code>/v1</code> endpoint maps the OpenAI <code>model</code> field to archi's <code>config_name</code>. Per-request <code>temperature</code> and <code>max_tokens</code> overrides do not exist today — they are new work in this proposal.</p>
+<p><strong>Note:</strong> archi currently uses <code>config_name</code> to select a pipeline/agent and <code>provider</code> + <code>model</code> to override the <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> within that pipeline. The <code>/v1</code> endpoint maps the OpenAI <code>model</code> field to archi's <code>config_name</code>. Per-request <code>temperature</code> and <code>max_tokens</code> overrides do not exist today — they are new work in this proposal.</p>
 <h3 id="response-translation">Response Translation</h3>
 <p>archi's <code>ChatWrapper.stream()</code> yields 11+ NDJSON event types. The <code>/v1</code> blueprint translates the ones that map to OpenAI's SSE format and silently consumes the rest:</p>
 <table>
@@ -472,7 +488,7 @@ max_tokens: 4096                →       NEW: per-request LLM parameter overrid
 <td>Unchanged</td>
 </tr>
 <tr>
-<td>BYOK (bring your own key)</td>
+<td><abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr> (bring your own key)</td>
 <td>Works via native UI</td>
 </tr>
 <tr>
@@ -601,9 +617,9 @@ max_tokens: 4096                →       NEW: per-request LLM parameter overrid
 <td>Agent management is admin configuration. The frontend's "model" selector maps to archi configs, but creating/editing agent specs requires archi's native UI or direct file editing.</td>
 </tr>
 <tr>
-<td><strong>BYOK Key Management</strong></td>
+<td><strong><abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr> Key Management</strong></td>
 <td>Users store their own API keys per provider, which are encrypted in Postgres and used for their requests (<code>/api/providers/keys/*</code>)</td>
-<td>For archi's <code>/v1</code> backend, BYOK doesn't apply — archi uses its own configured provider keys.</td>
+<td>For archi's <code>/v1</code> backend, <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr> doesn't apply — archi uses its own configured provider keys.</td>
 </tr>
 <tr>
 <td><strong>Grading Pipeline</strong></td>
@@ -613,7 +629,7 @@ max_tokens: 4096                →       NEW: per-request LLM parameter overrid
 <tr>
 <td><strong>Dynamic Config Switching</strong></td>
 <td>Users switch active pipeline, model, temperature, prompt templates at runtime (<code>/api/update_config</code>, <code>/api/config/dynamic</code>)</td>
-<td><code>/v1</code> maps <code>model</code> to a config name and supports basic <code>temperature</code>/<code>max_tokens</code> overrides, but the full config surface (prompt selection, hybrid search weights, retrieval parameters, provider/model LLM overrides) isn't expressible in the OpenAI request schema.</td>
+<td><code>/v1</code> maps <code>model</code> to a config name and supports basic <code>temperature</code>/<code>max_tokens</code> overrides, but the full config surface (prompt selection, hybrid search weights, retrieval parameters, provider/model <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> overrides) isn't expressible in the OpenAI request schema.</td>
 </tr>
 <tr>
 <td><strong>Database Admin</strong></td>
@@ -644,12 +660,12 @@ max_tokens: 4096                →       NEW: per-request LLM parameter overrid
 </tr>
 <tr>
 <td><strong>Scope</strong></td>
-<td>Document mgmt, uploads, agent config, BYOK, grading, dynamic config, DB admin</td>
+<td>Document mgmt, uploads, agent config, <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr>, grading, dynamic config, DB admin</td>
 <td>Use archi's native UI or data-manager API directly</td>
 </tr>
 </tbody>
 </table>
-<p>None of these features are broken or removed. They continue to work through archi's native interface. The <code>/v1</code> endpoint is a <strong>chat-focused projection</strong> of archi's capabilities — it surfaces RAG Q&amp;A through a standard protocol, but the full feature set lives behind archi's native API.</p>
+<p>None of these features are broken or removed. They continue to work through archi's native interface. The <code>/v1</code> endpoint is a <strong>chat-focused projection</strong> of archi's capabilities — it surfaces <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> Q&amp;A through a standard protocol, but the full feature set lives behind archi's native API.</p>
 <hr />
 <h2 id="implementation-summary">Implementation Summary</h2>
 <h3 id="openai-compatible-api-7-tasks">OpenAI-Compatible API (7 tasks)</h3>
@@ -873,7 +889,7 @@ max_tokens: 4096                →       NEW: per-request LLM parameter overrid
 <tr>
 <td><code>BYPASS_EMBEDDING_AND_RETRIEVAL</code></td>
 <td><code>"true"</code></td>
-<td>Disables Open WebUI's built-in RAG so it doesn't interfere with archi's retrieval</td>
+<td>Disables Open WebUI's built-in <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> so it doesn't interfere with archi's retrieval</td>
 </tr>
 <tr>
 <td><code>ENABLE_FORWARD_USER_INFO_HEADERS</code></td>
@@ -1000,7 +1016,7 @@ max_tokens: 4096                →       NEW: per-request LLM parameter overrid
 <td>archi data-manager</td>
 </tr>
 <tr>
-<td>RAG retrieval</td>
+<td><abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> retrieval</td>
 <td>archi pipelines</td>
 </tr>
 <tr>
@@ -1008,8 +1024,8 @@ max_tokens: 4096                →       NEW: per-request LLM parameter overrid
 <td>archi (always) + Open WebUI (its own copy)</td>
 </tr>
 <tr>
-<td>LLM inference</td>
-<td>vLLM / Ollama / API</td>
+<td><abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> inference</td>
+<td><abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> / Ollama / API</td>
 </tr>
 </tbody>
 </table>
@@ -1193,9 +1209,9 @@ endpoints:
 </thead>
 <tbody>
 <tr>
-<td><strong>RAG interference</strong></td>
+<td><strong><abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> interference</strong></td>
 <td>Must disable with <code>BYPASS_EMBEDDING_AND_RETRIEVAL=true</code></td>
-<td>No built-in RAG — if <code>RAG_API_URL</code> is unset, retrieval is simply not active</td>
+<td>No built-in <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> — if <code>RAG_API_URL</code> is unset, retrieval is simply not active</td>
 </tr>
 <tr>
 <td><strong>Model access control</strong></td>
@@ -1231,7 +1247,7 @@ endpoints:
 </table>
 <h4 id="recommendation">Recommendation</h4>
 <p>For deployments where <strong>per-user collection access control</strong> is important, <strong>Open WebUI</strong> is the stronger choice today — its group-based model filtering provides defense in depth alongside archi's RBAC.</p>
-<p>For deployments where <strong>flexible header forwarding</strong>, <strong>no RAG interference</strong>, and <strong>built-in agents</strong> matter more than model-level access control, <strong>LibreChat</strong> is a compelling alternative.</p>
+<p>For deployments where <strong>flexible header forwarding</strong>, <strong>no <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> interference</strong>, and <strong>built-in agents</strong> matter more than model-level access control, <strong>LibreChat</strong> is a compelling alternative.</p>
 <p>Both consume the same <code>/v1</code> API. The archi-side implementation does not change.</p>
 <hr />
 <h2 id="references">References</h2>
@@ -1246,6 +1262,17 @@ endpoints:
 <li>archi source: <code>src/utils/rbac/</code> — existing permission framework</li>
 <li>archi source: <code>src/utils/conversation_service.py</code> — message persistence and A/B comparison tracking</li>
 </ul>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>

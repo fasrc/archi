@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>AWS Migration Plan: Service Options and Call Notes - Archi Docs</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "AWS Migration Plan: Service Options and Call Notes";
+        var mkdocs_page_input_path = "proposals/aws-migration-plan.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../.." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">AWS Migration Plan: Service Options and Call Notes</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/proposals/aws-migration-plan.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="aws-migration-plan-service-options-and-call-notes">AWS Migration Plan: Service Options and Call Notes</h1>
+<p><strong>Status:</strong> draft for the call with the AWS solutions architects and management.
+<strong>Date:</strong> 2026-09-01.
+<strong>Owner:</strong> <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> archi team.
+<strong>Method:</strong> Terraform manages all AWS resources.</p>
+<p>This document lists the AWS service options for the archi migration. The
+comparison factors are monthly cost, service reliability, and system
+performance. Section 9 holds the notes for the call.</p>
+<blockquote>
+<p><strong>DISCLAIMER:</strong> Claude Fable 5, an AI model, created everything in this
+document. All prices, service details, and code claims are subject to
+scrutiny — verify them before you rely on them in a decision.</p>
+<p><strong>NOTE:</strong> All prices in this document are estimates for us-east-1,
+on-demand, from 2026-09-01. Confirm current prices with the AWS Pricing
+Calculator and the solutions architects before any commitment.</p>
+</blockquote>
+<h2 id="the-request">The request</h2>
+<p>Original prompt (2026-09-01), verbatim:</p>
+<blockquote>
+<p>We are moving archi to AWS, via terraform, give me the options available
+for AWS services to utilize in that migration. factors to consider are
+ongoing cost, service reliability, system performance. ask questions for
+clarity on ambiguious items. Present this as a plan, with notes for an
+upcoming call with AWS solutions architects and management. Output is a
+markdown file in docs, use mermaid for visual aids.</p>
+</blockquote>
+<p>Clarity answers received before this draft:</p>
+<ul>
+<li>Scope: the staging stack, the production stack, and the nightly benchmark rig.</li>
+<li><abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> inference: direct AWS Bedrock and the HUIT Bedrock proxy. No
+  self-hosted GPUs in AWS.</li>
+<li>Account: the current <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> AWS account.</li>
+<li>Cost target: none yet.</li>
+</ul>
+<h2 id="1-assumptions">1. Assumptions</h2>
+<p>This plan builds on the assumptions below, drawn from the clarity answers in
+the section above. Confirm or correct each one on the call.</p>
+<ul>
+<li>AWS will host the <strong>staging stack</strong>, the <strong>production stack</strong>, and the
+  <strong>nightly benchmark rig</strong>.</li>
+<li>The <strong>dev stack stays on the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> GPU host</strong> (<code>holygpu7c0717</code>).</li>
+<li><abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> inference will <strong>not</strong> run on self-hosted GPUs in AWS. The two candidate
+  paths are <strong>direct AWS Bedrock</strong> and the <strong>HUIT Bedrock proxy</strong>. Direct
+  Bedrock needs a new provider module — see section 3.3.</li>
+<li>The deployment will use the <strong>current <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> AWS account</strong>.</li>
+<li>The Terraform code will live in the <strong><abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> GitLab</strong>, and AWS will pick it
+  up from there through GitLab CI.</li>
+<li>Management has not set a cost target. Section 6 gives cost ranges per
+  option, and the target is a decision for the call.</li>
+</ul>
+<h2 id="2-the-system-today">2. The system today</h2>
+<p>The stack is a docker compose deployment that <code>archi create</code> renders from
+templates. It runs on one <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> GPU host. Container images come from GHCR.
+The running app config lives in Postgres, and a config-seed job writes it at
+deploy time.</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Function</th>
+<th>Where it runs today</th>
+<th>On dev today</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>chatbot</td>
+<td>Web chat app, port 7861, <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> agents</td>
+<td>compose, GPU host</td>
+<td><strong>Yes</strong></td>
+</tr>
+<tr>
+<td>data-manager</td>
+<td>Always-on ingest service, port 7871: scrape, chunk, and embed; upload, schedule, and status APIs for the chatbot</td>
+<td>compose, GPU host</td>
+<td><strong>Yes</strong></td>
+</tr>
+<tr>
+<td>postgres</td>
+<td>PostgreSQL with pgvector: app config, documents, vectors</td>
+<td>compose, GPU host</td>
+<td><strong>Yes</strong></td>
+</tr>
+<tr>
+<td>config-seed, db-migrate</td>
+<td>One-shot deploy jobs</td>
+<td>compose, GPU host</td>
+<td><strong>Yes</strong>, at each deploy</td>
+</tr>
+<tr>
+<td>grafana</td>
+<td>Dashboards</td>
+<td>compose template, available</td>
+<td>No</td>
+</tr>
+<tr>
+<td>grader</td>
+<td>Grading app, no GPU</td>
+<td>compose template, available</td>
+<td>No</td>
+</tr>
+<tr>
+<td>benchmark</td>
+<td><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> goldenset runs</td>
+<td>compose, GPU host</td>
+<td>On demand, for goldenset campaigns</td>
+</tr>
+<tr>
+<td>QA evaluation console</td>
+<td>Atoms evaluation: judges answers against gold atoms (<code>atom_score</code>, <code>required_atom_recall</code>) with a judge-<abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> oracle; reads the <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> golden set</td>
+<td>routes inside the chatbot app, plus a CLI (<code>src/cli/qa_eval.py</code>)</td>
+<td><strong>Yes</strong>, inside chatbot</td>
+</tr>
+<tr>
+<td>piazza, slack/mattermost, redmine mailer</td>
+<td>Optional integrations</td>
+<td>compose template, available</td>
+<td>No</td>
+</tr>
+<tr>
+<td><abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> servers</td>
+<td>Qwen models on 2 of 4 V100 GPUs</td>
+<td>GPU host, outside compose</td>
+<td><strong>Yes</strong></td>
+</tr>
+<tr>
+<td>nightly timers</td>
+<td>Benchmark report, team update</td>
+<td>systemd on a workstation</td>
+<td><strong>Yes</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The dev deploy enables <code>--services chatbot</code>, which auto-pulls postgres and
+data-manager (<code>deploy/scripts/lib.sh:112</code>). The other services exist as
+templates and deploy only when named in <code>--services</code>.</p>
+<p>Facts that constrain the options:</p>
+<ul>
+<li><strong>pgvector is the only supported vector backend.</strong> The migration must keep
+  PostgreSQL.</li>
+<li><strong>The corpus is small.</strong> About 820 files and about 6,000 vector chunks. The
+  database is tiny by AWS standards.</li>
+<li><strong>The embedding model is small.</strong> all-MiniLM-L6-v2, about 80 MB. A full
+  CPU embed run took 44 minutes on one core. More vCPUs cut this time.</li>
+<li><strong>The Bedrock request format is already in use.</strong> The HUIT Bedrock provider
+  (<code>src/archi/providers/huit_bedrock_provider.py</code>) sends the Bedrock-native
+  Anthropic JSON request format today.</li>
+<li><strong>The chatbot depends on data-manager at runtime.</strong> It calls the
+  data-manager upload, schedule, and status APIs over HTTP.</li>
+</ul>
+<pre><code class="language-mermaid">flowchart TB
+    users[&quot;Users (HarvardKey)&quot;]
+    subgraph host[&quot;FASRC GPU host: holygpu7c0717&quot;]
+        subgraph compose[&quot;docker compose stack (archi create)&quot;]
+            chat[&quot;chatbot :7861&quot;]
+            dm[&quot;data-manager :7871&quot;]
+            pg[(&quot;PostgreSQL + pgvector&quot;)]
+            graf[&quot;grafana&quot;]
+            grader[&quot;grader&quot;]
+            bench[&quot;benchmark&quot;]
+        end
+        vllm[&quot;vLLM servers (V100 GPUs)&quot;]
+    end
+    ws[&quot;workstation systemd timers&quot;]
+    huit[&quot;HUIT Bedrock proxy&quot;]
+    anth[&quot;Anthropic API (standby)&quot;]
+    users --&gt; chat
+    chat --&gt; vllm
+    chat -.-&gt; anth
+    chat --&gt; pg
+    chat --&gt; dm
+    dm --&gt; pg
+    bench --&gt; huit
+    ws --&gt; bench
+</code></pre>
+<h2 id="3-options-by-component">3. Options by component</h2>
+<h3 id="31-container-compute">3.1 Container compute</h3>
+<p>The long-lived services in use today are chatbot and data-manager. grafana
+and grader are available in the templates but off on dev; they enter the
+cost model only if the team enables them in AWS. The batch jobs are
+benchmark, config-seed, and db-migrate. The chatbot calls the data-manager
+APIs at runtime, so data-manager must stay always-on.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Monthly cost</th>
+<th>Reliability</th>
+<th>Performance</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ECS on Fargate</strong> (recommended)</td>
+<td>About $36 per vCPU + 2 GB, per service</td>
+<td>High: multi-AZ, auto restart, no hosts to patch</td>
+<td>Good; per-service CPU and memory sizes</td>
+<td>Serverless containers. Batch jobs run as one-shot tasks.</td>
+</tr>
+<tr>
+<td>ECS on EC2</td>
+<td>Lower at steady load</td>
+<td>High, but you patch the hosts</td>
+<td>Same as EC2</td>
+<td>Worth it only above about 4 always-on vCPUs.</td>
+</tr>
+<tr>
+<td>EKS</td>
+<td>+$73 per cluster per month, plus nodes</td>
+<td>High, but most operator work</td>
+<td>Same as nodes</td>
+<td>Kubernetes skills and upkeep are not justified at this scale.</td>
+</tr>
+<tr>
+<td>EC2 + docker compose (lift and shift)</td>
+<td>One t3.large is about $61</td>
+<td>Low: one instance, one AZ</td>
+<td>Fine for this load</td>
+<td>Reuses <code>archi create</code> unchanged. Fastest path, least AWS-native.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommendation:</strong> ECS on Fargate. The in-use stack is about 2 to 4
+always-on vCPUs, below the EC2 break-even point, and Fargate removes host
+patch work.</p>
+<h3 id="32-postgresql-and-pgvector">3.2 PostgreSQL and pgvector</h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Monthly cost</th>
+<th>Reliability</th>
+<th>Performance</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>RDS for PostgreSQL</strong> (recommended)</td>
+<td>db.t4g.medium: about $47 single-AZ, about $95 Multi-AZ, + storage</td>
+<td>Multi-AZ failover, automated backups, PITR</td>
+<td>More than enough for 6,000 vectors</td>
+<td>pgvector is a supported extension on RDS.</td>
+</tr>
+<tr>
+<td>Aurora PostgreSQL Serverless v2</td>
+<td>About $87+ at 1 ACU minimum, per instance</td>
+<td>Highest</td>
+<td>More than this load needs</td>
+<td>Pays off at much larger scale or spiky load.</td>
+</tr>
+<tr>
+<td>Self-managed on EC2</td>
+<td>Instance + EBS only</td>
+<td>You own backups, patches, failover</td>
+<td>Same hardware</td>
+<td>Saves little money and adds all the operator work.</td>
+</tr>
+<tr>
+<td>OpenSearch Service (k-NN), incl. Serverless</td>
+<td>Domain from about $80; Serverless minimum about $175</td>
+<td>Managed, multi-AZ options</td>
+<td>Built for millions of vectors</td>
+<td><strong>Not pgvector.</strong> New vectorstore backend + full re-benchmark.</td>
+</tr>
+<tr>
+<td>Bedrock Knowledge Bases</td>
+<td>Per use: embeddings, retrieval, and the store under it</td>
+<td>AWS-managed</td>
+<td>Good</td>
+<td><strong>Not pgvector</strong>, and it replaces ingestion and retrieval, not just the store — the largest scope change.</td>
+</tr>
+<tr>
+<td>MemoryDB vector search</td>
+<td>In-memory node prices, the highest per GB</td>
+<td>Managed, multi-AZ</td>
+<td>Microsecond latency this load does not need</td>
+<td><strong>Not pgvector.</strong> New backend + re-benchmark.</td>
+</tr>
+<tr>
+<td>DocumentDB vector search</td>
+<td>From about $70</td>
+<td>Managed</td>
+<td>Good</td>
+<td><strong>Not pgvector</strong>; MongoDB-compatible API. New backend + re-benchmark.</td>
+</tr>
+<tr>
+<td>S3 Vectors</td>
+<td>Lowest at-rest cost, per-query prices</td>
+<td>High (S3)</td>
+<td>Subsecond, for very large cold collections</td>
+<td><strong>Not pgvector.</strong> New backend + re-benchmark.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommendation:</strong> RDS for PostgreSQL. Multi-AZ in production, single-AZ in
+staging. The dataset is small, so the smallest Graviton instance class is a
+safe start.</p>
+<p>The last five rows are the AWS vector services outside PostgreSQL. None is
+pgvector-compatible: each needs a new backend in
+<code>src/data_manager/vectorstore/</code> and a full re-benchmark, and at about 6,000
+vectors none returns a measurable gain. Expect the solutions architects to
+offer them; hold to the backend constraint (section 2) unless they show a
+decisive advantage.</p>
+<h3 id="33-llm-inference">3.3 <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> inference</h3>
+<p>Self-hosted GPU serving is out of scope (section 1 assumptions). The two
+paths:</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Monthly cost</th>
+<th>Reliability</th>
+<th>Performance</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>AWS Bedrock, direct</strong></td>
+<td>Per token; no idle cost. See section 6.</td>
+<td>AWS-managed; quotas apply</td>
+<td>Lowest latency from inside AWS</td>
+<td>Traffic stays in the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> account. Data boundary review needed. <strong>Needs a new provider module.</strong></td>
+</tr>
+<tr>
+<td>HUIT Bedrock proxy</td>
+<td>Per token via HUIT</td>
+<td>Adds one network hop and one org dependency</td>
+<td>Extra round trip from AWS to HUIT and back</td>
+<td>Keeps the Harvard compliance boundary. Works today with no code change.</td>
+</tr>
+</tbody>
+</table>
+<p>Two facts from the code bound this choice:</p>
+<ul>
+<li><strong>The provider registry has no direct AWS Bedrock provider.</strong>
+  <code>src/archi/providers/__init__.py</code> registers <code>huit_bedrock</code>, <code>anthropic</code>,
+  <code>openai</code>, and others; none signs AWS requests. A direct Bedrock provider is
+  new, bounded work: the HUIT provider already sends the Bedrock-native
+  Anthropic JSON request format, so the new module changes authentication and
+  transport, not message handling.</li>
+<li><strong>A standby is a manual config switch, not automatic failover.</strong> The chat
+  app reads one <code>services.chat_app.default_provider</code> value. A fallback today
+  means an operator edits the config and reseeds Postgres. Automatic failover
+  is new code — do not promise it on the call.</li>
+</ul>
+<p><strong>Recommendation:</strong> decide the target on the call; it is a compliance
+question. The HUIT proxy works with no code change. If the call picks direct
+Bedrock, schedule the provider module in Phase 1 and budget that work.</p>
+<p>Questions that gate this choice are in section 9.1, items 2 and 3.</p>
+<h3 id="34-ingestion-and-embedding-data-manager">3.4 Ingestion and embedding (data-manager)</h3>
+<p>data-manager is not a batch job. It is a long-lived Flask service on port
+7871 (<code>src/bin/service_data_manager.py</code>). The chatbot calls its upload,
+schedule, and status APIs at runtime. A cron-style replacement breaks
+uploads and schedule reloads.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Monthly cost</th>
+<th>Reliability</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Always-on Fargate service</strong> (recommended)</td>
+<td>About $45 (1 vCPU + 4 GB)</td>
+<td>Same as the other services</td>
+<td>Ingest runs on the service's internal schedule. No code change.</td>
+</tr>
+<tr>
+<td>Split: small API service + batch ingest task</td>
+<td>API task + about $0.20 per ingest run</td>
+<td>Good</td>
+<td><strong>Needs code changes</strong> to split the service. Price both pieces if this path is chosen.</td>
+</tr>
+<tr>
+<td>Bedrock managed embeddings (Titan, Cohere)</td>
+<td>Per token</td>
+<td>High</td>
+<td><strong>Changes the embedding model</strong> and forces a full re-benchmark. Not now.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommendation:</strong> keep data-manager whole, as an always-on Fargate
+service, with all-MiniLM-L6-v2 on CPU. The model is CPU-friendly and the
+benchmark baseline stays valid. Fargate cannot resize a live task, so size
+the task for the ingest peak — the embed took 44 minutes on one core, and
+more vCPUs cut that time.</p>
+<h3 id="35-nightly-benchmark-rig">3.5 Nightly benchmark rig</h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Monthly cost</th>
+<th>Reliability</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>EventBridge Scheduler + Fargate task</strong> (recommended)</td>
+<td>Compute per run + judge tokens</td>
+<td>Managed schedule, retries, CloudWatch alarms on failure</td>
+<td>Report artifacts go to S3.</td>
+</tr>
+<tr>
+<td>Small EC2 with systemd timers</td>
+<td>About $8 (t4g.micro)</td>
+<td>One instance; closest to today</td>
+<td>Acceptable interim step.</td>
+</tr>
+</tbody>
+</table>
+<p>The benchmark must run against <strong>staging</strong>, never against production. The
+<abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> judge <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> calls Bedrock or the HUIT proxy, the same choice as 3.3.</p>
+<h3 id="36-ingress-dns-and-tls">3.6 Ingress, DNS, and TLS</h3>
+<ul>
+<li><strong>Application Load Balancer</strong> in front of the chatbot service. About $20 to
+  $30 per month per environment. Health checks give clean deploys.</li>
+<li><strong>ACM</strong> for free TLS certificates, with DNS validation.</li>
+<li><strong>Route 53</strong> for zone or record management, or a CNAME from the current
+  Harvard DNS (<code>archi.rc.fas.harvard.edu</code>) to the ALB. The hostname decision
+  is a call item (section 9.1, item 5).</li>
+<li><strong>CAUTION:</strong> A NAT gateway costs about $33 per month plus $0.045 per GB
+  before any workload runs. Put the Fargate tasks in public subnets with
+  public IPs, or use VPC endpoints, to avoid it in staging.</li>
+</ul>
+<h3 id="37-observability">3.7 Observability</h3>
+<ul>
+<li><strong>CloudWatch Logs</strong> for all container logs. Set retention to 30 or 90 days;
+  unlimited retention grows cost forever.</li>
+<li><strong>Grafana</strong> (off on dev today): if it moves to AWS, keep the container on
+  ECS (cost: one small task) rather than Amazon Managed Grafana ($9 per
+  editor per month). Move later if SSO for dashboards becomes a requirement.</li>
+</ul>
+<h3 id="38-secrets">3.8 Secrets</h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Monthly cost</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SSM Parameter Store, SecureString</strong> (recommended)</td>
+<td>Free at standard tier</td>
+<td>Covers API keys, <code>GIT_TOKEN</code>, DB passwords. ECS injects them natively.</td>
+</tr>
+<tr>
+<td>Secrets Manager</td>
+<td>$0.40 per secret per month</td>
+<td>Choose it only where automatic rotation is required (the RDS password is a fair case).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="39-container-images">3.9 Container images</h3>
+<p>Images ship from GHCR today. Two options:</p>
+<ol>
+<li>Keep GHCR as the source and add an <strong>ECR pull-through cache</strong>. This keeps
+   one publish path and removes a GHCR outage as a deploy blocker.</li>
+<li>Publish to ECR in CI as a second target.</li>
+</ol>
+<p>Option 1 is less CI change. Note: the current GHCR pulls need a classic PAT;
+ECR pull-through moves that credential into AWS.</p>
+<h2 id="4-three-candidate-architectures">4. Three candidate architectures</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>A: Lift and shift</th>
+<th>B: ECS Fargate + RDS</th>
+<th>C: EKS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Architecture</td>
+<td>EC2 per environment, docker compose via <code>archi create</code></td>
+<td>Managed containers, managed Postgres</td>
+<td>Kubernetes cluster per environment</td>
+</tr>
+<tr>
+<td>Monthly cost (staging + production, before tokens)</td>
+<td>About $150 to $350</td>
+<td>About $400 to $650</td>
+<td>About $750 to $1,150</td>
+</tr>
+<tr>
+<td>Reliability</td>
+<td>Low: single instance per environment</td>
+<td>High: multi-AZ services and database</td>
+<td>High</td>
+</tr>
+<tr>
+<td>Operator load</td>
+<td>Highest: patch OS, docker, Postgres</td>
+<td>Lowest</td>
+<td>High: cluster upkeep</td>
+</tr>
+<tr>
+<td>Change to archi tooling</td>
+<td>None</td>
+<td>Compose templates map to ECS task definitions; a deploy pipeline must run db-migrate and config-seed before any service update (section 5)</td>
+<td>Same mapping plus manifests</td>
+</tr>
+<tr>
+<td>Best when</td>
+<td>Speed matters most and downtime is acceptable</td>
+<td>Steady production service with small team</td>
+<td>The org standardizes on Kubernetes</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommendation: Option B.</strong> Option A is a legitimate phase-1 interim step:
+it can host staging in days and gives time to build Option B in Terraform
+for production. Option C solves problems this stack does not have.</p>
+<p>The Option B architecture:</p>
+<pre><code class="language-mermaid">flowchart TB
+    users[&quot;Users&quot;] --&gt; dns[&quot;Route 53 or&lt;br/&gt;Harvard DNS CNAME&quot;]
+    dns --&gt; alb[&quot;ALB + ACM TLS&quot;]
+    subgraph vpc[&quot;VPC — one copy per environment&quot;]
+        direction TB
+        subgraph ecs[&quot;ECS on Fargate — always-on services&quot;]
+            direction TB
+            chat[&quot;chatbot&lt;br/&gt;(+ QA evaluation console)&quot;]
+            dm[&quot;data-manager&quot;]
+            graf[&quot;grafana (optional)&quot;]
+            grader[&quot;grader (optional)&quot;]
+        end
+        deploy[&quot;one-shot deploy tasks:&lt;br/&gt;db-migrate, then config-seed&quot;]
+        bench[&quot;benchmark task&lt;br/&gt;(nightly, staging only)&quot;]
+        rds[(&quot;RDS for PostgreSQL&lt;br/&gt;with pgvector&quot;)]
+    end
+    alb --&gt; chat
+    chat --&gt; dm
+    ecs --&gt; rds
+    deploy --&gt; rds
+    evb[&quot;EventBridge&lt;br/&gt;Scheduler&quot;] --&gt; bench
+    bench --&gt; rds
+    ecs --&gt; llm[&quot;AWS Bedrock (new provider)&lt;br/&gt;or HUIT Bedrock proxy&quot;]
+    ecs --&gt; obs[&quot;CloudWatch Logs;&lt;br/&gt;S3 for reports, config, exports&quot;]
+</code></pre>
+<h2 id="5-terraform-approach">5. Terraform approach</h2>
+<ul>
+<li><strong>State backend:</strong> S3 bucket with state lock (native S3 lock on
+  Terraform 1.10+, or a DynamoDB lock table). One state per environment.</li>
+<li><strong>Layout:</strong> shared modules, thin environment roots.</li>
+</ul>
+<pre><code class="language-text">infra/
+  modules/
+    network/          # VPC, subnets, endpoints
+    database/         # RDS + pgvector, backups
+    ecs-service/      # one long-lived service (chatbot, data-manager, grafana, grader)
+    scheduled-task/   # benchmark
+    ingress/          # ALB, ACM, DNS
+    secrets/          # SSM parameters
+  envs/
+    staging/
+    prod/
+</code></pre>
+<ul>
+<li><strong>Repo home and CI:</strong> the Terraform lives in the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> GitLab, and GitLab
+  CI applies it to AWS. Federate GitLab CI to an IAM role through an OIDC
+  identity provider for the GitLab issuer — no long-lived AWS keys as CI
+  variables. Plan on merge request, apply on merge.</li>
+<li><strong>Two repo homes stay in play:</strong> the archi app code and images remain on
+  GitHub and GHCR; only the infrastructure code lives in GitLab. A deploy
+  connects the two only through image tags.</li>
+<li><strong>App config stays app config.</strong> Terraform provisions infrastructure; the
+  archi config still seeds Postgres through the config-seed job.</li>
+<li>
+<p><strong>The compose start gate must be rebuilt in the deploy pipeline.</strong> Today,
+  compose mounts the rendered config into the containers and blocks service
+  start until db-migrate and config-seed complete. ECS has no cross-service
+  <code>depends_on</code>, so the pipeline owns the order:</p>
+</li>
+<li>
+<p>Render the config and upload it to a versioned S3 object.</p>
+</li>
+<li>Run the db-migrate one-shot task. Wait for exit 0.</li>
+<li>Run the config-seed one-shot task against that S3 config. Wait for exit 0.</li>
+<li>Update the ECS services to the new task definition revision.</li>
+</ul>
+<p>Services fetch the rendered config from S3 at container start (an entrypoint
+step sets <code>CONFIG_PATH</code>). A failed step 2 or 3 stops the deploy before any
+user-facing service restarts.</p>
+<h2 id="6-cost-ranges">6. Cost ranges</h2>
+<p>Line items for Option B (estimates; confirm on the call):</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Staging</th>
+<th>Production</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fargate services (chatbot, data-manager; grafana and grader if enabled)</td>
+<td>About $60 to $75</td>
+<td>About $110 to $190</td>
+</tr>
+<tr>
+<td>RDS for PostgreSQL</td>
+<td>About $47 (db.t4g.medium, single-AZ)</td>
+<td>About $95 to $130 (Multi-AZ) + storage</td>
+</tr>
+<tr>
+<td>ALB</td>
+<td>About $20</td>
+<td>About $25</td>
+</tr>
+<tr>
+<td>Benchmark task (nightly)</td>
+<td>About $5 to $15</td>
+<td>$0 — the benchmark runs in staging only</td>
+</tr>
+<tr>
+<td>S3, EFS (evaluation artifacts), CloudWatch, EventBridge, SSM</td>
+<td>About $15</td>
+<td>About $25</td>
+</tr>
+<tr>
+<td>NAT gateway (only if used)</td>
+<td>$0 with public subnets</td>
+<td>About $35 to $60</td>
+</tr>
+<tr>
+<td><strong>Subtotal</strong></td>
+<td><strong>About $145 to $175</strong></td>
+<td><strong>About $255 to $430</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Bedrock tokens are the variable line.</strong> A worked example for a Claude
+Sonnet-class model at $3 per million input tokens and $15 per million output
+tokens: one <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> chat query with about 8,000 input tokens of retrieved context
+and about 600 output tokens costs about $0.03. One thousand queries cost
+about $33. The nightly benchmark adds judge-model tokens per run; current
+goldenset runs are hundreds of queries, so tens of dollars per month at a
+nightly cadence.</p>
+<p>Cost levers to raise on the call:</p>
+<ul>
+<li>Graviton (ARM) for Fargate and RDS: about 20% less than x86.</li>
+<li>Compute Savings Plans after load is steady: about 20% to 30% less.</li>
+<li>Fargate Spot for the benchmark task: about 70% less for that line.</li>
+<li>Stop or shrink staging outside work hours.</li>
+<li>Education prices, credits, or an Internet2 agreement — ask the SAs.</li>
+</ul>
+<h2 id="7-migration-phases">7. Migration phases</h2>
+<pre><code class="language-mermaid">flowchart LR
+    p0[&quot;Phase 0&lt;br/&gt;Foundations&lt;br/&gt;account audit, VPC,&lt;br/&gt;state backend, OIDC&quot;]
+    p1[&quot;Phase 1&lt;br/&gt;Staging stack&lt;br/&gt;full Option B copy&quot;]
+    p2[&quot;Phase 2&lt;br/&gt;Benchmark rig&lt;br/&gt;EventBridge + Fargate,&lt;br/&gt;reports to S3&quot;]
+    p3[&quot;Phase 3&lt;br/&gt;Production&lt;br/&gt;DNS cutover&quot;]
+    p4[&quot;Phase 4&lt;br/&gt;FASRC host&lt;br/&gt;becomes dev only&quot;]
+    p0 --&gt; p1 --&gt; p2 --&gt; p3 --&gt; p4
+</code></pre>
+<ol>
+<li><strong>Phase 0 — foundations.</strong> Audit the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> account (org membership,
+   guardrails, quotas). Create the Terraform state backend, the OIDC role,
+   and the network module. Request Bedrock model access.</li>
+<li><strong>Phase 1 — staging.</strong> Stand up the full Option B stack. Load the corpus
+   with a fresh ingest run. Point the team at it for daily use. Build the
+   direct Bedrock provider module here if the call picks that path.</li>
+<li><strong>Phase 2 — benchmark rig.</strong> Move the nightly goldenset run and reports
+   off the workstation. Compare results against the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> baseline to prove
+   the platform change did not move the numbers.</li>
+<li><strong>Phase 3 — production.</strong> Restore a Postgres dump into production RDS
+   (the database is small, so dump-and-restore beats DMS). Cut DNS over in a
+   planned window. Keep the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> deployment in place as rollback for two
+   weeks.</li>
+<li><strong>Phase 4 — settle.</strong> The GPU host keeps dev and <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> provider testing.
+   Decommission nothing else until management signs off.</li>
+</ol>
+<h2 id="8-risks-and-open-questions">8. Risks and open questions</h2>
+<ul>
+<li><strong>Data boundary.</strong> The HUIT proxy exists so Harvard traffic stays inside
+  the HUIT compliance boundary. Direct Bedrock in the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> account changes
+  that boundary. This is the main compliance question for the call.</li>
+<li><strong>Bedrock quotas.</strong> Default per-model token rates can be low in a fresh
+  account. Request increases in Phase 0, not at cutover.</li>
+<li><strong>HarvardKey SSO is OIDC, not SAML.</strong> The chat app uses Authlib OAuth with
+  OpenID Connect (<code>src/interfaces/chat_app/app.py</code>): issuer metadata, a
+  registered redirect URI, and client credentials. A production hostname
+  change means a new redirect URI registration with HUIT IAM, and the client
+  secret moves to SSM.</li>
+<li><strong>Benchmark integrity.</strong> Corpus fingerprints must match across
+  environments before any cross-environment comparison of scores.</li>
+<li><strong>Evaluation artifacts are file-backed.</strong> The QA evaluation console
+  (<code>src/evaluation/qa/</code>) keeps atoms, judgments, and run history in files
+  and SQLite on the container filesystem. Fargate task storage is ephemeral:
+  without a persistent volume (EFS) or an S3 sync, a task restart erases
+  the evaluation history.</li>
+<li><strong>Optional integrations.</strong> piazza, slack/mattermost, and the redmine
+  mailer are off by default today. Undecided whether they move at all.</li>
+<li><strong>Region assumption.</strong> All prices in this plan assume us-east-1. Confirm
+  the region on the call, with the section 1 assumptions.</li>
+</ul>
+<h2 id="9-notes-for-the-call">9. Notes for the call</h2>
+<h3 id="91-questions-for-the-aws-solutions-architects">9.1 Questions for the AWS solutions architects</h3>
+<ol>
+<li>Account posture: is the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> account inside an AWS Organization? Which
+   guardrails, SCPs, or Control Tower constraints apply to it?</li>
+<li>Bedrock: which Claude models are enabled in which regions for this
+   account? What are the default quotas, and what is the path to raise them?
+   Are cross-region inference profiles advisable here?</li>
+<li>Data boundary: what do AWS and Harvard agreements say about Bedrock
+   direct from the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> account versus the HUIT proxy, for our data
+   classification (public docs corpus plus user chat logs)?</li>
+<li>Network: does <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr>-to-AWS traffic ride Internet2 peering, Direct
+   Connect, or the public internet? Any private connectivity requirement for
+   the HarvardKey OIDC flow? (We believe browser redirects and public issuer
+   metadata suffice — confirm.)</li>
+<li>DNS and TLS: can <code>rc.fas.harvard.edu</code> names CNAME to an ALB, and does ACM
+   DNS validation work with Harvard-managed DNS?</li>
+<li>Cost: education prices, credits, an EDP, or an Internet2 Net+ agreement
+   available to this account? What support plan does the account carry?</li>
+<li>Scheduled containers at our scale: EventBridge Scheduler + ECS RunTask,
+   or AWS Batch — which do they recommend and why?</li>
+<li>pgvector on RDS: supported versions, <abbr title="The approximate-nearest-neighbor index type archi uses to find similar embeddings quickly.">HNSW</abbr> index guidance, and the
+   smallest reasonable instance class for about 10,000 vectors.</li>
+<li>Review our Option B diagram (section 4): what changes do they recommend?</li>
+<li>CI federation: the Terraform repo lives in the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> GitLab. What is the
+    recommended IAM OIDC identity-provider setup for a self-hosted GitLab
+    issuer, and which claim conditions (audience, project path, branch) do
+    they advise on the role trust policy?</li>
+</ol>
+<h3 id="92-decisions-for-management">9.2 Decisions for management</h3>
+<ol>
+<li>Monthly cost target. Section 6 gives the ranges; Option B lands near
+   $400 to $600 per month plus tokens for both environments.</li>
+<li>Order of environments. Recommendation: staging first, production after
+   the benchmark rig proves parity.</li>
+<li><abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> path: Bedrock direct or HUIT proxy as the production primary. Needs
+   the compliance answer from question 9.1.3, and Bedrock direct also needs
+   the new provider module (section 3.3).</li>
+<li>Data classification sign-off for the corpus and for user chat logs.</li>
+<li>Ownership: who operates the AWS environment and holds the on-call duty.
+   Managed services shrink this load; they do not remove it.</li>
+<li>Cutover window for production DNS, and the two-week <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> rollback hold.</li>
+<li>Scope ruling on the optional services: grafana, grader, piazza,
+   slack/mattermost, redmine mailer.</li>
+</ol>
+<h3 id="93-facts-to-have-on-hand">9.3 Facts to have on hand</h3>
+<ul>
+<li>Corpus: about 820 files, about 6,000 vector chunks. Database size is tiny.</li>
+<li>Embedding model: all-MiniLM-L6-v2, about 80 MB, CPU-friendly.</li>
+<li>Always-on compute on dev today: about 2 to 3 vCPUs (chatbot and
+  data-manager). grafana and grader add about 1 vCPU if enabled.</li>
+<li>Images: GHCR, pulled with a classic PAT.</li>
+<li>Terraform home: the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> GitLab; GitLab CI applies it to AWS. The app
+  code and images stay on GitHub and GHCR.</li>
+<li>The Bedrock-native Anthropic JSON request format is already in production
+  use through the HUIT proxy provider. A direct AWS Bedrock provider does
+  not exist in the code yet; it is new, bounded work.</li>
+<li>Deploy model: config lives in Postgres, seeded at deploy; a config edit
+  without a reseed is a no-op. Any AWS design must keep the seed step and
+  its start-order gate (section 5).</li>
+</ul>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

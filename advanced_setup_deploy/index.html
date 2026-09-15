@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -91,6 +95,14 @@
                 <li class="toctree-l1"><a class="reference internal" href="../benchmarking/">Benchmarking</a>
                 </li>
               </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
               <ul class="current">
                 <li class="toctree-l1 current"><a class="reference internal current" href="#">Advanced Setup</a>
     <ul class="current">
@@ -103,6 +115,8 @@
     <li class="toctree-l3"><a class="reference internal" href="#running-multiple-deployments-on-the-same-machine">Running multiple deployments on the same machine</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#persisting-data-between-deployments">Persisting data between deployments</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#schema-migrations-run-automatically-at-startup">Schema migrations run automatically at startup</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#https-configuration-for-production">HTTPS Configuration for Production</a>
         <ul>
@@ -125,6 +139,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -243,8 +261,31 @@ The remaining steps mirror the Podman flow. NOTE: this has not yet been fully te
 <p>To see what volumes are currently present, run:</p>
 <pre><code class="language-bash">docker/podman volume ls
 </code></pre>
+<h3 id="schema-migrations-run-automatically-at-startup">Schema migrations run automatically at startup</h3>
+<p>When Postgres is enabled, every deployment renders a one-shot <code>db-migrate</code> container that
+applies each <code>migrations/*.sql</code> file, in filename order, against the database before any
+application service starts. It exists so an existing deployment picks up schema changes on
+redeploy instead of failing at ingest time against an out-of-date <code>documents</code> table.</p>
+<p>What this means in practice:</p>
+<ul>
+<li><strong><code>db-migrate</code> is on the critical path.</strong> <code>config-seed</code> and the data manager both wait on
+  it with <code>condition: service_completed_successfully</code>, so if it fails, neither starts. That
+  is deliberate — a half-migrated schema that silently swallows writes is worse than a stack
+  that refuses to come up.</li>
+<li><strong>It stops at the first error.</strong> The container runs under <code>set -e</code> with psql's
+  <code>ON_ERROR_STOP=1</code>, so one bad statement ends the run and exits non-zero rather than
+  continuing through the remaining files.</li>
+<li><strong>It is safe to re-run.</strong> Migrations are written to be no-ops against a schema <code>init.sql</code>
+  already created, so a fresh deployment applies them and changes nothing.</li>
+<li><strong>It does not restart.</strong> <code>restart: "no"</code> — a migration that failed should stay failed and
+  visible, not loop.</li>
+</ul>
+<p>The migration files are copied into your deployment directory next to <code>init.sql</code>, and
+mounted read-only at <code>/migrations</code>.</p>
+<p>If the stack does not come up after a redeploy, check this container first — see
+<a href="../troubleshooting/#stack-will-not-start-db-migrate-failed">Stack will not start: <code>db-migrate</code> failed</a>.</p>
 <h3 id="https-configuration-for-production">HTTPS Configuration for Production</h3>
-<p>For production deployments, especially when using BYOK (Bring Your Own Key), HTTPS is strongly recommended to protect API keys in transit.</p>
+<p>For production deployments, especially when using <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr> (Bring Your Own Key), HTTPS is strongly recommended to protect API keys in transit.</p>
 <h4 id="using-a-reverse-proxy">Using a Reverse Proxy</h4>
 <p>The recommended approach is to terminate TLS at a reverse proxy (nginx, Caddy, Traefik):</p>
 <p><strong>Example nginx configuration:</strong></p>
@@ -292,11 +333,22 @@ The remaining steps mirror the Podman flow. NOTE: this has not yet been fully te
 <li>[ ] Firewall rules limiting direct access to internal ports</li>
 <li>[ ] Regular certificate renewal (use Let's Encrypt/certbot)</li>
 </ul>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>
     <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
-        <a href="../benchmarking/" class="btn btn-neutral float-left" title="Benchmarking"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../interpreting_benchmark_results/" class="btn btn-neutral float-left" title="Interpreting Results"><span class="icon icon-circle-arrow-left"></span> Previous</a>
         <a href="../adding_providers/" class="btn btn-neutral float-right" title="Adding Providers">Next <span class="icon icon-circle-arrow-right"></span></a>
     </div>
 
@@ -324,7 +376,7 @@ The remaining steps mirror the Podman flow. NOTE: this has not yet been fully te
         </span>
     
     
-      <span><a href="../benchmarking/" style="color: #fcfcfc">&laquo; Previous</a></span>
+      <span><a href="../interpreting_benchmark_results/" style="color: #fcfcfc">&laquo; Previous</a></span>
     
     
       <span><a href="../adding_providers/" style="color: #fcfcfc">Next &raquo;</a></span>

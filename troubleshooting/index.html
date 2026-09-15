@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -92,6 +96,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -101,6 +113,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul class="current">
@@ -121,6 +137,8 @@
     <li class="toctree-l2"><a class="reference internal" href="#docker-build-failures">Docker Build Failures</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#multiple-deployments">Multiple Deployments</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stack-will-not-start-db-migrate-failed">Stack will not start: db-migrate failed</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#getting-help">Getting Help</a>
     </li>
@@ -277,17 +295,67 @@ docker logs archi-myapp-data-manager
 <pre><code class="language-bash">archi list-services
 </code></pre>
 <hr />
+<h2 id="stack-will-not-start-db-migrate-failed">Stack will not start: <code>db-migrate</code> failed</h2>
+<p>When Postgres is enabled, a one-shot <code>db-migrate</code> container applies pending schema
+migrations before anything else starts. <code>config-seed</code> and the data manager wait for it to
+complete successfully, so a failure here keeps the whole stack down by design — see
+<a href="../advanced_setup_deploy/#schema-migrations-run-automatically-at-startup">Schema migrations run automatically at startup</a>.</p>
+<p>Symptom: services sit in <code>Created</code> or <code>waiting</code> and never come up.</p>
+<p>Check the container's logs first — it names the file it was applying when it stopped:</p>
+<pre><code class="language-bash">docker logs &lt;deployment-name&gt;-db-migrate
+</code></pre>
+<p>Common causes:</p>
+<table>
+<thead>
+<tr>
+<th>Log line</th>
+<th>Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fe_sendauth: no password supplied</code> or <code>password authentication failed</code></td>
+<td><code>PG_PASSWORD</code> is missing or empty in the deployment's <code>.env</code></td>
+<td>Set <code>PG_PASSWORD</code> in <code>.env</code> and redeploy. The container passes it to psql as <code>PGPASSWORD</code>.</td>
+</tr>
+<tr>
+<td><code>could not connect to server</code></td>
+<td>Postgres was not healthy in time</td>
+<td>Check the <code>postgres</code> container's logs and healthcheck.</td>
+</tr>
+<tr>
+<td>A psql <code>ERROR:</code> naming a table or column</td>
+<td>A genuine problem in a migration file, applied against your schema</td>
+<td>Read the named <code>.sql</code> file under your deployment's <code>migrations/</code> directory to see what ran. Fix it in <code>src/cli/templates/migrations/</code> — <strong>not</strong> in the deployment directory, which is rendered output: each redeploy overwrites the packaged files there and removes any <code>.sql</code> no longer packaged.</td>
+</tr>
+</tbody>
+</table>
+<p>The container does not restart on failure (<code>restart: "no"</code>), so its logs stay available
+until the next deployment.</p>
+<hr />
 <h2 id="getting-help">Getting Help</h2>
 <ul>
 <li><strong>GitHub Issues</strong>: <a href="https://github.com/archi-physics/archi/issues">archi-physics/archi</a></li>
 <li><strong>Verbose Logging</strong>: Check container logs with <code>docker logs -f &lt;container-name&gt;</code></li>
 <li><strong>Configuration Reference</strong>: See the <a href="../configuration/">Configuration</a> page for all available settings</li>
 </ul>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>
     <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
-        <a href="../developer_guide/" class="btn btn-neutral float-left" title="Developer Guide"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../observability/" class="btn btn-neutral float-left" title="Observability"><span class="icon icon-circle-arrow-left"></span> Previous</a>
     </div>
 
   <hr/>
@@ -314,7 +382,7 @@ docker logs archi-myapp-data-manager
         </span>
     
     
-      <span><a href="../developer_guide/" style="color: #fcfcfc">&laquo; Previous</a></span>
+      <span><a href="../observability/" style="color: #fcfcfc">&laquo; Previous</a></span>
     
     
   </span>

@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -166,6 +170,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -175,6 +187,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -232,6 +248,19 @@ evidence from retrieved sources, and keep responses concise and actionable.
 <li><strong><code>tools</code></strong> (list of strings): Tools this agent can use — a subset of tools defined by the agent class.</li>
 </ul>
 <p><strong>Prompt body:</strong> Everything after the frontmatter is the system prompt.</p>
+<div class="admonition note">
+<p class="admonition-title">Automatic citation guidance for retrieval agents</p>
+<p>If an agent's <code>tools</code> list includes a vectorstore retriever
+(<code>search_vectorstore_hybrid</code> or <code>search_knowledge_base</code>), Archi automatically
+<strong>appends a default citation instruction</strong> to the resolved system prompt at load
+time: cite sources inline as a Markdown link <code>[title](url)</code> (using the title and
+URL shown for each search result), never as bare <code>[1]</code>/<code>[2]</code> indices, and never
+fabricate a URL. This is why retrieval agents emit hyperlinked citations even when
+their prompt body says nothing about citations — the guidance ships in code
+(<code>agent_spec._apply_citation_guidance</code>), so it does not need to be repeated in every
+agent file. Agents without a retriever tool are unaffected. To override the wording,
+add your own citation instructions to the prompt body (they are additive).</p>
+</div>
 <h3 id="practical-agent-spec-examples">Practical Agent Spec Examples</h3>
 <h4 id="minimal-default-agent">Minimal default agent</h4>
 <pre><code class="language-markdown">---
@@ -311,7 +340,7 @@ When a request is about rates, failures, or timeseries:
 <li><strong>Use for:</strong> Reading a specific document after finding it via search</li>
 </ul>
 <h3 id="search_vectorstore_hybrid"><code>search_vectorstore_hybrid</code></h3>
-<p>Semantic and keyword (BM25) hybrid retrieval of relevant passages from the vector store.</p>
+<p>Semantic and keyword (<abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr>) hybrid retrieval of relevant passages from the vector store.</p>
 <ul>
 <li><strong>Use for:</strong> Answering questions when you don't know exact keywords</li>
 </ul>
@@ -454,7 +483,7 @@ external information retrieval.
 </tbody>
 </table>
 <h3 id="hybrid-search">Hybrid Search</h3>
-<p>Hybrid search (semantic + BM25 keyword retrieval) is enabled by default as a dynamic runtime setting. The weights are configurable in your YAML:</p>
+<p>Hybrid search (semantic + <abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr> keyword retrieval) is enabled by default as a dynamic runtime setting. The weights are configurable in your YAML:</p>
 <pre><code class="language-yaml">data_manager:
   retrievers:
     hybrid_retriever:
@@ -476,6 +505,17 @@ external information retrieval.
 <li><strong>Deleted files</strong> are removed from the collection</li>
 <li><strong>All artifacts</strong> are tracked in the PostgreSQL <code>resources</code> catalog</li>
 </ol>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>

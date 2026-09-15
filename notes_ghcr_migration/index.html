@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Exploration — Move fasrc/archi base images to ghcr.io - Archi Docs</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Exploration \u2014 Move fasrc/archi base images to ghcr.io";
+        var mkdocs_page_input_path = "notes_ghcr_migration.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Exploration — Move fasrc/archi base images to ghcr.io</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/notes_ghcr_migration.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="exploration-move-fasrcarchi-base-images-to-ghcrio">Exploration — Move fasrc/archi base images to ghcr.io</h1>
+<blockquote>
+<p>Status: <strong>exploration only</strong> — no decision yet. Captured to revisit later.
+Trigger: PR #8 and #9 land green on lint/unit-tests, but <code>build-base-images</code>
+stays red because <code>DOCKERHUB_USERNAME</code>/<code>DOCKERHUB_TOKEN</code> aren't provisioned
+on the fasrc/archi fork. ghcr.io would sidestep the secret-provisioning
+step entirely (uses the auto-injected <code>GITHUB_TOKEN</code>).</p>
+</blockquote>
+<h2 id="surface-area-where-dockerioa2rchi-reaches">Surface area — where <code>docker.io/a2rchi/...</code> reaches</h2>
+<p>Three tiers, only one is self-contained.</p>
+<pre><code>                ┌─────────────────────────────────────────────────────┐
+                │   &quot;docker.io/a2rchi/...&quot; reaches in three places    │
+                └─────────────────────────────────────────────────────┘
+                                       │
+        ┌──────────────────────────────┼──────────────────────────────┐
+        ▼                              ▼                              ▼
+  ┌──────────────┐            ┌──────────────────┐         ┌─────────────────────┐
+  │ CI workflows │            │ 12 Dockerfiles   │         │ scripts/dev/ tools  │
+  │  (3 files)   │            │ (FROM lines)     │         │ build/push/tag-mgmt │
+  ├──────────────┤            ├──────────────────┤         ├─────────────────────┤
+  │ pr-preview   │            │ Dockerfile-chat  │         │ build_docker_…sh    │
+  │ publish-base │            │ -data-manager    │         │ push_docker_…sh     │
+  │ test-and-bld │            │ -grader / -gpu   │         │ docker_common.sh    │
+  │              │            │ -piazza          │         │ update_service_…py  │
+  │              │            │ -mattermost      │         │ manage_docker_tags  │
+  │ secrets:     │            │ -mailbox         │         │   ← DockerHub-      │
+  │ DOCKERHUB_*  │            │ -redmine         │         │     specific API    │
+  │              │            │ -benchmarks      │         │                     │
+  │              │            │ (+ 4 *-gpu)      │         │ ALREADY has         │
+  │              │            │                  │         │ SOURCE_PREFIXES =   │
+  │              │            │ Templates ship   │         │  {localhost,        │
+  │              │            │ via pip install  │         │   dockerhub}        │
+  │              │            │ archi → end-user │         │                     │
+  │              │            │ machines         │         │                     │
+  └──────────────┘            └──────────────────┘         └─────────────────────┘
+       fork-internal              user-facing                  half abstracted
+</code></pre>
+<p>Concrete file refs:</p>
+<ul>
+<li><code>.github/workflows/publish-base-images.yml</code> (uses <code>secrets.DOCKERHUB_*</code>)</li>
+<li><code>.github/workflows/pr-preview.yml</code> (build + push + pull paths, all docker.io)</li>
+<li><code>.github/workflows/test-and-build-tag.yml</code> (production-release publish)</li>
+<li><code>scripts/dev/docker_common.sh</code> line 50: <code>login docker.io --username ...</code></li>
+<li><code>scripts/dev/update_service_base_images.py</code> line 20: already has
+  <code>SOURCE_PREFIXES = {"localhost": ..., "dockerhub": ...}</code> — extension point
+  for <code>"ghcr"</code> is sitting right there.</li>
+<li><code>scripts/dev/manage_docker_tags.py</code> — DockerHub-specific REST client.
+  GHCR equivalent uses GitHub Packages API; different auth, different endpoints.</li>
+<li><code>src/cli/templates/dockerfiles/Dockerfile-*</code> (12 files) hardcode
+  <code>FROM docker.io/a2rchi/a2rchi-python-base:latest</code> (or pytorch-base).</li>
+</ul>
+<h2 id="use-ghcrio-four-plausible-meanings">"Use ghcr.io" — four plausible meanings</h2>
+<pre><code>┌─────────────────────────────────────────────────────────────────────┐
+│  (A) CI-only swap                                                   │
+│      fasrc's CI pushes to ghcr.io/fasrc, templates still pull       │
+│      docker.io/a2rchi. Fixes the red push job; nobody downstream    │
+│      notices. Cheapest. Also: pointless? CI builds images it then   │
+│      immediately throws away.                                       │
+│                                                                     │
+│  (B) Full swap (fork self-sufficient)                               │
+│      Templates rewritten to FROM ghcr.io/fasrc/... End users        │
+│      deploying fasrc/archi pull from fasrc's registry. Clean break  │
+│      from upstream's docker.io/a2rchi.                              │
+│                                                                     │
+│  (C) Multi-registry via existing SOURCE_PREFIXES abstraction        │
+│      Add &quot;ghcr&quot; alongside &quot;localhost&quot;/&quot;dockerhub&quot;. Operators pick   │
+│      at deploy time. Templates parameterized rather than hardcoded. │
+│      Principled; biggest scope.                                     │
+│                                                                     │
+│  (D) Dual-publish (mirror)                                          │
+│      Push to both registries; default templates to one, document    │
+│      the other. Most compatible, most maintenance.                  │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="open-threads-pick-one-to-pull-on-later">Open threads — pick one to pull on later</h2>
+<ol>
+<li>
+<p><strong>End-state for the fork.</strong> Permanent divergence from upstream's image
+   namespace, or stay close and only "own" the bits the fork's own CI
+   needs? Dictates whether the target is (A) or (B).</p>
+</li>
+<li>
+<p><strong>Who consumes the base images downstream?</strong> Today <code>archi create</code> on
+   a HUIT/HMS box pulls <code>docker.io/a2rchi/a2rchi-python-base:latest</code>.
+   Are anyone's deployments pinned to specific tags? Changing templates
+   breaks those.</p>
+</li>
+<li>
+<p><strong>DockerHub-specific tooling.</strong> <code>manage_docker_tags.py</code> prunes old
+   <code>main-*</code> tags via the DockerHub REST API. For ghcr.io the analog is
+   <code>DELETE /user/packages/container/&lt;image&gt;/versions/&lt;id&gt;</code>. Rewrite vs.
+   keep-for-legacy is a real fork.</p>
+</li>
+<li>
+<p><strong>Relationship to the failing CI.</strong> If the <em>only</em> goal is "make
+   build-base-images green on PRs without provisioning DockerHub
+   secrets," (A) does it, but builds images CI throws away — feels
+   wrong. (C) is principled but bigger. (D) is conservative but doubles
+   publish work.</p>
+</li>
+<li>
+<p><strong>Naming.</strong> <code>ghcr.io/fasrc/a2rchi-python-base</code> (preserves history)
+   vs. <code>ghcr.io/fasrc/archi-python-base</code> (matches the project name).
+   Choosing now avoids a rename later.</p>
+</li>
+<li>
+<p><strong>GHCR org policies.</strong> fasrc org may need "allow GHCR publishing"
+   toggled in <code>Settings → Packages</code> before this is even possible.
+   Worth confirming before designing around it.</p>
+</li>
+</ol>
+<h2 id="cheapest-possible-unblock-if-we-ever-want-it">Cheapest possible unblock (if we ever want it)</h2>
+<p>If the only objective is "make <code>build-base-images</code> green on PR #8/#9 for
+now," the smallest change is option (A) limited to <code>pr-preview.yml</code>:</p>
+<pre><code class="language-yaml">permissions:
+  packages: write
+
+- uses: docker/login-action@v3
+  with:
+    registry: ghcr.io
+    username: ${{ github.actor }}
+    password: ${{ secrets.GITHUB_TOKEN }}
+
+# replace `docker.io/a2rchi/` with `ghcr.io/fasrc/` in build/push/pull steps
+</code></pre>
+<p>No new repo secrets. No template changes. Doesn't touch <code>publish-base-images</code>
+or <code>test-and-build-tag</code>. Lives stacked on PR #8.</p>
+<p>But it's not obviously the right thing — the published image would be
+fork-only and never consumed by templates, so it's mostly ceremony to
+turn a checkmark green. Real value would be (B) or (C).</p>
+<h2 id="punted">Punted</h2>
+<p>No decision recorded. No proposal opened. Revisit when:</p>
+<ul>
+<li>The build-base-images failure blocks something we actually care about, or</li>
+<li>The fork formally diverges enough from upstream that it needs its own
+  publishable images, or</li>
+<li>A user reports that pulling <code>docker.io/a2rchi/...</code> is failing for them.</li>
+</ul>
+<hr />
+<h2 id="update-decisions-locked-2026-05-28-explore-session">UPDATE — Decisions locked (2026-05-28 explore session)</h2>
+<p>Shape chosen: <strong>path D — additive multi-registry / dual-publish</strong>. Existing
+docker.io publishing stays untouched; ghcr.io is added as an opt-in lane.</p>
+<h3 id="locked">Locked</h3>
+<ol>
+<li><strong>Image names on ghcr — keep <code>a2rchi-*</code> prefix.</strong> Final paths:</li>
+<li><code>ghcr.io/fasrc/a2rchi-python-base</code></li>
+<li><code>ghcr.io/fasrc/a2rchi-pytorch-base</code></li>
+</ol>
+<p>Rationale: rename costs more later; preserves consistency across registries.</p>
+<ol>
+<li><strong>Visibility — public.</strong></li>
+</ol>
+<p>Rationale: zero confidentiality benefit (base images contain only pinned
+   public PyPI packages + MIT LICENSE; archi-physics's docker.io copy is
+   already public; security audit confirmed no project secrets baked in).
+   Cost-free (no storage/bandwidth metering on public packages). Eliminates
+   <code>docker login</code> ceremony for every downstream consumer.</p>
+<p>Caveat: confirm there's no FAS-level "no public artifacts by default"
+   policy before first push.</p>
+<ol>
+<li><strong>Graceful skip — CI fails soft when DOCKERHUB_* secrets are missing.</strong></li>
+</ol>
+<p>CI pushes to ghcr always (uses auto-injected <code>GITHUB_TOKEN</code> with
+   <code>packages:write</code>); pushes to docker.io only when both <code>DOCKERHUB_USERNAME</code>
+   and <code>DOCKERHUB_TOKEN</code> are set. Missing-secret case logs a notice and
+   continues; doesn't fail the job. Means fasrc PRs go green without
+   provisioning DockerHub secrets, archi-physics behavior is unchanged.</p>
+<h3 id="deferred-to-implementation-pass">Deferred to implementation pass</h3>
+<ul>
+<li>Auth refactor scope: <code>docker_common.sh::docker_login</code> parameterization vs
+  sidestep via <code>docker/login-action@v3</code> for ghcr only.</li>
+<li>Tag retention on ghcr: write a sibling tool against GitHub Packages API,
+  vs lean on per-repo retention policy, vs skip pruning entirely.</li>
+<li>Tag taxonomy: mirror exactly across both registries (<code>main-&lt;sha&gt;</code>,
+  <code>pr-&lt;n&gt;</code>, <code>vX.Y.Z</code>, <code>latest</code>) — leaning yes.</li>
+<li>Service-image consumption (12 <code>Dockerfile-*</code> FROM lines): templates stay
+  docker.io as default; users opt into ghcr via existing
+  <code>archi create --base-image-source ghcr</code> flag (extension of
+  <code>SOURCE_PREFIXES</code> in <code>update_service_base_images.py</code>); no template-level
+  changes needed.</li>
+</ul>
+<h3 id="acceptance-criteria">Acceptance criteria</h3>
+<ul>
+<li>New <code>SOURCE_PREFIXES</code> entry: <code>"ghcr": "ghcr.io/fasrc/"</code></li>
+<li><code>pr-preview.yml</code> + <code>publish-base-images.yml</code> + <code>test-and-build-tag.yml</code>:
+  each publishes to ghcr always, to docker.io when secrets present; neither
+  path fails the job if the other lacks credentials.</li>
+<li>ghcr packages created as <strong>public</strong> on first publish.</li>
+<li><code>archi create --base-image-source ghcr</code> rewrites FROM lines to
+  <code>ghcr.io/fasrc/a2rchi-{python,pytorch}-base:&lt;tag&gt;</code>.</li>
+<li><code>archi create --base-image-source dockerhub</code> remains the default behavior.</li>
+<li>No changes to in-tree <code>Dockerfile-*</code> templates (no
+  <code>FROM ghcr.io/...</code> hardcoded anywhere).</li>
+<li><code>manage_docker_tags.py</code> unchanged (still docker.io-only); no equivalent
+  shipped for ghcr in this change.</li>
+</ul>
+<p>Tracking: Asana action ticket
+<a href="https://app.asana.com/1/111770479145744/project/1207453379095415/task/1215182716573047">1215182716573047</a>
+(due 2026-06-05).</p>
+<hr />
+<h2 id="status-implementation-pr-open">STATUS — Implementation PR open</h2>
+<p><strong>PR:</strong> <a href="https://github.com/fasrc/archi/pull/13">fasrc/archi#13 — feat(ci): publish base images to ghcr.io alongside docker.io</a>
+<strong>Branch:</strong> <code>feat/ghcr-dual-publish</code>
+<strong>OpenSpec change:</strong> <code>add-ghcr-dual-publish</code> (local — at <code>openspec/changes/add-ghcr-dual-publish/</code>; the openspec dir is gitignored)
+<strong>Date opened:</strong> 2026-05-28</p>
+<p>What's done (in-PR):
+- SOURCE_PREFIXES extension to add <code>ghcr</code>
+- <code>push_docker_images.sh</code> rewritten for dual-publish (always-ghcr + conditional-docker.io + <code>--image</code> filter)
+- All 3 CI workflows updated (pr-preview, publish-base-images, test-and-build-tag) with GHCR login + push-via-script + graceful docker.io skip
+- Pre-existing image-name bug in <code>test-and-build-tag.yml</code>'s promote-to-latest fixed as a bonus</p>
+<p>What's NOT done (post-merge manual steps):
+- Confirm fasrc org permits GHCR publishing (assumed already done per ticket)
+- Merge → first publish lands as private (GitHub default)
+- Flip both packages to public visibility (UI or <code>gh api</code>)
+- Anonymous-pull verification</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

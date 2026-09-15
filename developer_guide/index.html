@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -92,6 +96,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -121,10 +133,18 @@
     <li class="toctree-l2"><a class="reference internal" href="#dev-mode">Dev Mode</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#contribution-workflow">Contribution Workflow</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#reading-the-pr-list">Reading the PR list</a>
+    </li>
+        </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#editing-documentation">Editing Documentation</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#smoke-tests">Smoke Tests</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#embedding-benchmarks">Embedding benchmarks</a>
+    </li>
+        </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#ci-cd-architecture">CI / CD Architecture</a>
         <ul>
@@ -133,6 +153,8 @@
     <li class="toctree-l3"><a class="reference internal" href="#release-test-and-build-tagyml">Release (test-and-build-tag.yml)</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#publish-base-images-publish-base-imagesyml">Publish Base Images (publish-base-images.yml)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#pr-readiness-labels-pr-readiness-labelsyml">PR Readiness Labels (pr-readiness-labels.yml)</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#docker-layer-caching">Docker Layer Caching</a>
     </li>
@@ -143,6 +165,12 @@
     <li class="toctree-l2"><a class="reference internal" href="#postgres-usage-overview">Postgres Usage Overview</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#dockerhub-images">DockerHub Images</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#pointing-the-service-templates-at-a-base-image">Pointing the service templates at a base image</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#which-service-templates-the-deploy-preflight-refuses">Which service templates the deploy preflight refuses</a>
+    </li>
+        </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#data-ingestion-architecture">Data Ingestion Architecture</a>
         <ul>
@@ -167,6 +195,10 @@
         </ul>
     </li>
     </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -200,7 +232,7 @@
                 <h1 id="developers-guide">Developers Guide</h1>
 <p>Below is all the information developers may need to get started contributing to the Archi project.</p>
 <h2 id="architecture-overview">Architecture Overview</h2>
-<p>Archi is a containerized RAG framework with these core components:</p>
+<p>Archi is a containerized <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> framework with these core components:</p>
 <pre><code>┌─────────────────────────────────────────────────────────┐
 │                    CLI (archi create)                     │
 │  Renders configs, builds images, launches containers     │
@@ -257,7 +289,7 @@
 </tbody>
 </table>
 <h2 id="provider-architecture">Provider Architecture</h2>
-<p>All LLM providers extend <code>BaseProvider</code> (<code>src/archi/providers/base_provider.py</code>):</p>
+<p>All <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> providers extend <code>BaseProvider</code> (<code>src/archi/providers/base_provider.py</code>):</p>
 <pre><code class="language-python">class BaseProvider(ABC):
     @abstractmethod
     def get_model(self, model_name, **kwargs) -&gt; BaseChatModel: ...
@@ -270,7 +302,7 @@
 <ul>
 <li><code>get_provider(provider_type)</code> — returns a provider instance</li>
 <li><code>get_model(provider_type, model_name)</code> — returns a LangChain <code>BaseChatModel</code></li>
-<li><code>get_provider_with_api_key(provider_type, api_key)</code> — for BYOK</li>
+<li><code>get_provider_with_api_key(provider_type, api_key)</code> — for <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr></li>
 </ul>
 <p>Built-in providers:</p>
 <table>
@@ -389,6 +421,39 @@ docker restart chatbot-my-archi
 <li><strong>Commit</strong>: Use short, lowercase commit summaries (e.g., <code>add gemini provider</code>).</li>
 <li><strong>PR</strong>: Include a brief summary, test results, and documentation impact. Link related issues.</li>
 </ol>
+<h3 id="reading-the-pr-list">Reading the PR list</h3>
+<p>The pull request index shows the CI check rollup but <strong>not</strong> mergeability, so a
+conflicted PR with green checks looks identical to one that is ready. Two
+automatically-maintained labels close that gap — see
+<a href="#pr-readiness-labels-pr-readiness-labelsyml">PR Readiness Labels</a>:</p>
+<table>
+<thead>
+<tr>
+<th>Chip</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ready-to-merge</code></td>
+<td>Nothing blocks a merge: not a draft, no conflicts, checks green, and no unresolved review finding.</td>
+</tr>
+<tr>
+<td><code>conflicts</code></td>
+<td>Merge-conflicted with <code>dev</code>, drafts included. Resolve it before spending another review round — answering findings cannot land the PR.</td>
+</tr>
+<tr>
+<td><em>neither</em></td>
+<td>In flight: review findings outstanding, or checks not green.</td>
+</tr>
+</tbody>
+</table>
+<p><code>ready-to-merge</code> is <strong>not</strong> a claim that review is provably complete — it is a
+mechanical predicate: no unresolved review threads, checks green, not conflicted.
+The review-response skill resolves threads as it addresses them, so <code>isResolved</code>
+is the authoritative signal.</p>
+<p>Filter for what is actually mergeable:
+<a href="https://github.com/fasrc/archi/pulls?q=is%3Apr+is%3Aopen+label%3Aready-to-merge"><code>is:pr is:open label:ready-to-merge</code></a>.</p>
 <h2 id="editing-documentation">Editing Documentation</h2>
 <p>Editing documentation requires the <code>mkdocs</code> Python package:</p>
 <pre><code class="language-bash">pip install mkdocs
@@ -441,6 +506,47 @@ export FILE_SEARCH_QUERY=&quot;first linux server installation&quot;
 export METADATA_SEARCH_QUERY=&quot;ppc.mit.edu&quot;
 export VECTORSTORE_QUERY=&quot;cms&quot;
 </code></pre>
+<h3 id="embedding-benchmarks">Embedding benchmarks</h3>
+<p>The embedding benchmarks live in <code>tests/smoke/test_embedding_benchmarks.py</code> and are deliberately
+<strong>outside the gating suite</strong> so a HuggingFace CDN outage cannot red a pull request (see issue #187).
+Run them manually when you need to verify the embedding pipeline:</p>
+<pre><code class="language-bash">python -m pytest tests/smoke/test_embedding_benchmarks.py -v
+</code></pre>
+<p>These tests download approximately 90 MB of model weights from the HuggingFace CDN on first run and
+take 30–50 seconds per test on CPU. If the CDN is unreachable they are reported as skipped with a
+reason that names the network, rather than failing.</p>
+<p>A skip means "not verified", so the guard is deliberately narrow about what earns one:</p>
+<table>
+<thead>
+<tr>
+<th>Outcome</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Skipped</strong> — network</td>
+<td>A connection or transport failure, a TLS error, a timeout, an interrupted transfer, a protocol error from the <em>server</em>, <code>429</code> rate limiting, <strong>any</strong> <code>5xx</code> (including the <code>520</code>–<code>524</code> codes Cloudflare emits for origin trouble), or offline mode with a cold cache.</td>
+</tr>
+<tr>
+<td><strong>Skipped</strong> — library</td>
+<td><code>langchain_huggingface</code> (or another benchmark dependency) is not installed.</td>
+</tr>
+<tr>
+<td><strong>Failed</strong></td>
+<td>The Hub answered definitively — the model repository is missing, renamed, or gated behind credentials (<code>404</code>/<code>403</code>/<code>401</code>); the endpoint is misconfigured (a malformed <code>HF_ENDPOINT</code>, a redirect loop, a protocol error in the request <em>we</em> built); or the failure is local, such as a permission error on the model cache or a full disk.</td>
+</tr>
+</tbody>
+</table>
+<p>The last row is the important one: a removed model repository or a mistyped <code>HF_ENDPOINT</code> is a broken
+dependency, not an outage, so it fails loudly instead of leaving the benchmarks permanently
+green-by-skip. The <code>5xx</code> side is a range rather than a list of codes, because a fronting CDN reports
+origin trouble with its own status numbers.</p>
+<p>The distinction that decides every row is <strong>"did a usable answer come back?"</strong> — not which library
+raised. That is why the guard names transport exception types individually rather than the convenient
+shared base class of each HTTP library: those bases also cover URL-validation and client-side protocol
+errors, which never touch the network. A test enumerates the subclasses of everything the guard names
+and fails if an over-broad base is added, so this cannot regress quietly.</p>
 <h2 id="ci-cd-architecture">CI / CD Architecture</h2>
 <p>All CI workflows run on GitHub-hosted <code>ubuntu-latest</code> runners with Docker (not Podman).</p>
 <h3 id="pr-preview-pr-previewyml">PR Preview (<code>pr-preview.yml</code>)</h3>
@@ -487,6 +593,136 @@ export VECTORSTORE_QUERY=&quot;cms&quot;
 <p>Manually dispatched; builds Docker base images, pushes to DockerHub, runs smoke tests, then tags and releases.</p>
 <h3 id="publish-base-images-publish-base-imagesyml">Publish Base Images (<code>publish-base-images.yml</code>)</h3>
 <p>Triggered on push to <code>main</code>; rebuilds and pushes base images when requirements or Dockerfiles change.</p>
+<h3 id="pr-readiness-labels-pr-readiness-labelsyml">PR Readiness Labels (<code>pr-readiness-labels.yml</code>)</h3>
+<p>Reconciles the <code>ready-to-merge</code> and <code>conflicts</code> labels on every open PR so the PR
+index reflects mergeability, which GitHub itself never renders there.</p>
+<p>The workflow subscribes to every event Actions can be triggered by that changes the
+answer:</p>
+<table>
+<thead>
+<tr>
+<th>Trigger</th>
+<th>Why it changes the answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>push</code> to <code>dev</code></td>
+<td>Merging one PR is what conflicts the others</td>
+</tr>
+<tr>
+<td><code>pull_request</code> (incl. <code>edited</code>, <code>labeled</code>/<code>unlabeled</code>)</td>
+<td>Retargeting changes the base; a hand-edited chip needs correcting</td>
+</tr>
+<tr>
+<td><code>pull_request_review</code>, <code>pull_request_review_comment</code></td>
+<td>A new finding appears</td>
+</tr>
+<tr>
+<td><code>workflow_run</code> on <code>gate</code> / <code>PR Preview</code></td>
+<td>Checks feed <code>mergeStateStatus</code>; a rerun turns a green check pending</td>
+</tr>
+<tr>
+<td><code>schedule</code> (hourly)</td>
+<td>The <strong>only</strong> observer of thread resolution — plus a missed delivery, a failed run, or mergeability still <code>UNKNOWN</code></td>
+</tr>
+<tr>
+<td><code>workflow_dispatch</code></td>
+<td>Manual, with a <code>dry_run</code> input</td>
+</tr>
+</tbody>
+</table>
+<p>One input has no trigger: <strong>resolving or un-resolving a review thread.</strong>
+<code>pull_request_review_thread</code> is a real <em>webhook</em> event but is not among the events
+that can start a workflow, so the hourly sweep is what picks resolution up. Adding it
+to the trigger list does not silently no-op — it makes the workflow file invalid, and
+GitHub then records a startup failure on every push. Check the Actions events
+reference, not the webhooks reference; they are different sets.</p>
+<p>All the logic lives in <code>scripts/ci/pr_readiness_labels.sh</code>, with a self-test suite
+(<code>scripts/ci/test_pr_readiness_labels.sh</code>) wired into <code>scripts/gate.sh</code>; the workflow is
+only the trigger surface. Run it yourself with:</p>
+<pre><code class="language-bash">bash scripts/ci/pr_readiness_labels.sh --dry-run     # decide and print, change nothing
+</code></pre>
+<p><code>ready-to-merge</code> requires all four of: not a draft, no merge conflicts (<code>mergeable !=
+CONFLICTING</code>), zero blocking checks, and zero <em>live</em> review findings — a review thread
+that is unresolved (<code>isResolved == false</code>). Check state is evaluated from the individual
+contexts in the commit's status-check rollup, not from <code>mergeStateStatus</code>.</p>
+<p>Three further guards withhold the chip even when those four are satisfied, each because
+the evidence on record does not describe the PR as it stands. All three are fail-closed:</p>
+<ul>
+<li><strong><code>mergeStateStatus == BEHIND</code></strong> — the checks on record did not test the current base,
+  so a green rollup says nothing about what merging would produce.</li>
+<li><strong><code>mergeStateStatus == BLOCKED</code> with an <em>empty</em> rollup</strong> — GitHub reports something
+  blocking while no checks exist to explain it, so readiness cannot be verified. The
+  reconciler's own in-progress run cannot trip this: its CheckRun sits on the head commit,
+  so the rollup is non-empty whenever it is the trigger. <code>UNSTABLE</code> is deliberately not
+  gated alongside it — see the check-state note below.</li>
+<li><strong>A truncated rollup</strong> (<code>totalCount</code> greater than the fetched count) — a blocking check
+  could be sitting in the unfetched tail.</li>
+</ul>
+<p>Seven design notes worth knowing before changing it:</p>
+<ul>
+<li>
+<p><strong><code>mergeable</code> and <code>mergeStateStatus</code> answer different questions.</strong> <code>mergeStateStatus</code>
+  is a <em>priority</em> field: on a draft it reports <code>DRAFT</code>, masking <code>DIRTY</code>. So <code>conflicts</code>
+  is derived from <code>mergeable == CONFLICTING</code> — otherwise a conflicted draft gets no chip,
+  which is where it is arguably most useful. <code>mergeStateStatus</code> is retained in the query
+  for the <code>UNKNOWN</code> retry/revoke path and for the two state guards above, but it is no
+  longer the field <em>check state</em> is read from; that comes from individual rollup contexts
+  instead. The distinction matters: <code>BEHIND</code> and <code>BLOCKED</code> are consulted as statements
+  about whether the recorded evidence is current, never as a substitute for counting
+  checks.</p>
+</li>
+<li>
+<p><strong>Check state comes from individual rollup contexts, not from <code>mergeStateStatus</code>.</strong>
+  A <code>CheckRun</code> is passing when its <code>conclusion</code> is <code>SUCCESS</code>, <code>NEUTRAL</code>, or <code>SKIPPED</code>;
+  anything else — including a null conclusion (still in progress) — is blocking. A
+  <code>StatusContext</code> (legacy commit status) is passing when its <code>state</code> is <code>SUCCESS</code>. The
+  reconciler's own job (name <code>reconcile</code>, matching <code>jobs.reconcile</code> in
+  <code>pr-readiness-labels.yml</code>) is excluded from the blocking count so the script does not
+  block on its own in-progress check when triggered by pull-request events. A null rollup
+  (no checks on record) counts as zero blocking checks — but that is a statement about
+  the <em>count</em>, not about readiness: when <code>mergeStateStatus</code> is <code>BLOCKED</code> at the same
+  time, the empty-rollup guard above still withholds the chip, because GitHub is
+  reporting something blocking that no check on record explains. A null rollup on an
+  otherwise clean PR does grant. A
+  truncated rollup (<code>totalCount</code> greater than the fetched count) is fail-closed: the chip
+  is withheld rather than guessed at, since a blocking check could be sitting in the
+  unfetched tail.</p>
+</li>
+<li>
+<p><strong>An incomplete snapshot is never guessed at</strong>, and the two cases are not
+  symmetric. Connections are fetched one page (100) deep and each <code>totalCount</code> is
+  checked. Truncated <code>reviewThreads</code> means the live-findings count may be an
+  undercount, so the chip is <em>withheld</em> — otherwise a PR whose first 100 threads all
+  read as addressed would count zero while a live one sat in the tail. Truncated
+  <code>labels</code> instead triggers an authoritative re-read of the full label list, because
+  concluding a chip is <em>absent</em> just because it fell off the page would schedule no
+  removal and leave the PR advertising readiness.</p>
+</li>
+<li>
+<p><strong>Every run sweeps every open PR</strong>, not just the one that triggered it. Merging PR
+  A is what conflicts PRs B–F, so the chips needing revocation are on the PRs that
+  did <em>not</em> change. This also makes a run idempotent.</p>
+</li>
+<li><strong>Sweeps serialize; they are not cancelled.</strong> The workflow sets
+  <code>cancel-in-progress: false</code> deliberately. A cancelled run can have a label write
+  already in flight, which may land <em>after</em> the replacement run wrote from a newer
+  snapshot — persisting the stale decision until the next sweep.</li>
+<li><strong>Granting is conservative, revocation is unconditional.</strong> A stale green chip is
+  worse than no chip.</li>
+<li><strong><code>UNKNOWN</code> mergeability is never guessed — and never left advertised.</strong> GitHub
+  computes mergeability lazily and reports <code>UNKNOWN</code> until it lands, which is exactly
+  the state right after a push to <code>dev</code>. The script re-queries a few times, since
+  querying is what prompts the computation. If it is still unknown, the PR
+  <em>revokes</em> any <code>ready-to-merge</code> it holds (readiness that cannot be verified must not
+  be asserted) and asserts nothing else — no <code>conflicts</code> either, since that is
+  equally unverified.</li>
+</ul>
+<p>The predicate keys on <code>isResolved</code>: a review thread blocks the chip until it is
+explicitly resolved. The review-response skill resolves threads as it addresses
+findings, so the signal tracks real work rather than the <code>isOutdated</code> proxy it
+replaced.</p>
 <h3 id="docker-layer-caching">Docker Layer Caching</h3>
 <p>All workflows that build Docker images use <code>docker/setup-buildx-action</code> with <code>actions/cache</code> for layer caching, reducing rebuild times on cache hits.</p>
 <h3 id="local-development">Local Development</h3>
@@ -531,6 +767,160 @@ cat requirements/gpu-requirementsHEADER.txt requirements/requirements-base.txt &
 <p>Push the image:</p>
 <pre><code class="language-bash">podman push a2rchi/&lt;image-name&gt;:&lt;tag&gt;
 </code></pre>
+<h3 id="pointing-the-service-templates-at-a-base-image">Pointing the service templates at a base image</h3>
+<p>The 15 service templates under <code>src/cli/templates/dockerfiles/</code> each start with a <code>FROM</code>
+line that names a base image. <code>scripts/dev/update_service_base_images.py</code> is the only
+writer of those lines. Do not edit them by hand.</p>
+<p><strong>What counts as a service template.</strong> <code>service_templates()</code> in
+<code>src/cli/managers/base_image_preflight.py</code> walks that directory <strong>recursively</strong>: every
+<code>Dockerfile*</code> at any depth is a service template unless it is named in
+<code>NON_SERVICE_TEMPLATES</code>. Those keys are paths relative to the template directory —
+<code>base-python-image/Dockerfile</code>, not <code>Dockerfile</code> — so excluding a nested file cannot
+silently exclude every file of the same name elsewhere in the tree. Two consequences are
+worth knowing before you add a file there:</p>
+<ul>
+<li>A <code>Dockerfile*</code> you add in a subdirectory joins the service set the moment it lands, and
+  <code>archi create</code> refuses to deploy when the preflight cannot cover it. If the file is not a
+  service template — it defines a base image, or builds on a third-party image — add its
+  relative path to <code>NON_SERVICE_TEMPLATES</code> with the reason, in the same change.</li>
+<li>The rewriter above is <strong>not</strong> recursive. It reads only the <code>Dockerfile*</code> files at the top
+  of the directory, so a nested template's <code>FROM</code> line is never retargeted by the release
+  workflow and never checked by <code>--verify</code>. Keep service templates at the top level unless
+  you extend the rewriter in the same change --
+  <code>test_no_service_template_is_nested_while_the_release_rewriter_is_top_level_only</code> fails
+  otherwise, which is what forces the two changes to land together.</li>
+</ul>
+<pre><code class="language-bash"># Move every template to a tag.
+python scripts/dev/update_service_base_images.py --tag dev-abc1234 --switch-source ghcr --orig-tag all
+
+# Pin every template to a digest, with the tag recorded on the line above.
+python scripts/dev/update_service_base_images.py \
+  --digest python=sha256:&lt;64 hex&gt; \
+  --digest pytorch=sha256:&lt;64 hex&gt; \
+  --tag dev-abc1234 --switch-source ghcr --orig-tag all
+
+# Check instead of write: fail unless every template already names this reference.
+# The tag is the release tag, zero-padded as the CalVer tags are: v2026.08.0, not v2026.8.0.
+# --verify compares it exactly, so the unpadded form reports every reference as wrong.
+python scripts/dev/update_service_base_images.py --verify --tag v2026.08.0 --switch-source ghcr
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--tag &lt;tag&gt;</code></td>
+<td>The tag to write. With <code>--digest</code>, the tag is recorded in a <code># base-image-pin:</code> line above the reference instead.</td>
+</tr>
+<tr>
+<td><code>--digest &lt;name&gt;=sha256:&lt;64 hex&gt;</code></td>
+<td>Pins that base image by digest. Repeatable. <code>&lt;name&gt;</code> is <code>python</code> or <code>pytorch</code>. Requires <code>--tag</code>.</td>
+</tr>
+<tr>
+<td><code>--orig-tag &lt;tag&gt;</code></td>
+<td>Only rewrites lines that carry this tag. <strong>The default is <code>latest</code>.</strong> Use <code>all</code> to match every line, digest-pinned lines included.</td>
+</tr>
+<tr>
+<td><code>--switch-source &lt;source&gt;</code></td>
+<td>Moves the registry: <code>ghcr</code>, <code>dockerhub</code>, or <code>localhost</code>.</td>
+</tr>
+<tr>
+<td><code>--bases &lt;name&gt; …</code></td>
+<td>Limits the run to these base images. Defaults to both.</td>
+</tr>
+<tr>
+<td><code>--verify</code></td>
+<td>Checks instead of writing. Exits non-zero unless every base reference already names <code>--tag</code>, at the registry <code>--switch-source</code> names when it is given. Requires <code>--tag</code>; refuses <code>--digest</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Four rules decide what the script writes:</p>
+<ol>
+<li>A tag and a digest are alternatives. A digest-pinned line carries no tag, so only
+   <code>--orig-tag all</code> reaches it.</li>
+<li>A digest says nothing about which build it is. The tag from <code>--tag</code> therefore goes in a
+   <code># base-image-pin: &lt;tag&gt; (managed by update_service_base_images.py)</code> line directly above the <code>FROM</code> line. That line survives while the digest holds,
+   and the script removes it whenever it writes a tag. It cannot go on the <code>FROM</code> line
+   itself: a Dockerfile reads <code>#</code> as a comment only at the start of a line, so a trailing
+   comment there makes the build fail to parse. The script removes such a line only when
+   the whole wording matches, so a comment of your own above a <code>FROM</code> line is safe.</li>
+<li>A rewrite that names no new reference keeps the digest it finds. A bare
+   <code>--switch-source</code> moves the registry only; it never unpins an image.</li>
+<li>The script refuses an unknown <code>--digest</code> name, a malformed digest, a digest for a base
+   image that <code>--bases</code> excludes, <code>--digest</code> without <code>--tag</code>, and a <code>--tag</code> that is not a
+   valid image tag — <code>[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}</code>, which an unexpanded shell
+   variable is not. Each
+   exits non-zero and writes nothing. The last one matters because a digest names no build: without a tag to
+   record above it, the pin says nothing about which build the services are on, and
+   <code>test_service_templates_pin_one_explicit_base_tag</code> fails.</li>
+</ol>
+<p><code>--verify</code> is the proof that a rewrite landed. It reads the reference each template
+declares, not whether the file changed, because those two tests disagree on exactly one
+input: a template that already carries the target reference, which is what a re-dispatch of
+the same release tag produces. It fails on a reference at another tag or another registry,
+on an <code>a2rchi</code> base image the script cannot place — a rename the rewriter would skip in
+silence — and on a run that matched no reference at all, since a check that reads nothing
+would otherwise pass without reading anything. It shares the rewriter's <code>FROM</code> matcher and
+base image map, so it cannot disagree with the rewriter about what a base line is.</p>
+<p>Its bound is worth knowing: it reads the references templates <strong>declare</strong>. A template that
+declares no base image at all is invisible to it, as it is to the rewriter. In-tree that gap
+is closed: <code>service_templates()</code> in <code>src/cli/managers/base_image_preflight.py</code> declares the
+service set, the deploy preflight refuses a member it cannot cover, and
+<code>test_service_templates_pin_one_explicit_base_tag</code> fails naming the file.</p>
+<h3 id="which-service-templates-the-deploy-preflight-refuses">Which service templates the deploy preflight refuses</h3>
+<p><code>archi create</code> refuses <strong>before</strong> it removes an existing deployment when a service template
+is one the preflight cannot probe. Five shapes are refused, and the message names which:</p>
+<ol>
+<li><strong>No resolvable <code>FROM</code>.</strong> The template carries no <code>FROM</code> line, or its final stage is
+   <code>FROM &lt;alias&gt;</code> in a chain that does not end at a real reference.</li>
+<li><strong>An a2rchi base outside the placeable set.</strong> Only <code>a2rchi-python-base</code> and
+   <code>a2rchi-pytorch-base</code> — <code>PLACEABLE_BASES</code> in <code>base_image_preflight.py</code> — can be probed.
+   A template on, say, <code>a2rchi-node-base</code> declares a base and is still refused, because
+   nothing checks that image's Python version before the build needs it. Adding a base means
+   adding it to <code>PLACEABLE_BASES</code> <em>and</em> giving it a rule in <code>required_base_image_names</code>; a
+   guard test fails if you do only the first.</li>
+<li><strong>A final stage that is not an a2rchi base.</strong> The check judges the stage that ships, not
+   the first <code>FROM</code>, so a multistage template may build in an a2rchi stage and still be
+   refused if it ends on a third-party image. The name must match at image boundaries: a
+   registry prefix and a tag or digest are allowed, so <code>ghcr.io/fasrc/a2rchi-python-base@sha256:…</code>
+   is accepted while the lookalike <code>a2rchi-python-base-custom</code> is not.</li>
+<li><strong>A heredoc this walk cannot prove is closed.</strong> The reader finds a heredoc opener by
+   text, and it cannot see shell quoting. <code>RUN echo "example &lt;&lt;EOF here"</code> is a valid
+   instruction Docker builds without complaint, but the walk reads <code>&lt;&lt;EOF</code> as an opener,
+   finds no delimiter line below it, and refuses the template. The same goes for other text
+   that only looks like an opener, such as <code>$(( 1 &lt;&lt; 3 ))</code>. This direction is deliberate: the
+   walk either over-reads and refuses, which is loud, or under-reads and lets a third-party
+   final stage ship unprobed, which is silent. If a template hits this, put the text in a
+   file the instruction reads, or split the line so the marker is not in the instruction the
+   walk sees. Do not work around it by removing the base <code>FROM</code>.</li>
+<li><strong>A split pin on a required base.</strong> Two service templates name the same required base
+   image at different references. The preflight can probe only one, so a split pin would
+   otherwise establish one digest in the registry while a build pulls another. The check is
+   scoped to the bases the deployment requires — a split pin on a base the current deployment
+   will not build stays hidden until a deployment that does need it.
+   <code>test_service_templates_pin_one_explicit_base_tag</code> is the repository-side guard this check
+   does not replace: that test keys on the annotation, not on the reference the templates
+   agree on.</li>
+</ol>
+<p>Only a line that starts a Dockerfile instruction can start a stage. A <code>FROM</code> inside a
+<code>RUN &lt;&lt;EOF</code> heredoc body — including the second payload of a <code>RUN &lt;&lt;ONE &lt;&lt;TWO</code> — on the
+continuation of an earlier instruction, or in a comment, is not read as one. A <code>FROM</code> may
+carry flags before its reference; <code>FROM --platform=$BUILDPLATFORM &lt;image&gt;</code> is read as
+<code>&lt;image&gt;</code>, the same form the rewriter above accepts.</p>
+<p>The image the preflight actually pulls is the one the final stage names, for the same
+reason: a template may name the same base twice, one digest in a builder stage and another
+in the stage that ships, and probing the builder's line would establish an image the
+deployment never runs.</p>
+<p>Two CI jobs call the script: <code>pr-preview.yml</code> points the templates at the PR's base-image
+build, and <code>test-and-build-tag.yml</code> points them at the release build. The release workflow
+passes <code>--orig-tag all</code> — without it the script takes its <code>latest</code> default and matches none
+of the templates, which is issue #339 — and calls <code>--verify</code> three times: after the retarget
+and before the smoke deployment, on the release job's fresh checkout before anything is
+published, and once more on the tree the tag is cut from.</p>
 <h2 id="data-ingestion-architecture">Data Ingestion Architecture</h2>
 <p>Archi ingests content through <strong>sources</strong> which are collected by <strong>collectors</strong> (<code>data_manager/collectors</code>).
 These documents are written to persistent, local files via the <code>PersistenceService</code>, which uses <code>Resource</code> objects as an abstraction for different content types, and <code>ResourceMetadata</code> for associated metadata.
@@ -588,12 +978,23 @@ Finally, the <code>VectorStoreManager</code> reads these files, splits them into
 </ol>
 <h3 id="extending-embeddings-or-storage">Extending Embeddings or Storage</h3>
 <p>When extending the embedding pipeline or storage schema, keep this flow in mind: collectors produce resources → <code>PersistenceService</code> writes files and updates the Postgres catalog → <code>VectorStoreManager</code> indexes embeddings in PostgreSQL. Keeping responsibilities narrowly scoped makes the ingestion stack easier to reason about and evolve.</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>
     <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
         <a href="../adding_providers/" class="btn btn-neutral float-left" title="Adding Providers"><span class="icon icon-circle-arrow-left"></span> Previous</a>
-        <a href="../troubleshooting/" class="btn btn-neutral float-right" title="Troubleshooting">Next <span class="icon icon-circle-arrow-right"></span></a>
+        <a href="../observability/" class="btn btn-neutral float-right" title="Observability">Next <span class="icon icon-circle-arrow-right"></span></a>
     </div>
 
   <hr/>
@@ -623,7 +1024,7 @@ Finally, the <code>VectorStoreManager</code> reads these files, splits them into
       <span><a href="../adding_providers/" style="color: #fcfcfc">&laquo; Previous</a></span>
     
     
-      <span><a href="../troubleshooting/" style="color: #fcfcfc">Next &raquo;</a></span>
+      <span><a href="../observability/" style="color: #fcfcfc">Next &raquo;</a></span>
     
   </span>
 </div>

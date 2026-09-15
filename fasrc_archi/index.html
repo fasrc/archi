@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -92,6 +96,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -101,6 +113,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -131,16 +147,47 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
             <div class="section" itemprop="articleBody">
               
-                <h1 id="fasrc-archi-deployment-notes">FASRC Archi — Deployment Notes</h1>
-<p>Operational notes specific to the Harvard <strong>FASRC</strong> deployment of archi (the
+                <h1 id="fasrc-archi-deployment-notes"><abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> Archi — Deployment Notes</h1>
+<p>Operational notes specific to the Harvard <strong><abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr></strong> deployment of archi (the
 <code>fasrc/archi</code> fork). These cover host- and environment-specific details that do
-not belong in the upstream docs — primarily the self-hosted vLLM model server
+not belong in the upstream docs — primarily the self-hosted <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> model server
 that backs the chat app.</p>
 <p>Host: <code>archi.rc.fas.harvard.edu</code> (DNS alias for <code>holygpu7c0717.rc.fas.harvard.edu</code>),
 4× Tesla V100-PCIE-32GB.</p>
+<p><strong>Two <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> servers run on this host</strong>, one per GPU pair, both under systemd:</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Port</th>
+<th>GPUs</th>
+<th>systemd unit</th>
+<th>archi provider slot</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code></td>
+<td>8001</td>
+<td>2,3</td>
+<td><code>vllm-qwen36.service</code></td>
+<td><code>local</code> (default)</td>
+</tr>
+<tr>
+<td><code>palmfuture/Qwen3.8-27B-GPTQ-Int4</code></td>
+<td>8002</td>
+<td>0,1</td>
+<td><code>vllm-qwen38.service</code></td>
+<td><code>openai</code> (see <a href="#running-two-models-in-archi-provider-slots">Running two models</a>)</td>
+</tr>
+</tbody>
+</table>
+<p>Qwen 3.8 requires two source patches to the container's <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> — without them it
+either crashes at load or silently emits garbage. See
+<a href="#vllm-patches-required"><abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> patches</a>.</p>
 <hr />
-<h2 id="model-server-vllm-qwen-36">Model server (vLLM / Qwen 3.6)</h2>
-<p>The chat app does <strong>not</strong> ship the LLM — it calls an OpenAI-compatible vLLM
+<h2 id="model-server-vllm-qwen-36">Model server (<abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> / Qwen 3.6)</h2>
+<p>The chat app does <strong>not</strong> ship the <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> — it calls an OpenAI-compatible <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>
 server that runs separately on the GPU host.</p>
 <table>
 <thead>
@@ -171,15 +218,20 @@ server that runs separately on the GPU host.</p>
 <td>Singularity / Apptainer (<code>singularity exec</code>)</td>
 </tr>
 <tr>
-<td>Log (manual launch)</td>
-<td><code>/scratch/a2rchi/vllm_instance2.log</code></td>
+<td>Engine flags</td>
+<td>TP=2, <code>--max-model-len 32768</code>, <code>--gpu-memory-utilization 0.88</code>, <code>--max-num-seqs 16</code>, <code>--enable-prefix-caching</code>, <code>--enable-auto-tool-choice --tool-call-parser qwen3_coder</code>, <code>--enable-log-requests</code>. <strong>No</strong> <code>--reasoning-parser</code> — see <a href="#disabling-model-thinking-enable_thinkingfalse">Disabling model thinking</a>.</td>
+</tr>
+<tr>
+<td>Logs</td>
+<td>journald (<code>sudo journalctl -u vllm-qwen36</code>) when run under systemd; <code>/scratch/a2rchi/vllm_instance2.log</code> <strong>only</strong> for the manual launcher</td>
 </tr>
 </tbody>
 </table>
 <p>The chat app's pointer to this endpoint is the authoritative <strong>running config in
 Postgres</strong> (<code>static_config.services_config</code>, database <code>archi-db</code>), seeded at
 <code>archi create</code> from <code>config/environments/dev.yaml</code>. Editing a <code>config.yaml</code> on
-disk and restarting is a no-op; re-run the deploy (<code>g.sh</code>) to reseed.</p>
+disk and restarting is a no-op; re-run the deploy (<code>g.sh</code>) to reseed. See
+<a href="#configuration-where-the-running-config-lives">Configuration</a>.</p>
 <blockquote>
 <p>The server is <strong>not</strong> part of the docker-compose stack and is not started by
 <code>archi create</code>. It is launched independently as described below.</p>
@@ -189,8 +241,10 @@ disk and restarting is a no-op; re-run the deploy (<code>g.sh</code>) to reseed.
 <pre><code class="language-bash">bash config/scripts/singularity_vllm_qwen36_volta.sh
 </code></pre>
 <p>This backgrounds the process and writes to <code>/scratch/a2rchi/vllm_instance2.log</code>.
-Engine warmup takes ~50–60 s; it is ready when the log shows
-<code>Application startup complete.</code> and <code>GET /v1/models</code> returns HTTP 200.</p>
+Engine warmup takes <strong>~2 minutes</strong> (model load + torch.compile / CUDA-graph
+capture); it is ready when the log shows <code>Application startup complete.</code> and
+<code>GET /v1/models</code> returns HTTP 200. <strong>Prefer the systemd service</strong> (below) for the
+production instance — the manual launcher has no auto-restart.</p>
 <p>To stop it, target the specific PID — <strong>never</strong> a broad <code>pkill -f</code>, which on a
 shared GPU cluster could hit other users' instances:</p>
 <pre><code class="language-bash">pgrep -f vllm.entrypoints.openai.api_server   # find the PID
@@ -203,19 +257,26 @@ route object has no <code>.path</code> attribute,
 but the older instrumentator reads <code>route.path</code> on every request — so it raises
 <code>AttributeError</code> and returns <strong>HTTP 500 on every request</strong>, including
 <code>/v1/chat/completions</code>. The engine loads fine; only the metrics middleware
-breaks, and there is no vLLM flag to disable it.</p>
+breaks, and there is no <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> flag to disable it.</p>
 <p>Fix: <code>config/scripts/vllm_patch/sitecustomize.py</code> wraps <code>get_route_name</code> to
 return <code>None</code> on <code>AttributeError</code> (the instrumentator then falls back to the raw
 URL path). It is injected via <code>SINGULARITYENV_PYTHONPATH=/opt/vllm_patch</code> and a
 bind mount, so Python auto-imports it at interpreter startup. <strong>Do not</strong> wrap the
-entrypoint with a <code>runpy</code> launcher instead — that breaks vLLM's multiprocessing
-<code>spawn</code> workers (<code>freeze_support()</code> RuntimeError); vLLM must stay the <code>__main__</code>
+entrypoint with a <code>runpy</code> launcher instead — that breaks <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>'s multiprocessing
+<code>spawn</code> workers (<code>freeze_support()</code> RuntimeError); <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> must stay the <code>__main__</code>
 module. Both launch scripts already wire the shim in.</p>
 <hr />
 <h2 id="auto-start-on-reboot-systemd">Auto-start on reboot (systemd)</h2>
 <p>The user crontab is blocked by PAM on this host, so <code>@reboot</code> cron is not an
 option. The host runs systemd, and we have <code>sudo</code>, so a <strong>system-level systemd
 service</strong> is used. It also restarts the server on crash and logs to journald.</p>
+<blockquote>
+<p><strong>Status (2026-06-25): installed, <code>enabled</code>, and <code>active</code>.</strong> The production
+server runs under this unit — <code>Restart=on-failure</code> recovers it after a crash
+(e.g. an OOM). The earlier note that it was "failed since 2026-06-18" no longer
+applies; that stale failure was just a port/GPU collision with a manual
+instance, cleared at cutover.</p>
+</blockquote>
 <p>systemd needs a <strong>foreground</strong> process, so the service uses a foreground variant
 of the launcher (no backgrounding, no log redirect):
 <code>config/scripts/vllm_qwen36_volta_serve.sh</code>.</p>
@@ -261,8 +322,22 @@ sudo systemctl enable --now vllm-qwen36.service     # enable = start on boot; --
 sudo systemctl start vllm-qwen36           # start
 sudo systemctl stop vllm-qwen36            # stop
 sudo systemctl restart vllm-qwen36         # restart
-journalctl -u vllm-qwen36 -f               # follow logs (watch for &quot;Application startup complete.&quot;)
+sudo journalctl -u vllm-qwen36 -f          # follow logs (watch for &quot;Application startup complete.&quot;)
 </code></pre>
+<p>Under systemd the server logs to <strong>journald</strong>, not to
+<code>/scratch/a2rchi/vllm_instance2.log</code> (that path is written <strong>only</strong> by the manual
+launcher and is stale once the service is in charge). <code>journalctl</code> needs <code>sudo</code>
+here (the <code>a2rchi</code> user is not in <code>systemd-journal</code>).</p>
+<blockquote>
+<p><strong>PID-matching gotcha at cutover.</strong> The session/service user is <code>a2rchi</code>, but an
+interactive admin shell is typically <code>swinney</code>. <code>ss -ltnp</code> only reveals a
+socket's PID to the <strong>owning</strong> user, so a <code>swinney</code> shell trying to find the
+manual instance's PID on <code>:8001</code> gets nothing and won't kill it — then
+<code>systemctl start</code> launches a second server that collides on the port/GPUs. Stop
+the manual instance as <code>a2rchi</code> (or read the PID from
+<code>nvidia-smi --query-compute-apps=pid,process_name,used_gpu_memory --format=csv,noheader</code>)
+<strong>before</strong> starting the service.</p>
+</blockquote>
 <h3 id="caveats">Caveats</h3>
 <ul>
 <li>The service <strong>claims GPUs 2,3 on every boot</strong>. This is correct only while the
@@ -272,6 +347,492 @@ journalctl -u vllm-qwen36 -f               # follow logs (watch for &quot;Applic
   <code>systemctl</code> — do not also run <code>singularity_vllm_qwen36_volta.sh</code>, or the two
   servers will fight over port 8001 and the GPUs.</li>
 </ul>
+<hr />
+<h2 id="gpu-memory-the-088-utilization-cap">GPU memory &amp; the 0.88 utilization cap</h2>
+<p><code>--gpu-memory-utilization</code> is set to <strong>0.88</strong>, not <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>'s default. On a 31.73 GiB
+V100, <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> pre-reserves its KV-cache pool at startup, but ~2–2.7 GiB of non-torch
+memory (CUDA context, NCCL, cuBLAS/MoE workspaces) lives <strong>outside</strong> that budget.
+At 0.95 each worker idled at ~31.5 GiB — only a few hundred MiB below the ceiling
+— so a single long-context prefill (the Qwen 3.6 GatedDeltaNet FLA kernel
+allocates transient activations) tipped it over: <strong><code>CUDA out of memory</code> →
+<code>EngineCore</code> dies → the whole server exits</strong> (a dead EngineCore is fatal in <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>
+v1). The crash followed ~16 h of idle, so it looked random; it was really the
+first request large enough to exceed the thin headroom — not concurrency.</p>
+<p>0.88 leaves ~4.5 GiB headroom (idle ~28.2 GiB), absorbing worst-case prefill
+spikes; the KV pool is still ~15 GiB / ~400k tokens, far more than this workload
+uses. <code>--enable-log-requests</code> was added so the next such event records the
+triggering request's shape.</p>
+<p>Do <strong>not</strong> add <code>PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True</code> on this image —
+it crashes CUDA-graph capture (<code>VllmWorker died in compile_or_warm_up_model</code>) and
+only ever reclaimed ~135 MiB of fragmentation anyway.</p>
+<hr />
+<h2 id="disabling-model-thinking-enable_thinkingfalse">Disabling model thinking (<code>enable_thinking=false</code>)</h2>
+<p>Qwen 3.6 is a reasoning model; archi runs it with thinking <strong>off</strong> for latency.
+The switch is in the chat-app provider config (seeded to Postgres):</p>
+<pre><code class="language-yaml">services:
+  chat_app:
+    providers:
+      local:                 # the slot serving 3.6 — see the table at the top
+        extra_kwargs:
+          extra_body:
+            chat_template_kwargs:
+              enable_thinking: false
+</code></pre>
+<p>(in <code>config/environments/dev.yaml</code>). It is forwarded to <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> as
+<code>chat_template_kwargs={"enable_thinking": false}</code>; the model then answers directly
+with no <code>&lt;think&gt;</code> trace.</p>
+<blockquote>
+<p><strong><code>extra_kwargs</code> is read per slot, not globally.</strong>
+<code>_build_provider_config_from_payload()</code> takes it from the selected provider's own
+block (<code>chat_app/app.py:158</code>, the lookup at <code>:165</code>), so this setting under
+<code>local:</code> does nothing for the <code>openai:</code> slot serving 3.8. To run 3.8 without
+thinking as well, repeat the same <code>extra_kwargs</code> block under <code>openai:</code>.</p>
+</blockquote>
+<h3 id="what-turning-thinking-back-on-does-to-streaming">What turning thinking back on does to streaming</h3>
+<p>This same key also controls whether the chat app suppresses streamed reasoning
+(issue #122). With <code>enable_thinking: true</code>, the chat template pre-fills the
+<code>&lt;think&gt;</code> opener, so the model starts inside its reasoning block and closes it
+with a <code>&lt;/think&gt;</code> that has no opener. Before that tag arrives the reasoning is
+byte-identical to a plain answer, so the app used to display it as the answer.</p>
+<p>The app now holds visible text until that closing tag arrives, per reasoning
+phase. Three consequences are worth knowing before you turn the key on:</p>
+<ul>
+<li>The answer still streams incrementally, but only after the model closes its
+  reasoning block. The reasoning itself appears in the thinking-step panel.</li>
+<li>If the model never emits a <code>&lt;/think&gt;</code>, the whole answer arrives in one piece at
+  the end of the stream instead of growing word by word. Nothing is lost.</li>
+<li>The gate is read per provider slot, not per model. A slot that lists a
+  reasoning model and a plain model gates both, so the plain model's answers also
+  arrive in one piece. Declare the two models as two slots to avoid that.</li>
+</ul>
+<p>With <code>enable_thinking: false</code> or the key absent, streaming is unchanged.</p>
+<p><strong>Critical: the launch must NOT pass <code>--reasoning-parser qwen3</code>.</strong> This image's
+custom qwen3 parser fixes <code>prompt_has_open_think=True</code> at startup, so when a
+no-think reply contains no <code>&lt;/think&gt;</code> it routes the entire answer into the
+discarded reasoning channel — <strong>every reply comes back with empty <code>content</code></strong>.
+(Symptom: raw <code>/v1/completions</code> returns the answer, but <code>/v1/chat/completions</code>
+returns <code>""</code>.) The parser only matters when thinking is <em>on</em>; with thinking off it
+is pure harm, so it is omitted from both launch scripts. Tool-calling is
+unaffected — <code>--tool-call-parser qwen3_coder</code> is independent.</p>
+<p>To change this end-to-end, restart the <strong>server first</strong>: <code>g.sh</code> (the reseed/redeploy
+below) recreates the chatbot, so reseeding before the server is corrected brings a
+fresh chatbot up against the <strong>old</strong> <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> and serves empty answers in the window.
+Order: <strong>(1)</strong> edit the launch script + <code>sudo systemctl restart vllm-qwen36</code> (server
+picks up the flag change — wait for <code>GET /v1/models</code> HTTP 200), then <strong>(2)</strong> edit
+<code>config/environments/dev.yaml</code> + re-run <code>g.sh</code> to reseed Postgres and redeploy the
+chatbot (or, if only the server changed and Postgres already has the right config,
+just <code>docker restart chatbot-archi-openai-compat</code>). Server first, app second — the
+reverse order briefly serves empty answers.</p>
+<hr />
+<h2 id="second-model-server-vllm-qwen-38">Second model server (<abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> / Qwen 3.8)</h2>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Model</td>
+<td><code>palmfuture/Qwen3.8-27B-GPTQ-Int4</code></td>
+</tr>
+<tr>
+<td>Endpoint</td>
+<td><code>http://localhost:8002/v1</code></td>
+</tr>
+<tr>
+<td>GPUs</td>
+<td>0,1 (<code>--tensor-parallel-size 2</code>)</td>
+</tr>
+<tr>
+<td>Container image</td>
+<td><code>/scratch/a2rchi/sifs/vllm_volta.sif</code> (same image as 3.6)</td>
+</tr>
+<tr>
+<td>Engine flags</td>
+<td>Same as 3.6 except <code>--gpu-memory-utilization 0.80</code> — see <a href="#the-080-cap-is-unvalidated">the note below</a></td>
+</tr>
+<tr>
+<td>Logs</td>
+<td>journald (<code>sudo journalctl -u vllm-qwen38</code>); <code>/scratch/a2rchi/vllm.log</code> <strong>only</strong> for the manual launcher</td>
+</tr>
+<tr>
+<td>Patches</td>
+<td><strong>Required</strong> — two bind-mounts, see below</td>
+</tr>
+</tbody>
+</table>
+<p>Port 8002 rather than 8000: <strong>8000 is already taken</strong> by the <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> Dataset
+Manager on this host.</p>
+<h3 id="the-080-cap-is-unvalidated">The 0.80 cap is unvalidated</h3>
+<p>0.80 was set on the assumption that GPU 0 is shared with the data-manager
+embedding pass. That assumption does not hold under the configuration this page
+prescribes: embeddings are pinned to <code>cpu</code> (see
+<a href="#embedding-device-why-it-must-be-cpu">Embedding device</a>) and the chatbot runs a
+CPU image, so nothing else in the archi stack holds memory on GPU 0. Treat 0.80
+as unexplained margin rather than a validated requirement — but <strong>do not raise it
+on that basis alone.</strong> <code>nvidia-smi</code> can establish that no other process holds
+GPU 0; it cannot establish that 3.8 shares 3.6's transient-memory profile, and
+there is no reason to assume it does — 3.6 is a 35B MoE, 3.8 a 27B dense model on
+a patched mixed-precision projection path. The 0.88 figure is a measurement of a
+different checkpoint. Going 0.80 → 0.88 hands <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> roughly another 2.5 GiB of a
+31.73 GiB card and removes exactly that much from the transient headroom whose
+exhaustion the 3.6 section documents as <code>CUDA out of memory</code> → dead <code>EngineCore</code>
+→ whole server exits. Keep 0.80 until a long-prefill end-to-end test against 3.8
+itself passes at the higher cap.</p>
+<pre><code class="language-bash">bash config/scripts/singularity_vllm_qwen38_volta.sh   # manual (backgrounds)
+sudo systemctl status vllm-qwen38.service              # systemd (installed &amp; active)
+</code></pre>
+<p>Install/operate exactly as for 3.6 — stop any manual instance first so the unit
+can bind :8002, and kill by specific PID, never a broad <code>pkill -f vllm</code>.</p>
+<p><strong>Both models are hybrid linear-attention architectures</strong>, with the same 3:1
+layer pattern (<code>full_attention_interval: 4</code>) — 3.8 is 64 layers (48
+<code>linear_attention</code> + 16 <code>full_attention</code>), 3.6 is 40 (30 + 10). The patches are
+<strong>not</strong> explained by an architecture difference: 3.6 runs the same Gated DeltaNet
+path, which is why the GPU-memory section above attributes its prefill spikes to
+the FLA kernel.</p>
+<p>What actually differs is the <strong>GPTQ quantization layout</strong>. Both checkpoints
+record their exclusions in <code>quantization_config.dynamic</code>, but at very different
+granularity:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>3.6 (<code>Qwen3_5MoeForConditionalGeneration</code>)</th>
+<th>3.8 (<code>Qwen3_5ForConditionalGeneration</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>linear-attn exclusions</td>
+<td><code>-:.*attn.*</code> — one regex, excludes the <strong>entire</strong> attention stack</td>
+<td>seven per-parameter regexes (<code>in_proj_a</code>, <code>in_proj_b</code>, <code>in_proj_ba</code>, <code>A_log</code>, <code>conv1d</code>, <code>dt_bias</code>, <code>norm</code>)</td>
+</tr>
+<tr>
+<td><code>in_proj_qkv</code> / <code>in_proj_z</code></td>
+<td><strong>not</strong> quantized — swept up by the broad regex</td>
+<td><strong>int4</strong></td>
+</tr>
+<tr>
+<td>net effect</td>
+<td>nothing mixed-precision inside the GDN block</td>
+<td>int4 and bf16 weights <strong>side by side</strong> in one block</td>
+</tr>
+</tbody>
+</table>
+<p>So 3.6 never exercises the fork's fused-vs-split projection logic and loads
+cleanly unpatched; 3.8 does, and that is the source of both patches below.</p>
+<hr />
+<h2 id="vllm-patches-required"><abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> patches (required)</h2>
+<p><code>config/scripts/vllm_patches/qwen3_5.py</code> is bind-mounted <strong>over</strong> the copy inside
+the <code>.sif</code> at launch. A file-over-file <code>--bind</code> is the mechanism — <code>PYTHONPATH</code>
+cannot shadow a module that lives inside the installed <code>vllm</code> package. Both fixes
+are in that one file; its <code>README.md</code> carries the full write-up.</p>
+<p><strong>Do not try to fix these by upgrading <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>.</strong> The image reports version <code>1.1.0</code>,
+but upstream's newest release is <strong>v0.27.1</strong> — this is a Volta (SM 7.0) fork
+build (hence the companion <code>flash_attn_v100</code> wheel and <code>FLASH_ATTN_V100</code>
+backend). Its <code>qwen3_5.py</code> is 1099 lines against upstream's 732, and the broken
+code <strong>does not exist upstream</strong>, so there is no fix to pull. There is also no
+build recipe on disk: <code>vllm_volta.def</code> copies in pre-built wheels,
+<code>/scratch/src/vllm-volta</code> is only a conda env, and the build commands have aged
+out of shell history. Rebuilding means re-deriving the Volta port from scratch.</p>
+<h3 id="fix-1-load-time-crash">Fix 1 — load-time crash</h3>
+<pre><code>qwen3_5.py:571 -&gt; AttributeError: 'RowvLLMParameter' object has no attribute 'output_dim'
+</code></pre>
+<p>The tuple-shard branch of <code>load_weights</code> assumes every parameter in the fused GDN
+projection is split along an output dimension. GPTQ's <code>g_idx</code> is indexed per
+<em>input</em> channel and deliberately has no <code>output_dim</code>. Fix: load params lacking
+<code>output_dim</code> whole, unsharded. Guarding only the <code>logger.debug</code> line is not
+enough — the same unguarded access recurs in the bounds check and <code>narrow()</code>.</p>
+<h3 id="fix-2-silent-garbage-output">Fix 2 — silent garbage output</h3>
+<p>Symptom: server returns HTTP 200, but every response is token id 0 (<code>!</code>) repeated
+to <code>max_tokens</code>, and a <code>logprobs</code> request 500s because NaN will not serialize.
+The tell-tale is a warning that is easy to miss among the startup noise, logged
+96 times (48 GDN layers × 2 TP workers):</p>
+<pre><code>WARNING [qwen3_5.py:676] Parameter layers.N.linear_attn.in_proj_qkvz.weight
+                         not found in params_dict, skip loading
+</code></pre>
+<p>The checkpoint is <strong>mixed precision</strong> inside the linear-attention block:
+<code>in_proj_qkv</code>/<code>in_proj_z</code> are GPTQ int4 while <code>in_proj_b</code>/<code>in_proj_a</code> stay bf16.
+The fork handles this via <code>_uses_split_gdn_input_projections()</code>, but that function
+was written for <strong>AWQ</strong> and reads only <code>modules_to_not_convert</code>/<code>ignored_layers</code> —
+both <code>None</code> on a GPTQ checkpoint, which records exclusions in <code>dynamic</code> under
+<code>-:</code>-prefixed regexes. It therefore returned <code>False</code>, the model built one fused
+<em>quantized</em> projection, and the bf16 b/a weights were dropped with only a warning,
+leaving every DeltaNet gate on uninitialized memory. Fix: also read GPTQ's
+<code>dynamic</code> exclusions.</p>
+<p><strong>Verify after any change to this file:</strong></p>
+<pre><code class="language-bash"># RESTART FIRST. qwen3_5.py is bind-mounted and imported once at process start,
+# so a still-running server is executing the OLD file -- capturing its invocation
+# id would validate the edit without ever exercising it.
+sudo systemctl restart vllm-qwen38
+
+# Wait for readiness -- BOUNDED, and watching for the failure this procedure
+# exists to catch. A bad patch means the unit never becomes ready, so an
+# unbounded wait hangs instead of showing you why. A 27B load takes minutes.
+for _ in $(seq 1 120); do                      # 120 x 5s = 10 min ceiling
+  curl -sf http://localhost:8002/v1/models &gt;/dev/null &amp;&amp; break
+  systemctl is-failed --quiet vllm-qwen38 &amp;&amp; break
+  sleep 5
+done
+
+# Only now does this name the invocation that loaded the edited file. Scoping
+# matters because a bare `journalctl -u vllm-qwen38` replays retained history,
+# so the 96 warnings from the bad launch would keep matching forever.
+INV=$(systemctl show -p InvocationID --value vllm-qwen38)
+
+# Never came up? This invocation's log IS the diagnosis -- a load-time crash
+# appears here as the Fix 1 AttributeError. Print it and stop.
+if ! curl -sf http://localhost:8002/v1/models &gt;/dev/null; then
+  sudo journalctl _SYSTEMD_INVOCATION_ID=&quot;$INV&quot; --no-pager | tail -50
+  echo &quot;vllm-qwen38 did not become ready -- see the log above&quot; &gt;&amp;2
+fi
+
+# must print 0 -- anything else means weights are being silently dropped
+sudo journalctl _SYSTEMD_INVOCATION_ID=&quot;$INV&quot; | grep -c &quot;not found in params_dict&quot;
+# must answer &quot;Paris&quot; and &quot;391&quot;, not &quot;!!!!&quot;
+curl -s http://localhost:8002/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{&quot;model&quot;:&quot;palmfuture/Qwen3.8-27B-GPTQ-Int4&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,
+       &quot;content&quot;:&quot;Capital of France? Then 17*23. Two short lines.&quot;}],&quot;max_tokens&quot;:80,&quot;temperature&quot;:0}'
+</code></pre>
+<p>Ruled out during diagnosis, recorded so nobody re-treads them: the <code>g_idx</code> patch
+is <strong>not</strong> a cause of garbage (both checkpoints set <code>desc_act: false</code>, so <code>g_idx</code>
+is trivially sequential); the <code>4-bit gptq_gemm kernel is buggy</code> warning is a <strong>red
+herring</strong> (3.6 logs it too and is fine — it is emitted unconditionally at
+config-parse time); and it is <strong>not</strong> an fp16/bf16 issue (GPTQ in this build
+accepts <em>only</em> fp16 — <code>--dtype float32</code> is rejected outright).</p>
+<hr />
+<h2 id="running-two-models-in-archi-provider-slots">Running two models in archi (provider slots)</h2>
+<p>archi's providers are a <strong>closed enum</strong> — <code>openai</code>, <code>anthropic</code>, <code>gemini</code>,
+<code>openrouter</code>, <code>local</code>, <code>cern_litellm</code>, <code>huit_bedrock</code>. Provider config is read by
+<code>_build_provider_config_from_payload()</code> (<code>chat_app/app.py:158</code>, the enum lookup at
+<code>:165</code>), so an invented key like <code>local2:</code> is <strong>not rejected — it is silently
+never read</strong>. Each provider
+type gets exactly one <code>base_url</code>, so two <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> endpoints cannot both be <code>local</code>.</p>
+<p>Because <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> speaks the OpenAI API and <code>OpenAIProvider</code> honors a custom
+<code>base_url</code> (<code>openai_provider.py:147</code>), the <strong><code>openai</code> slot is repurposed</strong> for the
+second endpoint:</p>
+<pre><code class="language-yaml">openai:
+  enabled: true
+  base_url: http://localhost:8002/v1
+  default_model: &quot;palmfuture/Qwen3.8-27B-GPTQ-Int4&quot;
+  models: [&quot;palmfuture/Qwen3.8-27B-GPTQ-Int4&quot;]
+  extra_kwargs:
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false    # 3.8 emits &lt;think&gt; tags
+</code></pre>
+<p>Two settings look mandatory here; only the first actually is.</p>
+<ol>
+<li><strong><code>OPENAI_API_KEY=sk-noauth</code> in the secrets env — required.</strong> Without it
+   <code>is_configured()</code> is <code>False</code> (<code>providers/base.py:122-127</code> — only <code>local</code> is
+   exempt from needing a key), so <code>/api/providers</code> reports <code>enabled: false</code> and
+   the UI <strong>hides the model</strong> (<code>static/chat.js:1572</code>). What still works is a
+   <strong>direct call to <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> on <code>:8002</code></strong> — which is exactly what makes this easy to
+   misdiagnose, because an archi request does <em>not</em>. The streaming route takes an
+   override key only from the session (<code>app.py:4934-4937</code>), so with no session key
+   <code>_create_provider_llm()</code> builds <code>ChatOpenAI</code> without one, the SDK refuses, and
+   the request quietly falls back to the default model. Probing through archi will
+   not reveal the misconfiguration; probing <code>:8002</code> directly will not reveal it
+   either, for the opposite reason. The same value is
+   what reaches the client: passing a custom provider config does not disable
+   environment lookup — <code>_ensure_provider_config_api_key_env()</code> backfills
+   <code>api_key_env</code> to <code>OPENAI_API_KEY</code> (<code>providers/__init__.py:48-61</code>),
+   <code>BaseProvider._load_api_key()</code> reads it (<code>providers/base.py:92-97</code>), and
+   <code>OpenAIProvider.get_chat_model()</code> passes it to <code>ChatOpenAI</code>
+   (<code>openai_provider.py:144-145</code>).</li>
+<li><strong>A placeholder <code>api_key</code> in <code>extra_kwargs</code> — redundant; prefer to omit it.</strong>
+   A bare <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> needs no auth and the OpenAI SDK refuses to construct a client
+   with no key at all, but the env value above already satisfies that. Setting it
+   here as well buys nothing and persists an authentication-shaped value verbatim
+   into Postgres <code>static_config</code>.</li>
+</ol>
+<blockquote>
+<p><strong>Declare the 3.8 slot's context window per model.</strong> <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> is launched
+<code>--max-model-len 32768</code>, and nothing discovers that number for you. A model
+named in the deployment's <code>models:</code> list becomes a <code>ModelInfo</code> whose
+<code>context_window</code> defaults to a fabricated <strong>128000</strong>, so
+<code>resolve_configured_model_window()</code> deliberately returns <code>None</code> rather than
+trust it — a 32768-launched server reporting 128000 is the exact case its
+docstring cites. The deployment-wide <code>context_editing.context_window</code> does not
+fill the gap either: a request-local view onto a different model withdraws it
+by design, because it describes the model the deployment serves.</p>
+<p>Declare the window against the model id instead, which is the one statement
+that survives a model override:</p>
+<p><code>yaml
+services:
+  chat_app:
+    context_editing:
+      context_windows:
+        palmfuture/Qwen3.8-27B-GPTQ-Int4: 32768</code></p>
+<p>Without that entry a long overridden conversation can still submit an
+oversized prompt that <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> rejects, and the absence is logged on every agent
+build naming the key to set. The entry is matched on the model id alone, so it
+applies under every provider slot — fine here, where each id is served by one
+slot, and tracked as
+<a href="https://github.com/fasrc/archi/issues/344">#344</a> for the day that stops being
+true.</p>
+<p><strong>Never put a real OpenAI key in this env file</strong> while this slot points at a
+local endpoint: whatever <code>OPENAI_API_KEY</code> holds is exactly what
+<code>OpenAIProvider.get_chat_model()</code> hands to <code>ChatOpenAI</code>
+(<code>openai_provider.py:144-145</code>), so a real key would be transmitted to
+<code>localhost:8002</code>. This provider slot and genuine OpenAI usage are mutually
+exclusive on this deployment. And because <code>extra_kwargs</code> is persisted verbatim
+into Postgres <code>static_config</code>, a real credential must never be placed there
+either — which is the second reason to leave <code>api_key</code> out of it.</p>
+</blockquote>
+<h3 id="the-override-is-streaming-only">The override is streaming-only</h3>
+<p>Per-request model selection (<code>"provider": "openai", "model": "..."</code> in the chat
+payload) is implemented in <code>stream()</code> (<code>app.py:2016</code>); the override block begins
+at <code>:2143</code> (<code>_create_provider_llm</code>) and logs <code>Serving request from request-local
+view with &lt;provider&gt;/&lt;model&gt;</code> at <code>:2177</code>. The non-streaming
+<code>/api/get_chat_response</code> does parse <code>provider</code>/<code>model</code> — in
+<code>_parse_chat_request()</code> (<code>app.py:4779</code>, the two keys at <code>:4805-4806</code>) — and then
+<strong>ignores them</strong>, silently serving the default provider and still returning
+<strong>HTTP 200</strong>.</p>
+<p>Verify an override against <code>/api/get_chat_response_stream</code>, and confirm at the
+destination — the target <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>'s request log — never by HTTP 200 alone:</p>
+<pre><code class="language-bash"># same invocation scoping as above -- retained history would inflate the count
+INV=$(systemctl show -p InvocationID --value vllm-qwen38)
+sudo journalctl _SYSTEMD_INVOCATION_ID=&quot;$INV&quot; | grep -c &quot;Received request&quot;
+# must increase across the request under test
+</code></pre>
+<hr />
+<h2 id="embedding-device-why-it-must-be-cpu">Embedding device: why it must be <code>cpu</code></h2>
+<p><code>data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.model_kwargs.device</code>
+is consumed by <strong>both</strong> containers — the data-manager <em>and</em> the chatbot, which
+also builds a <code>VectorStoreManager</code> for retrieval. Setting <code>cuda:0</code> crash-loops the
+chatbot:</p>
+<pre><code>manager.py:103 -&gt; HuggingFaceEmbeddings(device=&quot;cuda:0&quot;)
+AssertionError: Torch not compiled with CUDA enabled
+</code></pre>
+<p>There is <strong>no cuda-availability fallback anywhere in the codebase</strong> — the device
+string is passed through verbatim.</p>
+<p><strong>This is latent and detonates on re-seed.</strong> Because the running config lives in
+Postgres, the value can sit in the config file un-deployed for days; an unrelated
+redeploy is what finally applies it. So a deploy can break the chatbot with a
+change you did not make. After any deploy, check
+<code>docker inspect chatbot-archi-openai-compat --format '{{.RestartCount}}'</code> — not
+just HTTP 200 on the UI, which the crash loop can still briefly satisfy.</p>
+<p><strong>There is no per-service GPU setting.</strong> The compose template picks GPU images
+with one global flag applied to every service:</p>
+<pre><code class="language-jinja">dockerfile: .../Dockerfile-chat{{ '-gpu' if gpu_ids else '' }}
+</code></pre>
+<p>The rendered compose already names <code>Dockerfile-chat-gpu</code> for the chatbot, but the
+running chatbot image is a <strong>stale CPU build</strong>:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>chatbot</th>
+<th>data-manager</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>torch</td>
+<td><code>2.6.0+cpu</code></td>
+<td><code>2.6.0+cu124</code></td>
+</tr>
+<tr>
+<td><code>/usr/local/cuda</code></td>
+<td>absent</td>
+<td>present</td>
+</tr>
+<tr>
+<td>image size</td>
+<td>4.46 GB</td>
+<td>18.9 GB</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>--force</code> is not the reason.</strong> <code>archi create --force</code> only overwrites an
+existing deployment directory; the compose step that follows defaults to
+<code>--build --force-recreate --always-recreate-deps</code>
+(<code>DeploymentManager.start_deployment()</code>,
+<code>src/cli/managers/deployment_manager.py:48-51</code>), so an ordinary deploy <em>does</em>
+rebuild images. A stale image therefore means either no deploy has run since
+<code>gpu_ids</code> was set, or the ambient <code>ARCHI_COMPOSE_UP_FLAGS</code> was overridden and
+dropped <code>--build</code> — CI does exactly that
+(<code>.github/workflows/test-and-build-tag.yml:161</code>). Verify the image, never infer
+it from the flag:</p>
+<pre><code class="language-bash">docker inspect chatbot-archi-openai-compat --format '{{.Image}}'
+</code></pre>
+<p>So enabling <code>cuda:0</code> here still means <strong>an actual chatbot image rebuild</strong>, not
+just editing config. Think before doing so: the chatbot's reservation is
+<code>count: all</code>, so a CUDA chatbot claims GPUs 0–3 — including the pair running
+<abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>, which pre-reserves
+its KV pool at startup, making it a startup-order race. The chatbot only embeds
+short queries, not the bulk ingest that the GPU data-manager work actually sped
+up. Keep <code>device: cpu</code> while <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> owns the GPUs.</p>
+<hr />
+<h2 id="configuration-where-the-running-config-lives">Configuration: where the running config lives</h2>
+<p>Two layers:</p>
+<ul>
+<li><strong>Source file (edit this):</strong> <code>config/environments/dev.yaml</code>. The active deploy
+  is the <strong>repo-root</strong> <code>./g.sh</code>:
+  <code>archi create --name archi-openai-compat --dev --config ./config/environments/dev.yaml --services chatbot,grafana --hostmode --force --env-file &lt;path-to-secrets.env&gt;</code>.
+  The <code>--force</code> (<code>-f</code>) is <strong>required</strong> on a reseed: <code>archi create</code> aborts with
+  <code>Deployment '...' already exists</code> otherwise (it overwrites the existing
+  deployment dir; volumes are preserved). A <em>separate</em> <code>config/scripts/g.sh</code>
+  deploys an unrelated <code>main-gpu-agent</code> from <code>config/vllm-config.yaml</code> — not the
+  chat app described here.</li>
+</ul>
+<blockquote>
+<p><strong><code>--env-file</code> is still required here — but omitting it no longer costs you
+the running deployment.</strong> Without <code>--env-file</code>, <code>SecretsManager(None)</code> falls
+back to <code>src/cli/managers/secrets_dummy.env</code>, whose entire contents are
+<code>PG_PASSWORD=donuts</code>. The <code>grafana</code> service requires <code>GRAFANA_PG_PASSWORD</code>
+(<code>src/cli/service_registry.py:114</code>), so the run still fails — it just fails
+before anything is destroyed, and now names <code>--env-file</code> instead of pointing
+you at the packaged placeholder file. <code>OPENAI_API_KEY</code> would not have reached
+the deployment either.</p>
+<p>Until <a href="https://github.com/fasrc/archi/issues/287">#287</a> landed, <code>--force</code> tore
+the running deployment down <em>before</em> any secret was validated, so this exact
+command left the deployment both down and not replaced. It no longer does:
+<code>handle_existing_deployment()</code> in <code>src/cli/cli_main.py</code> now only <em>refuses</em> an
+existing deployment when <code>--force</code> was not given, and the destructive teardown
+moved to <code>remove_existing_deployment()</code> in <code>src/cli/utils/helpers.py</code>, called
+below config validation, secret validation, and compose-plan construction.</p>
+<p>(Symbols, not line numbers: these anchors moved three times inside the pull
+request that changed them. Grep the name.)</p>
+<p><strong>This does not make <code>--force</code> safe in general.</strong> Config, secrets, the compose
+plan, the agent files, and port configuration (bad or duplicated values) are
+checked before anything is destroyed. Closing this class of errors more
+completely means rendering the replacement before destroying the old deployment
+rather than adding checks one at a time
+(<a href="https://github.com/fasrc/archi/issues/294">#294</a>). Beyond that, a failure
+while <em>starting</em> the deployment — an image that will not pull, a port already
+taken by something else, a compose error — still leaves you without a running
+deployment, because nothing preserves the old one for rollback. <code>--force</code> on a
+production deployment is still a decision, not a default.</p>
+<p>For contrast, <code>archi restart</code> refuses the grafana-without-<code>--env-file</code>
+combination only when it re-renders config: its <code>elif "grafana" in
+enabled_services:</code> guard sits inside the <code>if config_files or config_dir:</code>
+block in <code>restart()</code>, so <code>archi restart --config</code> / <code>--config-dir</code> raises,
+while a plain <code>archi restart</code> skips that block entirely. <code>create</code> has
+no such special-case guard — it does not need one, because its ordering makes
+every required secret fail safely, not just grafana's.
+- <strong>Authoritative running config (what archi reads):</strong> Postgres
+  <code>static_config.services_config</code> (db <code>archi-db</code>, container
+  <code>postgres-archi-openai-compat</code>), seeded from <code>dev.yaml</code> at <code>archi create</code>.</p>
+</blockquote>
+<p>Consequence: <strong>editing <code>dev.yaml</code> + restarting is a no-op</strong> — re-run <code>g.sh</code> to
+reseed Postgres. A <code>docker restart chatbot-archi-openai-compat</code> only picks up
+values already seeded into Postgres. <code>config/</code> is a checkout of the separate
+<code>fasrc/archi-config</code> repo — see the note at the end of
+<a href="#file-reference">File reference</a>.</p>
+<blockquote>
+<p><strong>This is not the <code>deploy/fasrc-dev/</code> deployment.</strong> That one is
+<code>DEPLOYMENT="dev"</code> (<code>deploy/scripts/lib.sh:74-75</code>) → containers
+<code>chatbot-dev</code> / <code>postgres-dev</code>. Since issue #363 the name <code>dev</code> is reserved for
+the GPU host; the no-GPU workstation deploys as <code>claw</code> via its own <code>host.env</code>.
+Both point at a remote <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> endpoint, and both leave <code>GPU_IDS</code> off
+(<code>lib.sh:91-104</code>). Everything on this page is the
+<code>archi-openai-compat</code> deployment on <code>archi.rc.fas.harvard.edu</code>. The container
+names are not interchangeable between the two.</p>
+</blockquote>
 <hr />
 <h2 id="file-reference">File reference</h2>
 <table>
@@ -284,31 +845,115 @@ journalctl -u vllm-qwen36 -f               # follow logs (watch for &quot;Applic
 <tbody>
 <tr>
 <td><code>config/scripts/singularity_vllm_qwen36_volta.sh</code></td>
-<td>Manual launcher (backgrounds, logs to file)</td>
+<td>Qwen 3.6 manual launcher (backgrounds, logs to file)</td>
 </tr>
 <tr>
 <td><code>config/scripts/vllm_qwen36_volta_serve.sh</code></td>
-<td>Foreground launcher used by systemd</td>
-</tr>
-<tr>
-<td><code>config/scripts/vllm_patch/sitecustomize.py</code></td>
-<td>prometheus/fastapi 500 compat shim</td>
+<td>Qwen 3.6 foreground launcher used by systemd; keep its engine flags identical to the manual launcher</td>
 </tr>
 <tr>
 <td><code>config/scripts/vllm-qwen36.service</code></td>
-<td>systemd unit (install to <code>/etc/systemd/system/</code>)</td>
+<td>systemd unit — <strong>installed &amp; active</strong> at <code>/etc/systemd/system/vllm-qwen36.service</code></td>
 </tr>
 <tr>
-<td><code>config/scripts/g.sh</code> / <code>g.sh</code></td>
-<td><code>archi create</code> redeploy of chatbot + grafana</td>
+<td><code>config/scripts/singularity_vllm_qwen38_volta.sh</code></td>
+<td>Qwen 3.8 manual launcher (:8002, GPUs 0,1)</td>
+</tr>
+<tr>
+<td><code>config/scripts/vllm_qwen38_volta_serve.sh</code></td>
+<td>Qwen 3.8 foreground launcher used by systemd; keep flags identical to the manual launcher</td>
+</tr>
+<tr>
+<td><code>config/scripts/vllm-qwen38.service</code></td>
+<td>systemd unit — <strong>installed &amp; active</strong> at <code>/etc/systemd/system/vllm-qwen38.service</code></td>
+</tr>
+<tr>
+<td><code>config/scripts/vllm_patch/sitecustomize.py</code></td>
+<td>prometheus/fastapi 500 compat shim (both servers)</td>
+</tr>
+<tr>
+<td><code>config/scripts/vllm_patches/qwen3_5.py</code></td>
+<td>Qwen 3.8 weight-loading patches — <strong>required</strong>, see <a href="#vllm-patches-required"><abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> patches</a></td>
+</tr>
+<tr>
+<td><code>config/scripts/vllm_patches/README.md</code></td>
+<td>Full write-up of both patches, with the ruled-out hypotheses</td>
+</tr>
+<tr>
+<td><code>config/environments/dev.yaml</code></td>
+<td>Chat-app config seeded to Postgres (model, provider, <code>enable_thinking</code>)</td>
+</tr>
+<tr>
+<td><code>g.sh</code> (repo root)</td>
+<td>Active deploy: <code>archi create</code> of chatbot + grafana from <code>dev.yaml</code></td>
+</tr>
+<tr>
+<td><code>config/scripts/g.sh</code></td>
+<td>Separate <code>main-gpu-agent</code> deploy from <code>config/vllm-config.yaml</code> (not the chat app here)</td>
 </tr>
 </tbody>
 </table>
 <blockquote>
-<p><code>config/</code> is intentionally untracked in this repo (local deployment state), so
-these scripts live outside version control — keep this doc in sync by hand when
-they change.</p>
+<p><strong><code>config/</code> is a separate repository — but none of these <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> files are in it,
+and nothing provisions it on this host.</strong>
+<code>config/</code> is a checkout of <strong><code>fasrc/archi-config</code></strong> (private). It is git-ignored
+<em>in this repo</em> only because committing it would break as a gitlink or leak
+<code>config/benchmarking/secrets.env</code> (<code>.gitignore:40-44</code>) — not because it is
+unversioned.</p>
+<p><strong>Provisioning is not automatic here.</strong> <code>ensure_config</code>, which checks the
+checkout out at a pinned, SHA-verified ref, has exactly one caller —
+<code>deploy/scripts/lib.sh:282</code> — on the <em>other</em> deployment. This page's
+active path is the repo-root <code>g.sh</code> calling <code>archi create</code> directly, which never
+runs it. So on this host <code>config/</code> is simply whatever is on disk, at whatever
+revision someone last left it, with nothing verifying it.</p>
+<p><strong>And the files that matter are not committed anywhere.</strong> As of the
+<code>deploy-pin-2026-08a</code> pin, <code>git ls-files</code> inside <code>config/</code> returns
+<code>scripts/prune-build-cache.sh</code> and <code>scripts/systemd/**</code> only — <strong>no launcher, no
+systemd unit, no <code>vllm_patch/</code> or <code>vllm_patches/</code></strong>. Of the table above, only
+<code>config/environments/dev.yaml</code> is tracked. In August 2026
+<code>vllm_patch/sitecustomize.py</code> and <code>vllm_qwen36_volta_serve.sh</code> were found
+<strong>missing from disk</strong> while <code>vllm-qwen36.service</code> was still <code>enabled</code> and
+<code>active</code>: the running 3.6 server survived only because it was already up, and
+<code>Restart=on-failure</code> or a reboot would have left production down with no way to
+start it. Both had to be reconstructed by hand — a <code>git checkout</code> in <code>config/</code>
+would not have restored them, because they had never been committed.</p>
+<p><strong>Closing this takes two steps, and committing the files is only the first</strong>
+(both are tracked as <strong><a href="https://github.com/fasrc/archi/issues/286">#286</a></strong>):</p>
+<ol>
+<li>Add the launchers, both units, the compat shim and <code>vllm_patches/</code> to
+   <code>fasrc/archi-config</code>.</li>
+<li>Give <em>this</em> deployment a provisioning step that pins them. Bumping
+   <code>CONFIG_REF</code>/<code>CONFIG_SHA</code> in <code>deploy/scripts/lib.sh</code> governs
+   <strong>every script-managed deployment</strong> — <code>dev</code> on the GPU host and <code>claw</code> on the
+   workstation both source that shared file, and <code>archi_deploy</code> calls
+   <code>ensure_config</code> unconditionally, so one bump converges both on their next
+   create/redeploy. It still does nothing here. Either wrap <code>g.sh</code> so it sources
+   <code>ensure_config</code> before <code>archi create</code>, or record an explicit checkout step in
+   this deployment's procedure that <strong>verifies the commit, not just the tag
+   name</strong>: <code>git -C config/ fetch --tags</code>, then
+   <code>resolved=$(git -C config/ rev-parse "&lt;tag&gt;^{commit}")</code>, compare <code>$resolved</code>
+   against the recorded SHA and abort on mismatch, and only then
+   <code>git -C config/ checkout "$resolved"</code>. A bare <code>checkout &lt;tag&gt;</code> accepts
+   whatever commit the remote tag currently names — that is not the SHA-verified
+   pin <code>ensure_config</code> implements (<code>lib.sh:121-139</code>), which rejects a re-pointed
+   remote tag outright. (When creating the tag: make a <em>new</em> annotated tag —
+   never move an existing one, as <code>git fetch --tags</code> refuses to clobber a moved
+   tag.)</li>
+</ol>
+<p>Until <a href="https://github.com/fasrc/archi/issues/286">#286</a> lands, this page plus
+<code>vllm_patches/README.md</code> are the interim record and must be kept in sync by hand.</p>
 </blockquote>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>

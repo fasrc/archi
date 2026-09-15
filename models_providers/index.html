@@ -44,6 +44,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
                 </li>
               </ul>
@@ -91,6 +95,10 @@
     <li class="toctree-l3"><a class="reference internal" href="#local-models-ollama">Local Models (Ollama)</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#local-openai-compatible-server-vllm-lm-studio-etc">Local OpenAI-compatible server (vLLM, LM Studio, etc.)</a>
+        <ul>
+    <li class="toctree-l4"><a class="reference internal" href="#local-provider-endpoint-precedence">Local provider endpoint precedence</a>
+    </li>
+        </ul>
     </li>
         </ul>
     </li>
@@ -138,6 +146,14 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -147,6 +163,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
                 </li>
               </ul>
               <ul>
@@ -178,7 +198,7 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="models-providers">Models &amp; Providers</h1>
-<p>Archi uses a <strong>provider-based architecture</strong> for LLM access. Each provider wraps a specific LLM service and exposes a unified interface for model listing, connection validation, and chat model creation.</p>
+<p>Archi uses a <strong>provider-based architecture</strong> for <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> access. Each provider wraps a specific <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> service and exposes a unified interface for model listing, connection validation, and chat model creation.</p>
 <h2 id="provider-architecture">Provider Architecture</h2>
 <p>All providers extend the <code>BaseProvider</code> abstract class and are registered in a global provider registry. The system supports six provider types:</p>
 <table>
@@ -225,10 +245,10 @@
 <td><code>cern_litellm</code></td>
 <td><code>CERN_LITELLM_API_KEY</code></td>
 <td>Configured via YAML</td>
-<td><code>ChatOpenAI</code> (CERN LLM Gateway)</td>
+<td><code>ChatOpenAI</code> (CERN <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> Gateway)</td>
 </tr>
 <tr>
-<td>Local (Ollama/vLLM)</td>
+<td>Local (Ollama/<abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>)</td>
 <td><code>local</code></td>
 <td>N/A</td>
 <td>Dynamic (fetched from server)</td>
@@ -302,7 +322,7 @@
         models:
           - llama3.2
 </code></pre>
-<h3 id="local-openai-compatible-server-vllm-lm-studio-etc">Local OpenAI-compatible server (vLLM, LM Studio, etc.)</h3>
+<h3 id="local-openai-compatible-server-vllm-lm-studio-etc">Local OpenAI-compatible server (<abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>, LM Studio, etc.)</h3>
 <pre><code class="language-yaml">services:
   chat_app:
     default_provider: local
@@ -318,8 +338,29 @@
 <p>The <code>local</code> provider supports two modes:</p>
 <ul>
 <li><strong><code>ollama</code></strong> (default): Uses <code>ChatOllama</code>. Models are dynamically fetched from the Ollama server's <code>/api/tags</code> endpoint.</li>
-<li><strong><code>openai_compat</code></strong>: Uses <code>ChatOpenAI</code> with a custom base URL. Suitable for vLLM, LM Studio, or other OpenAI-compatible servers.</li>
+<li><strong><code>openai_compat</code></strong>: Uses <code>ChatOpenAI</code> with a custom base URL. Suitable for <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>, LM Studio, or other OpenAI-compatible servers.</li>
 </ul>
+<p>The value is matched without regard to case or surrounding whitespace — <code>Ollama</code>, <code>OLLAMA</code>, and <code>openai_compat</code> are all accepted. Any value other than <code>ollama</code> or <code>openai_compat</code> is rejected at startup with an error that names the valid values.</p>
+<h4 id="local-provider-endpoint-precedence">Local provider endpoint precedence</h4>
+<p>The two modes speak different dialects on different default ports, so each resolves its
+endpoint from its own mode. The <code>OLLAMA_HOST</code> environment variable names an Ollama daemon,
+so it applies in <code>ollama</code> mode only.</p>
+<p>In <strong><code>ollama</code></strong> mode, in order:</p>
+<ol>
+<li><code>OLLAMA_HOST</code>, if set and non-empty — it overrides a configured <code>base_url</code>.</li>
+<li>The configured <code>base_url</code>.</li>
+<li><code>http://localhost:11434</code>.</li>
+</ol>
+<p>In <strong><code>openai_compat</code></strong> mode, in order:</p>
+<ol>
+<li>The configured <code>base_url</code>. <code>OLLAMA_HOST</code> is ignored — pointing an OpenAI-dialect client
+   at an Ollama daemon would send requests to a route it does not serve.</li>
+<li><code>http://localhost:8000/v1</code>.</li>
+</ol>
+<p>An endpoint with no scheme gets <code>http://</code> prefixed in both modes, so <code>gpu-host:8000/v1</code>
+resolves to <code>http://gpu-host:8000/v1</code>.</p>
+<p>The mode is fixed when the provider is built, and the endpoint is resolved once from it.
+Set <code>mode</code> in the provider config; it cannot be changed per request.</p>
 <blockquote>
 <p><strong>Note:</strong> For GPU setup with local models, see <a href="../advanced_setup_deploy/#running-llms-locally-on-your-gpus">Advanced Setup &amp; Deployment</a>.</p>
 </blockquote>
@@ -334,9 +375,9 @@
       class: OpenAIEmbeddings
       kwargs:
         model: text-embedding-3-small
-      similarity_score_reference: 10
+      similarity_score_reference: 0.0
 </code></pre>
-<p>Requires <code>OPENAI_API_KEY</code> in your secrets file.</p>
+<p><code>similarity_score_reference</code> is a minimum cosine similarity in the range <code>0..1</code>; <code>0.0</code> means cite everything retrieved. Requires <code>OPENAI_API_KEY</code> in your secrets file.</p>
 <h3 id="huggingface-embeddings">HuggingFace Embeddings</h3>
 <pre><code class="language-yaml">data_manager:
   embedding_name: HuggingFaceEmbeddings
@@ -349,25 +390,25 @@
           device: cpu
         encode_kwargs:
           normalize_embeddings: true
-      similarity_score_reference: 10
+      similarity_score_reference: 0.0
 </code></pre>
-<p>Uses HuggingFace models locally. Optionally requires <code>HUGGINGFACEHUB_API_TOKEN</code> for private models.</p>
+<p><code>similarity_score_reference</code> is a minimum cosine similarity in the range <code>0..1</code>; <code>0.0</code> means cite everything retrieved. Uses HuggingFace models locally. Optionally requires <code>HUGGINGFACEHUB_API_TOKEN</code> for private models.</p>
 <hr />
-<h2 id="bring-your-own-key-byok">Bring Your Own Key (BYOK)</h2>
-<p>BYOK allows users to provide their own API keys for LLM providers at runtime, enabling cost attribution, provider flexibility, and privacy.</p>
+<h2 id="bring-your-own-key-byok">Bring Your Own Key (<abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr>)</h2>
+<p><abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr> allows users to provide their own API keys for <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> providers at runtime, enabling cost attribution, provider flexibility, and privacy.</p>
 <blockquote>
-<p><strong>Supported Providers:</strong> BYOK session keys work with all configured provider types (OpenAI, Anthropic, OpenRouter, Gemini, etc.). The Settings UI shows status indicators for each provider.</p>
+<p><strong>Supported Providers:</strong> <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr> session keys work with all configured provider types (OpenAI, Anthropic, OpenRouter, Gemini, etc.). The Settings UI shows status indicators for each provider.</p>
 </blockquote>
 <h3 id="key-hierarchy">Key Hierarchy</h3>
 <p>API keys are resolved in the following order (highest priority first):</p>
 <ol>
-<li><strong>Session Storage</strong>: User-provided keys via the Settings UI (BYOK)</li>
+<li><strong>Session Storage</strong>: User-provided keys via the Settings UI (<abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr>)</li>
 <li><strong>Environment Variables / Docker Secrets</strong>: Admin-configured keys (e.g., <code>OPENAI_API_KEY</code> or keys mounted at <code>/run/secrets/</code>)</li>
 </ol>
 <blockquote>
 <p><strong>Note:</strong> When a user provides a session key, it overrides any environment-level key for that user's requests. Environment keys serve as the default fallback for users who have not configured their own key.</p>
 </blockquote>
-<h3 id="using-byok-in-the-chat-interface">Using BYOK in the Chat Interface</h3>
+<h3 id="using-byok-in-the-chat-interface">Using <abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr> in the Chat Interface</h3>
 <ol>
 <li>Open the <strong>Settings</strong> modal (gear icon in the header)</li>
 <li>Expand the <strong>API Keys</strong> section</li>
@@ -399,7 +440,7 @@
 </tr>
 </tbody>
 </table>
-<h3 id="byok-api-endpoints">BYOK API Endpoints</h3>
+<h3 id="byok-api-endpoints"><abbr title="Bring Your Own Key — users supply their own language-model API keys.">BYOK</abbr> API Endpoints</h3>
 <table>
 <thead>
 <tr>
@@ -432,6 +473,17 @@
 <li>Keys are session-scoped and cleared on logout or session expiry</li>
 <li>HTTPS is strongly recommended for production — see <a href="../advanced_setup_deploy/#https-configuration-for-production">HTTPS Configuration</a></li>
 </ul>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
               
             </div>
           </div><footer>
