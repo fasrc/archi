@@ -77,9 +77,16 @@ _PYTORCH_FROM_PATTERN = re.compile(
     r"^FROM\s+\S*pytorch/pytorch:(\d+(?:\.\d+)*)-cuda(\d+(?:\.\d+)*)", re.MULTILINE
 )
 
-# Every table below maps a measured release to the specifier that release actually
-# DECLARES, as a tuple of ``(operator, release)`` clauses that must all hold. ``None``
-# means the release declares no dependency on that package at all.
+# Every table below maps a measured version STRING to the specifier that version
+# actually DECLARES, as a tuple of ``(operator, version)`` clauses that must all hold.
+# ``None`` means the version declares no dependency on that package at all, which is
+# different from the version being unmeasured — see ``_measured``.
+#
+# The keys are full version strings, post identifier included, because a post release is
+# a separate distribution with its own metadata. Review on 2026-09-16 found the keys were
+# numeric release tuples, which merged ``0.0.29``, ``0.0.29.post1``, ``0.0.29.post2`` and
+# ``0.0.29.post3`` into one row holding whichever constraint was measured last — and the
+# constraint it held, ``torch==2.6.0``, was wrong for two of the four.
 #
 # The uniform shape is deliberate. The first version of this module used one-sided
 # comparisons — "vllm at least 0.9.0", "sympy at least the floor" — and review on
@@ -101,27 +108,50 @@ _PYTORCH_FROM_PATTERN = re.compile(
 # ``pkg_resources`` at module scope, which setuptools 82 removed (see
 # ``requirements-base.txt``). So no SDK pin satisfies both vllm 0.8.5 and a working
 # exporter, and the fix had to be the vllm bump.
+# Re-measured on 2026-09-16 when the keys moved to full version strings. The 0.9.x line
+# is why the keys matter here too: 0.9.0 and 0.9.1 declare a floor, 0.9.2 declares no
+# opentelemetry-sdk dependency at all, and a release-tuple key could not tell 0.9.0 from
+# 0.9.0.1.
 VLLM_OTEL_SPEC = {
-    (0, 8, 5): ((">=", (1, 26, 0)), ("<", (1, 27, 0))),
-    (0, 9, 0): ((">=", (1, 26, 0)),),
-    (0, 10, 0): None,
-    (0, 11, 0): None,
-    (0, 12, 0): None,
-    (0, 15, 0): None,
-    (0, 19, 0): ((">=", (1, 27, 0)),),
-    (0, 22, 0): ((">=", (1, 27, 0)),),
-    (0, 25, 0): ((">=", (1, 27, 0)),),
-    (0, 27, 0): ((">=", (1, 27, 0)),),
-    (0, 29, 0): ((">=", (1, 27, 0)),),
+    "0.8.5": ((">=", "1.26.0"), ("<", "1.27.0")),
+    "0.8.5.post1": ((">=", "1.26.0"), ("<", "1.27.0")),
+    "0.9.0": ((">=", "1.26.0"),),
+    "0.9.0.1": ((">=", "1.26.0"),),
+    "0.9.1": ((">=", "1.26.0"),),
+    "0.9.2": None,
+    "0.10.0": None,
+    "0.11.0": None,
+    "0.12.0": None,
+    "0.15.0": None,
+    "0.19.0": ((">=", "1.27.0"),),
+    "0.22.0": ((">=", "1.27.0"),),
+    "0.25.0": ((">=", "1.27.0"),),
+    "0.27.0": ((">=", "1.27.0"),),
+    "0.29.0": ((">=", "1.27.0"),),
 }
 
-# ``xformers`` -> its ``torch`` specifier. One exact torch per release, so a torch bump
-# that leaves xformers behind conflicts rather than falling back. Measured 2026-09-15.
+# ``xformers`` -> its ``torch`` specifier. One exact torch per distribution, so a torch
+# bump that leaves xformers behind conflicts rather than falling back.
+#
+# Re-measured from PyPI ``requires_dist`` on 2026-09-16, which CORRECTED this table. It
+# previously read ``(0, 0, 29) -> torch==2.6.0``; that is the 0.0.29.post2 and post3
+# constraint, while 0.0.29 and 0.0.29.post1 require ``torch==2.5.1``. xformers rebuilds a
+# release against a newer torch under a post tag, so the post identifier is exactly the
+# part that carries the constraint — 0.0.33 wants torch 2.9.0 and 0.0.33.post2 wants
+# 2.9.1. Note 0.0.32 has no bare release on PyPI; post1 is the first.
 XFORMERS_TORCH_SPEC = {
-    (0, 0, 29): (("==", (2, 6, 0)),),
-    (0, 0, 30): (("==", (2, 7, 0)),),
-    (0, 0, 31): (("==", (2, 7, 1)),),
-    (0, 0, 33): (("==", (2, 9, 0)),),
+    "0.0.29": (("==", "2.5.1"),),
+    "0.0.29.post1": (("==", "2.5.1"),),
+    "0.0.29.post2": (("==", "2.6.0"),),
+    "0.0.29.post3": (("==", "2.6.0"),),
+    "0.0.30": (("==", "2.7.0"),),
+    "0.0.31": (("==", "2.7.1"),),
+    "0.0.31.post1": (("==", "2.7.1"),),
+    "0.0.32.post1": (("==", "2.8.0"),),
+    "0.0.32.post2": (("==", "2.8.0"),),
+    "0.0.33": (("==", "2.9.0"),),
+    "0.0.33.post1": (("==", "2.9.0"),),
+    "0.0.33.post2": (("==", "2.9.1"),),
 }
 
 # vllm -> the ``transformers`` range it actually WORKS with, which is narrower than the
@@ -138,20 +168,48 @@ XFORMERS_TORCH_SPEC = {
 # real image build, which is why #473 matters and why an unpinned transformers is a
 # latent break rather than a convenience.
 VLLM_TRANSFORMERS_SPEC = {
-    (0, 9, 0): ((">=", (4, 51, 1)), ("<", (4, 54, 0))),
+    "0.9.0": ((">=", "4.51.1"), ("<", "4.54.0")),
 }
 
 # ``torch`` -> its ``sympy`` specifier. This coupling crosses the header/base boundary
 # (torch is pinned in the headers, sympy in the shared base), so neither file shows it
-# alone — which is how the first pass at #472 missed it. Measured 2026-09-15.
+# alone — which is how the first pass at #472 missed it. Re-measured 2026-09-16; torch
+# 2.6.0's declaration carries a ``python_version >= "3.9"`` marker, which every image
+# here satisfies, so the clause is recorded unconditionally.
 TORCH_SYMPY_SPEC = {
-    (2, 6, 0): (("==", (1, 13, 1)),),
-    (2, 7, 0): ((">=", (1, 13, 3)),),
+    "2.6.0": (("==", "1.13.1"),),
+    "2.7.0": ((">=", "1.13.3"),),
+    "2.7.1": ((">=", "1.13.3"),),
+    "2.8.0": ((">=", "1.13.3"),),
 }
 
 
-def _satisfies(candidate: tuple, clauses: tuple) -> bool:
-    """Does ``candidate`` satisfy every ``(operator, release)`` clause?
+_MISSING = object()
+
+
+def _normalize_version(version: str) -> str:
+    """Casefold and strip a version string, so it can be a table key or compared."""
+    return version.strip().lower()
+
+
+def _measured(table: dict, version: str):
+    """The clauses ``table`` records for ``version``, or ``_MISSING``.
+
+    ``_MISSING`` means nobody measured this version, and every caller turns that into
+    a failure. It is deliberately distinct from a recorded ``None``, which means the
+    version was measured and declares no dependency on that package at all. Collapsing
+    the two would let an unmeasured release read as "declares nothing" and pass.
+    """
+    return table.get(_normalize_version(version), _MISSING)
+
+
+def _satisfies(candidate: str, clauses: tuple) -> bool:
+    """Does version ``candidate`` satisfy every ``(operator, version)`` clause?
+
+    ``==`` compares the WHOLE version string, so ``2.7.0.post1`` does not satisfy
+    ``==2.7.0``: they are different distributions and upstream builds them against
+    different dependencies. ``>=`` and ``<`` compare the numeric release segment,
+    which is what an ordered bound is about.
 
     Only the operators the measured tables actually use are implemented. An
     unrecognized operator raises rather than silently passing, so a future table row
@@ -159,26 +217,22 @@ def _satisfies(candidate: tuple, clauses: tuple) -> bool:
     """
     for operator, bound in clauses:
         if operator == "==":
-            if candidate != bound:
+            if _normalize_version(candidate) != _normalize_version(bound):
                 return False
         elif operator == ">=":
-            if candidate < bound:
+            if _release(candidate) < _release(bound):
                 return False
         elif operator == "<":
-            if candidate >= bound:
+            if _release(candidate) >= _release(bound):
                 return False
         else:
             raise ValueError(f"unsupported operator {operator!r} in a measured table")
     return True
 
 
-def _fmt(release: tuple) -> str:
-    return ".".join(str(part) for part in release)
-
-
 def _describe(clauses: tuple) -> str:
     """Render clauses the way the package declares them, for failure messages."""
-    return ",".join(f"{operator}{_fmt(bound)}" for operator, bound in clauses)
+    return ",".join(f"{operator}{bound}" for operator, bound in clauses)
 
 
 # ``markitdown[pdf,pptx]==0.1.5`` -> name "markitdown". An extras marker belongs to the
@@ -321,7 +375,8 @@ class TestVllmAcceptsThePinnedOpenTelemetrySdk:
                 "shared base pins opentelemetry-sdk"
             )
 
-        if _release(vllm) not in VLLM_OTEL_SPEC:
+        clauses = _measured(VLLM_OTEL_SPEC, vllm)
+        if clauses is _MISSING:
             pytest.fail(
                 f"vllm {vllm} is not in VLLM_OTEL_SPEC. Read its ``requires_dist`` on "
                 f"PyPI, add the row with today's date, then re-run. Do not widen this "
@@ -330,11 +385,10 @@ class TestVllmAcceptsThePinnedOpenTelemetrySdk:
                 f"unmeasured release can reintroduce #472."
             )
 
-        clauses = VLLM_OTEL_SPEC[_release(vllm)]
         if clauses is None:
             return  # this vllm declares no opentelemetry-sdk dependency at all
 
-        assert _satisfies(_release(sdk), clauses), (
+        assert _satisfies(sdk, clauses), (
             f"vllm {vllm} requires opentelemetry-sdk{_describe(clauses)}, but "
             f"requirements-base.txt pins opentelemetry-sdk=={sdk}. pip cannot resolve "
             f"the PyTorch image's requirement set, so the release build fails at the "
@@ -378,17 +432,19 @@ class TestXformersMatchesTheTorchPin:
         if xformers is None or torch is None:
             pytest.skip("this guard only applies while the GPU header pins both")
 
-        clauses = XFORMERS_TORCH_SPEC.get(_release(xformers))
-        if clauses is None:
+        clauses = _measured(XFORMERS_TORCH_SPEC, xformers)
+        if clauses is _MISSING:
             pytest.fail(
                 f"xformers {xformers} is not in XFORMERS_TORCH_SPEC. Read its "
                 f"``requires_dist`` on PyPI, add the row with today's date, then "
                 f"re-run. Do not delete this guard to get past it: xformers pins "
                 f"torch exactly, so an unverified pair is a build failure waiting "
-                f"for the next release (#472)."
+                f"for the next release (#472). Add the row under the FULL version, "
+                f"post identifier included: 0.0.29 and 0.0.29.post2 are different "
+                f"distributions built against different torch versions."
             )
 
-        assert _satisfies(_release(torch), clauses), (
+        assert _satisfies(torch, clauses), (
             f"xformers {xformers} requires torch{_describe(clauses)}, but the GPU "
             f"header pins torch=={torch}. xformers ships one build per torch "
             f"release, so this set cannot resolve."
@@ -425,7 +481,7 @@ class TestPytorchBaseImageMatchesTheTorchPin:
         )
         image_torch, image_cuda = match.group(1), match.group(2)
 
-        assert _release(image_torch) == _release(torch), (
+        assert _normalize_version(image_torch) == _normalize_version(torch), (
             f"the PyTorch base image is built FROM pytorch/pytorch:{image_torch}-"
             f"cuda{image_cuda}, but gpu-requirementsHEADER.txt pins torch=={torch}. "
             f"pip would install the pinned wheel over the image's torch and leave "
@@ -462,8 +518,8 @@ class TestTransformersIsPinnedWithinWhatVllmImportsWith:
             pytest.skip("this guard only applies while the GPU header pins vllm")
         assert transformers is not None, "requirements-base.txt must pin transformers"
 
-        clauses = VLLM_TRANSFORMERS_SPEC.get(_release(vllm))
-        if clauses is None:
+        clauses = _measured(VLLM_TRANSFORMERS_SPEC, vllm)
+        if clauses is _MISSING:
             pytest.fail(
                 f"vllm {vllm} is not in VLLM_TRANSFORMERS_SPEC. This range cannot be "
                 f"read off PyPI metadata — vllm declares no ceiling. Import vllm "
@@ -471,7 +527,7 @@ class TestTransformersIsPinnedWithinWhatVllmImportsWith:
                 f"record what actually works with today's date, then re-run."
             )
 
-        assert _satisfies(_release(transformers), clauses), (
+        assert _satisfies(transformers, clauses), (
             f"vllm {vllm} imports only with transformers{_describe(clauses)}, but "
             f"requirements-base.txt pins transformers=={transformers}. The image will "
             f"BUILD and then fail at ``import vllm`` with \"'aimv2' is already used by "
@@ -501,8 +557,8 @@ class TestSympySatisfiesTheTorchPin:
                 "base pins sympy"
             )
 
-        clauses = TORCH_SYMPY_SPEC.get(_release(torch))
-        if clauses is None:
+        clauses = _measured(TORCH_SYMPY_SPEC, torch)
+        if clauses is _MISSING:
             pytest.fail(
                 f"torch {torch} is not in TORCH_SYMPY_SPEC. Read its "
                 f"``requires_dist`` on PyPI, add the row with today's date, then "
@@ -511,7 +567,7 @@ class TestSympySatisfiesTheTorchPin:
                 f"pair is a base-image build failure (#472)."
             )
 
-        assert _satisfies(_release(sympy), clauses), (
+        assert _satisfies(sympy, clauses), (
             f"{header_name}-requirementsHEADER.txt pins torch=={torch}, which requires "
             f"sympy{_describe(clauses)}, but requirements-base.txt pins "
             f"sympy=={sympy}. The base-image requirement set cannot resolve. Note "
@@ -536,40 +592,40 @@ class TestSatisfiesModelsTheWholeDeclaredRange:
         "candidate, clauses, expected, why",
         [
             (
-                (1, 26, 0),
-                ((">=", (1, 26, 0)), ("<", (1, 27, 0))),
+                "1.26.0",
+                ((">=", "1.26.0"), ("<", "1.27.0")),
                 True,
                 "the lower bound is inclusive",
             ),
             (
-                (1, 44, 0),
-                ((">=", (1, 26, 0)), ("<", (1, 27, 0))),
+                "1.44.0",
+                ((">=", "1.26.0"), ("<", "1.27.0")),
                 False,
                 "vllm 0.8.5's ceiling excludes 1.44.0 — the original #472 conflict",
             ),
             (
-                (1, 25, 0),
-                ((">=", (1, 26, 0)),),
+                "1.25.0",
+                ((">=", "1.26.0"),),
                 False,
                 "a floor-only range still has a floor: vllm 0.9.0 needs >=1.26.0, so "
                 "an SDK downgrade must not pass",
             ),
             (
-                (1, 26, 0),
-                ((">=", (1, 27, 0)),),
+                "1.26.0",
+                ((">=", "1.27.0"),),
                 False,
                 "vllm 0.19.0 raised the floor to 1.27.0, so constraints are not "
                 "monotonic across releases",
             ),
             (
-                (1, 13, 3),
-                (("==", (1, 13, 1)),),
+                "1.13.3",
+                (("==", "1.13.1"),),
                 False,
                 "torch 2.6.0 pins sympy exactly, so a HIGHER sympy is still wrong",
             ),
             (
-                (1, 13, 1),
-                (("==", (1, 13, 1)),),
+                "1.13.1",
+                (("==", "1.13.1"),),
                 True,
                 "the exact pin is satisfied only by itself",
             ),
@@ -577,6 +633,121 @@ class TestSatisfiesModelsTheWholeDeclaredRange:
     )
     def test_every_clause_is_enforced(self, candidate, clauses, expected, why):
         assert _satisfies(candidate, clauses) is expected, why
+
+
+class TestMeasuredTablesKeyOnTheFullVersion:
+    """A table key must identify ONE distribution, post identifier included.
+
+    Review on 2026-09-16 found the table keys were numeric release tuples, so
+    ``_release`` mapped ``0.0.29``, ``0.0.29.post1``, ``0.0.29.post2`` and
+    ``0.0.29.post3`` all onto ``(0, 0, 29)`` — four distributions, one row. The row
+    then held whichever constraint was measured last, and the module reported it for
+    the other three.
+
+    That was not hypothetical: the row read ``torch==2.6.0``, which is the post2 and
+    post3 constraint, while xformers 0.0.29 and 0.0.29.post1 both require
+    ``torch==2.5.1``. So the guard approved xformers 0.0.29 with torch 2.6.0 — a pair
+    pip rejects — and rejected xformers 0.0.29 with torch 2.5.1, which is the pair
+    upstream actually built. Measured from PyPI ``requires_dist`` on 2026-09-16.
+    """
+
+    @pytest.mark.parametrize(
+        "xformers_version, torch_version",
+        [
+            ("0.0.29", "2.5.1"),
+            ("0.0.29.post1", "2.5.1"),
+            ("0.0.29.post2", "2.6.0"),
+            ("0.0.29.post3", "2.6.0"),
+            ("0.0.30", "2.7.0"),
+            ("0.0.31", "2.7.1"),
+            ("0.0.31.post1", "2.7.1"),
+            ("0.0.32.post1", "2.8.0"),
+            ("0.0.32.post2", "2.8.0"),
+            ("0.0.33", "2.9.0"),
+            ("0.0.33.post1", "2.9.0"),
+            ("0.0.33.post2", "2.9.1"),
+        ],
+    )
+    def test_each_measured_xformers_release_accepts_its_own_torch(
+        self, xformers_version, torch_version
+    ):
+        clauses = _measured(XFORMERS_TORCH_SPEC, xformers_version)
+        assert clauses is not _MISSING, (
+            f"xformers {xformers_version} is measured in this test but missing from "
+            f"XFORMERS_TORCH_SPEC."
+        )
+        assert _satisfies(torch_version, clauses), (
+            f"xformers {xformers_version} requires torch=={torch_version} as "
+            f"measured, but the table says torch{_describe(clauses)}."
+        )
+
+    @pytest.mark.parametrize(
+        "left, right, why",
+        [
+            (
+                "0.0.29",
+                "0.0.29.post2",
+                "xformers rebuilt 0.0.29 against a newer torch under a post tag, so "
+                "collapsing the two reuses the wrong constraint",
+            ),
+            (
+                "0.0.33",
+                "0.0.33.post2",
+                "the same split happened again at 0.0.33: 2.9.0 versus 2.9.1",
+            ),
+        ],
+    )
+    def test_a_post_release_is_not_read_as_its_base_release(self, left, right, why):
+        assert _measured(XFORMERS_TORCH_SPEC, left) != _measured(
+            XFORMERS_TORCH_SPEC, right
+        ), why
+
+    @pytest.mark.parametrize(
+        "candidate, bound, expected, why",
+        [
+            ("2.7.0", "2.7.0", True, "the exact pin is satisfied by itself"),
+            (
+                "2.7.0.post1",
+                "2.7.0",
+                False,
+                "a post release is a DIFFERENT distribution, so an exact clause must "
+                "reject it rather than truncating it to the release segment",
+            ),
+            (
+                "1.13.1",
+                "1.13.1",
+                True,
+                "torch 2.6.0's exact sympy pin still matches itself",
+            ),
+        ],
+    )
+    def test_an_exact_clause_compares_the_whole_version(
+        self, candidate, bound, expected, why
+    ):
+        assert _satisfies(candidate, (("==", bound),)) is expected, why
+
+    @pytest.mark.parametrize(
+        "label, table",
+        [
+            ("VLLM_OTEL_SPEC", "vllm_otel"),
+            ("XFORMERS_TORCH_SPEC", "xformers_torch"),
+            ("VLLM_TRANSFORMERS_SPEC", "vllm_transformers"),
+            ("TORCH_SYMPY_SPEC", "torch_sympy"),
+        ],
+    )
+    def test_every_table_is_keyed_by_version_strings(self, label, table):
+        tables = {
+            "vllm_otel": VLLM_OTEL_SPEC,
+            "xformers_torch": XFORMERS_TORCH_SPEC,
+            "vllm_transformers": VLLM_TRANSFORMERS_SPEC,
+            "torch_sympy": TORCH_SYMPY_SPEC,
+        }
+        offenders = [key for key in tables[table] if not isinstance(key, str)]
+        assert not offenders, (
+            f"{label} is keyed by {offenders}, not by version strings. A numeric "
+            f"tuple key drops the post identifier and merges distinct distributions "
+            f"into one row."
+        )
 
 
 class TestProtectedPackagesCarryAnExactPin:
