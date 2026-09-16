@@ -319,7 +319,7 @@ Rules that apply to **every** task below:
 
 ## 5. Publish
 
-- [ ] 5.1 Push the branch and open the pull request.
+- [x] 5.1 Push the branch and open the pull request.
 
   1. Re-run `bash scripts/gate.sh` bare on a **clean** tree and confirm it exits 0. A run
      against a dirty working tree misattributes line numbers and reports a false coverage
