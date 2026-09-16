@@ -66,6 +66,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CPU_HEADER = REPO_ROOT / "requirements" / "cpu-requirementsHEADER.txt"
 GPU_HEADER = REPO_ROOT / "requirements" / "gpu-requirementsHEADER.txt"
 BASE_REQUIREMENTS = REPO_ROOT / "requirements" / "requirements-base.txt"
+
+# The two sets ``pip`` actually installs. ``build_docker_images.sh`` writes each one by
+# concatenating a header with the shared base, so these are the only files where a pin
+# duplicated ACROSS the header/base boundary is visible at all.
+_DOCKERFILE_TEMPLATES = REPO_ROOT / "src" / "cli" / "templates" / "dockerfiles"
+GENERATED_CPU_REQUIREMENTS = (
+    _DOCKERFILE_TEMPLATES / "base-python-image" / "requirements.txt"
+)
+GENERATED_GPU_REQUIREMENTS = (
+    _DOCKERFILE_TEMPLATES / "base-pytorch-image" / "requirements.txt"
+)
 PYTORCH_BASE_DOCKERFILE = (
     REPO_ROOT
     / "src"
@@ -325,6 +336,59 @@ def _parse_requirements(text: str) -> dict:
         if match:
             found[_normalize_name(match.group(1))] = match.group(2).strip()
     return found
+
+
+# ``-r other.txt`` / ``-c constraints.txt`` and their long forms. Deliberately NOT
+# ``--extra-index-url`` or ``--index-url``, which carry no requirements and which the
+# CPU header legitimately uses.
+_INCLUDE_PATTERN = re.compile(r"^(?:-r|-c|--requirement|--constraint)(?:[=\s]|$)")
+
+
+def _include_directives(text: str) -> list:
+    """Lines of ``text`` that pull requirements in from another file.
+
+    These are the option lines ``_requirement_lines`` cannot honour: it skips
+    everything starting with ``-``, so an included package is invisible to every guard
+    while pip installs it regardless.
+    """
+    directives = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if _INCLUDE_PATTERN.match(line):
+            directives.append(line)
+    return directives
+
+
+def _declarations(text: str) -> dict:
+    """Map normalized project name to EVERY specifier declared for it, in file order.
+
+    ``_parse_pins`` and ``_parse_requirements`` both keep only the last occurrence of a
+    name, which is what let a repeated declaration hide a contradiction. This keeps all
+    of them, so a duplicate is a fact the guards can see.
+    """
+    found = {}
+    for line in _requirement_lines(text):
+        match = _REQUIREMENT_PATTERN.match(line)
+        if match:
+            found.setdefault(_normalize_name(match.group(1)), []).append(
+                match.group(2).strip()
+            )
+    return found
+
+
+def _duplicated_protected(text: str) -> dict:
+    """Protected packages that ``text`` declares more than once, with every specifier.
+
+    An empty mapping is the healthy answer. Any entry means pip sees two constraints
+    where the guards see one, so the set can be impossible while this module is green.
+    """
+    return {
+        name: specifiers
+        for name, specifiers in _declarations(text).items()
+        if name in PROTECTED_PACKAGES and len(specifiers) > 1
+    }
 
 
 def _unpinned_protected(text: str) -> dict:
@@ -1025,4 +1089,141 @@ class TestProtectedPackagesCarryAnExactPin:
             f"absent, and a range is read as absent, so this would disable the "
             f"guard instead of relaxing it. Pin the package exactly and add the "
             f"measured row, or drop it from PROTECTED_PACKAGES with a reason."
+        )
+
+
+class TestNoRequirementFileDefersToAnotherFile:
+    """An ``-r``/``-c`` include would make a protected package invisible here.
+
+    Adversarial review on 2026-09-16: ``_requirement_lines`` drops every line starting
+    with ``-``, which is right for ``--extra-index-url`` (the CPU header has two) but
+    wrong for ``-r other.txt`` and ``-c constraints.txt``. Those pull in real
+    requirements that pip installs and this module cannot see, so a protected package
+    supplied through an include reads as absent and turns its guard off — the same
+    silent skip as a range, by a different route.
+
+    Resolving includes recursively is the other possible answer. Refusing them is
+    better here: the three files are assembled by ``cat`` in
+    ``build_docker_images.sh``, so an include has no reason to appear, and a guard that
+    fails closed on an unsupported construct beats one that half-supports it. No file
+    uses an include today, so this costs nothing until somebody adds one.
+    """
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            ("-r other.txt\n", ["-r other.txt"]),
+            ("-c constraints.txt\n", ["-c constraints.txt"]),
+            ("--requirement other.txt\n", ["--requirement other.txt"]),
+            ("--constraint constraints.txt\n", ["--constraint constraints.txt"]),
+            ("--extra-index-url https://example.invalid/simple\n", []),
+            ("--index-url https://example.invalid/simple\n", []),
+            ("torch==2.7.0\n", []),
+            ("# -r other.txt\n", []),
+        ],
+    )
+    def test_an_include_directive_is_reported(self, text, expected):
+        assert _include_directives(text) == expected
+
+    @pytest.mark.parametrize(
+        "label, path",
+        [
+            ("cpu-requirementsHEADER.txt", CPU_HEADER),
+            ("gpu-requirementsHEADER.txt", GPU_HEADER),
+            ("requirements-base.txt", BASE_REQUIREMENTS),
+            ("base-python-image/requirements.txt", GENERATED_CPU_REQUIREMENTS),
+            ("base-pytorch-image/requirements.txt", GENERATED_GPU_REQUIREMENTS),
+        ],
+    )
+    def test_no_file_pulls_requirements_in_from_elsewhere(self, label, path):
+        includes = _include_directives(path.read_text(encoding="utf-8"))
+        assert not includes, (
+            f"{label} uses {includes}. Every guard in this module reads only the file "
+            f"in front of it, so a package supplied through an include is invisible "
+            f"here and its guard silently skips, while pip installs it anyway. These "
+            f"sets are assembled by ``cat``, so inline the pins instead — or teach "
+            f"_requirement_lines to resolve includes before relaxing this."
+        )
+
+
+class TestProtectedPackagesAreDeclaredOnce:
+    """A protected package must be declared once, in one place.
+
+    Adversarial review on 2026-09-16 found that both parsers keep only the last
+    occurrence of a name, so a repeated declaration hides a contradiction instead of
+    reporting it. ``vllm==0.9.0`` followed by ``vllm<0.9.0`` leaves an exact pin in
+    ``_parse_pins``, ``_unpinned_protected`` reports healthy, and every pairwise guard
+    passes — while pip correctly calls the set impossible.
+
+    The concatenation is why this is not an exotic case. ``build_docker_images.sh``
+    builds each image's set by joining a header with ``requirements-base.txt``, so a
+    package pinned in BOTH files produces two lines in one file with nothing in this
+    module comparing them: ``gpu_pins`` and ``base_pins`` are separate dicts. torch is
+    pinned in the headers and sympy and transformers in the shared base today, and
+    nothing stops the next edit from adding torch to the base.
+
+    So the duplicate check runs over the GENERATED sets as well — the only files pip
+    actually reads, and the only place a cross-file duplicate can be seen at all.
+    """
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            (
+                "vllm==0.9.0\nvllm<0.9.0\n",
+                {"vllm": ["==0.9.0", "<0.9.0"]},
+            ),
+            (
+                "torch==2.7.0\ntorch==2.6.0\n",
+                {"torch": ["==2.7.0", "==2.6.0"]},
+            ),
+            (
+                "vllm==0.9.0\nVLLM==0.9.0\n",
+                {"vllm": ["==0.9.0", "==0.9.0"]},
+            ),
+            ("vllm==0.9.0\n", {}),
+            ("numpy==1.0\nnumpy==2.0\n", {}),
+        ],
+    )
+    def test_a_repeated_protected_declaration_is_reported(self, text, expected):
+        assert _duplicated_protected(text) == expected
+
+    @pytest.mark.parametrize(
+        "label, path",
+        [
+            ("cpu-requirementsHEADER.txt", CPU_HEADER),
+            ("gpu-requirementsHEADER.txt", GPU_HEADER),
+            ("requirements-base.txt", BASE_REQUIREMENTS),
+            ("base-python-image/requirements.txt", GENERATED_CPU_REQUIREMENTS),
+            ("base-pytorch-image/requirements.txt", GENERATED_GPU_REQUIREMENTS),
+        ],
+    )
+    def test_each_protected_package_is_declared_once(self, label, path):
+        duplicated = _duplicated_protected(path.read_text(encoding="utf-8"))
+        assert not duplicated, (
+            f"{label} declares {sorted(duplicated)} more than once ({duplicated}). "
+            f"Both parsers keep the last occurrence, so the earlier one is invisible "
+            f"to every guard while pip still sees both and can call the set "
+            f"impossible. Declare the package in exactly one file."
+        )
+
+    @pytest.mark.parametrize(
+        "label, header, generated",
+        [
+            ("base-python-image", CPU_HEADER, GENERATED_CPU_REQUIREMENTS),
+            ("base-pytorch-image", GPU_HEADER, GENERATED_GPU_REQUIREMENTS),
+        ],
+    )
+    def test_the_generated_set_matches_its_sources(self, label, header, generated):
+        expected = header.read_text(encoding="utf-8") + BASE_REQUIREMENTS.read_text(
+            encoding="utf-8"
+        )
+        assert generated.read_text(encoding="utf-8") == expected, (
+            f"{label}/requirements.txt is not "
+            f"``cat {header.name} requirements-base.txt``. That generated file is "
+            f"what the image installs and what a ``pip install --dry-run`` resolves, "
+            f"while every other guard here reads the sources — so a stale generated "
+            f"file means this module is green about a requirement set the build does "
+            f"not use. Re-run scripts/dev/build_docker_images.sh, or regenerate the "
+            f"two files with that same concatenation."
         )
