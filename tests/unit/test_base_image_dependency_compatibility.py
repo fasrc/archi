@@ -58,6 +58,8 @@ import re
 from pathlib import Path
 
 import pytest
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -80,9 +82,10 @@ _PYTORCH_FROM_PATTERN = re.compile(
 )
 
 # Every table below maps a measured version STRING to the specifier that version
-# actually DECLARES, as a tuple of ``(operator, version)`` clauses that must all hold.
-# ``None`` means the version declares no dependency on that package at all, which is
-# different from the version being unmeasured — see ``_measured``.
+# actually DECLARES, verbatim as PyPI reports it — so a row can be diffed against
+# ``requires_dist`` by eye, and ``packaging`` rather than this module decides what it
+# means. ``None`` means the version declares no dependency on that package at all, which
+# is different from the version being unmeasured — see ``_measured``.
 #
 # The keys are full version strings, post identifier included, because a post release is
 # a separate distribution with its own metadata. Review on 2026-09-16 found the keys were
@@ -115,21 +118,21 @@ _PYTORCH_FROM_PATTERN = re.compile(
 # opentelemetry-sdk dependency at all, and a release-tuple key could not tell 0.9.0 from
 # 0.9.0.1.
 VLLM_OTEL_SPEC = {
-    "0.8.5": ((">=", "1.26.0"), ("<", "1.27.0")),
-    "0.8.5.post1": ((">=", "1.26.0"), ("<", "1.27.0")),
-    "0.9.0": ((">=", "1.26.0"),),
-    "0.9.0.1": ((">=", "1.26.0"),),
-    "0.9.1": ((">=", "1.26.0"),),
+    "0.8.5": ">=1.26.0,<1.27.0",
+    "0.8.5.post1": ">=1.26.0,<1.27.0",
+    "0.9.0": ">=1.26.0",
+    "0.9.0.1": ">=1.26.0",
+    "0.9.1": ">=1.26.0",
     "0.9.2": None,
     "0.10.0": None,
     "0.11.0": None,
     "0.12.0": None,
     "0.15.0": None,
-    "0.19.0": ((">=", "1.27.0"),),
-    "0.22.0": ((">=", "1.27.0"),),
-    "0.25.0": ((">=", "1.27.0"),),
-    "0.27.0": ((">=", "1.27.0"),),
-    "0.29.0": ((">=", "1.27.0"),),
+    "0.19.0": ">=1.27.0",
+    "0.22.0": ">=1.27.0",
+    "0.25.0": ">=1.27.0",
+    "0.27.0": ">=1.27.0",
+    "0.29.0": ">=1.27.0",
 }
 
 # ``xformers`` -> its ``torch`` specifier. One exact torch per distribution, so a torch
@@ -142,18 +145,18 @@ VLLM_OTEL_SPEC = {
 # part that carries the constraint — 0.0.33 wants torch 2.9.0 and 0.0.33.post2 wants
 # 2.9.1. Note 0.0.32 has no bare release on PyPI; post1 is the first.
 XFORMERS_TORCH_SPEC = {
-    "0.0.29": (("==", "2.5.1"),),
-    "0.0.29.post1": (("==", "2.5.1"),),
-    "0.0.29.post2": (("==", "2.6.0"),),
-    "0.0.29.post3": (("==", "2.6.0"),),
-    "0.0.30": (("==", "2.7.0"),),
-    "0.0.31": (("==", "2.7.1"),),
-    "0.0.31.post1": (("==", "2.7.1"),),
-    "0.0.32.post1": (("==", "2.8.0"),),
-    "0.0.32.post2": (("==", "2.8.0"),),
-    "0.0.33": (("==", "2.9.0"),),
-    "0.0.33.post1": (("==", "2.9.0"),),
-    "0.0.33.post2": (("==", "2.9.1"),),
+    "0.0.29": "==2.5.1",
+    "0.0.29.post1": "==2.5.1",
+    "0.0.29.post2": "==2.6.0",
+    "0.0.29.post3": "==2.6.0",
+    "0.0.30": "==2.7.0",
+    "0.0.31": "==2.7.1",
+    "0.0.31.post1": "==2.7.1",
+    "0.0.32.post1": "==2.8.0",
+    "0.0.32.post2": "==2.8.0",
+    "0.0.33": "==2.9.0",
+    "0.0.33.post1": "==2.9.0",
+    "0.0.33.post2": "==2.9.1",
 }
 
 # vllm -> its ``torch`` specifier. Always exact, and every release so far moved it, so
@@ -166,21 +169,21 @@ XFORMERS_TORCH_SPEC = {
 # every release (0.9.x -> 2.7.0, 0.10.0 -> 2.7.1, 0.11.0 -> 2.8.0) and then sits still
 # across two (0.22.0 and 0.25.0 both want 2.11.0; 0.27.0 and 0.29.0 both want 2.13.0).
 VLLM_TORCH_SPEC = {
-    "0.8.5": (("==", "2.6.0"),),
-    "0.8.5.post1": (("==", "2.6.0"),),
-    "0.9.0": (("==", "2.7.0"),),
-    "0.9.0.1": (("==", "2.7.0"),),
-    "0.9.1": (("==", "2.7.0"),),
-    "0.9.2": (("==", "2.7.0"),),
-    "0.10.0": (("==", "2.7.1"),),
-    "0.11.0": (("==", "2.8.0"),),
-    "0.12.0": (("==", "2.9.0"),),
-    "0.15.0": (("==", "2.9.1"),),
-    "0.19.0": (("==", "2.10.0"),),
-    "0.22.0": (("==", "2.11.0"),),
-    "0.25.0": (("==", "2.11.0"),),
-    "0.27.0": (("==", "2.13.0"),),
-    "0.29.0": (("==", "2.13.0"),),
+    "0.8.5": "==2.6.0",
+    "0.8.5.post1": "==2.6.0",
+    "0.9.0": "==2.7.0",
+    "0.9.0.1": "==2.7.0",
+    "0.9.1": "==2.7.0",
+    "0.9.2": "==2.7.0",
+    "0.10.0": "==2.7.1",
+    "0.11.0": "==2.8.0",
+    "0.12.0": "==2.9.0",
+    "0.15.0": "==2.9.1",
+    "0.19.0": "==2.10.0",
+    "0.22.0": "==2.11.0",
+    "0.25.0": "==2.11.0",
+    "0.27.0": "==2.13.0",
+    "0.29.0": "==2.13.0",
 }
 
 # vllm -> the ``transformers`` range it actually WORKS with, which is narrower than the
@@ -197,7 +200,7 @@ VLLM_TORCH_SPEC = {
 # real image build, which is why #473 matters and why an unpinned transformers is a
 # latent break rather than a convenience.
 VLLM_TRANSFORMERS_SPEC = {
-    "0.9.0": ((">=", "4.51.1"), ("<", "4.54.0")),
+    "0.9.0": ">=4.51.1,<4.54.0",
 }
 
 # ``torch`` -> its ``sympy`` specifier. This coupling crosses the header/base boundary
@@ -206,10 +209,10 @@ VLLM_TRANSFORMERS_SPEC = {
 # 2.6.0's declaration carries a ``python_version >= "3.9"`` marker, which every image
 # here satisfies, so the clause is recorded unconditionally.
 TORCH_SYMPY_SPEC = {
-    "2.6.0": (("==", "1.13.1"),),
-    "2.7.0": ((">=", "1.13.3"),),
-    "2.7.1": ((">=", "1.13.3"),),
-    "2.8.0": ((">=", "1.13.3"),),
+    "2.6.0": "==1.13.1",
+    "2.7.0": ">=1.13.3",
+    "2.7.1": ">=1.13.3",
+    "2.8.0": ">=1.13.3",
 }
 
 
@@ -222,7 +225,7 @@ def _normalize_version(version: str) -> str:
 
 
 def _measured(table: dict, version: str):
-    """The clauses ``table`` records for ``version``, or ``_MISSING``.
+    """The specifier ``table`` records for ``version``, or ``_MISSING``.
 
     ``_MISSING`` means nobody measured this version, and every caller turns that into
     a failure. It is deliberately distinct from a recorded ``None``, which means the
@@ -232,36 +235,21 @@ def _measured(table: dict, version: str):
     return table.get(_normalize_version(version), _MISSING)
 
 
-def _satisfies(candidate: str, clauses: tuple) -> bool:
-    """Does version ``candidate`` satisfy every ``(operator, version)`` clause?
+def _satisfies(candidate: str, specifier: str) -> bool:
+    """Does version ``candidate`` satisfy the declared ``specifier``?
 
-    ``==`` compares the WHOLE version string, so ``2.7.0.post1`` does not satisfy
-    ``==2.7.0``: they are different distributions and upstream builds them against
-    different dependencies. ``>=`` and ``<`` compare the numeric release segment,
-    which is what an ordered bound is about.
+    ``packaging`` decides, because PEP 440 is not what a numeric comparison does.
+    Zero-padding makes ``1.27`` equal ``1.27.0``; an exclusive ordered bound excludes
+    a pre-release of its own version, so ``<1.27.0`` rejects ``1.27.0rc1``; and ``==``
+    rejects a post release of its version. A hand-rolled comparison got all three
+    wrong in this module before 2026-09-16.
 
-    Only the operators the measured tables actually use are implemented. An
-    unrecognized operator raises rather than silently passing, so a future table row
-    cannot weaken a guard by typo.
+    ``prereleases=True`` because every candidate here comes from an explicit ``==``
+    pin in a requirement file, which is the case where pip also considers a
+    pre-release. An unparseable specifier raises ``InvalidSpecifier`` rather than
+    silently passing, so a typo in a measured table cannot weaken a guard.
     """
-    for operator, bound in clauses:
-        if operator == "==":
-            if _normalize_version(candidate) != _normalize_version(bound):
-                return False
-        elif operator == ">=":
-            if _release(candidate) < _release(bound):
-                return False
-        elif operator == "<":
-            if _release(candidate) >= _release(bound):
-                return False
-        else:
-            raise ValueError(f"unsupported operator {operator!r} in a measured table")
-    return True
-
-
-def _describe(clauses: tuple) -> str:
-    """Render clauses the way the package declares them, for failure messages."""
-    return ",".join(f"{operator}{bound}" for operator, bound in clauses)
+    return SpecifierSet(specifier).contains(Version(candidate), prereleases=True)
 
 
 # ``markitdown[pdf,pptx]==0.1.5`` -> name "markitdown". An extras marker belongs to the
@@ -353,21 +341,6 @@ def _unpinned_protected(text: str) -> dict:
     }
 
 
-def _release(version: str) -> tuple:
-    """Leading numeric components of ``version``, as ints.
-
-    ``0.0.29.post2`` yields ``(0, 0, 29)``. Comparison here only ever needs the
-    release segment, so trailing ``.postN``/``rcN`` parts are dropped rather than
-    ordered — this module never has to distinguish two builds of one release.
-    """
-    parts = []
-    for component in version.split("."):
-        if not component.isdigit():
-            break
-        parts.append(int(component))
-    return tuple(parts)
-
-
 def _pins(path: Path) -> dict:
     """``_parse_pins`` over a file, for the fixtures below."""
     return _parse_pins(path.read_text(encoding="utf-8"))
@@ -404,8 +377,8 @@ class TestVllmAcceptsThePinnedOpenTelemetrySdk:
                 "shared base pins opentelemetry-sdk"
             )
 
-        clauses = _measured(VLLM_OTEL_SPEC, vllm)
-        if clauses is _MISSING:
+        specifier = _measured(VLLM_OTEL_SPEC, vllm)
+        if specifier is _MISSING:
             pytest.fail(
                 f"vllm {vllm} is not in VLLM_OTEL_SPEC. Read its ``requires_dist`` on "
                 f"PyPI, add the row with today's date, then re-run. Do not widen this "
@@ -414,11 +387,11 @@ class TestVllmAcceptsThePinnedOpenTelemetrySdk:
                 f"unmeasured release can reintroduce #472."
             )
 
-        if clauses is None:
+        if specifier is None:
             return  # this vllm declares no opentelemetry-sdk dependency at all
 
-        assert _satisfies(sdk, clauses), (
-            f"vllm {vllm} requires opentelemetry-sdk{_describe(clauses)}, but "
+        assert _satisfies(sdk, specifier), (
+            f"vllm {vllm} requires opentelemetry-sdk{specifier}, but "
             f"requirements-base.txt pins opentelemetry-sdk=={sdk}. pip cannot resolve "
             f"the PyTorch image's requirement set, so the release build fails at the "
             f"build step (#472). Note the constraint has a FLOOR as well as any "
@@ -461,8 +434,8 @@ class TestXformersMatchesTheTorchPin:
         if xformers is None or torch is None:
             pytest.skip("this guard only applies while the GPU header pins both")
 
-        clauses = _measured(XFORMERS_TORCH_SPEC, xformers)
-        if clauses is _MISSING:
+        specifier = _measured(XFORMERS_TORCH_SPEC, xformers)
+        if specifier is _MISSING:
             pytest.fail(
                 f"xformers {xformers} is not in XFORMERS_TORCH_SPEC. Read its "
                 f"``requires_dist`` on PyPI, add the row with today's date, then "
@@ -473,8 +446,8 @@ class TestXformersMatchesTheTorchPin:
                 f"distributions built against different torch versions."
             )
 
-        assert _satisfies(torch, clauses), (
-            f"xformers {xformers} requires torch{_describe(clauses)}, but the GPU "
+        assert _satisfies(torch, specifier), (
+            f"xformers {xformers} requires torch{specifier}, but the GPU "
             f"header pins torch=={torch}. xformers ships one build per torch "
             f"release, so this set cannot resolve."
         )
@@ -507,8 +480,8 @@ class TestVllmMatchesTheTorchPin:
         if vllm is None or torch is None:
             pytest.skip("this guard only applies while the GPU header pins both")
 
-        clauses = _measured(VLLM_TORCH_SPEC, vllm)
-        if clauses is _MISSING:
+        specifier = _measured(VLLM_TORCH_SPEC, vllm)
+        if specifier is _MISSING:
             pytest.fail(
                 f"vllm {vllm} is not in VLLM_TORCH_SPEC. Read its ``requires_dist`` on "
                 f"PyPI, add the row with today's date, then re-run. vllm pins torch "
@@ -516,8 +489,8 @@ class TestVllmMatchesTheTorchPin:
                 f"release is a resolution failure waiting for the next bump (#472)."
             )
 
-        assert _satisfies(torch, clauses), (
-            f"vllm {vllm} requires torch{_describe(clauses)}, but "
+        assert _satisfies(torch, specifier), (
+            f"vllm {vllm} requires torch{specifier}, but "
             f"gpu-requirementsHEADER.txt pins torch=={torch}. vllm pins torch exactly, "
             f"so this set cannot resolve. torch, vllm and xformers move as one unit: "
             f"changing any one of the three means re-measuring the other two."
@@ -546,14 +519,14 @@ class TestVllmMatchesTheTorchPin:
     def test_each_measured_vllm_release_accepts_its_own_torch(
         self, vllm_version, torch_version
     ):
-        clauses = _measured(VLLM_TORCH_SPEC, vllm_version)
-        assert clauses is not _MISSING, (
+        specifier = _measured(VLLM_TORCH_SPEC, vllm_version)
+        assert specifier is not _MISSING, (
             f"vllm {vllm_version} is measured in this test but missing from "
             f"VLLM_TORCH_SPEC."
         )
-        assert _satisfies(torch_version, clauses), (
+        assert _satisfies(torch_version, specifier), (
             f"vllm {vllm_version} requires torch=={torch_version} as measured, but "
-            f"the table says torch{_describe(clauses)}."
+            f"the table says torch{specifier}."
         )
 
     @pytest.mark.parametrize(
@@ -581,9 +554,9 @@ class TestVllmMatchesTheTorchPin:
     def test_a_vllm_bump_that_leaves_torch_behind_is_rejected(
         self, vllm_version, torch_version, why
     ):
-        clauses = _measured(VLLM_TORCH_SPEC, vllm_version)
-        assert clauses is not _MISSING, f"vllm {vllm_version} must be measured"
-        assert not _satisfies(torch_version, clauses), why
+        specifier = _measured(VLLM_TORCH_SPEC, vllm_version)
+        assert specifier is not _MISSING, f"vllm {vllm_version} must be measured"
+        assert not _satisfies(torch_version, specifier), why
 
 
 class TestPytorchBaseImageMatchesTheTorchPin:
@@ -653,8 +626,8 @@ class TestTransformersIsPinnedWithinWhatVllmImportsWith:
             pytest.skip("this guard only applies while the GPU header pins vllm")
         assert transformers is not None, "requirements-base.txt must pin transformers"
 
-        clauses = _measured(VLLM_TRANSFORMERS_SPEC, vllm)
-        if clauses is _MISSING:
+        specifier = _measured(VLLM_TRANSFORMERS_SPEC, vllm)
+        if specifier is _MISSING:
             pytest.fail(
                 f"vllm {vllm} is not in VLLM_TRANSFORMERS_SPEC. This range cannot be "
                 f"read off PyPI metadata — vllm declares no ceiling. Import vllm "
@@ -662,8 +635,8 @@ class TestTransformersIsPinnedWithinWhatVllmImportsWith:
                 f"record what actually works with today's date, then re-run."
             )
 
-        assert _satisfies(transformers, clauses), (
-            f"vllm {vllm} imports only with transformers{_describe(clauses)}, but "
+        assert _satisfies(transformers, specifier), (
+            f"vllm {vllm} imports only with transformers{specifier}, but "
             f"requirements-base.txt pins transformers=={transformers}. The image will "
             f"BUILD and then fail at ``import vllm`` with \"'aimv2' is already used by "
             f'a Transformers config". Resolution cannot catch this; only an import in '
@@ -692,8 +665,8 @@ class TestSympySatisfiesTheTorchPin:
                 "base pins sympy"
             )
 
-        clauses = _measured(TORCH_SYMPY_SPEC, torch)
-        if clauses is _MISSING:
+        specifier = _measured(TORCH_SYMPY_SPEC, torch)
+        if specifier is _MISSING:
             pytest.fail(
                 f"torch {torch} is not in TORCH_SYMPY_SPEC. Read its "
                 f"``requires_dist`` on PyPI, add the row with today's date, then "
@@ -702,9 +675,9 @@ class TestSympySatisfiesTheTorchPin:
                 f"pair is a base-image build failure (#472)."
             )
 
-        assert _satisfies(sympy, clauses), (
+        assert _satisfies(sympy, specifier), (
             f"{header_name}-requirementsHEADER.txt pins torch=={torch}, which requires "
-            f"sympy{_describe(clauses)}, but requirements-base.txt pins "
+            f"sympy{specifier}, but requirements-base.txt pins "
             f"sympy=={sympy}. The base-image requirement set cannot resolve. Note "
             f"torch 2.6.0 pins sympy EXACTLY, so on a torch downgrade a higher sympy "
             f"is as wrong as a lower one. sympy is in the SHARED base while torch is "
@@ -724,50 +697,168 @@ class TestSatisfiesModelsTheWholeDeclaredRange:
     """
 
     @pytest.mark.parametrize(
-        "candidate, clauses, expected, why",
+        "candidate, specifier, expected, why",
         [
             (
                 "1.26.0",
-                ((">=", "1.26.0"), ("<", "1.27.0")),
+                ">=1.26.0,<1.27.0",
                 True,
                 "the lower bound is inclusive",
             ),
             (
                 "1.44.0",
-                ((">=", "1.26.0"), ("<", "1.27.0")),
+                ">=1.26.0,<1.27.0",
                 False,
                 "vllm 0.8.5's ceiling excludes 1.44.0 — the original #472 conflict",
             ),
             (
                 "1.25.0",
-                ((">=", "1.26.0"),),
+                ">=1.26.0",
                 False,
                 "a floor-only range still has a floor: vllm 0.9.0 needs >=1.26.0, so "
                 "an SDK downgrade must not pass",
             ),
             (
                 "1.26.0",
-                ((">=", "1.27.0"),),
+                ">=1.27.0",
                 False,
                 "vllm 0.19.0 raised the floor to 1.27.0, so constraints are not "
                 "monotonic across releases",
             ),
             (
                 "1.13.3",
-                (("==", "1.13.1"),),
+                "==1.13.1",
                 False,
                 "torch 2.6.0 pins sympy exactly, so a HIGHER sympy is still wrong",
             ),
             (
                 "1.13.1",
-                (("==", "1.13.1"),),
+                "==1.13.1",
                 True,
                 "the exact pin is satisfied only by itself",
             ),
         ],
     )
-    def test_every_clause_is_enforced(self, candidate, clauses, expected, why):
-        assert _satisfies(candidate, clauses) is expected, why
+    def test_every_clause_is_enforced(self, candidate, specifier, expected, why):
+        assert _satisfies(candidate, specifier) is expected, why
+
+
+class TestVersionComparisonFollowsPep440:
+    """Ordered bounds must follow PEP 440, not a truncated numeric tuple.
+
+    Adversarial review on 2026-09-16 found the hand-rolled comparison wrong in both
+    directions. ``_release`` kept only leading numeric components, so it stopped at the
+    first non-numeric one: ``1.27.0rc1`` compared as ``(1, 27)``, and so did the
+    abbreviated ``1.27``. Against ``<1.27.0`` — vllm 0.8.5's ceiling, the exact
+    constraint behind #472 — ``(1, 27) < (1, 27, 0)`` held, so both passed.
+
+    Both are wrong. PEP 440 zero-pads, so ``1.27`` IS ``1.27.0`` and the ceiling
+    excludes it; and an exclusive ordered bound excludes a pre-release of its own
+    version, so ``<1.27.0`` excludes ``1.27.0rc1`` too. The truncation also produced
+    false REDS: ``1.26.1rc1`` and ``1.26`` both failed ``>=1.26.0``, which PEP 440
+    accepts.
+
+    Hand-rolling PEP 440 was the mistake. ``packaging`` decides this now — it is an
+    unconditional pytest dependency (``packaging>=22``), so it is present wherever this
+    suite runs, and it adds nothing to either image.
+
+    ``prereleases=True`` is deliberate: every version reaching these helpers comes from
+    an explicit ``==`` pin in a requirement file, which is exactly the case where pip
+    also considers a pre-release.
+    """
+
+    @pytest.mark.parametrize(
+        "candidate, specifier, expected, why",
+        [
+            (
+                "1.27.0rc1",
+                ">=1.26.0,<1.27.0",
+                False,
+                "an exclusive ordered bound excludes a pre-release of its own "
+                "version, so vllm 0.8.5's ceiling rejects 1.27.0rc1. The truncating "
+                "comparison passed it",
+            ),
+            (
+                "1.27",
+                ">=1.26.0,<1.27.0",
+                False,
+                "PEP 440 zero-pads, so 1.27 is 1.27.0 and the ceiling excludes it. "
+                "The truncating comparison passed it",
+            ),
+            (
+                "1.26.1rc1",
+                ">=1.26.0",
+                True,
+                "1.26.1rc1 is above the 1.26.0 floor. The truncating comparison "
+                "rejected it — a false red on a pin that resolves",
+            ),
+            (
+                "1.26",
+                ">=1.26.0",
+                True,
+                "1.26 is 1.26.0, which meets its own floor. Also a false red before",
+            ),
+            (
+                "2.7.0.post1",
+                "==2.7.0",
+                False,
+                "a post release is a different distribution, so an exact pin rejects "
+                "it — the finding-6 behaviour, now enforced by packaging",
+            ),
+            (
+                "2.7.0",
+                "==2.7.0",
+                True,
+                "the exact pin is satisfied by itself",
+            ),
+            (
+                "1.44.0",
+                ">=1.26.0,<1.27.0",
+                False,
+                "the original #472 conflict: the shared base's SDK against vllm "
+                "0.8.5's ceiling",
+            ),
+        ],
+    )
+    def test_the_comparison_matches_pep_440(self, candidate, specifier, expected, why):
+        assert _satisfies(candidate, specifier) is expected, why
+
+    @pytest.mark.parametrize(
+        "label, table",
+        [
+            ("VLLM_OTEL_SPEC", "vllm_otel"),
+            ("XFORMERS_TORCH_SPEC", "xformers_torch"),
+            ("VLLM_TRANSFORMERS_SPEC", "vllm_transformers"),
+            ("TORCH_SYMPY_SPEC", "torch_sympy"),
+            ("VLLM_TORCH_SPEC", "vllm_torch"),
+        ],
+    )
+    def test_every_recorded_specifier_parses(self, label, table):
+        tables = {
+            "vllm_otel": VLLM_OTEL_SPEC,
+            "xformers_torch": XFORMERS_TORCH_SPEC,
+            "vllm_transformers": VLLM_TRANSFORMERS_SPEC,
+            "torch_sympy": TORCH_SYMPY_SPEC,
+            "vllm_torch": VLLM_TORCH_SPEC,
+        }
+        for key, specifier in tables[table].items():
+            try:
+                Version(key)
+            except InvalidVersion:
+                pytest.fail(f"{label} key {key!r} is not a PEP 440 version")
+            if specifier is None:
+                continue
+            try:
+                SpecifierSet(specifier)
+            except InvalidSpecifier:
+                pytest.fail(
+                    f"{label}[{key!r}] holds {specifier!r}, which is not a PEP 440 "
+                    f"specifier. Copy it verbatim from the package's requires_dist."
+                )
+
+    def test_an_unsupported_operator_is_rejected_rather_than_ignored(self):
+        with pytest.raises(InvalidSpecifier):
+            _satisfies("1.0.0", "=>1.0.0")
 
 
 class TestMeasuredTablesKeyOnTheFullVersion:
@@ -806,14 +897,14 @@ class TestMeasuredTablesKeyOnTheFullVersion:
     def test_each_measured_xformers_release_accepts_its_own_torch(
         self, xformers_version, torch_version
     ):
-        clauses = _measured(XFORMERS_TORCH_SPEC, xformers_version)
-        assert clauses is not _MISSING, (
+        specifier = _measured(XFORMERS_TORCH_SPEC, xformers_version)
+        assert specifier is not _MISSING, (
             f"xformers {xformers_version} is measured in this test but missing from "
             f"XFORMERS_TORCH_SPEC."
         )
-        assert _satisfies(torch_version, clauses), (
+        assert _satisfies(torch_version, specifier), (
             f"xformers {xformers_version} requires torch=={torch_version} as "
-            f"measured, but the table says torch{_describe(clauses)}."
+            f"measured, but the table says torch{specifier}."
         )
 
     @pytest.mark.parametrize(
@@ -859,7 +950,7 @@ class TestMeasuredTablesKeyOnTheFullVersion:
     def test_an_exact_clause_compares_the_whole_version(
         self, candidate, bound, expected, why
     ):
-        assert _satisfies(candidate, (("==", bound),)) is expected, why
+        assert _satisfies(candidate, f"=={bound}") is expected, why
 
     @pytest.mark.parametrize(
         "label, table",
