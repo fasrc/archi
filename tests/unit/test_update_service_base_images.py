@@ -1621,3 +1621,114 @@ def test_docker_config_is_never_set_at_job_level():
         f"`runner` context, which is unavailable at job level and makes the "
         f"whole workflow file fail to start. Offenders: {', '.join(offenders)}."
     )
+
+
+# --- The compose flags the smoke deployment is handed ------------------------
+
+# `docker compose up` flags that REQUIRE a value. Measured from
+# `docker compose up --help` on Compose v5.5.0, 2026-09-16: `--pull` is
+# documented as `--pull string  Pull image before running
+# ("always"|"missing"|"never") (default "policy")`.
+_COMPOSE_UP_FLAGS_WITH_VALUES = {
+    "--pull": ("always", "missing", "never"),
+    "--timeout": None,
+    "--scale": None,
+    "--exit-code-from": None,
+}
+
+
+def _extra_env(step):
+    """The `extra-env` block a run-smoke step passes, as a dict."""
+    raw = (step.get("with") or {}).get("extra-env") or ""
+    pairs = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        pairs[key.strip()] = value.strip()
+    return pairs
+
+
+def test_every_smoke_deployment_passes_valid_compose_up_flags():
+    """Release run 35145748563 died here, AFTER publishing both base images.
+
+    `test-and-build-tag.yml` passed `ARCHI_COMPOSE_UP_FLAGS=--build --pull`,
+    and `docker compose up --pull` needs a value, so docker refused the whole
+    command with `flag needs an argument: --pull` and the deployment never
+    started. `deployment_manager.py:49` passes the variable through verbatim, so
+    nothing between the workflow and docker could catch it.
+
+    `pr-preview.yml` never hit it: it passes `--build --force-recreate`, which is
+    valid. The release path is the only one that used `--pull`, which is why an
+    invalid flag survived to a third release attempt.
+    """
+    checked = 0
+    for workflow_path in sorted(_WORKFLOWS.glob("*.yml")):
+        document = yaml.safe_load(workflow_path.read_text())
+        for job_name, job in (document.get("jobs") or {}).items():
+            for step in job.get("steps", []):
+                if _RUN_SMOKE_USES not in (step.get("uses") or ""):
+                    continue
+                flags = _extra_env(step).get("ARCHI_COMPOSE_UP_FLAGS")
+                if flags is None:
+                    continue
+                checked += 1
+                argv = shlex.split(flags)
+                for i, token in enumerate(argv):
+                    allowed = _COMPOSE_UP_FLAGS_WITH_VALUES.get(token)
+                    if token not in _COMPOSE_UP_FLAGS_WITH_VALUES:
+                        continue
+                    where = f"{workflow_path.name}:{job_name}"
+                    nxt = argv[i + 1] if i + 1 < len(argv) else None
+                    assert nxt is not None and not nxt.startswith("-"), (
+                        f"{where} passes ARCHI_COMPOSE_UP_FLAGS={flags!r}, but "
+                        f"{token} requires a value. docker refuses the whole "
+                        f"`compose up` command with `flag needs an argument: "
+                        f"{token}`, so the deployment never starts."
+                    )
+                    if allowed is not None:
+                        assert nxt in allowed, (
+                            f"{where} passes {token} {nxt!r}; docker accepts only "
+                            f"{', '.join(allowed)}."
+                        )
+    assert checked, "no ARCHI_COMPOSE_UP_FLAGS found in any run-smoke step"
+
+
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def test_extra_env_carries_only_assignments():
+    """A `#` inside a `|` block is content, not a comment.
+
+    `scripts/dev/run_smoke_preview.sh:42-47` reads `EXTRA_ENV` line by line and
+    splits each on `=`, taking the whole line as the key when there is no `=`.
+    So a comment line placed inside the block scalar becomes an environment
+    assignment with an invalid name -- and the natural comment for this very
+    step contains backticks, which is worse than merely invalid.
+
+    Measured while fixing the `--pull` flag: the comment was first written
+    inside the block, and `yaml.safe_load` returned it as four lines of the
+    value. Comments for these steps belong above the `extra-env:` key.
+    """
+    checked = 0
+    for workflow_path in sorted(_WORKFLOWS.glob("*.yml")):
+        document = yaml.safe_load(workflow_path.read_text())
+        for job_name, job in (document.get("jobs") or {}).items():
+            for step in job.get("steps", []):
+                if _RUN_SMOKE_USES not in (step.get("uses") or ""):
+                    continue
+                raw = (step.get("with") or {}).get("extra-env") or ""
+                for line in raw.splitlines():
+                    if not line.strip():
+                        continue
+                    checked += 1
+                    key, sep, _ = line.strip().partition("=")
+                    assert sep and _ENV_KEY_RE.match(key), (
+                        f"{workflow_path.name}:{job_name} passes extra-env line "
+                        f"{line.strip()!r}, which is not a KEY=value assignment. "
+                        f"run_smoke_preview.sh would export it as an environment "
+                        f"name. Put comments above the `extra-env:` key, not "
+                        f"inside the block scalar."
+                    )
+    assert checked, "no extra-env lines found in any run-smoke step"

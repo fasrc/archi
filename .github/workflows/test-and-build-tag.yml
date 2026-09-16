@@ -177,8 +177,25 @@ jobs:
         uses: ./.github/actions/run-smoke
         with:
           deployment-name: release-${{ github.run_id }}
+          # ARCHI_COMPOSE_UP_FLAGS was `--build --pull`, which docker refuses
+          # outright: `compose up --pull` takes a value ("always"|"missing"|"never"),
+          # so the whole command died with `flag needs an argument: --pull` and the
+          # deployment never started. Release run 35145748563 died there, AFTER
+          # publishing both base images.
+          #
+          # The value below matches pr-preview.yml, the only smoke path proven in
+          # CI. `--pull always` would express the original intent but is unproven
+          # here and risks failing on services compose builds locally rather than
+          # pulls. The freshness `--pull` reached for comes from `--build` anyway:
+          # the service Dockerfiles are retargeted to `ghcr.io/fasrc/...:<tag>` and
+          # this job runs on a different runner than build-images, so the base image
+          # is not in its local cache and the build must pull it.
+          #
+          # These lines are OUTSIDE the block scalar on purpose. Inside a `|` block
+          # a `#` is content, not a comment, and run_smoke_preview.sh:42-47 splits
+          # every line on `=` and uses the whole line as the key when there is none.
           extra-env: |
-            ARCHI_COMPOSE_UP_FLAGS=--build --pull
+            ARCHI_COMPOSE_UP_FLAGS=--build --force-recreate
             SMOKE_OLLAMA_MODEL=qwen3:4b
             SMOKE_OLLAMA_URL=http://localhost:11434
             SMOKE_OLLAMA_HOST=http://localhost:11434
