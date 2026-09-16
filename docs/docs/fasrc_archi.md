@@ -574,7 +574,11 @@ dockerfile: .../Dockerfile-chat{{ '-gpu' if gpu_ids else '' }}
 ```
 
 The rendered compose already names `Dockerfile-chat-gpu` for the chatbot, but the
-running chatbot image is a **stale CPU build**:
+running chatbot image is a **stale CPU build**. Observed on fasrc-dev before
+2026-09-15; the torch versions below are what those two images held at the time,
+not the current pins. The base images moved to torch 2.7.0 on 2026-09-15 (#472), so
+a freshly built pair reports 2.7.0 rather than 2.6.0. The asymmetry is the point
+here, not the version:
 
 | | chatbot | data-manager |
 |---|---|---|
