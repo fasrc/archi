@@ -324,6 +324,29 @@ def _parse_pins(text: str) -> dict:
     return pins
 
 
+# A requirement given as a bare VCS or URL reference rather than a project name:
+# ``git+https://host/repo.git#egg=vllm``, ``hg+``, ``https://host/pkg.whl``. Review on
+# 2026-09-16: ``_requirement_lines`` strips the ``#egg=vllm`` fragment as a comment and
+# the name matcher then recorded the project as ``git``, so every vllm guard read vllm
+# as ABSENT and skipped while pip installed an arbitrary checkout. These lines do not
+# start with ``-``, so the directive matcher above never saw them either.
+_VCS_OR_URL_REQUIREMENT = re.compile(
+    r"^(?:(?:git|hg|bzr|svn)\+|https?://|file://|[A-Za-z]:[\\/])", re.IGNORECASE
+)
+
+
+def _opaque_requirements(text: str) -> list:
+    """Requirement lines whose project name this module cannot read.
+
+    Reported rather than parsed. A VCS or URL requirement supplies a real package with
+    no version this module can check, so it must fail the suite instead of resolving to
+    a nonsense name like ``git``.
+    """
+    return [
+        line for line in _requirement_lines(text) if _VCS_OR_URL_REQUIREMENT.match(line)
+    ]
+
+
 def _parse_requirements(text: str) -> dict:
     """Map normalized project name to specifier text for EVERY requirement line.
 
@@ -350,8 +373,13 @@ def _parse_requirements(text: str) -> dict:
 #
 # The rule is the class, not the two spellings: an option that can carry a requirement
 # must fail the suite rather than read as silence.
+# The short forms take a value with NO separator too: pip accepts ``-rother.txt`` and
+# ``-cconstraints.txt`` exactly as it accepts ``-r other.txt``. Review on 2026-09-16
+# found the pattern demanded whitespace, ``=`` or end-of-line, so the compact spelling
+# matched nothing while ``_requirement_lines`` still dropped the line for starting with
+# ``-`` — the included file's pins stayed invisible.
 _REQUIREMENT_BEARING_PATTERN = re.compile(
-    r"^(?:-r|-c|-e|--requirement|--constraint|--editable)(?:[=\s]|$)"
+    r"^(?:-[rce]|--requirement|--constraint|--editable)(?:[=\s]|$|\S)"
 )
 
 
@@ -1415,3 +1443,68 @@ class TestPytorchBaseStagesAreUnambiguous:
     def test_a_single_stage_is_still_read(self):
         content = "FROM docker.io/pytorch/pytorch:2.7.0-cuda12.6-cudnn9-devel\nRUN true"
         assert _pytorch_from_stages(content) == [("2.7.0", "12.6")]
+
+
+class TestOpaqueRequirementsFailClosed:
+    """A requirement with no readable project name must fail, not resolve to nonsense.
+
+    Review on 2026-09-16: ``git+https://host/repo.git#egg=vllm`` had its ``#egg=vllm``
+    fragment stripped as a comment, and the name matcher then recorded the project as
+    ``git``. Every vllm guard read vllm as ABSENT and skipped while pip installed an
+    arbitrary checkout. These lines do not begin with ``-``, so the directive matcher
+    never saw them either.
+    """
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "git+https://github.com/vllm-project/vllm@main#egg=vllm",
+            "hg+https://host/repo#egg=vllm",
+            "https://host/vllm-0.9.0-py3-none-any.whl",
+            "file:///opt/wheels/vllm-0.9.0.whl",
+        ],
+    )
+    def test_a_vcs_or_url_requirement_is_reported(self, line):
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n"), (
+            f"{line!r} supplies a package with no version this module can check, so it "
+            f"must be reported rather than parsed into a bogus project name."
+        )
+
+    def test_a_plain_pin_is_not_reported(self):
+        assert _opaque_requirements("torch==2.7.0\nvllm==0.9.0\n") == []
+
+    @pytest.mark.parametrize(
+        "path",
+        [GENERATED_CPU_REQUIREMENTS, GENERATED_GPU_REQUIREMENTS],
+        ids=["cpu", "gpu"],
+    )
+    def test_the_generated_sets_carry_no_opaque_requirement(self, path):
+        opaque = _opaque_requirements(path.read_text(encoding="utf-8"))
+        assert opaque == [], (
+            f"{path} declares {opaque}, whose project name this module cannot read. "
+            f"Every compatibility guard would silently skip the package it supplies."
+        )
+
+
+class TestCompactOptionFormsAreRecognized:
+    """pip accepts ``-rother.txt`` with no separator, and so must the matcher.
+
+    Review on 2026-09-16: the pattern required whitespace, ``=`` or end-of-line after
+    the short option, so the compact spelling matched nothing — while
+    ``_requirement_lines`` still dropped the line for starting with ``-``, leaving the
+    included file's pins invisible to every guard.
+    """
+
+    @pytest.mark.parametrize(
+        "line",
+        ["-rother.txt", "-cconstraints.txt", "-e./local/vllm", "-r other.txt"],
+    )
+    def test_a_compact_directive_is_reported(self, line):
+        assert _requirement_bearing_directives(line) == [line]
+
+    @pytest.mark.parametrize(
+        "line",
+        ["--extra-index-url https://example.invalid/simple", "--prefer-binary", "-v"],
+    )
+    def test_an_inert_option_is_not_reported(self, line):
+        assert _requirement_bearing_directives(line) == []
