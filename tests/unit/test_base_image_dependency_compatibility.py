@@ -378,6 +378,28 @@ def _declarations(text: str) -> dict:
     return found
 
 
+def _conditional_protected(text: str) -> dict:
+    """Protected packages declared with an environment marker, mapped to that marker.
+
+    An empty mapping is the healthy answer. ``_requirement_lines`` cuts a line at
+    ``;`` so the guards never see the marker, which means a line pip may skip on this
+    image reads here as an unconditional pin.
+    """
+    conditional = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("-"):
+            continue
+        line = line.split("#", 1)[0].strip()
+        requirement, separator, marker = line.partition(";")
+        if not separator:
+            continue
+        match = _REQUIREMENT_PATTERN.match(requirement.strip())
+        if match and _normalize_name(match.group(1)) in PROTECTED_PACKAGES:
+            conditional[_normalize_name(match.group(1))] = marker.strip()
+    return conditional
+
+
 def _duplicated_protected(text: str) -> dict:
     """Protected packages that ``text`` declares more than once, with every specifier.
 
@@ -1143,6 +1165,65 @@ class TestNoRequirementFileDefersToAnotherFile:
             f"here and its guard silently skips, while pip installs it anyway. These "
             f"sets are assembled by ``cat``, so inline the pins instead — or teach "
             f"_requirement_lines to resolve includes before relaxing this."
+        )
+
+
+class TestProtectedPinsAreUnconditional:
+    """A protected pin carrying an environment marker must fail closed.
+
+    Found by the async reviewer on 2026-09-16, on the parser this round introduced.
+    ``_requirement_lines`` cuts a line at ``;`` to drop the marker, so
+    ``transformers==4.53.3; sys_platform == "win32"`` reads here as an unconditional
+    exact pin: ``_parse_pins`` records 4.53.3 and ``_unpinned_protected`` reports
+    healthy. On the Linux image pip ignores that line completely, leaving transformers
+    unpinned and free to resolve 4.54+ — which is precisely the ``aimv2`` import break
+    this guard exists to prevent.
+
+    Evaluating markers against the image environment is the other option. Failing
+    closed is the better answer for these files: they are ``cat``-concatenated into one
+    Linux image each, a conditional pin on a protected package has no purpose here, and
+    a guard that refuses a construct it cannot model beats one that quietly mismodels
+    it. Markers on other packages are untouched. No file uses one today.
+    """
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            (
+                'transformers==4.53.3; sys_platform == "win32"',
+                {"transformers": 'sys_platform == "win32"'},
+            ),
+            (
+                'torch==2.7.0 ; python_version >= "3.9"',
+                {"torch": 'python_version >= "3.9"'},
+            ),
+            ("transformers==4.53.3", {}),
+            ('markitdown[pdf,pptx]==0.1.5; sys_platform == "linux"', {}),
+            ('# transformers==4.53.3; sys_platform == "win32"', {}),
+        ],
+    )
+    def test_a_marker_on_a_protected_pin_is_reported(self, text, expected):
+        assert _conditional_protected(text) == expected
+
+    @pytest.mark.parametrize(
+        "label, path",
+        [
+            ("cpu-requirementsHEADER.txt", CPU_HEADER),
+            ("gpu-requirementsHEADER.txt", GPU_HEADER),
+            ("requirements-base.txt", BASE_REQUIREMENTS),
+            ("base-python-image/requirements.txt", GENERATED_CPU_REQUIREMENTS),
+            ("base-pytorch-image/requirements.txt", GENERATED_GPU_REQUIREMENTS),
+        ],
+    )
+    def test_no_protected_pin_is_conditional(self, label, path):
+        conditional = _conditional_protected(path.read_text(encoding="utf-8"))
+        assert not conditional, (
+            f"{label} declares {sorted(conditional)} with an environment marker "
+            f"({conditional}). The marker is stripped before these guards read the "
+            f"pin, so a line pip skips on this image still reads here as an "
+            f"unconditional pin — the guard passes while the package is effectively "
+            f"unpinned. Drop the marker, or evaluate markers against the image "
+            f"environment before relaxing this."
         )
 
 
