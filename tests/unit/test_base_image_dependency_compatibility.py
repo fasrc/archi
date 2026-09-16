@@ -172,12 +172,102 @@ def _satisfies(candidate: tuple, clauses: tuple) -> bool:
     return True
 
 
+def _fmt(release: tuple) -> str:
+    return ".".join(str(part) for part in release)
+
+
 def _describe(clauses: tuple) -> str:
     """Render clauses the way the package declares them, for failure messages."""
     return ",".join(f"{operator}{_fmt(bound)}" for operator, bound in clauses)
 
 
-_PIN_PATTERN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;#]+)")
+# ``markitdown[pdf,pptx]==0.1.5`` -> name "markitdown". An extras marker belongs to the
+# requirement, not to the project name, so both patterns step over it. The trailing ``$``
+# on the pin pattern is deliberate: it makes a COMPOUND specifier such as
+# ``vllm==0.9.0,<0.10`` fail to read as an exact pin rather than reading as an exact pin
+# of 0.9.0 that the second clause silently contradicts.
+_NAME = r"([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?"
+_PIN_PATTERN = re.compile(rf"^{_NAME}==([^\s;#,]+)$")
+_REQUIREMENT_PATTERN = re.compile(rf"^{_NAME}\s*(.*)$")
+
+# Packages whose pin a guard in this module reads. Each guard SKIPS when its subject is
+# absent from the file, which is correct for a genuinely absent package — the CPU header
+# carries no vllm. For these names, therefore, "absent" must mean absent and never
+# "present, but not as an exact pin"; ``_unpinned_protected`` enforces the difference.
+PROTECTED_PACKAGES = frozenset(
+    {
+        "opentelemetry-sdk",
+        "sympy",
+        "torch",
+        "transformers",
+        "vllm",
+        "xformers",
+    }
+)
+
+
+def _normalize_name(name: str) -> str:
+    """PEP 503 name normalization, so ``opentelemetry_sdk`` and ``Torch`` compare."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _requirement_lines(text: str):
+    """Yield the requirement lines of ``text``, without comments or option lines.
+
+    Blanks, ``#`` comments and option lines such as ``--extra-index-url`` carry no
+    requirement. A trailing comment and an environment marker are cut away, so the
+    caller sees the requirement and nothing else.
+    """
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("-"):
+            continue
+        line = line.split("#", 1)[0].split(";", 1)[0].strip()
+        if line:
+            yield line
+
+
+def _parse_pins(text: str) -> dict:
+    """Map normalized project name to pinned version for every ``name==version``.
+
+    Only exact pins are read: this module asserts against exact pins, and a range
+    would make every constraint below ambiguous. ``_unpinned_protected`` is what keeps
+    that ambiguity from turning into a silent skip.
+    """
+    pins = {}
+    for line in _requirement_lines(text):
+        match = _PIN_PATTERN.match(line)
+        if match:
+            pins[_normalize_name(match.group(1))] = match.group(2)
+    return pins
+
+
+def _parse_requirements(text: str) -> dict:
+    """Map normalized project name to specifier text for EVERY requirement line.
+
+    Operator-agnostic, unlike ``_parse_pins``, so a protected package written as a
+    range stays visible instead of vanishing. That difference is the whole point.
+    """
+    found = {}
+    for line in _requirement_lines(text):
+        match = _REQUIREMENT_PATTERN.match(line)
+        if match:
+            found[_normalize_name(match.group(1))] = match.group(2).strip()
+    return found
+
+
+def _unpinned_protected(text: str) -> dict:
+    """Protected packages that ``text`` names without an exact ``==`` pin.
+
+    An empty mapping is the healthy answer. Any entry means a guard below would
+    ``skip`` on a package the file genuinely carries.
+    """
+    pins = _parse_pins(text)
+    return {
+        name: specifier
+        for name, specifier in _parse_requirements(text).items()
+        if name in PROTECTED_PACKAGES and name not in pins
+    }
 
 
 def _release(version: str) -> tuple:
@@ -196,22 +286,8 @@ def _release(version: str) -> tuple:
 
 
 def _pins(path: Path) -> dict:
-    """Map normalized project name to pinned version for every ``name==version``.
-
-    Comments, blanks and option lines such as ``--extra-index-url`` carry no pin and
-    are skipped. Only ``==`` pins are read: this module asserts against exact pins,
-    and a range would make every constraint below ambiguous.
-    """
-    pins = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or line.startswith("-"):
-            continue
-        match = _PIN_PATTERN.match(line)
-        if match:
-            name = re.sub(r"[-_.]+", "-", match.group(1)).lower()
-            pins[name] = match.group(2)
-    return pins
+    """``_parse_pins`` over a file, for the fixtures below."""
+    return _parse_pins(path.read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
@@ -503,5 +579,51 @@ class TestSatisfiesModelsTheWholeDeclaredRange:
         assert _satisfies(candidate, clauses) is expected, why
 
 
-def _fmt(release: tuple) -> str:
-    return ".".join(str(part) for part in release)
+class TestProtectedPackagesCarryAnExactPin:
+    """A protected package written as a RANGE must fail, not read as absent.
+
+    Every guard above skips when its subject is missing from the file, and for a
+    genuinely absent package that is right — the CPU header carries no vllm. But
+    ``_parse_pins`` reads only ``==``, so ``vllm>=0.9.0`` is indistinguishable from
+    no vllm at all and the skip turns the guard OFF rather than tightening it.
+
+    Found by review on 2026-09-16. A range on any of vllm, opentelemetry-sdk, sympy
+    or xformers silently disabled that package's guard while pip stayed free to
+    resolve an unmeasured release — the same green-guard-failing-build shape as #472
+    itself. An extras marker did it too: ``_PIN_PATTERN`` did not allow ``[...]``, so
+    ``torch[opt]==2.7.0`` also read as absent.
+    """
+
+    @pytest.mark.parametrize(
+        "line, expected",
+        [
+            ("vllm>=0.9.0", {"vllm": ">=0.9.0"}),
+            ("opentelemetry-sdk>=1.26.0", {"opentelemetry-sdk": ">=1.26.0"}),
+            ("sympy>1.13.0,<2", {"sympy": ">1.13.0,<2"}),
+            ("xformers", {"xformers": ""}),
+            ("vllm==0.9.0", {}),
+            ("torch[opt]==2.7.0", {}),
+            ("langgraph-prebuilt<1.0.9", {}),
+            ("# vllm>=0.9.0", {}),
+        ],
+    )
+    def test_a_range_on_a_protected_package_is_not_read_as_absent(self, line, expected):
+        assert _unpinned_protected(line) == expected
+
+    @pytest.mark.parametrize(
+        "label, path",
+        [
+            ("cpu-requirementsHEADER.txt", CPU_HEADER),
+            ("gpu-requirementsHEADER.txt", GPU_HEADER),
+            ("requirements-base.txt", BASE_REQUIREMENTS),
+        ],
+    )
+    def test_every_protected_package_present_is_exactly_pinned(self, label, path):
+        unpinned = _unpinned_protected(path.read_text(encoding="utf-8"))
+        assert not unpinned, (
+            f"{label} names {sorted(unpinned)} without an exact ``==`` pin "
+            f"({unpinned}). Every guard in this module skips when its subject is "
+            f"absent, and a range is read as absent, so this would disable the "
+            f"guard instead of relaxing it. Pin the package exactly and add the "
+            f"measured row, or drop it from PROTECTED_PACKAGES with a reason."
+        )
