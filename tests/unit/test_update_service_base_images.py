@@ -1498,3 +1498,126 @@ def test_the_release_steps_compose_on_the_pin_the_templates_carry(
     assert (templates / "Dockerfile-chat").read_text() == (
         "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n"
     )
+
+
+# --- The registry credentials the smoke test needs ---------------------------
+
+_ACTIONS = Path(__file__).resolve().parents[2] / ".github" / "actions"
+_RUN_SMOKE = _ACTIONS / "run-smoke" / "action.yml"
+_RUN_SMOKE_USES = "actions/run-smoke"
+
+# The one value that works, asserted exactly rather than by presence: a key
+# holding an empty expression or a typo satisfies a presence check and leaves
+# the pull looking in the same wrong place.
+_DOCKER_CONFIG = "${{ runner.temp }}/.docker"
+_DOCKER_CONFIG_RE = re.compile(r"^\$\{\{\s*runner\.temp\s*\}\}/\.docker$")
+
+
+def _home_overriding_steps(action_path):
+    """Steps in a composite action that replace HOME, with their env blocks."""
+    document = yaml.safe_load(action_path.read_text())
+    return [
+        step
+        for step in document.get("runs", {}).get("steps", [])
+        if "HOME" in (step.get("env") or {})
+    ]
+
+
+def _jobs_using(workflow_path, action_ref):
+    """Every (job name, job) in a workflow whose steps use `action_ref`."""
+    document = yaml.safe_load(workflow_path.read_text())
+    return [
+        (name, job)
+        for name, job in document["jobs"].items()
+        if any(action_ref in (step.get("uses") or "") for step in job.get("steps", []))
+    ]
+
+
+def _all_jobs():
+    """Every (path, job name, job) across the workflow files."""
+    for workflow_path in sorted(_WORKFLOWS.glob("*.yml")):
+        document = yaml.safe_load(workflow_path.read_text())
+        for name, job in (document.get("jobs") or {}).items():
+            yield workflow_path, name, job
+
+
+def test_the_smoke_action_pins_docker_config_where_it_breaks_home():
+    """`run-smoke` replaces HOME, so it owes the DOCKER_CONFIG pin.
+
+    The docker CLI reads `$HOME/.docker/config.json` unless DOCKER_CONFIG says
+    otherwise -- `docker --help` reports `--config` defaulting to
+    `$HOME/.docker`, and DOCKER_CONFIG has been its environment equivalent since
+    Docker 1.8.0. Verified locally that `DOCKER_CONFIG=<dir> docker logout
+    ghcr.io` leaves `~/.docker/config.json` untouched.
+
+    Release run 35133910854 published both base images and then died here:
+    `Not authorized to pull ghcr.io/fasrc/a2rchi-python-base:v2026.08.0`. The
+    packages are `internal`, so an anonymous pull is refused.
+    """
+    steps = _home_overriding_steps(_RUN_SMOKE)
+    if not steps:
+        pytest.skip("run-smoke no longer overrides HOME")
+
+    for step in steps:
+        value = (step.get("env") or {}).get("DOCKER_CONFIG")
+        assert value is not None and _DOCKER_CONFIG_RE.match(str(value).strip()), (
+            f"{_RUN_SMOKE.name} step {step.get('name')!r} replaces HOME but sets "
+            f"DOCKER_CONFIG={value!r}. It must be {_DOCKER_CONFIG!r}, or the "
+            f"docker CLI falls back to $HOME/.docker and cannot find the "
+            f"credentials the login wrote."
+        )
+
+
+def test_every_login_in_a_smoke_job_agrees_with_the_action():
+    """A login that writes elsewhere than the pull reads is no login at all.
+
+    Only the jobs that call `run-smoke` need this. `build-images` in
+    test-and-build-tag.yml logs in and pushes without ever replacing HOME, so
+    pinning it there would assert a rule it does not need.
+    """
+    if not _home_overriding_steps(_RUN_SMOKE):
+        pytest.skip("run-smoke no longer overrides HOME")
+
+    checked = 0
+    for workflow_path in sorted(_WORKFLOWS.glob("*.yml")):
+        for job_name, job in _jobs_using(workflow_path, _RUN_SMOKE_USES):
+            for step in job["steps"]:
+                if "docker/login-action" not in (step.get("uses") or ""):
+                    continue
+                checked += 1
+                value = (step.get("env") or {}).get("DOCKER_CONFIG")
+                assert value is not None and _DOCKER_CONFIG_RE.match(
+                    str(value).strip()
+                ), (
+                    f"{workflow_path.name}:{job_name} step {step.get('name')!r} "
+                    f"logs in with DOCKER_CONFIG={value!r}, but this job calls "
+                    f"run-smoke, which replaces HOME. Set it to "
+                    f"{_DOCKER_CONFIG!r} to match the action."
+                )
+    assert checked, "no login step found in any job that calls run-smoke"
+
+
+def test_docker_config_is_never_set_at_job_level():
+    """`runner` is a step-level context. At job level it is a startup failure.
+
+    Measured: the first attempt at this fix put `${{ runner.temp }}/.docker` in
+    the job-level `env` of both `test-and-build-tag.yml` and `pr-preview.yml`.
+    Both files became invalid and GitHub refused to start them -- the runs
+    reported "This run likely failed because of a workflow file issue" on every
+    push, ignoring the branch filters, and four of the seven PR checks silently
+    stopped existing. `yaml.safe_load` accepted the file, so a YAML-parse check
+    proves nothing about it. actionlint names it exactly:
+
+        context "runner" is not allowed here. available contexts are "github",
+        "inputs", "matrix", "needs", "secrets", "strategy", "vars"
+    """
+    offenders = [
+        f"{path.name}:{name}"
+        for path, name, job in _all_jobs()
+        if "DOCKER_CONFIG" in (job.get("env") or {})
+    ]
+    assert not offenders, (
+        "DOCKER_CONFIG belongs on the step, not the job: its value uses the "
+        f"`runner` context, which is unavailable at job level and makes the "
+        f"whole workflow file fail to start. Offenders: {', '.join(offenders)}."
+    )

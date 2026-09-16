@@ -80,6 +80,21 @@ runs:
         BASE_URL: ${{ inputs.base-url }}
         USE_PODMAN: ${{ inputs.use-podman }}
         HOME: ${{ github.workspace }}
+        # Replacing HOME moves where the docker CLI looks for credentials: it
+        # reads `$HOME/.docker/config.json` unless DOCKER_CONFIG says otherwise
+        # (`docker --help` reports `--config` defaulting to `$HOME/.docker`).
+        # So this step, which breaks HOME, is the one that owes the pin. Every
+        # `docker/login-action` step in a job that calls this action must set
+        # the same value, or the login writes where the pull cannot read.
+        #
+        # Release run 35133910854 died here AFTER publishing both base images:
+        # `Not authorized to pull ghcr.io/fasrc/a2rchi-python-base:v2026.08.0`.
+        # The fasrc packages are `internal`, so an anonymous pull is refused.
+        # `runner` is a step-level context only -- at job level this expression
+        # is a startup failure, which is how the first attempt at this fix broke
+        # both workflows. tests/unit/test_update_service_base_images.py holds
+        # the agreement between this value and the login steps.
+        DOCKER_CONFIG: ${{ runner.temp }}/.docker
       run: |
         set -euo pipefail
         ./scripts/dev/run_smoke_preview.sh "${DEPLOYMENT_NAME}"
