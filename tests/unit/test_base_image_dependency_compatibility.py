@@ -341,24 +341,55 @@ def _parse_requirements(text: str) -> dict:
 # ``-r other.txt`` / ``-c constraints.txt`` and their long forms. Deliberately NOT
 # ``--extra-index-url`` or ``--index-url``, which carry no requirements and which the
 # CPU header legitimately uses.
-_INCLUDE_PATTERN = re.compile(r"^(?:-r|-c|--requirement|--constraint)(?:[=\s]|$)")
+# Options that supply installable content without a version this module can read.
+# ``-r``/``-c`` pull in another file; ``-e``/``--editable`` install a path or VCS
+# checkout directly. Adversarial review on 2026-09-16 found only the first pair was
+# matched, so ``-e git+...#egg=vllm`` was dropped by ``_requirement_lines`` (it starts
+# with ``-``) and reported by nothing — every protected-dependency guard then read vllm
+# as ABSENT and skipped, admitting an arbitrary unmeasured checkout to the GPU image.
+#
+# The rule is the class, not the two spellings: an option that can carry a requirement
+# must fail the suite rather than read as silence.
+_REQUIREMENT_BEARING_PATTERN = re.compile(
+    r"^(?:-r|-c|-e|--requirement|--constraint|--editable)(?:[=\s]|$)"
+)
 
 
-def _include_directives(text: str) -> list:
-    """Lines of ``text`` that pull requirements in from another file.
+def _requirement_bearing_directives(text: str) -> list:
+    """Option lines of ``text`` that install something this module cannot version.
 
-    These are the option lines ``_requirement_lines`` cannot honour: it skips
-    everything starting with ``-``, so an included package is invisible to every guard
-    while pip installs it regardless.
+    These are the lines ``_requirement_lines`` cannot honour: it skips everything
+    starting with ``-``, so the package they supply is invisible to every guard while
+    pip installs it regardless. Reporting them is what turns that silence into a
+    failure.
     """
     directives = []
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        if _INCLUDE_PATTERN.match(line):
+        if _REQUIREMENT_BEARING_PATTERN.match(line):
             directives.append(line)
     return directives
+
+
+# Kept as the previous name so existing guards keep reading; the behaviour is now the
+# wider class above.
+_include_directives = _requirement_bearing_directives
+
+
+def _pytorch_from_stages(content: str) -> list:
+    """Every ``(torch, cuda)`` pair named by a pytorch ``FROM`` in ``content``.
+
+    A list, not a first match. ``re.search`` returned only the earliest stage, so in a
+    multi-stage Dockerfile a builder stage on the correct torch could mask a later
+    stage on the wrong one while ``pip install -r requirements.txt`` ran against the
+    mismatched base (adversarial review, 2026-09-16).
+    """
+    return [
+        (match.group(1), match.group(2))
+        for match in _PYTORCH_FROM_PATTERN.finditer(content)
+    ]
 
 
 def _declarations(text: str) -> dict:
@@ -666,14 +697,22 @@ class TestPytorchBaseImageMatchesTheTorchPin:
         assert torch is not None, "gpu-requirementsHEADER.txt must pin torch"
 
         content = PYTORCH_BASE_DOCKERFILE.read_text(encoding="utf-8")
-        match = _PYTORCH_FROM_PATTERN.search(content)
-        assert match, (
+        stages = _pytorch_from_stages(content)
+        assert stages, (
             f"{PYTORCH_BASE_DOCKERFILE} has no recognizable "
             f"``FROM .../pytorch/pytorch:<torch>-cuda<ver>`` line. If the base image "
             f"moved to a different publisher, update _PYTORCH_FROM_PATTERN rather "
             f"than deleting this guard."
         )
-        image_torch, image_cuda = match.group(1), match.group(2)
+        assert len(stages) == 1, (
+            f"{PYTORCH_BASE_DOCKERFILE} names {len(stages)} pytorch base stages "
+            f"{stages}. This guard cannot tell which one runs `pip install -r "
+            f"requirements.txt`, so it fails closed rather than checking the first and "
+            f"reporting confidence it does not have. If this file became a multi-stage "
+            f"build deliberately, teach the guard which stage installs the "
+            f"requirements — do not relax it to the first match."
+        )
+        image_torch, image_cuda = stages[0]
 
         assert _normalize_version(image_torch) == _normalize_version(torch), (
             f"the PyTorch base image is built FROM pytorch/pytorch:{image_torch}-"
@@ -1308,3 +1347,71 @@ class TestProtectedPackagesAreDeclaredOnce:
             f"not use. Re-run scripts/dev/build_docker_images.sh, or regenerate the "
             f"two files with that same concatenation."
         )
+
+
+class TestParsingFailsClosedOnRequirementBearingOptions:
+    """Adversarial review, 2026-09-16: a shape the parser cannot read was treated as
+    a shape that is not there. That is backwards for a guard.
+    """
+
+    def test_an_editable_directive_is_reported_as_unreadable(self):
+        """``-e``/``--editable`` installs a real project, so it must not vanish.
+
+        ``_requirement_lines`` drops every line starting with ``-``, and the include
+        matcher recognised only ``-r``/``-c``. So ``-e git+...#egg=vllm`` was invisible:
+        every protected-dependency guard saw vllm as absent and SKIPPED, which would let
+        an arbitrary unmeasured checkout into the GPU image.
+        """
+        text = "\n".join(
+            [
+                "torch==2.7.0",
+                "-e git+https://github.com/vllm-project/vllm@main#egg=vllm",
+                "--editable ./local/vllm",
+            ]
+        )
+        reported = _requirement_bearing_directives(text)
+        assert len(reported) == 2, (
+            f"both editable directives must be reported as unreadable, got {reported}. "
+            f"An editable install supplies a package no guard here can version-check, "
+            f"so it must fail the suite rather than read as absent."
+        )
+
+    def test_include_directives_are_still_reported(self):
+        text = "-r other.txt\n--constraint pins.txt\ntorch==2.7.0"
+        assert len(_requirement_bearing_directives(text)) == 2
+
+    def test_plain_option_lines_stay_inert(self):
+        text = (
+            "--extra-index-url https://example.invalid/simple\n"
+            "--prefer-binary\n"
+            "torch==2.7.0"
+        )
+        assert _requirement_bearing_directives(text) == []
+
+
+class TestPytorchBaseStagesAreUnambiguous:
+    """A multi-stage Dockerfile can name more than one pytorch base.
+
+    ``re.search`` returned the FIRST match only, so a builder stage on the right torch
+    could mask a later stage on the wrong one while ``pip install -r requirements.txt``
+    ran against the mismatched base.
+    """
+
+    def test_every_pytorch_stage_is_collected(self):
+        content = "\n".join(
+            [
+                "FROM docker.io/pytorch/pytorch:2.7.0-cuda12.6-cudnn9-devel AS builder",
+                "RUN echo build",
+                "FROM docker.io/pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel",
+                "RUN pip install -r requirements.txt",
+            ]
+        )
+        stages = _pytorch_from_stages(content)
+        assert stages == [("2.7.0", "12.6"), ("2.6.0", "12.4")], (
+            f"both stages must be collected, got {stages}. Taking only the first lets "
+            f"a correct builder stage hide a wrong runtime stage."
+        )
+
+    def test_a_single_stage_is_still_read(self):
+        content = "FROM docker.io/pytorch/pytorch:2.7.0-cuda12.6-cudnn9-devel\nRUN true"
+        assert _pytorch_from_stages(content) == [("2.7.0", "12.6")]
