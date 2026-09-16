@@ -24,8 +24,10 @@ Each encodes one pairwise constraint somebody already knew to look for, so the m
 is green exactly when the known traps are absent — not when ``pip`` succeeds. Fixing
 #472 demonstrated the gap: the vllm guard below went green while the real GPU set
 still failed ``ResolutionImpossible``, because ``torch==2.7.0`` also needs
-``sympy>=1.13.3`` and the shared base pinned ``1.13.1``. Every constraint in this
-module was added *after* a resolver found it.
+``sympy>=1.13.3`` and the shared base pinned ``1.13.1``. Almost every constraint here
+was added *after* a resolver found it; ``VLLM_TORCH_SPEC`` is the one exception, added
+on 2026-09-16 from a review reading of the GPU header, which had asserted the vllm-torch
+coupling in prose for a day with no table behind it.
 
 So this module is a regression net, not a gate. The gate is resolving both generated
 files, which catches transitive conflicts nobody predicted and costs seconds:
@@ -152,6 +154,33 @@ XFORMERS_TORCH_SPEC = {
     "0.0.33": (("==", "2.9.0"),),
     "0.0.33.post1": (("==", "2.9.0"),),
     "0.0.33.post2": (("==", "2.9.1"),),
+}
+
+# vllm -> its ``torch`` specifier. Always exact, and every release so far moved it, so
+# vllm and torch can never be bumped apart. The GPU header already said so in prose;
+# review on 2026-09-16 pointed out that no table enforced it, which left the header
+# asserting a coupling the guards ignored. Measured from PyPI ``requires_dist`` on
+# 2026-09-16.
+#
+# Note how little of this a version comparison could express: the pin moves on nearly
+# every release (0.9.x -> 2.7.0, 0.10.0 -> 2.7.1, 0.11.0 -> 2.8.0) and then sits still
+# across two (0.22.0 and 0.25.0 both want 2.11.0; 0.27.0 and 0.29.0 both want 2.13.0).
+VLLM_TORCH_SPEC = {
+    "0.8.5": (("==", "2.6.0"),),
+    "0.8.5.post1": (("==", "2.6.0"),),
+    "0.9.0": (("==", "2.7.0"),),
+    "0.9.0.1": (("==", "2.7.0"),),
+    "0.9.1": (("==", "2.7.0"),),
+    "0.9.2": (("==", "2.7.0"),),
+    "0.10.0": (("==", "2.7.1"),),
+    "0.11.0": (("==", "2.8.0"),),
+    "0.12.0": (("==", "2.9.0"),),
+    "0.15.0": (("==", "2.9.1"),),
+    "0.19.0": (("==", "2.10.0"),),
+    "0.22.0": (("==", "2.11.0"),),
+    "0.25.0": (("==", "2.11.0"),),
+    "0.27.0": (("==", "2.13.0"),),
+    "0.29.0": (("==", "2.13.0"),),
 }
 
 # vllm -> the ``transformers`` range it actually WORKS with, which is narrower than the
@@ -451,6 +480,112 @@ class TestXformersMatchesTheTorchPin:
         )
 
 
+class TestVllmMatchesTheTorchPin:
+    """``vllm`` pins ``torch`` exactly, and until 2026-09-16 nothing checked it.
+
+    The GPU header states the constraint in its own comment — "vllm pins torch exactly,
+    and xformers ships one build per torch release" — but only the xformers half of that
+    sentence had a table. So the header asserted a coupling the guards did not enforce.
+
+    Review on 2026-09-16 raised it with the right example: vllm 0.10.0 requires
+    ``torch==2.7.1``, so bumping vllm to 0.10.0 and leaving ``torch==2.7.0`` produces a
+    set pip cannot resolve. Measured from PyPI ``requires_dist`` on 2026-09-16.
+
+    Honest note on how reachable that was before this guard existed: a bump to 0.10.0
+    would still have failed, because ``VLLM_TRANSFORMERS_SPEC`` holds only 0.9.0 and
+    fails closed on anything else. That protection is incidental, not designed — the
+    transformers table exists to catch an import collision, not to gate torch — and it
+    dissolves the moment somebody follows that failure message, measures the transformers
+    range for the new vllm and adds the row. At that point torch is unguarded again. A
+    constraint the header names deserves its own table rather than a side effect of a
+    different one.
+    """
+
+    def test_vllm_release_matches_the_pinned_torch(self, gpu_pins):
+        vllm = gpu_pins.get("vllm")
+        torch = gpu_pins.get("torch")
+        if vllm is None or torch is None:
+            pytest.skip("this guard only applies while the GPU header pins both")
+
+        clauses = _measured(VLLM_TORCH_SPEC, vllm)
+        if clauses is _MISSING:
+            pytest.fail(
+                f"vllm {vllm} is not in VLLM_TORCH_SPEC. Read its ``requires_dist`` on "
+                f"PyPI, add the row with today's date, then re-run. vllm pins torch "
+                f"exactly and every release so far moved that pin, so an unmeasured "
+                f"release is a resolution failure waiting for the next bump (#472)."
+            )
+
+        assert _satisfies(torch, clauses), (
+            f"vllm {vllm} requires torch{_describe(clauses)}, but "
+            f"gpu-requirementsHEADER.txt pins torch=={torch}. vllm pins torch exactly, "
+            f"so this set cannot resolve. torch, vllm and xformers move as one unit: "
+            f"changing any one of the three means re-measuring the other two."
+        )
+
+    @pytest.mark.parametrize(
+        "vllm_version, torch_version",
+        [
+            ("0.8.5", "2.6.0"),
+            ("0.8.5.post1", "2.6.0"),
+            ("0.9.0", "2.7.0"),
+            ("0.9.0.1", "2.7.0"),
+            ("0.9.1", "2.7.0"),
+            ("0.9.2", "2.7.0"),
+            ("0.10.0", "2.7.1"),
+            ("0.11.0", "2.8.0"),
+            ("0.12.0", "2.9.0"),
+            ("0.15.0", "2.9.1"),
+            ("0.19.0", "2.10.0"),
+            ("0.22.0", "2.11.0"),
+            ("0.25.0", "2.11.0"),
+            ("0.27.0", "2.13.0"),
+            ("0.29.0", "2.13.0"),
+        ],
+    )
+    def test_each_measured_vllm_release_accepts_its_own_torch(
+        self, vllm_version, torch_version
+    ):
+        clauses = _measured(VLLM_TORCH_SPEC, vllm_version)
+        assert clauses is not _MISSING, (
+            f"vllm {vllm_version} is measured in this test but missing from "
+            f"VLLM_TORCH_SPEC."
+        )
+        assert _satisfies(torch_version, clauses), (
+            f"vllm {vllm_version} requires torch=={torch_version} as measured, but "
+            f"the table says torch{_describe(clauses)}."
+        )
+
+    @pytest.mark.parametrize(
+        "vllm_version, torch_version, why",
+        [
+            (
+                "0.10.0",
+                "2.7.0",
+                "the scenario review raised: bumping vllm one release while leaving "
+                "torch behind. 0.10.0 requires torch==2.7.1",
+            ),
+            (
+                "0.9.0",
+                "2.7.1",
+                "and the mirror image: moving torch forward while vllm stays at 0.9.0, "
+                "which requires torch==2.7.0 exactly",
+            ),
+            (
+                "0.29.0",
+                "2.7.0",
+                "a large vllm jump with torch untouched is the same failure, louder",
+            ),
+        ],
+    )
+    def test_a_vllm_bump_that_leaves_torch_behind_is_rejected(
+        self, vllm_version, torch_version, why
+    ):
+        clauses = _measured(VLLM_TORCH_SPEC, vllm_version)
+        assert clauses is not _MISSING, f"vllm {vllm_version} must be measured"
+        assert not _satisfies(torch_version, clauses), why
+
+
 class TestPytorchBaseImageMatchesTheTorchPin:
     """The ``FROM`` image already ships a torch, and ``pip`` then installs the pin.
 
@@ -733,6 +868,7 @@ class TestMeasuredTablesKeyOnTheFullVersion:
             ("XFORMERS_TORCH_SPEC", "xformers_torch"),
             ("VLLM_TRANSFORMERS_SPEC", "vllm_transformers"),
             ("TORCH_SYMPY_SPEC", "torch_sympy"),
+            ("VLLM_TORCH_SPEC", "vllm_torch"),
         ],
     )
     def test_every_table_is_keyed_by_version_strings(self, label, table):
@@ -741,6 +877,7 @@ class TestMeasuredTablesKeyOnTheFullVersion:
             "xformers_torch": XFORMERS_TORCH_SPEC,
             "vllm_transformers": VLLM_TRANSFORMERS_SPEC,
             "torch_sympy": TORCH_SYMPY_SPEC,
+            "vllm_torch": VLLM_TORCH_SPEC,
         }
         offenders = [key for key in tables[table] if not isinstance(key, str)]
         assert not offenders, (
