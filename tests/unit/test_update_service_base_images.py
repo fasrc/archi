@@ -1498,3 +1498,72 @@ def test_the_release_steps_compose_on_the_pin_the_templates_carry(
     assert (templates / "Dockerfile-chat").read_text() == (
         "FROM ghcr.io/fasrc/a2rchi-python-base:v2026.8.0\n"
     )
+
+
+# --- The registry credentials the smoke test needs ---------------------------
+
+_ACTIONS = Path(__file__).resolve().parents[2] / ".github" / "actions"
+_RUN_SMOKE = _ACTIONS / "run-smoke" / "action.yml"
+
+
+def _steps_overriding_home(action_path):
+    """Names of steps in a composite action that replace HOME."""
+    document = yaml.safe_load(action_path.read_text())
+    steps = document.get("runs", {}).get("steps", [])
+    return [step.get("name") for step in steps if "HOME" in (step.get("env") or {})]
+
+
+def _jobs_using(workflow_path, action_ref):
+    """Every (job name, job) in a workflow whose steps use `action_ref`."""
+    document = yaml.safe_load(workflow_path.read_text())
+    return [
+        (name, job)
+        for name, job in document["jobs"].items()
+        if any(action_ref in (step.get("uses") or "") for step in job.get("steps", []))
+    ]
+
+
+def test_a_job_that_logs_in_and_overrides_home_pins_docker_config():
+    """The release smoke test pulled with credentials it could not find.
+
+    `run-smoke` replaces HOME for the runner step, and the docker CLI reads
+    `$HOME/.docker/config.json` unless DOCKER_CONFIG says otherwise. So
+    `docker/login-action`, which runs earlier under the real HOME, writes the
+    credentials somewhere the pull never looks.
+
+    Measured in release run 35133910854: `build-images` published both images,
+    then the smoke test died on `Not authorized to pull the base image
+    ghcr.io/fasrc/a2rchi-python-base:v2026.08.0`, with `HOME` logged as the
+    workspace. The packages are `internal`, so an anonymous pull is refused.
+
+    `pr-preview.yml` hides this. It downloads the base image as an artifact and
+    `docker load`s it, so its smoke test never pulls from the registry and
+    stays green with the same broken credentials. The release path is the only
+    one that pulls, which is why the defect survived to a release.
+
+    The premise comes from the action file, not from this test: drop the HOME
+    override and the requirement lapses on its own.
+    """
+    overriding = _steps_overriding_home(_RUN_SMOKE)
+    if not overriding:
+        pytest.skip("run-smoke no longer overrides HOME")
+
+    offenders = []
+    for workflow_path in sorted(_WORKFLOWS.glob("*.yml")):
+        for job_name, job in _jobs_using(workflow_path, "actions/run-smoke"):
+            logs_in = any(
+                "docker/login-action" in (step.get("uses") or "")
+                for step in job["steps"]
+            )
+            if not logs_in:
+                continue
+            if "DOCKER_CONFIG" not in (job.get("env") or {}):
+                offenders.append(f"{workflow_path.name}:{job_name}")
+
+    assert not offenders, (
+        "these jobs log in to a registry and then run a step that replaces HOME, "
+        "so the docker CLI cannot find the credentials: "
+        f"{', '.join(offenders)}. Set DOCKER_CONFIG on the job so the login and "
+        f"the pull agree on one path regardless of HOME. HOME is replaced by: "
+        f"{', '.join(overriding)}."
+    )
