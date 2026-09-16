@@ -1505,6 +1505,12 @@ def test_the_release_steps_compose_on_the_pin_the_templates_carry(
 _ACTIONS = Path(__file__).resolve().parents[2] / ".github" / "actions"
 _RUN_SMOKE = _ACTIONS / "run-smoke" / "action.yml"
 
+# The one value that works, asserted exactly rather than by presence. A key
+# holding an empty expression or a typo would satisfy a presence check and leave
+# the pull looking in the same wrong place. `runner.temp` is per-job, writable,
+# and outside the workspace, so it is not swept into an uploaded artifact.
+_DOCKER_CONFIG_RE = re.compile(r"^\$\{\{\s*runner\.temp\s*\}\}/\.docker$")
+
 
 def _steps_overriding_home(action_path):
     """Names of steps in a composite action that replace HOME."""
@@ -1543,6 +1549,15 @@ def test_a_job_that_logs_in_and_overrides_home_pins_docker_config():
 
     The premise comes from the action file, not from this test: drop the HOME
     override and the requirement lapses on its own.
+
+    Mechanism confirmed, not assumed: `docker --help` reports
+    `--config` defaulting to `$HOME/.docker`, and DOCKER_CONFIG has been its
+    environment equivalent since Docker 1.8.0. Verified locally that
+    `DOCKER_CONFIG=<dir> docker logout ghcr.io` leaves `~/.docker/config.json`
+    untouched, so the variable really does move both the read and the write.
+
+    The value is asserted exactly, and every mutation was measured to fail:
+    an empty string, `runner.tmp` for `runner.temp`, and a step-level override.
     """
     overriding = _steps_overriding_home(_RUN_SMOKE)
     if not overriding:
@@ -1557,13 +1572,30 @@ def test_a_job_that_logs_in_and_overrides_home_pins_docker_config():
             )
             if not logs_in:
                 continue
-            if "DOCKER_CONFIG" not in (job.get("env") or {}):
-                offenders.append(f"{workflow_path.name}:{job_name}")
+            where = f"{workflow_path.name}:{job_name}"
+            value = (job.get("env") or {}).get("DOCKER_CONFIG")
+            if value is None:
+                offenders.append(f"{where} sets no DOCKER_CONFIG")
+                continue
+            if not _DOCKER_CONFIG_RE.match(str(value).strip()):
+                offenders.append(f"{where} sets DOCKER_CONFIG={value!r}")
+            # A step-level value shadows the job-level one, so a step that sets
+            # its own sends the pull somewhere the login never wrote.
+            for step in job["steps"]:
+                step_value = (step.get("env") or {}).get("DOCKER_CONFIG")
+                if step_value is not None and str(step_value).strip() != str(
+                    value
+                ).strip():
+                    offenders.append(
+                        f"{where} step {step.get('name')!r} overrides "
+                        f"DOCKER_CONFIG={step_value!r}"
+                    )
 
     assert not offenders, (
         "these jobs log in to a registry and then run a step that replaces HOME, "
-        "so the docker CLI cannot find the credentials: "
-        f"{', '.join(offenders)}. Set DOCKER_CONFIG on the job so the login and "
-        f"the pull agree on one path regardless of HOME. HOME is replaced by: "
-        f"{', '.join(overriding)}."
+        "so the docker CLI falls back to $HOME/.docker and cannot find the "
+        f"credentials: {'; '.join(offenders)}. Set DOCKER_CONFIG to "
+        f"'${{{{ runner.temp }}}}/.docker' on the job, and let every step inherit "
+        f"it, so the login and the pull agree on one path regardless of HOME. "
+        f"HOME is replaced by: {', '.join(overriding)}."
     )
