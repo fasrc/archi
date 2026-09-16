@@ -1583,9 +1583,10 @@ def test_a_job_that_logs_in_and_overrides_home_pins_docker_config():
             # its own sends the pull somewhere the login never wrote.
             for step in job["steps"]:
                 step_value = (step.get("env") or {}).get("DOCKER_CONFIG")
-                if step_value is not None and str(step_value).strip() != str(
-                    value
-                ).strip():
+                if (
+                    step_value is not None
+                    and str(step_value).strip() != str(value).strip()
+                ):
                     offenders.append(
                         f"{where} step {step.get('name')!r} overrides "
                         f"DOCKER_CONFIG={step_value!r}"
