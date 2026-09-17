@@ -42,8 +42,10 @@ in the shared `.env` can stop the export for one service without an edit to that
 
 ### Requirement: Telemetry failure never stops a service
 
-A failure inside `init_telemetry()` SHALL log one warning and return a disabled status, and it
-SHALL NOT raise into the caller.
+A failure inside `init_telemetry()` SHALL NOT raise into the caller, and it SHALL log a warning
+that names what failed. A failure that stops the bootstrap SHALL return a disabled status. A
+failure in one instrumentor SHALL cost only that instrumentor: the status stays enabled and
+lists the instrumentor that failed.
 
 `setup_logging()` is the first statement of every service entrypoint. An exception there stops
 the service before it opens a port. The readiness document records the precedent: a vLLM
@@ -59,6 +61,13 @@ own thread, and the processor drops the spans in silence. Both must reach the se
 - **WHEN** telemetry is enabled and an instrumentor raises during `init_telemetry()`
 - **THEN** the call returns without raising
 - **AND** the service log holds one warning that names the failure
+- **AND** the returned status stays enabled and lists that instrumentor as failed
+
+#### Scenario: The bootstrap itself fails
+
+- **WHEN** telemetry is enabled and `init_telemetry()` fails before it installs any instrumentor
+- **THEN** the call returns without raising
+- **AND** the returned status is disabled
 
 #### Scenario: The exporter cannot reach the receiver
 
@@ -117,8 +126,9 @@ not start, such as the benchmark harness or a shell.
 
 ### Requirement: Spans carry no prompt, completion, document or query string
 
-A span SHALL carry no prompt text, completion text, retrieved document text, or URL query
-string unless the operator sets `ARCHI_OTEL_CAPTURE_CONTENT` to a true value.
+A span SHALL carry no URL query string, and no flag SHALL release one. A span SHALL carry no
+prompt text, completion text, or retrieved document text unless the operator sets
+`ARCHI_OTEL_CAPTURE_CONTENT` to a true value.
 
 The OpenInference LangChain instrumentor records prompts, completions, tool arguments and
 retrieved documents by default. Issue #258 excludes query text from logs on purpose, and a
@@ -157,6 +167,7 @@ independent of a table inside a dependency.
 
 - **WHEN** a span carries a URL attribute whose value holds a query string
 - **THEN** the exported span carries that URL without the query string
+- **AND** this holds whatever value `ARCHI_OTEL_CAPTURE_CONTENT` carries
 
 #### Scenario: The SSO redirect route
 
