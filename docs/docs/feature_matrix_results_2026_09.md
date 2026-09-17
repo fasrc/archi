@@ -121,7 +121,7 @@ two baseline runs). A **normal question** is any other question.
   The minimum detectable effect is `MDE = max(2·SE, 2·σ)`: `SE` is the paired per-question
   standard error over the 104 bank questions, `σ` the run-to-run spread of the mean measured
   on the three opening baseline runs of this campaign (paired σ: `context_precision` 0.004,
-  `context_recall` 0.011, `faithfulness` 0.021, `answer_relevancy` 0.016 — all below the
+  `context_recall` 0.011, `faithfulness` 0.021, `answer_relevancy` 0.005 — all below the
   planning prior, so N = 2 runs per arm stood). A delta inside the MDE is the null, never a
   direction. **Two runs combine as: outside the MDE in the same direction in both runs → a
   verdict; outside in one run → reported as the null, with the direction noted.**
@@ -433,42 +433,42 @@ into "a real content change in the FASRC documentation between the two dates". C
 
 Per plan §4.4 step 5: a default the campaign shows to hurt gets an issue; "no measurable
 difference" on a default that costs ingest time or latency is itself a finding and gets an
-issue proposing the cheaper setting. **None of these has been filed**; they are proposals for
-the operator to open or decline against the release plan's gate bar.
+issue proposing the cheaper setting. **Filed on 2026-09-17** as fasrc/archi issues, numbered
+beside each item; milestones are left to the operator against the release plan's gate bar.
 
-1. **Propose `processing.categorization.enabled: false` as the default.** No measurable effect
+1. **Propose `processing.categorization.enabled: false` as the default** ([#496](https://github.com/fasrc/archi/issues/496))**.** No measurable effect
    on any retrieval metric across two runs (3.5), the category is read by nothing, and it
    costs 19 min and ~1 080 LLM calls per ingest. The one atom metric just outside 2σ points the
    same way. Lowest-risk change in this report.
-2. **Propose `retrievers.hierarchical_rerank.num_documents_to_retrieve: 8`.** Citation accuracy
+2. **Propose `retrievers.hierarchical_rerank.num_documents_to_retrieve: 8`** ([#498](https://github.com/fasrc/archi/issues/498))**.** Citation accuracy
    0.88 → 0.96 at p ≤ 0.012 in both runs, recall up, latency and blowouts flat (3.3). Ask for
    one more QA run at k = 8 before merging, since the answer side is one flat run.
 3. **Decide the reranker's default — this needs a human call, not more data of the same
-   kind.** The primary metric says nothing; the cost is 45 % of the time per question and a
+   kind** ([#497](https://github.com/fasrc/archi/issues/497))**.** The primary metric says nothing; the cost is 45 % of the time per question and a
    third of the searches; the answer-side evaluator says the answers are better without it;
    retrieved-text recall says they rest on less material. The campaign's lean: the evidence
    for default-on is not there, and the decision should be made on the answer-side metric with
    a paired QA design (two QA runs per side, McNemar on item passes), which is about 6 h of
    compute.
-4. **Separate "smaller payload per search" from "better chunk boundaries".** Reranker OFF and
+4. **Separate "smaller payload per search" from "better chunk boundaries"** (folded into [#497](https://github.com/fasrc/archi/issues/497))**.** Reranker OFF and
    markdown chunking share one signature (4.1). A two-arm follow-up that keeps sentence
    chunking and the reranker but caps the parent size, or raises `context_editing.keep`, would
    say whether the answer-side gains come from payload size — which would also settle whether
    markdown chunking's atom gain is worth its 55 % larger index.
-5. **Recursion-limit blowouts as a production issue** (4.3): ~8 % of questions, 150–250 s
+5. **Recursion-limit blowouts as a production issue** (4.3; [#499](https://github.com/fasrc/archi/issues/499)): ~8 % of questions, 150–250 s
    each, an apology as the answer. Not a benchmark artifact.
-6. **Fix #448 and re-run the HTML→Markdown arm** under a new lock, with a same-lock baseline
+6. **Fix #448 and re-run the HTML→Markdown arm** (#448 was fixed by #456 on 2026-09-11; the re-run is [#500](https://github.com/fasrc/archi/issues/500)) under a new lock, with a same-lock baseline
    (about 5.5 h extra), plus the lock-time render check so an arm can never again run a
    configuration it did not intend.
 7. **Defaults confirmed, no action:** `chunking.strategy: sentence` (against both `character`
    and `markdown` on the primary metric), `stemming.enabled: false`, k = 5 against k = 3.
 8. **Harness items unblocked now that the lock is released** (all logged in plan §13.2):
-   G8 anchor threshold uses aggregate σ and fires on the baseline itself (#14);
-   `answer_relevancy` abstains on ~18 % of the bank, concentrated by question class (#20); QA
-   denominator drifts by one item between runs (#16); `qa_arm.sh` fails open on a zero-scored
+   G8 anchor threshold uses aggregate σ and fires on the baseline itself (#14; [#501](https://github.com/fasrc/archi/issues/501));
+   `answer_relevancy` abstains on ~18 % of the bank, concentrated by question class (#20; [#502](https://github.com/fasrc/archi/issues/502)); QA
+   denominator drifts by one item between runs (#16; [#503](https://github.com/fasrc/archi/issues/503)); `qa_arm.sh` fails open on a zero-scored
    run ([#434](https://github.com/fasrc/archi/issues/434)); the benchmark service reads a
    baked config ([#439](https://github.com/fasrc/archi/issues/439)); a chain with a manual
-   step must page the operator, not log a marker (cost 3 idle hours on Sep 9).
+   step must page the operator, not log a marker (cost 3 idle hours on Sep 9; [#504](https://github.com/fasrc/archi/issues/504)).
 
 ---
 

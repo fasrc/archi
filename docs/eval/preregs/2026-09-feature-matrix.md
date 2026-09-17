@@ -155,7 +155,8 @@ harness drift. Bank blob hash unchanged (G4).
 rather than the Sep 5 opening baseline, with the tool's MDE unchanged; both numbers are
 shown in the report. No primary verdict differs between the two comparisons.
 
-**Follow-up issues:** proposed in the report's §5 (categorization default off; k = 8;
-a reranker decision on the answer-side evaluator; payload-size experiment; recursion-limit
-blowouts; #448 fix + arm 06 re-run; harness items #14 / #16 / #20 / #434 / #439). None filed
-as of 2026-09-11.
+**Follow-up issues:** filed 2026-09-17 on fasrc/archi: #496 (categorization default off), #497
+(reranker default decision, with the payload-size experiment), #498 (k = 8), #499 (recursion-limit
+blowouts), #500 (arm 06 re-run under a new lock, #448 having been fixed by #456), #501 (G8 anchor
+σ, defect 14), #502 (`answer_relevancy` denominator, defect 20), #503 (QA denominator, defect 16),
+#504 (page the operator). #434 and #439 pre-existed.
