@@ -389,3 +389,121 @@ def test_forced_tar_in_later_run_is_flagged_via_saved_path():
         f"instruction; the guard must cross RUN boundaries via the saved path; "
         f"got {offenders!r}"
     )
+
+
+def test_forced_tar_on_different_file_in_same_run_is_not_flagged():
+    """A forcing tar on a pinned file in the same RUN as a correct moving extraction is clean.
+
+    Branch 1 binds the verdict to each tar invocation's own token span, not to the
+    whole command — so a second tar that extracts a version-pinned archive is not
+    indicted merely because a saved path appears elsewhere in the same command.
+    """
+    text = (
+        'RUN wget -O /tmp/ff.tar.xz "https://download.mozilla.org/?product=firefox-esr-latest-ssl" '
+        "&& tar -xf /tmp/ff.tar.xz -C /opt "
+        "&& tar -xzf tool-v1.2.3.tar.gz -C /usr/local/bin\n"
+    )
+    offenders = _offenders(text)
+    assert offenders == [], (
+        f"tar -xzf operates on tool-v1.2.3.tar.gz, not the saved moving-download path; "
+        f"branch 1 must bind to the invocation's own span, not the whole command; "
+        f"got {offenders!r}"
+    )
+
+
+def test_stdout_sink_download_is_flagged_via_branch2():
+    """A piped download that writes no file is indicted via branch 2 (unresolvable).
+
+    Both the glued form (-O-) and the spaced form (-O -) must not be recorded as
+    saved paths — '-' is a stdout sink.  With no saved path, branch 2 fires: the
+    invocation shares a command with a moving download and the guard cannot resolve
+    which file tar reads.
+    """
+    glued = (
+        'RUN wget -O- "https://download.mozilla.org/?product=firefox-esr-latest-ssl" '
+        "| tar -xzf -\n"
+    )
+    assert _offenders(glued), (
+        f"wget -O- pipes to stdout; the guard must not record '-' as a saved path "
+        f"and must indict the forcing tar via branch 2; got {_offenders(glued)!r}"
+    )
+    spaced = (
+        'RUN wget -O - "https://download.mozilla.org/?product=firefox-esr-latest-ssl" '
+        "| tar -xzf -\n"
+    )
+    assert _offenders(spaced), (
+        f"wget -O - (spaced) also pipes to stdout; the guard must not record '-' as "
+        f"a saved path and must indict via branch 2; got {_offenders(spaced)!r}"
+    )
+
+
+def test_archive_path_glued_to_option_is_flagged_via_branch1():
+    """A saved path glued to a tar option token is matched in the full span, not operands.
+
+    tar --bzip2 --file=/tmp/ff.tar.xz and tar -xjf/tmp/ff.tar.xz both hide the
+    archive path inside an option token.  An operand-only scan would miss them;
+    span matching catches both.
+    """
+    base = 'RUN wget -O /tmp/ff.tar.xz "https://download.mozilla.org/?product=firefox-esr-latest-ssl"\n'
+    long_form = base + "RUN tar --bzip2 --file=/tmp/ff.tar.xz\n"
+    assert _offenders(long_form), (
+        f"--file=/tmp/ff.tar.xz glues the saved path to a long option; span matching "
+        f"must find it; got {_offenders(long_form)!r}"
+    )
+    short_glued = base + "RUN tar -xjf/tmp/ff.tar.xz\n"
+    assert _offenders(short_glued), (
+        f"-xjf/tmp/ff.tar.xz glues the saved path to the short cluster; span matching "
+        f"must find it; got {_offenders(short_glued)!r}"
+    )
+
+
+def test_shell_variable_archive_is_flagged_via_branch2():
+    """A tar that names its archive through a shell variable is indicted via branch 2.
+
+    The guard cannot resolve the variable, so the span is unresolvable; branch 2
+    fires because the invocation shares a command with a moving download.
+    """
+    text = (
+        'RUN wget -O /tmp/ff.tar.xz "https://download.mozilla.org/?product=firefox-esr-latest-ssl" '
+        '&& tar -xjf "$FF"\n'
+    )
+    offenders = _offenders(text)
+    assert (
+        offenders
+    ), f'tar -xjf "$FF" is unresolvable; branch 2 must indict it; got {offenders!r}'
+
+
+def test_bare_basename_in_later_run_is_flagged_via_branch1():
+    """A tar naming the saved file by basename alone (after cd) is flagged via branch 1.
+
+    A basename token with no '/' matches the saved path's basename, provided the
+    candidate token itself carries no '/'.
+    """
+    text = (
+        'RUN wget -O /tmp/ff.tar.xz "https://download.mozilla.org/?product=firefox-esr-latest-ssl"\n'
+        "RUN cd /tmp && tar -xjf ff.tar.xz\n"
+    )
+    offenders = _offenders(text)
+    assert offenders, (
+        f"ff.tar.xz (bare basename) matches the saved /tmp/ff.tar.xz; "
+        f"branch 1 must indict it; got {offenders!r}"
+    )
+
+
+def test_basename_collision_with_pinned_path_is_not_flagged():
+    """A later RUN whose archive shares a basename but not the full path is clean.
+
+    /tmp/firefox-esr.tar.xz is saved; /opt/vendor/pinned-9.9.9/firefox-esr.tar.xz
+    shares its basename but is a different, explicitly version-pinned file.  Because
+    the token carries a '/', basename matching is skipped and only full-path matching
+    applies — which does not fire.
+    """
+    text = (
+        'RUN wget -O /tmp/firefox-esr.tar.xz "https://download.mozilla.org/?product=firefox-esr-latest-ssl"\n'
+        "RUN tar -xJf /opt/vendor/pinned-9.9.9/firefox-esr.tar.xz\n"
+    )
+    offenders = _offenders(text)
+    assert offenders == [], (
+        f"/opt/vendor/pinned-9.9.9/firefox-esr.tar.xz differs from the saved path; "
+        f"basename matching must not fire on a token containing '/'; got {offenders!r}"
+    )

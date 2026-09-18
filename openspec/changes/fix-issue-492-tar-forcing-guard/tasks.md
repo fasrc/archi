@@ -78,7 +78,7 @@ Standing notes for every task:
 
 ## 2. Hole B — association by the saved path
 
-- [ ] 2.1 `model: opus` — RED first, a new test method: build the split-`RUN` text
+- [x] 2.1 `model: opus` — RED first, a new test method: build the split-`RUN` text
       `RUN wget -O /tmp/ff.tar "https://download.mozilla.org/?product=firefox-esr-latest-ssl&os=linux64"`
       followed by `RUN tar -xjf /tmp/ff.tar -C /opt`, and assert the guard reports a
       non-empty offender list naming `/tmp/ff.tar`. **Watch it fail** — today `_commands`
@@ -102,7 +102,7 @@ Standing notes for every task:
       `test_the_saved_filename_does_not_claim_a_format_it_cannot_guarantee`, which asserts a
       `.tar.bz2` naming claim, never calls the decompressor check at all, and would be
       turned into a duplicate of `:66` by a literal rewrite. Gate green; commit.
-- [ ] 2.2 `model: opus` — The false-positive guard that makes 2.1 safe. New test method:
+- [x] 2.2 `model: opus` — The false-positive guard that makes 2.1 safe. New test method:
       one `RUN` reading
       `wget -O /tmp/ff.tar.xz "<moving url>" && tar -xf /tmp/ff.tar.xz -C /opt && tar -xzf tool-v1.2.3.tar.gz -C /usr/local/bin`
       must report an **empty** offender list. The saved path is extracted correctly; the
