@@ -17,7 +17,11 @@ been moved to xz and three had not, so this is also a half-finished fix: the gua
 below covers the class rather than the three instances, because the next template
 added by copy-paste would otherwise reintroduce it.
 
-No pre-merge job builds service images (#473), so nothing caught this. These templates
+A pre-merge job builds only the chatbot slice — ``Dockerfile-chat``,
+``Dockerfile-postgres``, ``Dockerfile-data-manager`` — and none of the six templates
+that fetch this download is in that slice; they are ``Dockerfile-grader``,
+``Dockerfile-grader-gpu``, ``Dockerfile-chat-gpu``, ``Dockerfile-data-manager-gpu``,
+``Dockerfile-mattermost-gpu``, and ``Dockerfile-benchmarks-gpu``. These templates
 had been unbuildable on ``dev`` for as long as Mozilla has served xz.
 """
 
