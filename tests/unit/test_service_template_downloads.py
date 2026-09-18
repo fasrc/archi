@@ -28,16 +28,59 @@ import pytest
 from src.cli.managers.base_image_preflight import service_templates
 
 # EVERY tar option that forces a compression program, not just the one this defect
-# happened to involve. Review on 2026-09-16 pointed out that the guard claimed
-# "format auto-detection" while only rejecting bzip2, so a future edit to ``tar -xzf``
-# on the same moving URL would fail the image exactly as ``-xjf`` did and stay green
-# here. ``tar --help``: -z/--gzip, -j/--bzip2, -J/--xz, -Z/--compress, --lzma, --lzop,
-# --zstd. Short flags are matched inside a cluster (``-xzf``); the long forms are
-# matched whole.
-_FORCED_DECOMPRESSOR = re.compile(
-    r"tar\s+(?:-[a-zA-Z]*[zjJZ][a-zA-Z]*\b"
-    r"|--(?:gzip|gunzip|ungzip|bzip2|xz|lzma|lzop|zstd|compress)\b)"
+# happened to involve. Two-step token scan: walk the command's tokens to find each
+# ``tar`` invocation bounded by shell separators (``&&``, ``||``, ``;``, ``|``); then
+# inspect that invocation's option tokens (those beginning with ``-``). Long forms are
+# matched whole after stripping ``=PROG`` — so ``--no-auto-compress`` and
+# ``--exclude=*.gz`` stay clean. Short clusters are matched case-sensitively — ``-i``
+# (``--ignore-zeros``) differs from ``-I`` (``--use-compress-program``) by case alone.
+_FORCING_LONG = frozenset(
+    {
+        "--gzip",
+        "--gunzip",
+        "--ungzip",
+        "--bzip2",
+        "--xz",
+        "--lzma",
+        "--lzop",
+        "--zstd",
+        "--lzip",
+        "--compress",
+        "--uncompress",
+        "--use-compress-program",
+    }
 )
+_FORCING_SHORT = frozenset("zjJZI")
+_SHELL_SEP = frozenset({"&&", "||", ";", "|"})
+
+
+def _forced_decompressors(command: str) -> list[str]:
+    tokens = command.split()
+    result = []
+    i = 0
+    while i < len(tokens):
+        if tokens[i] == "tar":
+            i += 1
+            while i < len(tokens) and tokens[i] not in _SHELL_SEP:
+                token = tokens[i]
+                if token.startswith("--"):
+                    if token.split("=")[0] in _FORCING_LONG:
+                        result.append(token)
+                elif token.startswith("-"):
+                    if any(ch in _FORCING_SHORT for ch in token[1:]):
+                        result.append(token)
+                i += 1
+        else:
+            i += 1
+    return result
+
+
+class _ForcedDecompressorScanner:
+    def findall(self, command: str) -> list[str]:
+        return _forced_decompressors(command)
+
+
+_FORCED_DECOMPRESSOR = _ForcedDecompressorScanner()
 # A download URL that names no version, so its payload can change under us.
 _MOVING_DOWNLOAD = re.compile(r"download\.mozilla\.org|[?&]product=[^\s\"']*latest")
 
@@ -128,6 +171,12 @@ class TestTheGuardRejectsEveryForcedDecompressor:
             "tar --xz -xf /tmp/f -C /opt/",
             "tar --zstd -xf /tmp/f -C /opt/",
             "tar --lzma -xf /tmp/f -C /opt/",
+            "tar -x --gzip -f /tmp/f",
+            "tar -x -z -f /tmp/f",
+            "tar --lzip -xf /tmp/f",
+            "tar --uncompress -xf /tmp/f",
+            "tar -I zstd -xf /tmp/f",
+            "tar --use-compress-program=zstd -xf /tmp/f",
         ],
     )
     def test_a_forced_format_is_detected(self, command):
