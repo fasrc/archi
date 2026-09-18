@@ -31,7 +31,7 @@ Standing notes for every task:
 
 ## 1. Hole A — every forcing option, wherever it sits
 
-- [ ] 1.1 `model: opus` — Replace the regex with a two-step scan. RED first: add these six
+- [x] 1.1 `model: opus` — Replace the regex with a two-step scan. RED first: add these six
       commands to the parametrize list of `test_a_forced_format_is_detected` inside
       `TestTheGuardRejectsEveryForcedDecompressor` (`:111`) — `tar -x --gzip -f /tmp/f`,
       `tar -x -z -f /tmp/f`, `tar --lzip -xf /tmp/f`, `tar --uncompress -xf /tmp/f`,
@@ -56,7 +56,7 @@ Standing notes for every task:
       (`t._FORCED_DECOMPRESSOR.findall(c)`) working verbatim, which acceptance criteria 1
       and 2 depend on. Update the comment at `:33-36`, which claims the old pattern covered
       every option, to describe the new scan. Gate green; commit.
-- [ ] 1.2 `model: sonnet` — Negative guards, in a **new** test method beside
+- [x] 1.2 `model: sonnet` — Negative guards, in a **new** test method beside
       `test_auto_detection_is_left_alone` (do not extend that method's parametrize list —
       it is frozen). Assert `_forced_decompressors` returns empty for: `tar -a -xf /tmp/f.tar.gz`,
       `tar --auto-compress -xf /tmp/f`, `tar --no-auto-compress -xf /tmp/f`,

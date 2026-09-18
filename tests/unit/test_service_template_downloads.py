@@ -198,6 +198,21 @@ class TestTheGuardRejectsEveryForcedDecompressor:
             command
         ), f"{command!r} lets tar detect the format and must not trip the guard."
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "tar -a -xf /tmp/f.tar.gz",
+            "tar --auto-compress -xf /tmp/f",
+            "tar --no-auto-compress -xf /tmp/f",
+            "tar -xif /tmp/f.tar",
+            "tar --exclude=*.gz -xf /tmp/f",
+        ],
+    )
+    def test_near_misses_are_not_flagged(self, command):
+        assert not _FORCED_DECOMPRESSOR.findall(
+            command
+        ), f"{command!r} does not force a decompressor and must not trip the guard."
+
 
 class TestAVersionedDownloadMayForceItsFormat:
     """A pinned URL cannot change format underneath us, so forcing is fine there.
