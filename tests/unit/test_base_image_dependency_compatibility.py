@@ -334,16 +334,35 @@ _VCS_OR_URL_REQUIREMENT = re.compile(
     r"^(?:(?:git|hg|bzr|svn)\+|https?://|file://|[A-Za-z]:[\\/])", re.IGNORECASE
 )
 
+# A requirement given as a bare local project path or a bare archive path rather than a
+# project name: ``./local_vllm``, ``../pkgs/vllm``, ``/opt/vllm.whl``,
+# ``vllm-0.9.0-py3-none-any.whl``, ``dist/vllm-0.9.0.tar.gz``. Added 2026-09-18 (#491):
+# pip accepts both shapes, and neither was in ``_VCS_OR_URL_REQUIREMENT``, so a line like
+# this read as a project named e.g. ``vllm-0-9-0-py3-none-any-whl`` and every guard
+# naming the real package skipped it as absent. Three alternatives, one per clause: a
+# leading ``.``, a token containing a path separator, a token ending in an archive
+# suffix. The suffix alternation is anchored on the right so a dotted project name such
+# as ``backports.tarfile==1.2.0`` does not match on its own ``.tar``-shaped substring.
+_ARCHIVE_SUFFIX = r"\.(?:whl|zip|tgz|tbz2?|txz|tar|tar\.gz|tar\.bz2|tar\.xz)"
+_PATH_OR_ARCHIVE_REQUIREMENT = re.compile(
+    rf"^(?:\.|[^\s;]*[\\/]|[^\s;]*{_ARCHIVE_SUFFIX}(?:\s|;|$))", re.IGNORECASE
+)
+
 
 def _opaque_requirements(text: str) -> list:
     """Requirement lines whose project name this module cannot read.
 
-    Reported rather than parsed. A VCS or URL requirement supplies a real package with
-    no version this module can check, so it must fail the suite instead of resolving to
-    a nonsense name like ``git``.
+    Reported rather than parsed. A VCS or URL requirement, a bare local path, or a bare
+    archive path (``.whl``, ``.zip``, ``.tar.gz`` and siblings) supplies a real package
+    with no version this module can check, so each must fail the suite instead of
+    resolving to a nonsense name like ``git`` or ``vllm-0-9-0-py3-none-any-whl``.
+    Updated 2026-09-18 (#491).
     """
     return [
-        line for line in _requirement_lines(text) if _VCS_OR_URL_REQUIREMENT.match(line)
+        line
+        for line in _requirement_lines(text)
+        if _VCS_OR_URL_REQUIREMENT.match(line)
+        or _PATH_OR_ARCHIVE_REQUIREMENT.match(line)
     ]
 
 
@@ -1468,6 +1487,41 @@ class TestOpaqueRequirementsFailClosed:
         assert _opaque_requirements(f"torch==2.7.0\n{line}\n"), (
             f"{line!r} supplies a package with no version this module can check, so it "
             f"must be reported rather than parsed into a bogus project name."
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "./local_vllm",
+            "../pkgs/vllm",
+            "/opt/vllm.whl",
+            "vllm-0.9.0-py3-none-any.whl",
+            "dist/vllm-0.9.0.tar.gz",
+            ".\\win_vllm",
+            "vllm-0.9.0.tar.bz2",
+            "vllm-0.9.0.zip",
+        ],
+    )
+    def test_a_local_path_or_archive_requirement_is_reported(self, line):
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n"), (
+            f"{line!r} is a bare local path or archive, which supplies a real package "
+            f"with no version this module can check, so it must be reported rather than "
+            f"silently skipped."
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "backports.tarfile==1.2.0",
+            "zope.interface==5.4.0",
+            "ruamel.yaml==0.18.6",
+            "langgraph-prebuilt<1.0.9",
+        ],
+    )
+    def test_a_dotted_project_name_pin_is_not_reported(self, line):
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n") == [], (
+            f"{line!r} is an ordinary dotted project name, not an archive path, and must "
+            f"not be swept up by the path/archive class."
         )
 
     def test_a_plain_pin_is_not_reported(self):
