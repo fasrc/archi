@@ -507,3 +507,32 @@ def test_basename_collision_with_pinned_path_is_not_flagged():
         f"/opt/vendor/pinned-9.9.9/firefox-esr.tar.xz differs from the saved path; "
         f"basename matching must not fire on a token containing '/'; got {offenders!r}"
     )
+
+
+def test_moving_download_without_saved_path_indicts_own_command_only():
+    """A wget with no -O/-o falls to branch 2 (no saved path) within its own command.
+
+    The guard must not guess a saved path from the URL — guessing is how false positives
+    land on files the download never wrote.  A forcing tar in the same RUN as the
+    wget-without-O is indicted conservatively via branch 2.  A forcing tar in a
+    *different* RUN is not indicted, because no saved path was recorded to link them
+    and they do not share a command with the moving download.
+    """
+    # A forcing tar in the same command as wget-without-O: indicted via branch 2.
+    same_run = (
+        'RUN wget "https://download.mozilla.org/?product=firefox-esr-latest-ssl" '
+        "&& tar -xjf firefox-esr.tar.xz -C /opt\n"
+    )
+    assert _offenders(same_run), (
+        f"wget with no -O shares a RUN with a forcing tar; branch 2 must indict it "
+        f"because no saved path is known; got {_offenders(same_run)!r}"
+    )
+    # A forcing tar in a separate RUN: no saved path links it, so it must be clean.
+    separate_run = (
+        'RUN wget "https://download.mozilla.org/?product=firefox-esr-latest-ssl"\n'
+        "RUN tar -xjf firefox-esr.tar.xz -C /opt\n"
+    )
+    assert _offenders(separate_run) == [], (
+        f"wget with no -O in a prior RUN records no saved path; the guard must not "
+        f"guess one and indict the later tar; got {_offenders(separate_run)!r}"
+    )

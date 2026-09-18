@@ -123,7 +123,7 @@ Standing notes for every task:
       Add one negative alongside them: a later `RUN` reading
       `tar -xJf /opt/vendor/pinned-9.9.9/firefox-esr.tar.xz` must report **nothing**, even
       though its basename matches the saved `/tmp/firefox-esr.tar.xz`. Gate green; commit.
-- [ ] 2.3 `model: sonnet` — Confirm the three frozen tests and the live templates. Run
+- [x] 2.3 `model: sonnet` — Confirm the three frozen tests and the live templates. Run
       `python -m pytest tests/unit/test_service_template_downloads.py -q --no-header` and
       confirm: `test_auto_detection_is_left_alone`,
       `test_the_two_are_not_paired_across_separate_commands` and
