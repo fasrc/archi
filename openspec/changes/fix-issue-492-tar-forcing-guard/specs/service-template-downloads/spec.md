@@ -1,0 +1,274 @@
+## ADDED Requirements
+
+### Requirement: A forcing option is recognised wherever it sits in the tar invocation
+
+The download guard SHALL treat a `tar` invocation as forcing a decompressor when any of its option tokens names a compression program, whatever position that token holds.
+
+The invariant this guard exists to protect is format **auto-detection** on a moving
+download. A moving download is a URL that names no version, so what arrives can change
+format without anything in this repository changing; forcing a decompressor on one is the
+defect whichever format is forced. That is a property of the whole `tar` invocation, not of
+its first option token.
+
+Today `_FORCED_DECOMPRESSOR` (`tests/unit/test_service_template_downloads.py:37-40`)
+anchors the option immediately after `tar\s+`, so `tar -x --gzip -f f` and `tar -x -z -f f`
+are both unreachable. Four forcing forms are also absent from its alternation: `-I`,
+`--use-compress-program`, `--lzip`, and `--uncompress`. The guard's own comment (`:33-36`)
+claims it covers "EVERY tar option that forces a compression program", so the gap is a
+false statement in the file as well as a hole.
+
+The forcing set is what GNU tar 1.35 `--help` lists under "Compression options", less the
+two that force nothing, measured on the host on 2026-09-18. Short forms, matched
+case-sensitively inside a cluster: `-z`, `-j`, `-J`, `-Z`, `-I`. Long forms, matched as
+whole tokens: `--gzip`, `--gunzip`, `--ungzip`, `--bzip2`, `--xz`, `--lzma`, `--lzop`,
+`--zstd`, `--lzip`, `--compress`, `--uncompress`, `--use-compress-program`.
+
+An option token is a token beginning with `-`. An operand is not, which is why
+`tar -xf f.tar.xz` stays clean even though its operand ends in `.xz`. The scan SHALL stop
+at the end of the `tar` invocation — a shell separator such as `&&`, `;`, or `|` — so an
+unrelated command later on the same line cannot supply a forcing option to it.
+
+#### Scenario: A forcing option separated from the tar token is flagged
+
+- **WHEN** the guard reads `tar -x --gzip -f /tmp/f.tar.gz -C /opt/` or `tar -x -z -f /tmp/f.tar.gz -C /opt/`
+- **THEN** each is reported as forcing a decompressor
+
+#### Scenario: The four missing forcing forms are flagged
+
+- **WHEN** the guard reads `tar --lzip -xf f.tar.lz`, `tar --uncompress -xf f.tar.Z`, `tar -I zstd -xf f.tar.zst`, or `tar --use-compress-program=zstd -xf f.tar.zst`
+- **THEN** each is reported as forcing a decompressor
+
+All four are compression options in GNU tar 1.35, and none appears in the guard's
+alternation today. `-I` and `--use-compress-program` are the same option in two spellings,
+and the long spelling takes its program with an `=`, so both spellings need matching.
+
+#### Scenario: The forcing options already covered stay flagged
+
+- **WHEN** the guard reads any of `tar -xjf f`, `tar -xzf f`, `tar -xJf f`, `tar -xZf f`, `tar --gzip -xf f`, `tar --bzip2 -xf f`, `tar --xz -xf f`, `tar --zstd -xf f`, or `tar --lzma -xf f`
+- **THEN** each is reported as forcing a decompressor
+
+These are the cases `TestTheGuardRejectsEveryForcedDecompressor`
+(`tests/unit/test_service_template_downloads.py:111`) holds today. Widening the scan must
+not drop one.
+
+#### Scenario: A forcing option belonging to a later command is not borrowed
+
+- **WHEN** the guard reads `tar -xf /tmp/f.tar.xz -C /opt/ && gzip -d /tmp/other.gz`
+- **THEN** the `tar` invocation is not reported as forcing a decompressor
+
+The scan stops at the shell separator. Reading to the end of the line instead would let any
+neighbouring command decide the verdict on a `tar` that is correct.
+
+### Requirement: Format auto-detection never trips the guard
+
+The download guard SHALL NOT report a `tar` invocation whose option tokens carry no program-forcing compression option.
+
+A false positive here is worse than the hole it closes. The guard runs over the live
+templates, so a false positive turns a correct template red and the only repair available
+is to make the template wrong. That is how a file-wide scan condemned the legitimate
+geckodriver line the first time the decompressor check was widened.
+
+Three near-misses are the ones a careless widening breaks, and each SHALL stay clean:
+`-xvf` and `--extract` contain no forcing letter but sit next to one in a cluster;
+`-a`/`--auto-compress` is a compression option that *selects by suffix* rather than forcing,
+and `--no-auto-compress` only switches that selection off; and `-i` is `--ignore-zeros`,
+which differs from the forcing `-I` by case alone.
+
+#### Scenario: Plain extraction is left alone
+
+- **WHEN** the guard reads `tar -xf /tmp/f.tar.xz -C /opt/`, `tar -xvf /tmp/f.tar -C /opt/`, or `tar --extract --file /tmp/f -C /opt/`
+- **THEN** none is reported as forcing a decompressor
+
+#### Scenario: Suffix-based selection is not forcing
+
+- **WHEN** the guard reads `tar -a -xf /tmp/f.tar.gz`, `tar --auto-compress -xf /tmp/f`, or `tar --no-auto-compress -xf /tmp/f`
+- **THEN** none is reported as forcing a decompressor
+
+`--auto-compress` reads the suffix and `--no-auto-compress` stops it doing so. Neither names
+a program, so neither pins the format the way this guard forbids. `--no-auto-compress` is
+also the near-miss for a long-form alternation containing `compress`: matching it would be
+a match on the wrong token boundary.
+
+#### Scenario: A lowercase -i is not the forcing -I
+
+- **WHEN** the guard reads `tar -xif /tmp/f.tar`
+- **THEN** it is not reported as forcing a decompressor
+
+`-i` is `--ignore-zeros`. Only the uppercase `-I` is `--use-compress-program`, so the short
+cluster SHALL be matched case-sensitively.
+
+#### Scenario: Every live service template reports no offender
+
+- **WHEN** the guard runs over every template `service_templates()` discovers
+- **THEN** no template reports a forced decompressor on a moving download
+- **AND** no file under `src/cli/templates/dockerfiles/` is edited by this change
+
+All 15 templates are correct as they stand, measured at `4b253e26`. Six of them fetch a
+moving download; all six use `wget -O` and `tar -xf`. If closing these holes needs a
+template edited, the guard is wrong, not the template.
+
+### Requirement: A moving download is indicted wherever its saved file is force-extracted
+
+The download guard SHALL record the path each moving download is saved to, and SHALL report a forced decompressor applied to that path anywhere in the same template, including in a later `RUN` instruction.
+
+`_commands` (`tests/unit/test_service_template_downloads.py:51-63`) joins backslash
+continuations and then splits on newline, so two `RUN` instructions are two logical
+commands and the per-command pairing cannot see across them. Docker carries the downloaded
+file into the next layer, so splitting the download from the extraction is an ordinary
+build shape — and today it is a silent one. Measured at `4b253e26`, the split form below
+reports an empty offender list while the identical single-`RUN` form reports
+`['tar -xjf']`.
+
+The saved path is read from `wget -O <path>`, `curl -o <path>`, or `curl --output <path>`.
+A stdout sink — `-`, `/dev/stdout`, `/dev/null` — SHALL NOT be recorded as a saved path. The
+guard SHALL NOT guess a path it cannot read, because a guessed one is what produces a false
+positive on a file the download never wrote.
+
+Each forcing `tar` invocation SHALL therefore be decided by one of three branches:
+
+1. A known saved path appears in the invocation's **own token span** → report it, wherever
+   in the template the invocation sits.
+2. The invocation shares a command with a moving download **and** the guard cannot tell
+   which file the invocation reads — no saved path was recorded, or the span holds a shell
+   variable or a stdout sink → report it, as conservatively as the guard is today.
+3. Otherwise → do not report it.
+
+The span, not the operand list, is what branch 1 SHALL search. An operand list holds only
+tokens that do not begin with `-`, so an archive glued to its flag — `--file=<path>`, or a
+short cluster written `-xjf<path>` — is hidden inside an option token. Today's whole-command
+rule reports both, so matching operands alone would **lose** coverage the guard already has.
+
+A basename SHALL match only a token that carries no `/`. `cd /tmp && tar -xjf ff.tar.xz`
+names the saved file with no directory and must be reported; comparing basenames freely
+would also report `tar -xJf /opt/vendor/pinned-9.9.9/firefox-esr.tar.xz`, a different and
+explicitly version-pinned file that merely shares a basename.
+
+Branch 2 SHALL be kept. `wget -O - "<moving url>" | tar -xzf -` writes no file, and
+`tar -xjf "$FF"` names its archive through a variable, so neither can be bound by path.
+
+Branch 1 **replaces** the whole-command pairing wherever a saved path is known, and this is
+a deliberate narrowing. Today the check runs over the whole command, so a forcing `tar`
+sharing a `RUN` with a moving download is reported even when it extracts a different,
+version-pinned file. That over-reach and binding-by-operand cannot both hold: they disagree
+about the same line. Where the guard can name the file, the operand decides.
+
+#### Scenario: A download and its extraction in separate RUN instructions are paired
+
+- **WHEN** a template reads `RUN wget -O /tmp/ff.tar "https://download.mozilla.org/?product=firefox-esr-latest-ssl&os=linux64"` followed by `RUN tar -xjf /tmp/ff.tar -C /opt`
+- **THEN** the guard reports `/tmp/ff.tar` as force-extracted
+- **AND** the offender list is not empty
+
+#### Scenario: The single-RUN pairing keeps working
+
+- **WHEN** a moving download saved to `/tmp/ff.tar` and `tar -xjf /tmp/ff.tar` sit in one `RUN` joined by `&&`
+- **THEN** the guard reports it, as it does today
+
+This is the original defect's shape, and branch 1 covers it: the saved path is an operand of
+the forcing invocation.
+
+#### Scenario: A moving download with no saved path is still reported
+
+- **WHEN** a moving download carries no `-O`, `-o`, or `--output` and a forced `tar` sits in the same logical command
+- **THEN** the guard reports it
+- **AND** no `tar` invocation in any other command is reported because of that download
+
+This is branch 2. A download with no saved file cannot be bound by path, so dropping the
+whole-command rule for it would open a new hole while closing the old one.
+
+#### Scenario: A download piped to tar is reported in both spellings
+
+- **WHEN** a template reads `wget -O- "<moving url>" | tar -xzf -` or `wget -O - "<moving url>" | tar -xzf -`
+- **THEN** the guard reports each of them
+
+The two spellings differ only by a space, and the spaced one is the trap: a reader that took
+the next token would record `-` as the saved path. A path would then be "known", so branch 2
+could not fire, while branch 1 could not fire either because `-` names no file — and the
+case would go clean. Today's guard reports it, so this SHALL NOT become a regression.
+
+#### Scenario: An archive glued to its flag is reported
+
+- **WHEN** a moving download saved to `/tmp/ff.tar.xz` is extracted by `tar --bzip2 --file=/tmp/ff.tar.xz` or by `tar -xjf/tmp/ff.tar.xz`
+- **THEN** the guard reports each of them
+
+Both glue the archive into an option token, where an operand scan cannot see it. Today's
+whole-command rule reports both.
+
+#### Scenario: An archive named by a shell variable is reported
+
+- **WHEN** a moving download saved to `/tmp/ff.tar.xz` shares a `RUN` with `tar -xjf "$FF" -C /opt`
+- **THEN** the guard reports it
+
+The guard cannot resolve `$FF`, so it cannot prove the invocation reads some other file.
+Branch 2 covers it. `src/cli/templates/dockerfiles/Dockerfile-data-manager-gpu` already
+writes `tar` operands through variables, so this shape is not hypothetical.
+
+#### Scenario: A bare basename after a directory change is reported
+
+- **WHEN** a moving download saved to `/tmp/ff.tar.xz` is extracted in a later `RUN` by `cd /tmp && tar -xjf ff.tar.xz -C /opt`
+- **THEN** the guard reports it
+
+### Requirement: The guard indicts only the file the moving download saved
+
+The download guard SHALL bind a forced decompressor to a moving download by the `tar` invocation's own token span whenever that download's saved path is known, and SHALL NOT report an invocation that demonstrably reads some other file.
+
+This is the constraint that makes path association safe where proximity association is not.
+Finding `4027485403` proposes associating extraction inputs with *prior* downloads. Read as
+proximity, that re-condemns the geckodriver line
+(`src/cli/templates/dockerfiles/Dockerfile-grader:62-65`), which forces `-xzf` on a URL
+naming `v0.36.0` and is correct because a pinned URL cannot change format. It also breaks
+`test_the_two_are_not_paired_across_separate_commands`
+(`tests/unit/test_service_template_downloads.py:180-191`), which exists to assert exactly
+that.
+
+Binding by the `tar` invocation's own span, rather than by the text of the whole command it
+sits in, is the load-bearing half. A single `RUN` can hold a correct extraction of the
+moving download and a forced extraction of some pinned archive; a check that asked only
+whether the saved path appears *somewhere in the command* would indict the second for the
+first's presence.
+
+"Demonstrably reads some other file" is the limit of this clause. Where the invocation names
+a file the guard can resolve and that file is not a saved path, it SHALL be left alone; where
+the invocation names nothing the guard can resolve, branch 2 of the previous requirement
+applies and it SHALL be reported. Silence is never read as innocence.
+
+Today's guard does exactly that, so this requirement narrows it. That narrowing is the
+price of binding by operand and is paid only where the guard can name the file; where it
+cannot, branch 2 of the previous requirement keeps the whole-command reach unchanged. No
+live template is affected either way — all 15 report no offender under both rules, measured
+on 2026-09-18.
+
+#### Scenario: A pinned download in another command keeps its forced format
+
+- **WHEN** one command fetches a moving download to `/tmp/f.tar.xz` and extracts it with `tar -xf`, and a later command fetches `tool-v1.2.3.tar.gz` and extracts it with `tar -xzf`
+- **THEN** the offender list is empty
+
+This is `test_the_two_are_not_paired_across_separate_commands`
+(`tests/unit/test_service_template_downloads.py:180`) unchanged. It SHALL stay green and
+SHALL NOT be edited.
+
+#### Scenario: A forced tar on another file in the same command is not indicted
+
+- **WHEN** one `RUN` reads `wget -O /tmp/ff.tar.xz "<moving url>" && tar -xf /tmp/ff.tar.xz -C /opt && tar -xzf tool-v1.2.3.tar.gz -C /usr/local/bin`
+- **THEN** the offender list is empty
+
+The saved path is extracted correctly. The forced `tar` beside it operates on a different,
+version-pinned file. Only the operand distinguishes the two, so only the operand may decide.
+
+#### Scenario: A different file sharing a basename is not reported
+
+- **WHEN** a moving download saved to `/tmp/firefox-esr.tar.xz` appears in one `RUN`, and a later `RUN` reads `tar -xJf /opt/vendor/pinned-9.9.9/firefox-esr.tar.xz -C /opt/vendor`
+- **THEN** the offender list is empty
+
+The two files share a basename and nothing else. The second names a version-pinned
+directory, so its payload cannot change format, and forcing `xz` on it is correct. This is
+the false positive a free basename comparison produces, and it is why a basename SHALL match
+only a token carrying no `/`.
+
+#### Scenario: The geckodriver line stays clean
+
+- **WHEN** the guard runs over the templates that fetch geckodriver from a URL naming `v0.36.0` and extract it with `tar -xzf`
+- **THEN** no offender is reported for those lines
+
+`TestAVersionedDownloadMayForceItsFormat`
+(`tests/unit/test_service_template_downloads.py:153`) holds this line. It SHALL stay green
+and SHALL NOT be edited.
