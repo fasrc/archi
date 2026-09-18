@@ -7,6 +7,33 @@ list. An empty list below means nothing is currently blocked.
 
 <!-- The loop appends entries below this line. -->
 
+## Task 4.2 (fix-issue-492) — PR creation blocked by PAT scope
+
+**Status: BLOCKED — fine-grained PAT cannot create PRs in `fasrc/archi`.**
+
+The branch `fix/issue-492-tar-forcing-guard` has been pushed to the fork at
+`https://github.com/swinney/archi/tree/fix/issue-492-tar-forcing-guard`.
+The gate is green (`bash scripts/gate.sh` exits 0, `git status --porcelain` is empty).
+
+`gh pr create --repo fasrc/archi --base dev` fails with HTTP 403:
+"Resource not accessible by personal access token". The active PAT
+(`github_pat_11AADEDXI0Sxfs6F2YCK5t_...`) is a fine-grained token scoped to
+`swinney/archi` only — it cannot write to `fasrc/archi`.
+
+**Action needed from a human operator:** open the PR via the GitHub web UI, or run:
+
+```
+gh pr create \
+  --repo fasrc/archi \
+  --head swinney:fix/issue-492-tar-forcing-guard \
+  --base dev \
+  --title "fix(#492): harden tar forcing guard — hole-A long/short options, hole-B saved-path association" \
+  --body-file docs/pr-body-492.md
+```
+
+The complete PR body (with probe output and docstring-wording note) is in
+`docs/pr-body-492.md` (committed on this branch).
+
 ## Task 5.1 (fix-issue-463) — PR creation blocked by PAT scope
 
 **Status: BLOCKED — fine-grained PAT cannot create PRs in `fasrc/archi`.**
