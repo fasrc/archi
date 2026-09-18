@@ -213,6 +213,21 @@ class TestTheGuardRejectsEveryForcedDecompressor:
             command
         ), f"{command!r} does not force a decompressor and must not trip the guard."
 
+    def test_separator_bounds_each_tar_invocation(self):
+        """A shell separator ends a tar invocation; adjacent commands cannot bleed."""
+        # A command after the separator must not contaminate the preceding clean tar.
+        assert not _forced_decompressors(
+            "tar -xf /tmp/f.tar.xz -C /opt/ && gzip -d /tmp/other.gz"
+        ), "gzip after && must not be attributed to the preceding tar scan"
+        # A second tar after the separator is scanned independently and indicted on its own.
+        offenders = _forced_decompressors(
+            "tar -xf /tmp/a.tar && tar -xzf /tmp/b.tar.gz"
+        )
+        assert len(offenders) == 1, (
+            f"exactly one forcing option expected from the second tar invocation; "
+            f"got {offenders}"
+        )
+
 
 class TestAVersionedDownloadMayForceItsFormat:
     """A pinned URL cannot change format underneath us, so forcing is fine there.

@@ -68,7 +68,7 @@ Standing notes for every task:
       **These pass once 1.1 is correct — that is the point of them. Do not contrive a
       failure first.** If any fails, 1.1's matching is too wide; fix 1.1's rule, not the
       test. Gate green; commit.
-- [ ] 1.3 `model: sonnet` — Invocation-boundary guard, a new test method: assert
+- [x] 1.3 `model: sonnet` — Invocation-boundary guard, a new test method: assert
       `_forced_decompressors("tar -xf /tmp/f.tar.xz -C /opt/ && gzip -d /tmp/other.gz")`
       is empty, and that
       `_forced_decompressors("tar -xf /tmp/a.tar && tar -xzf /tmp/b.tar.gz")` reports
