@@ -52,6 +52,7 @@ _FORCING_LONG = frozenset(
 )
 _FORCING_SHORT = frozenset("zjJZI")
 _SHELL_SEP = frozenset({"&&", "||", ";", "|"})
+_STDOUT_SINKS = frozenset({"-", "/dev/stdout", "/dev/null"})
 
 
 def _forced_decompressors(command: str) -> list[str]:
@@ -105,6 +106,116 @@ def _commands(text: str) -> list:
     return [line for line in joined.splitlines() if line.strip()]
 
 
+def _wget_curl_paths(command: str) -> set:
+    """Extract wget -O / curl -o saved paths from one command; exclude stdout sinks."""
+    result = set()
+    tokens = command.split()
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in _SHELL_SEP:
+            i += 1
+            continue
+        if tok == "wget":
+            i += 1
+            while i < len(tokens) and tokens[i] not in _SHELL_SEP:
+                if tokens[i] == "-O":
+                    if i + 1 < len(tokens) and tokens[i + 1] not in _SHELL_SEP:
+                        path = tokens[i + 1].strip("\"'")
+                        if path not in _STDOUT_SINKS:
+                            result.add(path)
+                    i += 2
+                elif tokens[i].startswith("-O") and len(tokens[i]) > 2:
+                    path = tokens[i][2:].strip("\"'")
+                    if path not in _STDOUT_SINKS:
+                        result.add(path)
+                    i += 1
+                else:
+                    i += 1
+        elif tok == "curl":
+            i += 1
+            while i < len(tokens) and tokens[i] not in _SHELL_SEP:
+                if tokens[i] in ("-o", "--output"):
+                    if i + 1 < len(tokens) and tokens[i + 1] not in _SHELL_SEP:
+                        path = tokens[i + 1].strip("\"'")
+                        if path not in _STDOUT_SINKS:
+                            result.add(path)
+                    i += 2
+                else:
+                    i += 1
+        else:
+            i += 1
+    return result
+
+
+def _saved_paths(text: str) -> set:
+    """Collect wget/curl saved paths from every moving-download command in text."""
+    result = set()
+    for command in _commands(text):
+        if _MOVING_DOWNLOAD.search(command):
+            result |= _wget_curl_paths(command)
+    return result
+
+
+def _span_contains_path(span: list, saved: set) -> bool:
+    """True when any span token matches a saved path (full path or bare basename)."""
+    for path in saved:
+        basename = path.rsplit("/", 1)[-1] if "/" in path else path
+        for tok in span:
+            clean = tok.strip("\"'")
+            if path in clean:
+                return True
+            if "/" not in clean and basename and basename in clean:
+                return True
+    return False
+
+
+def _span_is_unresolvable(span: list) -> bool:
+    """True when the archive reference is a shell variable or a stdout sink."""
+    for tok in span:
+        if "$" in tok:
+            return True
+        if tok.strip("\"'") in _STDOUT_SINKS:
+            return True
+    return False
+
+
+def _offenders(text: str) -> list:
+    """Forcing options on tar invocations that extract a moving download.
+
+    Three branches decide each forcing invocation:
+    1. A known saved path appears in the invocation's token span — indict.
+    2. The invocation shares a command with a moving download and the guard
+       cannot resolve which file it reads — indict conservatively.
+    3. Otherwise — clean.
+    """
+    saved = _saved_paths(text)
+    result = []
+    for command in _commands(text):
+        tokens = command.split()
+        i = 0
+        while i < len(tokens):
+            if tokens[i] == "tar":
+                i += 1
+                span = []
+                while i < len(tokens) and tokens[i] not in _SHELL_SEP:
+                    span.append(tokens[i])
+                    i += 1
+                forcing = _forced_decompressors("tar " + " ".join(span))
+                if not forcing:
+                    continue
+                if saved and _span_contains_path(span, saved):
+                    result.extend(forcing)
+                    continue
+                if _MOVING_DOWNLOAD.search(command):
+                    cmd_saved = _wget_curl_paths(command)
+                    if not cmd_saved or _span_is_unresolvable(span):
+                        result.extend(forcing)
+            else:
+                i += 1
+    return result
+
+
 @pytest.mark.parametrize("template", _templates(), ids=lambda p: p.name)
 def test_a_moving_download_is_not_extracted_with_a_forced_decompressor(template):
     """A versionless download must be extracted with format auto-detection."""
@@ -112,12 +223,7 @@ def test_a_moving_download_is_not_extracted_with_a_forced_decompressor(template)
     if not _MOVING_DOWNLOAD.search(content):
         pytest.skip(f"{template.name} fetches no versionless archive")
 
-    forced = [
-        found
-        for command in _commands(content)
-        if _MOVING_DOWNLOAD.search(command)
-        for found in _FORCED_DECOMPRESSOR.findall(command)
-    ]
+    forced = _offenders(content)
     assert not forced, (
         f"{template.name} extracts a versionless download with {forced}, which forces "
         f"a compression program. The endpoint carries no version, so its payload can "
@@ -268,3 +374,18 @@ class TestAVersionedDownloadMayForceItsFormat:
             f"the pinned second command must not be indicted by the moving first one, "
             f"got {offenders}"
         )
+
+
+def test_forced_tar_in_later_run_is_flagged_via_saved_path():
+    """A forcing tar in a separate RUN is indicted when its span contains the saved path."""
+    text = (
+        "RUN wget -O /tmp/ff.tar "
+        '"https://download.mozilla.org/?product=firefox-esr-latest-ssl&os=linux64"\n'
+        "RUN tar -xjf /tmp/ff.tar -C /opt\n"
+    )
+    offenders = _offenders(text)
+    assert offenders, (
+        f"/tmp/ff.tar is extracted with a forced decompressor in a separate RUN "
+        f"instruction; the guard must cross RUN boundaries via the saved path; "
+        f"got {offenders!r}"
+    )
