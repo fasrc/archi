@@ -88,7 +88,7 @@
 
 ## 2. Ship it (no merge)
 
-- [ ] 2.1 Push with `git push -u origin fix/issue-491-opaque-local-path-requirements`.
+- [x] 2.1 Push with `git push -u origin fix/issue-491-opaque-local-path-requirements`.
       The `-u` matters: the branch was cut from `origin/dev` and still tracks the trunk
       until you repoint it. Then confirm the push landed by comparing
       `git rev-parse HEAD` with
@@ -96,7 +96,7 @@
       "Everything up-to-date" is not proof, and a remote that is behind local HEAD means
       the push failed.
 
-- [ ] 2.2 Open the PR: `gh pr create --repo fasrc/archi --base dev`. The **body** MUST
+- [x] 2.2 Open the PR: `gh pr create --repo fasrc/archi --base dev`. The **body** MUST
       contain `Closes #491` — a closing keyword in the *title* does not create the link.
       Verify the link afterwards with the GraphQL `closingIssuesReferences` field; do not
       infer it from the body text. The body must also record:
