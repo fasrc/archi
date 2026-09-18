@@ -13,7 +13,7 @@
 
 ## 1. Close the hole (TDD, red and green in this one task)
 
-- [ ] 1.1 Write the new cases red, then make them green — **both in this one task**,
+- [x] 1.1 Write the new cases red, then make them green — **both in this one task**,
       because `scripts/gate.sh` runs before every commit and a task that ends with the
       suite red can never be committed. All work is in
       `tests/unit/test_base_image_dependency_compatibility.py`. **No `src/` file changes
