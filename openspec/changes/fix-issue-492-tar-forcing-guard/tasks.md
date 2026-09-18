@@ -135,7 +135,7 @@ Standing notes for every task:
 
 ## 3. Correct the stale #473 claims
 
-- [ ] 3.1 `model: sonnet` — Docstring and comment text only, no assertion changes.
+- [x] 3.1 `model: sonnet` — Docstring and comment text only, no assertion changes.
       **CAUTION — issue #492's "One more thing" section prescribes wording that is itself
       wrong. Do not copy it.** It says to change the module docstring
       (`tests/unit/test_service_template_downloads.py:20`) to say CI builds service images
@@ -157,7 +157,7 @@ Standing notes for every task:
 
 ## 4. Close out
 
-- [ ] 4.1 `model: sonnet` — Re-run the issue's probe and record the result in the PR body.
+- [x] 4.1 `model: sonnet` — Re-run the issue's probe and record the result in the PR body.
       Handle the three probe blocks differently; do **not** rewrite the probe globally.
       - **Hole-A block: run it verbatim.** It calls `t._FORCED_DECOMPRESSOR.findall(c)`,
         and task 1.1 deliberately kept that name bound to an object exposing `.findall`, so
