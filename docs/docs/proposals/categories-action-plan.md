@@ -14,8 +14,8 @@ out at `config/`).
 
 ## TL;DR
 
-archi carries **five different notions of "category"** and consumes none of them on the
-answer path by default. Two are written at ingest into every FASRC document. One is
+archi carries **at least five different notions of "category"** and consumes none of them
+on the answer path by default. Two are written at ingest into every FASRC document. One is
 proposed for the query side. Two more label the questions in the evaluation banks. They
 share no vocabulary, no reader, and no report.
 
@@ -58,7 +58,7 @@ is an opinion.
 | Second cost of the LLM label | embedding ran 6.0–6.7 s per file vs 3.2 s idle because the same config ran categorization | [#378](https://github.com/fasrc/archi/issues/378) |
 | Breadcrumb coverage | whole corpus 206 / 841 = 24.5 %; **KB articles 206 / 213 = 96.7 %**; non-KB documents 0 / 628 | archi-config #22 `benchmarking/prompt_sweep_r0/README.md` §1, claw Postgres 2026-09-19 |
 | Breadcrumb vocabulary | **19** Title Case labels (`Software`, `Cluster Usage`, `Storage`, …) | same |
-| LLM vocabulary | **6** lowercase labels (`job-scheduling`, `storage`, `account-access`, `software`, `compute`, `data-transfer`) | archi-config `environments/dev.yaml:220-226` (`main`; `:100-106` at the pin), `benchmarking/ragas.yaml`, all eight `benchmarking/feature_matrix/*.yaml` |
+| LLM vocabulary | **6** lowercase labels (`job-scheduling`, `storage`, `account-access`, `software`, `compute`, `data-transfer`) | archi-config `environments/dev.yaml:220-226` (`main`; `:100-106` at the pin), `benchmarking/ragas.yaml`, all eight `benchmarking/feature_matrix/*.yaml`; host-local `deploy/fasrc-dev/config.yaml:163-169` |
 | Overlap between the two vocabularies | **none** — the two share no values | archi-config #22 `benchmarking/prompt_sweep_r0/README.md` §1 |
 | LLM label validity window | every document was `uncategorized` until PR [#44](https://github.com/fasrc/archi/pull/44) (2026-06-26) and again until PR [#218](https://github.com/fasrc/archi/pull/218) (2026-08-07) | those PRs |
 | Prompt cost of the rung-0 arms | control ~556 tokens; r0a **+523 tokens per turn**; r0b **+485 tokens per turn** | archi-config #22 `benchmarking/prompt_sweep_r0/README.md` §4 |
@@ -97,15 +97,23 @@ Two claims in the record are **not** facts and this plan corrects them:
 
 | # | Mechanism | Writer | Readers | Default | Vocabulary | Cost | State |
 |---|---|---|---|---|---|---|---|
-| A | Breadcrumb → `metadata["category"]` | `HtmlCategoryProcessor`, `src/data_manager/collectors/processing.py:181-208` | catalog substring match only (`src/data_manager/collectors/utils/catalog_postgres.py:474-481`); no retriever, no prompt header, no schema tool | **on** with `html_to_markdown.enabled` (`src/data_manager/collectors/processing.py:1071-1075`) | 19 Title Case labels from the Echo-KB breadcrumb | ~0 — a regex on a page already fetched | live, unread |
+| A | Breadcrumb → `metadata["category"]` | `HtmlCategoryProcessor`, `src/data_manager/collectors/processing.py:181-208`; the Indico scraper writes its own event category into the same key (`src/data_manager/collectors/scrapers/integrations/indico_scraper.py:987`, `:1056`) and the processor never overwrites a source value (`src/data_manager/collectors/processing.py:202-206`) | reaches every chunk's metadata (`src/data_manager/vectorstore/manager.py:575`, `:857`); read only by the catalog substring match (`src/data_manager/collectors/utils/catalog_postgres.py:474-481`), which `parse_metadata_query` lets any `key:value` reach because it has **no key allowlist** (`src/utils/catalog_query.py:42-74`); no retriever, no prompt header, no schema tool | **on** with `html_to_markdown.enabled` (`src/data_manager/collectors/processing.py:1071-1075`) | 19 Title Case labels from the Echo-KB breadcrumb on FASRC; Indico's own categories on Indico sources | ~0 — a regex on a page already fetched | live, unread by design; reachable by accident |
 | B | LLM label → `metadata["llm_category"]` | `CategorizationProcessor`, `src/data_manager/collectors/processing.py:790-857` | same substring path | **off** in code (`src/cli/templates/base-config.yaml:501-510`); **on** in every FASRC config | 6 lowercase labels | 19.2 min per ingest + slower embedding | live on FASRC, unread, disposition open ([#496](https://github.com/fasrc/archi/issues/496)) |
 | C | Retrieval `filter` plumbing | `PostgresVectorStore.similarity_search` and `hybrid_search` accept a `filter` dict (`src/data_manager/vectorstore/postgres_vectorstore.py:337-352`, `:449-483`) | **nobody passes one.** `LlamaIndexHierarchicalRetriever._candidates` calls `hybrid_search(query, k, weights)` (`src/data_manager/vectorstore/retrievers/hierarchical_retriever.py:133-138`) and is the default path (`src/data_manager/vectorstore/retrievers/factory.py:54-56`); `HybridRetriever` runs only with rerank off | — | any metadata key | — | dormant. **The key is f-string interpolated into SQL** (`c.metadata->>'{key}' = %s`, `src/data_manager/vectorstore/postgres_vectorstore.py:351`, `:482`); a model-chosen key is an injection surface |
 | D | Model-visible category | — | `_format_documents_for_llm` header shows title, url, hash, score, **no category** (`src/archi/pipelines/agents/tools/retriever.py:67-98`); `list_metadata_schema` formats only `keys`, `source_type`, `suffix` (`src/archi/pipelines/agents/tools/local_files.py:469-476`); `get_distinct_metadata` allows five keys, not `category` (`src/data_manager/collectors/utils/catalog_postgres.py:554-564`) | — | — | — | absent |
 | E | Query → category routing | none in code | — | — | 19 breadcrumb labels, hard-coded in the prompt | +523 tokens per turn | prompt arm **r0a** filled, unrun (archi-config #22 `benchmarking/prompt_sweep_r0/fasrc-docs-r0a-category.md`) |
 | F | In-context learning | none in code; no exemplar store | — | — | — | +485 tokens per turn | prompt arm **r0b** filled, unrun (archi-config #22 `benchmarking/prompt_sweep_r0/fasrc-docs-r0b-icl.md`); dynamic ICL not designed |
-| G | Question-side labels | bank `anchor_type` (reasoning / easy_retrieve / should_refuse); QA dataset v2 optional `category` field (`docs/docs/cli_reference.md:273`) | `scripts/benchmarking/compare_runs.py` slices by `anchor_type` and `difficulty` (`SLICE_FIELDS`, `:85`); the QA catalog collects distinct `category` values (`src/evaluation/qa/catalog.py:537-538`), and the FASRC bank sets none; nothing joins either to a document category | — | disjoint from A and B | — | live, not joinable |
+| G | Question-side labels | bank `anchor_type` (reasoning / easy_retrieve / should_refuse); QA dataset v2 optional `category` field (`docs/docs/cli_reference.md:273`) | `scripts/benchmarking/compare_runs.py` slices by `anchor_type` and `difficulty` (`SLICE_FIELDS`, `:85`); the QA catalog collects distinct `category` values (`src/evaluation/qa/catalog.py:537-538`), and the FASRC bank sets none; the QA dataset's `answer_mode` is a closed 4-value set; Argilla carries an 8-label `failure_modes` set (`src/utils/benchmark_argilla.py:410`) that no report aggregates; nothing joins any of these to a document category | — | disjoint from A and B | — | live, not joinable |
 | H | `collection` | `PostgresVectorStore` tags every chunk (`src/data_manager/vectorstore/postgres_vectorstore.py:185`) | every query filters on it (`:345`, `:477`, `:649`) | on | one value per deployment | — | live; the same predicate as C at a coarser grain ([Multi-Collection Routing](multi-collection-routing.md)) |
 | I | Upstream list-name `category` | proposed upstream ([#570](https://github.com/archi-physics/archi/issues/570)) | proposed `search_local_files` filter | — | input-list names | — | not in this fork; a **fourth** vocabulary if ported blind |
+| J | `header_path` markdown header hierarchy | `src/data_manager/vectorstore/node_parsing.py:540` | **none** outside that module | only under `chunking.strategy: markdown`; the live default is `sentence` | per-document headings | — | write-only, dormant |
+
+**Tests.** Both processors are tested (`tests/unit/test_html_category_processor.py`, 8 tests;
+`tests/unit/test_categorization_processor.py`, 26 tests). The two things the rung-0 arm
+r0a depends on are **not**: no test names `_build_extra_text`, and no test exercises the
+`search_metadata` substring fallback. The `search_metadata_index` tool description calls
+its filters "exact matches" (`src/archi/pipelines/agents/tools/local_files.py:373-381`),
+which is false for any key outside `_METADATA_COLUMN_MAP`.
 
 The per-turn seam that any dynamic variant will use already exists and is proven:
 `_inject_forced_retrieval` (`src/archi/pipelines/agents/base_react.py:1752-1762`, overridden
@@ -127,7 +135,10 @@ documents for the same purpose. A prompt that hard-codes the 6-label list routes
 values that do not exist in `metadata["category"]`. A prompt that hard-codes the 19-label
 list cannot use `llm_category`. While both writers are on, a substring filter
 `category:storage` also matches `llm_category:storage`, so the two contaminate each other's
-reads (archi-config #22 `benchmarking/prompt_sweep_r0/README.md` §1).
+reads (archi-config #22 `benchmarking/prompt_sweep_r0/README.md` §1). That filter works
+only because `parse_metadata_query` accepts any key (`src/utils/catalog_query.py:42-74`)
+and the catalog falls back to a substring match for keys it does not know. Nothing
+documents this path, the tool description calls its filters exact, and no test pins it.
 
 **Three question taxonomies that do not join.** `anchor_type`, the QA dataset's optional
 `category`, and the bank's gold-source URLs each classify questions. None of them connects
@@ -148,10 +159,12 @@ uses only it.
 
 ### The rule this plan adopts
 
-> **One document vocabulary.** The Echo-KB breadcrumb (`metadata["category"]`, 19 labels
-> as measured on the corpus) is the only document category vocabulary in this fork. A new
-> taxonomy enters only if it maps onto it or is a different grain (`collection`) with a
-> stated purpose. No prompt, config, or report carries a third label set.
+> **One document vocabulary.** `metadata["category"]` holds the **source's own published
+> taxonomy** and nothing else: the Echo-KB breadcrumb for the documentation site (19 labels
+> as measured on the corpus), Indico's event category for Indico sources. archi does not
+> invent document labels. A new taxonomy enters only if it maps onto the source's or is a
+> different grain (`collection`) with a stated purpose. No prompt, config, or report
+> carries a label set the source does not publish.
 
 This rule retires row B, decides row I in advance, and gives rows E, G, and the evaluation
 work in §6 a common key.
@@ -351,6 +364,8 @@ test so they run the same way every time.
 | A per-category slice reads a corpus other than the one scored | The slice reads only a fingerprint-matched snapshot; no snapshot, no slice |
 | A model-chosen filter key reaches SQL | Rung 2 whitelists keys; nothing in rung 0 or 1 passes a key to the vector store |
 | The bank cannot see most categories | The bank-coverage census runs before any verdict is read |
+| `anchor_type` means question kind in the live bank but holds difficulty values (`easy`/`medium`/`hard`) in archi-config `benchmarking/queries.json` | The slice runs on one bank per comparison; the void checks refuse a comparison that mixes banks |
+| r0a depends on an untested substring fallback that a refactor can remove without notice | W7 pins `_build_extra_text` and the fallback with a unit test before the sweep runs |
 | The 841-document claw corpus differs from the 1 091-document campaign corpus | The sweep runs on one stack; the census is re-read on that stack, not copied from the README |
 
 ---
@@ -365,7 +380,7 @@ test so they run the same way every time.
 | W4 | `categorization.enabled: false` in dev.yaml, ragas.yaml, host config; template comment + docs; redeploy; record ingest time | config + docs + deploy | both repos, FASRC host | D1 |
 | W5 | File the `evidence-trial` tracking issue with the Phase 1 pre-registration | tracker | fasrc/archi | D3 |
 | W6 | Category snapshot at archive time + fingerprint-matched per-category slice in `scripts/benchmarking/compare_runs.py` (§6.1), with tests | code | fasrc/archi `scripts/benchmarking/` | — |
-| W7 | Preflight census script (§6.2, all three censuses), with tests; run the bank-coverage census and post the table | code | fasrc/archi `scripts/benchmarking/` | — |
+| W7 | Preflight census script (§6.2, all three censuses), with tests; run the bank-coverage census and post the table; plus one unit test that pins `_build_extra_text` and the `search_metadata` substring fallback r0a depends on | code | fasrc/archi `scripts/benchmarking/`, `tests/unit/` | — |
 | W8 | Run the rung-0 sweep; post verdicts with the void-check record | measurement | claw or FASRC host | W2, W4, W5, W6, W7 |
 | W9 | Phase 2 decision recorded on the tracking issue | tracker | fasrc/archi | W8 |
 | W10 | Rung-1 issue with the verdict record (only on `helps`) | tracker | fasrc/archi | W9 |
@@ -396,6 +411,16 @@ Two more corrections come from this plan's own reads:
 - The LLM label list is **6** values, not 20 (archi-config `environments/dev.yaml:220-226`
   on `main`, `:100-106` at the pin).
 - The 19-item list is the breadcrumb vocabulary and lives in the corpus, not in any config.
+
+Stale anchors in other companion documents, for whoever next edits them:
+
+- [Release Plan 2026](release-plan-2026.md) row #396 cites `processing.py:689` for the
+  categorization default; it is `src/data_manager/collectors/processing.py:1078` today.
+- `docs/docs/configuration.md:685-692` shows a **4-label** example set — a third label list
+  in the docs beside the 6 in the deploy configs and the 19 on the corpus.
+- [Multi-Collection Routing](multi-collection-routing.md) line 42 says RBAC has "8 categories,
+  20+ permissions"; `src/utils/rbac/permission_enum.py:24-70` defines 11 groups and 23
+  permissions.
 
 ---
 
@@ -431,7 +456,10 @@ Do, in order:
    coverage of category (fail below 90 %), vocabulary drift between Postgres and any prompt or
    config label list (fail on mismatch), and bank coverage by category (distinct gold articles
    per category, from the bank's gold URLs). Run the bank-coverage census against postgres-claw
-   and put the table in the PR body, labelled with the corpus fingerprint it read.
+   and put the table in the PR body, labelled with the corpus fingerprint it read. In the same
+   PR add one unit test that pins _build_extra_text's key:value emission and the
+   search_metadata substring fallback for an unknown key; r0a depends on both and neither has
+   a test today.
 5. W5 — Draft the evidence-trial tracking issue body from Phase 1's pre-registration table and
    save it as a file in the PR; do not file the issue.
 
