@@ -212,6 +212,12 @@ def _commands(text: str) -> list:
 def _download_invocations(command: str) -> list:
     """Every wget or curl invocation in ``command`` as ``(saved paths, its tokens)``.
 
+    Every spelling of the destination option is read: spaced (``-O /tmp/x``), attached
+    short (``-O/tmp/x``), spaced long (``--output-document /tmp/x``) and attached long
+    (``--output-document=/tmp/x``). Round 2 on 2026-09-19 found the attached long form
+    missing, which loses the saved path silently — and branch 2 only reaches within the
+    download's own command, so a forced extraction in a LATER RUN then read as clean.
+
     Pairing each destination with the invocation that wrote it is what keeps a pinned
     download out of the moving set. Review on 2026-09-19: every destination in a
     command containing any moving URL was recorded as moving, so
@@ -239,8 +245,11 @@ def _download_invocations(command: str) -> list:
                     i += 1
                     span.append(tokens[i])
                     paths.add(tokens[i].strip("\"'"))
-            elif token.startswith(short) and len(token) > len(short):
-                paths.add(token[len(short) :].strip("\"'"))
+            elif token.startswith(f"{long_form}="):
+                paths.add(token[len(long_form) + 1 :].strip("\"'"))
+            elif not token.startswith("--") and token.startswith(short):
+                if len(token) > len(short):
+                    paths.add(token[len(short) :].strip("\"'"))
             i += 1
         invocations.append((paths - _STDOUT_SINKS, " ".join(span)))
     return invocations
@@ -743,6 +752,26 @@ class TestTheGuardBindsEachArchiveToItsOwnDownload:
         assert _offenders(text), (
             "curl's short options take an attached value exactly as wget's -OFILE "
             "does; an unrecorded saved path leaves the later forced tar undetected"
+        )
+
+    @pytest.mark.parametrize(
+        "download",
+        [
+            "curl --output=/tmp/ff.tar.xz",
+            "wget --output-document=/tmp/ff.tar.xz",
+            "curl --output /tmp/ff.tar.xz",
+            "wget --output-document /tmp/ff.tar.xz",
+        ],
+    )
+    def test_a_long_output_option_records_the_saved_path(self, download):
+        """The attached long form saves a file exactly as the spaced form does."""
+        text = (
+            f"RUN {download} {self._MOVING}\n" "RUN tar -xzf /tmp/ff.tar.xz -C /opt\n"
+        )
+        assert _offenders(text), (
+            f"{download!r} saves the moving download to /tmp/ff.tar.xz; losing that "
+            f"association leaves the forced extraction in the later RUN undetected, "
+            f"because branch 2 only reaches within the download's own command"
         )
 
     def test_a_saved_path_does_not_match_a_longer_path_that_starts_with_it(self):

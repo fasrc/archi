@@ -206,3 +206,11 @@ through the GraphQL closing-issues field). Not merged.
 - [x] 5.3 Reply in-thread on each of the eight findings, push to the PR head branch, and
       post the round log. File the old-style `tar xzf` gap as a follow-up issue rather
       than widening this diff. **Never merge.**
+
+## 6. Review round 2 — 2026-09-19
+
+- [x] 6.1 Close the attached long output option gap found by the adversarial pass over
+      round 1's own fix (design D13), test-first. File: 60 -> 64 passed, 18 skipped.
+
+- [x] 6.2 Post the round-2 log, re-request the async reviewer, and stop at the
+      two-round bound. **Never merge.**

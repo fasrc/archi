@@ -322,9 +322,10 @@ anywhere in the invocation counted as an unresolvable archive, so
 extraction DIRECTORY. Each of the three turns a correct template red, which is how a
 guard stops being trusted.
 
-#### Scenario: curl's attached short output option records the saved path
-- **WHEN** a moving download is written as `curl -o/tmp/ff.tar.xz <moving>` and extracted by `tar -xzf /tmp/ff.tar.xz` in a later RUN
+#### Scenario: Every spelling of the output option records the saved path
+- **WHEN** a moving download is written as `curl -o/tmp/ff.tar.xz`, `curl --output=/tmp/ff.tar.xz`, `wget -O/tmp/ff.tar.xz` or `wget --output-document=/tmp/ff.tar.xz` and extracted by `tar -xzf /tmp/ff.tar.xz` in a later RUN
 - **THEN** the guard reports the forcing option
+- **AND** the spaced forms of the same options behave identically
 
 #### Scenario: A saved path does not match a longer path that starts with it
 - **WHEN** `/tmp/a` is the saved path and a later RUN extracts `/tmp/archive-v1.tar.gz` with a forced format

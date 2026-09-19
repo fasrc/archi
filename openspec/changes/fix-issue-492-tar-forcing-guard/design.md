@@ -273,3 +273,20 @@ rather than grown into this diff.
 **After the round:** 60 passed, 18 skipped in the file (46 passed, 18 skipped at
 `072dac42`), 16 of 16 cases in the review matrix at their expected verdict, including the
 original `-xjf` defect still indicted and the pinned geckodriver line still clean.
+
+## Review round 2 — 2026-09-19 (adversarial pass over round 1's own fix)
+
+### D13 — Every spelling of the destination option, or the saved path is lost silently
+
+Round 1's `_download_invocations` read the spaced forms and the attached SHORT form, and
+missed the attached LONG form: `curl --output=/tmp/ff.tar` and
+`wget --output-document=/tmp/ff.tar` recorded no saved path at all. The failure is quiet
+and one-directional — branch 2 only reaches within the download's own command, so a forced
+extraction in a LATER RUN read as clean, which is the exact silent-skip shape this change
+exists to close. Fixed with a parametrized test over all four spellings.
+
+This is round 1's own regression, not a pre-existing hole: the spelling was unreachable
+before, because the previous code matched `-O`/`-o` literally and never looked at long
+options at all.
+
+**After the round:** 64 passed, 18 skipped in the file.
