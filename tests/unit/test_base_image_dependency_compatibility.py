@@ -343,22 +343,32 @@ _VCS_OR_URL_REQUIREMENT = re.compile(
 # leading ``.``, a token containing a path separator, a token ending in an archive
 # suffix. The suffix alternation is anchored on the right so a dotted project name such
 # as ``backports.tarfile==1.2.0`` does not match on its own ``.tar``-shaped substring.
-# Every suffix in pip's own ``ARCHIVE_EXTENSIONS`` (``pip._internal.utils.filetypes``,
-# measured on pip 26.1.2), plus ``.tbz2`` which costs nothing. Review on 2026-09-19 found
+# Exactly the suffixes in pip's own ``ARCHIVE_EXTENSIONS``
+# (``pip._internal.utils.filetypes``, measured on pip 26.1.2). Review on 2026-09-19 found
 # ``.tlz``, ``.tar.lz`` and ``.tar.lzma`` missing: pip builds a ``file://`` link for each
 # of them from the extension alone, so ``vllm-0.9.0.tlz`` read as a project named
-# ``vllm-0-9-0-tlz`` and every vllm guard skipped.
+# ``vllm-0-9-0-tlz`` and every vllm guard skipped. Round 2 removed ``.tbz2``, which pip
+# does NOT accept — ``is_archive_file("x.tbz2")`` is False and pip reads such a line as
+# an ordinary project name, so matching it was a guess, not a free superset.
 _ARCHIVE_SUFFIX = (
-    r"\.(?:whl|zip|tgz|tbz2?|txz|tlz|tar\.gz|tar\.bz2|tar\.xz|tar\.lzma|tar\.lz|tar)"
+    r"\.(?:whl|zip|tgz|tbz|txz|tlz|tar\.gz|tar\.bz2|tar\.xz|tar\.lzma|tar\.lz|tar)"
 )
 # A PEP 508 comparison, so that ``example.zip ==1.0`` — a legal dotted project name
 # whose tail looks like an archive — is not read as a filename because of the space
 # before its operator. Review on 2026-09-19: the compact spelling ``example.zip==1.0``
-# already passed, so whitespace alone decided the verdict.
-_COMPARISON_AFTER_SUFFIX = r"(?:===|==|!=|~=|<=|>=|<|>)"
+# already passed, so whitespace alone decided the verdict. Round 2 added the optional
+# ``(``: the grammar also allows the specifier in parentheses, ``example.zip (==1.0)``,
+# which pip reads as the project ``example.zip``.
+_COMPARISON_AFTER_SUFFIX = r"\(?\s*(?:===|==|!=|~=|<=|>=|<|>)"
+# An extras list attached to an archive: ``vllm-0.9.0-py3-none-any.whl[foo]``. pip
+# accepts it and resolves the wheel; round 2 found the guard reading the line as a
+# project named ``vllm-0-9-0-py3-none-any-whl``, so vllm read as absent and every
+# protected-vllm guard skipped — the silent-skip shape this change exists to close.
+_ATTACHED_EXTRAS = r"(?:\[[^\]]*\])?"
 _PATH_OR_ARCHIVE_REQUIREMENT = re.compile(
     rf"^(?:\.|[^;]*[\\/]"
-    rf"|[^;]*{_ARCHIVE_SUFFIX}(?:;|$|\s(?!\s*{_COMPARISON_AFTER_SUFFIX})))",
+    rf"|[^;]*{_ARCHIVE_SUFFIX}{_ATTACHED_EXTRAS}"
+    rf"(?:;|$|\s(?!\s*{_COMPARISON_AFTER_SUFFIX})))",
     re.IGNORECASE,
 )
 
@@ -381,8 +391,8 @@ def _opaque_requirements(text: str) -> list:
     Reported rather than parsed. A VCS reference, a URL, a ``file://`` URL, a Windows
     drive letter, a bare local path, or a bare archive path (every suffix in pip's
     ``ARCHIVE_EXTENSIONS``: ``.whl``, ``.zip``, ``.tgz``, ``.tbz``, ``.txz``, ``.tlz``,
-    ``.tar``, ``.tar.gz``, ``.tar.bz2``, ``.tar.xz``, ``.tar.lz``, ``.tar.lzma``)
-    supplies a real package with no version this module can check, so each must fail the
+    ``.tar``, ``.tar.gz``, ``.tar.bz2``, ``.tar.xz``, ``.tar.lz``, ``.tar.lzma``, with or
+    without an attached extras list) supplies a real package with no version this module can check, so each must fail the
     suite instead of resolving to a nonsense name like ``git`` or
     ``vllm-0-9-0-py3-none-any-whl``. A line is reported; no project name is ever resolved
     from a path or an archive filename.
@@ -1544,6 +1554,8 @@ class TestOpaqueRequirementsFailClosed:
             "vendor packages/vllm",
             "vendor packages/vllm-0.9.0.tar.gz",
             "my package.tar.gz",
+            "vllm-0.9.0-py3-none-any.whl[foo]",
+            "vllm-0.9.0.tar.gz[extra]",
             "evil@../pkgs/vllm",
             "evil@/opt/vllm",
             "evil@C:\\pkgs\\vllm",
@@ -1604,6 +1616,9 @@ class TestOpaqueRequirementsFailClosed:
             "example.zip==1.0",
             "example.tar >=1",
             "example.tgz > 1",
+            "example.zip (==1.0)",
+            "example.tar (>=1)",
+            "example.zip[foo] ==1.0",
         ],
     )
     def test_a_spaced_specifier_is_not_read_as_an_archive(self, line):
@@ -1611,6 +1626,27 @@ class TestOpaqueRequirementsFailClosed:
             f"{line!r} is a dotted project name followed by a PEP 508 comparison, which "
             f"pip parses as a named requirement. Only the whitespace before the operator "
             f"separates it from the compact spelling, which is already accepted."
+        )
+
+    @pytest.mark.parametrize("line", ["example.tbz2==1.0", "vllm-0.9.0.tbz2"])
+    def test_a_suffix_pip_does_not_accept_is_not_read_as_an_archive(self, line):
+        """``.tbz2`` is not in pip's ``ARCHIVE_EXTENSIONS``; ``.tbz`` is.
+
+        Round 2 on 2026-09-19 refused the "a superset costs nothing" claim round 1
+        made, and it is right: ``is_archive_file("x.tbz2")`` is False, so pip reads
+        the line as an ordinary named requirement and only this guard calls it an
+        archive. The suffix set is pip's set, or it is a guess.
+        """
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n") == [], (
+            f"{line!r} carries a suffix pip does not recognise as an archive, so pip "
+            f"reads it as a project name and the guard must too."
+        )
+
+    def test_the_supported_bzip2_suffix_is_still_reported(self):
+        """Dropping ``.tbz2`` must not drop ``.tbz``, which pip DOES accept."""
+        assert _opaque_requirements("torch==2.7.0\nvllm-0.9.0.tbz\n"), (
+            "pip builds a file:// link for vllm-0.9.0.tbz from the extension alone; "
+            "it must stay reported."
         )
 
     def test_a_plain_pin_is_not_reported(self):

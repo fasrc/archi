@@ -124,3 +124,12 @@
 
 - [x] 3.3 Reply in-thread on each of the four findings, push to the PR head branch, and
       post the round log. **Never merge.**
+
+## 4. Review round 2 — 2026-09-19
+
+- [x] 4.1 Close the three findings the async reviewer raised against round 1's own fix,
+      test-first: pip's exact suffix set (D9), an attached extras list on an archive
+      (D10), and a parenthesized specifier (D11). File: 163 -> 171 passed.
+
+- [x] 4.2 Reply in-thread on all three, post the round-2 log, re-request the async
+      reviewer, and stop at the two-round bound. **Never merge.**

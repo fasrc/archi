@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: A path or archive requirement SHALL fail the base-image guard closed
-The base-image dependency guard SHALL report a requirement line that names a local path or an archive file — a line starting with `.`, a line containing `/` or `\` anywhere, or a line whose archive suffix carries every extension pip accepts (`.whl`, `.zip`, `.tgz`, `.tbz`, `.tbz2`, `.txz`, `.tlz`, `.tar`, `.tar.gz`, `.tar.bz2`, `.tar.xz`, `.tar.lz`, `.tar.lzma`) — as a requirement whose project name the guard cannot read, so the test suite fails instead of reading the package as absent.
+The base-image dependency guard SHALL report a requirement line that names a local path or an archive file — a line starting with `.`, a line containing `/` or `\` anywhere, or a line whose archive suffix is one pip accepts (`.whl`, `.zip`, `.tgz`, `.tbz`, `.txz`, `.tlz`, `.tar`, `.tar.gz`, `.tar.bz2`, `.tar.xz`, `.tar.lz`, `.tar.lzma`), with or without an attached extras list — as a requirement whose project name the guard cannot read, so the test suite fails instead of reading the package as absent.
 pip installs a local project path and an archive path exactly as it installs a named requirement. Every pairwise guard in this module SKIPS when its subject is absent, so a protected package supplied in either form does not merely go unchecked — it silently disables every guard that names it, and the module reports green while pip installs an unmeasured build. Measured at `4b253e26`: a path line is dropped by the name reader unrecorded, and an archive filename records a nonsense project such as `vllm-0-9-0-py3-none-any-whl` or `dist`. Both readings mean "absent". Widened on 2026-09-19 after review: the suffix list was short of pip's own `ARCHIVE_EXTENSIONS`, and each clause stopped at the first space, so `vllm-0.9.0.tlz` and `vendor packages/vllm` both read as ordinary project names.
 
 #### Scenario: A relative local project path is reported
@@ -48,9 +48,19 @@ pip installs a local project path and an archive path exactly as it installs a n
 - **THEN** none of them is reported as a requirement with no readable project name
 
 #### Scenario: A spaced comparison operator does not make a project name an archive
-- **WHEN** a requirement file read by the guard contains `example.zip ==1.0` or `example.tar >=1`
-- **THEN** neither line is reported as a requirement with no readable project name
+- **WHEN** a requirement file read by the guard contains `example.zip ==1.0`, `example.tar >=1` or the parenthesized form `example.zip (==1.0)`
+- **THEN** none of the lines is reported as a requirement with no readable project name
 - **AND** the verdict matches the compact spelling `example.zip==1.0`, which is already accepted
+
+#### Scenario: An archive requesting extras is still reported
+- **WHEN** a requirement file read by the guard contains `vllm-0.9.0-py3-none-any.whl[foo]` or `vllm-0.9.0.tar.gz[extra]`
+- **THEN** each line is reported as a requirement with no readable project name
+- **AND** `example.zip[foo] ==1.0`, which is a project name with extras and a specifier, is not reported
+
+#### Scenario: A suffix pip does not accept is not an archive
+- **WHEN** a requirement file read by the guard contains `vllm-0.9.0.tbz2`
+- **THEN** it is not reported, because `is_archive_file` rejects `.tbz2` and pip reads the line as a project name
+- **AND** `vllm-0.9.0.tbz`, which pip does accept, is still reported
 
 #### Scenario: The monitored files stay green
 - **WHEN** the guard reads the five monitored requirement files of the clean tree

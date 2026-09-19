@@ -169,3 +169,35 @@ reported, because `--hash` is not a comparison.
 
 **After the round:** 163 passed in the file (145 at `41522329`), 35 of 35 cases in the
 review matrix at their expected verdict, the five monitored files still reporting `[]`.
+
+## Review round 2 — 2026-09-19 (three findings on round 1's own fix, all valid)
+
+### D9 — The suffix set is pip's set exactly; ".tbz2" was a guess
+
+Round 1 kept `.tbz2` on the argument that a superset costs nothing. Round 2 refused that,
+correctly: `is_archive_file("x.tbz2")` is False and `install_req_from_line("example.tbz2")`
+returns an ordinary named requirement, so only this guard was calling it an archive — a
+false failure waiting for a project whose legitimate name ends that way. Removed. `.tbz`,
+which pip DOES accept, is fenced by its own regression test so the removal cannot take it
+along.
+
+### D10 — An attached extras list terminates an archive
+
+`vllm-0.9.0-py3-none-any.whl[foo]` was NOT reported: the suffix was followed by `[`, which
+none of the terminators matched. Measured: pip resolves that line to a link and reads the
+project as `vllm`, while the guard recorded `vllm-0-9-0-py3-none-any-whl` — vllm absent,
+every protected-vllm guard skipped. This is the same silent-skip failure the change exists
+to close, reachable through a spelling round 1 did not consider.
+
+`_ATTACHED_EXTRAS` is optional and sits before the terminator, so
+`example.zip[foo] ==1.0` — a project name with extras and a specifier — still backtracks
+to the comparison lookahead and stays readable.
+
+### D11 — The specifier may be parenthesized
+
+The dependency-specifier grammar allows `name (==1.0)`, and pip reads `example.zip (==1.0)`
+as the project `example.zip`. Round 1's lookahead saw `(` instead of an operator and
+reported the line. The optional `\(?` in `_COMPARISON_AFTER_SUFFIX` closes it.
+
+**After the round:** 171 passed in the file (163 after round 1, 145 at `41522329`), 19 of 19
+cases in the re-measured matrix at their expected verdict, five monitored files still `[]`.
