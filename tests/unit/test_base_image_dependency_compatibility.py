@@ -334,16 +334,83 @@ _VCS_OR_URL_REQUIREMENT = re.compile(
     r"^(?:(?:git|hg|bzr|svn)\+|https?://|file://|[A-Za-z]:[\\/])", re.IGNORECASE
 )
 
+# A requirement given as a bare local project path or a bare archive path rather than a
+# project name: ``./local_vllm``, ``../pkgs/vllm``, ``/opt/vllm.whl``,
+# ``vllm-0.9.0-py3-none-any.whl``, ``dist/vllm-0.9.0.tar.gz``. Added 2026-09-18 (#491):
+# pip accepts both shapes, and neither was in ``_VCS_OR_URL_REQUIREMENT``, so a line like
+# this read as a project named e.g. ``vllm-0-9-0-py3-none-any-whl`` and every guard
+# naming the real package skipped it as absent. Three alternatives, one per clause: a
+# leading ``.``, a token containing a path separator, a token ending in an archive
+# suffix. The suffix alternation is anchored on the right so a dotted project name such
+# as ``backports.tarfile==1.2.0`` does not match on its own ``.tar``-shaped substring.
+# Exactly the suffixes in pip's own ``ARCHIVE_EXTENSIONS``
+# (``pip._internal.utils.filetypes``, measured on pip 26.1.2). Review on 2026-09-19 found
+# ``.tlz``, ``.tar.lz`` and ``.tar.lzma`` missing: pip builds a ``file://`` link for each
+# of them from the extension alone, so ``vllm-0.9.0.tlz`` read as a project named
+# ``vllm-0-9-0-tlz`` and every vllm guard skipped. Round 2 removed ``.tbz2``, which pip
+# does NOT accept — ``is_archive_file("x.tbz2")`` is False and pip reads such a line as
+# an ordinary project name, so matching it was a guess, not a free superset.
+_ARCHIVE_SUFFIX = (
+    r"\.(?:whl|zip|tgz|tbz|txz|tlz|tar\.gz|tar\.bz2|tar\.xz|tar\.lzma|tar\.lz|tar)"
+)
+# A PEP 508 comparison, so that ``example.zip ==1.0`` — a legal dotted project name
+# whose tail looks like an archive — is not read as a filename because of the space
+# before its operator. Review on 2026-09-19: the compact spelling ``example.zip==1.0``
+# already passed, so whitespace alone decided the verdict. Round 2 added the optional
+# ``(``: the grammar also allows the specifier in parentheses, ``example.zip (==1.0)``,
+# which pip reads as the project ``example.zip``.
+_COMPARISON_AFTER_SUFFIX = r"\(?\s*(?:===|==|!=|~=|<=|>=|<|>)"
+# An extras list attached to an archive: ``vllm-0.9.0-py3-none-any.whl[foo]``. pip
+# accepts it and resolves the wheel; round 2 found the guard reading the line as a
+# project named ``vllm-0-9-0-py3-none-any-whl``, so vllm read as absent and every
+# protected-vllm guard skipped — the silent-skip shape this change exists to close.
+_ATTACHED_EXTRAS = r"(?:\[[^\]]*\])?"
+_PATH_OR_ARCHIVE_REQUIREMENT = re.compile(
+    rf"^(?:\.|[^;]*[\\/]"
+    rf"|[^;]*{_ARCHIVE_SUFFIX}{_ATTACHED_EXTRAS}"
+    rf"(?:;|$|\s(?!\s*{_COMPARISON_AFTER_SUFFIX})))",
+    re.IGNORECASE,
+)
+
+# A PEP 508 direct reference carrying a project name in front of the URL:
+# ``numpy@https://host/numpy.whl``, ``vllm @ git+https://host/vllm``. The name reader
+# reads ``numpy`` from both spellings, so design D4 leaves the class readable and
+# ``_unpinned_protected`` fails a protected name closed. Review on 2026-09-19: the
+# separator inside the URL made the compact spelling opaque while the spaced spelling
+# passed, so whitespace alone decided the verdict. The scheme set is the one
+# ``_VCS_OR_URL_REQUIREMENT`` uses; a target with NO scheme (``evil@../pkgs/vllm``) is a
+# local path by another name and stays reported.
+_NAMED_URL_REFERENCE = re.compile(
+    rf"^{_NAME}\s*@\s*(?:(?:git|hg|bzr|svn)\+|https?://|file://)", re.IGNORECASE
+)
+
 
 def _opaque_requirements(text: str) -> list:
     """Requirement lines whose project name this module cannot read.
 
-    Reported rather than parsed. A VCS or URL requirement supplies a real package with
-    no version this module can check, so it must fail the suite instead of resolving to
-    a nonsense name like ``git``.
+    Reported rather than parsed. A VCS reference, a URL, a ``file://`` URL, a Windows
+    drive letter, a bare local path, or a bare archive path (every suffix in pip's
+    ``ARCHIVE_EXTENSIONS``: ``.whl``, ``.zip``, ``.tgz``, ``.tbz``, ``.txz``, ``.tlz``,
+    ``.tar``, ``.tar.gz``, ``.tar.bz2``, ``.tar.xz``, ``.tar.lz``, ``.tar.lzma``, with or
+    without an attached extras list) supplies a real package with no version this module can check, so each must fail the
+    suite instead of resolving to a nonsense name like ``git`` or
+    ``vllm-0-9-0-py3-none-any-whl``. A line is reported; no project name is ever resolved
+    from a path or an archive filename.
+
+    One shape is deliberately NOT reported: a PEP 508 direct reference carrying a project
+    name, ``numpy@https://host/numpy.whl``. The name reader reads it, and
+    ``_unpinned_protected`` fails a protected name closed — design D4. That exemption
+    needs a URL scheme; ``evil@../pkgs/vllm`` is a local path wearing a name and is
+    reported. Class measured 2026-09-18 (#491), widened after review 2026-09-19.
     """
     return [
-        line for line in _requirement_lines(text) if _VCS_OR_URL_REQUIREMENT.match(line)
+        line
+        for line in _requirement_lines(text)
+        if not _NAMED_URL_REFERENCE.match(line)
+        and (
+            _VCS_OR_URL_REQUIREMENT.match(line)
+            or _PATH_OR_ARCHIVE_REQUIREMENT.match(line)
+        )
     ]
 
 
@@ -1468,6 +1535,118 @@ class TestOpaqueRequirementsFailClosed:
         assert _opaque_requirements(f"torch==2.7.0\n{line}\n"), (
             f"{line!r} supplies a package with no version this module can check, so it "
             f"must be reported rather than parsed into a bogus project name."
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "./local_vllm",
+            "../pkgs/vllm",
+            "/opt/vllm.whl",
+            "vllm-0.9.0-py3-none-any.whl",
+            "dist/vllm-0.9.0.tar.gz",
+            ".\\win_vllm",
+            "vllm-0.9.0.tar.bz2",
+            "vllm-0.9.0.zip",
+            "vllm-0.9.0.tlz",
+            "vllm-0.9.0.tar.lz",
+            "vllm-0.9.0.tar.lzma",
+            "vendor packages/vllm",
+            "vendor packages/vllm-0.9.0.tar.gz",
+            "my package.tar.gz",
+            "vllm-0.9.0-py3-none-any.whl[foo]",
+            "vllm-0.9.0.tar.gz[extra]",
+            "evil@../pkgs/vllm",
+            "evil@/opt/vllm",
+            "evil@C:\\pkgs\\vllm",
+        ],
+    )
+    def test_a_local_path_or_archive_requirement_is_reported(self, line):
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n"), (
+            f"{line!r} is a bare local path or archive, which supplies a real package "
+            f"with no version this module can check, so it must be reported rather than "
+            f"silently skipped."
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "backports.tarfile==1.2.0",
+            "zope.interface==5.4.0",
+            "ruamel.yaml==0.18.6",
+            "langgraph-prebuilt<1.0.9",
+        ],
+    )
+    def test_a_dotted_project_name_pin_is_not_reported(self, line):
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n") == [], (
+            f"{line!r} is an ordinary dotted project name, not an archive path, and must "
+            f"not be swept up by the path/archive class."
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "numpy@https://host/numpy-2.0.0-py3-none-any.whl",
+            "numpy @ https://host/numpy-2.0.0-py3-none-any.whl",
+            "vllm@https://host/vllm-0.9.0-py3-none-any.whl",
+            "vllm@git+https://github.com/vllm-project/vllm",
+        ],
+    )
+    def test_a_named_url_direct_reference_is_not_reported(self, line):
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n") == [], (
+            f"{line!r} is a PEP 508 direct reference whose project name the name reader "
+            f"does read, so design D4 leaves it readable and _unpinned_protected fails "
+            f"it closed. Reporting the compact spelling while the spaced spelling "
+            f"passes makes the verdict depend on whitespace alone."
+        )
+
+    def test_a_protected_direct_reference_still_fails_closed(self):
+        unpinned = _unpinned_protected(
+            "torch==2.7.0\nvllm@https://host/vllm-0.9.0-py3-none-any.whl\n"
+        )
+        assert "vllm" in unpinned, (
+            f"a direct reference is left readable only because this guard fails it "
+            f"closed; got {unpinned}. Without it the vllm guards would skip."
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "example.zip ==1.0",
+            "example.zip==1.0",
+            "example.tar >=1",
+            "example.tgz > 1",
+            "example.zip (==1.0)",
+            "example.tar (>=1)",
+            "example.zip[foo] ==1.0",
+        ],
+    )
+    def test_a_spaced_specifier_is_not_read_as_an_archive(self, line):
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n") == [], (
+            f"{line!r} is a dotted project name followed by a PEP 508 comparison, which "
+            f"pip parses as a named requirement. Only the whitespace before the operator "
+            f"separates it from the compact spelling, which is already accepted."
+        )
+
+    @pytest.mark.parametrize("line", ["example.tbz2==1.0", "vllm-0.9.0.tbz2"])
+    def test_a_suffix_pip_does_not_accept_is_not_read_as_an_archive(self, line):
+        """``.tbz2`` is not in pip's ``ARCHIVE_EXTENSIONS``; ``.tbz`` is.
+
+        Round 2 on 2026-09-19 refused the "a superset costs nothing" claim round 1
+        made, and it is right: ``is_archive_file("x.tbz2")`` is False, so pip reads
+        the line as an ordinary named requirement and only this guard calls it an
+        archive. The suffix set is pip's set, or it is a guess.
+        """
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n") == [], (
+            f"{line!r} carries a suffix pip does not recognise as an archive, so pip "
+            f"reads it as a project name and the guard must too."
+        )
+
+    def test_the_supported_bzip2_suffix_is_still_reported(self):
+        """Dropping ``.tbz2`` must not drop ``.tbz``, which pip DOES accept."""
+        assert _opaque_requirements("torch==2.7.0\nvllm-0.9.0.tbz\n"), (
+            "pip builds a file:// link for vllm-0.9.0.tbz from the extension alone; "
+            "it must stay reported."
         )
 
     def test_a_plain_pin_is_not_reported(self):
