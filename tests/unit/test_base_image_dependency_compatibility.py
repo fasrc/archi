@@ -343,26 +343,64 @@ _VCS_OR_URL_REQUIREMENT = re.compile(
 # leading ``.``, a token containing a path separator, a token ending in an archive
 # suffix. The suffix alternation is anchored on the right so a dotted project name such
 # as ``backports.tarfile==1.2.0`` does not match on its own ``.tar``-shaped substring.
-_ARCHIVE_SUFFIX = r"\.(?:whl|zip|tgz|tbz2?|txz|tar|tar\.gz|tar\.bz2|tar\.xz)"
+# Every suffix in pip's own ``ARCHIVE_EXTENSIONS`` (``pip._internal.utils.filetypes``,
+# measured on pip 26.1.2), plus ``.tbz2`` which costs nothing. Review on 2026-09-19 found
+# ``.tlz``, ``.tar.lz`` and ``.tar.lzma`` missing: pip builds a ``file://`` link for each
+# of them from the extension alone, so ``vllm-0.9.0.tlz`` read as a project named
+# ``vllm-0-9-0-tlz`` and every vllm guard skipped.
+_ARCHIVE_SUFFIX = (
+    r"\.(?:whl|zip|tgz|tbz2?|txz|tlz|tar\.gz|tar\.bz2|tar\.xz|tar\.lzma|tar\.lz|tar)"
+)
+# A PEP 508 comparison, so that ``example.zip ==1.0`` — a legal dotted project name
+# whose tail looks like an archive — is not read as a filename because of the space
+# before its operator. Review on 2026-09-19: the compact spelling ``example.zip==1.0``
+# already passed, so whitespace alone decided the verdict.
+_COMPARISON_AFTER_SUFFIX = r"(?:===|==|!=|~=|<=|>=|<|>)"
 _PATH_OR_ARCHIVE_REQUIREMENT = re.compile(
-    rf"^(?:\.|[^\s;]*[\\/]|[^\s;]*{_ARCHIVE_SUFFIX}(?:\s|;|$))", re.IGNORECASE
+    rf"^(?:\.|[^;]*[\\/]"
+    rf"|[^;]*{_ARCHIVE_SUFFIX}(?:;|$|\s(?!\s*{_COMPARISON_AFTER_SUFFIX})))",
+    re.IGNORECASE,
+)
+
+# A PEP 508 direct reference carrying a project name in front of the URL:
+# ``numpy@https://host/numpy.whl``, ``vllm @ git+https://host/vllm``. The name reader
+# reads ``numpy`` from both spellings, so design D4 leaves the class readable and
+# ``_unpinned_protected`` fails a protected name closed. Review on 2026-09-19: the
+# separator inside the URL made the compact spelling opaque while the spaced spelling
+# passed, so whitespace alone decided the verdict. The scheme set is the one
+# ``_VCS_OR_URL_REQUIREMENT`` uses; a target with NO scheme (``evil@../pkgs/vllm``) is a
+# local path by another name and stays reported.
+_NAMED_URL_REFERENCE = re.compile(
+    rf"^{_NAME}\s*@\s*(?:(?:git|hg|bzr|svn)\+|https?://|file://)", re.IGNORECASE
 )
 
 
 def _opaque_requirements(text: str) -> list:
     """Requirement lines whose project name this module cannot read.
 
-    Reported rather than parsed. A VCS or URL requirement, a bare local path, or a bare
-    archive path (``.whl``, ``.zip``, ``.tar.gz`` and siblings) supplies a real package
-    with no version this module can check, so each must fail the suite instead of
-    resolving to a nonsense name like ``git`` or ``vllm-0-9-0-py3-none-any-whl``.
-    Updated 2026-09-18 (#491).
+    Reported rather than parsed. A VCS reference, a URL, a ``file://`` URL, a Windows
+    drive letter, a bare local path, or a bare archive path (every suffix in pip's
+    ``ARCHIVE_EXTENSIONS``: ``.whl``, ``.zip``, ``.tgz``, ``.tbz``, ``.txz``, ``.tlz``,
+    ``.tar``, ``.tar.gz``, ``.tar.bz2``, ``.tar.xz``, ``.tar.lz``, ``.tar.lzma``)
+    supplies a real package with no version this module can check, so each must fail the
+    suite instead of resolving to a nonsense name like ``git`` or
+    ``vllm-0-9-0-py3-none-any-whl``. A line is reported; no project name is ever resolved
+    from a path or an archive filename.
+
+    One shape is deliberately NOT reported: a PEP 508 direct reference carrying a project
+    name, ``numpy@https://host/numpy.whl``. The name reader reads it, and
+    ``_unpinned_protected`` fails a protected name closed — design D4. That exemption
+    needs a URL scheme; ``evil@../pkgs/vllm`` is a local path wearing a name and is
+    reported. Class measured 2026-09-18 (#491), widened after review 2026-09-19.
     """
     return [
         line
         for line in _requirement_lines(text)
-        if _VCS_OR_URL_REQUIREMENT.match(line)
-        or _PATH_OR_ARCHIVE_REQUIREMENT.match(line)
+        if not _NAMED_URL_REFERENCE.match(line)
+        and (
+            _VCS_OR_URL_REQUIREMENT.match(line)
+            or _PATH_OR_ARCHIVE_REQUIREMENT.match(line)
+        )
     ]
 
 
@@ -1500,6 +1538,15 @@ class TestOpaqueRequirementsFailClosed:
             ".\\win_vllm",
             "vllm-0.9.0.tar.bz2",
             "vllm-0.9.0.zip",
+            "vllm-0.9.0.tlz",
+            "vllm-0.9.0.tar.lz",
+            "vllm-0.9.0.tar.lzma",
+            "vendor packages/vllm",
+            "vendor packages/vllm-0.9.0.tar.gz",
+            "my package.tar.gz",
+            "evil@../pkgs/vllm",
+            "evil@/opt/vllm",
+            "evil@C:\\pkgs\\vllm",
         ],
     )
     def test_a_local_path_or_archive_requirement_is_reported(self, line):
@@ -1522,6 +1569,48 @@ class TestOpaqueRequirementsFailClosed:
         assert _opaque_requirements(f"torch==2.7.0\n{line}\n") == [], (
             f"{line!r} is an ordinary dotted project name, not an archive path, and must "
             f"not be swept up by the path/archive class."
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "numpy@https://host/numpy-2.0.0-py3-none-any.whl",
+            "numpy @ https://host/numpy-2.0.0-py3-none-any.whl",
+            "vllm@https://host/vllm-0.9.0-py3-none-any.whl",
+            "vllm@git+https://github.com/vllm-project/vllm",
+        ],
+    )
+    def test_a_named_url_direct_reference_is_not_reported(self, line):
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n") == [], (
+            f"{line!r} is a PEP 508 direct reference whose project name the name reader "
+            f"does read, so design D4 leaves it readable and _unpinned_protected fails "
+            f"it closed. Reporting the compact spelling while the spaced spelling "
+            f"passes makes the verdict depend on whitespace alone."
+        )
+
+    def test_a_protected_direct_reference_still_fails_closed(self):
+        unpinned = _unpinned_protected(
+            "torch==2.7.0\nvllm@https://host/vllm-0.9.0-py3-none-any.whl\n"
+        )
+        assert "vllm" in unpinned, (
+            f"a direct reference is left readable only because this guard fails it "
+            f"closed; got {unpinned}. Without it the vllm guards would skip."
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "example.zip ==1.0",
+            "example.zip==1.0",
+            "example.tar >=1",
+            "example.tgz > 1",
+        ],
+    )
+    def test_a_spaced_specifier_is_not_read_as_an_archive(self, line):
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n") == [], (
+            f"{line!r} is a dotted project name followed by a PEP 508 comparison, which "
+            f"pip parses as a named requirement. Only the whitespace before the operator "
+            f"separates it from the compact spelling, which is already accepted."
         )
 
     def test_a_plain_pin_is_not_reported(self):

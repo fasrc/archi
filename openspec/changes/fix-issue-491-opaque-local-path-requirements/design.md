@@ -120,3 +120,52 @@ archive. It reads only the text handed to it, and only the lines `_requirement_l
 yields — so an option line (anything starting with `-`) is still the business of
 `_requirement_bearing_directives` (`:388-403`), not this pattern. The docstring says so, so
 the next reviewer does not have to rediscover it.
+
+## Review round 1 — 2026-09-19 (Codex, four P2 findings, all verified valid)
+
+Every finding was measured against pip 26.1.2's own parser
+(`pip._internal.req.constructors.install_req_from_line`) before any code moved. The
+measurements, and what each decided:
+
+### D5 — The suffix list is pip's `ARCHIVE_EXTENSIONS`, not a hand-picked subset
+
+`pip._internal.utils.filetypes.ARCHIVE_EXTENSIONS` is `.zip .whl .tar.bz2 .tbz .tar.gz
+.tgz .tar .tar.xz .txz .tlz .tar.lz .tar.lzma`. D1's list missed the last three, and pip
+builds a `file://` link from the extension alone — `install_req_from_line('vllm-0.9.0.tlz')`
+returns `name=None, link='file:///…/vllm-0.9.0.tlz'` with no filesystem access. The guard
+read `vllm-0-9-0-tlz` and every vllm guard skipped. `.tbz2` is kept although pip has only
+`.tbz`: a superset costs nothing here.
+
+### D6 — The path and archive clauses read the whole line, not the first whitespace-delimited token
+
+`[^\s;]*` stopped at the first space, so `vendor packages/vllm` and `my package.tar.gz`
+were invisible. Measured: with the directory present,
+`install_req_from_line('vendor packages/vllm')` returns
+`link='file:///tmp/pipprobe/vendor%20packages/vllm'`; the archive spelling needs no
+filesystem at all, because `_get_url_from_path` consults `is_archive_file` on the
+extension. Both clauses now read `[^;]*`. Re-measured on the five monitored files: **327
+requirement lines, zero matches**, unchanged from D1.
+
+### D7 — A named direct reference is exempt only when its target carries a URL scheme
+
+D4 left `vllm @ https://…` readable. The compact spelling `numpy@https://host/numpy.whl`
+was being reported, because the separator inside the URL matched the path clause — so
+whitespace alone decided the verdict on one requirement. pip reads both spellings as
+`name='numpy'`. `_NAMED_URL_REFERENCE` now exempts the class, and a regression test holds
+the backstop: `_unpinned_protected('vllm@https://host/vllm-0.9.0.whl')` returns `vllm`, so
+a protected name still fails rather than skips.
+
+The exemption is scheme-gated on purpose. pip also reads `evil@../pkgs/vllm` and
+`evil@/opt/vllm` as named direct references, and those install a local tree under an
+unrelated name — the exact silent-skip shape this change closes. They stay reported, with
+test cases fencing them.
+
+### D8 — An archive suffix followed by a spaced comparison is a project name
+
+`example.zip ==1.0` parses in pip as `name='example.zip'`, while `example.zip==1.0` was
+already accepted by the guard. A negative lookahead for a PEP 508 comparison after the
+suffix removes the whitespace-dependent verdict. `vllm-0.9.0.whl --hash=sha256:…` stays
+reported, because `--hash` is not a comparison.
+
+**After the round:** 163 passed in the file (145 at `41522329`), 35 of 35 cases in the
+review matrix at their expected verdict, the five monitored files still reporting `[]`.

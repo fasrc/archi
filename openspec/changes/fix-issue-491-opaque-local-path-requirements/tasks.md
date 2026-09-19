@@ -109,3 +109,18 @@
       `_unpinned_protected` already fails them closed (design D4);
       and that `diff-cover` reports no measurable lines because the diff is tests-only.
       **Never merge** — a human merges in daylight.
+
+## 3. Review round 1 — 2026-09-19 (unattended 4AM responder)
+
+- [x] 3.1 Verify all four Codex P2 findings against pip 26.1.2's own parser before
+      changing anything, then close each test-first: pip's full `ARCHIVE_EXTENSIONS`
+      (D5), whole-line path and archive clauses (D6), the scheme-gated direct-reference
+      exemption (D7), and the spaced-comparison lookahead (D8). File: 145 -> 163 passed.
+      Re-measured: five monitored files, 327 requirement lines, zero false positives.
+
+- [x] 3.2 Re-validate the change (`openspec validate
+      fix-issue-491-opaque-local-path-requirements --strict`) after the spec delta grew
+      the second requirement and four scenarios. Green on the host.
+
+- [x] 3.3 Reply in-thread on each of the four findings, push to the PR head branch, and
+      post the round log. **Never merge.**
