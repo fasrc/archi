@@ -26,7 +26,10 @@ whole tokens: `--gzip`, `--gunzip`, `--ungzip`, `--bzip2`, `--xz`, `--lzma`, `--
 An option token is a token beginning with `-`. An operand is not, which is why
 `tar -xf f.tar.xz` stays clean even though its operand ends in `.xz`. The scan SHALL stop
 at the end of the `tar` invocation — a shell separator such as `&&`, `;`, or `|` — so an
-unrelated command later on the same line cannot supply a forcing option to it.
+unrelated command later on the same line cannot supply a forcing option to it. Two limits
+on "option token" were added after review on 2026-09-19 and are specified below: the
+argument attached to an option such as `-f` is not a flag cluster, and nothing after
+`--` is an option at all.
 
 #### Scenario: A forcing option separated from the tar token is flagged
 
@@ -272,3 +275,68 @@ only a token carrying no `/`.
 `TestAVersionedDownloadMayForceItsFormat`
 (`tests/unit/test_service_template_downloads.py:153`) holds this line. It SHALL stay green
 and SHALL NOT be edited.
+
+### Requirement: The guard SHALL read a tar invocation the way tar reads it
+
+The download guard SHALL parse each `tar` invocation into its forcing options and the archive named by `-f` or `--file`, SHALL recognise the executable by its basename, SHALL bound each invocation on shell control operators whether or not whitespace surrounds them, and SHALL stop recognising options at the `--` end-of-options marker.
+
+Reading the command as whitespace-delimited tokens was wrong in both directions, measured
+on 2026-09-19. It produced false positives — `tar -xf/tmp/firefox.tar.xz` was reported as
+forcing xz because the FILENAME contains a `z`, and `tar -xf /tmp/moving -- --gzip` was
+reported although GNU tar treats `--gzip` there as a member name. It produced false
+negatives too — `/bin/tar -xzf …` was skipped by an exact `tar` token match (a regression
+against the earlier unanchored regex), and `wget …&&tar …` hid both the URL and the tar
+token, because bash does not require whitespace around a control operator. Whitespace
+alone must not decide whether a template is broken.
+
+#### Scenario: An attached archive argument is not read as options
+- **WHEN** a template contains `tar -xf/tmp/firefox.tar.xz`
+- **THEN** the guard reports no forcing option
+- **AND** `tar -xjf/tmp/ff.tar.xz` is still reported, because `-j` precedes the attached argument
+
+#### Scenario: An absolute path to the tar executable is recognised
+- **WHEN** a moving download saved to `/tmp/ff.tar` is extracted by `/bin/tar -xzf /tmp/ff.tar` in a later RUN
+- **THEN** the guard reports the forcing option
+- **AND** an unrelated executable named `mytar` is not read as a tar invocation
+
+#### Scenario: A control operator without surrounding whitespace bounds the invocation
+- **WHEN** a template contains `wget -O /tmp/ff.tar <moving>&&tar -xzf /tmp/ff.tar`
+- **THEN** the guard reports the forcing option
+- **AND** in `tar -xf /tmp/moving;tar -xzf pinned-v1.tar.gz` the forcing option belongs to the second invocation only
+
+#### Scenario: Option recognition stops at the end-of-options marker
+- **WHEN** a template contains `tar -xf /tmp/moving -- --gzip`
+- **THEN** the guard reports no forcing option
+
+### Requirement: The guard SHALL bind each saved path and each archive reference whole
+
+The download guard SHALL record a saved path only from the download invocation that wrote it, SHALL compare an archive reference to a saved path as a whole value rather than by containment, and SHALL judge resolvability from the archive reference alone.
+
+Three collection rules were too broad, measured on 2026-09-19. Every destination in a
+command containing any moving URL was recorded as moving, so
+`wget -O /tmp/moving <latest> && wget -O /tmp/pinned <versioned>` condemned a correct
+`tar -xzf /tmp/pinned`. Containment made the saved `/tmp/a` match a pinned
+`/tmp/archive-v1.tar.gz`, and the basename branch made `a` match `a.tar.old`. A `$`
+anywhere in the invocation counted as an unresolvable archive, so
+`tar -xzf pinned-v1.tar.gz -C "$DEST"` was indicted for the variable naming its
+extraction DIRECTORY. Each of the three turns a correct template red, which is how a
+guard stops being trusted.
+
+#### Scenario: curl's attached short output option records the saved path
+- **WHEN** a moving download is written as `curl -o/tmp/ff.tar.xz <moving>` and extracted by `tar -xzf /tmp/ff.tar.xz` in a later RUN
+- **THEN** the guard reports the forcing option
+
+#### Scenario: A saved path does not match a longer path that starts with it
+- **WHEN** `/tmp/a` is the saved path and a later RUN extracts `/tmp/archive-v1.tar.gz` with a forced format
+- **THEN** the guard reports no offender
+- **AND** a saved basename `a` does not match the archive `a.tar.old`
+
+#### Scenario: Each saved path belongs to its own download
+- **WHEN** one RUN saves a moving download to `/tmp/moving`, a version-pinned download to `/tmp/pinned`, and extracts `/tmp/pinned` with a forced format
+- **THEN** the guard reports no offender
+- **AND** extracting `/tmp/moving` with a forced format in that same RUN is still reported
+
+#### Scenario: Only the archive reference decides resolvability
+- **WHEN** a RUN carrying a moving download extracts a literal `pinned-v1.tar.gz` with `-C "$DEST"`
+- **THEN** the guard reports no offender
+- **AND** `tar -xjf "$FF"`, whose archive itself is a variable, is still reported

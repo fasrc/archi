@@ -190,3 +190,19 @@ green on `ed50c60f` (4600 passed, 27 skipped, 1 xfailed; patch coverage reports 
 with coverage information", expected for a tests-only diff). Branch pushed with `-u`, and
 PR https://github.com/fasrc/archi/pull/507 is open against `dev`, closing #492 (confirmed
 through the GraphQL closing-issues field). Not merged.
+
+## 5. Review round 1 — 2026-09-19 (unattended 4AM responder)
+
+- [x] 5.1 Reproduce all eight Codex P2 findings against the PR head before changing
+      anything, then close them test-first with one rewrite of the helper layer:
+      `_shell_tokens`, `_basename`, `_parse_tar_span`, `_tar_invocations`,
+      `_download_invocations`, `_moving_saved_paths`, `_archive_matches_saved` and
+      `_archive_is_unresolvable` (design D9-D12). File: 46 -> 60 passed, 18 skipped.
+
+- [x] 5.2 Re-validate the change (`openspec validate fix-issue-492-tar-forcing-guard
+      --strict`) after the spec delta grew two requirements and eight scenarios. Green
+      on the host.
+
+- [x] 5.3 Reply in-thread on each of the eight findings, push to the PR head branch, and
+      post the round log. File the old-style `tar xzf` gap as a follow-up issue rather
+      than widening this diff. **Never merge.**

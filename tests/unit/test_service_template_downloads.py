@@ -58,26 +58,125 @@ _FORCING_SHORT = frozenset("zjJZI")
 _SHELL_SEP = frozenset({"&&", "||", ";", "|"})
 _STDOUT_SINKS = frozenset({"-", "/dev/stdout", "/dev/null"})
 
+# A shell control operator, whether or not whitespace surrounds it. ``||`` is listed
+# before ``|`` so the two-character operator wins.
+_SHELL_OPERATOR = re.compile(r"(\|\||&&|;|\|)")
 
-def _forced_decompressors(command: str) -> list[str]:
-    tokens = command.split()
-    result = []
+# tar's short options that consume an argument: the rest of their own cluster when one
+# is attached, otherwise the next token. ``-f`` names the archive; ``-I`` names a
+# compression program and is a forcing option as well. Review on 2026-09-19: without
+# this set, ``tar -xf/tmp/firefox.tar.xz`` read the ``z`` in the FILENAME as a forcing
+# option, so a correct auto-detecting extraction was reported as forcing xz.
+_SHORT_WITH_ARGUMENT = frozenset("bCfFgHIKLNTVX")
+
+# The long options that name the archive. ``--file=PATH`` and ``--file PATH`` both.
+_ARCHIVE_LONG = frozenset({"--file"})
+
+# The tools whose saved-output option tells the guard where a download landed, with the
+# options that name that destination. Both accept the value attached to the short form:
+# ``wget -O/tmp/x`` and ``curl -o/tmp/x`` are valid, and curl's own manual says a short
+# option may be used "with or without a space between it and its value".
+_DOWNLOAD_OUTPUT_OPTIONS = {
+    "wget": ("-O", "--output-document"),
+    "curl": ("-o", "--output"),
+}
+
+
+def _shell_tokens(command: str) -> list[str]:
+    """``command`` split into tokens, with shell control operators isolated.
+
+    ``str.split`` sees ``&&``, ``||``, ``;`` and ``|`` only when whitespace surrounds
+    them, but bash does not require it. Review on 2026-09-19: ``wget …&&tar …`` hid
+    both the URL and the tar token, so a forced extraction of a moving download read
+    as clean, and ``tar -xf a;tar -xzf b`` read as ONE invocation, so the second tar's
+    forcing option was attributed to the first tar's archive.
+    """
+    return _SHELL_OPERATOR.sub(r" \1 ", command).split()
+
+
+def _basename(token: str) -> str:
+    """The command name of ``token``, so ``/bin/tar`` is recognised as ``tar``."""
+    return token.strip("\"'").rsplit("/", 1)[-1]
+
+
+def _parse_tar_span(span: list[str]) -> tuple[list[str], str | None]:
+    """One tar invocation's forcing options and the archive it reads.
+
+    The archive comes from ``-f``/``--file`` only. An operand is never read as the
+    archive: without ``-f`` tar reads its default device or stdin, and the operands
+    are member names.
+    """
+    forcing = []
+    archive = None
+    end_of_options = False
+    i = 0
+    while i < len(span):
+        token = span[i]
+        if end_of_options or not token.startswith("-") or token == "-":
+            i += 1
+            continue
+        if token == "--":
+            # Everything after tar's end-of-options marker is an operand, including a
+            # member literally named ``--gzip``.
+            end_of_options = True
+            i += 1
+            continue
+        if token.startswith("--"):
+            name, separator, attached = token.partition("=")
+            if name in _FORCING_LONG:
+                forcing.append(token)
+            if name in _ARCHIVE_LONG:
+                if separator:
+                    archive = attached
+                elif i + 1 < len(span):
+                    i += 1
+                    archive = span[i]
+            i += 1
+            continue
+        cluster = token[1:]
+        forces = False
+        for position, character in enumerate(cluster):
+            if character in _FORCING_SHORT:
+                forces = True
+            if character in _SHORT_WITH_ARGUMENT:
+                attached = cluster[position + 1 :]
+                if character == "f":
+                    if attached:
+                        archive = attached
+                    elif i + 1 < len(span):
+                        i += 1
+                        archive = span[i]
+                elif not attached and i + 1 < len(span):
+                    i += 1
+                # The rest of the cluster is this option's argument, not more flags.
+                break
+        if forces:
+            forcing.append(token)
+        i += 1
+    return forcing, archive
+
+
+def _tar_invocations(command: str) -> list:
+    """Every tar invocation in ``command``, bounded by shell control operators."""
+    invocations = []
+    tokens = _shell_tokens(command)
     i = 0
     while i < len(tokens):
-        if tokens[i] == "tar":
+        if _basename(tokens[i]) != "tar":
             i += 1
-            while i < len(tokens) and tokens[i] not in _SHELL_SEP:
-                token = tokens[i]
-                if token.startswith("--"):
-                    if token.split("=")[0] in _FORCING_LONG:
-                        result.append(token)
-                elif token.startswith("-"):
-                    if any(ch in _FORCING_SHORT for ch in token[1:]):
-                        result.append(token)
-                i += 1
-        else:
+            continue
+        i += 1
+        span = []
+        while i < len(tokens) and tokens[i] not in _SHELL_SEP:
+            span.append(tokens[i])
             i += 1
-    return result
+        invocations.append(_parse_tar_span(span))
+    return invocations
+
+
+def _forced_decompressors(command: str) -> list[str]:
+    """Every forcing option of every tar invocation in ``command``."""
+    return [option for forcing, _ in _tar_invocations(command) for option in forcing]
 
 
 class _ForcedDecompressorScanner:
@@ -110,78 +209,90 @@ def _commands(text: str) -> list:
     return [line for line in joined.splitlines() if line.strip()]
 
 
-def _wget_curl_paths(command: str) -> set:
-    """Extract wget -O / curl -o saved paths from one command; exclude stdout sinks."""
-    result = set()
-    tokens = command.split()
+def _download_invocations(command: str) -> list:
+    """Every wget or curl invocation in ``command`` as ``(saved paths, its tokens)``.
+
+    Pairing each destination with the invocation that wrote it is what keeps a pinned
+    download out of the moving set. Review on 2026-09-19: every destination in a
+    command containing any moving URL was recorded as moving, so
+    ``wget -O /tmp/moving <latest> && wget -O /tmp/pinned <versioned>`` made a correct
+    ``tar -xzf /tmp/pinned`` an offender.
+    """
+    invocations = []
+    tokens = _shell_tokens(command)
     i = 0
     while i < len(tokens):
-        tok = tokens[i]
-        if tok in _SHELL_SEP:
+        name = _basename(tokens[i])
+        options = _DOWNLOAD_OUTPUT_OPTIONS.get(name)
+        if options is None:
             i += 1
             continue
-        if tok == "wget":
-            i += 1
-            while i < len(tokens) and tokens[i] not in _SHELL_SEP:
-                if tokens[i] == "-O":
-                    if i + 1 < len(tokens) and tokens[i + 1] not in _SHELL_SEP:
-                        path = tokens[i + 1].strip("\"'")
-                        if path not in _STDOUT_SINKS:
-                            result.add(path)
-                    i += 2
-                elif tokens[i].startswith("-O") and len(tokens[i]) > 2:
-                    path = tokens[i][2:].strip("\"'")
-                    if path not in _STDOUT_SINKS:
-                        result.add(path)
+        short, long_form = options
+        paths = set()
+        span = []
+        i += 1
+        while i < len(tokens) and tokens[i] not in _SHELL_SEP:
+            token = tokens[i]
+            span.append(token)
+            if token in (short, long_form):
+                if i + 1 < len(tokens) and tokens[i + 1] not in _SHELL_SEP:
                     i += 1
-                else:
-                    i += 1
-        elif tok == "curl":
+                    span.append(tokens[i])
+                    paths.add(tokens[i].strip("\"'"))
+            elif token.startswith(short) and len(token) > len(short):
+                paths.add(token[len(short) :].strip("\"'"))
             i += 1
-            while i < len(tokens) and tokens[i] not in _SHELL_SEP:
-                if tokens[i] in ("-o", "--output"):
-                    if i + 1 < len(tokens) and tokens[i + 1] not in _SHELL_SEP:
-                        path = tokens[i + 1].strip("\"'")
-                        if path not in _STDOUT_SINKS:
-                            result.add(path)
-                    i += 2
-                else:
-                    i += 1
-        else:
-            i += 1
+        invocations.append((paths - _STDOUT_SINKS, " ".join(span)))
+    return invocations
+
+
+def _moving_saved_paths(command: str) -> set:
+    """Paths saved by the MOVING downloads of ``command``, and by no other download."""
+    result = set()
+    for paths, text in _download_invocations(command):
+        if _MOVING_DOWNLOAD.search(text):
+            result |= paths
     return result
 
 
 def _saved_paths(text: str) -> set:
-    """Collect wget/curl saved paths from every moving-download command in text."""
+    """Collect every moving download's saved path across all of ``text``."""
     result = set()
     for command in _commands(text):
-        if _MOVING_DOWNLOAD.search(command):
-            result |= _wget_curl_paths(command)
+        result |= _moving_saved_paths(command)
     return result
 
 
-def _span_contains_path(span: list, saved: set) -> bool:
-    """True when any span token matches a saved path (full path or bare basename)."""
+def _archive_matches_saved(archive, saved: set) -> bool:
+    """True when the archive reference IS a saved path, by full path or by basename.
+
+    Whole-value comparison, not containment. Review on 2026-09-19: ``path in token``
+    made the saved ``/tmp/a`` match a pinned ``/tmp/archive-v1.tar.gz``, and the
+    basename branch made ``a`` match ``a.tar.old``.
+    """
+    if archive is None:
+        return False
+    reference = archive.strip("\"'")
     for path in saved:
-        basename = path.rsplit("/", 1)[-1] if "/" in path else path
-        for tok in span:
-            clean = tok.strip("\"'")
-            if path in clean:
-                return True
-            if "/" not in clean and basename and basename in clean:
-                return True
+        if reference == path:
+            return True
+        if "/" not in reference and reference == path.rsplit("/", 1)[-1]:
+            return True
     return False
 
 
-def _span_is_unresolvable(span: list) -> bool:
-    """True when the archive reference is a shell variable or a stdout sink."""
-    for tok in span:
-        if "$" in tok:
-            return True
-        if tok.strip("\"'") in _STDOUT_SINKS:
-            return True
-    return False
+def _archive_is_unresolvable(archive) -> bool:
+    """True when the guard cannot tell which file this tar reads.
+
+    Only the archive reference is consulted. Review on 2026-09-19: a ``$`` anywhere in
+    the invocation counted, so ``tar -xzf pinned-v1.tar.gz -C "$DEST"`` was called
+    unresolvable because its extraction DIRECTORY was a variable. No ``-f`` at all
+    means tar reads stdin or its default device, which is equally unresolvable.
+    """
+    if archive is None:
+        return True
+    reference = archive.strip("\"'")
+    return "$" in reference or reference in _STDOUT_SINKS
 
 
 def _offenders(text: str) -> list:
@@ -196,27 +307,16 @@ def _offenders(text: str) -> list:
     saved = _saved_paths(text)
     result = []
     for command in _commands(text):
-        tokens = command.split()
-        i = 0
-        while i < len(tokens):
-            if tokens[i] == "tar":
-                i += 1
-                span = []
-                while i < len(tokens) and tokens[i] not in _SHELL_SEP:
-                    span.append(tokens[i])
-                    i += 1
-                forcing = _forced_decompressors("tar " + " ".join(span))
-                if not forcing:
-                    continue
-                if saved and _span_contains_path(span, saved):
-                    result.extend(forcing)
-                    continue
-                if _MOVING_DOWNLOAD.search(command):
-                    cmd_saved = _wget_curl_paths(command)
-                    if not cmd_saved or _span_is_unresolvable(span):
-                        result.extend(forcing)
-            else:
-                i += 1
+        is_moving = bool(_MOVING_DOWNLOAD.search(command))
+        command_saved = _moving_saved_paths(command) if is_moving else set()
+        for forcing, archive in _tar_invocations(command):
+            if not forcing:
+                continue
+            if saved and _archive_matches_saved(archive, saved):
+                result.extend(forcing)
+                continue
+            if is_moving and (not command_saved or _archive_is_unresolvable(archive)):
+                result.extend(forcing)
     return result
 
 
@@ -540,3 +640,170 @@ def test_moving_download_without_saved_path_indicts_own_command_only():
         f"wget with no -O in a prior RUN records no saved path; the guard must not "
         f"guess one and indict the later tar; got {_offenders(separate_run)!r}"
     )
+
+
+class TestTheScannerReadsATarInvocationAsTarDoes:
+    """Review on 2026-09-19 (Codex, eight P2 findings): the scanner read a tar
+    invocation as whitespace-delimited tokens, so an attached option argument, an
+    absolute path to the executable, an attached shell operator and tar's
+    end-of-options marker each produced a wrong verdict — in both directions.
+    """
+
+    _MOVING = '"https://download.mozilla.org/?product=firefox-esr-latest-ssl"'
+
+    def test_an_attached_archive_argument_is_not_read_as_options(self):
+        """``-f`` consumes the remainder of its cluster, so the path is not flags."""
+        assert _forced_decompressors("tar -xf/tmp/firefox.tar.xz") == [], (
+            "the 'z' in the filename is part of -f's argument, not a forcing option; "
+            "GNU tar documents -f as --file=ARCHIVE and extracts the attached form"
+        )
+
+    def test_a_forcing_option_before_the_attached_argument_is_still_read(self):
+        """The characters before ``f`` are still a flag cluster."""
+        assert _forced_decompressors("tar -xjf/tmp/ff.tar.xz"), (
+            "-xjf/tmp/ff.tar.xz forces bzip2 before -f consumes the path; narrowing "
+            "the cluster scan must not drop the forcing option in front of it"
+        )
+
+    def test_an_absolute_path_to_tar_is_recognized(self):
+        """``/bin/tar`` is a tar invocation; the exact-token check skipped it."""
+        text = (
+            f"RUN wget -O /tmp/ff.tar {self._MOVING}\n"
+            "RUN /bin/tar -xzf /tmp/ff.tar\n"
+        )
+        assert _offenders(text), (
+            "/bin/tar -xzf on the saved moving download must be indicted; matching "
+            "the bare token 'tar' also regressed the earlier unanchored regex"
+        )
+
+    def test_an_unrelated_executable_ending_in_tar_is_not_a_tar_invocation(self):
+        """Matching the basename must not widen to any name ending in ``tar``."""
+        text = (
+            f"RUN wget -O /tmp/ff.tar {self._MOVING}\n" "RUN mytar -xzf /tmp/ff.tar\n"
+        )
+        assert (
+            _offenders(text) == []
+        ), "mytar is not tar; basename matching must compare the whole basename"
+
+    def test_an_attached_shell_operator_bounds_the_invocation(self):
+        """Bash runs ``a;b`` without spaces; the scanner must see two invocations.
+
+        The list of forcing options alone cannot tell the two readings apart, so this
+        asserts the attribution: the moving download is extracted correctly by the
+        first tar, and the forcing option belongs to the second, which reads a pinned
+        archive. Scanned as one invocation, the guard hands the second tar's ``-xzf``
+        to the first tar's ``/tmp/moving`` and reports a correct template as broken.
+        """
+        text = (
+            f"RUN wget -O /tmp/moving {self._MOVING} && "
+            "tar -xf /tmp/moving;tar -xzf pinned-v1.tar.gz\n"
+        )
+        assert _offenders(text) == [], (
+            f"the ';' bounds two tar invocations; -xzf belongs to the one reading "
+            f"pinned-v1.tar.gz, not to the one reading the moving download; "
+            f"got {_offenders(text)!r}"
+        )
+        hidden = f"RUN wget -O /tmp/ff.tar {self._MOVING};tar -xzf /tmp/ff.tar\n"
+        assert _offenders(hidden), (
+            "the ';' glued to both neighbours hid the tar token altogether, so a "
+            "forced extraction of the moving download read as clean"
+        )
+
+    def test_an_attached_operator_does_not_hide_a_download_or_a_tar(self):
+        """``wget …&&tar …`` must not swallow the tokens it is glued to."""
+        text = f"RUN wget -O /tmp/ff.tar {self._MOVING}&&tar -xzf /tmp/ff.tar\n"
+        assert _offenders(text), (
+            "&& glued to its neighbours hid both the URL and the tar token, so a "
+            "forced extraction of the moving download read as clean"
+        )
+
+    def test_option_scanning_stops_at_the_end_of_options_marker(self):
+        """Tokens after ``--`` are operands, not options."""
+        assert _forced_decompressors("tar -xf /tmp/moving -- --gzip") == [], (
+            "GNU tar extracts a member literally named --gzip here with format "
+            "auto-detection; after -- the scanner must stop recognizing options"
+        )
+
+
+class TestTheGuardBindsEachArchiveToItsOwnDownload:
+    """The other half of the same review: which file a tar reads, and where it came
+    from. Substring containment, whole-span variable detection and whole-command
+    download collection each turned a correct template red.
+    """
+
+    _MOVING = '"https://download.mozilla.org/?product=firefox-esr-latest-ssl"'
+    _PINNED = '"https://example.invalid/tool-v1.2.3.tar.gz"'
+
+    def test_curl_saves_to_an_attached_short_argument(self):
+        """``curl -o/tmp/x`` is valid curl and must record the saved path."""
+        text = (
+            f"RUN curl -o/tmp/ff.tar.xz {self._MOVING}\n"
+            "RUN tar -xzf /tmp/ff.tar.xz\n"
+        )
+        assert _offenders(text), (
+            "curl's short options take an attached value exactly as wget's -OFILE "
+            "does; an unrecorded saved path leaves the later forced tar undetected"
+        )
+
+    def test_a_saved_path_does_not_match_a_longer_path_that_starts_with_it(self):
+        """``/tmp/a`` is not ``/tmp/archive-v1.tar.gz``."""
+        text = (
+            f"RUN wget -O /tmp/a {self._MOVING}\n"
+            "RUN tar -xzf /tmp/archive-v1.tar.gz\n"
+        )
+        assert _offenders(text) == [], (
+            "substring containment made every path with the saved path as a prefix "
+            "look like the moving download; the archive reference must match whole"
+        )
+
+    def test_a_saved_basename_does_not_match_a_longer_basename(self):
+        """``a`` is not ``a.tar.old``."""
+        text = (
+            f"RUN wget -O /tmp/a {self._MOVING}\n" "RUN cd /tmp && tar -xzf a.tar.old\n"
+        )
+        assert (
+            _offenders(text) == []
+        ), "the basename branch had the same containment defect as the path branch"
+
+    def test_each_saved_path_belongs_to_its_own_download(self):
+        """One RUN, two downloads: only the moving one contributes a saved path."""
+        text = (
+            f"RUN wget -O /tmp/moving {self._MOVING} && "
+            f"wget -O /tmp/pinned {self._PINNED} && tar -xzf /tmp/pinned\n"
+        )
+        assert _offenders(text) == [], (
+            "/tmp/pinned came from a version-pinned URL, so forcing its format is "
+            "correct; collecting every destination in a command that happens to "
+            "contain a moving URL condemns it"
+        )
+
+    def test_a_moving_download_in_the_same_run_still_records_its_path(self):
+        """The pairing must not lose the moving download's own destination."""
+        text = (
+            f"RUN wget -O /tmp/moving {self._MOVING} && "
+            f"wget -O /tmp/pinned {self._PINNED} && tar -xzf /tmp/moving\n"
+        )
+        assert _offenders(text), (
+            "the moving download's destination must still be indicted when a "
+            "pinned download shares the RUN with it"
+        )
+
+    def test_a_variable_outside_the_archive_reference_is_not_unresolvable(self):
+        """``-C "$DEST"`` says nothing about which archive tar reads."""
+        text = (
+            f"RUN wget -O /tmp/ff.tar.xz {self._MOVING} && "
+            "tar -xf /tmp/ff.tar.xz -C /opt && "
+            'tar -xzf pinned-v1.tar.gz -C "$DEST"\n'
+        )
+        assert _offenders(text) == [], (
+            "the second tar reads a pinned literal archive; a variable extraction "
+            "directory must not make it unresolvable"
+        )
+
+    def test_a_variable_archive_reference_is_still_unresolvable(self):
+        """Narrowing the check must keep the case it exists for."""
+        text = f"RUN wget -O /tmp/ff.tar.xz {self._MOVING} && " 'tar -xjf "$FF"\n'
+        assert _offenders(text), (
+            'tar -xjf "$FF" names its archive through a variable; branch 2 must '
+            "still indict it"
+        )

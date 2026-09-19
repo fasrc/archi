@@ -198,3 +198,78 @@ the service templates pre-merge, and none of the templates that fetch this downl
 - `diff-cover` measures `src/` only, so this diff prints *"No lines with coverage
   information"* and clears `--fail-under=80`. Expected. Black and isort **do** cover
   `tests/`, so keep both clean.
+
+## Review round 1 — 2026-09-19 (Codex, eight P2 findings, all verified valid)
+
+Every finding was reproduced against the PR head at `072dac42` before any code moved, and
+each fix was written test-first. The eight share one root cause, so they were closed by one
+rewrite of the helper layer rather than eight patches: the scanner read the command as
+whitespace-delimited TOKENS, where it needed to read it as INVOCATIONS.
+
+### D9 — One parser: `(forcing options, archive reference)` per tar invocation
+
+`_parse_tar_span` replaces the character-scan. It knows three things the token scan did
+not:
+
+- **An option that takes an argument consumes the rest of its cluster.**
+  `tar -xf/tmp/firefox.tar.xz` was reported as forcing xz because the FILENAME contains a
+  `z`. The short options that take an argument are `bCfFgHIKLNTVX`; `-I` is both forcing
+  and argument-taking, so it is recorded before the cluster ends.
+- **`--` ends option recognition.** `tar -xf /tmp/moving -- --gzip` extracts a member
+  literally named `--gzip` with auto-detection; the guard called it forcing.
+- **The archive comes from `-f`/`--file` only.** An operand is never read as the archive:
+  without `-f`, tar reads stdin or its default device, and the operands are member names.
+
+The archive reference is what branch 1 and branch 2 now consult, which is what makes D11
+and D12 possible at all.
+
+### D10 — The executable is matched by basename, and operators are isolated
+
+`tokens[i] == "tar"` skipped `/bin/tar -xzf …` entirely — a regression against the
+unanchored `tar\s+` regex this change replaced. `_basename` fixes it, and a test fences
+the over-widening: `mytar` is not tar.
+
+`str.split()` exposes `&&`, `||`, `;` and `|` only when whitespace surrounds them, but
+bash does not require it. Measured: `wget …&&tar …` hid both the URL and the tar token, so
+a forced extraction of a moving download read as clean; `tar -xf a;tar -xzf b` read as ONE
+invocation, so the second tar's forcing option was attributed to the first tar's archive.
+`_shell_tokens` isolates the operators first, `||` before `|`.
+
+The trade-off, stated rather than implied: an operator inside a quoted string is also
+isolated. That ends a tar span early, which can only lose a forcing option the guard would
+otherwise attribute to a file it cannot prove tar reads — it cannot invent an offender.
+
+### D11 — A saved path belongs to the download invocation that wrote it
+
+`_saved_paths` collected every wget/curl destination in any command containing a moving
+URL. So `wget -O /tmp/moving <latest> && wget -O /tmp/pinned <versioned>` marked
+`/tmp/pinned` as moving and condemned a correct `tar -xzf /tmp/pinned`.
+`_download_invocations` now pairs each destination with its own invocation's tokens, and
+only an invocation whose own text matches `_MOVING_DOWNLOAD` contributes. curl's attached
+short form `-o/tmp/x` is read too — it was handled for wget's `-OFILE` and not for curl's,
+so a moving download written that way recorded no path and left the later forced tar
+undetected.
+
+### D12 — Whole-value matching, and resolvability judged on the archive alone
+
+`path in token` made the saved `/tmp/a` match a pinned `/tmp/archive-v1.tar.gz`, and the
+basename branch made `a` match `a.tar.old`. `_archive_matches_saved` compares whole
+values, keeping the basename branch only for an archive reference carrying no `/`.
+
+`_span_is_unresolvable` scanned the whole span for `$`, so
+`tar -xzf pinned-v1.tar.gz -C "$DEST"` was indicted for a variable naming its extraction
+DIRECTORY. `_archive_is_unresolvable` reads the archive reference only, and keeps the
+conservative default: no `-f` at all means tar reads stdin or its default device, which is
+unresolvable.
+
+### Deliberately not fixed here
+
+Old-style tar syntax (`tar xzf /tmp/f.tar.gz`, no leading dash) is still invisible to the
+scanner: the first operand is the option cluster and nothing treats it as one. No template
+in the repository uses that spelling — all ten dash-prefix their options, measured — so
+this is a widening rather than a fix to a live hole, and it is filed as a follow-up issue
+rather than grown into this diff.
+
+**After the round:** 60 passed, 18 skipped in the file (46 passed, 18 skipped at
+`072dac42`), 16 of 16 cases in the review matrix at their expected verdict, including the
+original `-xjf` defect still indicted and the pinned geckodriver line still clean.
