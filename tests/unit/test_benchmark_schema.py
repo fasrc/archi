@@ -24,11 +24,13 @@ import math
 from src.utils.benchmark_schema import (
     RAGAS_DEFAULT_MAX_WORKERS,
     RAGAS_DEFAULT_TIMEOUT,
+    apply_ragas_run_config,
     bank_status_counts,
     json_safe,
     metric_required_column,
     normalize_bank,
     normalize_record,
+    ragas_effective_settings,
     ragas_run_config_kwargs,
     required_fields_for_modes,
     row_is_eligible,
@@ -643,6 +645,71 @@ def test_run_config_kwargs_rejects_non_positive_and_non_integer_values():
         kwargs = ragas_run_config_kwargs({"timeout": bad, "max_workers": bad})
         assert kwargs["timeout"] == RAGAS_DEFAULT_TIMEOUT, bad
         assert kwargs["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS, bad
+
+
+def test_effective_settings_report_what_the_run_will_use():
+    """Comparing CONFIGURED values misses the two cases that decide comparability.
+
+    An arm that omits ``max_workers`` and an arm that sets 16 explicitly are the
+    same run and must compare equal; an arm that omits it and an arm that sets 4
+    are different runs and must not. Only the effective value says so.
+    """
+    assert ragas_effective_settings({})["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS
+    assert ragas_effective_settings(
+        {"max_workers": RAGAS_DEFAULT_MAX_WORKERS}
+    ) == ragas_effective_settings(
+        {}
+    ), "an explicit default and an absent key describe the same run"
+    assert ragas_effective_settings({"max_workers": 4}) != ragas_effective_settings(
+        {}
+    ), "4 concurrent judge calls is not the same run as 16"
+    assert ragas_effective_settings({"timeout": 600})["timeout"] == 600
+    # An invalid value reports the default it will actually run at, not the typo.
+    assert ragas_effective_settings({"max_workers": 0})["max_workers"] == (
+        RAGAS_DEFAULT_MAX_WORKERS
+    )
+    assert ragas_effective_settings(None)["timeout"] == RAGAS_DEFAULT_TIMEOUT
+    # The two comparison knobs only; nothing that does not affect the scores.
+    assert set(ragas_effective_settings({})) == {"timeout", "max_workers"}
+
+
+def test_apply_run_config_records_the_values_the_run_actually_used():
+    """The substitution must reach the config the artifact serializes.
+
+    ``config_version`` digests the selected configuration. While the fallback
+    lived only in the RunConfig kwargs, a run configured ``timeout: -1``
+    published evidence claiming -1 when it used 180, and two runs that both fell
+    back to the same default carried different digests -- so the artifact could
+    not answer the one question it exists to answer.
+    """
+    settings = {"timeout": -1, "max_workers": "many"}
+    kwargs = apply_ragas_run_config(settings)
+
+    assert kwargs["timeout"] == RAGAS_DEFAULT_TIMEOUT
+    assert kwargs["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS
+    assert (
+        settings["timeout"] == RAGAS_DEFAULT_TIMEOUT
+    ), "the recorded configuration must say what ran, not what was typed"
+    assert settings["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS
+
+    # Two configs that fall back to the same defaults now record the same values,
+    # so their config digests agree -- which is the point.
+    other = {"timeout": 0, "max_workers": -3}
+    apply_ragas_run_config(other)
+    assert other == settings
+
+    # A valid setting is recorded unchanged.
+    valid = {"timeout": 600, "max_workers": 4}
+    apply_ragas_run_config(valid)
+    assert valid == {"timeout": 600, "max_workers": 4}
+
+
+def test_apply_run_config_tolerates_a_none_settings_block():
+    """There is nowhere to record when the block is absent; still returns kwargs."""
+    kwargs = apply_ragas_run_config(None)
+
+    assert kwargs["timeout"] == RAGAS_DEFAULT_TIMEOUT
+    assert kwargs["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS
 
 
 def test_run_config_kwargs_tolerates_a_none_settings_block():

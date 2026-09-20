@@ -41,8 +41,10 @@ from src.utils.benchmark_resilience import (
 )
 from src.utils.benchmark_schema import (
     DEFAULT_ENABLED_METRICS,
+    apply_ragas_run_config,
     json_safe,
     normalize_bank,
+    ragas_effective_settings,
     ragas_run_config_kwargs,
     required_fields_for_modes,
     score_metrics_per_eligibility,
@@ -846,6 +848,11 @@ class ResultHandler:
             "model": set(),
             "provider": set(),
             "evaluator_model": set(),
+            # How hard the judge was pushed. Not cosmetic: concurrency drives the
+            # judge's throttling, throttling drives timeouts, and a timed-out row
+            # leaves the scored denominator -- so arms judged under different
+            # pressure carry aggregates over different question sets.
+            "judge_max_workers": set(),
             "queries_path": set(),
             "corpus_fingerprint": set(),
         }
@@ -965,6 +972,11 @@ class ResultHandler:
             ctx_fields["model"].add(bench.get("model"))
             ctx_fields["provider"].add(bench.get("provider"))
             ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
+            # The EFFECTIVE value, so an arm that omits the key and an arm that
+            # sets the default explicitly compare equal, as they should.
+            ctx_fields["judge_max_workers"].add(
+                ragas_effective_settings(ragas_settings)["max_workers"]
+            )
             ctx_fields["queries_path"].add(bench.get("queries_path"))
             # The corpus is a swept-context field like any other: ranking arms
             # scored against different documents asserts controlled conditions
@@ -1754,7 +1766,7 @@ class Benchmarker:
         # never passed here, so ragas' default of 16 concurrent judge calls
         # applied unannounced. See ragas_run_config_kwargs for why raising
         # `max_retries` is NOT the lever for judge timeouts.
-        runconfig = RunConfig(**ragas_run_config_kwargs(ragas_settings, verbosity))
+        runconfig = RunConfig(**apply_ragas_run_config(ragas_settings, verbosity))
         llm = LangchainLLMWrapper(self.get_ragas_llm_evaluator())
         embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
 

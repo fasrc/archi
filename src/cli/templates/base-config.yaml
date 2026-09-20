@@ -97,7 +97,12 @@ services:
         # the judge with too many parallel calls throttles it, the retries eat
         # the budget, and the row times out unscored -- which is why this is a
         # knob and not ragas' silent default of 16.
-        max_workers: {{ services.benchmarking.mode_settings.ragas_settings.max_workers | default(16, true) }}
+        # A configured 0 must REACH the validator, not be swallowed here: 0 would
+        # stall the executor, and `default(16, true)` treats it as absent, so the
+        # typo would silently run at the high default -- the very condition this
+        # knob exists to reduce. Ternary per this template's numeric-site rule.
+        {%- set v_ragas_max_workers = services.benchmarking.mode_settings.ragas_settings.max_workers %}
+        max_workers: {{ v_ragas_max_workers if v_ragas_max_workers is defined and v_ragas_max_workers is not none else 16 }}
         batch_size: {{ services.benchmarking.mode_settings.ragas_settings.batch_size | default(false, true) }}
         # Judge/SUT split: when these are set, the RAGAS judge LLM is constructed
         # independent of the SUT (services.benchmarking.provider/model). Falls back

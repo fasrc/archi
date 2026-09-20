@@ -540,7 +540,6 @@ _NON_BOOL_DEFAULT_BASELINE = [
     "services.benchmarking.mode_settings.ragas_settings.evaluator_model=''",
     "services.benchmarking.mode_settings.ragas_settings.evaluator_ollama_url=''",
     "services.benchmarking.mode_settings.ragas_settings.evaluator_provider=''",
-    "services.benchmarking.mode_settings.ragas_settings.max_workers=16",
     "services.benchmarking.mode_settings.ragas_settings.timeout=180",
     "services.benchmarking.mode_settings.sources_settings.default_match_field='file_name'",
     "services.benchmarking.model=''",
@@ -654,6 +653,26 @@ def test_guard_default_filter_baseline_is_unchanged():
 # ---------------------------------------------------------------------------
 # Nullable caps — a configured 0 must not become "unlimited"
 # ---------------------------------------------------------------------------
+
+
+def test_judge_concurrency_keeps_a_configured_zero():
+    """0 is invalid for ``max_workers``, and the validator must be the one to say so.
+
+    ``default(16, true)`` treated 0 as absent and rewrote it to 16, so an operator
+    typo ran at the HIGH default concurrency -- the condition the knob exists to
+    reduce -- with none of the warning ``ragas_run_config_kwargs`` promises. The
+    template's job is to render what was configured; rejecting it belongs to
+    ``_positive_int``, which can say what it did and why.
+    """
+    path = "services.benchmarking.mode_settings.ragas_settings.max_workers"
+    cfg = _render(**_expand(path, 0))
+    assert _get(cfg, path) == 0, (
+        "a configured 0 must reach the validator, which substitutes the default "
+        "AND warns; swallowing it here loses the diagnostic"
+    )
+    assert _get(_render(), path) == 16, "absent still renders the default"
+    assert _get(_render(**_expand(path, None)), path) == 16, "explicit null too"
+    assert _get(_render(**_expand(path, 4)), path) == 4, "a real value is unchanged"
 
 
 def test_nullable_zero_caps_are_not_replaced_by_null():

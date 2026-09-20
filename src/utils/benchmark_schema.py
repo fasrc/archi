@@ -660,6 +660,46 @@ def ragas_run_config_kwargs(
     }
 
 
+def ragas_effective_settings(
+    ragas_settings: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """The two judge knobs a run WILL actually use, defaults already substituted.
+
+    Read by anything that has to compare runs rather than start one. A knob that
+    changes how hard the judge is pushed changes the missing-score rate, and a
+    missing score changes the denominator every aggregate is divided by -- so two
+    arms judged under different pressure are not comparable, whatever else
+    matched. Comparing the CONFIGURED values would miss exactly the case that
+    matters: one arm setting the default explicitly and another leaving it out
+    are the same run, while an unset arm and an arm set to 4 are not.
+    """
+    kwargs = ragas_run_config_kwargs(ragas_settings)
+    return {"timeout": kwargs["timeout"], "max_workers": kwargs["max_workers"]}
+
+
+def apply_ragas_run_config(
+    ragas_settings: Optional[Dict[str, Any]], verbosity: int = 0
+) -> Dict[str, Any]:
+    """``ragas_run_config_kwargs``, and record the effective values back on the config.
+
+    ``_positive_int`` substitutes a default for an invalid setting, and without
+    this the substitution reached ``RunConfig`` and nothing else: the artifact
+    still serialized the selected configuration verbatim and derived its
+    config-version digest from it. A run configured ``timeout: -1`` therefore
+    published evidence claiming it used -1 when it used 180, and two runs that
+    both fell back to the same default carried different digests. Provenance has
+    to describe the run that happened, so the normalized values are written where
+    ``config_version`` will read them.
+
+    Writes only when handed a real mapping; ``None`` has nowhere to record.
+    """
+    kwargs = ragas_run_config_kwargs(ragas_settings, verbosity)
+    if isinstance(ragas_settings, dict):
+        ragas_settings["timeout"] = kwargs["timeout"]
+        ragas_settings["max_workers"] = kwargs["max_workers"]
+    return kwargs
+
+
 def json_safe(value: Any) -> Any:
     """A deep COPY of ``value`` with every non-finite float replaced by ``None``.
 

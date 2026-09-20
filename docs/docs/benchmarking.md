@@ -109,6 +109,7 @@ services:
 | `out_dir` | — | Output directory for results (must exist) |
 | `modes` | — | List of evaluation modes (`RAGAS`, `SOURCES`) |
 | `mode_settings.ragas_settings.timeout` | `180` | Max seconds per QA pair for RAGAS evaluation |
+| `mode_settings.ragas_settings.max_workers` | `16` | Concurrent RAGAS judge calls. Lower it when the judge throttles: ragas wraps each row in one `timeout` budget with its retries inside, so throttling spends the budget and loses the score. Must be a positive integer; anything else falls back to the default with a warning |
 | `mode_settings.ragas_settings.batch_size` | Ragas default | Number of QA pairs to evaluate at once |
 
 `archi evaluate` now requires benchmark runtime fields under `services.benchmarking`.
