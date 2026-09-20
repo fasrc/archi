@@ -41,7 +41,6 @@ from src.utils.benchmark_resilience import (
 )
 from src.utils.benchmark_schema import (
     DEFAULT_ENABLED_METRICS,
-    apply_ragas_run_config,
     json_safe,
     normalize_bank,
     ragas_effective_settings,
@@ -439,6 +438,24 @@ class ResultHandler:
             # hand. This digest answers the other question -- "was this the same
             # configuration as that other run?" -- from the finished artifact
             # alone, long after Postgres has moved on.
+            # What the judge ACTUALLY ran with, recorded BESIDE the configuration
+            # as written rather than folded into it. The validators substitute a
+            # default for an invalid setting, and that substitution reached
+            # RunConfig and nothing else -- so an artifact recorded `timeout: -1`
+            # for a run that used 180. Normalizing `configuration` in place would
+            # fix that by falsifying the other half of the record;
+            # asserted_config_divergence exists to keep "what was selected" and
+            # "what happened" separable, so both are kept. Recomputed from the
+            # file just read: the helper is pure, so nothing has to be plumbed
+            # through from the Benchmarker.
+            "ragas_effective_settings": ragas_effective_settings(
+                (
+                    ((config.get("services") or {}).get("benchmarking") or {}).get(
+                        "mode_settings"
+                    )
+                    or {}
+                ).get("ragas_settings")
+            ),
             "config_version": config_version(
                 running=running_config,
                 selected=config,
@@ -848,11 +865,16 @@ class ResultHandler:
             "model": set(),
             "provider": set(),
             "evaluator_model": set(),
-            # How hard the judge was pushed. Not cosmetic: concurrency drives the
-            # judge's throttling, throttling drives timeouts, and a timed-out row
-            # leaves the scored denominator -- so arms judged under different
-            # pressure carry aggregates over different question sets.
+            # How hard the judge was pushed, and how long each row was given.
+            # Not cosmetic: concurrency drives the judge's throttling, throttling
+            # spends the one timeout budget that covers every retry, and a row
+            # that runs out of budget comes back unscored -- leaving the scored
+            # denominator. Arms judged under different pressure therefore carry
+            # aggregates over different question sets. Both knobs, not just the
+            # new one: singling out max_workers would leave the same hole open
+            # one field along.
             "judge_max_workers": set(),
+            "judge_timeout": set(),
             "queries_path": set(),
             "corpus_fingerprint": set(),
         }
@@ -974,9 +996,9 @@ class ResultHandler:
             ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
             # The EFFECTIVE value, so an arm that omits the key and an arm that
             # sets the default explicitly compare equal, as they should.
-            ctx_fields["judge_max_workers"].add(
-                ragas_effective_settings(ragas_settings)["max_workers"]
-            )
+            judge_pressure = ragas_effective_settings(ragas_settings)
+            ctx_fields["judge_max_workers"].add(judge_pressure["max_workers"])
+            ctx_fields["judge_timeout"].add(judge_pressure["timeout"])
             ctx_fields["queries_path"].add(bench.get("queries_path"))
             # The corpus is a swept-context field like any other: ranking arms
             # scored against different documents asserts controlled conditions
@@ -1766,7 +1788,7 @@ class Benchmarker:
         # never passed here, so ragas' default of 16 concurrent judge calls
         # applied unannounced. See ragas_run_config_kwargs for why raising
         # `max_retries` is NOT the lever for judge timeouts.
-        runconfig = RunConfig(**apply_ragas_run_config(ragas_settings, verbosity))
+        runconfig = RunConfig(**ragas_run_config_kwargs(ragas_settings, verbosity))
         llm = LangchainLLMWrapper(self.get_ragas_llm_evaluator())
         embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
 

@@ -24,7 +24,6 @@ import math
 from src.utils.benchmark_schema import (
     RAGAS_DEFAULT_MAX_WORKERS,
     RAGAS_DEFAULT_TIMEOUT,
-    apply_ragas_run_config,
     bank_status_counts,
     json_safe,
     metric_required_column,
@@ -640,11 +639,22 @@ def test_run_config_kwargs_rejects_non_positive_and_non_integer_values():
     time out instantly; both are worse failures than ignoring the operator. A
     bool is rejected too: ``True`` is an ``int`` in Python and would otherwise
     silently become one worker.
+
+    The two knobs do NOT share a contract. ``timeout`` is a duration handed to
+    ``asyncio.wait_for``, so any positive finite number is valid; ``max_workers``
+    is a count, so it must be a positive int. Rejecting a float for both would
+    have narrowed a ``timeout: 300.0`` that worked before this validation
+    existed -- see ``test_a_float_timeout_is_still_accepted``.
     """
-    for bad in (0, -1, "many", None, 2.5, True):
+    for bad in (0, -1, "many", None, True):
         kwargs = ragas_run_config_kwargs({"timeout": bad, "max_workers": bad})
         assert kwargs["timeout"] == RAGAS_DEFAULT_TIMEOUT, bad
         assert kwargs["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS, bad
+
+    # A fractional worker count is meaningless; a fractional duration is not.
+    split = ragas_run_config_kwargs({"timeout": 2.5, "max_workers": 2.5})
+    assert split["timeout"] == 2.5
+    assert split["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS
 
 
 def test_effective_settings_report_what_the_run_will_use():
@@ -673,43 +683,27 @@ def test_effective_settings_report_what_the_run_will_use():
     assert set(ragas_effective_settings({})) == {"timeout", "max_workers"}
 
 
-def test_apply_run_config_records_the_values_the_run_actually_used():
-    """The substitution must reach the config the artifact serializes.
+def test_a_float_timeout_is_still_accepted():
+    """``timeout`` is a duration, not a count, and a float worked before this knob.
 
-    ``config_version`` digests the selected configuration. While the fallback
-    lived only in the RunConfig kwargs, a run configured ``timeout: -1``
-    published evidence claiming -1 when it used 180, and two runs that both fell
-    back to the same default carried different digests -- so the artifact could
-    not answer the one question it exists to answer.
+    ragas hands it to ``asyncio.wait_for``, which takes a float, and the previous
+    code passed ``ragas_settings["timeout"]`` through untouched. Validating it as
+    an ``int`` would have silently downgraded a working ``timeout: 300.0`` to the
+    default -- a narrowing introduced by the validation, not by the operator.
     """
-    settings = {"timeout": -1, "max_workers": "many"}
-    kwargs = apply_ragas_run_config(settings)
-
-    assert kwargs["timeout"] == RAGAS_DEFAULT_TIMEOUT
-    assert kwargs["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS
+    assert ragas_run_config_kwargs({"timeout": 300.0})["timeout"] == 300.0
+    assert ragas_run_config_kwargs({"timeout": 0.5})["timeout"] == 0.5
+    # A worker count has no fractional meaning and stays strict.
     assert (
-        settings["timeout"] == RAGAS_DEFAULT_TIMEOUT
-    ), "the recorded configuration must say what ran, not what was typed"
-    assert settings["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS
-
-    # Two configs that fall back to the same defaults now record the same values,
-    # so their config digests agree -- which is the point.
-    other = {"timeout": 0, "max_workers": -3}
-    apply_ragas_run_config(other)
-    assert other == settings
-
-    # A valid setting is recorded unchanged.
-    valid = {"timeout": 600, "max_workers": 4}
-    apply_ragas_run_config(valid)
-    assert valid == {"timeout": 600, "max_workers": 4}
-
-
-def test_apply_run_config_tolerates_a_none_settings_block():
-    """There is nowhere to record when the block is absent; still returns kwargs."""
-    kwargs = apply_ragas_run_config(None)
-
-    assert kwargs["timeout"] == RAGAS_DEFAULT_TIMEOUT
-    assert kwargs["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS
+        ragas_run_config_kwargs({"max_workers": 2.5})["max_workers"]
+        == RAGAS_DEFAULT_MAX_WORKERS
+    )
+    # Neither NaN nor infinity is a duration.
+    for bad in (float("nan"), float("inf"), -0.5, True):
+        assert (
+            ragas_run_config_kwargs({"timeout": bad})["timeout"]
+            == RAGAS_DEFAULT_TIMEOUT
+        ), bad
 
 
 def test_run_config_kwargs_tolerates_a_none_settings_block():

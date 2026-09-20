@@ -628,6 +628,37 @@ def _positive_int(value: Any, default: int, name: str) -> int:
     return value
 
 
+def _positive_number(value: Any, default: int, name: str) -> Any:
+    """Accept any positive finite number, else fall back to ``default`` and say so.
+
+    ``timeout`` is a duration, not a count: ragas hands it to
+    ``asyncio.wait_for``, which takes a float, and before this knob was
+    validated a configured ``300.0`` reached ``RunConfig`` and worked. Demanding
+    an ``int`` here would silently downgrade that working config to the default
+    -- a narrowing introduced by the validation rather than by the operator.
+    ``max_workers`` keeps the stricter ``_positive_int``: a fractional worker
+    count has no meaning.
+
+    ``bool`` is excluded for the same reason as in ``_positive_int``, and a NaN
+    or infinity is rejected because neither is a duration.
+    """
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        if value is not None:
+            logger.warning(
+                "Ignoring ragas_settings.%s=%r (want a positive number); using %d",
+                name,
+                value,
+                default,
+            )
+        return default
+    return value
+
+
 def ragas_run_config_kwargs(
     ragas_settings: Optional[Dict[str, Any]], verbosity: int = 0
 ) -> Dict[str, Any]:
@@ -648,7 +679,7 @@ def ragas_run_config_kwargs(
     """
     settings = ragas_settings or {}
     return {
-        "timeout": _positive_int(
+        "timeout": _positive_number(
             settings.get("timeout"), RAGAS_DEFAULT_TIMEOUT, "timeout"
         ),
         "max_workers": _positive_int(
@@ -675,29 +706,6 @@ def ragas_effective_settings(
     """
     kwargs = ragas_run_config_kwargs(ragas_settings)
     return {"timeout": kwargs["timeout"], "max_workers": kwargs["max_workers"]}
-
-
-def apply_ragas_run_config(
-    ragas_settings: Optional[Dict[str, Any]], verbosity: int = 0
-) -> Dict[str, Any]:
-    """``ragas_run_config_kwargs``, and record the effective values back on the config.
-
-    ``_positive_int`` substitutes a default for an invalid setting, and without
-    this the substitution reached ``RunConfig`` and nothing else: the artifact
-    still serialized the selected configuration verbatim and derived its
-    config-version digest from it. A run configured ``timeout: -1`` therefore
-    published evidence claiming it used -1 when it used 180, and two runs that
-    both fell back to the same default carried different digests. Provenance has
-    to describe the run that happened, so the normalized values are written where
-    ``config_version`` will read them.
-
-    Writes only when handed a real mapping; ``None`` has nowhere to record.
-    """
-    kwargs = ragas_run_config_kwargs(ragas_settings, verbosity)
-    if isinstance(ragas_settings, dict):
-        ragas_settings["timeout"] = kwargs["timeout"]
-        ragas_settings["max_workers"] = kwargs["max_workers"]
-    return kwargs
 
 
 def json_safe(value: Any) -> Any:

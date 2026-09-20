@@ -56,6 +56,67 @@ CHAIN_CONFIG = {
 }
 
 
+def _ragas_config(**settings):
+    return {
+        "services": {
+            "benchmarking": {"mode_settings": {"ragas_settings": dict(settings)}}
+        }
+    }
+
+
+def test_records_the_judge_settings_the_run_actually_used(tmp_path):
+    """An invalid judge setting is substituted; the artifact must say what ran.
+
+    The validators replace a bad ``timeout`` or ``max_workers`` with the default
+    on the way into ``RunConfig``, and that substitution reached ragas and
+    nothing else -- so a run configured ``timeout: -1`` published evidence
+    claiming -1 when it used 180, and two runs that fell back from different
+    typos carried different config digests while behaving identically.
+
+    Writing the normalized values back over the in-memory config does NOT fix
+    this: ``handle_results`` re-reads the selected file from disk, so it never
+    sees such a mutation. The effective values have to be recorded here.
+    """
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=-1, max_workers="many")),
+        {},
+        {},
+        running_config=None,
+    )
+
+    record = ResultHandler.results[0]
+    assert record["ragas_effective_settings"] == {"timeout": 180, "max_workers": 16}
+    # The configuration as SELECTED is kept verbatim beside it. Normalizing it in
+    # place would fix the record of what ran by falsifying the record of what was
+    # asked for, and asserted_config_divergence exists to keep the two apart.
+    selected = record["configuration"]["services"]["benchmarking"]["mode_settings"]
+    assert selected["ragas_settings"] == {"timeout": -1, "max_workers": "many"}
+
+
+def test_effective_judge_settings_are_recorded_for_a_valid_config(tmp_path):
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+    )
+
+    assert ResultHandler.results[0]["ragas_effective_settings"] == {
+        "timeout": 600,
+        "max_workers": 4,
+    }
+
+
+def test_effective_judge_settings_survive_a_config_with_no_ragas_block(tmp_path):
+    """A benchmark run with no ragas settings still records the defaults it used."""
+    ResultHandler.handle_results(_write(tmp_path, {}), {}, {}, running_config=None)
+
+    assert ResultHandler.results[0]["ragas_effective_settings"] == {
+        "timeout": 180,
+        "max_workers": 16,
+    }
+
+
 def test_records_the_configuration_the_chain_held(tmp_path):
     ResultHandler.handle_results(
         _write(tmp_path, FILE_CONFIG), {}, {}, running_config=CHAIN_CONFIG
