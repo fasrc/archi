@@ -26,6 +26,7 @@ had been unbuildable on ``dev`` for as long as Mozilla has served xz.
 """
 
 import re
+from typing import NamedTuple
 
 import pytest
 
@@ -166,6 +167,18 @@ _DOWNLOAD_SHORT_WITH_ARGUMENT = {
     "wget": frozenset("aABDeiIloOPQRtTUwX"),
     "curl": frozenset("AbcCdDeEFHKmoPQrtTuUwxXyYz"),
 }
+
+# A bare word curl or wget would read as a URL. The scheme identifies it; a bare word
+# without one — an unmodelled long option's argument such as ``--header "Accept: x"``
+# — means the guard cannot pair outputs with transfers and reads the invocation whole.
+_URL_LIKE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+
+
+class _Download(NamedTuple):
+    """One wget or curl invocation: what it wrote, and its arguments for the URL check."""
+
+    writes: dict  # saved path -> True when the transfer that wrote it is moving
+    text: str
 
 
 def _shell_tokens(command: str) -> list[str]:
@@ -473,68 +486,115 @@ def _commands(text: str) -> list:
     return [line for line in joined.splitlines() if line.strip()]
 
 
-def _download_invocations(command: str) -> list:
-    """Every wget or curl invocation in ``command`` as ``(saved paths, its tokens)``.
+def _parse_download(name: str, span: list[str]) -> _Download:
+    """One wget or curl invocation's writes, each paired with the transfer that made it.
 
     Every spelling of the destination option is read: spaced (``-O /tmp/x``), attached
-    short (``-O/tmp/x``), spaced long (``--output-document /tmp/x``) and attached long
-    (``--output-document=/tmp/x``). Round 2 on 2026-09-19 found the attached long form
-    missing, which loses the saved path silently — and branch 2 only reaches within the
-    download's own command, so a forced extraction in a LATER RUN then read as clean.
+    short (``-O/tmp/x``), clustered (``-qO /tmp/x``, ``-sLo/tmp/x``), spaced long
+    (``--output-document /tmp/x``) and attached long (``--output-document=/tmp/x``).
+    Round 2 on 2026-09-19 found the attached long form missing, which loses the saved
+    path silently — and branch 2 only reaches within the download's own command, so a
+    forced extraction in a LATER RUN then read as clean.
 
-    Pairing each destination with the invocation that wrote it is what keeps a pinned
-    download out of the moving set. Review on 2026-09-19: every destination in a
-    command containing any moving URL was recorded as moving, so
-    ``wget -O /tmp/moving <latest> && wget -O /tmp/pinned <versioned>`` made a correct
-    ``tar -xzf /tmp/pinned`` an offender.
+    wget's ``-O`` names ONE file for every URL of the invocation, so that file is
+    moving when any URL is. curl pairs its ``-o`` options with its URLs in order —
+    ``curl --manual``: the first ``-o`` corresponds to the first URL — so
+    ``curl -o /tmp/moving <latest> -o /tmp/pinned <versioned>`` marks only
+    ``/tmp/moving``; curl's ``-O`` is a transfer whose destination the guard does not
+    know. Review on 2026-09-20: both destinations were marked from the invocation's
+    whole text. The pairing is trusted only when every bare word is a URL; otherwise
+    the invocation is read whole, the conservative reading the guard used before.
     """
-    invocations = []
-    for name, span in _named_commands(command):
-        options = _DOWNLOAD_OUTPUT_OPTIONS.get(name)
-        if options is None:
-            continue
-        output_letter, long_form = options
-        with_argument = _DOWNLOAD_SHORT_WITH_ARGUMENT[name]
-        paths = set()
-        i = 0
-        while i < len(span):
-            word = span[i]
-            if word == long_form:
-                if i + 1 < len(span):
-                    i += 1
-                    paths.add(span[i])
-            elif word.startswith(f"{long_form}="):
-                paths.add(word[len(long_form) + 1 :])
-            elif word.startswith("-") and word != "-" and not word.startswith("--"):
-                # A short-option cluster: value-less flags until the first option
-                # that takes an argument, which consumes the rest of the cluster
-                # or, when nothing is attached, the next word.
-                cluster = word[1:]
-                for offset, character in enumerate(cluster):
-                    if character not in with_argument:
-                        continue
-                    attached = cluster[offset + 1 :]
-                    if character == output_letter:
-                        if attached:
-                            paths.add(attached)
-                        elif i + 1 < len(span):
-                            i += 1
-                            paths.add(span[i])
-                    elif not attached and i + 1 < len(span):
+    output_letter, long_form = _DOWNLOAD_OUTPUT_OPTIONS[name]
+    with_argument = _DOWNLOAD_SHORT_WITH_ARGUMENT[name]
+    remote_name = "O" if name == "curl" else None
+    outputs: list = (
+        []
+    )  # one entry per transfer that names a destination; None = unknown
+    urls: list[str] = []
+    paired = True
+    i = 0
+    while i < len(span):
+        word = span[i]
+        if word == long_form:
+            if i + 1 < len(span):
+                i += 1
+                outputs.append(span[i])
+        elif word.startswith(f"{long_form}="):
+            outputs.append(word[len(long_form) + 1 :])
+        elif word == "--remote-name":
+            outputs.append(None)
+        elif word.startswith("-") and word != "-" and not word.startswith("--"):
+            # A short-option cluster: value-less flags until the first option that
+            # takes an argument, which consumes the rest of the cluster or, when
+            # nothing is attached, the next word.
+            cluster = word[1:]
+            for offset, character in enumerate(cluster):
+                if character == remote_name:
+                    outputs.append(None)
+                if character not in with_argument:
+                    continue
+                attached = cluster[offset + 1 :]
+                if character == output_letter:
+                    if attached:
+                        outputs.append(attached)
+                    elif i + 1 < len(span):
                         i += 1
-                    break
-            i += 1
-        invocations.append((paths - _STDOUT_SINKS, " ".join(span)))
-    return invocations
+                        outputs.append(span[i])
+                elif not attached and i + 1 < len(span):
+                    i += 1
+                break
+        elif not word.startswith("-"):
+            urls.append(word)
+            paired = paired and bool(_URL_LIKE.match(word))
+        i += 1
+    text = " ".join(span)
+    if name == "curl" and paired:
+        transfers = [
+            (path, bool(_MOVING_DOWNLOAD.search(url)))
+            for path, url in zip(outputs, urls)
+        ]
+    else:
+        whole = bool(_MOVING_DOWNLOAD.search(text))
+        transfers = [(path, whole) for path in outputs]
+    writes = {
+        path: moving
+        for path, moving in transfers
+        if path is not None and path not in _STDOUT_SINKS
+    }
+    return _Download(writes, text)
+
+
+def _download_invocations(command: str) -> list:
+    """Every wget or curl invocation in ``command`` as a :class:`_Download`."""
+    return [
+        _parse_download(name, arguments)
+        for name, arguments in _named_commands(command)
+        if name in _DOWNLOAD_OUTPUT_OPTIONS
+    ]
 
 
 def _moving_saved_paths(command: str) -> set:
-    """Paths saved by the MOVING downloads of ``command``, and by no other download."""
-    result = set()
-    for paths, text in _download_invocations(command):
-        if _MOVING_DOWNLOAD.search(text):
-            result |= paths
-    return result
+    """Paths saved by the MOVING transfers of ``command``, and by no other download."""
+    return {
+        path
+        for download in _download_invocations(command)
+        for path, moving in download.writes.items()
+        if moving
+    }
+
+
+def _invocations(command: str):
+    """Every tar and download invocation of ``command``, in the order the shell runs them.
+
+    A tar invocation is its ``(forcing options, archive)`` pair; a download is a
+    :class:`_Download`.
+    """
+    for name, arguments in _named_commands(command):
+        if name == "tar":
+            yield _parse_tar_span(arguments)
+        elif name in _DOWNLOAD_OUTPUT_OPTIONS:
+            yield _parse_download(name, arguments)
 
 
 def _archive_matches_saved(archive, saved: set) -> bool:
@@ -572,8 +632,14 @@ def _archive_is_unresolvable(archive) -> bool:
 def _offenders(text: str) -> list:
     """Forcing options on tar invocations that extract a moving download.
 
+    Provenance follows Dockerfile order: each download's writes are recorded as the
+    shell reaches them, a later write to the same path replaces the earlier one, and a
+    tar is judged by what its archive held at that moment. Review on 2026-09-20: one
+    file-wide set collected before any command was scanned let a LATER moving write
+    indict an EARLIER extraction, and never let a pinned write clear a moving path.
+
     Three branches decide each forcing invocation:
-    1. A known saved path appears in the invocation's token span — indict.
+    1. Its archive is a path a moving download had written by then — indict.
     2. The invocation shares a command with a moving download and the guard
        cannot resolve which file it reads — indict conservatively.
     3. Otherwise — clean.
@@ -588,16 +654,19 @@ def _offenders(text: str) -> list:
             result.append(f"unparseable command {command.strip()!r}: {exc}")
         else:
             commands.append(command)
-    saved = set()
-    for command in commands:
-        saved |= _moving_saved_paths(command)
+    provenance: dict = {}  # saved path -> True while a moving download's file is there
     for command in commands:
         is_moving = bool(_MOVING_DOWNLOAD.search(command))
         command_saved = _moving_saved_paths(command) if is_moving else set()
-        for forcing, archive in _tar_invocations(command):
+        for invocation in _invocations(command):
+            if isinstance(invocation, _Download):
+                provenance.update(invocation.writes)
+                continue
+            forcing, archive = invocation
             if not forcing:
                 continue
-            if saved and _archive_matches_saved(archive, saved):
+            moving_paths = {path for path, moving in provenance.items() if moving}
+            if _archive_matches_saved(archive, moving_paths):
                 result.extend(forcing)
                 continue
             if is_moving and (not command_saved or _archive_is_unresolvable(archive)):
@@ -1286,4 +1355,117 @@ class TestTheScannerReadsTheCommandAsTheShellDoes:
             f"{spelling!r} runs tar on the saved moving download — after a control "
             f"operator, behind an assignment or a wrapper, inside a shell -c string, "
             f"or after the RUN instruction's own flags — and must still be reported"
+        )
+
+
+class TestProvenanceFollowsDockerfileOrder:
+    """Review round 3 on 2026-09-20: where a file came from was decided file-wide and
+    per invocation, not per write and per transfer. A later write marked an earlier
+    extraction, a later pinned write never cleared a moving path, and one curl with
+    two transfers marked both destinations from the invocation's text.
+    """
+
+    _MOVING = '"https://download.mozilla.org/?product=firefox-esr-latest-ssl"'
+    _PINNED = '"https://example.invalid/tool-v1.2.3.tar.gz"'
+
+    def test_a_later_moving_write_does_not_indict_an_earlier_extraction(self):
+        """The file tar read in RUN 1 did not yet come from the moving download."""
+        text = (
+            f"RUN wget -O /tmp/a {self._PINNED} && tar -xzf /tmp/a\n"
+            f"RUN wget -O /tmp/a {self._MOVING}\n"
+        )
+        assert _offenders(text) == [], (
+            f"/tmp/a held the pinned download when tar read it; a write in a LATER "
+            f"RUN cannot change what was extracted; got {_offenders(text)!r}"
+        )
+        reordered = (
+            f"RUN wget -O /tmp/a {self._MOVING}\n"
+            f"RUN wget -O /tmp/b {self._PINNED} && tar -xzf /tmp/a\n"
+        )
+        assert _offenders(
+            reordered
+        ), "the same write BEFORE the extraction is the defect and stays reported"
+
+    def test_a_later_pinned_write_clears_the_moving_provenance(self):
+        """A path overwritten by a pinned download no longer holds the moving file."""
+        text = (
+            f"RUN wget -O /tmp/a {self._MOVING}\n"
+            f"RUN wget -O /tmp/a {self._PINNED} && tar -xzf /tmp/a\n"
+        )
+        assert _offenders(text) == [], (
+            f"the pinned download replaced /tmp/a before tar read it; a one-way "
+            f"moving set never forgets a path; got {_offenders(text)!r}"
+        )
+        one_run = (
+            f"RUN wget -O /tmp/a {self._MOVING} && tar -xf /tmp/a && "
+            f"wget -O /tmp/a {self._PINNED} && tar -xzf /tmp/a\n"
+        )
+        assert (
+            _offenders(one_run) == []
+        ), f"the same sequence inside one RUN is clean too; got {_offenders(one_run)!r}"
+
+    def test_a_write_after_the_extraction_in_the_same_run_is_not_its_source(self):
+        """Within one RUN the shell runs left to right, and so does provenance."""
+        text = f"RUN tar -xzf /tmp/a && wget -O /tmp/a {self._MOVING}\n"
+        assert _offenders(text) == [], (
+            f"tar read /tmp/a before the moving download wrote it; got "
+            f"{_offenders(text)!r}"
+        )
+
+    def test_each_curl_transfer_pairs_with_its_own_output(self):
+        """``curl -o A <url1> -o B <url2>``: the first ``-o`` belongs to the first URL."""
+        same_run = (
+            f"RUN curl -o /tmp/moving {self._MOVING} -o /tmp/pinned {self._PINNED} "
+            "&& tar -xzf /tmp/pinned\n"
+        )
+        assert _offenders(same_run) == [], (
+            f"/tmp/pinned received the version-pinned URL; marking both destinations "
+            f"from the invocation's text condemned it; got {_offenders(same_run)!r}"
+        )
+        later_pinned = (
+            f"RUN curl -o /tmp/moving {self._MOVING} -o /tmp/pinned {self._PINNED}\n"
+            "RUN tar -xzf /tmp/pinned\n"
+        )
+        assert _offenders(later_pinned) == [], (
+            f"the pinned destination stays pinned in a later RUN too; got "
+            f"{_offenders(later_pinned)!r}"
+        )
+        for extraction in (
+            f"RUN curl -o /tmp/moving {self._MOVING} -o /tmp/pinned {self._PINNED}\n"
+            "RUN tar -xzf /tmp/moving\n",
+            f"RUN curl -o /tmp/pinned {self._PINNED} -o /tmp/moving {self._MOVING} "
+            "&& tar -xzf /tmp/moving\n",
+        ):
+            assert _offenders(extraction), (
+                "the destination paired with the moving URL is still reported, "
+                "whichever transfer comes first"
+            )
+
+    def test_an_unpaired_curl_invocation_is_read_conservatively(self):
+        """A bare word that is not a URL breaks the pairing; every destination is moving.
+
+        ``--header`` takes a separate argument the guard does not model, so ``Accept:
+        x`` is left as a bare word. Pairing outputs with words positionally would hand
+        ``/tmp/moving`` to the header text and read it as pinned — the silent skip
+        this file exists to prevent. When the pairing cannot be trusted, the whole
+        invocation's moving-ness applies, exactly as before this round.
+        """
+        text = (
+            f'RUN curl --header "Accept: application/octet-stream" '
+            f"-o /tmp/moving {self._MOVING}\n"
+            "RUN tar -xzf /tmp/moving\n"
+        )
+        assert _offenders(text), (
+            "the header text is not a URL, so the pairing is untrusted and the "
+            "moving URL in the invocation marks /tmp/moving moving"
+        )
+
+    def test_wget_collects_every_url_into_its_one_output(self):
+        """``wget -O FILE url1 url2`` concatenates both into FILE."""
+        text = (
+            f"RUN wget -O /tmp/all {self._PINNED} {self._MOVING} && tar -xzf /tmp/all\n"
+        )
+        assert _offenders(text), (
+            "wget's -O names ONE file for every URL, so a moving URL anywhere in the "
+            "invocation makes that file moving"
         )
