@@ -168,9 +168,72 @@ _DOWNLOAD_SHORT_WITH_ARGUMENT = {
     "curl": frozenset("AbcCdDeEFHKmoPQrtTuUwxXyYz"),
 }
 
+# curl's long options by arity, measured from ``curl --help all`` (curl 8.21.0): the
+# entries shown with an ``<argument>`` take one, the rest take none (``--help`` omitted,
+# its subject is optional). ``--output``, ``--remote-name`` and ``--url`` name a
+# transfer's destination or the transfer itself and are handled by name first.
+# Adversarial pass on 2026-09-20: ``curl --header https://… -o /tmp/moving <latest>``
+# paired the header's URL-shaped value with ``-o`` and read the moving destination as
+# pinned. A long option in neither table has unknown arity, which disables the pairing.
+_CURL_LONG_WITH_ARGUMENT = frozenset(
+    """
+    --abstract-unix-socket --alt-svc --aws-sigv4 --cacert --capath --cert --cert-type
+    --ciphers --config --connect-timeout --connect-to --continue-at --cookie --cookie-jar
+    --create-file-mode --crlfile --curves --data --data-ascii --data-binary --data-raw
+    --data-urlencode --delegation --dns-interface --dns-ipv4-addr --dns-ipv6-addr
+    --dns-servers --doh-url --dump-header --ech --egd-file --engine --etag-compare
+    --etag-save --expect100-timeout --form --form-string --ftp-account
+    --ftp-alternative-to-user --ftp-method --ftp-port --ftp-ssl-ccc-mode
+    --happy-eyeballs-timeout-ms --haproxy-clientip --header --hostpubmd5 --hostpubsha256
+    --hsts --interface --ipfs-gateway --ip-tos --json --keepalive-cnt --keepalive-time
+    --key --key-type --knownhosts --krb --libcurl --limit-rate --local-port
+    --login-options --mail-auth --mail-from --mail-rcpt --max-filesize --max-redirs
+    --max-time --netrc-file --noproxy --oauth2-bearer --output --output-dir
+    --parallel-max --parallel-max-host --pass --pinnedpubkey --preproxy --proto
+    --proto-default --proto-redir --proxy --proxy1.0 --proxy-cacert --proxy-capath
+    --proxy-cert --proxy-cert-type --proxy-ciphers --proxy-crlfile --proxy-header
+    --proxy-key --proxy-key-type --proxy-pass --proxy-pinnedpubkey --proxy-service-name
+    --proxy-tls13-ciphers --proxy-tlsauthtype --proxy-tlspassword --proxy-tlsuser
+    --proxy-user --pubkey --quote --random-file --range --rate --referer --request
+    --request-target --resolve --retry --retry-delay --retry-max-time --sasl-authzid
+    --service-name --sigalgs --socks4 --socks4a --socks5 --socks5-gssapi-service
+    --socks5-hostname --speed-limit --speed-time --ssl-sessions --stderr --telnet-option
+    --tftp-blksize --time-cond --tls13-ciphers --tlsauthtype --tls-max --tlspassword
+    --tlsuser --trace --trace-ascii --trace-config --unix-socket --upload-file
+    --upload-flags --url --url-query --user --user-agent --variable --vlan-priority
+    --write-out
+    """.split()
+)
+_CURL_LONG_FLAGS = frozenset(
+    """
+    --anyauth --append --basic --ca-native --cert-status --compressed --compressed-ssh
+    --create-dirs --crlf --digest --disable --disable-eprt --disable-epsv
+    --disallow-username-in-url --doh-cert-status --doh-insecure --dump-ca-embed --fail
+    --fail-early --fail-with-body --false-start --follow --form-escape --ftp-create-dirs
+    --ftp-pasv --ftp-pret --ftp-skip-pasv-ip --ftp-ssl-ccc --ftp-ssl-control --get
+    --globoff --haproxy-protocol --head --http0.9 --http1.0 --http1.1 --http2
+    --http2-prior-knowledge --http3 --http3-only --ignore-content-length --insecure
+    --ipv4 --ipv6 --junk-session-cookies --list-only --location --location-trusted
+    --mail-rcpt-allowfails --manual --metalink --mptcp --negotiate --netrc
+    --netrc-optional --no-alpn --no-buffer --no-clobber --no-keepalive --no-npn
+    --no-progress-meter --no-sessionid --ntlm --ntlm-wb --out-null --parallel
+    --parallel-immediate --path-as-is --post301 --post302 --post303 --progress-bar
+    --proxy-anyauth --proxy-basic --proxy-ca-native --proxy-digest --proxy-http2
+    --proxy-http3 --proxy-insecure --proxy-negotiate --proxy-ntlm --proxy-ssl-allow-beast
+    --proxy-ssl-auto-client-cert --proxy-tlsv1 --proxytunnel --raw --remote-header-name
+    --remote-name --remote-name-all --remote-time --remove-on-error --retry-all-errors
+    --retry-connrefused --sasl-ir --show-error --show-headers --silent --skip-existing
+    --socks5-basic --socks5-gssapi --socks5-gssapi-nec --ssl --ssl-allow-beast
+    --ssl-auto-client-cert --ssl-no-revoke --ssl-reqd --ssl-revoke-best-effort --sslv2
+    --sslv3 --styled-output --suppress-connect-headers --tcp-fastopen --tcp-nodelay
+    --tftp-no-options --tls-earlydata --tlsv1 --tlsv1.0 --tlsv1.1 --tlsv1.2 --tlsv1.3
+    --trace-ids --trace-time --tr-encoding --use-ascii --verbose --version --xattr
+    """.split()
+)
+
 # A bare word curl or wget would read as a URL. The scheme identifies it; a bare word
-# without one — an unmodelled long option's argument such as ``--header "Accept: x"``
-# — means the guard cannot pair outputs with transfers and reads the invocation whole.
+# without one — an unmodelled option's argument — means the guard cannot pair outputs
+# with transfers and reads the invocation whole.
 _URL_LIKE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 
 
@@ -277,7 +340,31 @@ def _shell_tokens(command: str) -> list[str]:
                 operator = c
             tokens.append(_Operator(operator))
             i += len(operator)
-        elif c in "()" and not (c == "(" and word and word[-1] == "$"):
+        elif c == "$" and i + 1 < n and command[i + 1] == "(":
+            # A command substitution is one word, up to its matching parenthesis.
+            depth = 0
+            j = i + 1
+            while j < n:
+                if command[j] == "(":
+                    depth += 1
+                elif command[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            if j >= n:
+                raise ValueError("unterminated command substitution")
+            word.append(command[i : j + 1])
+            in_word = True
+            i = j + 1
+        elif c == "`":
+            end = command.find("`", i + 1)
+            if end < 0:
+                raise ValueError("unterminated backtick substitution")
+            word.append(command[i : end + 1])
+            in_word = True
+            i = end + 1
+        elif c in "()":
             flush()
             tokens.append(_Operator(c))
             i += 1
@@ -391,6 +478,13 @@ _TRANSPARENT_WRAPPERS = frozenset(
     {"sudo", "env", "exec", "command", "builtin", "nice", "nohup", "time"}
 )
 _SHELLS = frozenset({"sh", "bash", "dash", "ash", "zsh"})
+# The programs the guard reads. Behind a wrapper, one of these anywhere after the
+# wrapper's options is the command — see ``_command_name_position``.
+_KNOWN_PROGRAMS = frozenset({"tar", "wget", "curl"}) | _SHELLS
+# The name given to a command word the guard cannot resolve: a command substitution
+# (``$(which tar)``, `` `which tar` ``) or a variable (``$TAR``). Such a command is read
+# as a possible tar, so a forcing option on a moving archive is still reported.
+_UNRESOLVED_PROGRAM = "<unresolved>"
 
 
 def _command_name_position(argv: list[str]) -> int | None:
@@ -400,26 +494,39 @@ def _command_name_position(argv: list[str]) -> int | None:
     extraction because every word whose basename was ``tar`` counted as an invocation.
     A program is run only from the command position. Skipped to reach it: the
     Dockerfile ``RUN`` instruction and its ``--flag`` options, leading assignments, and
-    the wrappers in ``_TRANSPARENT_WRAPPERS`` with their own ``-flag`` options. A
-    wrapper option that takes a separate argument (``sudo -u root tar …``) is not
-    modelled: ``root`` is read as the command. Recorded as a known limit (design D16).
+    the wrappers in ``_TRANSPARENT_WRAPPERS`` with their own ``-flag`` options.
+
+    Adversarial pass on 2026-09-20: a wrapper option with a separate argument
+    (``sudo -u root tar …``, ``nice -n 10 tar …``) left ``root`` or ``10`` as the
+    command and the tar behind it unseen. The guard does not know each wrapper's option
+    arity, so behind a wrapper it errs closed: when the word at the command position is
+    not a program the guard knows, a known program anywhere after it is the command.
+    Without a wrapper the rule stays strict, so ``echo root tar -xzf …`` is still data.
     """
     i = 0
     if argv and argv[0].upper() == "RUN":
         i = 1
         while i < len(argv) and argv[i].startswith("--"):
             i += 1
+    wrapped = False
     while i < len(argv):
         word = argv[i]
         if _ASSIGNMENT.match(word):
             i += 1
         elif _basename(word) in _TRANSPARENT_WRAPPERS:
+            wrapped = True
             i += 1
             while i < len(argv) and argv[i].startswith("-"):
                 i += 1
         else:
-            return i
-    return None
+            break
+    if i >= len(argv):
+        return None
+    if wrapped and _basename(argv[i]) not in _KNOWN_PROGRAMS:
+        for position in range(i + 1, len(argv)):
+            if _basename(argv[position]) in _KNOWN_PROGRAMS:
+                return position
+    return i
 
 
 def _named_commands(command: str):
@@ -432,7 +539,10 @@ def _named_commands(command: str):
         position = _command_name_position(argv)
         if position is None:
             continue
-        name = _basename(argv[position])
+        word = argv[position]
+        name = _basename(word)
+        if word.startswith("$") or "$(" in word or "`" in word:
+            name = _UNRESOLVED_PROGRAM
         rest = argv[position + 1 :]
         if name in _SHELLS and "-c" in rest:
             script = rest[rest.index("-c") + 1 :]
@@ -447,7 +557,7 @@ def _tar_invocations(command: str) -> list:
     return [
         _parse_tar_span(arguments)
         for name, arguments in _named_commands(command)
-        if name == "tar"
+        if name in ("tar", _UNRESOLVED_PROGRAM)
     ]
 
 
@@ -508,11 +618,18 @@ def _parse_download(name: str, span: list[str]) -> _Download:
     output_letter, long_form = _DOWNLOAD_OUTPUT_OPTIONS[name]
     with_argument = _DOWNLOAD_SHORT_WITH_ARGUMENT[name]
     remote_name = "O" if name == "curl" else None
-    outputs: list = (
-        []
-    )  # one entry per transfer that names a destination; None = unknown
+    long_with_argument = _CURL_LONG_WITH_ARGUMENT if name == "curl" else frozenset()
+    long_flags = _CURL_LONG_FLAGS if name == "curl" else frozenset()
+    # One entry per transfer that names a destination; None = a destination unknown.
+    outputs: list = []
     urls: list[str] = []
     paired = True
+
+    def _url(word: str) -> None:
+        nonlocal paired
+        urls.append(word)
+        paired = paired and bool(_URL_LIKE.match(word))
+
     i = 0
     while i < len(span):
         word = span[i]
@@ -524,7 +641,25 @@ def _parse_download(name: str, span: list[str]) -> _Download:
             outputs.append(word[len(long_form) + 1 :])
         elif word == "--remote-name":
             outputs.append(None)
-        elif word.startswith("-") and word != "-" and not word.startswith("--"):
+        elif word == "--url":
+            if i + 1 < len(span):
+                i += 1
+                _url(span[i])
+        elif word.startswith("--url="):
+            _url(word[len("--url=") :])
+        elif word.startswith("--"):
+            # A long option of known arity is consumed with its argument. One the
+            # tables do not know may or may not have taken the next word, so the
+            # pairing cannot be trusted.
+            option = word.partition("=")[0]
+            if "=" in word or option in long_flags:
+                pass
+            elif option in long_with_argument:
+                if i + 1 < len(span):
+                    i += 1
+            else:
+                paired = False
+        elif word.startswith("-") and word != "-":
             # A short-option cluster: value-less flags until the first option that
             # takes an argument, which consumes the rest of the cluster or, when
             # nothing is attached, the next word.
@@ -545,8 +680,7 @@ def _parse_download(name: str, span: list[str]) -> _Download:
                     i += 1
                 break
         elif not word.startswith("-"):
-            urls.append(word)
-            paired = paired and bool(_URL_LIKE.match(word))
+            _url(word)
         i += 1
     text = " ".join(span)
     if name == "curl" and paired:
@@ -591,7 +725,7 @@ def _invocations(command: str):
     :class:`_Download`.
     """
     for name, arguments in _named_commands(command):
-        if name == "tar":
+        if name in ("tar", _UNRESOLVED_PROGRAM):
             yield _parse_tar_span(arguments)
         elif name in _DOWNLOAD_OUTPUT_OPTIONS:
             yield _parse_download(name, arguments)
@@ -1469,3 +1603,101 @@ class TestProvenanceFollowsDockerfileOrder:
             "wget's -O names ONE file for every URL, so a moving URL anywhere in the "
             "invocation makes that file moving"
         )
+
+
+class TestTheGuardErrsClosedWhereItCannotSeeTheProgram:
+    """Adversarial pass on 2026-09-20 over round 3's own fixes, three findings.
+
+    Each is a way the command position or the transfer pairing could be fooled into
+    silence: a wrapper option with a separate argument, a URL-shaped argument to a curl
+    option the guard did not model, and a program named through a command substitution.
+    Where the guard cannot see the program it errs closed.
+    """
+
+    _MOVING = '"https://download.mozilla.org/?product=firefox-esr-latest-ssl"'
+    _PINNED = '"https://example.invalid/tool-v1.2.3.tar.gz"'
+
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            "sudo -u root tar -xzf /tmp/moving",
+            "nice -n 10 tar -xzf /tmp/moving",
+            "env --chdir /tmp tar -xzf moving",
+            "sudo -u root sh -c 'tar -xzf /tmp/moving'",
+        ],
+    )
+    def test_a_wrapper_option_with_a_separate_argument_does_not_hide_tar(
+        self, spelling
+    ):
+        """Behind a wrapper, a known program anywhere after its options is the command."""
+        text = f"RUN wget -O /tmp/moving {self._MOVING}\n" f"RUN {spelling}\n"
+        assert _offenders(text), (
+            f"{spelling!r} runs tar; the guard does not know the wrapper's option "
+            f"arity, so it must not take the option's argument for the command and "
+            f"stop looking"
+        )
+        # Without a wrapper the rule stays strict: an argument named tar is data.
+        plain = (
+            f"RUN wget -O /tmp/moving {self._MOVING}\n"
+            "RUN echo root tar -xzf /tmp/moving\n"
+        )
+        assert _offenders(plain) == []
+
+    def test_a_url_shaped_option_argument_does_not_break_the_pairing(self):
+        """``--header <url>`` is the header, not a transfer; curl's arity is modelled."""
+        for option in ("--header", "--proxy", "--referer", "--user-agent"):
+            text = (
+                f"RUN curl {option} https://example.invalid/value "
+                f"-o /tmp/moving {self._MOVING}\n"
+                "RUN tar -xzf /tmp/moving\n"
+            )
+            assert _offenders(text), (
+                f"{option} takes an argument; pairing its URL-shaped value with -o "
+                f"read /tmp/moving as pinned and the forced extraction escaped"
+            )
+        # ``--url`` names a transfer and pairs like a bare URL.
+        text = (
+            f"RUN curl -o /tmp/moving --url {self._MOVING} -o /tmp/pinned --url {self._PINNED}\n"
+            "RUN tar -xzf /tmp/pinned\n"
+        )
+        assert _offenders(text) == [], f"--url is a transfer; got {_offenders(text)!r}"
+        # A long option the table does not know disables the pairing conservatively.
+        text = (
+            f"RUN curl --some-future-option value -o /tmp/moving {self._MOVING} "
+            f"-o /tmp/pinned {self._PINNED}\n"
+            "RUN tar -xzf /tmp/pinned\n"
+        )
+        assert _offenders(text), (
+            "an unknown long option may have taken 'value' or not; the guard cannot "
+            "pair and must read the invocation whole"
+        )
+
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            "$(echo tar) -xzf /tmp/moving",
+            "`which tar` -xzf /tmp/moving",
+            "$TAR -xzf /tmp/moving",
+        ],
+    )
+    def test_a_program_the_guard_cannot_name_is_read_as_a_possible_tar(self, spelling):
+        """A substituted or variable command word is unresolvable; err closed."""
+        text = f"RUN wget -O /tmp/moving {self._MOVING}\n" f"RUN {spelling}\n"
+        assert _offenders(text), (
+            f"{spelling!r} may run tar; the guard cannot name the program, so a "
+            f"forcing option on the saved moving path must still be reported"
+        )
+        # An unresolvable command word carrying no forcing option is not invented into one.
+        clean = (
+            f"RUN wget -O /tmp/moving {self._MOVING}\n"
+            "RUN $(which ls) -la /tmp/moving\n"
+        )
+        assert _offenders(clean) == []
+        # A substitution is one word; the archive inside it is unresolvable, as before.
+        assert _shell_tokens("tar -xzf $(ls /tmp/*.tar) -C /opt") == [
+            "tar",
+            "-xzf",
+            "$(ls /tmp/*.tar)",
+            "-C",
+            "/opt",
+        ]
