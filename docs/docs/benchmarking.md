@@ -319,9 +319,24 @@ The dump JSON gains a `leaderboard` key:
     primary metric, every row has one. Unranked rows do not consume rank numbers,
     so the scored variants still read 1..n.
 - `shared_context` — the model, provider, judge `evaluator_model`,
-  `queries_path`, and `corpus_snapshot_id` shared by all variants. If any of
+  `queries_path`, `corpus_snapshot_id`, and the judge-pressure pair
+  `judge_max_workers` / `judge_timeout`, shared by all variants. If any of
   these differ across the swept configs, the discrepancy is recorded in
   `shared_context.warnings` (the sweep is no longer apples-to-apples).
+
+    The two judge-pressure fields hold the **effective** values — the defaults
+    substituted, so an arm that omits the key and an arm that sets the default
+    explicitly agree. They are recorded because concurrency and the per-row
+    budget decide how often the judge times out, and a timed-out row leaves the
+    scored denominator that every aggregate is divided by. A difference here
+    warns; it does not withhold ranks, because it is a proxy for lost scores
+    rather than proof of them. Read the per-metric `<metric>_scored` counts to
+    see whether any were actually lost.
+- `ragas_effective_settings` — on each run record, the judge `timeout` and
+  `max_workers` the run actually used. The configuration is also recorded
+  verbatim as `configuration`; when an invalid setting was replaced by its
+  default the two deliberately disagree, and this field is the one that
+  describes the run.
 
 The pairwise `ab_comparisons` are still produced alongside the leaderboard; the
 leaderboard is computed independently from each config's aggregates.

@@ -172,11 +172,26 @@ for key in os.environ["FM_KEYS"].split():
             break
     if isinstance(cur, dict):
         cur.pop(parts[-1], None)
+# The judge-pressure knobs are locked by EFFECTIVE value, not as written. An arm
+# that omits the key and an arm that sets the default explicitly run identically,
+# and recording null against 16 would make fm_require_lock reject the second for a
+# difference that does not exist. A value the benchmark would reject normalizes to
+# the same default it will actually run at, for the same reason. Mirrors
+# ragas_effective_settings in src/utils/benchmark_schema.py, including the split
+# contract: timeout is a duration and takes any positive number, max_workers is a
+# count and must be a whole one.
+def _judge(value, default, whole=False):
+    ok = (int,) if whole else (int, float)
+    if isinstance(value, bool) or not isinstance(value, ok) or value <= 0:
+        return default
+    return value
+
+
 out = {"files": {k: {"path": v, "sha256": sha(v)} for k, v in files.items()},
        "data_manager_rest": rest,
        "values": {"sut.agent_class": b.get("agent_class"), "sut.provider": provider, "sut.model": b.get("model"), "modes": b.get("modes"),
                   "judge.provider": rs.get("evaluator_provider"), "judge.model": rs.get("evaluator_model"),
-                  "judge.timeout": rs.get("timeout"), "judge.max_workers": rs.get("max_workers"),
+                  "judge.timeout": _judge(rs.get("timeout"), 180), "judge.max_workers": _judge(rs.get("max_workers"), 16, whole=True),
                   "ragas.batch_size": rs.get("batch_size"),
                   "metrics": rs.get("enabled_metrics"), "ragas.embedding_model": rs.get("embedding_model"),
                   "embedding_name": dm.get("embedding_name"),
