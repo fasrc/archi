@@ -72,13 +72,88 @@ _SHORT_WITH_ARGUMENT = frozenset("bCfFgHIKLNTVX")
 # The long options that name the archive. ``--file=PATH`` and ``--file PATH`` both.
 _ARCHIVE_LONG = frozenset({"--file"})
 
+# tar's long options whose argument is REQUIRED, so it is the next token when no ``=``
+# is attached. Measured on GNU tar 1.35 (``tar --help``, every ``--name=ARG`` entry).
+# The six ``[=ARG]`` entries — ``--atime-preserve``, ``--backup``, ``--checkpoint``,
+# ``--occurrence``, ``--one-top-level``, ``--totals`` — take a value only when it is
+# attached, so they are deliberately absent. Review on 2026-09-20: without this set,
+# ``tar --exclude --gzip -xf /tmp/moving`` read the exclusion PATTERN as a forcing
+# option and rejected a correct template.
+_LONG_WITH_ARGUMENT = frozenset(
+    {
+        "--add-file",
+        "--after-date",
+        "--blocking-factor",
+        "--checkpoint-action",
+        "--directory",
+        "--exclude",
+        "--exclude-from",
+        "--exclude-ignore",
+        "--exclude-ignore-recursive",
+        "--exclude-tag",
+        "--exclude-tag-all",
+        "--exclude-tag-under",
+        "--file",
+        "--files-from",
+        "--format",
+        "--group",
+        "--group-map",
+        "--hole-detection",
+        "--index-file",
+        "--info-script",
+        "--label",
+        "--level",
+        "--listed-incremental",
+        "--mode",
+        "--mtime",
+        "--newer",
+        "--newer-mtime",
+        "--new-volume-script",
+        "--no-quote-chars",
+        "--owner",
+        "--owner-map",
+        "--quote-chars",
+        "--quoting-style",
+        "--record-size",
+        "--rmt-command",
+        "--rsh-command",
+        "--sort",
+        "--sparse-version",
+        "--starting-file",
+        "--strip-components",
+        "--suffix",
+        "--tape-length",
+        "--to-command",
+        "--transform",
+        "--use-compress-program",
+        "--volno-file",
+        "--warning",
+        "--xattrs-exclude",
+        "--xattrs-include",
+        "--xform",
+    }
+)
+
 # The tools whose saved-output option tells the guard where a download landed, with the
-# options that name that destination. Both accept the value attached to the short form:
-# ``wget -O/tmp/x`` and ``curl -o/tmp/x`` are valid, and curl's own manual says a short
-# option may be used "with or without a space between it and its value".
+# short LETTER and the long option that name that destination. Both accept the value
+# attached to the short form: ``wget -O/tmp/x`` and ``curl -o/tmp/x`` are valid, and
+# curl's own manual says a short option may be used "with or without a space between
+# it and its value".
 _DOWNLOAD_OUTPUT_OPTIONS = {
-    "wget": ("-O", "--output-document"),
-    "curl": ("-o", "--output"),
+    "wget": ("O", "--output-document"),
+    "curl": ("o", "--output"),
+}
+
+# Each tool's short options that take an argument: the rest of their own cluster when
+# one is attached, otherwise the next token. Value-less flags may precede them in the
+# same cluster — ``curl -sLo/tmp/x`` is ``-s -L -o/tmp/x`` and ``wget -qO /tmp/x`` is
+# ``-q -O /tmp/x``. Measured from ``curl --help all`` (curl 8.21.0; ``-h`` omitted, its
+# subject is optional) and ``wget --help`` (GNU Wget 1.25.0). Review on 2026-09-20:
+# matching the token prefix ``-o`` missed every clustered spelling, and the saved path
+# was lost silently.
+_DOWNLOAD_SHORT_WITH_ARGUMENT = {
+    "wget": frozenset("aABDeiIloOPQRtTUwX"),
+    "curl": frozenset("AbcCdDeEFHKmoPQrtTuUwxXyYz"),
 }
 
 
@@ -131,6 +206,9 @@ def _parse_tar_span(span: list[str]) -> tuple[list[str], str | None]:
                 elif i + 1 < len(span):
                     i += 1
                     archive = span[i]
+            elif name in _LONG_WITH_ARGUMENT and not separator and i + 1 < len(span):
+                # The next token is this option's argument, not another option.
+                i += 1
             i += 1
             continue
         cluster = token[1:]
@@ -233,23 +311,45 @@ def _download_invocations(command: str) -> list:
         if options is None:
             i += 1
             continue
-        short, long_form = options
+        output_letter, long_form = options
+        with_argument = _DOWNLOAD_SHORT_WITH_ARGUMENT[name]
         paths = set()
         span = []
         i += 1
         while i < len(tokens) and tokens[i] not in _SHELL_SEP:
             token = tokens[i]
             span.append(token)
-            if token in (short, long_form):
+
+            def _next_token() -> str | None:
+                nonlocal i
                 if i + 1 < len(tokens) and tokens[i + 1] not in _SHELL_SEP:
                     i += 1
                     span.append(tokens[i])
-                    paths.add(tokens[i].strip("\"'"))
+                    return tokens[i]
+                return None
+
+            if token == long_form:
+                value = _next_token()
+                if value is not None:
+                    paths.add(value.strip("\"'"))
             elif token.startswith(f"{long_form}="):
                 paths.add(token[len(long_form) + 1 :].strip("\"'"))
-            elif not token.startswith("--") and token.startswith(short):
-                if len(token) > len(short):
-                    paths.add(token[len(short) :].strip("\"'"))
+            elif token.startswith("-") and token != "-" and not token.startswith("--"):
+                # A short-option cluster: value-less flags until the first option that
+                # takes an argument, which consumes the rest of the cluster or, when
+                # nothing is attached, the next token.
+                cluster = token[1:]
+                for position, character in enumerate(cluster):
+                    if character not in with_argument:
+                        continue
+                    attached = cluster[position + 1 :]
+                    if character == output_letter:
+                        value = attached or _next_token()
+                        if value is not None:
+                            paths.add(value.strip("\"'"))
+                    elif not attached:
+                        _next_token()
+                    break
             i += 1
         invocations.append((paths - _STDOUT_SINKS, " ".join(span)))
     return invocations
@@ -835,4 +935,77 @@ class TestTheGuardBindsEachArchiveToItsOwnDownload:
         assert _offenders(text), (
             'tar -xjf "$FF" names its archive through a variable; branch 2 must '
             "still indict it"
+        )
+
+
+class TestTheScannerReadsTheCommandAsTheShellDoes:
+    """Review round 3 on 2026-09-20 (Codex, seven P2 findings): the parser still
+    read the command as whitespace-delimited tokens where the shell and the tools
+    read it otherwise — a long option's separate argument, an output option inside
+    a short-option cluster, an attached redirection, a quoted path with a space, and
+    a ``tar`` that is only an argument to another command.
+    """
+
+    _MOVING = '"https://download.mozilla.org/?product=firefox-esr-latest-ssl"'
+    _PINNED = '"https://example.invalid/tool-v1.2.3.tar.gz"'
+
+    def test_a_long_option_argument_is_not_read_as_an_option(self):
+        """``--exclude --gzip`` excludes a pattern named ``--gzip``; nothing is forced."""
+        assert _forced_decompressors("tar --exclude --gzip -xf /tmp/moving") == [], (
+            "GNU tar declares --exclude=PATTERN, so the next token is its argument; "
+            "scanning that argument as an option reports a correct template as broken"
+        )
+        # Once the argument is consumed, a forcing option AFTER it is still read.
+        assert _forced_decompressors("tar --exclude pattern --gzip -xf /tmp/f") == [
+            "--gzip"
+        ], "consuming the argument must stop at one token"
+        # An option whose argument is OPTIONAL takes a value only when attached, so
+        # the token after it is another option, exactly as getopt_long reads it.
+        assert _forced_decompressors("tar --occurrence --gzip -xf /tmp/f") == [
+            "--gzip"
+        ], "--occurrence[=N] must not swallow the --gzip that follows it"
+        # The archive is still found after a consumed long argument.
+        assert _parse_tar_span(["--directory", "/opt", "-xzf", "/tmp/moving"]) == (
+            ["-xzf"],
+            "/tmp/moving",
+        )
+
+    @pytest.mark.parametrize(
+        "download",
+        [
+            "curl -sLo/tmp/ff.tar.xz",
+            "curl -sLo /tmp/ff.tar.xz",
+            "wget -qO/tmp/ff.tar.xz",
+            "wget -qO /tmp/ff.tar.xz",
+        ],
+    )
+    def test_an_output_option_inside_a_short_cluster_records_the_saved_path(
+        self, download
+    ):
+        """``-sLo`` is ``-s -L -o``; the value-less flags in front hide nothing."""
+        text = (
+            f"RUN {download} {self._MOVING}\n" "RUN tar -xzf /tmp/ff.tar.xz -C /opt\n"
+        )
+        assert _offenders(text), (
+            f"{download!r} saves the moving download to /tmp/ff.tar.xz; curl and "
+            f"wget both let value-less short options precede the output option in "
+            f"one cluster, and losing the path leaves the later forced tar undetected"
+        )
+
+    def test_a_short_option_argument_is_not_read_as_an_output_option(self):
+        """``-do=1`` posts the data ``o=1``; ``-d`` consumes the rest of its cluster."""
+        recorded = [
+            path
+            for paths, _ in _download_invocations(f"curl -do=1 {self._MOVING}")
+            for path in paths
+        ]
+        assert recorded == [], (
+            f"curl's -d takes an argument, so the 'o' after it is data, not the "
+            f"output option; got {recorded!r}"
+        )
+        # The stdout sink is still recognised when it is glued inside the cluster.
+        text = f"RUN wget -qO- {self._MOVING} | tar -xzf -\n"
+        assert _offenders(text), (
+            "wget -qO- pipes to stdout; the guard must not record '-' as a saved "
+            "path and must indict the forcing tar via branch 2"
         )
