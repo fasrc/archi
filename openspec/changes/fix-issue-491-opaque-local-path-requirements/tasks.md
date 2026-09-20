@@ -133,3 +133,20 @@
 
 - [x] 4.2 Reply in-thread on all three, post the round-2 log, re-request the async
       reviewer, and stop at the two-round bound. **Never merge.**
+
+## 5. Review round 3 — 2026-09-20 (unattended 4AM responder)
+
+- [x] 5.1 Close the three findings the async reviewer raised against round 2's own fix,
+      each measured against pip 26.1.2 first, test-first: `file:` with no slashes is a
+      URL (D12), pip's comment rule replaces the cut at the first `#` (D13), and a
+      `${NAME}` placeholder is reported rather than expanded (D14). File: 171 -> 181
+      passed; five monitored files, 327 lines, still `[]`.
+
+- [x] 5.2 Re-validate the change (`openspec validate
+      fix-issue-491-opaque-local-path-requirements --strict`) after the spec delta grew
+      a fourth requirement and three scenarios. Green on the host.
+
+- [x] 5.3 Reply in-thread on all three, push, post the round-3 log. Run a synchronous
+      adversarial pass over the fix (approve, no material findings), post the round-4
+      log, re-request the async reviewer, and stop at the two-round bound. **Never
+      merge.**

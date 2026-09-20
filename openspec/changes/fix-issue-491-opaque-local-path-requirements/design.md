@@ -201,3 +201,47 @@ reported the line. The optional `\(?` in `_COMPARISON_AFTER_SUFFIX` closes it.
 
 **After the round:** 171 passed in the file (163 after round 1, 145 at `41522329`), 19 of 19
 cases in the re-measured matrix at their expected verdict, five monitored files still `[]`.
+
+## Review round 3 — 2026-09-20 (three findings on round 2's own fix, all valid)
+
+The re-requested async review landed against `510808e4` with three P2 findings. Each was
+measured against pip 26.1.2's own parser before any code moved, and each is a spelling pip
+accepts that the guard read as silence or as a bogus name.
+
+### D12 — The scheme alone makes a `file:` URL; the two slashes are not required
+
+`install_req_from_line("file:foo")` returns `name=None, link=file:///foo`: pip treats any
+`file:` URI as a local project link, slashes or not. The guard demanded `file://`, so
+`file:foo` matched no clause — it neither starts with `.` nor carries a slash or a suffix —
+and `_parse_requirements` recorded a project named `file`. Both `_VCS_OR_URL_REQUIREMENT`
+and the D7 exemption `_NAMED_URL_REFERENCE` now read `file:`. Widening the exemption is
+the same decision as D7: `numpy@file:foo` carries a scheme and keeps its readable name,
+while `evil@../pkgs/vllm`, with no scheme, stays reported.
+
+### D13 — Comments are cut by pip's rule, not at the first `#`
+
+pip's `COMMENT_RE` is `(^|\s+)#.*$`: a `#` begins a comment only at the start of the line
+or after whitespace. `foo#vllm.tar.gz` therefore reaches pip whole and becomes an unnamed
+`file:///…/foo%23vllm.tar.gz` link, while `_requirement_lines` cut it to `foo` before any
+classifier ran. `_requirement_lines` now applies pip's rule. Two consequences were checked
+rather than assumed: the fragment of `git+https://host/repo.git#egg=vllm` now survives,
+and the VCS clause still matches the line's head; `numpy@https://host/numpy.whl#sha256=abc`
+keeps its readable name under D4.
+
+### D14 — A `${NAME}` placeholder is reported, not expanded
+
+pip's `ENV_VAR_RE` is `\$\{[A-Z0-9_]+\}` and `expand_env_variables` substitutes it from the
+build environment before the line is parsed, so with `VLLM_PATH=./foo` a whole-line
+`${VLLM_PATH}` installs a local tree. The guard saw the literal placeholder, matched
+nothing and recorded nothing — the quietest of the silent skips. The finding offered two
+fixes: expand from the same environment, or fail closed. Expanding would measure the
+suite's environment, not the build's, so the guard fails closed: any requirement line
+carrying a `${NAME}` placeholder is reported, whatever else it says — whole-line, as a
+version (`vllm==${VLLM_VERSION}`, which the comparators could not read), or as a
+direct-reference target. The pattern is pip's exactly, so `${vllm_path}` and `$VLLM_PATH`,
+which pip does not expand and then rejects loudly, are not swept in. A placeholder after
+the comment marker is comment text.
+
+**After the round:** 181 passed in the file. Five monitored files, 327 requirement lines,
+still `[]` on every one. A synchronous adversarial pass over `b80228ec` returned approve
+with no material findings after probing pip 26.1.2 itself.

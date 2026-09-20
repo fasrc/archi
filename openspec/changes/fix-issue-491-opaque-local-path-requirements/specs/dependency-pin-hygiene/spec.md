@@ -94,3 +94,29 @@ The name reader reads `name` from both spellings, so design D4 leaves the class 
 #### Scenario: A named reference to a bare path is reported
 - **WHEN** a requirement file read by the guard contains `evil@../pkgs/vllm`, `evil@/opt/vllm` or `evil@C:\pkgs\vllm`
 - **THEN** each line is reported as a requirement with no readable project name
+
+### Requirement: The guard SHALL read a requirement line by pip's own rules before it classifies it
+
+The base-image guard SHALL treat any `file:` URI as a URL whether or not it carries two slashes, SHALL cut a trailing comment only at a `#` that pip's comment rule recognises, and SHALL report a requirement line carrying a `${NAME}` environment placeholder rather than read it as nothing.
+
+Review on 2026-09-20 (three findings against `510808e4`), each measured against pip 26.1.2:
+`install_req_from_line("file:foo")` returns an unnamed `file:///foo` link; `COMMENT_RE` is
+`(^|\s+)#.*$`, so `foo#vllm.tar.gz` is an archive path; `ENV_VAR_RE` is `\$\{[A-Z0-9_]+\}`
+and is substituted before parsing. Design D12–D14.
+
+#### Scenario: A relative file URI is reported
+- **WHEN** a requirement file read by the guard contains `file:foo`, `file:vllm` or `file:foo/bar`
+- **THEN** each line is reported as a requirement with no readable project name
+- **AND** `numpy@file:foo` keeps its readable name, because its target carries a URL scheme
+- **AND** `evil@../pkgs/vllm` is still reported
+
+#### Scenario: A literal hash in an archive filename is preserved
+- **WHEN** a requirement file read by the guard contains `foo#vllm.tar.gz`
+- **THEN** the line is reported as an archive requirement
+- **AND** `foo #vllm.tar.gz` and `bar\t# comment` are read as the projects `foo` and `bar`
+- **AND** `git+https://host/repo.git#egg=vllm` is still reported and `numpy@https://host/numpy.whl#sha256=abc` still keeps its name
+
+#### Scenario: An environment substitution is reported
+- **WHEN** a requirement file read by the guard contains `${VLLM_PATH}`, `${VLLM_PATH}==1.0`, `vllm==${VLLM_VERSION}` or `vllm @ ${VLLM_URL}`
+- **THEN** each line is reported as a requirement the guard cannot read
+- **AND** a `${NAME}` after the comment marker is comment text and is not reported
