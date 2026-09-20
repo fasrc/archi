@@ -297,14 +297,17 @@ def _requirement_lines(text: str):
     """Yield the requirement lines of ``text``, without comments or option lines.
 
     Blanks, ``#`` comments and option lines such as ``--extra-index-url`` carry no
-    requirement. A trailing comment and an environment marker are cut away, so the
-    caller sees the requirement and nothing else.
+    requirement. A trailing comment — by pip's rule, a ``#`` after whitespace — and an
+    environment marker are cut away, so the caller sees the requirement and nothing
+    else. A ``#`` with no whitespace before it is part of the requirement, as it is to
+    pip: the fragment of ``git+https://host/repo.git#egg=vllm`` or the literal hash in
+    ``foo#vllm.tar.gz``.
     """
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or line.startswith("-"):
             continue
-        line = line.split("#", 1)[0].split(";", 1)[0].strip()
+        line = _COMMENT.sub("", line).split(";", 1)[0].strip()
         if line:
             yield line
 
@@ -330,9 +333,28 @@ def _parse_pins(text: str) -> dict:
 # the name matcher then recorded the project as ``git``, so every vllm guard read vllm
 # as ABSENT and skipped while pip installed an arbitrary checkout. These lines do not
 # start with ``-``, so the directive matcher above never saw them either.
+#
+# ``file:`` with no slashes is a URL to pip too. Round 3 on 2026-09-20:
+# ``install_req_from_line("file:foo")`` returns ``name=None, link=file:///foo`` on pip
+# 26.1.2, so the scheme alone decides; the guard had demanded ``file://`` and read
+# ``file:foo`` as a project named ``file``.
 _VCS_OR_URL_REQUIREMENT = re.compile(
-    r"^(?:(?:git|hg|bzr|svn)\+|https?://|file://|[A-Za-z]:[\\/])", re.IGNORECASE
+    r"^(?:(?:git|hg|bzr|svn)\+|https?://|file:|[A-Za-z]:[\\/])", re.IGNORECASE
 )
+
+# pip's own comment rule (``COMMENT_RE`` in ``pip._internal.req.req_file``): a ``#``
+# begins a comment only at the start of the line or after whitespace. Round 3 on
+# 2026-09-20: ``foo#vllm.tar.gz`` is an archive path to pip — it keeps the ``#`` and
+# builds a ``file:///…/foo%23vllm.tar.gz`` link — but ``_requirement_lines`` cut the
+# line at the first ``#`` and the suffix matcher saw only ``foo``.
+_COMMENT = re.compile(r"(^|\s+)#.*$")
+
+# A ``${NAME}`` placeholder pip substitutes from the build environment before it reads
+# the line (``ENV_VAR_RE``: uppercase letters, digits and underscores only). Round 3 on
+# 2026-09-20: with ``VLLM_PATH=./foo`` a whole-line ``${VLLM_PATH}`` installs a local
+# tree, and this module — which cannot see that environment — matched nothing and
+# recorded no project at all. Such a line is reported, whatever else it contains.
+_ENVIRONMENT_SUBSTITUTION = re.compile(r"\$\{[A-Z0-9_]+\}")
 
 # A requirement given as a bare local project path or a bare archive path rather than a
 # project name: ``./local_vllm``, ``../pkgs/vllm``, ``/opt/vllm.whl``,
@@ -381,7 +403,7 @@ _PATH_OR_ARCHIVE_REQUIREMENT = re.compile(
 # ``_VCS_OR_URL_REQUIREMENT`` uses; a target with NO scheme (``evil@../pkgs/vllm``) is a
 # local path by another name and stays reported.
 _NAMED_URL_REFERENCE = re.compile(
-    rf"^{_NAME}\s*@\s*(?:(?:git|hg|bzr|svn)\+|https?://|file://)", re.IGNORECASE
+    rf"^{_NAME}\s*@\s*(?:(?:git|hg|bzr|svn)\+|https?://|file:)", re.IGNORECASE
 )
 
 
@@ -402,14 +424,21 @@ def _opaque_requirements(text: str) -> list:
     ``_unpinned_protected`` fails a protected name closed — design D4. That exemption
     needs a URL scheme; ``evil@../pkgs/vllm`` is a local path wearing a name and is
     reported. Class measured 2026-09-18 (#491), widened after review 2026-09-19.
+
+    A line carrying a ``${NAME}`` placeholder is reported whatever else it says: pip
+    substitutes it from the build environment before parsing, and this module cannot
+    see that environment, so the line may name any package at any version (D14).
     """
     return [
         line
         for line in _requirement_lines(text)
-        if not _NAMED_URL_REFERENCE.match(line)
-        and (
-            _VCS_OR_URL_REQUIREMENT.match(line)
-            or _PATH_OR_ARCHIVE_REQUIREMENT.match(line)
+        if _ENVIRONMENT_SUBSTITUTION.search(line)
+        or (
+            not _NAMED_URL_REFERENCE.match(line)
+            and (
+                _VCS_OR_URL_REQUIREMENT.match(line)
+                or _PATH_OR_ARCHIVE_REQUIREMENT.match(line)
+            )
         )
     ]
 
@@ -1647,6 +1676,89 @@ class TestOpaqueRequirementsFailClosed:
         assert _opaque_requirements("torch==2.7.0\nvllm-0.9.0.tbz\n"), (
             "pip builds a file:// link for vllm-0.9.0.tbz from the extension alone; "
             "it must stay reported."
+        )
+
+    @pytest.mark.parametrize("line", ["file:foo", "file:vllm", "file:foo/bar"])
+    def test_a_relative_file_uri_is_reported(self, line):
+        """``file:foo`` is a local project link to pip, slashes or not.
+
+        Round 3 on 2026-09-20: ``install_req_from_line("file:foo")`` returns
+        ``name=None, link=file:///foo`` on pip 26.1.2, but the line neither starts
+        with ``.`` nor carries a slash or an archive suffix, and the URL matcher wanted
+        ``file://``. The guard recorded a project named ``file`` and every protected
+        guard read the package inside as absent.
+        """
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n"), (
+            f"{line!r} is a file: URI pip resolves to a local project; it must be "
+            f"reported rather than read as a project named 'file'."
+        )
+
+    def test_a_named_file_uri_reference_keeps_its_name(self):
+        """``numpy@file:foo`` carries a URL scheme, so D4 leaves it readable."""
+        assert _opaque_requirements("torch==2.7.0\nnumpy@file:foo\n") == [], (
+            "a direct reference whose target carries the file: scheme is a URL like "
+            "any other; the exemption must not depend on the two slashes"
+        )
+        assert _opaque_requirements(
+            "torch==2.7.0\nevil@../pkgs/vllm\n"
+        ), "a target with no scheme is still a local path wearing a name"
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "${VLLM_PATH}",
+            "${VLLM_PATH}==1.0",
+            "vllm==${VLLM_VERSION}",
+            "vllm @ ${VLLM_URL}",
+        ],
+    )
+    def test_an_environment_substitution_is_reported(self, line):
+        """pip expands ``${NAME}`` before parsing; the guard cannot, so it fails closed.
+
+        Round 3 on 2026-09-20: pip's ``ENV_VAR_RE`` is ``\\$\\{[A-Z0-9_]+\\}`` and
+        ``expand_env_variables`` substitutes it from the build environment before the
+        line is read. With ``VLLM_PATH=./foo`` a whole-line ``${VLLM_PATH}`` installs a
+        local tree; this module saw the literal placeholder, matched nothing, and
+        recorded no project at all.
+        """
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n"), (
+            f"{line!r} depends on a build-time environment this module cannot see; it "
+            f"must be reported, not silently recorded as nothing."
+        )
+
+    def test_a_substitution_inside_a_comment_is_not_a_requirement(self):
+        assert (
+            _opaque_requirements("torch==2.7.0\nvllm==0.9.0  # export ${VLLM_PATH}\n")
+            == []
+        ), "a placeholder after the comment marker is comment text"
+
+    def test_a_literal_hash_in_an_archive_name_is_preserved(self):
+        """pip's comment rule needs whitespace before ``#``; ``foo#vllm.tar.gz`` has none.
+
+        Round 3 on 2026-09-20: pip's ``COMMENT_RE`` is ``(^|\\s+)#.*$``, so
+        ``install_req_from_line("foo#vllm.tar.gz")`` returns an unnamed
+        ``file:///…/foo%23vllm.tar.gz`` link. ``_requirement_lines`` cut the line at the
+        first ``#`` and the suffix matcher saw only ``foo``.
+        """
+        assert _opaque_requirements("torch==2.7.0\nfoo#vllm.tar.gz\n"), (
+            "pip keeps the '#' and reads an archive; the guard must match pip's "
+            "comment rule and report the archive"
+        )
+        assert list(_requirement_lines("foo #comment\nbar\t# comment\n")) == [
+            "foo",
+            "bar",
+        ], "a '#' preceded by whitespace is still a comment"
+        assert _opaque_requirements("torch==2.7.0\nfoo #vllm.tar.gz\n") == []
+        # The fragment of a VCS reference survives the comment rule and stays reported.
+        assert _opaque_requirements(
+            "torch==2.7.0\ngit+https://host/repo.git#egg=vllm\n"
+        ), "the VCS class is unchanged by the comment rule"
+        # A named direct reference with a fragment keeps its name (D4).
+        assert (
+            _opaque_requirements(
+                "torch==2.7.0\nnumpy@https://host/numpy.whl#sha256=abc\n"
+            )
+            == []
         )
 
     def test_a_plain_pin_is_not_reported(self):
