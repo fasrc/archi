@@ -293,6 +293,29 @@ def _normalize_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+def _joined_lines(text: str):
+    """Yield logical lines, joining each physical line that ends in a backslash.
+
+    pip's own rule (``join_lines`` in ``pip._internal.req.req_file``): a trailing ``\\``
+    continues the requirement onto the next physical line. Round 5 on 2026-09-20 found
+    this module reading the two halves separately, which broke the hash-pinned spelling
+    pip documents — ``numpy==2.0.0 \\`` then ``--hash=sha256:...`` — in BOTH directions
+    at once. ``_PIN_PATTERN`` is anchored, so ``numpy==2.0.0 \\`` recorded no pin and the
+    package read as absent; and the separator branch of ``_PATH_OR_ARCHIVE_REQUIREMENT``
+    read the same backslash as a path separator and reported the line. Joining first is
+    the only reading that records the pin AND declines the false report.
+    """
+    buffered = ""
+    for raw_line in text.splitlines():
+        if raw_line.endswith("\\"):
+            buffered += raw_line[:-1]
+            continue
+        yield buffered + raw_line
+        buffered = ""
+    if buffered:
+        yield buffered
+
+
 def _requirement_lines(text: str):
     """Yield the requirement lines of ``text``, without comments or option lines.
 
@@ -302,12 +325,19 @@ def _requirement_lines(text: str):
     else. A ``#`` with no whitespace before it is part of the requirement, as it is to
     pip: the fragment of ``git+https://host/repo.git#egg=vllm`` or the literal hash in
     ``foo#vllm.tar.gz``.
+
+    Physical lines are joined first, then the per-requirement options a joined line
+    carries (``--hash``, ``--config-settings``) are cut away: they qualify the
+    requirement rather than name it, and leaving them attached defeats the anchored
+    ``_PIN_PATTERN``. A whole line that IS an option still starts with ``-`` after the
+    join and is skipped as before.
     """
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
+    for joined_line in _joined_lines(text):
+        line = joined_line.strip()
         if not line or line.startswith("#") or line.startswith("-"):
             continue
         line = _COMMENT.sub("", line).split(";", 1)[0].strip()
+        line = _PER_REQUIREMENT_OPTION.sub("", line).strip()
         if line:
             yield line
 
@@ -348,6 +378,13 @@ _VCS_OR_URL_REQUIREMENT = re.compile(
 # builds a ``file:///…/foo%23vllm.tar.gz`` link — but ``_requirement_lines`` cut the
 # line at the first ``#`` and the suffix matcher saw only ``foo``.
 _COMMENT = re.compile(r"(^|\s+)#.*$")
+
+# The per-requirement options pip allows after a requirement on the same logical line:
+# ``numpy==2.0.0 --hash=sha256:...``. They qualify the requirement, never name it, so
+# they are cut away before matching. Round 5 on 2026-09-20: ``_PIN_PATTERN`` is anchored
+# at ``$``, so a hash left attached made an exactly-pinned protected package read as
+# absent and every pairwise guard skipped it.
+_PER_REQUIREMENT_OPTION = re.compile(r"\s+--\S+.*$")
 
 # A ``${NAME}`` placeholder pip substitutes from the build environment before it reads
 # the line (``ENV_VAR_RE``: uppercase letters, digits and underscores only). Round 3 on
@@ -402,8 +439,17 @@ _PATH_OR_ARCHIVE_REQUIREMENT = re.compile(
 # passed, so whitespace alone decided the verdict. The scheme set is the one
 # ``_VCS_OR_URL_REQUIREMENT`` uses; a target with NO scheme (``evil@../pkgs/vllm``) is a
 # local path by another name and stays reported.
+# PEP 508's grammar is ``name wsp* extras?``, so the brackets need not touch the name.
+# Round 5 on 2026-09-20: ``numpy [foo] @ https://host/numpy.whl`` is the project
+# ``numpy[foo]`` to pip, but ``_NAME`` demanded an attached ``[``, so this exemption
+# missed and the separator branch reported a line whose project name is readable. The
+# compact spelling already passed, so whitespace alone decided the verdict — the same
+# asymmetry round 1 fixed for the ``@`` itself. Widened HERE only: ``_PIN_PATTERN`` and
+# ``_REQUIREMENT_PATTERN`` keep the strict name so no pin is read across a space.
+_NAME_WITH_SPACED_EXTRAS = r"([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?"
 _NAMED_URL_REFERENCE = re.compile(
-    rf"^{_NAME}\s*@\s*(?:(?:git|hg|bzr|svn)\+|https?://|file:)", re.IGNORECASE
+    rf"^{_NAME_WITH_SPACED_EXTRAS}\s*@\s*(?:(?:git|hg|bzr|svn)\+|https?://|file:)",
+    re.IGNORECASE,
 )
 
 
@@ -1760,6 +1806,60 @@ class TestOpaqueRequirementsFailClosed:
             )
             == []
         )
+
+    def test_a_continued_line_is_joined_before_it_is_classified(self):
+        """pip joins a line ending in ``\\`` with the next; this module must too.
+
+        Round 5 on 2026-09-20: pip's standard hash-pinned spelling is
+        ``numpy==2.0.0 \\`` followed by ``--hash=sha256:...``. The separator branch of
+        ``_PATH_OR_ARCHIVE_REQUIREMENT`` read the trailing continuation backslash as a
+        path separator and reported the line, so adding hashes to any monitored file
+        turned the whole suite red. Reading the two physical lines separately was no
+        better before that: ``_PIN_PATTERN`` is anchored, ``numpy==2.0.0 \\`` never
+        matched it, and the pin went unrecorded — the silent skip this module exists to
+        prevent, reached by a spelling pip calls ordinary.
+
+        Joining is what pip does (``join_lines`` in ``pip._internal.req.req_file``), and
+        it is the only reading that both refuses the false report and records the pin.
+        """
+        hashed = "torch==2.7.0\nnumpy==2.0.0 \\\n    --hash=sha256:abcdef\n"
+        assert _opaque_requirements(hashed) == [], (
+            "a hash-pinned requirement is a named pin to pip; the continuation "
+            "backslash is not a path separator"
+        )
+        assert _parse_pins(hashed)["numpy"] == "2.0.0", (
+            "the pin must be RECORDED, not merely un-reported: an unrecorded "
+            "protected package reads as absent and every pairwise guard skips"
+        )
+        # The continuation still ends the requirement when nothing follows it.
+        assert _parse_pins("numpy==2.0.0 \\\n")["numpy"] == "2.0.0"
+        # A real local path is still reported when it arrives through a continuation.
+        assert _opaque_requirements(
+            "torch==2.7.0\nvllm @ \\\n    ../pkgs/vllm\n"
+        ), "joining must not launder a local path into a readable requirement"
+
+    def test_whitespace_may_separate_a_name_from_its_extras(self):
+        """PEP 508 allows ``wsp*`` between the name and the extras list.
+
+        Round 5 on 2026-09-20: ``numpy [foo] @ https://host/numpy.whl`` is the project
+        ``numpy[foo]`` to pip, but the direct-reference exemption required ``[`` to
+        follow the name immediately, so the exemption missed and the slash branch
+        reported a line whose project name is perfectly readable. The compact spelling
+        ``numpy[foo] @ ...`` already passed, so whitespace alone decided the verdict —
+        the same asymmetry round 1 fixed for the ``@`` itself.
+        """
+        assert (
+            _opaque_requirements("torch==2.7.0\nnumpy [foo] @ https://host/numpy.whl\n")
+            == []
+        ), "whitespace before the extras list does not hide the project name"
+        assert (
+            _opaque_requirements("torch==2.7.0\nnumpy[foo] @ https://host/numpy.whl\n")
+            == []
+        ), "the compact spelling is unchanged"
+        # The exemption still turns on a SCHEME, not on the brackets.
+        assert _opaque_requirements(
+            "torch==2.7.0\nevil [foo] @ ../pkgs/vllm\n"
+        ), "a target with no scheme is a local path whatever the extras look like"
 
     def test_a_plain_pin_is_not_reported(self):
         assert _opaque_requirements("torch==2.7.0\nvllm==0.9.0\n") == []
