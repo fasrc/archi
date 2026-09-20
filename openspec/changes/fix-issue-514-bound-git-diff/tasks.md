@@ -36,7 +36,7 @@ Standing notes for every task:
 
 ## 1. Bound the capture
 
-- [ ] 1.1 `model: opus` — Create `tests/unit/test_benchmark_git_diff_bound.py` with a
+- [x] 1.1 `model: opus` — Create `tests/unit/test_benchmark_git_diff_bound.py` with a
       module-level `pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason=...)`
       and a `repo` fixture (design D7): under `tmp_path / "checkout"` write
       `src/pkg/mod.py` (`"x = 1\n"`), `README.md`, and `bench_out/art.json` holding

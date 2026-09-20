@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from jinja2 import Environment
 
+from src.cli.managers.git_diff_capture import capture_git_diff
 from src.cli.managers.source_version import write_source_commit
 from src.cli.service_registry import service_registry
 from src.cli.utils.grafana_styling import assign_feedback_palette
@@ -135,10 +136,10 @@ def collect_host_information() -> Optional[Dict[str, Optional[str]]]:
     return {"hostname": hostname, "cpu_model": cpu_model}
 
 
-def get_git_information() -> Dict[str, str]:
+def get_git_information(wd: Optional[Path] = None) -> Dict[str, str]:
 
     meta_data: Dict[str, str] = {}
-    wd = Path(__file__).parent
+    wd = Path(wd) if wd is not None else Path(__file__).parent
 
     if (
         subprocess.call(
@@ -157,10 +158,7 @@ def get_git_information() -> Dict[str, str]:
         meta_data["last_commit"] = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=wd, encoding="UTF-8"
         )
-        diff_comm = ["git", "diff"]
-        meta_data["git_diff"] = subprocess.check_output(
-            diff_comm, encoding="UTF-8", cwd=wd
-        )
+        meta_data.update(capture_git_diff(wd))
     meta_data["host"] = collect_host_information()
     return meta_data
 
