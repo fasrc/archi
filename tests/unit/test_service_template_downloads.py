@@ -55,12 +55,23 @@ _FORCING_LONG = frozenset(
     }
 )
 _FORCING_SHORT = frozenset("zjJZI")
-_SHELL_SEP = frozenset({"&&", "||", ";", "|"})
 _STDOUT_SINKS = frozenset({"-", "/dev/stdout", "/dev/null"})
 
-# A shell control operator, whether or not whitespace surrounds it. ``||`` is listed
-# before ``|`` so the two-character operator wins.
-_SHELL_OPERATOR = re.compile(r"(\|\||&&|;|\|)")
+
+class _Operator(str):
+    """A token the shell reads as an operator, as opposed to a word that spells one.
+
+    ``echo ';'`` passes a word to echo; the ``;`` in ``a;b`` ends a command. Both are
+    the string ``;`` once the quotes are resolved, so the lexer marks the operator.
+    """
+
+
+# A redirection operator: ``>``, ``>>``, ``<``, ``>&``, ``&>`` and the rest, with an
+# optional descriptor in front (``2>``) and, for the dup forms, a descriptor or ``-``
+# behind (``2>&1``, ``>&-``). A dup form has no target word; every other form consumes
+# the word that follows it.
+_REDIRECTION = re.compile(r"^(?:\d*(?:>>|>&|>\||<<<|<<|<&|<>|>|<)(?:\d+|-)?|&>>?)$")
+_REDIRECTION_DUP = re.compile(r"&(?:\d+|-)$")
 
 # tar's short options that consume an argument: the rest of their own cluster when one
 # is attached, otherwise the next token. ``-f`` names the archive; ``-I`` names a
@@ -158,15 +169,139 @@ _DOWNLOAD_SHORT_WITH_ARGUMENT = {
 
 
 def _shell_tokens(command: str) -> list[str]:
-    """``command`` split into tokens, with shell control operators isolated.
+    """``command`` split into words and operators the way the shell splits it.
 
-    ``str.split`` sees ``&&``, ``||``, ``;`` and ``|`` only when whitespace surrounds
-    them, but bash does not require it. Review on 2026-09-19: ``wget …&&tar …`` hid
-    both the URL and the tar token, so a forced extraction of a moving download read
-    as clean, and ``tar -xf a;tar -xzf b`` read as ONE invocation, so the second tar's
-    forcing option was attributed to the first tar's archive.
+    Words are delimited by unquoted whitespace, with quotes resolved: ``"/tmp/my
+    moving.tar"``, ``'/tmp/my moving.tar'`` and ``/tmp/my\\ moving.tar`` are all the
+    one word ``/tmp/my moving.tar``. Control operators (``&&``, ``||``, ``;``, ``|``,
+    ``&``, ``(``, ``)``) and redirection operators (``>``, ``>>``, ``<``, ``2>&1``,
+    ``&>`` …) are isolated whether or not whitespace surrounds them, and returned as
+    :class:`_Operator` so a quoted word that spells one is not mistaken for one. An
+    unquoted ``#`` at the start of a word begins a comment.
+
+    Review on 2026-09-19: ``wget …&&tar …`` hid both the URL and the tar token, so a
+    forced extraction of a moving download read as clean. Review on 2026-09-20:
+    ``str.split`` broke a quoted path with a space into two words, and
+    ``tar -xzf /tmp/moving>/dev/null`` kept the redirection glued to the archive, so
+    the saved path stopped matching and the forced decompressor escaped.
+
+    Raises ``ValueError`` on an unterminated quote. The guard cannot say which file
+    such a command reads, and :func:`_offenders` reports that rather than passing it.
     """
-    return _SHELL_OPERATOR.sub(r" \1 ", command).split()
+    tokens: list[str] = []
+    word: list[str] = []
+    in_word = False
+    i = 0
+    n = len(command)
+
+    def flush() -> None:
+        nonlocal in_word
+        if in_word:
+            tokens.append("".join(word))
+        word.clear()
+        in_word = False
+
+    while i < n:
+        c = command[i]
+        if c in " \t\n":
+            flush()
+            i += 1
+        elif c == "#" and not in_word:
+            break
+        elif c == "'":
+            end = command.find("'", i + 1)
+            if end < 0:
+                raise ValueError("unterminated single quote")
+            word.append(command[i + 1 : end])
+            in_word = True
+            i = end + 1
+        elif c == '"':
+            i += 1
+            while i < n and command[i] != '"':
+                if command[i] == "\\" and i + 1 < n and command[i + 1] in '"$`\\':
+                    i += 1
+                word.append(command[i])
+                i += 1
+            if i >= n:
+                raise ValueError("unterminated double quote")
+            in_word = True
+            i += 1
+        elif c == "\\":
+            if i + 1 < n:
+                word.append(command[i + 1])
+                in_word = True
+            i += 2
+        elif c in "<>":
+            # Digits immediately in front of the operator are its descriptor: ``2>``.
+            descriptor = ""
+            if in_word and "".join(word).isdigit():
+                descriptor = "".join(word)
+                word.clear()
+                in_word = False
+            flush()
+            operator = c
+            j = i + 1
+            if j < n and command[j] in (">&|" if c == ">" else "<&>"):
+                operator += command[j]
+                j += 1
+                if operator == "<<" and j < n and command[j] == "<":
+                    operator += "<"
+                    j += 1
+            if operator.endswith("&"):
+                dup = re.match(r"(\d+|-)(?=$|[\s;&|<>()])", command[j:])
+                if dup:
+                    operator += dup.group(1)
+                    j += dup.end()
+            tokens.append(_Operator(descriptor + operator))
+            i = j
+        elif c in "&|;":
+            flush()
+            if command.startswith("&>>", i):
+                operator = "&>>"
+            elif command[i : i + 2] in ("&&", "&>", "||", "|&", ";;"):
+                operator = command[i : i + 2]
+            else:
+                operator = c
+            tokens.append(_Operator(operator))
+            i += len(operator)
+        elif c in "()" and not (c == "(" and word and word[-1] == "$"):
+            flush()
+            tokens.append(_Operator(c))
+            i += 1
+        else:
+            word.append(c)
+            in_word = True
+            i += 1
+    flush()
+    return tokens
+
+
+def _simple_commands(command: str) -> list[list[str]]:
+    """``command`` as the shell's simple commands: one argv each, redirections removed.
+
+    Control operators bound the commands. A redirection operator and its target word
+    are the shell's business and never reach the program's argv, so
+    ``tar -xzf /tmp/moving>/dev/null`` hands tar exactly ``-xzf /tmp/moving``.
+    """
+    commands: list[list[str]] = []
+    argv: list[str] = []
+    tokens = _shell_tokens(command)
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if not isinstance(token, _Operator):
+            argv.append(token)
+        elif _REDIRECTION.match(token):
+            if not _REDIRECTION_DUP.search(token):
+                i += 1  # the target word
+        else:
+            if argv:
+                commands.append(argv)
+            argv = []
+        i += 1
+    if argv:
+        commands.append(argv)
+    return commands
 
 
 def _basename(token: str) -> str:
@@ -235,20 +370,13 @@ def _parse_tar_span(span: list[str]) -> tuple[list[str], str | None]:
 
 
 def _tar_invocations(command: str) -> list:
-    """Every tar invocation in ``command``, bounded by shell control operators."""
+    """Every tar invocation in ``command``, one per simple command that runs tar."""
     invocations = []
-    tokens = _shell_tokens(command)
-    i = 0
-    while i < len(tokens):
-        if _basename(tokens[i]) != "tar":
-            i += 1
-            continue
-        i += 1
-        span = []
-        while i < len(tokens) and tokens[i] not in _SHELL_SEP:
-            span.append(tokens[i])
-            i += 1
-        invocations.append(_parse_tar_span(span))
+    for argv in _simple_commands(command):
+        for position, token in enumerate(argv):
+            if _basename(token) == "tar":
+                invocations.append(_parse_tar_span(argv[position + 1 :]))
+                break
     return invocations
 
 
@@ -303,55 +431,46 @@ def _download_invocations(command: str) -> list:
     ``tar -xzf /tmp/pinned`` an offender.
     """
     invocations = []
-    tokens = _shell_tokens(command)
-    i = 0
-    while i < len(tokens):
-        name = _basename(tokens[i])
-        options = _DOWNLOAD_OUTPUT_OPTIONS.get(name)
-        if options is None:
-            i += 1
-            continue
-        output_letter, long_form = options
-        with_argument = _DOWNLOAD_SHORT_WITH_ARGUMENT[name]
-        paths = set()
-        span = []
-        i += 1
-        while i < len(tokens) and tokens[i] not in _SHELL_SEP:
-            token = tokens[i]
-            span.append(token)
-
-            def _next_token() -> str | None:
-                nonlocal i
-                if i + 1 < len(tokens) and tokens[i + 1] not in _SHELL_SEP:
-                    i += 1
-                    span.append(tokens[i])
-                    return tokens[i]
-                return None
-
-            if token == long_form:
-                value = _next_token()
-                if value is not None:
-                    paths.add(value.strip("\"'"))
-            elif token.startswith(f"{long_form}="):
-                paths.add(token[len(long_form) + 1 :].strip("\"'"))
-            elif token.startswith("-") and token != "-" and not token.startswith("--"):
-                # A short-option cluster: value-less flags until the first option that
-                # takes an argument, which consumes the rest of the cluster or, when
-                # nothing is attached, the next token.
-                cluster = token[1:]
-                for position, character in enumerate(cluster):
-                    if character not in with_argument:
-                        continue
-                    attached = cluster[position + 1 :]
-                    if character == output_letter:
-                        value = attached or _next_token()
-                        if value is not None:
-                            paths.add(value.strip("\"'"))
-                    elif not attached:
-                        _next_token()
-                    break
-            i += 1
-        invocations.append((paths - _STDOUT_SINKS, " ".join(span)))
+    for argv in _simple_commands(command):
+        for position, token in enumerate(argv):
+            name = _basename(token)
+            options = _DOWNLOAD_OUTPUT_OPTIONS.get(name)
+            if options is None:
+                continue
+            output_letter, long_form = options
+            with_argument = _DOWNLOAD_SHORT_WITH_ARGUMENT[name]
+            span = argv[position + 1 :]
+            paths = set()
+            i = 0
+            while i < len(span):
+                word = span[i]
+                if word == long_form:
+                    if i + 1 < len(span):
+                        i += 1
+                        paths.add(span[i])
+                elif word.startswith(f"{long_form}="):
+                    paths.add(word[len(long_form) + 1 :])
+                elif word.startswith("-") and word != "-" and not word.startswith("--"):
+                    # A short-option cluster: value-less flags until the first option
+                    # that takes an argument, which consumes the rest of the cluster
+                    # or, when nothing is attached, the next word.
+                    cluster = word[1:]
+                    for offset, character in enumerate(cluster):
+                        if character not in with_argument:
+                            continue
+                        attached = cluster[offset + 1 :]
+                        if character == output_letter:
+                            if attached:
+                                paths.add(attached)
+                            elif i + 1 < len(span):
+                                i += 1
+                                paths.add(span[i])
+                        elif not attached and i + 1 < len(span):
+                            i += 1
+                        break
+                i += 1
+            invocations.append((paths - _STDOUT_SINKS, " ".join(span)))
+            break
     return invocations
 
 
@@ -361,14 +480,6 @@ def _moving_saved_paths(command: str) -> set:
     for paths, text in _download_invocations(command):
         if _MOVING_DOWNLOAD.search(text):
             result |= paths
-    return result
-
-
-def _saved_paths(text: str) -> set:
-    """Collect every moving download's saved path across all of ``text``."""
-    result = set()
-    for command in _commands(text):
-        result |= _moving_saved_paths(command)
     return result
 
 
@@ -413,9 +524,20 @@ def _offenders(text: str) -> list:
        cannot resolve which file it reads — indict conservatively.
     3. Otherwise — clean.
     """
-    saved = _saved_paths(text)
     result = []
+    commands = []
     for command in _commands(text):
+        try:
+            _shell_tokens(command)
+        except ValueError as exc:
+            # Fail closed: a command the guard cannot read is reported, never passed.
+            result.append(f"unparseable command {command.strip()!r}: {exc}")
+        else:
+            commands.append(command)
+    saved = set()
+    for command in commands:
+        saved |= _moving_saved_paths(command)
+    for command in commands:
         is_moving = bool(_MOVING_DOWNLOAD.search(command))
         command_saved = _moving_saved_paths(command) if is_moving else set()
         for forcing, archive in _tar_invocations(command):
@@ -1008,4 +1130,69 @@ class TestTheScannerReadsTheCommandAsTheShellDoes:
         assert _offenders(text), (
             "wget -qO- pipes to stdout; the guard must not record '-' as a saved "
             "path and must indict the forcing tar via branch 2"
+        )
+
+    @pytest.mark.parametrize(
+        "extraction",
+        [
+            "tar -xzf /tmp/moving>/dev/null",
+            "tar -xzf /tmp/moving>/dev/null 2>&1",
+            "tar -xzf /tmp/moving 2>/dev/null",
+            "tar -xzf >/dev/null /tmp/moving",
+            "tar 2>&1 -xzf /tmp/moving",
+            "tar -xzf /tmp/moving &>/dev/null",
+        ],
+    )
+    def test_an_attached_redirection_does_not_hide_the_archive(self, extraction):
+        """A redirection belongs to the shell; tar's argv never contains it."""
+        text = f"RUN wget -O /tmp/moving {self._MOVING}\n" f"RUN {extraction}\n"
+        assert _offenders(text), (
+            f"{extraction!r} hands tar the archive /tmp/moving and applies the "
+            f"redirection itself, so the saved moving path must still match; left "
+            f"joined, the archive reads as '/tmp/moving>/dev/null' and the forced "
+            f"decompressor escapes"
+        )
+
+    def test_a_quoted_path_with_a_space_is_one_argument(self):
+        """The shell passes ``"/tmp/my moving.tar"`` as ONE word."""
+        text = (
+            f'RUN wget -O "/tmp/my moving.tar" {self._MOVING}\n'
+            'RUN tar -xzf "/tmp/my pinned-v1.tar.gz"\n'
+        )
+        assert _offenders(text) == [], (
+            f"both paths truncated to /tmp/my by str.split, so a pinned archive was "
+            f"reported as the moving file; got {_offenders(text)!r}"
+        )
+        for spelling in (
+            'tar -xzf "/tmp/my moving.tar"',
+            "tar -xzf '/tmp/my moving.tar'",
+            "tar -xzf /tmp/my\\ moving.tar",
+        ):
+            hit = (
+                f'RUN wget -O "/tmp/my moving.tar" {self._MOVING}\n' f"RUN {spelling}\n"
+            )
+            assert _offenders(hit), (
+                f"{spelling!r} extracts the saved moving file; every quoting of the "
+                f"same word must still match"
+            )
+
+    def test_a_quoted_operator_is_not_a_separator(self):
+        """A ``;`` inside quotes is data, not a command boundary."""
+        text = (
+            f"RUN wget -O /tmp/moving {self._MOVING} && "
+            "echo 'note: a;tar -xzf /tmp/moving is wrong' > /opt/README\n"
+        )
+        assert _offenders(text) == [], (
+            f"the quoted text is one argument to echo; splitting on the ';' inside "
+            f"it invented a tar invocation; got {_offenders(text)!r}"
+        )
+
+    def test_an_unterminated_quote_fails_closed(self):
+        """A command the guard cannot parse is reported, never silently passed."""
+        text = f"RUN wget -O /tmp/moving {self._MOVING}\n" 'RUN tar -xf "/tmp/moving\n'
+        found = _offenders(text)
+        assert found and "unparseable" in found[0], (
+            f"an unterminated quote leaves the guard unable to say which file tar "
+            f"reads; silence here is the failure mode this file exists to prevent; "
+            f"got {found!r}"
         )
