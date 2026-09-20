@@ -333,10 +333,15 @@ The dump JSON gains a `leaderboard` key:
     rather than proof of them. Read the per-metric `<metric>_scored` counts to
     see whether any were actually lost.
 - `ragas_effective_settings` — on each run record, the judge `timeout` and
-  `max_workers` the run actually used. The configuration is also recorded
-  verbatim as `configuration`; when an invalid setting was replaced by its
-  default the two deliberately disagree, and this field is the one that
-  describes the run.
+  `max_workers` the run actually used, or `null` when `RAGAS` was not among the
+  run's `modes` and no judge ran. A rendered configuration always carries a
+  `ragas_settings` block, so its presence does not mean the judge was used.
+  The configuration is also recorded verbatim as `configuration`; when an
+  invalid setting was replaced by its default the two deliberately disagree,
+  and this field is the one that describes the run. `config_version.digest`
+  covers the normalized values for the same reason, while
+  `config_version.selected_file_digest` fingerprints the file as written, so
+  two different files stay distinguishable even when they drive identical runs.
 
 The pairwise `ab_comparisons` are still produced alongside the leaderboard; the
 leaderboard is computed independently from each config's aggregates.

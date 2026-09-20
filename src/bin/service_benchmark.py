@@ -449,13 +449,29 @@ class ResultHandler:
             # "what happened" separable, so both are kept. Recomputed from the
             # file just read: the helper is pure, so nothing has to be plumbed
             # through from the Benchmarker.
-            "ragas_effective_settings": ragas_effective_settings(
-                (
+            # None when no judge ran. A rendered configuration always carries a
+            # `ragas_settings` block, so the block's presence cannot stand in for
+            # "RAGAS was a mode": a SOURCES-only run would otherwise publish a
+            # timeout and a worker count as settings it used, when it never
+            # built a RunConfig at all. Null says "no judge ran" and is not the
+            # same claim as an absent key.
+            "ragas_effective_settings": (
+                ragas_effective_settings(
+                    (
+                        ((config.get("services") or {}).get("benchmarking") or {}).get(
+                            "mode_settings"
+                        )
+                        or {}
+                    ).get("ragas_settings")
+                )
+                if "RAGAS"
+                in (
                     ((config.get("services") or {}).get("benchmarking") or {}).get(
-                        "mode_settings"
+                        "modes"
                     )
-                    or {}
-                ).get("ragas_settings")
+                    or []
+                )
+                else None
             ),
             # The digest is the identity of the settings the run EFFECTIVELY had,
             # so the judge knobs are normalized in the BASIS while `configuration`
@@ -464,9 +480,15 @@ class ResultHandler:
             # reader compares, and hashing the unnormalized file gave two runs
             # that both fell back to the same defaults from different typos two
             # different digests.
+            #
+            # Passed as `effective_selected`, NOT as `selected`. The latter also
+            # feeds `selected_file_digest` and the divergence list, which
+            # describe the file as written -- two files that differ must
+            # fingerprint differently even when they drive identical runs.
             "config_version": config_version(
                 running=running_config,
-                selected=with_effective_ragas_settings(config),
+                selected=config,
+                effective_selected=with_effective_ragas_settings(config),
                 selected_file=str(config_path),
             ),
         }

@@ -57,10 +57,13 @@ CHAIN_CONFIG = {
 }
 
 
-def _ragas_config(**settings):
+def _ragas_config(modes=("RAGAS",), **settings):
     return {
         "services": {
-            "benchmarking": {"mode_settings": {"ragas_settings": dict(settings)}}
+            "benchmarking": {
+                "modes": list(modes),
+                "mode_settings": {"ragas_settings": dict(settings)},
+            }
         }
     }
 
@@ -147,13 +150,75 @@ def test_effective_judge_settings_are_recorded_for_a_valid_config(tmp_path):
 
 
 def test_effective_judge_settings_survive_a_config_with_no_ragas_block(tmp_path):
-    """A benchmark run with no ragas settings still records the defaults it used."""
-    ResultHandler.handle_results(_write(tmp_path, {}), {}, {}, running_config=None)
+    """A RAGAS run whose config omits the block still records the defaults it used."""
+    ResultHandler.handle_results(
+        _write(tmp_path, {"services": {"benchmarking": {"modes": ["RAGAS"]}}}),
+        {},
+        {},
+        running_config=None,
+    )
 
     assert ResultHandler.results[0]["ragas_effective_settings"] == {
         "timeout": 180,
         "max_workers": 16,
     }
+
+
+def test_no_judge_settings_are_claimed_when_ragas_was_not_a_mode(tmp_path):
+    """A SOURCES-only run builds no RunConfig, so it used no judge settings.
+
+    A rendered configuration always carries a ``ragas_settings`` block, so the
+    block's presence cannot stand in for "RAGAS ran". Reporting a timeout and a
+    worker count for a run that never called the judge is evidence of something
+    that did not happen.
+    """
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(modes=("SOURCES",), timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+    )
+
+    record = ResultHandler.results[0]
+    assert record["ragas_effective_settings"] is None, (
+        "null says no judge ran; it is not the same claim as reporting the "
+        "settings a RunConfig would have been given"
+    )
+    # The file is still recorded as written, judge block included.
+    assert record["configuration"]["services"]["benchmarking"]["mode_settings"][
+        "ragas_settings"
+    ] == {"timeout": 600, "max_workers": 4}
+
+
+def test_two_files_that_differ_keep_different_selected_file_digests(tmp_path):
+    """Normalizing the DIGEST basis must not reach the file's own fingerprint.
+
+    ``selected_file_digest`` and the divergence list describe the configuration
+    as it was written; that is their audit purpose. Two files that differ must
+    fingerprint differently even when they drive identical runs -- which is
+    exactly the pair that now shares a ``config_version.digest``.
+    """
+    ResultHandler.handle_results(
+        _write(tmp_path / "a", _ragas_config(max_workers=0)),
+        {},
+        {},
+        running_config=None,
+    )
+    ResultHandler.handle_results(
+        _write(tmp_path / "b", _ragas_config(max_workers="many")),
+        {},
+        {},
+        running_config=None,
+    )
+
+    first, second = ResultHandler.results
+    assert (
+        first["config_version"]["digest"] == second["config_version"]["digest"]
+    ), "both ran at 16, so they are the same configuration"
+    assert (
+        first["config_version"]["selected_file_digest"]
+        != second["config_version"]["selected_file_digest"]
+    ), "but the two files are not the same file"
 
 
 def test_records_the_configuration_the_chain_held(tmp_path):

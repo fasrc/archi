@@ -145,7 +145,7 @@ fm_lock_file() { printf '%s/campaign.lock\n' "$FM_OUT"; }
 # the SUT/judge/metric settings. Paths resolve from the cwd, like `archi evaluate` does.
 fm_fixed_factors_json() { # $1 = arm YAML
   FM_Y="$1" FM_KEYS="$FM_FACTOR_KEYS" "$FM_PYTHON" - <<'EOF'
-import hashlib, json, os, sys, yaml
+import hashlib, json, math, os, sys, yaml
 cfg = yaml.safe_load(open(os.environ["FM_Y"])) or {}
 b = (cfg.get("services") or {}).get("benchmarking") or {}
 rs = (b.get("mode_settings") or {}).get("ragas_settings") or {}
@@ -182,7 +182,15 @@ for key in os.environ["FM_KEYS"].split():
 # count and must be a whole one.
 def _judge(value, default, whole=False):
     ok = (int,) if whole else (int, float)
-    if isinstance(value, bool) or not isinstance(value, ok) or value <= 0:
+    # math.isfinite mirrors _positive_number: YAML `.nan` passes `<= 0` (NaN
+    # compares false against everything), and a NaN in the lock makes even two
+    # identical arms compare unequal, since nan != nan.
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, ok)
+        or not math.isfinite(value)
+        or value <= 0
+    ):
         return default
     return value
 
