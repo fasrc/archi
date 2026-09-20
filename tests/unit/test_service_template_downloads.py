@@ -369,15 +369,73 @@ def _parse_tar_span(span: list[str]) -> tuple[list[str], str | None]:
     return forcing, archive
 
 
-def _tar_invocations(command: str) -> list:
-    """Every tar invocation in ``command``, one per simple command that runs tar."""
-    invocations = []
+# Words that stand in front of the command name without being it. A leading
+# ``NAME=value`` is an assignment; ``RUN`` is the Dockerfile instruction, whose own
+# ``--mount=…`` / ``--network=…`` flags precede the shell command; and each wrapper
+# runs the command that follows it. A shell given ``-c`` runs the string that follows.
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_TRANSPARENT_WRAPPERS = frozenset(
+    {"sudo", "env", "exec", "command", "builtin", "nice", "nohup", "time"}
+)
+_SHELLS = frozenset({"sh", "bash", "dash", "ash", "zsh"})
+
+
+def _command_name_position(argv: list[str]) -> int | None:
+    """Index of the word the shell runs as the command, or ``None`` when there is none.
+
+    Review on 2026-09-20: ``echo tar -xzf /tmp/moving`` was reported as a forced
+    extraction because every word whose basename was ``tar`` counted as an invocation.
+    A program is run only from the command position. Skipped to reach it: the
+    Dockerfile ``RUN`` instruction and its ``--flag`` options, leading assignments, and
+    the wrappers in ``_TRANSPARENT_WRAPPERS`` with their own ``-flag`` options. A
+    wrapper option that takes a separate argument (``sudo -u root tar …``) is not
+    modelled: ``root`` is read as the command. Recorded as a known limit (design D16).
+    """
+    i = 0
+    if argv and argv[0].upper() == "RUN":
+        i = 1
+        while i < len(argv) and argv[i].startswith("--"):
+            i += 1
+    while i < len(argv):
+        word = argv[i]
+        if _ASSIGNMENT.match(word):
+            i += 1
+        elif _basename(word) in _TRANSPARENT_WRAPPERS:
+            i += 1
+            while i < len(argv) and argv[i].startswith("-"):
+                i += 1
+        else:
+            return i
+    return None
+
+
+def _named_commands(command: str):
+    """``(command name, its arguments)`` for every simple command the shell would run.
+
+    A ``sh -c '…'`` string is a command line of its own and is read as one, so the
+    tar or download inside it is seen exactly as if it stood in the RUN directly.
+    """
     for argv in _simple_commands(command):
-        for position, token in enumerate(argv):
-            if _basename(token) == "tar":
-                invocations.append(_parse_tar_span(argv[position + 1 :]))
-                break
-    return invocations
+        position = _command_name_position(argv)
+        if position is None:
+            continue
+        name = _basename(argv[position])
+        rest = argv[position + 1 :]
+        if name in _SHELLS and "-c" in rest:
+            script = rest[rest.index("-c") + 1 :]
+            if script:
+                yield from _named_commands(script[0])
+            continue
+        yield name, rest
+
+
+def _tar_invocations(command: str) -> list:
+    """Every tar invocation in ``command``: one per simple command whose command is tar."""
+    return [
+        _parse_tar_span(arguments)
+        for name, arguments in _named_commands(command)
+        if name == "tar"
+    ]
 
 
 def _forced_decompressors(command: str) -> list[str]:
@@ -431,46 +489,42 @@ def _download_invocations(command: str) -> list:
     ``tar -xzf /tmp/pinned`` an offender.
     """
     invocations = []
-    for argv in _simple_commands(command):
-        for position, token in enumerate(argv):
-            name = _basename(token)
-            options = _DOWNLOAD_OUTPUT_OPTIONS.get(name)
-            if options is None:
-                continue
-            output_letter, long_form = options
-            with_argument = _DOWNLOAD_SHORT_WITH_ARGUMENT[name]
-            span = argv[position + 1 :]
-            paths = set()
-            i = 0
-            while i < len(span):
-                word = span[i]
-                if word == long_form:
-                    if i + 1 < len(span):
-                        i += 1
-                        paths.add(span[i])
-                elif word.startswith(f"{long_form}="):
-                    paths.add(word[len(long_form) + 1 :])
-                elif word.startswith("-") and word != "-" and not word.startswith("--"):
-                    # A short-option cluster: value-less flags until the first option
-                    # that takes an argument, which consumes the rest of the cluster
-                    # or, when nothing is attached, the next word.
-                    cluster = word[1:]
-                    for offset, character in enumerate(cluster):
-                        if character not in with_argument:
-                            continue
-                        attached = cluster[offset + 1 :]
-                        if character == output_letter:
-                            if attached:
-                                paths.add(attached)
-                            elif i + 1 < len(span):
-                                i += 1
-                                paths.add(span[i])
-                        elif not attached and i + 1 < len(span):
+    for name, span in _named_commands(command):
+        options = _DOWNLOAD_OUTPUT_OPTIONS.get(name)
+        if options is None:
+            continue
+        output_letter, long_form = options
+        with_argument = _DOWNLOAD_SHORT_WITH_ARGUMENT[name]
+        paths = set()
+        i = 0
+        while i < len(span):
+            word = span[i]
+            if word == long_form:
+                if i + 1 < len(span):
+                    i += 1
+                    paths.add(span[i])
+            elif word.startswith(f"{long_form}="):
+                paths.add(word[len(long_form) + 1 :])
+            elif word.startswith("-") and word != "-" and not word.startswith("--"):
+                # A short-option cluster: value-less flags until the first option
+                # that takes an argument, which consumes the rest of the cluster
+                # or, when nothing is attached, the next word.
+                cluster = word[1:]
+                for offset, character in enumerate(cluster):
+                    if character not in with_argument:
+                        continue
+                    attached = cluster[offset + 1 :]
+                    if character == output_letter:
+                        if attached:
+                            paths.add(attached)
+                        elif i + 1 < len(span):
                             i += 1
-                        break
-                i += 1
-            invocations.append((paths - _STDOUT_SINKS, " ".join(span)))
-            break
+                            paths.add(span[i])
+                    elif not attached and i + 1 < len(span):
+                        i += 1
+                    break
+            i += 1
+        invocations.append((paths - _STDOUT_SINKS, " ".join(span)))
     return invocations
 
 
@@ -1195,4 +1249,41 @@ class TestTheScannerReadsTheCommandAsTheShellDoes:
             f"an unterminated quote leaves the guard unable to say which file tar "
             f"reads; silence here is the failure mode this file exists to prevent; "
             f"got {found!r}"
+        )
+
+    def test_tar_is_recognised_only_at_a_command_position(self):
+        """``echo tar -xzf /tmp/moving`` prints a string; it extracts nothing."""
+        base = f"RUN wget -O /tmp/moving {self._MOVING}\n"
+        for argument in (
+            "RUN echo tar -xzf /tmp/moving\n",
+            "RUN printf '%s\\n' tar -xzf /tmp/moving > /opt/HOWTO\n",
+        ):
+            assert _offenders(base + argument) == [], (
+                f"{argument.strip()!r} passes 'tar' as an argument to another "
+                f"command; matching the basename in any position reported it; "
+                f"got {_offenders(base + argument)!r}"
+            )
+
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            "tar -xzf /tmp/moving",
+            "/bin/tar -xzf /tmp/moving",
+            "cd /tmp && tar -xzf moving",
+            "true || tar -xzf /tmp/moving",
+            "(cd /tmp; tar -xzf moving)",
+            "sudo tar -xzf /tmp/moving",
+            "env TAR_OPTIONS= tar -xzf /tmp/moving",
+            "TAR_OPTIONS= tar -xzf /tmp/moving",
+            "sh -c 'tar -xzf /tmp/moving'",
+            "--mount=type=cache,target=/root/.cache tar -xzf /tmp/moving",
+        ],
+    )
+    def test_every_way_of_running_tar_is_still_a_command_position(self, spelling):
+        """Narrowing to the command position must keep every spelling that RUNS tar."""
+        text = f"RUN wget -O /tmp/moving {self._MOVING}\n" f"RUN {spelling}\n"
+        assert _offenders(text), (
+            f"{spelling!r} runs tar on the saved moving download — after a control "
+            f"operator, behind an assignment or a wrapper, inside a shell -c string, "
+            f"or after the RUN instruction's own flags — and must still be reported"
         )
