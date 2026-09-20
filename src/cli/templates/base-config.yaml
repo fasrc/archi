@@ -91,6 +91,13 @@ services:
           {%- endfor %}
         embedding_model: {{ services.benchmarking.mode_settings.ragas_settings.embedding_model | default("OpenAI", true) }}
         timeout: {{ services.benchmarking.mode_settings.ragas_settings.timeout | default(180, true) }}
+        # Judge concurrency. ragas wraps each row's scoring in
+        # asyncio.wait_for(timeout) with the tenacity retry chain INSIDE it, so
+        # `timeout` is one budget covering every retry and its backoff. Hitting
+        # the judge with too many parallel calls throttles it, the retries eat
+        # the budget, and the row times out unscored -- which is why this is a
+        # knob and not ragas' silent default of 16.
+        max_workers: {{ services.benchmarking.mode_settings.ragas_settings.max_workers | default(16, true) }}
         batch_size: {{ services.benchmarking.mode_settings.ragas_settings.batch_size | default(false, true) }}
         # Judge/SUT split: when these are set, the RAGAS judge LLM is constructed
         # independent of the SUT (services.benchmarking.provider/model). Falls back

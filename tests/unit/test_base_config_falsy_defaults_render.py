@@ -540,6 +540,7 @@ _NON_BOOL_DEFAULT_BASELINE = [
     "services.benchmarking.mode_settings.ragas_settings.evaluator_model=''",
     "services.benchmarking.mode_settings.ragas_settings.evaluator_ollama_url=''",
     "services.benchmarking.mode_settings.ragas_settings.evaluator_provider=''",
+    "services.benchmarking.mode_settings.ragas_settings.max_workers=16",
     "services.benchmarking.mode_settings.ragas_settings.timeout=180",
     "services.benchmarking.mode_settings.sources_settings.default_match_field='file_name'",
     "services.benchmarking.model=''",

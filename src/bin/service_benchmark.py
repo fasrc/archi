@@ -43,6 +43,7 @@ from src.utils.benchmark_schema import (
     DEFAULT_ENABLED_METRICS,
     json_safe,
     normalize_bank,
+    ragas_run_config_kwargs,
     required_fields_for_modes,
     score_metrics_per_eligibility,
 )
@@ -1747,11 +1748,13 @@ class Benchmarker:
         ]
         # The archi config-render pipeline can strip global.verbosity; tolerate
         # missing key (verbosity 4 enables tenacity retry logging in ragas).
-        log_tenacity = self.config.get("global", {}).get("verbosity", 0) >= 4
+        verbosity = self.config.get("global", {}).get("verbosity", 0)
         batch_size = ragas_settings["batch_size"] or None
-        runconfig = RunConfig(
-            timeout=ragas_settings["timeout"], log_tenacity=log_tenacity
-        )
+        # Kwargs built by a tested helper rather than inline: `max_workers` was
+        # never passed here, so ragas' default of 16 concurrent judge calls
+        # applied unannounced. See ragas_run_config_kwargs for why raising
+        # `max_retries` is NOT the lever for judge timeouts.
+        runconfig = RunConfig(**ragas_run_config_kwargs(ragas_settings, verbosity))
         llm = LangchainLLMWrapper(self.get_ragas_llm_evaluator())
         embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
 

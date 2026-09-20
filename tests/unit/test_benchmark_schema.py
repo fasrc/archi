@@ -22,11 +22,14 @@ import json
 import math
 
 from src.utils.benchmark_schema import (
+    RAGAS_DEFAULT_MAX_WORKERS,
+    RAGAS_DEFAULT_TIMEOUT,
     bank_status_counts,
     json_safe,
     metric_required_column,
     normalize_bank,
     normalize_record,
+    ragas_run_config_kwargs,
     required_fields_for_modes,
     row_is_eligible,
     row_status,
@@ -594,3 +597,57 @@ def test_answer_correctness_excludes_reference_less_rows():
     assert row_is_eligible(draft, "answer_correctness") is False
     # The answer-only metrics are unaffected by a missing reference.
     assert row_is_eligible(draft, "answer_relevancy") is True
+
+
+# --- RunConfig kwargs -------------------------------------------------------
+#
+# The judge is the benchmark's only external paid dependency and its sole
+# source of lost scores. ragas applies ``timeout`` with ``asyncio.wait_for``
+# AROUND the tenacity retry chain (``metrics/base.py::single_turn_ascore``), so
+# one budget covers every retry and its backoff: raising ``max_retries`` cannot
+# recover a timed-out row, while ``max_workers`` governs how hard the judge is
+# hit concurrently and so how often it throttles into that backoff. Both need
+# to be operator-settable; ``max_workers`` was not reaching ``RunConfig`` at
+# all, leaving ragas' default of 16 in force unannounced.
+
+
+def test_run_config_kwargs_defaults_when_settings_are_absent():
+    kwargs = ragas_run_config_kwargs({})
+
+    assert kwargs["timeout"] == RAGAS_DEFAULT_TIMEOUT
+    assert kwargs["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS
+    assert kwargs["log_tenacity"] is False
+
+
+def test_run_config_kwargs_honours_explicit_settings():
+    kwargs = ragas_run_config_kwargs({"timeout": 600, "max_workers": 6})
+
+    assert kwargs["timeout"] == 600
+    assert kwargs["max_workers"] == 6
+
+
+def test_run_config_kwargs_enables_tenacity_logging_at_verbosity_4():
+    assert ragas_run_config_kwargs({}, verbosity=3)["log_tenacity"] is False
+    assert ragas_run_config_kwargs({}, verbosity=4)["log_tenacity"] is True
+
+
+def test_run_config_kwargs_rejects_non_positive_and_non_integer_values():
+    """A bad value falls back to the default rather than reaching RunConfig.
+
+    ``max_workers=0`` stalls the executor and a negative timeout makes every row
+    time out instantly; both are worse failures than ignoring the operator. A
+    bool is rejected too: ``True`` is an ``int`` in Python and would otherwise
+    silently become one worker.
+    """
+    for bad in (0, -1, "many", None, 2.5, True):
+        kwargs = ragas_run_config_kwargs({"timeout": bad, "max_workers": bad})
+        assert kwargs["timeout"] == RAGAS_DEFAULT_TIMEOUT, bad
+        assert kwargs["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS, bad
+
+
+def test_run_config_kwargs_tolerates_a_none_settings_block():
+    """A config rendering ``ragas_settings:`` with no body yields None."""
+    kwargs = ragas_run_config_kwargs(None)
+
+    assert kwargs["timeout"] == RAGAS_DEFAULT_TIMEOUT
+    assert kwargs["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS

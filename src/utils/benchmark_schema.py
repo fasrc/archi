@@ -44,10 +44,13 @@ Serialization boundary
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import posixpath
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Mirror of the Jinja defaults in src/cli/templates/base-config.yaml so the
 # preflight judges a config by the SAME effective settings the rendered
@@ -63,6 +66,12 @@ DEFAULT_ENABLED_METRICS: List[str] = [
     "context_recall",
 ]
 DEFAULT_ANCHOR_PATH: str = "examples/benchmarking/anchor_questions.json"
+
+# RunConfig knobs. ``RAGAS_DEFAULT_TIMEOUT`` mirrors the Jinja default above;
+# ``RAGAS_DEFAULT_MAX_WORKERS`` mirrors ragas' own RunConfig default, which
+# applied unannounced before this key existed.
+RAGAS_DEFAULT_TIMEOUT: int = 180
+RAGAS_DEFAULT_MAX_WORKERS: int = 16
 
 # WORKDIR of the benchmarking image (src/cli/templates/dockerfiles/Dockerfile-benchmarks).
 # A relative anchor path is probed against this at runtime, so it is also where the
@@ -598,6 +607,57 @@ def score_metrics_per_eligibility(
 
 
 # --- serialization boundary -------------------------------------------------
+
+
+def _positive_int(value: Any, default: int, name: str) -> int:
+    """Accept a positive int, else fall back to ``default`` and say so.
+
+    ``bool`` is excluded deliberately: it is a subclass of ``int``, so a stray
+    ``max_workers: true`` would otherwise become one worker and quietly
+    serialize the whole judge pass.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        if value is not None:
+            logger.warning(
+                "Ignoring ragas_settings.%s=%r (want a positive integer); using %d",
+                name,
+                value,
+                default,
+            )
+        return default
+    return value
+
+
+def ragas_run_config_kwargs(
+    ragas_settings: Optional[Dict[str, Any]], verbosity: int = 0
+) -> Dict[str, Any]:
+    """Build the kwargs for ragas' ``RunConfig`` from the rendered config.
+
+    Kept here, beside the other pure helpers, so it is unit-testable without the
+    benchmark-only ragas dependency: the caller does ``RunConfig(**kwargs)``.
+
+    Why both knobs matter, and why ``max_retries`` is not among them: ragas wraps
+    each metric's per-row scoring in ``asyncio.wait_for(..., timeout)``
+    (``metrics/base.py::single_turn_ascore``), and the tenacity retry chain lives
+    INSIDE that call. One ``timeout`` therefore has to cover every retry and all
+    of its exponential backoff, so raising ``max_retries`` cannot rescue a row
+    that timed out — it just spends the same budget faster. The two knobs that
+    do help are a bigger budget (``timeout``) and hitting the judge less
+    concurrently so it throttles less (``max_workers``), the latter having never
+    been plumbed through at all.
+    """
+    settings = ragas_settings or {}
+    return {
+        "timeout": _positive_int(
+            settings.get("timeout"), RAGAS_DEFAULT_TIMEOUT, "timeout"
+        ),
+        "max_workers": _positive_int(
+            settings.get("max_workers"), RAGAS_DEFAULT_MAX_WORKERS, "max_workers"
+        ),
+        # verbosity 4 turns on tenacity's per-retry logging, which is the only
+        # way to see the judge retrying before it runs out of budget.
+        "log_tenacity": verbosity >= 4,
+    }
 
 
 def json_safe(value: Any) -> Any:
