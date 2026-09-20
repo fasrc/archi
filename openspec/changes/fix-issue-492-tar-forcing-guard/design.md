@@ -290,3 +290,158 @@ before, because the previous code matched `-O`/`-o` literally and never looked a
 options at all.
 
 **After the round:** 64 passed, 18 skipped in the file.
+
+## Review round 3 — 2026-09-20 (Codex, seven P2 findings, all verified valid)
+
+The seven findings landed against `4dc38191` after round 2 had closed, and the 2026-09-19
+run filed them as #509 rather than open a third round unattended. This run reproduced all
+seven with the probe recorded in #509 before any code moved, and closed them in four
+commits, each test-first and gate-green, in the order the work order proposed: the two
+cheap parser fixes, the tokenizer, the command position, then the two that change the
+guard's data model.
+
+### D14 — A long option consumes its required argument
+
+`_parse_tar_span` consumed arguments for SHORT options only, so in
+`tar --exclude --gzip -xf /tmp/moving` the exclusion PATTERN `--gzip` was scanned as an
+option and a correct template was rejected. The fix mirrors `_SHORT_WITH_ARGUMENT` with a
+`_LONG_WITH_ARGUMENT` table measured from GNU tar 1.35's `--help`: every `--name=ARG`
+entry. The six `[=ARG]` entries (`--atime-preserve`, `--backup`, `--checkpoint`,
+`--occurrence`, `--one-top-level`, `--totals`) take a value only when it is attached —
+`getopt_long` never consumes the next token for an optional argument — so they are
+deliberately absent, and `tar --occurrence --gzip -xf f` still reports `--gzip`.
+
+### D15 — The output option is found inside a short-option cluster
+
+`_download_invocations` matched the token prefix `-o` / `-O`, so a value-less flag in front
+(`curl -sLo/tmp/x`, `wget -qO /tmp/x`) hid the output option and the saved path was lost
+silently — the same one-directional failure as D13. The cluster is now walked: value-less
+flags until the first option that takes an argument, which consumes the rest of the cluster
+or the next word. That needs each tool's argument-taking short options, measured from
+`curl --help all` (curl 8.21.0; `-h` omitted, its subject is optional) and `wget --help`
+(GNU Wget 1.25.0), so `curl -do=1` posts data and records no path.
+
+### D16 — The command is read as the shell reads it
+
+Three findings shared one cause: `str.split` is not a shell lexer.
+
+- **Quotes.** `"/tmp/my moving.tar"` is one word to the shell and was two tokens to the
+  guard, so both a moving and a pinned path truncated to `/tmp/my` and collided. The lexer
+  resolves single quotes, double quotes and backslash escapes into one word.
+- **Redirections.** `tar -xzf /tmp/moving>/dev/null` hands tar `/tmp/moving`; the guard read
+  the archive as `/tmp/moving>/dev/null` and the forced decompressor escaped. Redirection
+  operators (`>`, `>>`, `<`, `2>&1`, `&>`, …) are isolated and dropped from each simple
+  command's argv together with their target word; a dup form (`2>&1`, `>&-`) has no target.
+- **Command position.** `echo tar -xzf /tmp/moving` prints a string, but every word whose
+  basename was `tar` counted as an invocation. A program runs only from the command
+  position; to reach it the scanner skips the Dockerfile `RUN` instruction and its
+  `--flags`, leading `NAME=value` assignments, and the transparent wrappers (`sudo`, `env`,
+  `exec`, `command`, `builtin`, `nice`, `nohup`, `time`) with their `-flags`. A `sh -c '…'`
+  string is a command line of its own and is read as one — which also restores the case
+  the quote-aware lexer would otherwise have swallowed, since the whole string is one word.
+
+Two decisions inside this one are worth stating:
+
+- **An unterminated quote fails closed.** The lexer raises, and `_offenders` reports the
+  command as `unparseable …` instead of passing it. A guard that returns "no offenders" on
+  a line it cannot read is the failure mode this file exists to prevent. Measured before
+  choosing this: all 268 commands across the 15 live templates parse.
+- **A wrapper option with a separate argument was first recorded as a known limit** —
+  `sudo -u root tar …` read `root` as the command and the tar was not seen. The
+  adversarial pass in round 4 read that limit as what it is under this file's contract, a
+  false negative, and D19 closes it.
+
+An operator token is marked as such (`_Operator`), so a quoted word that spells one —
+`echo 'a;tar -xzf /tmp/moving'` — is data, not a command boundary.
+
+### D17 — Provenance follows Dockerfile order
+
+`_saved_paths` collected every moving destination file-wide before any command was scanned,
+so a moving write in a LATER RUN indicted an extraction in an EARLIER one, and a pinned
+write that overwrote a formerly moving path never cleared it. Provenance is now a
+`path -> moving` map built as the shell reaches each write — across RUNs and left to right
+inside one — and a later write to the same path replaces the earlier entry. A tar is judged
+by what its archive held at that moment. Branch 2 keeps its whole-command reading on
+purpose: it is a same-command heuristic for a moving download whose destination the guard
+cannot see, and reordering it would have turned `tar -xzf pinned.tar.gz && wget MOV` red.
+
+### D18 — Each curl transfer pairs with its own output; wget's `-O` stays invocation-wide
+
+`curl --manual`: the first `-o` corresponds to the first URL. One curl with a moving and a
+pinned transfer marked BOTH destinations moving, because moving-ness was read from the
+invocation's whole text. Outputs and URLs are now collected in order and zipped; curl's
+`-O` / `--remote-name` is a transfer whose destination the guard does not know and takes a
+placeholder so later pairs stay aligned. wget's `-O` names one file for every URL of the
+invocation, so that file is moving when any URL is — the old reading, kept for wget.
+
+The pairing is trusted only when every bare word carries a URL scheme. The guard does not
+model curl's long options that take a separate argument (`--header "Accept: x"`), and a
+positional zip would hand `/tmp/moving` to the header text and read it as pinned — the
+silent-skip shape this change exists to close. When any bare word is not a URL, the
+invocation is read whole, which is exactly the conservative reading the guard used before
+this round.
+
+**After the round:** 96 passed, 18 skipped in the file (64 at `4dc38191`). Whole suite
+4650 passed, 27 skipped, 1 xfailed. The #509 probe prints the wanted verdict on all seven
+lines; every acceptance fence in that work order holds (`tar -xjf/tmp/ff.tar.xz`,
+`tar -xjf "$FF"`, `/bin/tar -xzf <saved>` and the original `-xjf` are reported; `mytar` is
+not); no test was deleted or renamed.
+
+## Review round 4 — 2026-09-20 (adversarial pass over round 3's own fixes, three findings)
+
+A synchronous adversarial pass over the four round-3 commits returned three [high]
+findings, every one a false negative, every one reproduced against `76e85d90` before
+changing anything. Two are holes round 3 opened while narrowing; the third is older but of
+the same class. The common thread: where the guard cannot see the program, it must err
+closed, not fall silent.
+
+### D19 — Behind a wrapper, a known program anywhere after the wrapper's options is the command
+
+D16 skipped a wrapper's `-flags` but not their separate arguments, so `sudo -u root tar …`
+read `root` as the command, `nice -n 10 tar …` read `10`, and `env --chdir /tmp tar …`
+read `/tmp`; the tar behind each was never scanned. Round 3 wrote that down as a limit.
+Under this file's contract it is a false negative, and it was introduced by round 3 — at
+`4dc38191` any-position matching still caught every one of these.
+
+The guard does not model each wrapper's option arity, and a table would be a second
+`_LONG_WITH_ARGUMENT` for eight programs. Instead it errs closed: behind a wrapper, when the
+word at the command position is not a program the guard knows (`tar`, `wget`, `curl`, the
+shells), a known program anywhere after it is the command. Without a wrapper the rule
+stays strict, so `echo root tar -xzf …` is still data and D16's false positive stays
+closed. The cost is one contrived false positive — `sudo -u root echo tar -xzf <saved>` —
+accepted because inside a wrapped command the guard cannot tell an option's argument
+from a program, and the file's rule for that case is to report.
+
+### D20 — curl's long options are consumed by arity, and unknown arity disables the pairing
+
+D18 trusted the transfer pairing when every bare word carried a URL scheme, assuming an
+option's argument would not. `curl --header https://example.invalid/x -o /tmp/moving
+<latest>` breaks that: the header's value is URL-shaped, pairs with `-o`, the moving URL is
+left unpaired, and `/tmp/moving` is read as pinned — the exact silent skip D18 was built
+to avoid. `--proxy`, `--referer` and `--user-agent` take URL-shaped values just as
+naturally.
+
+Two tables measured from `curl --help all` (curl 8.21.0) now give every long option its
+arity: the entries shown with an `<argument>` take one, the rest take none. `--url` names a
+transfer and pairs like a bare URL. A long option in neither table has unknown arity — it
+may or may not have taken the next word — and unknown arity disables the pairing, so the
+invocation is read whole. The URL-scheme check from D18 stays as a second fence.
+
+### D21 — A command word the guard cannot name is read as a possible tar
+
+`$(echo tar) -xzf /tmp/a`, `` `which tar` -xzf /tmp/a `` and `$TAR -xzf /tmp/a` all run
+tar; the guard saw no program. Two changes: the lexer keeps a command substitution as ONE
+word up to its matching parenthesis (nesting counted; unterminated raises, as an
+unterminated quote does), and a command word that starts with `$` or carries `$(` or a
+backtick is named `<unresolved>` and read as a possible tar. Its arguments go through the
+tar parser: a forcing option on an archive with moving provenance, or an unresolvable
+archive in a moving command, is reported; `$(which ls) -la /tmp/moving` carries no forcing
+option and is clean. Such a command is NOT read as a possible download — the guard does
+not guess a destination it cannot see, and a moving download it cannot see still indicts
+a forcing tar in the same command through branch 2.
+
+**After the round:** 104 passed, 18 skipped in the file. Whole suite 4658 passed, 27
+skipped, 1 xfailed. All 268 commands across the 15 live templates still parse; the six
+templates with a moving download report no offender. Rounds 1 through 4 each found real
+defects in the previous round's own work in this one helper layer, which is the strongest
+argument this change has for a human's eye at merge time.

@@ -214,3 +214,31 @@ through the GraphQL closing-issues field). Not merged.
 
 - [x] 6.2 Post the round-2 log, re-request the async reviewer, and stop at the
       two-round bound. **Never merge.**
+
+## 7. Review round 3 — 2026-09-20 (unattended 4AM responder)
+
+- [x] 7.1 Reproduce all seven Codex P2 findings filed as #509 against the PR head
+      `4dc38191` with the probe recorded in that issue, then close them test-first in
+      four commits: long-option arguments and clustered output options (D14, D15);
+      the quote-aware lexer with redirections (D16); the command position (D16);
+      ordered provenance and per-transfer curl pairing (D17, D18). File: 64 -> 96
+      passed, 18 skipped. Gate green on each commit.
+
+- [x] 7.2 Re-validate the change (`openspec validate fix-issue-492-tar-forcing-guard
+      --strict`) after the spec delta grew two requirements and ten scenarios. Green
+      on the host.
+
+- [x] 7.3 Reply in-thread on each of the seven findings, push to the PR head branch,
+      post the round-3 log, and link #509 to the PR (`Closes #509`, confirmed through
+      the GraphQL closing-issues field). **Never merge.**
+
+## 8. Review round 4 — 2026-09-20 (adversarial pass over round 3's own fixes)
+
+- [x] 8.1 Close the three false negatives the synchronous adversarial pass found in
+      round 3's work, test-first: a wrapper option with a separate argument (D19), a
+      URL-shaped argument to a curl long option (D20), and a command word the guard
+      cannot name (D21). File: 96 -> 104 passed, 18 skipped. Gate green.
+
+- [x] 8.2 Record D19-D21 and three spec scenarios; re-validate with `--strict`; post
+      the round-4 log; re-request the async reviewer; stop at the two-round bound.
+      **Never merge.**

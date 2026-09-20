@@ -341,3 +341,92 @@ guard stops being trusted.
 - **WHEN** a RUN carrying a moving download extracts a literal `pinned-v1.tar.gz` with `-C "$DEST"`
 - **THEN** the guard reports no offender
 - **AND** `tar -xjf "$FF"`, whose archive itself is a variable, is still reported
+
+### Requirement: The guard SHALL read a command as the shell and the tools read it
+
+The download guard SHALL resolve quotes and isolate control and redirection operators before it reads a command, SHALL recognise `tar`, `wget` and `curl` only at a command position, SHALL consume the required argument of a long option and find the output option inside a short-option cluster, and SHALL report a command it cannot parse rather than pass it.
+
+Review on 2026-09-20 (seven findings against `4dc38191`): `str.split` broke a quoted path
+with a space into two words; `tar -xzf /tmp/moving>/dev/null` kept the redirection glued
+to the archive so the saved path stopped matching; `echo tar -xzf /tmp/moving` counted as
+an invocation; `tar --exclude --gzip` read the exclusion pattern as a forcing option; and
+`curl -sLo/tmp/x` recorded no saved path. Design D14–D16.
+
+#### Scenario: A long option's separate argument is not an option
+- **WHEN** a tar invocation reads `tar --exclude --gzip -xf /tmp/moving`
+- **THEN** the guard reports no forcing option
+- **AND** `tar --exclude pattern --gzip -xf /tmp/f` still reports `--gzip`
+- **AND** `tar --occurrence --gzip -xf /tmp/f`, whose first option takes only an attached value, still reports `--gzip`
+
+#### Scenario: The output option inside a short-option cluster records the saved path
+- **WHEN** a moving download is written as `curl -sLo/tmp/ff.tar.xz`, `curl -sLo /tmp/ff.tar.xz`, `wget -qO/tmp/ff.tar.xz` or `wget -qO /tmp/ff.tar.xz` and extracted by `tar -xzf /tmp/ff.tar.xz` in a later RUN
+- **THEN** the guard reports the forcing option
+- **AND** `curl -do=1 <url>` records no saved path, because `-d` consumes the rest of its cluster
+
+#### Scenario: An attached redirection does not hide the archive
+- **WHEN** a saved moving path is extracted by `tar -xzf /tmp/moving>/dev/null`, `tar -xzf /tmp/moving>/dev/null 2>&1`, `tar -xzf >/dev/null /tmp/moving` or `tar 2>&1 -xzf /tmp/moving`
+- **THEN** the guard reports the forcing option
+
+#### Scenario: A quoted path with a space is one argument
+- **WHEN** a moving download is saved as `"/tmp/my moving.tar"` and a later RUN extracts `"/tmp/my pinned-v1.tar.gz"` with a forced format
+- **THEN** the guard reports no offender
+- **AND** extracting `"/tmp/my moving.tar"`, `'/tmp/my moving.tar'` or `/tmp/my\ moving.tar` with a forced format is reported
+- **AND** a `;` inside a quoted argument does not begin a new command
+
+#### Scenario: A tar named as an argument to another command is not an invocation
+- **WHEN** a RUN after a moving download runs `echo tar -xzf /tmp/moving`
+- **THEN** the guard reports no offender
+- **AND** `tar` after `&&`, `||`, `;` or `(`, behind a `NAME=value` assignment or a wrapper such as `sudo` or `env`, inside a `sh -c '…'` string, or after the RUN instruction's own `--mount=` flag is still an invocation and is still reported
+- **AND** `mytar -xzf <saved moving path>` is still not reported
+
+#### Scenario: An unparseable command is reported
+- **WHEN** a RUN after a moving download carries an unterminated quote
+- **THEN** the guard reports the command as unparseable
+- **AND** every command of every live service template parses
+
+#### Scenario: A wrapper option with a separate argument does not hide tar
+- **WHEN** a RUN after a moving download runs `sudo -u root tar -xzf <saved>`, `nice -n 10 tar -xzf <saved>`, `env --chdir /tmp tar -xzf <saved>` or `sudo -u root sh -c 'tar -xzf <saved>'`
+- **THEN** the guard reports the forcing option, because behind a wrapper a known program anywhere after the wrapper's options is the command
+- **AND** `echo root tar -xzf <saved>` without a wrapper still reports no offender
+
+#### Scenario: A URL-shaped argument to a curl option does not break the pairing
+- **WHEN** a curl invocation reads `--header`, `--proxy`, `--referer` or `--user-agent` with a URL-shaped value before `-o /tmp/moving <moving>`, and a later RUN extracts `/tmp/moving` with a forced format
+- **THEN** the guard reports the forcing option, because the option's argument is consumed by arity and never pairs with `-o`
+- **AND** `--url <url>` names a transfer and pairs like a bare URL
+- **AND** a long option in neither arity table disables the pairing, so every destination of that invocation takes the invocation's moving-ness
+
+#### Scenario: A command word the guard cannot name is read as a possible tar
+- **WHEN** a RUN after a moving download runs `$(echo tar) -xzf <saved>`, `` `which tar` -xzf <saved> `` or `$TAR -xzf <saved>`
+- **THEN** the guard reports the forcing option
+- **AND** `$(which ls) -la <saved>` reports no offender, because it carries no forcing option
+- **AND** a command substitution is one word, so `tar -xzf $(ls /tmp/*.tar)` names an unresolvable archive as before
+
+### Requirement: The guard SHALL follow provenance in Dockerfile order
+
+The download guard SHALL record each saved path with the moving-ness of the transfer that wrote it, in the order the shell runs the writes, SHALL let a later write to the same path replace the earlier provenance, and SHALL pair each curl output option with the URL in the same position.
+
+Review on 2026-09-20: one file-wide set collected before any command was scanned let a
+LATER moving write indict an EARLIER extraction and never let a pinned write clear a
+moving path; one curl with a moving and a pinned transfer marked both destinations from
+the invocation's text. Design D17–D18.
+
+#### Scenario: A later moving write does not indict an earlier extraction
+- **WHEN** RUN 1 saves a pinned download to `/tmp/a` and extracts it with a forced format, and RUN 2 saves a moving download to `/tmp/a`
+- **THEN** the guard reports no offender
+- **AND** a moving write to `/tmp/a` BEFORE the extraction is still reported
+- **AND** `tar -xzf /tmp/a && wget -O /tmp/a <moving>` inside one RUN reports no offender
+
+#### Scenario: A later pinned write clears the moving provenance
+- **WHEN** a moving download is saved to `/tmp/a`, then a pinned download is saved to `/tmp/a` and extracted with a forced format, in separate RUNs or in one
+- **THEN** the guard reports no offender
+
+#### Scenario: Each curl transfer pairs with its own output
+- **WHEN** one invocation reads `curl -o /tmp/moving <moving> -o /tmp/pinned <pinned>` and `/tmp/pinned` is extracted with a forced format, in the same RUN or a later one
+- **THEN** the guard reports no offender
+- **AND** extracting `/tmp/moving` with a forced format is reported, whichever transfer comes first
+- **AND** `wget -O /tmp/all <pinned> <moving>` marks `/tmp/all` moving, because wget writes every URL to that one file
+
+#### Scenario: An unpaired curl invocation is read conservatively
+- **WHEN** a curl invocation carries a bare word that is not a URL, such as the argument of `--header "Accept: x"`, together with `-o /tmp/moving <moving>`
+- **THEN** `/tmp/moving` is recorded as moving from the invocation as a whole
+- **AND** a forced extraction of it in a later RUN is reported
