@@ -32,6 +32,7 @@ def _reset_results(monkeypatch):
 
 
 def _write(tmp_path, config):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(config))
     return path
@@ -91,6 +92,44 @@ def test_records_the_judge_settings_the_run_actually_used(tmp_path):
     # asked for, and asserted_config_divergence exists to keep the two apart.
     selected = record["configuration"]["services"]["benchmarking"]["mode_settings"]
     assert selected["ragas_settings"] == {"timeout": -1, "max_workers": "many"}
+
+
+def test_two_runs_that_fell_back_to_the_same_defaults_share_a_digest(tmp_path):
+    """The config digest is the identity of the EFFECTIVE settings, not the file.
+
+    Recording the effective values in a sibling field is not enough on its own:
+    the digest is what a later reader compares. While it hashed the file as
+    written, ``max_workers: 0`` and ``max_workers: many`` -- which run
+    identically at 16 -- carried different digests.
+    """
+    ResultHandler.handle_results(
+        _write(tmp_path / "a", _ragas_config(timeout=-1, max_workers=0)),
+        {},
+        {},
+        running_config=None,
+    )
+    ResultHandler.handle_results(
+        _write(tmp_path / "b", _ragas_config(timeout="many", max_workers="many")),
+        {},
+        {},
+        running_config=None,
+    )
+
+    first, second = ResultHandler.results
+    assert first["config_version"]["digest"] == second["config_version"]["digest"]
+    # And the two files are still recorded as the operator wrote them.
+    assert (
+        first["configuration"]["services"]["benchmarking"]["mode_settings"][
+            "ragas_settings"
+        ]["max_workers"]
+        == 0
+    )
+    assert (
+        second["configuration"]["services"]["benchmarking"]["mode_settings"][
+            "ragas_settings"
+        ]["max_workers"]
+        == "many"
+    )
 
 
 def test_effective_judge_settings_are_recorded_for_a_valid_config(tmp_path):

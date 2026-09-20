@@ -43,6 +43,7 @@ Serialization boundary
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import math
@@ -706,6 +707,48 @@ def ragas_effective_settings(
     """
     kwargs = ragas_run_config_kwargs(ragas_settings)
     return {"timeout": kwargs["timeout"], "max_workers": kwargs["max_workers"]}
+
+
+def with_effective_ragas_settings(config: Any) -> Any:
+    """A deep copy of ``config`` whose judge knobs hold the values a run will use.
+
+    The basis for the artifact's configuration digest, which the interpreting
+    guide defines as the identity of the settings a run effectively had. The
+    validators substitute a default for an invalid setting, and hashing the
+    unnormalized file made that identity wrong in one direction: two runs that
+    both fell back to 16 from different typos -- ``max_workers: 0`` and
+    ``max_workers: many`` -- ran identically and carried different digests, so
+    the digest could not answer "was this the same configuration as that other
+    run?". It could never certify two DIFFERENT runs as the same, because the
+    normalizer is a pure function of the recorded value, so the error only ever
+    ran in the safe direction. It was still an error.
+
+    Normalizes only when a ``ragas_settings`` mapping is already present. Its
+    presence is what says a judge ran; injecting judge defaults into a
+    SOURCES-only configuration would invent settings that run never had. When it
+    IS present, a missing key is filled with the default, so a block that omits
+    ``max_workers`` and a block that sets 16 explicitly hash alike -- which is
+    the case that motivated this.
+
+    A COPY, never in place: the artifact records the selected file verbatim
+    beside this, and ``asserted_config_divergence`` needs "what was asked for"
+    and "what happened" to stay separable.
+    """
+    if not isinstance(config, dict):
+        return config
+    updated = copy.deepcopy(config)
+    node = updated
+    for key in ("services", "benchmarking", "mode_settings"):
+        node = node.get(key) if isinstance(node, dict) else None
+        if node is None:
+            return updated
+    if not isinstance(node, dict):
+        return updated
+    settings = node.get("ragas_settings")
+    if not isinstance(settings, dict):
+        return updated
+    settings.update(ragas_effective_settings(settings))
+    return updated
 
 
 def json_safe(value: Any) -> Any:

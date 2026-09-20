@@ -35,6 +35,7 @@ from src.utils.benchmark_schema import (
     row_is_eligible,
     row_status,
     score_metrics_per_eligibility,
+    with_effective_ragas_settings,
 )
 
 # --- normalize_record: legacy -> modern dialect -----------------------------
@@ -704,6 +705,59 @@ def test_a_float_timeout_is_still_accepted():
             ragas_run_config_kwargs({"timeout": bad})["timeout"]
             == RAGAS_DEFAULT_TIMEOUT
         ), bad
+
+
+def _cfg(**settings):
+    return {
+        "services": {
+            "benchmarking": {"mode_settings": {"ragas_settings": dict(settings)}}
+        }
+    }
+
+
+def test_the_digest_basis_normalizes_the_judge_knobs():
+    """Two runs that fell back to the same defaults must hash alike.
+
+    The digest is the identity of the settings a run effectively had. Hashing
+    the file as written made that identity wrong in one direction: ``0`` and
+    ``many`` both run at 16 and carried different digests, so the artifact could
+    not answer the one question it exists to answer.
+    """
+    assert with_effective_ragas_settings(
+        _cfg(timeout=-1, max_workers=0)
+    ) == with_effective_ragas_settings(_cfg(timeout="many", max_workers="many"))
+
+    # An omitted key and an explicitly-set default describe the same run.
+    assert with_effective_ragas_settings(_cfg()) == with_effective_ragas_settings(
+        _cfg(timeout=RAGAS_DEFAULT_TIMEOUT, max_workers=RAGAS_DEFAULT_MAX_WORKERS)
+    )
+
+    # A real difference still separates them.
+    assert with_effective_ragas_settings(
+        _cfg(max_workers=4)
+    ) != with_effective_ragas_settings(_cfg(max_workers=16))
+
+
+def test_the_digest_basis_is_a_copy_and_leaves_non_judge_configs_alone():
+    """The record of what was ASKED for must survive normalizing what RAN."""
+    original = _cfg(timeout=-1, max_workers=0)
+    with_effective_ragas_settings(original)
+    assert original["services"]["benchmarking"]["mode_settings"]["ragas_settings"] == {
+        "timeout": -1,
+        "max_workers": 0,
+    }, "the caller's config must not be mutated"
+
+    # No ragas block means no judge ran; inventing judge defaults would record
+    # settings a SOURCES-only run never had.
+    sources_only = {
+        "services": {"benchmarking": {"mode_settings": {"sources_settings": {}}}}
+    }
+    assert with_effective_ragas_settings(sources_only) == sources_only
+
+    # Shapes that are not a config at all pass through rather than raising.
+    assert with_effective_ragas_settings(None) is None
+    assert with_effective_ragas_settings({}) == {}
+    assert with_effective_ragas_settings({"services": None}) == {"services": None}
 
 
 def test_run_config_kwargs_tolerates_a_none_settings_block():

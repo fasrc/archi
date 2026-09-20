@@ -47,6 +47,7 @@ from src.utils.benchmark_schema import (
     ragas_run_config_kwargs,
     required_fields_for_modes,
     score_metrics_per_eligibility,
+    with_effective_ragas_settings,
 )
 from src.utils.config_access import get_static_config
 from src.utils.env import read_secret
@@ -456,9 +457,16 @@ class ResultHandler:
                     or {}
                 ).get("ragas_settings")
             ),
+            # The digest is the identity of the settings the run EFFECTIVELY had,
+            # so the judge knobs are normalized in the BASIS while `configuration`
+            # above keeps the file verbatim. Recording the effective values in a
+            # sibling field is not enough on its own: the digest is what a later
+            # reader compares, and hashing the unnormalized file gave two runs
+            # that both fell back to the same defaults from different typos two
+            # different digests.
             "config_version": config_version(
                 running=running_config,
-                selected=config,
+                selected=with_effective_ragas_settings(config),
                 selected_file=str(config_path),
             ),
         }
