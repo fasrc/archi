@@ -343,7 +343,9 @@ session that wrote this, and the breadcrumb list is read from the corpus, not fr
     `services.chat_app.force_initial_retrieval: false` in the configuration that seeds
     the sweep deployment's Postgres and **redeploy** — editing a rendered file and
     restarting the container is a no-op (`CLAUDE.md`, "Don't-touch / gotchas") — hold it
-    identical across control and treatments, never vary it between arms, and confirm
+    identical across control and treatments, never vary it between arms (the flag's own
+    docstring invites a per-arm A/B that the seeder cannot express —
+    [#523](https://github.com/fasrc/archi/issues/523)), and confirm
     `divergence_from_selected_file` is empty in every artifact before reading a number.
     State in the issue body which of the two sweeps a number came from.
 - **(b) static-ICL prompt (`r0b`)** — 3–5 exemplars from a pool disjoint from the
