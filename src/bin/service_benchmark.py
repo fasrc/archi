@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
 from urllib.parse import urlsplit, urlunsplit
@@ -43,8 +43,11 @@ from src.utils.benchmark_schema import (
     DEFAULT_ENABLED_METRICS,
     json_safe,
     normalize_bank,
+    ragas_effective_settings,
+    ragas_run_config_kwargs,
     required_fields_for_modes,
     score_metrics_per_eligibility,
+    with_effective_ragas_settings,
 )
 from src.utils.config_access import get_static_config
 from src.utils.env import read_secret
@@ -214,8 +217,16 @@ class ResultHandler:
         )
 
     @staticmethod
-    def arms_comparable(records: List[Dict[str, Any]]) -> bool:
-        """Can these arms' scores be set against each other?
+    def arms_incomparability_reason(
+        records: List[Dict[str, Any]],
+    ) -> Optional[str]:
+        """Why these arms' scores cannot be set against each other, or None.
+
+        Returns the reason rather than a bare boolean so the operator-facing
+        warnings can name the predicate that actually failed: the A/B message
+        used to blame corpus provenance unconditionally, sending an operator
+        whose arms were withheld purely over judge pressure to inspect the
+        corpus.
 
         Only when, for every arm, the corpus provenance is established, they all
         observed the same corpus, and the arm actually ran the settings it was
@@ -238,16 +249,71 @@ class ResultHandler:
         comparable: historical sweeps are not retroactively invalidated.
         """
         fingerprints = set()
+        # How hard the judge was driven is a condition of the measurement, not a
+        # detail of it: `max_workers` decides how often the judge throttles into
+        # backoff, the backoff eats the per-row timeout budget, and the row is
+        # dropped unscored. Two arms judged at different concurrency therefore
+        # differ in score COVERAGE for reasons that have nothing to do with the
+        # arms. Recording the drift in the leaderboard's shared context is not a
+        # guard -- `rank` is what a consumer reads, and a warning it never sees
+        # cannot stop it -- so the pressure has to reach this predicate.
+        #
+        # `None` is a value here, not an absence: it says no judge ran, which is
+        # the starkest pressure difference there is against an arm that was
+        # judged. Only a wholly ABSENT key is skipped, and only because it
+        # predates the field.
+        judge_pressures = set()
         for record in records:
             stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is not _NOT_RECORDED and stability is not True:
-                return False
+                return "the corpus was not stable across an arm's own questions"
             if record.get("configuration_divergence"):
-                return False
+                return "an arm did not run the settings it was selected to run"
             fingerprint = record.get("corpus_fingerprint")
             if fingerprint is not None:
                 fingerprints.add(fingerprint)
-        return len(fingerprints) <= 1
+            pressure = record.get("ragas_effective_settings", _NOT_RECORDED)
+            if pressure is _NOT_RECORDED:
+                continue
+            judge_pressures.add(
+                None
+                if pressure is None
+                else (pressure.get("max_workers"), pressure.get("timeout"))
+            )
+        if len(judge_pressures) > 1:
+            return (
+                "the arms were scored under different judge pressure "
+                "(concurrency, per-row budget, or one arm was not judged), "
+                "so their scored denominators are not comparable"
+            )
+        if len(fingerprints) > 1:
+            return (
+                "corpus provenance does not establish that both arms were "
+                "scored against the same documents"
+            )
+        return None
+
+    @staticmethod
+    def arms_comparable(records: List[Dict[str, Any]]) -> bool:
+        """The boolean view of ``arms_incomparability_reason``.
+
+        One predicate, two shapes: callers that only gate use this, callers
+        that also report use the reason. They cannot drift apart.
+        """
+        return ResultHandler.arms_incomparability_reason(records) is None
+
+    @staticmethod
+    def leaderboard_rank_label(rank: Optional[int]) -> str:
+        """A rank rendered for the console table, withheld ranks included.
+
+        The table's positional was ``%-4d``. ``'%d' % None`` raises, and
+        ``logging`` catches that in ``handleError`` rather than aborting the
+        run, so a withheld rank did not crash -- it made every leaderboard row
+        DISAPPEAR from the console, in exactly the incomparable case the
+        withholding exists to report. ``ab_summary_line`` documents the same
+        failure mode for withheld winners; this is its leaderboard sibling.
+        """
+        return "-" if rank is None else str(rank)
 
     @staticmethod
     def ab_summary_line(
@@ -347,11 +413,28 @@ class ResultHandler:
         running_config: Optional[Dict[str, Any]],
         corpus_before: Optional[str] = None,
         ingest_wall_seconds: Optional[float] = None,
+        modes_executed: Optional[Set[str]] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
 
         ResultHandler.map_prompts(config)
+
+        # What RAN, which in a sweep is not what this arm's file says. `run()`
+        # reads `modes_being_run` once from the FIRST config and reuses it for
+        # every arm, so a later SOURCES-only file is judged anyway. Deriving the
+        # judge provenance from the arm's own file then records "no judge ran"
+        # for a run that was judged, and the reverse ordering claims judge
+        # settings for an arm that was not. The caller passes what executed;
+        # the file is only the fallback for callers that do not know.
+        ragas_ran = "RAGAS" in (
+            modes_executed
+            if modes_executed is not None
+            else set(
+                ((config.get("services") or {}).get("benchmarking") or {}).get("modes")
+                or []
+            )
+        )
 
         # The file above is what the operator SELECTED. The agent reads its
         # configuration from Postgres, and load_new_configuration writes the
@@ -436,9 +519,52 @@ class ResultHandler:
             # hand. This digest answers the other question -- "was this the same
             # configuration as that other run?" -- from the finished artifact
             # alone, long after Postgres has moved on.
+            # What the judge ACTUALLY ran with, recorded BESIDE the configuration
+            # as written rather than folded into it. The validators substitute a
+            # default for an invalid setting, and that substitution reached
+            # RunConfig and nothing else -- so an artifact recorded `timeout: -1`
+            # for a run that used 180. Normalizing `configuration` in place would
+            # fix that by falsifying the other half of the record;
+            # asserted_config_divergence exists to keep "what was selected" and
+            # "what happened" separable, so both are kept. Recomputed from the
+            # file just read: the helper is pure, so nothing has to be plumbed
+            # through from the Benchmarker.
+            # None when no judge ran. A rendered configuration always carries a
+            # `ragas_settings` block, so the block's presence cannot stand in for
+            # "RAGAS was a mode": a SOURCES-only run would otherwise publish a
+            # timeout and a worker count as settings it used, when it never
+            # built a RunConfig at all. Null says "no judge ran" and is not the
+            # same claim as an absent key.
+            "ragas_effective_settings": (
+                ragas_effective_settings(
+                    (
+                        ((config.get("services") or {}).get("benchmarking") or {}).get(
+                            "mode_settings"
+                        )
+                        or {}
+                    ).get("ragas_settings")
+                )
+                if ragas_ran
+                else None
+            ),
+            # The digest is the identity of the settings the run EFFECTIVELY had,
+            # so the judge knobs are normalized in the BASIS while `configuration`
+            # above keeps the file verbatim. Recording the effective values in a
+            # sibling field is not enough on its own: the digest is what a later
+            # reader compares, and hashing the unnormalized file gave two runs
+            # that both fell back to the same defaults from different typos two
+            # different digests.
+            #
+            # Passed as `effective_selected`, NOT as `selected`. The latter also
+            # feeds `selected_file_digest` and the divergence list, which
+            # describe the file as written -- two files that differ must
+            # fingerprint differently even when they drive identical runs.
             "config_version": config_version(
                 running=running_config,
                 selected=config,
+                effective_selected=with_effective_ragas_settings(
+                    config, modes_executed=modes_executed
+                ),
                 selected_file=str(config_path),
             ),
         }
@@ -716,9 +842,10 @@ class ResultHandler:
         # the two arms were measured under the same conditions. Guarding only
         # the leaderboard would still let a reader draw the unsupported
         # conclusion from this artifact.
-        comparable = ResultHandler.arms_comparable(
+        reason = ResultHandler.arms_incomparability_reason(
             [ResultHandler.results[idx_a], ResultHandler.results[idx_b]]
         )
+        comparable = reason is None
 
         wins_a: Optional[int] = 0
         wins_b: Optional[int] = 0
@@ -741,11 +868,10 @@ class ResultHandler:
                 row["winner_by_metric"] = {}
             wins_a = wins_b = ties = None
             logger.warning(
-                "A/B winners withheld for '%s' vs '%s': corpus provenance does "
-                "not establish that both arms were scored against the same "
-                "documents",
+                "A/B winners withheld for '%s' vs '%s': %s",
                 config_a_meta["name"],
                 config_b_meta["name"],
+                reason,
             )
 
         mean_scores_a: Dict[str, float] = {}
@@ -845,6 +971,20 @@ class ResultHandler:
             "model": set(),
             "provider": set(),
             "evaluator_model": set(),
+            # How hard the judge was pushed, and how long each row was given.
+            # Not cosmetic: concurrency drives the judge's throttling, throttling
+            # spends the one timeout budget that covers every retry, and a row
+            # that runs out of budget comes back unscored -- leaving the scored
+            # denominator. Arms judged under different pressure therefore carry
+            # aggregates over different question sets. Both knobs, not just the
+            # new one: singling out max_workers would leave the same hole open
+            # one field along.
+            "judge_max_workers": set(),
+            "judge_timeout": set(),
+            # Whether a judge ran at all, as a non-None token so the reduction
+            # cannot drop it: `None` is filtered before comparison, which is how
+            # a mixed sweep passed as "shared".
+            "judge_participation": set(),
             "queries_path": set(),
             "corpus_fingerprint": set(),
         }
@@ -964,6 +1104,26 @@ class ResultHandler:
             ctx_fields["model"].add(bench.get("model"))
             ctx_fields["provider"].add(bench.get("provider"))
             ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
+            # From the RECORD, never recomputed from the block. The block is
+            # always rendered, so recomputing claimed judge pressure for a
+            # SOURCES-only sweep whose every record said no judge ran. The
+            # record already holds the effective values, defaults substituted,
+            # or None when no judge ran -- and None adds nothing, so an absent
+            # judge stays absent instead of turning into a default.
+            judge_pressure = record.get("ragas_effective_settings")
+            if judge_pressure is not None:
+                ctx_fields["judge_max_workers"].add(judge_pressure["max_workers"])
+                ctx_fields["judge_timeout"].add(judge_pressure["timeout"])
+            # Whether a judge ran at all is its own swept field. The reduction
+            # below drops None before comparing, so adding pressure only for the
+            # judged record let a mixed sweep -- a RAGAS arm beside a
+            # SOURCES-only one -- see a single worker count and report it as
+            # shared, when one arm never built a RunConfig. A non-None token on
+            # every record keeps that difference visible, and stays a single
+            # value (so silent) when every arm agrees.
+            ctx_fields["judge_participation"].add(
+                "none" if judge_pressure is None else "judged"
+            )
             ctx_fields["queries_path"].add(bench.get("queries_path"))
             # The corpus is a swept-context field like any other: ranking arms
             # scored against different documents asserts controlled conditions
@@ -1747,11 +1907,13 @@ class Benchmarker:
         ]
         # The archi config-render pipeline can strip global.verbosity; tolerate
         # missing key (verbosity 4 enables tenacity retry logging in ragas).
-        log_tenacity = self.config.get("global", {}).get("verbosity", 0) >= 4
+        verbosity = self.config.get("global", {}).get("verbosity", 0)
         batch_size = ragas_settings["batch_size"] or None
-        runconfig = RunConfig(
-            timeout=ragas_settings["timeout"], log_tenacity=log_tenacity
-        )
+        # Kwargs built by a tested helper rather than inline: `max_workers` was
+        # never passed here, so ragas' default of 16 concurrent judge calls
+        # applied unannounced. See ragas_run_config_kwargs for why raising
+        # `max_retries` is NOT the lever for judge timeouts.
+        runconfig = RunConfig(**ragas_run_config_kwargs(ragas_settings, verbosity))
         llm = LangchainLLMWrapper(self.get_ragas_llm_evaluator())
         embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
 
@@ -2048,6 +2210,9 @@ class Benchmarker:
                 # questions ran -- not a fresh query, which would report the
                 # config as it stands now rather than as the arm used it.
                 running_config=getattr(self.chain, "config", None),
+                # What this invocation actually ran, not what this arm's file
+                # declares: one `modes_being_run` is applied to every arm.
+                modes_executed=modes_being_run,
                 # Measured once, before the sweep, and stamped on every arm --
                 # there is one ingest wait per invocation, not one per arm.
                 # Ingestion can continue in the background, so a later arm may
@@ -2124,8 +2289,8 @@ class Benchmarker:
 
                 flag = "  (incomplete)" if row["incomplete"] else ""
                 logger.info(
-                    "  %-4d %-28s %-12s %-12s %-12s %-12s %-12s %-10d %s%s",
-                    row["rank"],
+                    "  %-4s %-28s %-12s %-12s %-12s %-12s %-12s %-10d %s%s",
+                    ResultHandler.leaderboard_rank_label(row["rank"]),
                     row["name"][:28],
                     _fmt("answer_relevancy"),
                     _fmt("faithfulness"),

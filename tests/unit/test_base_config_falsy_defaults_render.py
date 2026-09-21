@@ -655,6 +655,55 @@ def test_guard_default_filter_baseline_is_unchanged():
 # ---------------------------------------------------------------------------
 
 
+def test_judge_knobs_keep_the_configured_scalar_type():
+    """A quoted number must stay a string, so validation and the lock agree.
+
+    A bare interpolation writes ``max_workers: "4"`` out as ``4``. The rendered
+    file then reloads it as an int, ``_positive_int`` accepts it unwarned, and
+    the benchmark runs at 4 -- while ``fm_fixed_factors_json`` reads the
+    ORIGINAL YAML, sees the string, normalizes it to 16, and writes a campaign
+    lock certifying a concurrency the run never used. A lock that disagrees with
+    the run is worse than no lock.
+
+    ``tojson`` keeps the type, so a quoted value is rejected by the validator
+    with its warning and both sides land on the same default.
+    """
+    mw = "services.benchmarking.mode_settings.ragas_settings.max_workers"
+    to = "services.benchmarking.mode_settings.ragas_settings.timeout"
+
+    assert _get(_render(**_expand(mw, "4")), mw) == "4", (
+        "a quoted scalar must survive rendering as a string; flattening it to an "
+        "int hides it from validation and splits the lock from the run"
+    )
+    assert _get(_render(**_expand(to, "300")), to) == "300"
+
+    # Real numbers are untouched, and so are the defaults.
+    assert _get(_render(**_expand(mw, 4)), mw) == 4
+    assert _get(_render(**_expand(to, 300)), to) == 300
+    assert _get(_render(), mw) == 16
+    assert _get(_render(), to) == 180
+
+
+def test_judge_concurrency_keeps_a_configured_zero():
+    """0 is invalid for ``max_workers``, and the validator must be the one to say so.
+
+    ``default(16, true)`` treated 0 as absent and rewrote it to 16, so an operator
+    typo ran at the HIGH default concurrency -- the condition the knob exists to
+    reduce -- with none of the warning ``ragas_run_config_kwargs`` promises. The
+    template's job is to render what was configured; rejecting it belongs to
+    ``_positive_int``, which can say what it did and why.
+    """
+    path = "services.benchmarking.mode_settings.ragas_settings.max_workers"
+    cfg = _render(**_expand(path, 0))
+    assert _get(cfg, path) == 0, (
+        "a configured 0 must reach the validator, which substitutes the default "
+        "AND warns; swallowing it here loses the diagnostic"
+    )
+    assert _get(_render(), path) == 16, "absent still renders the default"
+    assert _get(_render(**_expand(path, None)), path) == 16, "explicit null too"
+    assert _get(_render(**_expand(path, 4)), path) == 4, "a real value is unchanged"
+
+
 def test_nullable_zero_caps_are_not_replaced_by_null():
     """0 means "fetch nothing"; null means "no cap". Rendering 0 as null inverts it.
 
