@@ -222,6 +222,14 @@ Three prompt files through `scripts/benchmarking/generate_prompt_sweep.py`, from
 manifest already on archi-config (`benchmarking/prompt_sweep_r0/prompt_sweep.yaml`): the
 locked control, **r0a** (category routing), **r0b** (static ICL). No code change. Two runs
 per arm plus the control, on one stack, one corpus fingerprint, categorization **off** (D4).
+The second run needs a benchmark-only rerun, and the sweep has no such path yet. A second
+`archi evaluate` refuses unless forced (`src/cli/utils/helpers.py:310-313`), and `--force`
+keeps the data volumes (`helpers.py:343-348`, `remove_volumes=False`) but recreates the
+containers and re-ingests, which moves the corpus. `run_arm.sh --rerun` already recreates only
+the benchmark container, between two corpus-pin checks
+(`scripts/benchmarking/feature_matrix/run_arm.sh:52-53`, `:61`, `:65`) — but it is gated to
+feature-matrix arm labels and an active campaign lock (`lib.sh:29`, `run_arm.sh:57-61`) and
+never rewrites `agent_md_file`, so W6 must extend that path rather than invent one.
 
 The sweep reuses the campaign's verdict machinery
 ([§4.4](feature-matrix-campaign-2026.md#44-the-verdict-rule) and
@@ -232,12 +240,12 @@ effect at two runs. The pre-registration, corrected from the ICL proposal:
 | Item | Value |
 |---|---|
 | Bank power | 105 rows over **41 distinct gold KB articles** — clears the **≥ 30 distinct gold KB articles** minimum the July record set for an adopt-or-reject decision on this bank (`openspec/changes/measure-category-boost-ceiling/proposal.md:199-201`). That record sets two further benefit-side prerequisites that **do** bind a category-conditioned arm: **≥ 6 categories** and **no article > 10 % of gold rows**. Both are read by the bank-coverage census (§6.2), which runs as a pass/fail gate before any verdict is read — a bank below either minimum **voids** the arm rather than downgrading it. The record's remaining two prerequisites, **≥ 12 at-risk rows** (`:200-201`) and **non-KB gold source coverage** (`:196-198`), are harm-gate items: they exist to make a *retrieval boost's* harm cells visible, and r0a boosts nothing, so they do not transfer to a prompt-only arm, whose harm side is the G8 guard and the blowout count. They return as prerequisites if rung 1 or rung 2 is ever measured. A per-category claim has its own minimum (§6.1) |
-| Void checks | the campaign's §7 invariants, unchanged: corpus fingerprint equal across arms and runs; scored counts equal; control sha256 `ac22702a…4ce8` unchanged; `grep FILL_FROM_HOST` prints nothing; every arm's tool list equals the control's. **A void arm reports no numbers** |
+| Void checks | the campaign's §7 invariants: corpus fingerprint equal across arms and runs; scored counts equal; control sha256 `ac22702a…4ce8` unchanged; `grep FILL_FROM_HOST` prints nothing; every arm's tool list equals the control's. Two are **added** here, because the inherited set does not cover a prompt sweep: **every r0b exemplar disjoint from the bank and the anchor set**, and **every arm's prompt hashed per run in a per-arm manifest**. The prompt hash is new work, not an inherited invariant — `compare_runs.py` gates the bank, the corpus fingerprint and config divergence but has **no prompt-identity check** at all (the configuration file and its digest are printed as provenance only, `compare_runs.py:476-490`), and `campaign.lock` hashes the prompt as **one fixed sha256** for a whole campaign (`scripts/benchmarking/feature_matrix/lib.sh:155`, `:158-161`), which a prompt sweep varies by design, so the lock cannot be reused unchanged; the prompt moves into a per-arm manifest the way `arms` already holds per-arm YAML hashes (`lock_campaign.sh:58-68`). **A void arm reports no numbers** |
 | Primary metrics, per arm vs control | **source accuracy** — McNemar exact test, paired per question, p < 0.05 in **both** runs (the pattern [#498](https://github.com/fasrc/archi/issues/498) used). The test is **not in this repository**: run `mcnemar_exact` from `feature_matrix/figures/extract_figure_data.py:67-74` of `fasrc/archi-bench-out` against the sweep artifacts, or port it into `compare_runs.py` first (W6) — a raw hit-rate change is not a verdict. **item pass rate** and **atom score** — from `archi eval qa` runs joined with `compare_runs.py --qa-run LABEL=RUN_DIR` and paired through `qa_block`, whose rows carry `mean` and `se` only, so the 2σ comparison against the four-run floor (pass 0.424 ± 0.024, atom 0.475 ± 0.017) is computed by hand from those: `--noise-floor` accepts the five RAGAS metric names only (`compare_runs.py:75-81`, rejected at `:682-686`) |
 | Guard (G8) | a `helps` verdict is downgraded to `mixed` if any RAGAS metric, the QA pass rate, or an `easy_retrieve` anchor regresses by more than one σ, or if the `should_refuse` anchor fails — the campaign's rule, unchanged |
 | Cost side, always reported | **blowout count** vs 7 / 109 — a rise is `hurts` regardless of accuracy; **time per question** vs 48.2 s; Δ degraded-row count |
 | Descriptive only | `required_atom_recall` (a per-item fraction, not paired-binary, so McNemar does not apply); all RAGAS means (MDE 0.025–0.05, ~40 runs per arm); `context_precision` ranks the leaderboard and is **not** the verdict |
-| Preflight census | KB-article coverage of `category` ≥ 90 %; the 19-label prompt list equals the distinct set in `documents.extra_json->>'category'` on the sweep's own stack — a mismatch is an ingest regression, not a reason to edit the prompt |
+| Preflight census | KB-article coverage of `category` ≥ 90 %; the 19-label prompt list equals the distinct set in `documents.extra_json->>'category'` on the sweep's own stack — a mismatch is an ingest regression, not a reason to edit the prompt. This census runs against a stack that already exists — the post-D1 stack after W4, or the sweep's own stack before a `run_arm.sh --rerun` second run — because on a fresh `archi evaluate` the benchmark container waits only on Postgres and the config seed (`src/cli/templates/base-compose.yaml:717-721`) and starts scoring as soon as its in-container ingest wait clears (`src/bin/service_benchmark.py:1226`), leaving no window on that path |
 | Provenance | the sweep's stack snapshots its URL → category map at archive time (§6.1) so the per-category slice of these runs is reproducible |
 | Verdict | `helps` only if a primary metric clears its threshold in both runs **and** the guard holds **and** blowouts do not rise; `hurts` if any primary regresses past its threshold or blowouts rise; else `no measurable difference` |
 | Ceiling note | `force_initial_retrieval` is on, so r0a shapes only follow-up searches. If r0a shows nothing, one follow-up config arm with the flag **off** is permitted before the question closes |
@@ -303,7 +311,13 @@ corpus is re-ingested, without any change to the scored answers. So:
   is archived (`scripts/benchmarking/feature_matrix/archive_run.sh` today), dump
   `SELECT url, extra_json->>'category' FROM documents WHERE NOT is_deleted` to a
   `category_map.json` next to the artifact, and record its sha256 and the corpus
-  fingerprint in the ledger entry.
+  fingerprint in the ledger entry. W6 has to add a **multi-arm archive path** to do this:
+  `archive_run.sh` exits when an artifact holds anything but one arm
+  (`scripts/benchmarking/feature_matrix/archive_run.sh:112-113`), and a prompt sweep emits
+  one artifact carrying every arm's entry (`src/bin/service_benchmark.py:695`). The same
+  script also requires a two-digit arm label, a campaign lock, a stack lock, a `ragas-start`
+  ledger row and factor-key agreement with the arm YAML (`:35-38`, `:50`, `:80`, `:124-133`),
+  so this is not a one-line relaxation.
 - **Read only a matching snapshot.** The slice reads the snapshot whose fingerprint equals
   the artifact's. No snapshot, or a fingerprint mismatch, means **no slice** for that run,
   and the report says so.
@@ -326,8 +340,17 @@ corpus is re-ingested, without any change to the scored answers. So:
 
 1. **Coverage:** KB-article coverage of `category` (denominator: `url LIKE '%/kb/%'`).
    Below 90 % is an ingest bug to chase first.
-2. **Vocabulary drift:** the distinct label set in Postgres equals the list in any prompt
-   or config that names categories. A mismatch fails the preflight.
+2. **Vocabulary drift:** the distinct set in `documents.extra_json->>'category'` equals the
+   19-label breadcrumb list in any prompt that **routes on categories**. A mismatch fails the
+   preflight. A label list under a disabled processor (`categorization.categories` while
+   `categorization.enabled: false`, per D1) is **retired, not drift**, and is out of scope:
+   §3 retires it by deleting the list, not by failing this census. The narrow scope is
+   deliberate. A broad reading — "any prompt or config" — fails by construction after D1,
+   for three independent reasons: D1/W4 flip only `enabled` and leave the sibling
+   `categories:` list in place (`src/cli/templates/base-config.yaml:519`, `:524-527`); this
+   repository's own `docs/docs/configuration.md:688-692` carries a third, four-label list;
+   and after D1's re-ingest nothing writes `llm_category` at all, so the Postgres set is
+   empty against a six-label file.
 3. **Bank coverage by category:** join the bank's gold URLs to the current corpus's
    categories and count distinct gold articles per category. This one is a census, not a
    slice of scored answers, so a live read is admissible. It tells us **before** the sweep
@@ -392,7 +415,7 @@ test so they run the same way every time.
 | W4 | `categorization.enabled: false` in dev.yaml, ragas.yaml, host config; template comment + docs; redeploy; record ingest time | config + docs + deploy | both repos, FASRC host | D1 |
 | W5 | File the `evidence-trial` tracking issue with the Phase 1 pre-registration | tracker | fasrc/archi | D3 |
 | W6 | Category snapshot at archive time + fingerprint-matched per-category slice in `scripts/benchmarking/compare_runs.py` (§6.1); plus the paired exact (McNemar) test on per-question source hits and on per-question ok/not-ok, ported from `archi-bench-out`'s `mcnemar_exact`; with tests | code | fasrc/archi `scripts/benchmarking/` | — |
-| W7 | Preflight census script (§6.2, all three censuses), with tests; run the bank-coverage census and post the table; plus one unit test that pins `_build_extra_text` and the `search_metadata` substring fallback r0a depends on | code | fasrc/archi `scripts/benchmarking/`, `tests/unit/` | — |
+| W7 | Preflight census script (§6.2, all three censuses), with tests; run the bank-coverage census and post the table; plus one unit test that pins `_build_extra_text` and the `search_metadata` substring fallback r0a depends on; plus an r0b exemplar-disjointness check — every r0b exemplar question and its cited URLs absent from `benchmarking/fasrc_ragas_queries.json` and from the anchor set — with its result recorded on the arm | code | fasrc/archi `scripts/benchmarking/`, `tests/unit/` | — |
 | W8 | Run the rung-0 sweep: per replicate, one `archi evaluate --config-dir` pass **and** one `archi eval qa` pass per arm (6 + 6 runs over the two replicates, ≈ +6–9 h), joined with `compare_runs.py --qa-run LABEL=RUN_DIR`; post verdicts with the void-check record. Without the QA runs `qa_block` returns nothing (`compare_runs.py:1625-1626`) and both QA primaries are silently absent | measurement | claw or FASRC host | W2, W4, W5, W6, W7 |
 | W9 | Phase 2 decision recorded on the tracking issue | tracker | fasrc/archi | W8 |
 | W10 | Rung-1 issue with the verdict record (only on `helps`) | tracker | fasrc/archi | W9 |
@@ -452,10 +475,12 @@ code at origin/dev. Re-verify every file:line you cite against origin/dev before
 the checkout lags.
 
 Do, in order:
-1. W1 — Amend PR #511 for the eight Codex findings with Appendix A's verdicts. Reply in-thread
-   per finding, react to each comment once read, push, and re-request review. Do not merge.
-2. W3 — Move openspec/changes/measure-category-boost-ceiling/ to the archive as shelved, and
-   keep its banner. Docs-only PR to dev.
+1. W1 — DONE, no action. PR #511 ran five review rounds and merged on 2026-09-21 (squash
+   9705e588); Appendix A's verdicts were folded in before it landed. Start at step 2.
+2. W3 — PREPARE the archive move for openspec/changes/measure-category-boost-ceiling/
+   (shelved, banner kept) as a docs-only PR to dev, but do NOT apply it or open the PR
+   without a recorded D6 decision. D6 is a human gate: with no decision recorded, leave the
+   prepared diff in the final report and treat this step as complete.
 3. W6 — Two parts, test-first. (a) At archive time, dump url → extra_json->>'category' for
    every non-deleted document to category_map.json next to the artifact and record its sha256
    and the corpus fingerprint in the ledger entry. (b) Add a derived category slice to
@@ -466,8 +491,10 @@ Do, in order:
    sources; with no matching snapshot, print "no slice" and say why. Do not run it against the
    arm-00 or arm-03 artifacts: their stacks are gone and no matching snapshot exists.
 4. W7 — Add a preflight census script, test-first, read-only against Postgres: KB-article
-   coverage of category (fail below 90 %), vocabulary drift between Postgres and any prompt or
-   config label list (fail on mismatch), and bank coverage by category (distinct gold articles
+   coverage of category (fail below 90 %), vocabulary drift between
+   documents.extra_json->>'category' and the 19-label breadcrumb list in any prompt that routes
+   on categories (fail on mismatch; a retired list under categorization.enabled: false is out of
+   scope), and bank coverage by category (distinct gold articles
    per category, from the bank's gold URLs). Run the bank-coverage census against postgres-claw
    and put the table in the PR body, labelled with the corpus fingerprint it read. In the same
    PR add one unit test that pins _build_extra_text's key:value emission and the
@@ -484,7 +511,7 @@ Rules:
 - One document vocabulary: the breadcrumb metadata["category"]. Do not introduce a label list.
 - Do not port upstream #570.
 
-Done when: PR #511 amended with every finding answered; W3, W6, W7 open as PRs against dev
+Done when: W6 and W7 open as PRs against dev, and W3 prepared (opened only if D6 is recorded),
 with green gates and review findings addressed; the W5 issue body drafted; a final report
 lists each PR URL, the bank-coverage table, and the decisions D1–D7 that still need a human.
 ```
