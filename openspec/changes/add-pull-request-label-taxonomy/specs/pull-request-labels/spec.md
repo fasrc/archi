@@ -2,14 +2,33 @@
 
 ### Requirement: Exactly one status label explains a withheld readiness chip
 
-The reconciler SHALL add at most one status label to an open pull request, derived from the same precedence ladder that decides `ready-to-merge`, so the index shows why the chip was withheld. The status labels are `review-pending`, `checks-failing`, `base-behind` and `unverifiable`. A pull request that is ready, that is a draft, or whose blocker is a merge conflict MUST carry none of the four: a ready PR carries `ready-to-merge`, a draft is rendered as a draft by GitHub, and a conflict is already reported by the existing `conflicts` label. A status label MUST be removed as soon as its cause no longer holds.
+The reconciler SHALL add at most one status label to an open pull request, derived from the same precedence ladder that decides `ready-to-merge`, so the index shows why the chip was withheld. The status labels are `review-pending`, `checks-failing`, `checks-pending`, `base-behind` and `unverifiable`. A check that has not finished MUST be reported as pending rather than as failing, and a check that has finished badly outranks one still running. A pull request that is ready, that is a draft, or whose blocker is a merge conflict MUST carry none of the five: a ready PR carries `ready-to-merge`, a draft is rendered as a draft by GitHub, and a conflict is already reported by the existing `conflicts` label. A status label MUST be removed as soon as its cause no longer holds.
 
 #### Scenario: Live review findings earn `review-pending`
 
 - **WHEN** a pull request is not a draft, has no merge conflict, has no blocking check, and has one or more unresolved review threads
 - **THEN** `review-pending` is added
 - **AND** `ready-to-merge` is not present
-- **AND** none of `checks-failing`, `base-behind`, `unverifiable` is present
+- **AND** none of `checks-failing`, `checks-pending`, `base-behind`, `unverifiable` is present
+
+#### Scenario: A running check is pending, not failing
+
+- **WHEN** a pull request has a check that has not finished, and none that has finished badly
+- **THEN** `checks-pending` is added
+- **AND** `checks-failing` is NOT added
+- **AND** `ready-to-merge` is still withheld, exactly as before the two were distinguished
+
+#### Scenario: A finished failure outranks a running check
+
+- **WHEN** a pull request has one check that finished badly and one still running
+- **THEN** `checks-failing` is added
+- **AND** `checks-pending` is NOT added
+
+#### Scenario: Neutral and skipped checks remain passing
+
+- **WHEN** every check on a pull request concluded `NEUTRAL` or `SKIPPED`
+- **THEN** neither `checks-pending` nor `checks-failing` is added
+- **AND** `ready-to-merge` is granted, provided the rest of the predicate holds
 
 #### Scenario: A blocking check outranks a live finding
 
@@ -26,14 +45,14 @@ The reconciler SHALL add at most one status label to an open pull request, deriv
 #### Scenario: A draft carries no status label
 
 - **WHEN** a pull request is a draft, whatever else is true of it
-- **THEN** none of the four status labels is added
+- **THEN** none of the five status labels is added
 - **AND** any status label it already held is removed
 
 #### Scenario: A conflicted pull request keeps only `conflicts`
 
 - **WHEN** a pull request reports a merge conflict
 - **THEN** the existing `conflicts` label is applied unchanged
-- **AND** none of the four new status labels is added
+- **AND** none of the five new status labels is added
 
 #### Scenario: An unverifiable snapshot is labelled as such, never as ready
 

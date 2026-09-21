@@ -73,7 +73,7 @@ RECONCILER_JOB_NAME="${PR_LABELS_RECONCILER_JOB:-reconcile}"
 #
 # Nothing outside these groups is ever added or removed, so the nightly
 # triager's labels and a human's labels are untouched.
-STATUS_LABELS='["review-pending","checks-failing","base-behind","unverifiable"]'
+STATUS_LABELS='["review-pending","checks-failing","checks-pending","base-behind","unverifiable"]'
 KIND_LABELS='["bug","enhancement","documentation"]'
 # Strongest first: a PR closing a P1 is a P1 whatever else rides with it.
 PRIORITY_LABELS='["P1","P2","P3"]'
@@ -175,6 +175,8 @@ QUERY='query($owner:String!,$name:String!,$cursor:String){
 # mergeStateStatus, because an empty rollup also describes a PR whose checks have
 # not registered yet.
 # CheckRun conclusions considered passing: SUCCESS, NEUTRAL, SKIPPED.
+# A context that is neither passing nor finished-and-bad is PENDING: it blocks
+# the chip exactly as before, and is reported as pending rather than as failing.
 # StatusContext states considered passing: SUCCESS.
 # A CheckRun whose name equals $excl is excluded from the blocking count.
 FILTER='
@@ -196,6 +198,24 @@ FILTER='
            )
          | map(select(.))
          | length) as $blocking
+      # A second, NARROWER count: contexts that have finished and come back bad,
+      # as opposed to ones that simply have not finished. Both withhold the chip
+      # and always have -- this splits only the REASON, because "CI failed" and
+      # "CI is still running" call for opposite actions from a reader, and a
+      # label saying the first when the second is true is simply false.
+      | ($cnodes
+         | map(select(.__typename != "CheckRun" or .name != $excl))
+         | map(
+             if .__typename == "CheckRun" then
+               (.conclusion // "" | . == "FAILURE" or . == "TIMED_OUT"
+                  or . == "CANCELLED" or . == "ACTION_REQUIRED"
+                  or . == "STARTUP_FAILURE" or . == "STALE")
+             else
+               (.state == "FAILURE" or .state == "ERROR")
+             end
+           )
+         | map(select(.))
+         | length) as $failing
       | ([.labels.nodes[].name]) as $own
       | (.labels.totalCount > $page) as $ltrunc
       | ([.closingIssuesReferences.nodes[].labels.nodes[].name] | unique) as $issue_labels
@@ -236,6 +256,7 @@ FILTER='
           ([.labels.nodes[].name] | any(. == $ready) | tostring),
           ([.labels.nodes[].name] | any(. == $conflict) | tostring),
           ($blocking | tostring),
+          ($failing | tostring),
           ($ct | tostring),
           ($cf | tostring),
           ($held_status | tojson),
@@ -350,7 +371,7 @@ unverifiable=0
 
 while IFS=$'\t' read -r _tag number isdraft mergeable state live \
                         threads_total labels_total has_ready has_conflict \
-                        blocking_checks rollup_total rollup_fetched \
+                        blocking_checks failing_checks rollup_total rollup_fetched \
                         held_status to_add; do
   if [ -z "${number:-}" ]; then
     continue
@@ -474,9 +495,12 @@ while IFS=$'\t' read -r _tag number isdraft mergeable state live \
   elif [ "$rollup_total" -gt "$rollup_fetched" ]; then
     why="rollup truncated ($rollup_total checks seen, $rollup_fetched fetched) — cannot verify"
     want_status="unverifiable"
-  elif [ "$blocking_checks" -gt 0 ]; then
-    why="$blocking_checks blocking check(s)"
+  elif [ "$failing_checks" -gt 0 ]; then
+    why="$failing_checks failing check(s)"
     want_status="checks-failing"
+  elif [ "$blocking_checks" -gt 0 ]; then
+    why="$blocking_checks check(s) not green yet"
+    want_status="checks-pending"
   elif [ "$live" -gt 0 ]; then
     why="$live live review finding(s)"
     want_status="review-pending"

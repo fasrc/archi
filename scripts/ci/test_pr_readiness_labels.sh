@@ -1276,5 +1276,76 @@ else
   cat "$sb/calls" 2>/dev/null
 fi
 
+# ---- 60: a PENDING check is not a FAILING check -----------------------------
+# The gap that shipped: every non-passing context counted as "blocking", and the
+# status label called all of them checks-failing. PR #517 was labelled
+# checks-failing while its checks were merely still running, and every one of
+# them then passed. "CI failed" and "CI is still running" call for opposite
+# actions from a reader, so a label asserting the first when the second is true
+# is simply false. Both still withhold the chip, exactly as before -- only the
+# reported reason splits.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 320 false BLOCKED "" "" "" "" "" "$(mk_checks 'C:gate:IN_PROGRESS:null')")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '320 .*--add-label checks-pending' "$sb/calls" \
+   && ! grep -q -- '--add-label checks-failing' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "a check still running earns checks-pending, never checks-failing"
+else
+  notok "a check still running earns checks-pending, never checks-failing"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 61: a finished-and-bad check still says checks-failing -----------------
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 321 false UNSTABLE "" "" "" "" "" "$(mk_checks 'C:gate:COMPLETED:FAILURE')")" \
+  "$(mk_node 322 false UNSTABLE "" "" "" "" "" "$(mk_checks 'S:legacy:ERROR')")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '321 .*--add-label checks-failing' "$sb/calls" \
+   && grep -q '322 .*--add-label checks-failing' "$sb/calls" \
+   && ! grep -q -- '--add-label checks-pending' "$sb/calls"; then
+  ok "a completed failure, from either context type, still says checks-failing"
+else
+  notok "a completed failure, from either context type, still says checks-failing"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 62: failure outranks pending ------------------------------------------
+# A PR with one red check and one still running is red. Reporting it as pending
+# would tell the reader to wait for a verdict that has already arrived.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 323 false UNSTABLE "" "" "" "" "" "$(mk_checks 'C:a:IN_PROGRESS:null,C:b:COMPLETED:FAILURE')")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '323 .*--add-label checks-failing' "$sb/calls" \
+   && ! grep -q -- '--add-label checks-pending' "$sb/calls"; then
+  ok "one red check outranks a pending one: checks-failing"
+else
+  notok "one red check outranks a pending one: checks-failing"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 63: a neutral or skipped check is passing, not pending -----------------
+# These already counted as passing for the chip; the split must not reclassify
+# them as "not green yet" and withhold it.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 324 false CLEAN "" "" "" "" "" "$(mk_checks 'C:a:COMPLETED:NEUTRAL,C:b:COMPLETED:SKIPPED')")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '324 .*--add-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label checks-pending' "$sb/calls" \
+   && ! grep -q -- '--add-label checks-failing' "$sb/calls"; then
+  ok "NEUTRAL and SKIPPED stay passing and earn the chip"
+else
+  notok "NEUTRAL and SKIPPED stay passing and earn the chip"
+  cat "$sb/calls" 2>/dev/null
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

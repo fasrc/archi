@@ -172,7 +172,8 @@ the same precedence ladder that decides the chip:
 | Status label | Meaning |
 |------|---------|
 | `review-pending` | One or more review threads are unresolved. Reply and **resolve** them — a reply alone does not clear this, which is the most common reason a green PR sits for days. |
-| `checks-failing` | One or more checks on the head commit are not passing. |
+| `checks-failing` | A check on the head commit has finished and come back bad. Something to fix. |
+| `checks-pending` | Checks have not finished yet. Nothing to fix — wait. |
 | `base-behind` | The branch is behind `dev`, so the checks on record did not test the current base. Merge `dev` in. |
 | `unverifiable` | Readiness could not be determined from the snapshot — a truncated review-thread or check connection. Never read as ready; the next sweep retries. |
 
@@ -180,7 +181,7 @@ A ready PR carries none of these, and neither does a **draft** (GitHub already
 marks drafts in the list) or a **conflicted** PR (`conflicts` says it). At most
 one is ever present: they come from an `if`/`elif`, so the earliest matching
 reason wins — a PR with both a failing check and an open thread reads
-`checks-failing`.
+`checks-failing`, and a red check outranks a still-running one.
 
 One state is deliberately unlabelled: mergeability GitHub has not finished
 computing, which is what it returns right after a push to `dev`. That path

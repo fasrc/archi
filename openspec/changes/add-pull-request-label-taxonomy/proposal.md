@@ -14,7 +14,7 @@ The fix is unusually cheap because the information is already in hand. `scripts/
 
 ## What Changes
 
-- **Four new status labels**, fully managed by the existing reconciler and derived from the snapshot it already fetches: `review-pending`, `checks-failing`, `base-behind`, `unverifiable`. With the existing `conflicts`, exactly one status label is present whenever `ready-to-merge` is withheld, and none is present when it is granted.
+- **Five new status labels**, fully managed by the existing reconciler and derived from the snapshot it already fetches: `review-pending`, `checks-failing`, `checks-pending`, `base-behind`, `unverifiable`. With the existing `conflicts`, exactly one status label is present whenever `ready-to-merge` is withheld, and none is present when it is granted.
 - **Inheritance from the closing issue.** A PR with `Closes #N` receives that issue's kind (`bug`, `enhancement`, `documentation`), priority (`P1`/`P2`/`P3`) and area (`ragas`, `upstream`) labels. Multiple closing issues take the union, and the strongest priority wins.
 - **A kind fallback from the title** when a PR closes no issue, for the conventional-commit prefixes this repository already uses: `fix:` → `bug`, `feat:` → `enhancement`, `docs:` → `documentation`. Any other prefix, or none, yields no kind.
 - **Two management modes, deliberately different.** Status labels are added *and* removed, because they describe live state and a stale one is worse than none. Inherited labels are grant-only: added when absent, never removed. A human who re-prioritises a PR is not fought by the next sweep, and an issue relabelled after its PR opened does not churn the PR's timeline.
@@ -34,7 +34,7 @@ None. No existing spec describes PR labelling; `scripts/ci/pr_readiness_labels.s
 ## Impact
 
 - **Code**: `scripts/ci/pr_readiness_labels.sh` — the GraphQL query gains `closingIssuesReferences` and `title`; the decision block turns `$why` into a status label and computes the inherited set; the edit builder learns grant-only labels. `scripts/ci/test_pr_readiness_labels.sh` gains cases for each new label, for mutual exclusivity, for grant-only behaviour and for idempotence over the widened set.
-- **Labels**: four repository labels created, the status group. No kind, priority or area label is created: those already exist and are reused verbatim, which is the point of mirroring the issue taxonomy rather than inventing a parallel one.
+- **Labels**: five repository labels created, the status group. No kind, priority or area label is created: those already exist and are reused verbatim, which is the point of mirroring the issue taxonomy rather than inventing a parallel one.
 - **Workflow**: `.github/workflows/pr-readiness-labels.yml` unchanged. The trigger surface already covers every event that can change any input, including the hourly sweep that is the only observer of thread resolution.
 - **Docs**: the developer guide's existing "Reading the PR list" section is extended with the status and inherited groups, and gains a table for the issue taxonomy, which is documented nowhere today.
 - **Blast radius**: the reconciler writes to every open PR on every sweep. The idempotence guarantee is what keeps that from spamming timelines, so the widened label set must preserve it; a test asserts zero write calls when the desired set already matches.

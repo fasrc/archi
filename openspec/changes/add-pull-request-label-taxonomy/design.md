@@ -21,12 +21,13 @@ Mapping, in the ladder's existing precedence order:
 | `mergeStateStatus == BEHIND` | `base-behind` |
 | no checks on record while `BLOCKED` | `unverifiable` |
 | check rollup truncated | `unverifiable` |
-| one or more blocking checks | `checks-failing` |
+| one or more checks finished and bad | `checks-failing` |
+| one or more checks not finished | `checks-pending` |
 | one or more live review findings | `review-pending` |
 | review threads exceed the fetched page | `unverifiable` |
 | ready | none |
 
-Because the ladder is an `if/elif`, exactly one branch fires, so **at most one of the four new labels is ever present**. Mutual exclusivity is a property of the derivation rather than a rule that has to be enforced and tested separately — though it is tested anyway, because a later edit could turn the ladder into independent `if`s without noticing.
+Because the ladder is an `if/elif`, exactly one branch fires, so **at most one of the five new labels is ever present**. Mutual exclusivity is a property of the derivation rather than a rule that has to be enforced and tested separately — though it is tested anyway, because a later edit could turn the ladder into independent `if`s without noticing.
 
 ### Why draft gets no label
 
@@ -35,6 +36,14 @@ GitHub already renders draft state as a badge in the PR list, which is the exact
 ### Why `conflicts` is left alone
 
 `conflicts` is granted on `mergeStateStatus == DIRTY`, which is a different signal from the `mergeable == CONFLICTING` branch of the readiness ladder. The two agree in practice and are not guaranteed to. Reusing `conflicts` as the status label for the CONFLICTING branch would quietly couple them, so the CONFLICTING branch emits no new label and `conflicts` keeps its independent meaning and its own test coverage.
+
+### Pending is not failing
+
+The chip has always treated *any* non-passing context as blocking, which is right for the chip: a human cannot merge a PR whose CI has not finished. It is wrong for a label. "CI failed" and "CI is still running" call for opposite actions from a reader, and one of them is not even an action.
+
+This was found the honest way, in production. The first version of this change labelled every non-passing context `checks-failing`, and the very PR that introduced it was labelled `checks-failing` while its checks were merely running — all of which then passed. The suite had no case for a pending check, which is why it shipped.
+
+So a second, narrower count sits beside the blocking count: contexts that have finished and come back bad. Failure outranks pending, because a red check is a verdict that has already arrived and telling the reader to wait for it would be wrong. **The chip's verdict is unchanged** — both still withhold it, exactly as before. Only the reported reason splits.
 
 ## Decision 2 — inherited labels are grant-only
 

@@ -1,6 +1,6 @@
 ## 1. Repository labels
 
-- [x] 1.1 Create the four status labels on `fasrc/archi` with descriptions that state the cause, not the remedy: `review-pending`, `checks-failing`, `base-behind`, `unverifiable`.
+- [x] 1.1 Create the five status labels on `fasrc/archi` with descriptions that state the cause, not the remedy: `review-pending`, `checks-failing`, `checks-pending`, `base-behind`, `unverifiable`.
 - [x] 1.2 Confirm no kind, priority or area label needs creating — `bug`, `enhancement`, `documentation`, `P1`, `P2`, `P3`, `ragas` and `upstream` all already exist and are reused verbatim.
 
 ## 2. Query: carry the two fields inheritance needs
@@ -16,8 +16,8 @@
 - [x] 3.3 Test: live findings earn `review-pending` (red first — assert the label is absent before the change).
 - [x] 3.4 Test: a blocking check plus a live finding earns `checks-failing` only, proving the ladder's precedence is preserved.
 - [x] 3.5 Test: resolving the last thread removes `review-pending` and grants `ready-to-merge` in the same sweep.
-- [x] 3.6 Test: a draft carries none of the four, and a status label it already held is removed.
-- [x] 3.7 Test: a conflicted PR keeps `conflicts` and gains none of the four.
+- [x] 3.6 Test: a draft carries none of the five, and a status label it already held is removed.
+- [x] 3.7 Test: a conflicted PR keeps `conflicts` and gains none of the five.
 - [x] 3.8 Test: each of the three unverifiable paths earns `unverifiable` — truncated threads, truncated rollup, and no checks while BLOCKED.
 - [x] 3.9 Test: mutual exclusivity directly — seed a PR holding all four and assert exactly one survives.
 
@@ -56,3 +56,13 @@
 - [x] 8.1 Run the reconciler with `--dry-run` against the live repository and read the decision for every open PR before anything is written.
 - [x] 8.2 Check the dry-run output against the five PRs whose state is known from 2026-09-20, confirming each lands the expected status label.
 - [x] 8.3 Open the PR against `dev` and let the workflow reconcile for real on its own head.
+
+## 9. Pending is not failing (found in production on PR #517)
+
+- [x] 9.1 Add a `$failing` count beside `$blocking` in the FILTER: contexts that FINISHED and came back bad, by CheckRun conclusion or StatusContext state. Leave `$blocking` alone — the chip's verdict must not change.
+- [x] 9.2 Split the ladder branch: a finished failure says `checks-failing`, anything else non-passing says `checks-pending`. Failure outranks pending.
+- [x] 9.3 Create the `checks-pending` label.
+- [x] 9.4 Test: a running check earns `checks-pending` and never `checks-failing` — the case whose absence let this ship.
+- [x] 9.5 Test: a completed failure, from either context type, still says `checks-failing`.
+- [x] 9.6 Test: one red check outranks one still running.
+- [x] 9.7 Test: `NEUTRAL` and `SKIPPED` stay passing and still earn the chip, so the split did not reclassify them.
