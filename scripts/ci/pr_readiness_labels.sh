@@ -57,6 +57,28 @@ DRY_RUN=0
 # blocking on its own in-progress check when triggered by pull_request events.
 RECONCILER_JOB_NAME="${PR_LABELS_RECONCILER_JOB:-reconcile}"
 
+# --- the managed label set --------------------------------------------------
+# Two groups with DELIBERATELY DIFFERENT management modes.
+#
+# STATUS is reconciled both ways. It describes live state, so a stale one is a
+# lie, and at most one is ever held: it is derived from the single if/elif
+# ladder that already decides the chip, so the ladder's precedence IS the
+# exclusivity. `conflicts` is not in this group — it keys on a different field
+# (mergeable) and keeps its own independent meaning.
+#
+# INHERITED is grant-only. It carries a JUDGMENT from the issues a PR closes,
+# and there are two legitimate reasons a PR may differ: a human re-prioritised
+# it, or the issue was relabelled after the PR opened. Removing would fight the
+# first and churn every timeline hourly on the second.
+#
+# Nothing outside these groups is ever added or removed, so the nightly
+# triager's labels and a human's labels are untouched.
+STATUS_LABELS='["review-pending","checks-failing","base-behind","unverifiable"]'
+KIND_LABELS='["bug","enhancement","documentation"]'
+# Strongest first: a PR closing a P1 is a P1 whatever else rides with it.
+PRIORITY_LABELS='["P1","P2","P3"]'
+AREA_LABELS='["ragas","upstream"]' 
+
 # Connections are fetched one page deep; FILTER returns each totalCount so the
 # reconciler can tell a complete snapshot from a truncated one. The two truncation
 # cases are NOT symmetric:
@@ -122,8 +144,9 @@ QUERY='query($owner:String!,$name:String!,$cursor:String){
     pullRequests(states:OPEN, first:50, after:$cursor){
       pageInfo{ hasNextPage endCursor }
       nodes{
-        number isDraft mergeable mergeStateStatus
+        number isDraft mergeable mergeStateStatus title
         labels(first:100){ totalCount nodes{ name } }
+        closingIssuesReferences(first:20){ nodes{ labels(first:50){ nodes{ name } } } }
         reviewThreads(first:100){ totalCount nodes{ isResolved isOutdated } }
         commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){
           totalCount
@@ -173,6 +196,34 @@ FILTER='
            )
          | map(select(.))
          | length) as $blocking
+      | ([.labels.nodes[].name]) as $own
+      | (.labels.totalCount > $page) as $ltrunc
+      | ([.closingIssuesReferences.nodes[].labels.nodes[].name] | unique) as $issue_labels
+      | ((.closingIssuesReferences.nodes | length) > 0) as $closes_something
+      | ($own | map(select(. as $l | $status | index($l)))) as $held_status
+      # Inherited set. Skipped wholesale when the label connection is truncated:
+      # the exclusive-group rule needs the the PR OWN labels, and acting on a
+      # partial list could add a second priority. Grant-only makes skipping
+      # harmless -- nothing false is asserted, and the next sweep retries.
+      | (if $ltrunc then []
+         else
+           (if ($own | any(. as $l | $kind | index($l))) then []
+            else ($issue_labels | map(select(. as $l | $kind | index($l)))) end)
+           + (if ($own | any(. as $l | $prio | index($l))) then []
+              else ([$prio[] | select(. as $x | $issue_labels | index($x))][0:1]) end)
+           + ($issue_labels | map(select(. as $l | $area | index($l))))
+         end) as $inherited
+      # Title fallback: only when no issue is closed and no kind is held. An
+      # unrecognized prefix yields NOTHING rather than a default, because a
+      # wrong kind makes the index confidently misleading.
+      | (if $ltrunc or $closes_something
+              or ($own | any(. as $l | $kind | index($l))) then []
+         elif (.title | test("^fix(\\([^)]*\\))?!?:"))  then ["bug"]
+         elif (.title | test("^feat(\\([^)]*\\))?!?:")) then ["enhancement"]
+         elif (.title | test("^docs(\\([^)]*\\))?!?:")) then ["documentation"]
+         else [] end) as $title_kind
+      | (($inherited + $title_kind) | unique
+         | map(select(. as $l | ($own | index($l)) | not))) as $to_add
       | [ "PR",
           (.number | tostring),
           (.isDraft | tostring),
@@ -186,7 +237,9 @@ FILTER='
           ([.labels.nodes[].name] | any(. == $conflict) | tostring),
           ($blocking | tostring),
           ($ct | tostring),
-          ($cf | tostring)
+          ($cf | tostring),
+          ($held_status | tojson),
+          ($to_add | tojson)
         ] | @tsv )
 '
 
@@ -228,7 +281,10 @@ fetch_snapshot() {
     fi
     if ! rows="$(printf '%s' "$page" \
         | jq -r --arg ready "$READY_LABEL" --arg conflict "$CONFLICT_LABEL" \
-               --arg excl "$RECONCILER_JOB_NAME" "$FILTER")"; then
+               --arg excl "$RECONCILER_JOB_NAME" \
+               --argjson status "$STATUS_LABELS" --argjson kind "$KIND_LABELS" \
+               --argjson prio "$PRIORITY_LABELS" --argjson area "$AREA_LABELS" \
+               --argjson page "$PAGE" "$FILTER")"; then
       printf '%s: could not parse the GraphQL response for %s\n' "${0##*/}" "$REPO" >&2
       return 1
     fi
@@ -252,7 +308,9 @@ authoritative_membership() { # $1 = PR number
     return 1
   fi
   printf '%s' "$out" | jq -rs --arg ready "$READY_LABEL" --arg conflict "$CONFLICT_LABEL" \
-    '(add // []) | map(.name) | "\(any(. == $ready)) \(any(. == $conflict))"'
+    --argjson status "$STATUS_LABELS" \
+    '(add // []) | map(.name)
+     | "\(any(. == $ready)) \(any(. == $conflict)) \(map(select(. as $l | $status | index($l))) | tojson)"'
 }
 
 # Re-query while any PR's mergeability is still being computed — the query is
@@ -292,7 +350,8 @@ unverifiable=0
 
 while IFS=$'\t' read -r _tag number isdraft mergeable state live \
                         threads_total labels_total has_ready has_conflict \
-                        blocking_checks rollup_total rollup_fetched; do
+                        blocking_checks rollup_total rollup_fetched \
+                        held_status to_add; do
   if [ -z "${number:-}" ]; then
     continue
   fi
@@ -306,7 +365,7 @@ while IFS=$'\t' read -r _tag number isdraft mergeable state live \
       failed=$((failed + 1))
       continue
     fi
-    read -r has_ready has_conflict <<<"$membership"
+    read -r has_ready has_conflict held_status <<<"$membership"
   fi
 
   # Mergeability not computed even after the retries. We cannot verify readiness,
@@ -389,29 +448,47 @@ while IFS=$'\t' read -r _tag number isdraft mergeable state live \
   # head commit, so rollup_total is at least 1 and this clause cannot fire. The
   # remaining BLOCKED slice — green checks plus a missing required approval — is a
   # non-empty rollup, still falls through, and is tracked in #231.
+  # `want_status` is set in the SAME ladder that sets `why`, never from a
+  # parallel set of conditions. Two derivations could disagree, and a status
+  # label that contradicts the chip beside it is worse than none at all. Because
+  # this is an if/elif, exactly one branch fires, so at most one status label is
+  # ever wanted — the exclusivity is a property of the ladder, not a rule
+  # enforced afterwards.
+  #
+  # Two branches deliberately want NO label. A draft is already rendered as a
+  # draft by GitHub, and a conflict is already reported by `conflicts`, which
+  # keys on a different field and keeps its own meaning.
   want_ready=false
+  want_status="checks-failing"
   why="blocking check"
   if [ "$isdraft" = "true" ]; then
-    why="draft"
+    why="draft"; want_status=""
   elif [ "$mergeable" = "CONFLICTING" ]; then
-    why="conflicting"
+    why="conflicting"; want_status=""
   elif [ "$state" = "BEHIND" ]; then
     why="behind the base — checks on record did not test the current base"
+    want_status="base-behind"
   elif [ "$rollup_total" -eq 0 ] && [ "$state" = "BLOCKED" ]; then
     why="no checks on record while GitHub reports BLOCKED — cannot verify"
+    want_status="unverifiable"
   elif [ "$rollup_total" -gt "$rollup_fetched" ]; then
     why="rollup truncated ($rollup_total checks seen, $rollup_fetched fetched) — cannot verify"
+    want_status="unverifiable"
   elif [ "$blocking_checks" -gt 0 ]; then
     why="$blocking_checks blocking check(s)"
+    want_status="checks-failing"
   elif [ "$live" -gt 0 ]; then
     why="$live live review finding(s)"
+    want_status="review-pending"
   elif [ "$threads_total" -gt "$PAGE" ]; then
     # A live finding could be sitting in the unfetched tail, in which case `live`
     # undercounted. Withhold rather than advertise a readiness we did not verify.
     why="$threads_total review threads exceed the $PAGE fetched — cannot verify"
+    want_status="unverifiable"
   else
     want_ready=true
     why=""
+    want_status=""
   fi
 
   edits=()
@@ -427,6 +504,30 @@ while IFS=$'\t' read -r _tag number isdraft mergeable state live \
   if [ "$want_conflict" = false ] && [ "$has_conflict" = true ]; then
     edits+=(--remove-label "$CONFLICT_LABEL")
   fi
+
+  # STATUS: reconciled both ways, at most one held. Every status label the PR
+  # carries that is not the wanted one is revoked in the same edit, so a PR
+  # cannot accumulate stale reasons as its blocker changes.
+  held_status="${held_status:-[]}"
+  while IFS= read -r label; do
+    [ -z "$label" ] && continue
+    if [ "$label" != "$want_status" ]; then
+      edits+=(--remove-label "$label")
+    fi
+  done < <(printf '%s' "$held_status" | jq -r '.[]?')
+  if [ -n "$want_status" ] \
+     && ! printf '%s' "$held_status" | jq -e --arg w "$want_status" 'index($w)' >/dev/null; then
+    edits+=(--add-label "$want_status")
+  fi
+
+  # INHERITED: grant-only. `to_add` already excludes anything the PR holds, is
+  # empty when the label connection was truncated, and has had the exclusive-
+  # group rule applied, so there is nothing to decide here. No branch of this
+  # loop ever builds a --remove-label: that is the whole contract.
+  to_add="${to_add:-[]}"
+  while IFS= read -r label; do
+    [ -n "$label" ] && edits+=(--add-label "$label")
+  done < <(printf '%s' "$to_add" | jq -r '.[]?')
 
   if [ "$want_ready" = true ]; then
     ready_now=$((ready_now + 1))
