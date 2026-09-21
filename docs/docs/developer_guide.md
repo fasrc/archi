@@ -174,13 +174,18 @@ the same precedence ladder that decides the chip:
 | `review-pending` | One or more review threads are unresolved. Reply and **resolve** them — a reply alone does not clear this, which is the most common reason a green PR sits for days. |
 | `checks-failing` | One or more checks on the head commit are not passing. |
 | `base-behind` | The branch is behind `dev`, so the checks on record did not test the current base. Merge `dev` in. |
-| `unverifiable` | Readiness could not be determined from the snapshot — a truncated connection, or mergeability GitHub had not computed. Never read as ready; the next sweep retries. |
+| `unverifiable` | Readiness could not be determined from the snapshot — a truncated review-thread or check connection. Never read as ready; the next sweep retries. |
 
 A ready PR carries none of these, and neither does a **draft** (GitHub already
 marks drafts in the list) or a **conflicted** PR (`conflicts` says it). At most
 one is ever present: they come from an `if`/`elif`, so the earliest matching
 reason wins — a PR with both a failing check and an open thread reads
 `checks-failing`.
+
+One state is deliberately unlabelled: mergeability GitHub has not finished
+computing, which is what it returns right after a push to `dev`. That path
+revokes the chip and asserts nothing at all, by a long-standing invariant, so
+such a PR shows no chip and no status label until the next sweep resolves it.
 
 Find what needs a human:
 [`is:pr is:open label:review-pending`](https://github.com/fasrc/archi/pulls?q=is%3Apr+is%3Aopen+label%3Areview-pending).

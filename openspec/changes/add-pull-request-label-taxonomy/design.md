@@ -82,6 +82,18 @@ Size labels are also excluded. They are a reasonable thing for a PR to have and 
 
 The **issue** taxonomy, by contrast, is documented nowhere: every one of its labels is defined only in its own GitHub description and in the nightly skills, neither of which is visible from a checkout. It is written down in the same place, because a reader arriving at either list needs the same reference, and because documenting only the newer and less-used half would be an odd thing to leave behind.
 
+## Decision 6 — UNKNOWN mergeability gets no label, deliberately
+
+There is one state that reads as unverifiable and does **not** receive the `unverifiable` label: mergeability GitHub has not finished computing, after the retries are exhausted.
+
+That path returns before the ladder runs, and it is governed by an invariant the reconciler states in a comment and pins with two named tests — *"UNKNOWN mergeability is skipped, not guessed"* and *"UNKNOWN revokes an unverifiable ready-to-merge, asserts nothing new"*. On UNKNOWN it revokes the chip and asserts nothing, on the reasoning that "asserting a conflict we cannot see would be the same sin in the other direction".
+
+Adding a label there was tried and reverted. The argument for it is decent: `unverifiable` describes the snapshot rather than the PR, so it is not a guess about mergeability. But it does add an assertion on a path whose whole contract is that it makes none, and that contract is deliberate and test-pinned rather than incidental. Overriding it to make a naming scheme tidier is the wrong trade on a script that writes to every open PR.
+
+The practical cost is small. UNKNOWN is transient — it is what GitHub returns immediately after a push to `dev`, and the query itself is what prompts the computation — so the following sweep resolves it, within the hour at worst. A PR sits briefly with no status label and no chip, which is the same thing it does while a draft.
+
+If this is ever revisited, the change is to that branch and to those two tests together, with the invariant restated rather than quietly dropped.
+
 ## Risk
 
 The reconciler writes to every open PR on every sweep, so a defect here is repository-wide and immediate. Two properties bound it.
