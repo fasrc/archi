@@ -3,7 +3,7 @@
 **Author:** Austin Swinney, FASRC — Harvard University
 **Date:** September 2026
 **Status:** Exploration — no milestone proposed; the rung-0 tracking issue is filed as `evidence-trial` before the sweep runs (see "Release-plan judgment")
-**Baseline read:** `origin/dev` @ `4b253e2`, 2026-09-19; every anchor re-checked against `origin/dev` @ `1d6beb9`, 2026-09-21
+**Baseline read:** `origin/dev` @ `4b253e2`, 2026-09-19; every anchor re-checked against `origin/dev` @ `314039d`, 2026-09-21
 **Companion:** [Release Plan 2026](release-plan-2026.md) · [Multi-Collection Routing](multi-collection-routing.md) · [Feature-Matrix Campaign](feature-matrix-campaign-2026.md) · [Categories Action Plan](https://github.com/fasrc/archi/blob/docs/categories-action-plan/docs/docs/proposals/categories-action-plan.md) (PR #512, unmerged; the link becomes relative when it lands)
 
 ---
@@ -41,8 +41,12 @@ Neither idea clears the release plan's gate bar today. Rung 0 runs on the
 ([#396](https://github.com/fasrc/archi/issues/396)) explicitly points at for this: that
 campaign puts prompt variants **out of scope** (§11) and pins the agent prompt as a fixed
 factor by sha256 (§2), so a prompt arm is not an arm of it and needs its own
-pre-registration. What #396 does supply is everything that makes the arm measurable — its
-power numbers, its baselines, `compare_runs.py`, and the arm-03 result above.
+pre-registration. What #396 does supply is most of what makes the arm measurable — its
+power numbers, its decision rules, `compare_runs.py`, and the arm-03 result above. What it
+does **not** supply is a comparator: its baseline runs were pinned to one code SHA and one
+corpus, so a standalone sweep must carry the unchanged production prompt as a control arm
+of its own, and it must bring its own paired tests for the count metrics, because
+`compare_runs.py` has none (see "Staging").
 
 ---
 
@@ -127,6 +131,20 @@ prompt file, varying **only** `services.benchmarking.agent_md_file` and holding
 everything else byte-identical so the leaderboard is apples-to-apples. Both ideas'
 rung-0 form is a prompt file, so both are measurable with the rig that already ships.
 
+What the rig holds fixed is the **config**, not the **spec**. `agent_md_file` selects a
+whole `AgentSpec`: `load_agent_spec` reads the file's YAML `tools` list
+(`agent_spec.py:60-67`, `:134-142`), `BaseReActAgent` takes that list as
+`selected_tool_names` (`base_react.py:133`), and `FASRCDocsAgent` builds its vector tools
+only if `search_vectorstore_hybrid` is on it (`fasrc_docs_agent.py:52-54`). The generator
+checks that each prompt file exists and never parses it
+(`generate_prompt_sweep.py:104-110`), and the leaderboard's shared-context check compares
+model, provider, judge settings, bank and corpus — never the resolved tool list
+(`service_benchmark.py:970-989`). A prompt sweep must therefore **hold the frontmatter
+fixed**: identical `tools` across the control and every arm, checked by loading each spec
+before the sweep runs. archi-config PR #22's README does exactly that, and its three files
+list the same three tools; without the check, a tool-surface change rides along and is
+attributed to the wording.
+
 The bar comes from the campaign's own decision rules, as recorded on
 [#496](https://github.com/fasrc/archi/issues/496) for arm 03:
 
@@ -139,8 +157,11 @@ The bar comes from the campaign's own decision rules, as recorded on
   recursion-limit blowouts `7 / 109`, time per question `48.2 s`.
 
 **Consequence for both ideas: judge them on the count-type metrics — source accuracy
-(McNemar) and blowout count — and read the gold-atom metrics, required-atom recall
-included, only as paired deltas under the 2σ rule; never on RAGAS means.** Required-atom
+and blowout count, each under a pre-registered paired test (McNemar; see "Staging") —
+and read the gold-atom metrics, required-atom recall included, only as paired deltas
+under the 2σ rule; never on RAGAS means.** The paired test is not in this repository:
+`compare_runs.py` reports source accuracy per arm in aggregate and drops blowout rows
+before pairing, so a raw count change is not a verdict until the test runs. Required-atom
 recall is a per-attempt fraction, `entailed_required / required_count`
 (`evaluation/qa/scoring.py:32`), not a paired pass/fail count, so McNemar does not apply
 to it; and `compare_runs.py` pairs only `item_pass_rate` and `atom_score`
@@ -179,11 +200,18 @@ measures 8% of FASRC questions ending in a recursion-limit blowout at ~230 s. Tw
 sit under that, and they are different mechanisms: the **pre-loop history trim** reserves
 15% of the window (`base_react.py:1696-1697`) and counts with the model's own
 `get_num_tokens_from_messages`; the **in-loop approximate counter**
-(`agents/utils/context_budget.py`) subtracts, by default, a 15% generation reserve
-(`context_budget.py:108`) *and* a separate 25% counting margin (`:144`) over a
-4-chars-per-token estimate (#263, parked). Static exemplars add fixed tokens to every
-turn under both. The blowout count is already a campaign metric (`7 / 109`), so the
-interaction is measurable in the same arm — but it must be **read**, not assumed benign.
+(`count_request_tokens`, `agents/utils/context_middleware.py:103-121`) subtracts, by
+default, a 15% generation reserve (`context_budget.py:108`) *and* a separate 25% counting
+margin (`:144`) over a 4-chars-per-token estimate (#263, parked). Static exemplars add
+fixed tokens to every turn, but **only the in-loop counter sees them**: the pre-loop trim
+counts `history_messages` alone (`base_react.py:1703-1705`), while the agent-spec text
+travels separately as `system_prompt` into `create_agent` (`:1536-1544`); only
+`count_request_tokens` prepends that prompt to what it counts
+(`context_middleware.py:118-121`). So the pre-loop trim reserves no room for the examples:
+history can sit at its old 85% ceiling before they are added, and the examples land on top
+of it. That asymmetry is the overflow-risk mechanism to watch, not a uniform tax under both
+bounds. The blowout count is already a campaign metric (`7 / 109`), so the interaction is
+measurable in the same arm — but it must be **read**, not assumed benign.
 
 ---
 
@@ -223,7 +251,11 @@ the answer degrades silently with full confidence. Ordered by risk:
    retriever the shipped config actually uses — `LlamaIndexHierarchicalRetriever`, whose
    candidate generator calls `hybrid_search` directly — and through `HybridRetriever` for
    the reranker-off path, or through one shared retrieval interface; run filtered, and
-   re-run unfiltered when the filtered set is empty or thin. Never a bare `WHERE`.
+   re-run unfiltered when the filtered set is **empty or thin** — *thin* pre-registered
+   as fewer than half the requested `k` candidates, a `min_filtered_results` knob under
+   the rung-2 toggle with code default `k // 2`. The thin case is the one that matters: a
+   wrong category that returns one irrelevant document is the silent exclusion, and an
+   empty-only fallback never fires on it. Never a bare `WHERE`.
 
 A fourth cost question decides rung 2's shape: classifying the query with an LLM call
 adds latency to the **answer** path (baseline 48.2 s/question), unlike categorization's
@@ -260,23 +292,85 @@ session that wrote this, and the breadcrumb list is read from the corpus, not fr
 
 ## Staging
 
-**Rung 0 — no code, measurable now.** Two prompt files through
-`generate_prompt_sweep.py`:
+**Rung 0 — no code, measurable now.** Three prompt files through
+`generate_prompt_sweep.py`, in **one** sweep:
 
-- **(a) category-routing prompt (`r0a`)** — name the docs category before searching and
-  carry its vocabulary in the query text. archi-config PR #22's `r0a` also advertises the
+- **(control) the unchanged production prompt** — `config/agents/claw/fasrc-docs.md`,
+  the campaign's locked prompt (sha256 `ac22702a…4ce8`), run **in the same sweep** as the
+  arms. Every delta is read against this arm. The feature-matrix campaign's historical
+  baseline is **not** a substitute: that campaign pinned one code SHA and one corpus, and
+  this sweep can run after either has moved. `compare_runs.py` refuses arms that disagree
+  on `corpus_fingerprint` (G3, `compare_runs.py:511-545`) but only *displays*
+  `code_version.digest` for the baseline and treatment (`:466`); it refuses a digest
+  mismatch only among noise replicates (`:859-875`). Without a contemporaneous control, a
+  count or timing delta can be intervening code rather than the prompt. archi-config
+  PR #22's manifest already lists the control first; the campaign numbers below are a
+  drift check on the control, not the comparator.
+- **(a) category-routing prompt (`r0a`)** — name the docs category and carry its
+  vocabulary in the query text. archi-config PR #22's `r0a` also advertises the
   `category:<value>` substring filter on `search_metadata_index`, with the substring
   caveat stated, **and orders the fallback itself**: "if a narrowed search comes back
   empty or off-topic, search again without the narrowing." The code has no such fallback,
   so this arm measures a soft hint plus a model-enforced fallback. A bare-hint arm, if
-  ever wanted, is a third prompt file without the filter paragraph.
+  ever wanted, is a fourth prompt file without the filter paragraph.
+
+    **What `r0a` can touch under the shipped default.** `force_initial_retrieval`
+    defaults to `true` (`fasrc_docs_agent.py:256`), and the hook it gates searches with
+    the **raw user question** before the model's first turn (`:268-274`). So under the
+    default, `r0a` never names a category before the first search — the harness has
+    already issued an unfiltered one — and the arm shapes only the model's follow-up
+    searches. This document pre-registers `r0a` accordingly, as **post-retrieval
+    rerouting**, not as category-first search. Category-first search is a separate
+    pre-registration: the same three prompt files with
+    `services.chat_app.force_initial_retrieval: false` in the sweep's `base_config`.
+    The generator copies that config into every arm (`generate_prompt_sweep.py:125-130`),
+    so the flag is consistent across control and treatments by construction; it must
+    never differ between them, and the issue body must state which of the two sweeps a
+    number came from.
 - **(b) static-ICL prompt (`r0b`)** — 3–5 exemplars from a pool disjoint from the
   109-question bank, with the disjointness recorded.
 
-Read source accuracy (McNemar), blowout count and time per question as the decisive
-metrics against the campaign baselines; report required-atom recall and the other
-gold-atom scores as paired deltas against the 2σ floor, descriptive until
-`compare_runs.py` pairs them. Do **not** read RAGAS means at two runs.
+**Frontmatter held fixed.** All three files carry identical `tools` lists, checked by
+loading each spec before the sweep (see "The measurement rig"); a mismatch on any arm
+voids the sweep.
+
+**Two evaluators per arm, not one.** `archi evaluate` over the sweep directory produces
+the RAGAS, source-hit and timing rows; it does **not** produce gold-atom scores. Those
+come from `archi eval qa`, which takes the arm's prompt as `--agent-spec`
+(`src/cli/qa_eval.py:41-42`, `:184`) and writes its own run directory, and
+`compare_runs.py` reports gold-atom deltas only when handed those directories with
+`--qa-run LABEL=RUN_DIR`, one per arm (`compare_runs.py:2295-2332`). Rung 0 is therefore
+one `archi eval qa` per prompt file — control, `r0a`, `r0b` — with everything but
+`--agent-spec` identical, the way `feature_matrix/qa_arm.sh` runs it, followed by one
+`compare_runs.py` invocation carrying all three `--qa-run` pairs. Without the QA runs the
+required-atom and other gold-atom deltas do not exist.
+
+**Decision rules, pre-registered.** The decisive metrics are the count-type ones, and
+each needs a **paired** test with its threshold written into the tracking issue before
+the first run:
+
+- **Source accuracy** — exact two-sided McNemar on per-question source hits, control vs
+  arm, verdict at p < 0.05. This is the test behind the campaign's `0.868` reading
+  ([#496](https://github.com/fasrc/archi/issues/496)), and it does **not** live in this
+  repository: `compare_runs.py::source_block` reports each arm's aggregate hit rate beside
+  a recomputation (`compare_runs.py:1091-1117`) and pairs nothing, and `timing_block`
+  (`:1119`) is descriptive. The campaign's implementation is `mcnemar_exact` in
+  [`feature_matrix/figures/extract_figure_data.py:67-74`](https://github.com/fasrc/archi-bench-out/blob/main/feature_matrix/figures/extract_figure_data.py#L67-L74)
+  of `fasrc/archi-bench-out`, applied to paired hits at `:329-351`. Run that script
+  against the sweep's artifacts, or port the test into `compare_runs.py` first; a raw
+  hit-rate change is **not** a verdict.
+- **Blowout count** — a blowout is a row whose harness `status` is not `"ok"`
+  (`service_benchmark.py:2069-2071`, `:2104`); `compare_runs.py` drops such rows from
+  every paired mean (G6, `compare_runs.py:20`, `:207`) and never counts them. Count them
+  per arm the way the same bench-out script does (`:167`) and test with the same paired
+  McNemar on per-question ok/not-ok, control vs arm, at p < 0.05. Campaign reference:
+  `7 / 109` on the locked prompt.
+- **Time per question** — descriptive (`timing_block`); report cold and warm means beside
+  the control's and read no direction from them.
+
+Gold-atom scores are paired deltas against the 2σ floor: `item_pass_rate` and
+`atom_score` are paired by `compare_runs.py` today (`compare_runs.py:1695`), required-atom
+recall is descriptive until it is. Do **not** read RAGAS means at two runs.
 
 **Rung 1 — small, only if rung 0 shows signal.** Surface `category` in
 `_format_documents_for_llm` (`tools/retriever.py:94`), and teach the whole schema-hint
@@ -296,7 +390,10 @@ toggle whose default is off (below).
 true` selects (`factory.py:54-56`), and `HybridRetriever` (`hybrid_retriever.py:63-116`)
 for the reranker-off fallback (`factory.py:79`) — or one shared retrieval interface that
 both implement; a query-classification step at the `_inject_forced_retrieval` seam;
-fallback-on-empty. A filter on `HybridRetriever` alone is unused on the default path.
+fallback when the filtered set is **empty or thin**, with *thin* the pre-registered
+`min_filtered_results` threshold from "The design choice that matters" (fewer than half
+the requested `k`, default `k // 2`) — an empty-only fallback leaves the one-wrong-document
+case silent. A filter on `HybridRetriever` alone is unused on the default path.
 Dynamic ICL joins here, sharing the same seam and the same exemplar
 store. Both overlap [Multi-Collection Routing](multi-collection-routing.md) — a category
 filter and a collection filter are the same mechanism at different granularity, and the
@@ -320,10 +417,13 @@ defect is not the bar — an unmeasured enhancement is further from it still.
 out-of-scope section (§11, "the prompt-sweep harness exists for that") and pins the agent
 prompt as a fixed factor (§2, `config/agents/claw/fasrc-docs.md`, sha256 `ac22702a…4ce8`),
 so varying the prompt breaks a fixed factor and must not run under the campaign lock. Rung
-0 is a standalone sweep with its own pre-registration, reusing the campaign's baselines and
-decision rules. Those rules still do the rest: a *no measurable difference* on a free
-prompt change is a finding that closes the question, and a positive count-metric result is
-the evidence a rung-1/2 issue would need to enter a milestone honestly.
+0 is a standalone sweep with its own pre-registration, reusing the campaign's decision
+rules but **not** its baseline runs: the unchanged production prompt runs as a control arm
+in the same sweep, and the campaign's numbers serve only as a drift check on that control
+("Staging"). Those rules still do the rest: a *no measurable difference* on a free prompt
+change is a finding that closes the question, and a positive count-metric result **under
+the pre-registered paired test** — not a raw count change — is the evidence a rung-1/2
+issue would need to enter a milestone honestly.
 
 Because it is its own sweep rather than a campaign arm, the house pattern for recording it
 is a separate issue — which is how #496, #497 and #498 were filed out of the campaign —
