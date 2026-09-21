@@ -332,10 +332,22 @@ The dump JSON gains a `leaderboard` key:
     the leaderboard must not report a judge that never started. They are
     recorded because concurrency and the per-row budget decide how often the
     judge times out, and a timed-out row leaves the scored denominator that
-    every aggregate is divided by. A difference here warns; it does not withhold
-    ranks, because it is a proxy for lost scores rather than proof of them. Read
-    the per-metric `<metric>_scored` counts to see whether any were actually
-    lost.
+    every aggregate is divided by. A difference here **withholds ranks**: every
+    scored row's `rank` becomes `null`, the pairwise A/B winners are withheld
+    too, and the reason is recorded in `shared_context.warnings`. An arm that
+    was judged and one that was not (`ragas_effective_settings: null`) count as
+    differing, that being the starkest pressure difference there is.
+
+    This is deliberately stricter than the evidence alone demands. Pressure is
+    a proxy for lost scores rather than proof of them, so two arms driven at
+    different concurrency that both scored every question are in fact
+    comparable and are withheld anyway. Warning only was the previous
+    behaviour and it does not work: `rank` is what a consumer reads, and a
+    warning in `shared_context` that it never looks at cannot stop it.
+    Refusing to rank is recoverable — the metrics are still published, and the
+    per-metric `<metric>_scored` counts show whether anything was actually
+    lost — whereas publishing a ranking that asserts a controlled comparison
+    which did not happen is not.
 - `ragas_effective_settings` — on each run record, the judge `timeout` and
   `max_workers` the run actually used, or `null` when `RAGAS` was not among the
   run's `modes` and no judge ran. A rendered configuration always carries a

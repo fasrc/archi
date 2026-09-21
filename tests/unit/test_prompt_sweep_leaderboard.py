@@ -320,6 +320,24 @@ def test_shared_context_omits_judge_pressure_when_no_judge_ran():
     assert ctx["warnings"] == []
 
 
+def test_rank_label_renders_a_withheld_rank_without_percent_d():
+    """A withheld rank must survive the console table.
+
+    The rows are logged with a ``%-4d`` positional. ``'%d' % None`` raises, and
+    ``logging`` swallows that in ``handleError`` rather than aborting, so the
+    symptom is not a crash but every leaderboard row VANISHING from the console
+    -- in exactly the incomparable case the guard exists to report. Same failure
+    mode ``ab_summary_line`` already documents for withheld winners.
+    """
+    assert ResultHandler.leaderboard_rank_label(1) == "1"
+    assert ResultHandler.leaderboard_rank_label(12) == "12"
+
+    label = ResultHandler.leaderboard_rank_label(None)
+    assert label and not label.isdigit()
+    # It has to survive the formatter that broke on None.
+    assert "%-4s" % label
+
+
 def test_ranks_are_withheld_when_judge_concurrency_differs():
     """Differing judge pressure is a reason to withhold, not merely to warn.
 

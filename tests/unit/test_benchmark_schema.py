@@ -737,6 +737,18 @@ def test_the_digest_basis_leaves_a_sources_only_config_alone():
     ) != with_effective_ragas_settings(_cfg(modes=("SOURCES",), max_workers="many"))
 
 
+def test_the_digest_basis_tolerates_ragas_declared_without_a_settings_block():
+    """A hand-written config may name the mode and omit the block entirely.
+
+    Nothing to normalize, and nothing to invent: injecting judge defaults here
+    would fabricate settings the file never stated. The run's own defaults are
+    reported by ``ragas_effective_settings`` instead.
+    """
+    declared = {"services": {"benchmarking": {"modes": ["RAGAS"], "mode_settings": {}}}}
+
+    assert with_effective_ragas_settings(declared) == declared
+
+
 def test_the_digest_basis_tolerates_a_malformed_benchmarking_node():
     """A hand-written config can put anything under ``services.benchmarking``.
 

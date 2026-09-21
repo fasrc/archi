@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
 from urllib.parse import urlsplit, urlunsplit
@@ -277,6 +277,19 @@ class ResultHandler:
         return len(fingerprints) <= 1
 
     @staticmethod
+    def leaderboard_rank_label(rank: Optional[int]) -> str:
+        """A rank rendered for the console table, withheld ranks included.
+
+        The table's positional was ``%-4d``. ``'%d' % None`` raises, and
+        ``logging`` catches that in ``handleError`` rather than aborting the
+        run, so a withheld rank did not crash -- it made every leaderboard row
+        DISAPPEAR from the console, in exactly the incomparable case the
+        withholding exists to report. ``ab_summary_line`` documents the same
+        failure mode for withheld winners; this is its leaderboard sibling.
+        """
+        return "-" if rank is None else str(rank)
+
+    @staticmethod
     def ab_summary_line(
         name_a: str,
         name_b: str,
@@ -374,11 +387,28 @@ class ResultHandler:
         running_config: Optional[Dict[str, Any]],
         corpus_before: Optional[str] = None,
         ingest_wall_seconds: Optional[float] = None,
+        modes_executed: Optional[Set[str]] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
 
         ResultHandler.map_prompts(config)
+
+        # What RAN, which in a sweep is not what this arm's file says. `run()`
+        # reads `modes_being_run` once from the FIRST config and reuses it for
+        # every arm, so a later SOURCES-only file is judged anyway. Deriving the
+        # judge provenance from the arm's own file then records "no judge ran"
+        # for a run that was judged, and the reverse ordering claims judge
+        # settings for an arm that was not. The caller passes what executed;
+        # the file is only the fallback for callers that do not know.
+        ragas_ran = "RAGAS" in (
+            modes_executed
+            if modes_executed is not None
+            else set(
+                ((config.get("services") or {}).get("benchmarking") or {}).get("modes")
+                or []
+            )
+        )
 
         # The file above is what the operator SELECTED. The agent reads its
         # configuration from Postgres, and load_new_configuration writes the
@@ -488,13 +518,7 @@ class ResultHandler:
                         or {}
                     ).get("ragas_settings")
                 )
-                if "RAGAS"
-                in (
-                    ((config.get("services") or {}).get("benchmarking") or {}).get(
-                        "modes"
-                    )
-                    or []
-                )
+                if ragas_ran
                 else None
             ),
             # The digest is the identity of the settings the run EFFECTIVELY had,
@@ -512,7 +536,9 @@ class ResultHandler:
             "config_version": config_version(
                 running=running_config,
                 selected=config,
-                effective_selected=with_effective_ragas_settings(config),
+                effective_selected=with_effective_ragas_settings(
+                    config, ragas_ran=ragas_ran
+                ),
                 selected_file=str(config_path),
             ),
         }
@@ -2158,6 +2184,9 @@ class Benchmarker:
                 # questions ran -- not a fresh query, which would report the
                 # config as it stands now rather than as the arm used it.
                 running_config=getattr(self.chain, "config", None),
+                # What this invocation actually ran, not what this arm's file
+                # declares: one `modes_being_run` is applied to every arm.
+                modes_executed=modes_being_run,
                 # Measured once, before the sweep, and stamped on every arm --
                 # there is one ingest wait per invocation, not one per arm.
                 # Ingestion can continue in the background, so a later arm may
@@ -2234,8 +2263,8 @@ class Benchmarker:
 
                 flag = "  (incomplete)" if row["incomplete"] else ""
                 logger.info(
-                    "  %-4d %-28s %-12s %-12s %-12s %-12s %-12s %-10d %s%s",
-                    row["rank"],
+                    "  %-4s %-28s %-12s %-12s %-12s %-12s %-12s %-10d %s%s",
+                    ResultHandler.leaderboard_rank_label(row["rank"]),
                     row["name"][:28],
                     _fmt("answer_relevancy"),
                     _fmt("faithfulness"),

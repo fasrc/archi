@@ -97,6 +97,34 @@ def test_records_the_judge_settings_the_run_actually_used(tmp_path):
     assert selected["ragas_settings"] == {"timeout": -1, "max_workers": "many"}
 
 
+def test_judge_provenance_follows_what_executed_not_the_arms_own_file(tmp_path):
+    """In a sweep, the file's ``modes`` are not what the arm actually ran.
+
+    ``run()`` reads ``modes_being_run`` once from the FIRST config and reuses it
+    for every arm, so a later SOURCES-only file is judged anyway. Deriving the
+    judge provenance from the arm's own file then records
+    ``ragas_effective_settings: null`` for a run that really was judged -- and
+    the reverse ordering claims judge settings for an arm that never was.
+    The caller passes what executed; the file is not the authority here.
+    """
+    sources_only = _write(
+        tmp_path / "a",
+        _ragas_config(modes=("SOURCES",), timeout=600, max_workers=6),
+    )
+    ResultHandler.handle_results(
+        sources_only, {}, {}, running_config=None, modes_executed={"RAGAS"}
+    )
+    judged = ResultHandler.results[-1]
+    assert judged["ragas_effective_settings"] == {"timeout": 600, "max_workers": 6}
+
+    # ...and the reverse: a RAGAS file in a SOURCES-only sweep was not judged.
+    ragas_file = _write(tmp_path / "b", _ragas_config(modes=("RAGAS",), timeout=600))
+    ResultHandler.handle_results(
+        ragas_file, {}, {}, running_config=None, modes_executed={"SOURCES"}
+    )
+    assert ResultHandler.results[-1]["ragas_effective_settings"] is None
+
+
 def test_two_runs_that_fell_back_to_the_same_defaults_share_a_digest(tmp_path):
     """The config digest is the identity of the EFFECTIVE settings, not the file.
 

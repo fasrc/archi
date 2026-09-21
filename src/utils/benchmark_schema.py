@@ -709,7 +709,7 @@ def ragas_effective_settings(
     return {"timeout": kwargs["timeout"], "max_workers": kwargs["max_workers"]}
 
 
-def with_effective_ragas_settings(config: Any) -> Any:
+def with_effective_ragas_settings(config: Any, ragas_ran: Optional[bool] = None) -> Any:
     """A deep copy of ``config`` whose judge knobs hold the values a run will use.
 
     The basis for the artifact's configuration digest, which the interpreting
@@ -746,12 +746,20 @@ def with_effective_ragas_settings(config: Any) -> Any:
             return updated
     if not isinstance(benchmarking, dict):
         return updated
-    # Gate on the MODE, never on the block's presence: a rendered configuration
-    # always carries `ragas_settings`, so a SOURCES-only run would otherwise be
-    # normalized against defaults it never fell back to -- making two files
-    # whose unused judge values differ hash alike on a substitution that never
-    # happened. The sibling `ragas_effective_settings` field gates the same way.
-    if "RAGAS" not in (benchmarking.get("modes") or []):
+    # Gate on whether a judge RAN, never on the block's presence: a rendered
+    # configuration always carries `ragas_settings`, so a SOURCES-only run would
+    # otherwise be normalized against defaults it never fell back to -- making
+    # two files whose unused judge values differ hash alike on a substitution
+    # that never happened. The sibling `ragas_effective_settings` field gates
+    # the same way.
+    #
+    # `ragas_ran` overrides the file because in a sweep the file is not the
+    # authority: `run()` applies the FIRST config's modes to every arm. The
+    # caller that knows what executed passes it; the file is the fallback.
+    ran = (
+        "RAGAS" in (benchmarking.get("modes") or []) if ragas_ran is None else ragas_ran
+    )
+    if not ran:
         return updated
     node = benchmarking.get("mode_settings")
     if not isinstance(node, dict):
