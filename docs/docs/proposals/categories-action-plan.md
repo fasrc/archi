@@ -208,9 +208,14 @@ Each phase has an exit condition. No phase starts before the one above it exits.
 2. Update the body of archi-config PR [#22](https://github.com/fasrc/archi-config/pull/22):
    both arms are filled; the token deltas are +523 and +485, not +388 and +352.
 3. Apply D6: archive the shelved change.
-4. Apply D1 as an archi-config PR plus the archi template-comment and docs change
-   [#496](https://github.com/fasrc/archi/issues/496) specifies. Redeploy. Record the
-   acceptance number: ingest at least 15 minutes faster than the 82.7-minute baseline.
+4. Apply **D5 first**: classify [#496](https://github.com/fasrc/archi/issues/496), which
+   today carries neither a milestone nor `parked`, against the plan's invariant that every
+   open issue holds exactly one of {a milestone, `parked`, `evidence-trial`}
+   (`AGENTS.md:8-12`). D1 is a **production configuration change** specified by that issue,
+   so it must not precede the issue's own scheduling decision. **If D5 is not recorded,
+   stop at this step.** With D5 recorded, apply D1 as an archi-config PR plus the archi
+   template-comment and docs change #496 specifies. Redeploy. Record the acceptance number:
+   ingest at least 15 minutes faster than the 82.7-minute baseline.
 5. Apply D3: file the tracking issue. Its body is the pre-registration in Phase 1.
 
 **Exit:** D1 deployed and its ingest time recorded; the `evidence-trial` issue open; PR #22
