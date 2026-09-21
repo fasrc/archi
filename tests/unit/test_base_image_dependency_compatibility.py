@@ -4,8 +4,7 @@
 concatenating a header with ``requirements/requirements-base.txt``. Neither file
 knows what the other pins, so two independently reasonable pins can produce a set
 ``pip`` cannot resolve — and the only build path that assembles the GPU set is the
-release workflow (#473), so the failure surfaces during a release rather than on a
-PR.
+release workflow, so the failure surfaces during a release rather than on a PR.
 
 That is not hypothetical. It happened on 2026-09-15 (#472): PR #453 added
 ``opentelemetry-sdk==1.44.0`` to the shared base while
@@ -50,7 +49,7 @@ measured from ``requires_dist`` — it was measured by importing vllm in a built
 
 So the tiers are: this module catches known pairwise traps, a resolve catches
 unpredicted version conflicts, and only a real image build catches import-time
-collisions. #473 asks CI for the last two. Until it has them, the release dispatch is
+collisions. No pre-merge job covers those last two. The release dispatch is
 the first thing that builds the GPU image.
 """
 
@@ -208,8 +207,8 @@ VLLM_TORCH_SPEC = {
 # Measured by importing vllm inside the built GPU image on 2026-09-15: 4.52.4 and
 # 4.53.3 import, 4.54.1 / 4.55.4 / 4.56.2 all carry native aimv2. **No resolver can
 # find this** — every one of those versions satisfies the declared range. It took a
-# real image build, which is why #473 matters and why an unpinned transformers is a
-# latent break rather than a convenience.
+# real image build, which is why an unpinned transformers is a latent break rather
+# than a convenience.
 VLLM_TRANSFORMERS_SPEC = {
     "0.9.0": ">=4.51.1,<4.54.0",
 }
@@ -652,7 +651,7 @@ class TestVllmAcceptsThePinnedOpenTelemetrySdk:
     """The GPU set pins both ``vllm`` and, via the shared base, ``opentelemetry-sdk``.
 
     Only the GPU header carries ``vllm``, so this conflict can only ever appear in
-    the PyTorch image — the one image no pre-merge job builds (#473).
+    the PyTorch image, which no pre-merge job builds.
     """
 
     def test_vllm_does_not_cap_the_pinned_opentelemetry_sdk(self, gpu_pins, base_pins):
