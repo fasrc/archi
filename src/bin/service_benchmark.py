@@ -1024,11 +1024,16 @@ class ResultHandler:
             ctx_fields["model"].add(bench.get("model"))
             ctx_fields["provider"].add(bench.get("provider"))
             ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
-            # The EFFECTIVE value, so an arm that omits the key and an arm that
-            # sets the default explicitly compare equal, as they should.
-            judge_pressure = ragas_effective_settings(ragas_settings)
-            ctx_fields["judge_max_workers"].add(judge_pressure["max_workers"])
-            ctx_fields["judge_timeout"].add(judge_pressure["timeout"])
+            # From the RECORD, never recomputed from the block. The block is
+            # always rendered, so recomputing claimed judge pressure for a
+            # SOURCES-only sweep whose every record said no judge ran. The
+            # record already holds the effective values, defaults substituted,
+            # or None when no judge ran -- and None adds nothing, so an absent
+            # judge stays absent instead of turning into a default.
+            judge_pressure = record.get("ragas_effective_settings")
+            if judge_pressure is not None:
+                ctx_fields["judge_max_workers"].add(judge_pressure["max_workers"])
+                ctx_fields["judge_timeout"].add(judge_pressure["timeout"])
             ctx_fields["queries_path"].add(bench.get("queries_path"))
             # The corpus is a swept-context field like any other: ranking arms
             # scored against different documents asserts controlled conditions

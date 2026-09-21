@@ -758,6 +758,9 @@ def test_the_digest_basis_is_a_copy_and_leaves_non_judge_configs_alone():
     assert with_effective_ragas_settings(None) is None
     assert with_effective_ragas_settings({}) == {}
     assert with_effective_ragas_settings({"services": None}) == {"services": None}
+    # mode_settings present but not a mapping: nothing to normalize, copy as is.
+    malformed = {"services": {"benchmarking": {"mode_settings": "unset"}}}
+    assert with_effective_ragas_settings(malformed) == malformed
 
 
 def test_run_config_kwargs_tolerates_a_none_settings_block():

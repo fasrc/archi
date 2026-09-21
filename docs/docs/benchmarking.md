@@ -326,12 +326,16 @@ The dump JSON gains a `leaderboard` key:
 
     The two judge-pressure fields hold the **effective** values — the defaults
     substituted, so an arm that omits the key and an arm that sets the default
-    explicitly agree. They are recorded because concurrency and the per-row
-    budget decide how often the judge times out, and a timed-out row leaves the
-    scored denominator that every aggregate is divided by. A difference here
-    warns; it does not withhold ranks, because it is a proxy for lost scores
-    rather than proof of them. Read the per-metric `<metric>_scored` counts to
-    see whether any were actually lost.
+    explicitly agree. They come from each variant's own `ragas_effective_settings`
+    record, never from its configuration block, and they are `null` when no
+    judge ran: a SOURCES-only sweep renders the block like any other run, and
+    the leaderboard must not report a judge that never started. They are
+    recorded because concurrency and the per-row budget decide how often the
+    judge times out, and a timed-out row leaves the scored denominator that
+    every aggregate is divided by. A difference here warns; it does not withhold
+    ranks, because it is a proxy for lost scores rather than proof of them. Read
+    the per-metric `<metric>_scored` counts to see whether any were actually
+    lost.
 - `ragas_effective_settings` — on each run record, the judge `timeout` and
   `max_workers` the run actually used, or `null` when `RAGAS` was not among the
   run's `modes` and no judge ran. A rendered configuration always carries a

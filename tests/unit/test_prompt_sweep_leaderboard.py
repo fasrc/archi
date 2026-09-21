@@ -30,8 +30,15 @@ def _make_record(
     queries_path="config/benchmarking/queries.json",
     n_questions=3,
     include_name=True,
+    ragas_effective_settings=None,
+    judge_block=None,
 ):
-    """Build a ResultHandler.results record shaped like handle_results writes."""
+    """Build a ResultHandler.results record shaped like handle_results writes.
+
+    ``judge_block`` is merged into the configuration's ``ragas_settings`` -- what
+    the file asked for. ``ragas_effective_settings`` is what the judge ran with,
+    or None when no judge ran; handle_results always writes the key.
+    """
     total_results = {}
     for key, value in (
         ("aggregate_answer_relevancy", answer_relevancy),
@@ -54,6 +61,8 @@ def _make_record(
         benchmarking["mode_settings"]["ragas_settings"][
             "enabled_metrics"
         ] = enabled_metrics
+    if judge_block:
+        benchmarking["mode_settings"]["ragas_settings"].update(judge_block)
     if include_name:
         benchmarking["name"] = name
 
@@ -62,6 +71,7 @@ def _make_record(
         "total_results": total_results,
         "configuration_file": f"/tmp/{name}.yaml",
         "configuration": {"services": {"benchmarking": benchmarking}},
+        "ragas_effective_settings": ragas_effective_settings,
     }
 
 
@@ -280,6 +290,78 @@ def test_shared_context_flags_model_drift():
     assert any("model" in w for w in ctx["warnings"])
     # rows still emitted despite drift
     assert len(lb["rows"]) == 2
+
+
+# -- 4.7 judge pressure comes from the record, never from the block -----------
+
+
+def test_shared_context_omits_judge_pressure_when_no_judge_ran():
+    """A SOURCES-only sweep records ``ragas_effective_settings: null`` on every
+    arm. The leaderboard beside those records must not claim a worker count and
+    a timeout for a judge that never ran. The block is always rendered, so its
+    presence says nothing about whether a judge ran."""
+    ResultHandler.results = [
+        _make_record(
+            "a",
+            "p/a.md",
+            judge_block={"max_workers": 4, "timeout": 600},
+            ragas_effective_settings=None,
+        ),
+        _make_record(
+            "b",
+            "p/b.md",
+            judge_block={"max_workers": 4, "timeout": 600},
+            ragas_effective_settings=None,
+        ),
+    ]
+    ctx = ResultHandler.build_leaderboard()["shared_context"]
+    assert ctx["judge_max_workers"] is None
+    assert ctx["judge_timeout"] is None
+    assert ctx["warnings"] == []
+
+
+def test_shared_context_reads_judge_pressure_from_the_record():
+    """The record holds what the judge ran with; the block holds what the file
+    asked for. When the two differ, the leaderboard reports the record."""
+    ResultHandler.results = [
+        _make_record(
+            "a",
+            "p/a.md",
+            judge_block={"max_workers": 4},
+            ragas_effective_settings={"timeout": 300, "max_workers": 8},
+        ),
+        _make_record(
+            "b",
+            "p/b.md",
+            judge_block={"max_workers": 4},
+            ragas_effective_settings={"timeout": 300, "max_workers": 8},
+        ),
+    ]
+    ctx = ResultHandler.build_leaderboard()["shared_context"]
+    assert ctx["judge_max_workers"] == 8
+    assert ctx["judge_timeout"] == 300
+    assert ctx["warnings"] == []
+
+
+def test_shared_context_flags_judge_pressure_drift_between_records():
+    """Two arms judged under different effective concurrency are flagged even
+    when their configuration blocks read alike."""
+    ResultHandler.results = [
+        _make_record(
+            "a",
+            "p/a.md",
+            ragas_effective_settings={"timeout": 180, "max_workers": 4},
+        ),
+        _make_record(
+            "b",
+            "p/b.md",
+            ragas_effective_settings={"timeout": 180, "max_workers": 16},
+        ),
+    ]
+    ctx = ResultHandler.build_leaderboard()["shared_context"]
+    assert ctx["judge_max_workers"] == ["16", "4"]
+    assert ctx["judge_timeout"] == 180
+    assert any("judge_max_workers" in w for w in ctx["warnings"])
 
 
 # -- answer_correctness on the leaderboard ------------------------------------
