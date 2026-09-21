@@ -2,9 +2,9 @@
 
 **Author:** Austin Swinney, FASRC — Harvard University
 **Date:** September 2026
-**Status:** Exploration — no issue filed, no milestone proposed
-**Baseline read:** `origin/dev` @ `4b253e2`, 2026-09-19
-**Companion:** [Release Plan 2026](release-plan-2026.md) · [Multi-Collection Routing](multi-collection-routing.md) · [Feature-Matrix Campaign](feature-matrix-campaign-2026.md)
+**Status:** Exploration — no milestone proposed; the rung-0 tracking issue is filed as `evidence-trial` before the sweep runs (see "Release-plan judgment")
+**Baseline read:** `origin/dev` @ `4b253e2`, 2026-09-19; every anchor re-checked against `origin/dev` @ `1d6beb9`, 2026-09-21
+**Companion:** [Release Plan 2026](release-plan-2026.md) · [Multi-Collection Routing](multi-collection-routing.md) · [Feature-Matrix Campaign](feature-matrix-campaign-2026.md) · [Categories Action Plan](https://github.com/fasrc/archi/blob/docs/categories-action-plan/docs/docs/proposals/categories-action-plan.md) (PR #512, unmerged; the link becomes relative when it lands)
 
 ---
 
@@ -19,17 +19,22 @@ Two ideas were raised:
 Both are **prompt-only at rung 0** and need **no code at all** to measure, because
 `generate_prompt_sweep.py` already A/B's agent prompts with everything else held fixed.
 
-The load-bearing point for idea 2 is that it is **half-built and inert** — already
-established by [#496](https://github.com/fasrc/archi/issues/496) ("the label is
-write-only … readers: none"), and confirmed here for the breadcrumb field too: the FASRC
-docs category is captured at ingest into `metadata["category"]`
-(`processing.py:181-208`), and **nothing on the retrieval or prompt path ever reads it**
-— not the retriever, not the chunk header the model sees, not the schema hint tool. That
-inertness is the mechanism behind the campaign's arm-03 result
-([#496](https://github.com/fasrc/archi/issues/496): 19.2 min per ingest, no measurable
-retrieval effect) — a writer was enabled with no reader, so "no effect" was the only
-possible outcome. **Arm 03 is evidence against the ingest-side label as wired. It is not
-evidence against mapping the query to a category.**
+The load-bearing point for idea 2 is that it is **half-built and unread where it would
+matter**. [#496](https://github.com/fasrc/archi/issues/496) records the LLM label as
+write-only, and the same holds for the breadcrumb field: the FASRC docs category is
+captured at ingest into `metadata["category"]` (`processing.py:181-208`), and **neither
+the retriever nor the prompt path reads it** — not the retriever, not the chunk header
+the model sees, not the schema hint tool. One reader does exist, by accident: both labels
+land in the catalog's `extra_text`, and `search_metadata_index` matches an unknown key
+such as `llm_category:<value>` as a substring filter against it
+(`catalog_postgres.py:474-481`, `:1560-1569`). The campaign prompt exposes that tool but
+never names either key, and `list_metadata_schema` never advertises them, so the model
+could reach the label only by guessing it. That is why "no effect" was the **expected**
+outcome of arm 03 ([#496](https://github.com/fasrc/archi/issues/496): 19.2 min per
+ingest, no measurable retrieval effect) — not the only possible one, and the null result
+cannot be attributed mechanically to a writer with no reader. **Arm 03 is evidence
+against the ingest-side label as wired and as prompted. It is not evidence against
+mapping the query to a category.**
 
 Neither idea clears the release plan's gate bar today. Rung 0 runs on the
 **prompt-sweep harness**, which is the vehicle the feature-matrix campaign
@@ -48,12 +53,12 @@ power numbers, its baselines, `compare_runs.py`, and the arm-03 result above.
 | Stage | Where | State |
 |---|---|---|
 | Breadcrumb → `metadata["category"]` | `processing.py:181-208` (`HtmlCategoryProcessor`) | **live** — default on, runs whenever `html_to_markdown.enabled` (`processing.py:1072-1076`) |
-| LLM label → `metadata["llm_category"]` | `processing.py:857` (`CategorizationProcessor`) | **live on FASRC**, code-default `false` (`base-config.yaml:502`) |
+| LLM label → `metadata["llm_category"]` | `processing.py:857` (`CategorizationProcessor`) | **live on FASRC**, code-default `false` (`base-config.yaml:519`, `processing.py:1078`) |
 | Catalog persistence | `catalog_postgres.py:295` → `extra_json` / `extra_text` | **live** — `_build_extra_text` (`:1560-1569`) emits `category:<value>` |
 | Chunk metadata | `manager.py:484,574` (`file_level_metadata` merged into every chunk) | **live** — the field reaches `document_chunks` |
-| Retrieval filter | `HybridRetriever._get_relevant_documents` (`hybrid_retriever.py:63-116`) | **absent** — calls `hybrid_search(query, k, weights)` and forwards no `filter`, though `PostgresVectorStore.hybrid_search` accepts one (`postgres_vectorstore.py:439,449`) |
+| Retrieval filter | `LlamaIndexHierarchicalRetriever._generate_candidates` (`hierarchical_retriever.py:125-138`) on the shipped default — the deployed configs set `hierarchical_rerank.enabled: true` and `factory.py:54-56` returns it; `HybridRetriever._get_relevant_documents` (`hybrid_retriever.py:63-116`) only when reranking is disabled (`factory.py:79`) | **absent on both paths** — each calls `hybrid_search(query, k, weights)` and forwards no `filter`, though `PostgresVectorStore.hybrid_search` accepts one (`postgres_vectorstore.py:439,449`) |
 | What the model is shown | `_format_documents_for_llm` (`tools/retriever.py:78-98`) | **absent** — header is `[i] title <url> (hash=…)` + `Score:`; no category |
-| Schema hint to the model | `api_catalog_schema` (`uploader_app/app.py:779-790`) | **absent** — `keys` is `sorted(_METADATA_COLUMN_MAP.keys())` (`catalog_postgres.py:49-66`), and `get_distinct_metadata` allows only `source_type`, `suffix`, `ticket_id`, `git_repo`, `url` (`:554-564`). `category` is in neither |
+| Schema hint to the model | `api_catalog_schema` (`uploader_app/app.py:779-790`) → the `list_metadata_schema` tool (`create_metadata_schema_tool`, `tools/local_files.py:439-476`) | **absent** — `keys` is `sorted(_METADATA_COLUMN_MAP.keys())` (`catalog_postgres.py:49-66`), `get_distinct_metadata` allows only `source_type`, `suffix`, `ticket_id`, `git_repo`, `url` (`:554-564`), and the tool formats exactly three payload fields, `keys`, `source_types`, `suffixes` (`local_files.py:469-476`). `category` is in none of them |
 | Query-side classification | — | **absent** |
 | Few-shot / exemplar machinery | — | **absent**: zero hits for `few.?shot|in.?context learning|\bICL\b|exemplar` across `src/`, `docs/`, configs |
 
@@ -133,10 +138,15 @@ The bar comes from the campaign's own decision rules, as recorded on
 - Count-type metrics were decisive far cheaper: source accuracy `0.868` (McNemar),
   recursion-limit blowouts `7 / 109`, time per question `48.2 s`.
 
-**Consequence for both ideas: judge them on the count-type metrics — source accuracy,
-blowout count, required-atom recall — not on RAGAS means.** A two-run RAGAS arm cannot
-resolve a prompt effect of plausible size, and reporting one would be the kind of
-overclaim `v2026.09.0` exists to prevent.
+**Consequence for both ideas: judge them on the count-type metrics — source accuracy
+(McNemar) and blowout count — and read the gold-atom metrics, required-atom recall
+included, only as paired deltas under the 2σ rule; never on RAGAS means.** Required-atom
+recall is a per-attempt fraction, `entailed_required / required_count`
+(`evaluation/qa/scoring.py:32`), not a paired pass/fail count, so McNemar does not apply
+to it; and `compare_runs.py` pairs only `item_pass_rate` and `atom_score`
+(`compare_runs.py:1695`), so a required-atom delta is descriptive until that rig is
+extended. A two-run RAGAS arm cannot resolve a prompt effect of plausible size, and
+reporting one would be the kind of overclaim `v2026.09.0` exists to prevent.
 
 ---
 
@@ -165,10 +175,14 @@ The Argilla feedback loop (#60) and real ticket traffic are the candidate pools;
 bank is not.
 
 **Prompt tokens interact with a live defect.** [#499](https://github.com/fasrc/archi/issues/499)
-measures 8% of FASRC questions ending in a recursion-limit blowout at ~230 s, and the
-in-loop bound spends a 15% safety margin (`base_react.py:1696-1697`) over a
+measures 8% of FASRC questions ending in a recursion-limit blowout at ~230 s. Two bounds
+sit under that, and they are different mechanisms: the **pre-loop history trim** reserves
+15% of the window (`base_react.py:1696-1697`) and counts with the model's own
+`get_num_tokens_from_messages`; the **in-loop approximate counter**
+(`agents/utils/context_budget.py`) subtracts, by default, a 15% generation reserve
+(`context_budget.py:108`) *and* a separate 25% counting margin (`:144`) over a
 4-chars-per-token estimate (#263, parked). Static exemplars add fixed tokens to every
-turn on top of that. The blowout count is already a campaign metric (`7 / 109`), so the
+turn under both. The blowout count is already a campaign metric (`7 / 109`), so the
 interaction is measurable in the same arm — but it must be **read**, not assumed benign.
 
 ---
@@ -194,14 +208,22 @@ misclassified query removes the correct document from the candidate set entirely
 the answer degrades silently with full confidence. Ordered by risk:
 
 1. **Soft hint (rung 0).** The prompt tells the agent to name the docs category first,
-   then search — the category shapes the query text, nothing is excluded. No new failure
-   mode; also the only variant that is free.
+   then search — the category shapes the query text, and no code excludes anything. If
+   the prompt also advertises the `category:<value>` substring filter on
+   `search_metadata_index`, rung 2's exclusion risk comes back through the model's own
+   tool call, because `search_metadata` has no thin-result fallback
+   (`catalog_postgres.py:474-481`); the prompt must then order the unfiltered re-search
+   itself, and the arm measures a soft hint **plus a model-enforced fallback**, not a bare
+   hint. Either way, the only variant that is free.
 2. **Show the category (rung 1).** Add `category` to the chunk header in
    `_format_documents_for_llm`, so the model can see which section each hit came from and
-   reject off-category hits itself. One field in one f-string, plus a test.
-3. **Filter with fallback (rung 2).** Plumb `filter` through `HybridRetriever` into
-   `hybrid_search`, run filtered, and re-run unfiltered when the filtered set is empty or
-   thin. Never a bare `WHERE`.
+   reject off-category hits itself. One field in one f-string, plus a test, behind a
+   toggle whose default is off.
+3. **Filter with fallback (rung 2).** Plumb `filter` into `hybrid_search` through the
+   retriever the shipped config actually uses — `LlamaIndexHierarchicalRetriever`, whose
+   candidate generator calls `hybrid_search` directly — and through `HybridRetriever` for
+   the reranker-off path, or through one shared retrieval interface; run filtered, and
+   re-run unfiltered when the filtered set is empty or thin. Never a bare `WHERE`.
 
 A fourth cost question decides rung 2's shape: classifying the query with an LLM call
 adds latency to the **answer** path (baseline 48.2 s/question), unlike categorization's
@@ -217,14 +239,22 @@ Neither is answerable from this repository, and both are cheap on the dev host:
    `category`? `_extract_kb_category` returns `None` for crumbless pages and never
    raises (`processing.py:137-149`), so a low-coverage corpus would cap the idea's
    ceiling before any prompt work. One query against `documents.extra_json`.
-2. **Vocabulary agreement.** Do the 20 LLM labels in the FASRC config match the
-   breadcrumb vocabulary? [#496](https://github.com/fasrc/archi/issues/496) notes the
-   labels "duplicate the breadcrumb `category` field the scraper already writes" — if the
-   two vocabularies disagree, a prompt that hard-codes one will filter against the other.
+2. **Vocabulary agreement.** The FASRC config's LLM label list is **six** lower-case
+   slugs — `job-scheduling`, `storage`, `account-access`, `software`, `compute`,
+   `data-transfer` (`fasrc/archi-config` `environments/dev.yaml:220-226` on `main`,
+   `:100-106` at the `deploy-pin-2026-08b` checkout) — not the twenty that an earlier
+   draft of this document and [#496](https://github.com/fasrc/archi/issues/496) cite.
+   The breadcrumb vocabulary is a **19-item Title Case list that lives only in the
+   corpus** (`documents.extra_json` on the host), and the two lists share no values
+   ([Categories Action Plan](https://github.com/fasrc/archi/blob/docs/categories-action-plan/docs/docs/proposals/categories-action-plan.md),
+   PR #512). #496 says the labels "duplicate the breadcrumb `category` field the scraper
+   already writes"; they duplicate its *purpose*, not its values, so a prompt that
+   hard-codes one list filters against the other.
 
 The taxonomy in any rung-0 prompt must be **copied from the host, not from this
-document**: `docs.rc.fas.harvard.edu` was unreachable from the session that wrote this,
-and the 20-label list lives in `fasrc/archi-config` `config/environments/dev.yaml:292-301`.
+document and not from any config**: `docs.rc.fas.harvard.edu` was unreachable from the
+session that wrote this, and the breadcrumb list is read from the corpus, not from
+`archi-config`.
 
 ---
 
@@ -233,32 +263,48 @@ and the 20-label list lives in `fasrc/archi-config` `config/environments/dev.yam
 **Rung 0 — no code, measurable now.** Two prompt files through
 `generate_prompt_sweep.py`:
 
-- **(a) category-mapping prompt** — name the docs category before searching; optionally
-  advertise the working `category:<value>` filter on `search_metadata_index`, with its
-  substring caveat stated in the prompt.
-- **(b) static-ICL prompt** — 3–5 exemplars from a pool disjoint from the 109-question
-  bank, with the disjointness recorded.
+- **(a) category-routing prompt (`r0a`)** — name the docs category before searching and
+  carry its vocabulary in the query text. archi-config PR #22's `r0a` also advertises the
+  `category:<value>` substring filter on `search_metadata_index`, with the substring
+  caveat stated, **and orders the fallback itself**: "if a narrowed search comes back
+  empty or off-topic, search again without the narrowing." The code has no such fallback,
+  so this arm measures a soft hint plus a model-enforced fallback. A bare-hint arm, if
+  ever wanted, is a third prompt file without the filter paragraph.
+- **(b) static-ICL prompt (`r0b`)** — 3–5 exemplars from a pool disjoint from the
+  109-question bank, with the disjointness recorded.
 
-Read source accuracy (McNemar), required-atom recall, blowout count and time per
-question against the campaign baselines. Do **not** read RAGAS means at two runs.
+Read source accuracy (McNemar), blowout count and time per question as the decisive
+metrics against the campaign baselines; report required-atom recall and the other
+gold-atom scores as paired deltas against the 2σ floor, descriptive until
+`compare_runs.py` pairs them. Do **not** read RAGAS means at two runs.
 
 **Rung 1 — small, only if rung 0 shows signal.** Surface `category` in
-`_format_documents_for_llm` (`tools/retriever.py:94`), and teach
-`api_catalog_schema`/`get_distinct_metadata` to offer `category` and its distinct values
-so the model can discover the vocabulary instead of carrying it in the prompt. Note the
-second is not one line: `category` is not a promoted column, so distinct values need a
-JSONB query over `extra_json` or a schema migration.
+`_format_documents_for_llm` (`tools/retriever.py:94`), and teach the whole schema-hint
+path to offer `category` and its distinct values: `api_catalog_schema`
+(`uploader_app/app.py:779-790`) and `get_distinct_metadata` (`catalog_postgres.py:554-564`)
+on the server side, **and** the agent-facing `list_metadata_schema` tool
+(`create_metadata_schema_tool`, `tools/local_files.py:469-476`), which formats exactly
+three payload fields and hard-codes its tool description — a new field in the payload
+never reaches the model until that formatter and description change too. Note the
+server half is not one line: `category` is not a promoted column, so distinct values need
+a JSONB query over `extra_json` or a schema migration. Both surfaces ship behind one
+toggle whose default is off (below).
 
-**Rung 2 — a feature, with its own issue.** `filter` plumbed through `HybridRetriever`
-into `hybrid_search`; a query-classification step at the `_inject_forced_retrieval` seam;
-fallback-on-empty. Dynamic ICL joins here, sharing the same seam and the same exemplar
+**Rung 2 — a feature, with its own issue.** `filter` plumbed into `hybrid_search` on
+**both** retrieval paths — `LlamaIndexHierarchicalRetriever._generate_candidates`
+(`hierarchical_retriever.py:125-138`), which the shipped `hierarchical_rerank.enabled:
+true` selects (`factory.py:54-56`), and `HybridRetriever` (`hybrid_retriever.py:63-116`)
+for the reranker-off fallback (`factory.py:79`) — or one shared retrieval interface that
+both implement; a query-classification step at the `_inject_forced_retrieval` seam;
+fallback-on-empty. A filter on `HybridRetriever` alone is unused on the default path.
+Dynamic ICL joins here, sharing the same seam and the same exemplar
 store. Both overlap [Multi-Collection Routing](multi-collection-routing.md) — a category
 filter and a collection filter are the same mechanism at different granularity, and the
 two should not grow separate vocabularies.
 
-Rung 1 touches `tools/retriever.py` and `uploader_app/app.py`. Neither is `app.py`, so
-the diff-cover trap in `CLAUDE.md` does not apply, but both are large files — run the
-`black-seam-scout` check before editing in place.
+Rung 1 touches `tools/retriever.py`, `tools/local_files.py` and `uploader_app/app.py`.
+None of them is `chat_app/app.py`, so the diff-cover trap in `CLAUDE.md` does not apply,
+but all three are large files — run the `black-seam-scout` check before editing in place.
 
 ---
 
@@ -283,14 +329,28 @@ Because it is its own sweep rather than a campaign arm, the house pattern for re
 is a separate issue — which is how #496, #497 and #498 were filed out of the campaign —
 not a comment on #396.
 
-**Do not file an issue yet.** The plan's invariant is that every open issue carries
-exactly one of {a milestone, `parked`, `evidence-trial`} — so filing before there is a
-number forces a scheduling decision nobody is in a position to make, and the honest
-label would be `parked` on day one. File after rung 0, with the number in the body.
+**File the rung-0 issue before the sweep runs, labelled `evidence-trial`.** The plan's
+invariant is that every open issue carries exactly one of {a milestone, `parked`,
+`evidence-trial`}, and the third state exists for exactly this: "operator-initiated
+evidence work", milestone-exempt while the trial runs, with the label held until a human
+records the adopt/reject decision (release plan, "evidence-trial"; `AGENTS.md:13-15`). An
+earlier draft of this document said "do not file yet" and "the honest label would be
+`parked`"; that was wrong, because a sweep with no issue is invisible to every report and
+leaves the trial without the adopt/reject record the label requires. The
+pre-registration — arms, pool disjointness, decision rules, baselines — goes in the issue
+body before the first run; the number goes in afterwards. This is decision D3 of the
+[Categories Action Plan](https://github.com/fasrc/archi/blob/docs/categories-action-plan/docs/docs/proposals/categories-action-plan.md)
+(PR #512).
 
 **If rung 1/2 is ever merged ahead of its named release**, the plan's dark-ship rule
 applies: on this single trunk, code merged to `dev` rides the next release regardless of
 milestone, so a category filter or an exemplar injector must be an off-by-default toggle
-with no user-visible surface until the release that claims it. Both rungs are naturally
-toggleable — `force_initial_retrieval`
-(`fasrc_docs_agent.py:256`) is the precedent for exactly this shape.
+with no user-visible surface until the release that claims it. That needs **dedicated
+toggles whose code default is `false`** — one for the rung-1 surface (chunk header plus
+schema hint), one for rung-2 filtered or classified retrieval — read the way
+`categorization.enabled` is read (`base-config.yaml:519`, `processing.py:1078`: code
+default `false`, turned on only by the FASRC config). `force_initial_retrieval`
+(`fasrc_docs_agent.py:256`) is **not** the precedent: its code default is `true`, so a
+toggle shaped like it ships the feature on. And rung 1's category header must not be
+added unconditionally, as an earlier draft of this document implied; ungated, it is
+user-visible in the next release.
