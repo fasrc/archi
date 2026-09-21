@@ -4,7 +4,7 @@
 **Date:** September 2026
 **Status:** Proposal — for review
 **Baseline read:** `origin/dev` @ `4b253e26`, 2026-09-19; `fasrc/archi-config` `main` @ `56e4bac3`
-**Companion:** [Release Plan 2026](release-plan-2026.md) · [ICL and Query→Category Mapping](https://github.com/fasrc/archi/blob/claude/beautiful-gates-txvyxd/docs/docs/proposals/icl-and-query-category-mapping.md) (PR [#511](https://github.com/fasrc/archi/pull/511), unmerged; the link becomes relative when it lands) · [Feature-Matrix Campaign](feature-matrix-campaign-2026.md) · [Multi-Collection Routing](multi-collection-routing.md)
+**Companion:** [Release Plan 2026](release-plan-2026.md) · [ICL and Query→Category Mapping](icl-and-query-category-mapping.md) (PR [#511](https://github.com/fasrc/archi/pull/511), merged 2026-09-21) · [Feature-Matrix Campaign](feature-matrix-campaign-2026.md) · [Multi-Collection Routing](multi-collection-routing.md)
 
 Every path below is relative to the `fasrc/archi` repository root unless it is marked
 **archi-config**, in which case it is relative to the `fasrc/archi-config` root (checked
@@ -52,13 +52,13 @@ is an opinion.
 
 | Fact | Value | Source |
 |---|---|---|
-| LLM categorization cost per ingest | 3 802 s vs 4 956 s = **−19.2 min (−23 %)** on 1 091 documents | [#496](https://github.com/fasrc/archi/issues/496); `bench_out/feature_matrix/ledger.json` arms 00 and 03 |
-| Retrieval effect of the LLM label | `context_precision` −0.004 / −0.002 (MDE 0.025 / 0.027); source accuracy 0.868 / 0.840 vs 0.868 (McNemar p = 1 / 0.38) | [#496](https://github.com/fasrc/archi/issues/496) |
-| Chunk count with the LLM label off | 6 896 vs 6 926 — the toggle **changes the corpus fingerprint** | ledger arms 00 and 03 |
+| LLM categorization cost per ingest | 3 802 s vs 4 956 s = **−19.2 min (−23 %)** on 1 091 documents. The two ingests were not corpus-identical (30 chunks apart, 0.43 %), so read this as ≈ −23 %; the mechanism is one LLM call per document (`src/data_manager/collectors/processing.py:881`, serialized at `:868`) and the per-file row below corroborates it | [#496](https://github.com/fasrc/archi/issues/496); `bench_out/feature_matrix/ledger.json` arms 00 and 03 |
+| Retrieval effect of the LLM label | **No resolvable effect, and not a clean isolation.** `context_precision` −0.004 / −0.002 against an MDE of 0.025 / 0.027; source accuracy 0.868 / 0.840 vs 0.868 (McNemar p = 1 / 0.38). Every delta sits inside noise, **and** the two arms' corpora differed (row below), so this reads as "no effect measurable at this power, on corpora that were not identical" — not as evidence that the label cannot help | [#496](https://github.com/fasrc/archi/issues/496) |
+| Chunk count, arm 00 vs arm 03 | 6 926 vs 6 896 — the two arms **ingested different corpora**. The toggle cannot cause this: `CategorizationProcessor.process` writes only `metadata["llm_category"]` (`src/data_manager/collectors/processing.py:855-858`) and `CORPUS_STATE_QUERY` hashes document size and chunk and parent text, never that key (`src/bin/service_benchmark.py:106-129`). The 30-chunk delta is corpus drift between the two ingests, so **the arms did not isolate categorization** | ledger arms 00 and 03 |
 | Second cost of the LLM label | embedding ran 6.0–6.7 s per file vs 3.2 s idle because the same config ran categorization | [#378](https://github.com/fasrc/archi/issues/378) |
 | Breadcrumb coverage | whole corpus 206 / 841 = 24.5 %; **KB articles 206 / 213 = 96.7 %**; non-KB documents 0 / 628 | archi-config #22 `benchmarking/prompt_sweep_r0/README.md` §1, claw Postgres 2026-09-19 |
 | Breadcrumb vocabulary | **19** Title Case labels (`Software`, `Cluster Usage`, `Storage`, …) | same |
-| LLM vocabulary | **6** lowercase labels (`job-scheduling`, `storage`, `account-access`, `software`, `compute`, `data-transfer`) | archi-config `environments/dev.yaml:220-226` (`main`; `:100-106` at the pin), `benchmarking/ragas.yaml`, all eight `benchmarking/feature_matrix/*.yaml`; host-local `deploy/fasrc-dev/config.yaml:163-169` |
+| LLM vocabulary | **6** lowercase labels (`job-scheduling`, `storage`, `account-access`, `software`, `compute`, `data-transfer`) | archi-config `environments/dev.yaml:220-226` (`main`; `:101-106` at the pin — the six values under `categories:` at `:100`), `benchmarking/ragas.yaml`, all eight `benchmarking/feature_matrix/*.yaml`; host-local `deploy/fasrc-dev/config.yaml:163-169` |
 | Overlap between the two vocabularies | **none** — the two share no values | archi-config #22 `benchmarking/prompt_sweep_r0/README.md` §1 |
 | LLM label validity window | every document was `uncategorized` until PR [#44](https://github.com/fasrc/archi/pull/44) (2026-06-26) and again until PR [#218](https://github.com/fasrc/archi/pull/218) (2026-08-07) | those PRs |
 | Prompt cost of the rung-0 arms | control ~556 tokens; r0a **+523 tokens per turn**; r0b **+485 tokens per turn** | archi-config #22 `benchmarking/prompt_sweep_r0/README.md` §4 |
@@ -75,8 +75,9 @@ is an opinion.
 Two claims in the record are **not** facts and this plan corrects them:
 
 - **"The label is write-only. Readers: none."** ([#496](https://github.com/fasrc/archi/issues/496);
-  repeated in the [ICL proposal](https://github.com/fasrc/archi/blob/claude/beautiful-gates-txvyxd/docs/docs/proposals/icl-and-query-category-mapping.md) and
-  [PR #511](https://github.com/fasrc/archi/pull/511)). `CatalogPostgres.search_metadata`
+  the first draft of the [ICL proposal](icl-and-query-category-mapping.md) repeated it and
+  corrected it in review round 1, so the merged text already names the reader).
+  `CatalogPostgres.search_metadata`
   matches any unknown key by substring over `extra_text`
   (`src/data_manager/collectors/utils/catalog_postgres.py:474-481`), `_build_extra_text`
   writes both `category:<value>` and `llm_category:<value>` into that blob (`:1560-1569`),
@@ -85,11 +86,16 @@ Two claims in the record are **not** facts and this plan corrects them:
   vocabulary. Arm 03 is evidence that the label did not help **as wired and as prompted**.
   It is not evidence that no reader was reachable. The Codex review on PR #511 made this
   point first.
-- **"The 20 LLM labels."** [#496](https://github.com/fasrc/archi/issues/496) and the
-  [ICL proposal](https://github.com/fasrc/archi/blob/claude/beautiful-gates-txvyxd/docs/docs/proposals/icl-and-query-category-mapping.md) count 20 labels at
-  archi-config `environments/dev.yaml:292-301`. The pinned checkout (`deploy-pin-2026-08b`)
-  and `main` both carry **6** labels (`environments/dev.yaml:220-226` on `main`, `:100-106`
-  at the pin). The 19-item list is the breadcrumb vocabulary. The two lists were conflated.
+- **"The 20 LLM labels."** [#496](https://github.com/fasrc/archi/issues/496) counts 20
+  labels at archi-config `environments/dev.yaml:292-301`, a range that does not exist — the
+  file is 116 lines at the pin. The first draft of the
+  [ICL proposal](icl-and-query-category-mapping.md) repeated the count and corrected it in
+  review round 1. `main` and the pinned checkout both carry **6** labels
+  (`environments/dev.yaml:220-226` on `main`, `:101-106` at the pin). The 19-item list is
+  the breadcrumb vocabulary. The two lists were conflated. Pin provenance: these line
+  numbers were read at `deploy-pin-2026-08b`, the pin in force when this section was
+  measured; `deploy-pin-2026-09b` has been the deploy pin since
+  [#522](https://github.com/fasrc/archi/pull/522) and was not re-read for this row.
 
 ---
 
@@ -181,7 +187,7 @@ recommendation.
 | D1 | Turn `processing.categorization.enabled` **off** in archi-config `environments/dev.yaml`, archi-config `benchmarking/ragas.yaml`, and the host-local `deploy/fasrc-dev/config.yaml`; redeploy | **Yes** | It is the campaign's own disposition ([§4.4 rule 5](feature-matrix-campaign-2026.md#44-the-verdict-rule)); cost measured, effect nil; removes the substring contamination in §3 |
 | D2 | Keep `HtmlCategoryProcessor` default-on | **Yes** | It is free, covers 96.7 % of KB articles, and is the vocabulary of record |
 | D3 | File **one** tracking issue for the rung-0 sweep and label it `evidence-trial` **before** the sweep runs | **Yes** | The release plan's invariant requires every open issue to carry a milestone, `parked`, or `evidence-trial`. AGENTS.md defines `evidence-trial` as operator-driven evidence work. The ICL proposal's "do not file yet" leaves the sweep invisible to every report. The Codex review on PR #511 raised this as P1 |
-| D4 | Order D1 relative to the sweep | **D1 first**, then lock the sweep | D1 changes the corpus fingerprint (6 926 → 6 896 chunks). A sweep locked before D1 measures a corpus production will no longer run |
+| D4 | Order D1 relative to the sweep | **D1 first**, then lock the sweep | D1 requires a re-ingest, and any re-ingest re-scrapes, so the corpus fingerprint moves. The arm-00 against arm-03 pair is the evidence: two ingests of the same site came out 30 chunks apart (§1), which the toggle cannot cause. A sweep locked before D1 therefore measures a corpus production will no longer run |
 | D5 | Where [#496](https://github.com/fasrc/archi/issues/496) sits | **`v2026.10.0`**, or `parked` if the operator declines D1 | Today it carries neither a milestone nor `parked` and breaks the invariant. It is the campaign's output and the release claims measured defaults |
 | D6 | Archive `openspec/changes/measure-category-boost-ceiling/` as shelved | **Yes** | It sits among active changes with a "do not implement" banner; archive it so the record is findable and does not read as open work |
 | D7 | Whether to port upstream [#570](https://github.com/archi-physics/archi/issues/570) when it lands | **Only if** it maps its values onto the breadcrumb vocabulary or is scoped to `collection` | The rule in §3 |
@@ -225,9 +231,9 @@ effect at two runs. The pre-registration, corrected from the ICL proposal:
 
 | Item | Value |
 |---|---|
-| Bank power | 105 rows over **41 distinct gold KB articles**. This clears the ≥ 30-article minimum the July record set for an adopt-or-reject decision on this bank. A per-category claim has its own minimum (§6.1) |
+| Bank power | 105 rows over **41 distinct gold KB articles** — clears the **≥ 30 distinct gold KB articles** minimum the July record set for an adopt-or-reject decision on this bank (`openspec/changes/measure-category-boost-ceiling/proposal.md:199-201`). That record sets two further benefit-side prerequisites that **do** bind a category-conditioned arm: **≥ 6 categories** and **no article > 10 % of gold rows**. Both are read by the bank-coverage census (§6.2), which runs as a pass/fail gate before any verdict is read — a bank below either minimum **voids** the arm rather than downgrading it. The record's remaining two prerequisites, **≥ 12 at-risk rows** (`:200-201`) and **non-KB gold source coverage** (`:196-198`), are harm-gate items: they exist to make a *retrieval boost's* harm cells visible, and r0a boosts nothing, so they do not transfer to a prompt-only arm, whose harm side is the G8 guard and the blowout count. They return as prerequisites if rung 1 or rung 2 is ever measured. A per-category claim has its own minimum (§6.1) |
 | Void checks | the campaign's §7 invariants, unchanged: corpus fingerprint equal across arms and runs; scored counts equal; control sha256 `ac22702a…4ce8` unchanged; `grep FILL_FROM_HOST` prints nothing; every arm's tool list equals the control's. **A void arm reports no numbers** |
-| Primary metrics, per arm vs control | **source accuracy** — McNemar exact test, paired per question, p < 0.05 in **both** runs (the pattern [#498](https://github.com/fasrc/archi/issues/498) used); **item pass rate** and **atom score** — paired through `scripts/benchmarking/compare_runs.py::qa_block`, outside 2σ of the four-run floor (pass 0.424 ± 0.024, atom 0.475 ± 0.017) in both runs |
+| Primary metrics, per arm vs control | **source accuracy** — McNemar exact test, paired per question, p < 0.05 in **both** runs (the pattern [#498](https://github.com/fasrc/archi/issues/498) used). The test is **not in this repository**: run `mcnemar_exact` from `feature_matrix/figures/extract_figure_data.py:67-74` of `fasrc/archi-bench-out` against the sweep artifacts, or port it into `compare_runs.py` first (W6) — a raw hit-rate change is not a verdict. **item pass rate** and **atom score** — from `archi eval qa` runs joined with `compare_runs.py --qa-run LABEL=RUN_DIR` and paired through `qa_block`, whose rows carry `mean` and `se` only, so the 2σ comparison against the four-run floor (pass 0.424 ± 0.024, atom 0.475 ± 0.017) is computed by hand from those: `--noise-floor` accepts the five RAGAS metric names only (`compare_runs.py:75-81`, rejected at `:682-686`) |
 | Guard (G8) | a `helps` verdict is downgraded to `mixed` if any RAGAS metric, the QA pass rate, or an `easy_retrieve` anchor regresses by more than one σ, or if the `should_refuse` anchor fails — the campaign's rule, unchanged |
 | Cost side, always reported | **blowout count** vs 7 / 109 — a rise is `hurts` regardless of accuracy; **time per question** vs 48.2 s; Δ degraded-row count |
 | Descriptive only | `required_atom_recall` (a per-item fraction, not paired-binary, so McNemar does not apply); all RAGAS means (MDE 0.025–0.05, ~40 runs per arm); `context_precision` ranks the leaderboard and is **not** the verdict |
@@ -245,7 +251,7 @@ numbers and the void-check record; the artifacts and the category snapshot commi
 | Outcome | Action |
 |---|---|
 | Both arms `no measurable difference` | Post the finding. Close the tracking issue with a recorded decision. Categories stay a free ingest field. **No code.** |
-| r0a `helps` | File a rung-1 issue with the verdict record in its body. It enters a milestone through the gate bar. Rung 1 is: `category` in the chunk header (`src/archi/pipelines/agents/tools/retriever.py:94`); `category` and its distinct values through `api_catalog_schema` **and** the `list_metadata_schema` formatter (`src/archi/pipelines/agents/tools/local_files.py:469-476`), because the formatter drops any field it does not name; one dedicated default-off toggle |
+| r0a `helps` | File a rung-1 issue with the verdict record in its body. It enters a milestone **only if it clears the gate bar** (`AGENTS.md:16-18`); a `helps` verdict is evidence for that judgment, never a substitute for it. Rung 1 is: `category` in the chunk header (`src/archi/pipelines/agents/tools/retriever.py:94`); `category` and its distinct values through `api_catalog_schema` **and** the `list_metadata_schema` formatter (`src/archi/pipelines/agents/tools/local_files.py:469-476`), because the formatter drops any field it does not name; one dedicated default-off toggle |
 | r0b `helps` | Static ICL is a prompt change and needs no code. Ship the r0b section into archi-config `agents/claw/fasrc-docs.md` and the host spec after the blowout read. Dynamic ICL is a separate proposal with an exemplar pool **disjoint from the bank** (Argilla feedback, ticket traffic) and its own contamination record |
 | Either arm `hurts` or `mixed` | Record it. The question closes for that arm. A `mixed` arm does not advance |
 | Blowouts rise on either arm | The arm is `hurts` regardless of accuracy. Token cost per turn is the cause to check first ([#499](https://github.com/fasrc/archi/issues/499), [#263](https://github.com/fasrc/archi/issues/263)) |
@@ -287,8 +293,14 @@ metric.
 The join must **not** read live Postgres. A live join changes the slice whenever the
 corpus is re-ingested, without any change to the scored answers. So:
 
-- **Snapshot at archive time.** When a run is archived
-  (`scripts/benchmarking/feature_matrix/archive_run.sh` today), dump
+- **Snapshot at archive time.** A matching corpus fingerprint does not prove a snapshot
+  carries the categories the run used: `CORPUS_STATE_QUERY` hashes document size, chunk text
+  and parent text only, and `documents.extra_json` — where `category` lives, there being no
+  column for it (`src/cli/templates/init.sql:235`) — is never hashed
+  (`src/bin/service_benchmark.py:106-129`; metadata appears once, at `:126`, as a join key).
+  A re-ingest overwrites `extra_json` in place (`catalog_postgres.py:335`), so a
+  metadata-only change moves the category map at a constant fingerprint. Hence: when a run
+  is archived (`scripts/benchmarking/feature_matrix/archive_run.sh` today), dump
   `SELECT url, extra_json->>'category' FROM documents WHERE NOT is_deleted` to a
   `category_map.json` next to the artifact, and record its sha256 and the corpus
   fingerprint in the ledger entry.
@@ -379,9 +391,9 @@ test so they run the same way every time.
 | W3 | Archive `measure-category-boost-ceiling` as shelved | chore | fasrc/archi | D6 |
 | W4 | `categorization.enabled: false` in dev.yaml, ragas.yaml, host config; template comment + docs; redeploy; record ingest time | config + docs + deploy | both repos, FASRC host | D1 |
 | W5 | File the `evidence-trial` tracking issue with the Phase 1 pre-registration | tracker | fasrc/archi | D3 |
-| W6 | Category snapshot at archive time + fingerprint-matched per-category slice in `scripts/benchmarking/compare_runs.py` (§6.1), with tests | code | fasrc/archi `scripts/benchmarking/` | — |
+| W6 | Category snapshot at archive time + fingerprint-matched per-category slice in `scripts/benchmarking/compare_runs.py` (§6.1); plus the paired exact (McNemar) test on per-question source hits and on per-question ok/not-ok, ported from `archi-bench-out`'s `mcnemar_exact`; with tests | code | fasrc/archi `scripts/benchmarking/` | — |
 | W7 | Preflight census script (§6.2, all three censuses), with tests; run the bank-coverage census and post the table; plus one unit test that pins `_build_extra_text` and the `search_metadata` substring fallback r0a depends on | code | fasrc/archi `scripts/benchmarking/`, `tests/unit/` | — |
-| W8 | Run the rung-0 sweep; post verdicts with the void-check record | measurement | claw or FASRC host | W2, W4, W5, W6, W7 |
+| W8 | Run the rung-0 sweep: per replicate, one `archi evaluate --config-dir` pass **and** one `archi eval qa` pass per arm (6 + 6 runs over the two replicates, ≈ +6–9 h), joined with `compare_runs.py --qa-run LABEL=RUN_DIR`; post verdicts with the void-check record. Without the QA runs `qa_block` returns nothing (`compare_runs.py:1625-1626`) and both QA primaries are silently absent | measurement | claw or FASRC host | W2, W4, W5, W6, W7 |
 | W9 | Phase 2 decision recorded on the tracking issue | tracker | fasrc/archi | W8 |
 | W10 | Rung-1 issue with the verdict record (only on `helps`) | tracker | fasrc/archi | W9 |
 
@@ -409,7 +421,7 @@ findings. Each was checked against `origin/dev` @ `4b253e26`.
 Two more corrections come from this plan's own reads:
 
 - The LLM label list is **6** values, not 20 (archi-config `environments/dev.yaml:220-226`
-  on `main`, `:100-106` at the pin).
+  on `main`, `:101-106` at the pin).
 - The 19-item list is the breadcrumb vocabulary and lives in the corpus, not in any config.
 
 Stale anchors in other companion documents, for whoever next edits them:
@@ -419,8 +431,9 @@ Stale anchors in other companion documents, for whoever next edits them:
 - `docs/docs/configuration.md:685-692` shows a **4-label** example set — a third label list
   in the docs beside the 6 in the deploy configs and the 19 on the corpus.
 - [Multi-Collection Routing](multi-collection-routing.md) line 42 says RBAC has "8 categories,
-  20+ permissions"; `src/utils/rbac/permission_enum.py:24-70` defines 11 groups and 23
-  permissions.
+  20+ permissions". `src/utils/rbac/permission_enum.py:24-70` defines 11 groups and **26**
+  permissions, so "20+" is right and "8 categories" is wrong — it is 11. An earlier draft of
+  this appendix said 23 permissions; that was also wrong.
 
 ---
 
