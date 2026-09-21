@@ -321,24 +321,31 @@ session that wrote this, and the breadcrumb list is read from the corpus, not fr
     already issued an unfiltered one — and the arm shapes only the model's follow-up
     searches. This document pre-registers `r0a` accordingly, as **post-retrieval
     rerouting**, not as category-first search. Category-first search is a separate
-    pre-registration, and setting the flag in the sweep's generated `base_config` does
-    **not** buy it. The generator does copy that config into every arm
-    (`generate_prompt_sweep.py:125-130`), but nothing reads the copy for this key: the
-    harness hands the runtime only the selected file's benchmarking agent spec, provider
-    and model (`service_benchmark.py:1421-1434`), and the agent loads its pipeline config
-    from the PostgreSQL-backed active config through `get_full_config()` (`archi.py:31`,
-    `config_access.py:73`, which reads Postgres at `:24-25`) — which is where
-    `FASRCDocsAgent` looks `force_initial_retrieval` up. A sweep that sets the key only
-    in the generated YAML still runs the default raw-query retrieval, and provenance
-    records the disagreement: Procedure E refuses a comparison whose
-    `divergence_from_selected_file` is non-empty (`compare_runs.py:569-588`). So the
-    category-first sweep sets `services.chat_app.force_initial_retrieval: false` in the
-    sweep deployment's `config.yaml` and **redeploys**, so that Postgres carries the
-    value; editing `config.yaml` and restarting the container is a no-op (`CLAUDE.md`,
-    "Don't-touch / gotchas"). One deployment serves every arm, so the flag is identical
-    across control and treatments by construction. Confirm
-    `divergence_from_selected_file` is empty in every artifact, and state in the issue
-    body which of the two sweeps a number came from.
+    pre-registration, and the flag has to be set where the agent will read it. The
+    generated sweep YAML does not reach the agent directly: the harness hands the
+    runtime only the selected file's benchmarking agent spec, provider and model
+    (`service_benchmark.py:1421-1434`), and the agent loads its pipeline config from the
+    PostgreSQL-backed active config through `get_full_config()` (`archi.py:31`,
+    `config_access.py:73`, reading Postgres at `:15-21`), which is where
+    `FASRCDocsAgent` looks `force_initial_retrieval` up (`fasrc_docs_agent.py:256`, via
+    `services.chat_app` at `:61-63`). Postgres is seeded from exactly one file: a
+    multi-config deployment renders no `config.yaml`, so the seeder takes the
+    alphabetically first rendered arm file and seeds its whole `services` block
+    (`config_seed.py:30-52`, `:94`). A value held **identical across every arm**
+    therefore does arrive and is honoured; a value that **differs between arms** is
+    silently replaced by the first arm's, and the per-arm digest cannot tell those arms
+    apart, because `effective_config` overlays only `services.benchmarking` onto the
+    running config (`benchmark_provenance.py:77`, `:351`). The harness refuses rather
+    than publishing the mislabel: `services.chat_app` is not in
+    `DIVERGENCE_IGNORED_PATHS` (`benchmark_provenance.py:104-106`), so the mismatch
+    lands in `divergence_from_selected_file` and Procedure E stops the comparison
+    (`compare_runs.py:569-588`). The rule for this sweep is therefore: set
+    `services.chat_app.force_initial_retrieval: false` in the configuration that seeds
+    the sweep deployment's Postgres and **redeploy** — editing a rendered file and
+    restarting the container is a no-op (`CLAUDE.md`, "Don't-touch / gotchas") — hold it
+    identical across control and treatments, never vary it between arms, and confirm
+    `divergence_from_selected_file` is empty in every artifact before reading a number.
+    State in the issue body which of the two sweeps a number came from.
 - **(b) static-ICL prompt (`r0b`)** — 3–5 exemplars from a pool disjoint from the
   109-question bank, with the disjointness recorded.
 
