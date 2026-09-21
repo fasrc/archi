@@ -55,4 +55,4 @@
 
 - [x] 8.1 Run the reconciler with `--dry-run` against the live repository and read the decision for every open PR before anything is written.
 - [x] 8.2 Check the dry-run output against the five PRs whose state is known from 2026-09-20, confirming each lands the expected status label.
-- [ ] 8.3 Open the PR against `dev` and let the workflow reconcile for real on its own head.
+- [x] 8.3 Open the PR against `dev` and let the workflow reconcile for real on its own head.
