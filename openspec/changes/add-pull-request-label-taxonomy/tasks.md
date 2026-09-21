@@ -66,3 +66,13 @@
 - [x] 9.5 Test: a completed failure, from either context type, still says `checks-failing`.
 - [x] 9.6 Test: one red check outranks one still running.
 - [x] 9.7 Test: `NEUTRAL` and `SKIPPED` stay passing and still earn the chip, so the split did not reclassify them.
+
+## 10. Review round 1 on PR #517
+
+- [x] 10.1 Bound the nested closing-issue connection to `first:5` / `first:20` and carry `totalCount` on both. The shipped `first:20` / `first:50` took the query from ~151 to ~661 points against a 1,000/hour quota, leaving one sweep an hour before rate limiting.
+- [x] 10.2 Skip inheritance entirely when either closing-issue connection is truncated: a partial union is unfixable, because grant-only priority lets a visible `P3` permanently mask an omitted `P1`.
+- [x] 10.3 Recompute inheritance from the authoritative label list on the truncated-labels path, so a PR permanently over the page limit is not permanently excluded.
+- [x] 10.4 Move the grant rule into one `inherit_to_add` function used by both paths, rather than two copies that could disagree.
+- [x] 10.5 UNKNOWN mergeability now REMOVES a held status label while still adding none — removal withdraws a claim, it does not make one, so the path keeps its "assert nothing" contract.
+- [x] 10.6 Test each: UNKNOWN clears a stale status; a truncated closing-issue or issue-label set inherits nothing; a truncated PR-label set still inherits via the authoritative read; the nested bounds stay small.
+- [x] 10.7 Fix the jq element binding found by 4.5 during the refactor: `index(.)` inside a pipe rebinds the dot to the array, so priority exclusivity had silently stopped matching.

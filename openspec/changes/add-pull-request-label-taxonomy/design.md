@@ -103,6 +103,21 @@ The practical cost is small. UNKNOWN is transient — it is what GitHub returns 
 
 If this is ever revisited, the change is to that branch and to those two tests together, with the invariant restated rather than quietly dropped.
 
+## Decision 7 — the nested query bound is a cost decision
+
+GraphQL node cost is the product of the enclosing `first:` values, so a labels connection nested inside a closing-issues connection inside a PR page is multiplied twice. At `first:20` / `first:50` that one connection budgets 50,000 nodes and takes the whole query from about 151 points to about 661.
+
+The hourly quota for `GITHUB_TOKEN` is 1,000 points, and this workflow runs on many events **plus** an hourly sweep. So the first version afforded roughly one sweep an hour before rate limiting — and a rate-limited reconciler leaves every label unreconciled, which is a worse failure than the one this change fixes.
+
+`first:5` / `first:20` costs about 204 points and leaves room for four sweeps an hour. Measured against this repository, the most issues any PR closes is 2 and the mean is 0.6, so the bound is generous rather than tight. Both connections carry `totalCount`, so exceeding it is **detected** rather than silently truncated.
+
+### The two truncations are handled oppositely, on purpose
+
+- **Closing issues truncated** → inherit nothing. A partial union is not merely incomplete, it is unfixable: priority is grant-only and skipped once any priority is present, so a `P3` granted from a visible issue would permanently mask a `P1` on an omitted one.
+- **The PR's own labels truncated** → still inherit, from the authoritative re-read the script already performs. Abandoning inheritance here would permanently exclude a PR that stays over the page limit, and no later sweep could fix it.
+
+The rule that decides what to grant therefore lives in exactly one function, `inherit_to_add`, called with whichever label list was ultimately trusted. Two copies of that rule could disagree about the one thing it exists to decide — which is the same argument as Decision 1, and it was not hypothetical: refactoring it out revealed that a jq `index(.)` inside a pipe rebinds the dot to the array, so the priority-exclusivity test had silently stopped matching. The suite caught it.
+
 ## Risk
 
 The reconciler writes to every open PR on every sweep, so a defect here is repository-wide and immediate. Two properties bound it.

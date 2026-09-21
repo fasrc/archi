@@ -60,6 +60,12 @@ The reconciler SHALL add at most one status label to an open pull request, deriv
 - **THEN** `unverifiable` is added
 - **AND** `ready-to-merge` is not granted, and is revoked if held
 
+#### Scenario: Unverifiable mergeability clears a stale status label
+
+- **WHEN** mergeability is still `UNKNOWN` after the retries and the pull request holds a status label
+- **THEN** that status label is removed, along with any held `ready-to-merge`
+- **AND** no status label is added, because removal withdraws a claim while adding one would make a claim the snapshot cannot support
+
 ### Requirement: A pull request inherits kind, priority and area from the issues it closes
 
 The reconciler SHALL add to a pull request the kind, priority and area labels carried by the issues that pull request closes, and SHALL never remove a label of those groups. Priority is `P1`, `P2` or `P3`; kind is `bug`, `enhancement` or `documentation`; area is any of the repository's area labels. Priority and kind are exclusive groups and are inherited only when the pull request carries no label from that group. Area labels are inherited individually when absent. When several issues are closed, kind and area take the union and priority takes the strongest.
@@ -85,6 +91,18 @@ The reconciler SHALL add to a pull request the kind, priority and area labels ca
 - **WHEN** a pull request closes one issue carrying `P3` and another carrying `P1`
 - **THEN** `P1` is added
 - **AND** `P3` is not added
+
+#### Scenario: A truncated closing-issue set inherits nothing
+
+- **WHEN** a pull request closes more issues than the query fetches, or a closing issue carries more labels than the query fetches
+- **THEN** no kind, priority or area label is inherited
+- **AND** the readiness chip is unaffected, because inheritance and readiness are independent
+
+#### Scenario: A truncated label set still inherits
+
+- **WHEN** a pull request carries more labels than the query page holds
+- **THEN** the full label list is re-read authoritatively
+- **AND** inheritance is computed against that list rather than skipped, so a pull request permanently over the page limit is not permanently excluded
 
 #### Scenario: Area labels accumulate
 

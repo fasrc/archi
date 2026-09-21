@@ -185,8 +185,10 @@ reason wins — a PR with both a failing check and an open thread reads
 
 One state is deliberately unlabelled: mergeability GitHub has not finished
 computing, which is what it returns right after a push to `dev`. That path
-revokes the chip and asserts nothing at all, by a long-standing invariant, so
-such a PR shows no chip and no status label until the next sweep resolves it.
+revokes the chip **and any stale status label**, and adds nothing, by a
+long-standing invariant that it must not assert what it cannot see. Removing
+withdraws a claim; adding would make one. Such a PR shows nothing until the
+next sweep resolves it.
 
 Find what needs a human:
 [`is:pr is:open label:review-pending`](https://github.com/fasrc/archi/pulls?q=is%3Apr+is%3Aopen+label%3Areview-pending).

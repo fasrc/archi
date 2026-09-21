@@ -163,7 +163,7 @@ mk_node() {
   local n="$1" draft="$2" state="$3" labels="${4:-}" threads="${5:-}"
   local tt="${6:-}" lt="${7:-}" mergeable="${8:-}"
   local checks="${9:-}" ct="${10:-}"
-  local title="${11:-chore: untitled}" closes="${12:-}"
+  local title="${11:-chore: untitled}" closes="${12:-}" ctotal="${13:-}" ltotal="${14:-}"
   local tcount lcount ljson tjson cjson ccount rollup_json closes_json title_json
   if [ -z "$mergeable" ]; then
     case "$state" in
@@ -190,18 +190,20 @@ mk_node() {
   else
     rollup_json='null'
   fi
-  closes_json="$(mk_closes "$closes")"
+  closes_json="$(mk_closes "$closes" "$ltotal")"
   # jq builds the title string, so a title containing a quote, a backslash, a
   # tab or a newline is encoded correctly rather than breaking the JSON — the
   # tab case is the one that could split a TSV row downstream.
   title_json="$(jq -cn --arg t "$title" '$t')"
-  printf '{"number":%s,"isDraft":%s,"mergeable":"%s","mergeStateStatus":"%s","title":%s,"labels":{"totalCount":%s,"nodes":%s},"reviewThreads":{"totalCount":%s,"nodes":%s},"closingIssuesReferences":{"nodes":%s},"commits":{"nodes":[{"commit":{"statusCheckRollup":%s}}]}}' \
-    "$n" "$draft" "$mergeable" "$state" "$title_json" "$lcount" "$ljson" "$tcount" "$tjson" "$closes_json" "$rollup_json"
+  local ccount; ccount="$(printf '%s' "$closes_json" | jq 'length')"
+  if [ -n "$ctotal" ]; then ccount="$ctotal"; fi
+  printf '{"number":%s,"isDraft":%s,"mergeable":"%s","mergeStateStatus":"%s","title":%s,"labels":{"totalCount":%s,"nodes":%s},"reviewThreads":{"totalCount":%s,"nodes":%s},"closingIssuesReferences":{"totalCount":%s,"nodes":%s},"commits":{"nodes":[{"commit":{"statusCheckRollup":%s}}]}}' \
+    "$n" "$draft" "$mergeable" "$state" "$title_json" "$lcount" "$ljson" "$tcount" "$tjson" "$ccount" "$closes_json" "$rollup_json"
 }
 
 # mk_closes "<num>:<label>|<label>;<num>:<label>"  ->  closingIssuesReferences nodes
 mk_closes() {
-  local spec="${1:-}" out="" item num labels lj l
+  local spec="${1:-}" ltotal="${2:-}" out="" item num labels lj l ln
   [ -z "$spec" ] && { printf '[]'; return; }
   local IFS=';'
   for item in $spec; do
@@ -211,7 +213,9 @@ mk_closes() {
       local IFS='|'
       for l in $labels; do lj+="{\"name\":\"$l\"},"; done
     fi
-    out+="{\"number\":$num,\"labels\":{\"nodes\":[${lj%,}]}},"
+    ln="$(printf '[%s]' "${lj%,}" | jq 'length')"
+    [ -n "$ltotal" ] && ln="$ltotal"
+    out+="{\"number\":$num,\"labels\":{\"totalCount\":$ln,\"nodes\":[${lj%,}]}},"
   done
   printf '[%s]' "${out%,}"
 }
@@ -1345,6 +1349,72 @@ if grep -q '324 .*--add-label ready-to-merge' "$sb/calls" \
 else
   notok "NEUTRAL and SKIPPED stay passing and earn the chip"
   cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 64: UNKNOWN clears a stale status label, and still asserts nothing -----
+# Removal withdraws a claim; it does not make one. So this keeps the "asserts
+# nothing new" contract of the UNKNOWN path while not leaving a cause
+# advertised that was derived from a snapshot we can no longer stand behind.
+sb="$(new_sandbox)"
+mk_page false "" "$(mk_node 330 false UNKNOWN "review-pending,ready-to-merge" "")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '330 .*--remove-label review-pending' "$sb/calls" \
+   && grep -q '330 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label' "$sb/calls"; then
+  ok "UNKNOWN revokes a stale status label and the chip, and adds nothing"
+else
+  notok "UNKNOWN revokes a stale status label and the chip, and adds nothing"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 65: a truncated closing-issue set inherits NOTHING ---------------------
+# Inheriting from a subset is not merely incomplete, it is unfixable: priority
+# is grant-only and skipped once any priority is present, so a P3 from a
+# visible issue would permanently mask a P1 on an omitted one.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 331 false CLEAN "" "" "" "" "" "" "" "chore: x" "491:bug|P3" 25)" \
+  "$(mk_node 332 false CLEAN "" "" "" "" "" "" "" "chore: x" "491:bug|P3" "" 60)" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if ! grep -q -- '--add-label bug' "$sb/calls" \
+   && ! grep -q -- '--add-label P3' "$sb/calls" \
+   && grep -q '331 .*--add-label ready-to-merge' "$sb/calls"; then
+  ok "a truncated closing-issue or issue-label set inherits nothing, and still gets the chip"
+else
+  notok "a truncated closing-issue or issue-label set inherits nothing, and still gets the chip"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 66: a truncated PR-label set still inherits, from the authoritative read
+# The label connection being over the page is not a reason to abandon
+# inheritance forever: the re-read returns the full list, so the exclusive-group
+# rule can be evaluated properly. A PR permanently over the limit would
+# otherwise never inherit anything and no later sweep could fix it.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 333 false CLEAN "P1" "" "" 150 "" "" "" "chore: x" "491:bug|P3")" \
+  > "$sb/resp_1.json"
+printf '[{"name":"P1"}]' > "$sb/labels_333.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '333 .*--add-label bug' "$sb/calls" \
+   && ! grep -q -- '--add-label P3' "$sb/calls"; then
+  ok "a truncated label set still inherits, and the exclusive rule uses the authoritative list"
+else
+  notok "a truncated label set still inherits, and the exclusive rule uses the authoritative list"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 67: the nested closing-issue bounds stay small -------------------------
+# GraphQL node cost is the PRODUCT of enclosing first: values, so this one
+# nested connection dominates the whole query. At first:20/first:50 it budgets
+# 50,000 nodes and takes the query past 600 points against a 1,000-point hourly
+# quota -- one sweep an hour before the reconciler starts getting rate-limited.
+if grep -q 'closingIssuesReferences(first:5){ totalCount nodes{ labels(first:20){ totalCount' "$RECONCILER"; then
+  ok "the nested closing-issue connection keeps its small, totalCount-checked bounds"
+else
+  notok "the nested closing-issue connection keeps its small, totalCount-checked bounds"
+  grep -n 'closingIssuesReferences' "$RECONCILER"
 fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
