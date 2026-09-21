@@ -145,7 +145,7 @@ fm_lock_file() { printf '%s/campaign.lock\n' "$FM_OUT"; }
 # the SUT/judge/metric settings. Paths resolve from the cwd, like `archi evaluate` does.
 fm_fixed_factors_json() { # $1 = arm YAML
   FM_Y="$1" FM_KEYS="$FM_FACTOR_KEYS" "$FM_PYTHON" - <<'EOF'
-import hashlib, json, os, sys, yaml
+import hashlib, json, math, os, sys, yaml
 cfg = yaml.safe_load(open(os.environ["FM_Y"])) or {}
 b = (cfg.get("services") or {}).get("benchmarking") or {}
 rs = (b.get("mode_settings") or {}).get("ragas_settings") or {}
@@ -172,11 +172,35 @@ for key in os.environ["FM_KEYS"].split():
             break
     if isinstance(cur, dict):
         cur.pop(parts[-1], None)
+# The judge-pressure knobs are locked by EFFECTIVE value, not as written. An arm
+# that omits the key and an arm that sets the default explicitly run identically,
+# and recording null against 16 would make fm_require_lock reject the second for a
+# difference that does not exist. A value the benchmark would reject normalizes to
+# the same default it will actually run at, for the same reason. Mirrors
+# ragas_effective_settings in src/utils/benchmark_schema.py, including the split
+# contract: timeout is a duration and takes any positive number, max_workers is a
+# count and must be a whole one.
+def _judge(value, default, whole=False):
+    ok = (int,) if whole else (int, float)
+    # math.isfinite mirrors _positive_number: YAML `.nan` passes `<= 0` (NaN
+    # compares false against everything), and a NaN in the lock makes even two
+    # identical arms compare unequal, since nan != nan.
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, ok)
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        return default
+    return value
+
+
 out = {"files": {k: {"path": v, "sha256": sha(v)} for k, v in files.items()},
        "data_manager_rest": rest,
        "values": {"sut.agent_class": b.get("agent_class"), "sut.provider": provider, "sut.model": b.get("model"), "modes": b.get("modes"),
                   "judge.provider": rs.get("evaluator_provider"), "judge.model": rs.get("evaluator_model"),
-                  "judge.timeout": rs.get("timeout"), "ragas.batch_size": rs.get("batch_size"),
+                  "judge.timeout": _judge(rs.get("timeout"), 180), "judge.max_workers": _judge(rs.get("max_workers"), 16, whole=True),
+                  "ragas.batch_size": rs.get("batch_size"),
                   "metrics": rs.get("enabled_metrics"), "ragas.embedding_model": rs.get("embedding_model"),
                   "embedding_name": dm.get("embedding_name"),
                   "sut.base_url": prov_cfg.get("base_url"), "sut.extra_kwargs": prov_cfg.get("extra_kwargs"),

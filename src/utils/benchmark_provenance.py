@@ -529,7 +529,10 @@ def collect_code_version(
 
 
 def config_version(
-    running: Any, selected: Any, selected_file: Optional[str]
+    running: Any,
+    selected: Any,
+    selected_file: Optional[str],
+    effective_selected: Any = None,
 ) -> Dict[str, Any]:
     """The ``config_version`` block for one arm of a run.
 
@@ -545,9 +548,18 @@ def config_version(
     stamp roughly 192 meaningless paths into every arm of every artifact, since
     ``get_full_config`` synthesizes keys no YAML file has and the deploy rewrites
     host paths into container paths.
+
+    *effective_selected* is an optional stand-in for *selected* in the DIGEST
+    basis only, for values the run normalizes before use -- the judge knobs,
+    where an invalid setting is replaced by its default. It must not reach
+    ``selected_file_digest`` or the divergence list: those two describe the file
+    as it was written, and that is their whole audit purpose. Two files that
+    differ must fingerprint differently even when they drive identical runs.
     """
     have_running = running is not None
-    basis = effective_config(running, selected)
+    basis = effective_config(
+        running, selected if effective_selected is None else effective_selected
+    )
 
     return {
         "digest": config_fingerprint(basis),

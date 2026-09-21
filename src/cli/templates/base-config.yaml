@@ -90,7 +90,24 @@ services:
           - {{ metric }}
           {%- endfor %}
         embedding_model: {{ services.benchmarking.mode_settings.ragas_settings.embedding_model | default("OpenAI", true) }}
-        timeout: {{ services.benchmarking.mode_settings.ragas_settings.timeout | default(180, true) }}
+        timeout: {{ services.benchmarking.mode_settings.ragas_settings.timeout | default(180, true) | tojson }}
+        # Judge concurrency. ragas wraps each row's scoring in
+        # asyncio.wait_for(timeout) with the tenacity retry chain INSIDE it, so
+        # `timeout` is one budget covering every retry and its backoff. Hitting
+        # the judge with too many parallel calls throttles it, the retries eat
+        # the budget, and the row times out unscored -- which is why this is a
+        # knob and not ragas' silent default of 16.
+        # A configured 0 must REACH the validator, not be swallowed here: 0 would
+        # stall the executor, and `default(16, true)` treats it as absent, so the
+        # typo would silently run at the high default -- the very condition this
+        # knob exists to reduce. Ternary per this template's numeric-site rule.
+        # tojson, so the configured SCALAR keeps its type. A bare interpolation
+        # writes `"4"` out as 4, which reloads as an int, passes validation
+        # unwarned, and runs at 4 -- while the campaign lock reads the original
+        # YAML, normalizes the string to 16, and certifies a concurrency the run
+        # never used. The lock and the run must see the same type.
+        {%- set v_ragas_max_workers = services.benchmarking.mode_settings.ragas_settings.max_workers %}
+        max_workers: {{ (v_ragas_max_workers if v_ragas_max_workers is defined and v_ragas_max_workers is not none else 16) | tojson }}
         batch_size: {{ services.benchmarking.mode_settings.ragas_settings.batch_size | default(false, true) }}
         # Judge/SUT split: when these are set, the RAGAS judge LLM is constructed
         # independent of the SUT (services.benchmarking.provider/model). Falls back

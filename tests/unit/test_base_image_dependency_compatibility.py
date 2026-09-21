@@ -4,8 +4,7 @@
 concatenating a header with ``requirements/requirements-base.txt``. Neither file
 knows what the other pins, so two independently reasonable pins can produce a set
 ``pip`` cannot resolve — and the only build path that assembles the GPU set is the
-release workflow (#473), so the failure surfaces during a release rather than on a
-PR.
+release workflow, so the failure surfaces during a release rather than on a PR.
 
 That is not hypothetical. It happened on 2026-09-15 (#472): PR #453 added
 ``opentelemetry-sdk==1.44.0`` to the shared base while
@@ -50,7 +49,7 @@ measured from ``requires_dist`` — it was measured by importing vllm in a built
 
 So the tiers are: this module catches known pairwise traps, a resolve catches
 unpredicted version conflicts, and only a real image build catches import-time
-collisions. #473 asks CI for the last two. Until it has them, the release dispatch is
+collisions. No pre-merge job covers those last two. The release dispatch is
 the first thing that builds the GPU image.
 """
 
@@ -208,8 +207,8 @@ VLLM_TORCH_SPEC = {
 # Measured by importing vllm inside the built GPU image on 2026-09-15: 4.52.4 and
 # 4.53.3 import, 4.54.1 / 4.55.4 / 4.56.2 all carry native aimv2. **No resolver can
 # find this** — every one of those versions satisfies the declared range. It took a
-# real image build, which is why #473 matters and why an unpinned transformers is a
-# latent break rather than a convenience.
+# real image build, which is why an unpinned transformers is a latent break rather
+# than a convenience.
 VLLM_TRANSFORMERS_SPEC = {
     "0.9.0": ">=4.51.1,<4.54.0",
 }
@@ -293,18 +292,51 @@ def _normalize_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+def _joined_lines(text: str):
+    """Yield logical lines, joining each physical line that ends in a backslash.
+
+    pip's own rule (``join_lines`` in ``pip._internal.req.req_file``): a trailing ``\\``
+    continues the requirement onto the next physical line. Round 5 on 2026-09-20 found
+    this module reading the two halves separately, which broke the hash-pinned spelling
+    pip documents — ``numpy==2.0.0 \\`` then ``--hash=sha256:...`` — in BOTH directions
+    at once. ``_PIN_PATTERN`` is anchored, so ``numpy==2.0.0 \\`` recorded no pin and the
+    package read as absent; and the separator branch of ``_PATH_OR_ARCHIVE_REQUIREMENT``
+    read the same backslash as a path separator and reported the line. Joining first is
+    the only reading that records the pin AND declines the false report.
+    """
+    buffered = ""
+    for raw_line in text.splitlines():
+        if raw_line.endswith("\\"):
+            buffered += raw_line[:-1]
+            continue
+        yield buffered + raw_line
+        buffered = ""
+    if buffered:
+        yield buffered
+
+
 def _requirement_lines(text: str):
     """Yield the requirement lines of ``text``, without comments or option lines.
 
     Blanks, ``#`` comments and option lines such as ``--extra-index-url`` carry no
-    requirement. A trailing comment and an environment marker are cut away, so the
-    caller sees the requirement and nothing else.
+    requirement. A trailing comment — by pip's rule, a ``#`` after whitespace — and an
+    environment marker are cut away, so the caller sees the requirement and nothing
+    else. A ``#`` with no whitespace before it is part of the requirement, as it is to
+    pip: the fragment of ``git+https://host/repo.git#egg=vllm`` or the literal hash in
+    ``foo#vllm.tar.gz``.
+
+    Physical lines are joined first, then the per-requirement options a joined line
+    carries (``--hash``, ``--config-settings``) are cut away: they qualify the
+    requirement rather than name it, and leaving them attached defeats the anchored
+    ``_PIN_PATTERN``. A whole line that IS an option still starts with ``-`` after the
+    join and is skipped as before.
     """
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
+    for joined_line in _joined_lines(text):
+        line = joined_line.strip()
         if not line or line.startswith("#") or line.startswith("-"):
             continue
-        line = line.split("#", 1)[0].split(";", 1)[0].strip()
+        line = _COMMENT.sub("", line).split(";", 1)[0].strip()
+        line = _PER_REQUIREMENT_OPTION.sub("", line).strip()
         if line:
             yield line
 
@@ -330,20 +362,129 @@ def _parse_pins(text: str) -> dict:
 # the name matcher then recorded the project as ``git``, so every vllm guard read vllm
 # as ABSENT and skipped while pip installed an arbitrary checkout. These lines do not
 # start with ``-``, so the directive matcher above never saw them either.
+#
+# ``file:`` with no slashes is a URL to pip too. Round 3 on 2026-09-20:
+# ``install_req_from_line("file:foo")`` returns ``name=None, link=file:///foo`` on pip
+# 26.1.2, so the scheme alone decides; the guard had demanded ``file://`` and read
+# ``file:foo`` as a project named ``file``.
 _VCS_OR_URL_REQUIREMENT = re.compile(
-    r"^(?:(?:git|hg|bzr|svn)\+|https?://|file://|[A-Za-z]:[\\/])", re.IGNORECASE
+    r"^(?:(?:git|hg|bzr|svn)\+|https?://|file:|[A-Za-z]:[\\/])", re.IGNORECASE
+)
+
+# pip's own comment rule (``COMMENT_RE`` in ``pip._internal.req.req_file``): a ``#``
+# begins a comment only at the start of the line or after whitespace. Round 3 on
+# 2026-09-20: ``foo#vllm.tar.gz`` is an archive path to pip — it keeps the ``#`` and
+# builds a ``file:///…/foo%23vllm.tar.gz`` link — but ``_requirement_lines`` cut the
+# line at the first ``#`` and the suffix matcher saw only ``foo``.
+_COMMENT = re.compile(r"(^|\s+)#.*$")
+
+# The per-requirement options pip allows after a requirement on the same logical line:
+# ``numpy==2.0.0 --hash=sha256:...``. They qualify the requirement, never name it, so
+# they are cut away before matching. Round 5 on 2026-09-20: ``_PIN_PATTERN`` is anchored
+# at ``$``, so a hash left attached made an exactly-pinned protected package read as
+# absent and every pairwise guard skipped it.
+_PER_REQUIREMENT_OPTION = re.compile(r"\s+--\S+.*$")
+
+# A ``${NAME}`` placeholder pip substitutes from the build environment before it reads
+# the line (``ENV_VAR_RE``: uppercase letters, digits and underscores only). Round 3 on
+# 2026-09-20: with ``VLLM_PATH=./foo`` a whole-line ``${VLLM_PATH}`` installs a local
+# tree, and this module — which cannot see that environment — matched nothing and
+# recorded no project at all. Such a line is reported, whatever else it contains.
+_ENVIRONMENT_SUBSTITUTION = re.compile(r"\$\{[A-Z0-9_]+\}")
+
+# A requirement given as a bare local project path or a bare archive path rather than a
+# project name: ``./local_vllm``, ``../pkgs/vllm``, ``/opt/vllm.whl``,
+# ``vllm-0.9.0-py3-none-any.whl``, ``dist/vllm-0.9.0.tar.gz``. Added 2026-09-18 (#491):
+# pip accepts both shapes, and neither was in ``_VCS_OR_URL_REQUIREMENT``, so a line like
+# this read as a project named e.g. ``vllm-0-9-0-py3-none-any-whl`` and every guard
+# naming the real package skipped it as absent. Three alternatives, one per clause: a
+# leading ``.``, a token containing a path separator, a token ending in an archive
+# suffix. The suffix alternation is anchored on the right so a dotted project name such
+# as ``backports.tarfile==1.2.0`` does not match on its own ``.tar``-shaped substring.
+# Exactly the suffixes in pip's own ``ARCHIVE_EXTENSIONS``
+# (``pip._internal.utils.filetypes``, measured on pip 26.1.2). Review on 2026-09-19 found
+# ``.tlz``, ``.tar.lz`` and ``.tar.lzma`` missing: pip builds a ``file://`` link for each
+# of them from the extension alone, so ``vllm-0.9.0.tlz`` read as a project named
+# ``vllm-0-9-0-tlz`` and every vllm guard skipped. Round 2 removed ``.tbz2``, which pip
+# does NOT accept — ``is_archive_file("x.tbz2")`` is False and pip reads such a line as
+# an ordinary project name, so matching it was a guess, not a free superset.
+_ARCHIVE_SUFFIX = (
+    r"\.(?:whl|zip|tgz|tbz|txz|tlz|tar\.gz|tar\.bz2|tar\.xz|tar\.lzma|tar\.lz|tar)"
+)
+# A PEP 508 comparison, so that ``example.zip ==1.0`` — a legal dotted project name
+# whose tail looks like an archive — is not read as a filename because of the space
+# before its operator. Review on 2026-09-19: the compact spelling ``example.zip==1.0``
+# already passed, so whitespace alone decided the verdict. Round 2 added the optional
+# ``(``: the grammar also allows the specifier in parentheses, ``example.zip (==1.0)``,
+# which pip reads as the project ``example.zip``.
+_COMPARISON_AFTER_SUFFIX = r"\(?\s*(?:===|==|!=|~=|<=|>=|<|>)"
+# An extras list attached to an archive: ``vllm-0.9.0-py3-none-any.whl[foo]``. pip
+# accepts it and resolves the wheel; round 2 found the guard reading the line as a
+# project named ``vllm-0-9-0-py3-none-any-whl``, so vllm read as absent and every
+# protected-vllm guard skipped — the silent-skip shape this change exists to close.
+_ATTACHED_EXTRAS = r"(?:\[[^\]]*\])?"
+_PATH_OR_ARCHIVE_REQUIREMENT = re.compile(
+    rf"^(?:\.|[^;]*[\\/]"
+    rf"|[^;]*{_ARCHIVE_SUFFIX}{_ATTACHED_EXTRAS}"
+    rf"(?:;|$|\s(?!\s*{_COMPARISON_AFTER_SUFFIX})))",
+    re.IGNORECASE,
+)
+
+# A PEP 508 direct reference carrying a project name in front of the URL:
+# ``numpy@https://host/numpy.whl``, ``vllm @ git+https://host/vllm``. The name reader
+# reads ``numpy`` from both spellings, so design D4 leaves the class readable and
+# ``_unpinned_protected`` fails a protected name closed. Review on 2026-09-19: the
+# separator inside the URL made the compact spelling opaque while the spaced spelling
+# passed, so whitespace alone decided the verdict. The scheme set is the one
+# ``_VCS_OR_URL_REQUIREMENT`` uses; a target with NO scheme (``evil@../pkgs/vllm``) is a
+# local path by another name and stays reported.
+# PEP 508's grammar is ``name wsp* extras?``, so the brackets need not touch the name.
+# Round 5 on 2026-09-20: ``numpy [foo] @ https://host/numpy.whl`` is the project
+# ``numpy[foo]`` to pip, but ``_NAME`` demanded an attached ``[``, so this exemption
+# missed and the separator branch reported a line whose project name is readable. The
+# compact spelling already passed, so whitespace alone decided the verdict — the same
+# asymmetry round 1 fixed for the ``@`` itself. Widened HERE only: ``_PIN_PATTERN`` and
+# ``_REQUIREMENT_PATTERN`` keep the strict name so no pin is read across a space.
+_NAME_WITH_SPACED_EXTRAS = r"([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?"
+_NAMED_URL_REFERENCE = re.compile(
+    rf"^{_NAME_WITH_SPACED_EXTRAS}\s*@\s*(?:(?:git|hg|bzr|svn)\+|https?://|file:)",
+    re.IGNORECASE,
 )
 
 
 def _opaque_requirements(text: str) -> list:
     """Requirement lines whose project name this module cannot read.
 
-    Reported rather than parsed. A VCS or URL requirement supplies a real package with
-    no version this module can check, so it must fail the suite instead of resolving to
-    a nonsense name like ``git``.
+    Reported rather than parsed. A VCS reference, a URL, a ``file://`` URL, a Windows
+    drive letter, a bare local path, or a bare archive path (every suffix in pip's
+    ``ARCHIVE_EXTENSIONS``: ``.whl``, ``.zip``, ``.tgz``, ``.tbz``, ``.txz``, ``.tlz``,
+    ``.tar``, ``.tar.gz``, ``.tar.bz2``, ``.tar.xz``, ``.tar.lz``, ``.tar.lzma``, with or
+    without an attached extras list) supplies a real package with no version this module can check, so each must fail the
+    suite instead of resolving to a nonsense name like ``git`` or
+    ``vllm-0-9-0-py3-none-any-whl``. A line is reported; no project name is ever resolved
+    from a path or an archive filename.
+
+    One shape is deliberately NOT reported: a PEP 508 direct reference carrying a project
+    name, ``numpy@https://host/numpy.whl``. The name reader reads it, and
+    ``_unpinned_protected`` fails a protected name closed — design D4. That exemption
+    needs a URL scheme; ``evil@../pkgs/vllm`` is a local path wearing a name and is
+    reported. Class measured 2026-09-18 (#491), widened after review 2026-09-19.
+
+    A line carrying a ``${NAME}`` placeholder is reported whatever else it says: pip
+    substitutes it from the build environment before parsing, and this module cannot
+    see that environment, so the line may name any package at any version (D14).
     """
     return [
-        line for line in _requirement_lines(text) if _VCS_OR_URL_REQUIREMENT.match(line)
+        line
+        for line in _requirement_lines(text)
+        if _ENVIRONMENT_SUBSTITUTION.search(line)
+        or (
+            not _NAMED_URL_REFERENCE.match(line)
+            and (
+                _VCS_OR_URL_REQUIREMENT.match(line)
+                or _PATH_OR_ARCHIVE_REQUIREMENT.match(line)
+            )
+        )
     ]
 
 
@@ -510,7 +651,7 @@ class TestVllmAcceptsThePinnedOpenTelemetrySdk:
     """The GPU set pins both ``vllm`` and, via the shared base, ``opentelemetry-sdk``.
 
     Only the GPU header carries ``vllm``, so this conflict can only ever appear in
-    the PyTorch image — the one image no pre-merge job builds (#473).
+    the PyTorch image, which no pre-merge job builds.
     """
 
     def test_vllm_does_not_cap_the_pinned_opentelemetry_sdk(self, gpu_pins, base_pins):
@@ -1469,6 +1610,255 @@ class TestOpaqueRequirementsFailClosed:
             f"{line!r} supplies a package with no version this module can check, so it "
             f"must be reported rather than parsed into a bogus project name."
         )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "./local_vllm",
+            "../pkgs/vllm",
+            "/opt/vllm.whl",
+            "vllm-0.9.0-py3-none-any.whl",
+            "dist/vllm-0.9.0.tar.gz",
+            ".\\win_vllm",
+            "vllm-0.9.0.tar.bz2",
+            "vllm-0.9.0.zip",
+            "vllm-0.9.0.tlz",
+            "vllm-0.9.0.tar.lz",
+            "vllm-0.9.0.tar.lzma",
+            "vendor packages/vllm",
+            "vendor packages/vllm-0.9.0.tar.gz",
+            "my package.tar.gz",
+            "vllm-0.9.0-py3-none-any.whl[foo]",
+            "vllm-0.9.0.tar.gz[extra]",
+            "evil@../pkgs/vllm",
+            "evil@/opt/vllm",
+            "evil@C:\\pkgs\\vllm",
+        ],
+    )
+    def test_a_local_path_or_archive_requirement_is_reported(self, line):
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n"), (
+            f"{line!r} is a bare local path or archive, which supplies a real package "
+            f"with no version this module can check, so it must be reported rather than "
+            f"silently skipped."
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "backports.tarfile==1.2.0",
+            "zope.interface==5.4.0",
+            "ruamel.yaml==0.18.6",
+            "langgraph-prebuilt<1.0.9",
+        ],
+    )
+    def test_a_dotted_project_name_pin_is_not_reported(self, line):
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n") == [], (
+            f"{line!r} is an ordinary dotted project name, not an archive path, and must "
+            f"not be swept up by the path/archive class."
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "numpy@https://host/numpy-2.0.0-py3-none-any.whl",
+            "numpy @ https://host/numpy-2.0.0-py3-none-any.whl",
+            "vllm@https://host/vllm-0.9.0-py3-none-any.whl",
+            "vllm@git+https://github.com/vllm-project/vllm",
+        ],
+    )
+    def test_a_named_url_direct_reference_is_not_reported(self, line):
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n") == [], (
+            f"{line!r} is a PEP 508 direct reference whose project name the name reader "
+            f"does read, so design D4 leaves it readable and _unpinned_protected fails "
+            f"it closed. Reporting the compact spelling while the spaced spelling "
+            f"passes makes the verdict depend on whitespace alone."
+        )
+
+    def test_a_protected_direct_reference_still_fails_closed(self):
+        unpinned = _unpinned_protected(
+            "torch==2.7.0\nvllm@https://host/vllm-0.9.0-py3-none-any.whl\n"
+        )
+        assert "vllm" in unpinned, (
+            f"a direct reference is left readable only because this guard fails it "
+            f"closed; got {unpinned}. Without it the vllm guards would skip."
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "example.zip ==1.0",
+            "example.zip==1.0",
+            "example.tar >=1",
+            "example.tgz > 1",
+            "example.zip (==1.0)",
+            "example.tar (>=1)",
+            "example.zip[foo] ==1.0",
+        ],
+    )
+    def test_a_spaced_specifier_is_not_read_as_an_archive(self, line):
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n") == [], (
+            f"{line!r} is a dotted project name followed by a PEP 508 comparison, which "
+            f"pip parses as a named requirement. Only the whitespace before the operator "
+            f"separates it from the compact spelling, which is already accepted."
+        )
+
+    @pytest.mark.parametrize("line", ["example.tbz2==1.0", "vllm-0.9.0.tbz2"])
+    def test_a_suffix_pip_does_not_accept_is_not_read_as_an_archive(self, line):
+        """``.tbz2`` is not in pip's ``ARCHIVE_EXTENSIONS``; ``.tbz`` is.
+
+        Round 2 on 2026-09-19 refused the "a superset costs nothing" claim round 1
+        made, and it is right: ``is_archive_file("x.tbz2")`` is False, so pip reads
+        the line as an ordinary named requirement and only this guard calls it an
+        archive. The suffix set is pip's set, or it is a guess.
+        """
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n") == [], (
+            f"{line!r} carries a suffix pip does not recognise as an archive, so pip "
+            f"reads it as a project name and the guard must too."
+        )
+
+    def test_the_supported_bzip2_suffix_is_still_reported(self):
+        """Dropping ``.tbz2`` must not drop ``.tbz``, which pip DOES accept."""
+        assert _opaque_requirements("torch==2.7.0\nvllm-0.9.0.tbz\n"), (
+            "pip builds a file:// link for vllm-0.9.0.tbz from the extension alone; "
+            "it must stay reported."
+        )
+
+    @pytest.mark.parametrize("line", ["file:foo", "file:vllm", "file:foo/bar"])
+    def test_a_relative_file_uri_is_reported(self, line):
+        """``file:foo`` is a local project link to pip, slashes or not.
+
+        Round 3 on 2026-09-20: ``install_req_from_line("file:foo")`` returns
+        ``name=None, link=file:///foo`` on pip 26.1.2, but the line neither starts
+        with ``.`` nor carries a slash or an archive suffix, and the URL matcher wanted
+        ``file://``. The guard recorded a project named ``file`` and every protected
+        guard read the package inside as absent.
+        """
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n"), (
+            f"{line!r} is a file: URI pip resolves to a local project; it must be "
+            f"reported rather than read as a project named 'file'."
+        )
+
+    def test_a_named_file_uri_reference_keeps_its_name(self):
+        """``numpy@file:foo`` carries a URL scheme, so D4 leaves it readable."""
+        assert _opaque_requirements("torch==2.7.0\nnumpy@file:foo\n") == [], (
+            "a direct reference whose target carries the file: scheme is a URL like "
+            "any other; the exemption must not depend on the two slashes"
+        )
+        assert _opaque_requirements(
+            "torch==2.7.0\nevil@../pkgs/vllm\n"
+        ), "a target with no scheme is still a local path wearing a name"
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "${VLLM_PATH}",
+            "${VLLM_PATH}==1.0",
+            "vllm==${VLLM_VERSION}",
+            "vllm @ ${VLLM_URL}",
+        ],
+    )
+    def test_an_environment_substitution_is_reported(self, line):
+        """pip expands ``${NAME}`` before parsing; the guard cannot, so it fails closed.
+
+        Round 3 on 2026-09-20: pip's ``ENV_VAR_RE`` is ``\\$\\{[A-Z0-9_]+\\}`` and
+        ``expand_env_variables`` substitutes it from the build environment before the
+        line is read. With ``VLLM_PATH=./foo`` a whole-line ``${VLLM_PATH}`` installs a
+        local tree; this module saw the literal placeholder, matched nothing, and
+        recorded no project at all.
+        """
+        assert _opaque_requirements(f"torch==2.7.0\n{line}\n"), (
+            f"{line!r} depends on a build-time environment this module cannot see; it "
+            f"must be reported, not silently recorded as nothing."
+        )
+
+    def test_a_substitution_inside_a_comment_is_not_a_requirement(self):
+        assert (
+            _opaque_requirements("torch==2.7.0\nvllm==0.9.0  # export ${VLLM_PATH}\n")
+            == []
+        ), "a placeholder after the comment marker is comment text"
+
+    def test_a_literal_hash_in_an_archive_name_is_preserved(self):
+        """pip's comment rule needs whitespace before ``#``; ``foo#vllm.tar.gz`` has none.
+
+        Round 3 on 2026-09-20: pip's ``COMMENT_RE`` is ``(^|\\s+)#.*$``, so
+        ``install_req_from_line("foo#vllm.tar.gz")`` returns an unnamed
+        ``file:///…/foo%23vllm.tar.gz`` link. ``_requirement_lines`` cut the line at the
+        first ``#`` and the suffix matcher saw only ``foo``.
+        """
+        assert _opaque_requirements("torch==2.7.0\nfoo#vllm.tar.gz\n"), (
+            "pip keeps the '#' and reads an archive; the guard must match pip's "
+            "comment rule and report the archive"
+        )
+        assert list(_requirement_lines("foo #comment\nbar\t# comment\n")) == [
+            "foo",
+            "bar",
+        ], "a '#' preceded by whitespace is still a comment"
+        assert _opaque_requirements("torch==2.7.0\nfoo #vllm.tar.gz\n") == []
+        # The fragment of a VCS reference survives the comment rule and stays reported.
+        assert _opaque_requirements(
+            "torch==2.7.0\ngit+https://host/repo.git#egg=vllm\n"
+        ), "the VCS class is unchanged by the comment rule"
+        # A named direct reference with a fragment keeps its name (D4).
+        assert (
+            _opaque_requirements(
+                "torch==2.7.0\nnumpy@https://host/numpy.whl#sha256=abc\n"
+            )
+            == []
+        )
+
+    def test_a_continued_line_is_joined_before_it_is_classified(self):
+        """pip joins a line ending in ``\\`` with the next; this module must too.
+
+        Round 5 on 2026-09-20: pip's standard hash-pinned spelling is
+        ``numpy==2.0.0 \\`` followed by ``--hash=sha256:...``. The separator branch of
+        ``_PATH_OR_ARCHIVE_REQUIREMENT`` read the trailing continuation backslash as a
+        path separator and reported the line, so adding hashes to any monitored file
+        turned the whole suite red. Reading the two physical lines separately was no
+        better before that: ``_PIN_PATTERN`` is anchored, ``numpy==2.0.0 \\`` never
+        matched it, and the pin went unrecorded — the silent skip this module exists to
+        prevent, reached by a spelling pip calls ordinary.
+
+        Joining is what pip does (``join_lines`` in ``pip._internal.req.req_file``), and
+        it is the only reading that both refuses the false report and records the pin.
+        """
+        hashed = "torch==2.7.0\nnumpy==2.0.0 \\\n    --hash=sha256:abcdef\n"
+        assert _opaque_requirements(hashed) == [], (
+            "a hash-pinned requirement is a named pin to pip; the continuation "
+            "backslash is not a path separator"
+        )
+        assert _parse_pins(hashed)["numpy"] == "2.0.0", (
+            "the pin must be RECORDED, not merely un-reported: an unrecorded "
+            "protected package reads as absent and every pairwise guard skips"
+        )
+        # The continuation still ends the requirement when nothing follows it.
+        assert _parse_pins("numpy==2.0.0 \\\n")["numpy"] == "2.0.0"
+        # A real local path is still reported when it arrives through a continuation.
+        assert _opaque_requirements(
+            "torch==2.7.0\nvllm @ \\\n    ../pkgs/vllm\n"
+        ), "joining must not launder a local path into a readable requirement"
+
+    def test_whitespace_may_separate_a_name_from_its_extras(self):
+        """PEP 508 allows ``wsp*`` between the name and the extras list.
+
+        Round 5 on 2026-09-20: ``numpy [foo] @ https://host/numpy.whl`` is the project
+        ``numpy[foo]`` to pip, but the direct-reference exemption required ``[`` to
+        follow the name immediately, so the exemption missed and the slash branch
+        reported a line whose project name is perfectly readable. The compact spelling
+        ``numpy[foo] @ ...`` already passed, so whitespace alone decided the verdict —
+        the same asymmetry round 1 fixed for the ``@`` itself.
+        """
+        assert (
+            _opaque_requirements("torch==2.7.0\nnumpy [foo] @ https://host/numpy.whl\n")
+            == []
+        ), "whitespace before the extras list does not hide the project name"
+        assert (
+            _opaque_requirements("torch==2.7.0\nnumpy[foo] @ https://host/numpy.whl\n")
+            == []
+        ), "the compact spelling is unchanged"
+        # The exemption still turns on a SCHEME, not on the brackets.
+        assert _opaque_requirements(
+            "torch==2.7.0\nevil [foo] @ ../pkgs/vllm\n"
+        ), "a target with no scheme is a local path whatever the extras look like"
 
     def test_a_plain_pin_is_not_reported(self):
         assert _opaque_requirements("torch==2.7.0\nvllm==0.9.0\n") == []

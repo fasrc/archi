@@ -109,6 +109,7 @@ services:
 | `out_dir` | — | Output directory for results (must exist) |
 | `modes` | — | List of evaluation modes (`RAGAS`, `SOURCES`) |
 | `mode_settings.ragas_settings.timeout` | `180` | Max seconds per QA pair for RAGAS evaluation |
+| `mode_settings.ragas_settings.max_workers` | `16` | Concurrent RAGAS judge calls. Lower it when the judge throttles: ragas wraps each row in one `timeout` budget with its retries inside, so throttling spends the budget and loses the score. Must be a positive integer; anything else falls back to the default with a warning |
 | `mode_settings.ragas_settings.batch_size` | Ragas default | Number of QA pairs to evaluate at once |
 
 `archi evaluate` now requires benchmark runtime fields under `services.benchmarking`.
@@ -318,9 +319,51 @@ The dump JSON gains a `leaderboard` key:
     primary metric, every row has one. Unranked rows do not consume rank numbers,
     so the scored variants still read 1..n.
 - `shared_context` — the model, provider, judge `evaluator_model`,
-  `queries_path`, and `corpus_snapshot_id` shared by all variants. If any of
+  `queries_path`, `corpus_snapshot_id`, and the judge-pressure pair
+  `judge_max_workers` / `judge_timeout`, shared by all variants. If any of
   these differ across the swept configs, the discrepancy is recorded in
   `shared_context.warnings` (the sweep is no longer apples-to-apples).
+
+    The two judge-pressure fields hold the **effective** values — the defaults
+    substituted, so an arm that omits the key and an arm that sets the default
+    explicitly agree. They come from each variant's own `ragas_effective_settings`
+    record, never from its configuration block, and they are `null` when no
+    judge ran: a SOURCES-only sweep renders the block like any other run, and
+    the leaderboard must not report a judge that never started. They are
+    recorded because concurrency and the per-row budget decide how often the
+    judge times out, and a timed-out row leaves the scored denominator that
+    every aggregate is divided by. A difference here **withholds ranks**: every
+    scored row's `rank` becomes `null`, the pairwise A/B winners are withheld
+    too, and the reason is recorded in `shared_context.warnings`. An arm that
+    was judged and one that was not (`ragas_effective_settings: null`) count as
+    differing, that being the starkest pressure difference there is.
+
+    This is deliberately stricter than the evidence alone demands. Pressure is
+    a proxy for lost scores rather than proof of them, so two arms driven at
+    different concurrency that both scored every question are in fact
+    comparable and are withheld anyway. Warning only was the previous
+    behaviour and it does not work: `rank` is what a consumer reads, and a
+    warning in `shared_context` that it never looks at cannot stop it.
+    Refusing to rank is recoverable — the metrics are still published, and the
+    per-metric `<metric>_scored` counts show whether anything was actually
+    lost — whereas publishing a ranking that asserts a controlled comparison
+    which did not happen is not.
+
+    `judge_participation` sits beside the pair and records whether a judge ran
+    at all: `"judged"`, `"none"`, or a sorted list when the arms disagree. It
+    exists because the two pressure fields are `null` when no judge ran, and
+    the drift reduction ignores `null` — so without it, one judged arm beside
+    an unjudged one reported that arm's worker count as shared by both.
+- `ragas_effective_settings` — on each run record, the judge `timeout` and
+  `max_workers` the run actually used, or `null` when `RAGAS` was not among the
+  run's `modes` and no judge ran. A rendered configuration always carries a
+  `ragas_settings` block, so its presence does not mean the judge was used.
+  The configuration is also recorded verbatim as `configuration`; when an
+  invalid setting was replaced by its default the two deliberately disagree,
+  and this field is the one that describes the run. `config_version.digest`
+  covers the normalized values for the same reason, while
+  `config_version.selected_file_digest` fingerprints the file as written, so
+  two different files stay distinguishable even when they drive identical runs.
 
 The pairwise `ab_comparisons` are still produced alongside the leaderboard; the
 leaderboard is computed independently from each config's aggregates.
