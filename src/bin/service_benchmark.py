@@ -241,6 +241,20 @@ class ResultHandler:
         comparable: historical sweeps are not retroactively invalidated.
         """
         fingerprints = set()
+        # How hard the judge was driven is a condition of the measurement, not a
+        # detail of it: `max_workers` decides how often the judge throttles into
+        # backoff, the backoff eats the per-row timeout budget, and the row is
+        # dropped unscored. Two arms judged at different concurrency therefore
+        # differ in score COVERAGE for reasons that have nothing to do with the
+        # arms. Recording the drift in the leaderboard's shared context is not a
+        # guard -- `rank` is what a consumer reads, and a warning it never sees
+        # cannot stop it -- so the pressure has to reach this predicate.
+        #
+        # `None` is a value here, not an absence: it says no judge ran, which is
+        # the starkest pressure difference there is against an arm that was
+        # judged. Only a wholly ABSENT key is skipped, and only because it
+        # predates the field.
+        judge_pressures = set()
         for record in records:
             stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is not _NOT_RECORDED and stability is not True:
@@ -250,6 +264,16 @@ class ResultHandler:
             fingerprint = record.get("corpus_fingerprint")
             if fingerprint is not None:
                 fingerprints.add(fingerprint)
+            pressure = record.get("ragas_effective_settings", _NOT_RECORDED)
+            if pressure is _NOT_RECORDED:
+                continue
+            judge_pressures.add(
+                None
+                if pressure is None
+                else (pressure.get("max_workers"), pressure.get("timeout"))
+            )
+        if len(judge_pressures) > 1:
+            return False
         return len(fingerprints) <= 1
 
     @staticmethod
@@ -905,6 +929,10 @@ class ResultHandler:
             # one field along.
             "judge_max_workers": set(),
             "judge_timeout": set(),
+            # Whether a judge ran at all, as a non-None token so the reduction
+            # cannot drop it: `None` is filtered before comparison, which is how
+            # a mixed sweep passed as "shared".
+            "judge_participation": set(),
             "queries_path": set(),
             "corpus_fingerprint": set(),
         }
@@ -1034,6 +1062,16 @@ class ResultHandler:
             if judge_pressure is not None:
                 ctx_fields["judge_max_workers"].add(judge_pressure["max_workers"])
                 ctx_fields["judge_timeout"].add(judge_pressure["timeout"])
+            # Whether a judge ran at all is its own swept field. The reduction
+            # below drops None before comparing, so adding pressure only for the
+            # judged record let a mixed sweep -- a RAGAS arm beside a
+            # SOURCES-only one -- see a single worker count and report it as
+            # shared, when one arm never built a RunConfig. A non-None token on
+            # every record keeps that difference visible, and stays a single
+            # value (so silent) when every arm agrees.
+            ctx_fields["judge_participation"].add(
+                "none" if judge_pressure is None else "judged"
+            )
             ctx_fields["queries_path"].add(bench.get("queries_path"))
             # The corpus is a swept-context field like any other: ranking arms
             # scored against different documents asserts controlled conditions

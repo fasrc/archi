@@ -320,6 +320,63 @@ def test_shared_context_omits_judge_pressure_when_no_judge_ran():
     assert ctx["warnings"] == []
 
 
+def test_ranks_are_withheld_when_judge_concurrency_differs():
+    """Differing judge pressure is a reason to withhold, not merely to warn.
+
+    ``max_workers`` decides how hard the judge is driven, and a throttled judge
+    loses rows to timeouts, so two arms judged at different concurrency have
+    different score coverage for reasons that have nothing to do with the arms.
+    Recording the drift in ``shared_context`` is not enough: ``rank`` is what a
+    consumer reads, and a warning it never sees cannot stop it.
+    """
+    ResultHandler.results = [
+        _make_record(
+            "a", "p/a.md", ragas_effective_settings={"timeout": 600, "max_workers": 16}
+        ),
+        _make_record(
+            "b", "p/b.md", ragas_effective_settings={"timeout": 600, "max_workers": 4}
+        ),
+    ]
+    lb = ResultHandler.build_leaderboard()
+
+    assert all(row["rank"] is None for row in lb["rows"])
+    assert any("judge" in w for w in lb["shared_context"]["warnings"])
+
+
+def test_ranks_survive_when_judge_concurrency_matches():
+    """The guard must not withhold a legitimately controlled comparison."""
+    ResultHandler.results = [
+        _make_record(
+            "a", "p/a.md", ragas_effective_settings={"timeout": 600, "max_workers": 4}
+        ),
+        _make_record(
+            "b", "p/b.md", ragas_effective_settings={"timeout": 600, "max_workers": 4}
+        ),
+    ]
+    lb = ResultHandler.build_leaderboard()
+
+    assert all(row["rank"] is not None for row in lb["rows"])
+
+
+def test_mixed_judge_participation_warns_and_withholds():
+    """One arm judged and one not is the starkest pressure difference there is.
+
+    Adding pressure only for the judged record let the reduction see a single
+    value and call it shared, so the sweep reported a worker count as common to
+    arms one of which never built a RunConfig.
+    """
+    ResultHandler.results = [
+        _make_record(
+            "a", "p/a.md", ragas_effective_settings={"timeout": 600, "max_workers": 4}
+        ),
+        _make_record("b", "p/b.md", ragas_effective_settings=None),
+    ]
+    lb = ResultHandler.build_leaderboard()
+
+    assert any("judge" in w for w in lb["shared_context"]["warnings"])
+    assert all(row["rank"] is None for row in lb["rows"])
+
+
 def test_shared_context_reads_judge_pressure_from_the_record():
     """The record holds what the judge ran with; the block holds what the file
     asked for. When the two differ, the leaderboard reports the record."""

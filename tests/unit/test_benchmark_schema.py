@@ -707,12 +707,45 @@ def test_a_float_timeout_is_still_accepted():
         ), bad
 
 
-def _cfg(**settings):
+def _cfg(modes=("RAGAS",), **settings):
     return {
         "services": {
-            "benchmarking": {"mode_settings": {"ragas_settings": dict(settings)}}
+            "benchmarking": {
+                "modes": list(modes),
+                "mode_settings": {"ragas_settings": dict(settings)},
+            }
         }
     }
+
+
+def test_the_digest_basis_leaves_a_sources_only_config_alone():
+    """No judge ran, so there are no effective judge values to substitute.
+
+    A rendered configuration always carries a ``ragas_settings`` block, so its
+    presence cannot stand in for "RAGAS was a mode" -- the sibling
+    ``ragas_effective_settings`` field already gates on the mode for exactly
+    this reason. Normalizing regardless made the digest claim an identity that
+    never happened: two SOURCES-only files with ``max_workers: 0`` and
+    ``max_workers: "many"`` hashed alike on a fallback neither run performed,
+    while other unused judge values still told them apart.
+    """
+    sources_only = _cfg(modes=("SOURCES",), timeout=-1, max_workers=0)
+
+    assert with_effective_ragas_settings(sources_only) == sources_only
+    assert with_effective_ragas_settings(
+        _cfg(modes=("SOURCES",), max_workers=0)
+    ) != with_effective_ragas_settings(_cfg(modes=("SOURCES",), max_workers="many"))
+
+
+def test_the_digest_basis_tolerates_a_malformed_benchmarking_node():
+    """A hand-written config can put anything under ``services.benchmarking``.
+
+    The digest basis is built while writing the artifact, so raising here would
+    lose a completed run's record over a config typo.
+    """
+    malformed = {"services": {"benchmarking": "not-a-mapping"}}
+
+    assert with_effective_ragas_settings(malformed) == malformed
 
 
 def test_the_digest_basis_normalizes_the_judge_knobs():

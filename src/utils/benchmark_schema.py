@@ -723,12 +723,14 @@ def with_effective_ragas_settings(config: Any) -> Any:
     normalizer is a pure function of the recorded value, so the error only ever
     ran in the safe direction. It was still an error.
 
-    Normalizes only when a ``ragas_settings`` mapping is already present. Its
-    presence is what says a judge ran; injecting judge defaults into a
-    SOURCES-only configuration would invent settings that run never had. When it
-    IS present, a missing key is filled with the default, so a block that omits
-    ``max_workers`` and a block that sets 16 explicitly hash alike -- which is
-    the case that motivated this.
+    Normalizes only when ``RAGAS`` is among the configured ``modes``. The
+    ``ragas_settings`` block's presence cannot stand in for that: a rendered
+    configuration always carries the block, so gating on it normalized
+    SOURCES-only runs against defaults they never fell back to, and two such
+    files whose unused judge values differed then hashed alike on a
+    substitution that never happened. When RAGAS IS a mode, a missing key is
+    filled with the default, so a block that omits ``max_workers`` and a block
+    that sets 16 explicitly hash alike -- the case that motivated this.
 
     A COPY, never in place: the artifact records the selected file verbatim
     beside this, and ``asserted_config_divergence`` needs "what was asked for"
@@ -737,11 +739,21 @@ def with_effective_ragas_settings(config: Any) -> Any:
     if not isinstance(config, dict):
         return config
     updated = copy.deepcopy(config)
-    node = updated
-    for key in ("services", "benchmarking", "mode_settings"):
-        node = node.get(key) if isinstance(node, dict) else None
-        if node is None:
+    benchmarking = updated
+    for key in ("services", "benchmarking"):
+        benchmarking = benchmarking.get(key) if isinstance(benchmarking, dict) else None
+        if benchmarking is None:
             return updated
+    if not isinstance(benchmarking, dict):
+        return updated
+    # Gate on the MODE, never on the block's presence: a rendered configuration
+    # always carries `ragas_settings`, so a SOURCES-only run would otherwise be
+    # normalized against defaults it never fell back to -- making two files
+    # whose unused judge values differ hash alike on a substitution that never
+    # happened. The sibling `ragas_effective_settings` field gates the same way.
+    if "RAGAS" not in (benchmarking.get("modes") or []):
+        return updated
+    node = benchmarking.get("mode_settings")
     if not isinstance(node, dict):
         return updated
     settings = node.get("ragas_settings")
