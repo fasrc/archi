@@ -537,7 +537,7 @@ class ResultHandler:
                 running=running_config,
                 selected=config,
                 effective_selected=with_effective_ragas_settings(
-                    config, ragas_ran=ragas_ran
+                    config, modes_executed=modes_executed
                 ),
                 selected_file=str(config_path),
             ),

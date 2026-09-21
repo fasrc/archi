@@ -737,6 +737,37 @@ def test_the_digest_basis_leaves_a_sources_only_config_alone():
     ) != with_effective_ragas_settings(_cfg(modes=("SOURCES",), max_workers="many"))
 
 
+def test_the_digest_basis_records_the_modes_that_executed():
+    """The digest is the identity of what RAN, and modes are part of that.
+
+    Normalizing only the judge knobs left ``services.benchmarking.modes`` as the
+    arm's file declared them, so a SOURCES-only file executed as RAGAS in a
+    sweep carried a digest claiming SOURCES -- and two arms that executed
+    identically could still hash differently on modes neither of them ran.
+    """
+    declared_sources = _cfg(modes=("SOURCES",), timeout=600)
+    basis = with_effective_ragas_settings(declared_sources, modes_executed={"RAGAS"})
+
+    assert basis["services"]["benchmarking"]["modes"] == ["RAGAS"]
+    # The judge knobs are normalized too, because RAGAS did run.
+    assert (
+        basis["services"]["benchmarking"]["mode_settings"]["ragas_settings"][
+            "max_workers"
+        ]
+        == RAGAS_DEFAULT_MAX_WORKERS
+    )
+
+    # Two arms that executed the same modes agree, whatever their files said.
+    assert with_effective_ragas_settings(
+        _cfg(modes=("SOURCES",), timeout=600), modes_executed={"RAGAS"}
+    ) == with_effective_ragas_settings(
+        _cfg(modes=("RAGAS",), timeout=600), modes_executed={"RAGAS"}
+    )
+
+    # The selected file is still left verbatim.
+    assert declared_sources["services"]["benchmarking"]["modes"] == ["SOURCES"]
+
+
 def test_the_digest_basis_tolerates_ragas_declared_without_a_settings_block():
     """A hand-written config may name the mode and omit the block entirely.
 

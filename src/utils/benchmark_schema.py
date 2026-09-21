@@ -709,7 +709,9 @@ def ragas_effective_settings(
     return {"timeout": kwargs["timeout"], "max_workers": kwargs["max_workers"]}
 
 
-def with_effective_ragas_settings(config: Any, ragas_ran: Optional[bool] = None) -> Any:
+def with_effective_ragas_settings(
+    config: Any, modes_executed: Optional[Sequence[str]] = None
+) -> Any:
     """A deep copy of ``config`` whose judge knobs hold the values a run will use.
 
     The basis for the artifact's configuration digest, which the interpreting
@@ -753,13 +755,19 @@ def with_effective_ragas_settings(config: Any, ragas_ran: Optional[bool] = None)
     # that never happened. The sibling `ragas_effective_settings` field gates
     # the same way.
     #
-    # `ragas_ran` overrides the file because in a sweep the file is not the
-    # authority: `run()` applies the FIRST config's modes to every arm. The
+    # `modes_executed` overrides the file because in a sweep the file is not
+    # the authority: `run()` applies the FIRST config's modes to every arm. The
     # caller that knows what executed passes it; the file is the fallback.
-    ran = (
-        "RAGAS" in (benchmarking.get("modes") or []) if ragas_ran is None else ragas_ran
-    )
-    if not ran:
+    #
+    # The executed modes are written INTO the basis, not merely consulted. The
+    # digest is the identity of what ran and modes are part of that: leaving
+    # the declared list gave a SOURCES-only file executed as RAGAS a digest
+    # claiming SOURCES, and let two arms that executed identically hash
+    # differently over modes neither ran. Sorted, so set iteration order cannot
+    # move a digest.
+    if modes_executed is not None:
+        benchmarking["modes"] = sorted(modes_executed)
+    if "RAGAS" not in (benchmarking.get("modes") or []):
         return updated
     node = benchmarking.get("mode_settings")
     if not isinstance(node, dict):
