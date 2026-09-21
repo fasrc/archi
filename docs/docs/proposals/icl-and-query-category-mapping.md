@@ -321,14 +321,40 @@ session that wrote this, and the breadcrumb list is read from the corpus, not fr
     already issued an unfiltered one — and the arm shapes only the model's follow-up
     searches. This document pre-registers `r0a` accordingly, as **post-retrieval
     rerouting**, not as category-first search. Category-first search is a separate
-    pre-registration: the same three prompt files with
-    `services.chat_app.force_initial_retrieval: false` in the sweep's `base_config`.
-    The generator copies that config into every arm (`generate_prompt_sweep.py:125-130`),
-    so the flag is consistent across control and treatments by construction; it must
-    never differ between them, and the issue body must state which of the two sweeps a
-    number came from.
+    pre-registration, and setting the flag in the sweep's generated `base_config` does
+    **not** buy it. The generator does copy that config into every arm
+    (`generate_prompt_sweep.py:125-130`), but nothing reads the copy for this key: the
+    harness hands the runtime only the selected file's benchmarking agent spec, provider
+    and model (`service_benchmark.py:1421-1434`), and the agent loads its pipeline config
+    from the PostgreSQL-backed active config through `get_full_config()` (`archi.py:31`,
+    `config_access.py:73`, which reads Postgres at `:24-25`) — which is where
+    `FASRCDocsAgent` looks `force_initial_retrieval` up. A sweep that sets the key only
+    in the generated YAML still runs the default raw-query retrieval, and provenance
+    records the disagreement: Procedure E refuses a comparison whose
+    `divergence_from_selected_file` is non-empty (`compare_runs.py:569-588`). So the
+    category-first sweep sets `services.chat_app.force_initial_retrieval: false` in the
+    sweep deployment's `config.yaml` and **redeploys**, so that Postgres carries the
+    value; editing `config.yaml` and restarting the container is a no-op (`CLAUDE.md`,
+    "Don't-touch / gotchas"). One deployment serves every arm, so the flag is identical
+    across control and treatments by construction. Confirm
+    `divergence_from_selected_file` is empty in every artifact, and state in the issue
+    body which of the two sweeps a number came from.
 - **(b) static-ICL prompt (`r0b`)** — 3–5 exemplars from a pool disjoint from the
   109-question bank, with the disjointness recorded.
+
+**Prompt contents pinned, not only their paths.** Record the `sha256sum` of every
+resolved prompt file — control, `r0a`, `r0b` — in the issue body before the first run,
+and beside each arm's artifact afterwards. Nothing in the rig does this for the arms:
+the generator writes the prompt's **path** into each arm's config
+(`generate_prompt_sweep.py:128`) and never parses the file it names (`:104-110`), so
+`config_fingerprint` digests that path string rather than the prompt's bytes
+(`benchmark_provenance.py:321`), and the code digest is a content digest of the `src`
+package files only (`:379`, `:489`) — a prompt under `config/agents/` sits outside it.
+The arm prompts live in archi-config PR #22, which can still change after this
+pre-registration, and the arms run sequentially, so an edit between two arms would leave
+two runs carrying identical labels, identical provenance and different treatments. The
+control already has a pinned hash (sha256 `ac22702a…4ce8`); the arms need theirs for the
+same reason. A hash that does not match its pre-registered value voids that arm.
 
 **Frontmatter held fixed.** All three files carry identical `tools` lists, checked by
 loading each spec before the sweep (see "The measurement rig"); a mismatch on any arm
@@ -347,7 +373,22 @@ required-atom and other gold-atom deltas do not exist.
 
 **Decision rules, pre-registered.** The decisive metrics are the count-type ones, and
 each needs a **paired** test with its threshold written into the tracking issue before
-the first run:
+the first run.
+
+**One primary endpoint per arm.** Two arms times two count tests is a family of four,
+and "Release-plan judgment" below treats a single positive count result as the evidence
+that lets a rung-1/2 issue enter a milestone. Four such tests, each read at an
+unadjusted `p < 0.05`, carry a family-wise false-positive rate near 18.5%, so an
+unadjusted family lets chance alone supply release-gating evidence. This
+pre-registration therefore names **one primary count endpoint per arm**, picked by what
+the arm acts on: **source accuracy for `r0a`**, which reroutes retrieval and so changes
+which documents come back, and **blowout count for `r0b`**, whose exemplars lengthen
+every prompt and so act on whether a row finishes. The primary carries that arm's
+verdict at `p < 0.05`. The other count test on each arm is **secondary**: report it with
+a Holm-adjusted p-value across the two secondaries, and never let a secondary alone gate
+a milestone. Write both primaries into the issue body before the first run; a swap
+afterwards voids the sweep.
+
 
 - **Source accuracy** — exact two-sided McNemar on per-question source hits, control vs
   arm, verdict at p < 0.05. This is the test behind the campaign's `0.868` reading
