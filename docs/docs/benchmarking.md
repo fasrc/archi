@@ -348,6 +348,12 @@ The dump JSON gains a `leaderboard` key:
     per-metric `<metric>_scored` counts show whether anything was actually
     lost — whereas publishing a ranking that asserts a controlled comparison
     which did not happen is not.
+
+    `judge_participation` sits beside the pair and records whether a judge ran
+    at all: `"judged"`, `"none"`, or a sorted list when the arms disagree. It
+    exists because the two pressure fields are `null` when no judge ran, and
+    the drift reduction ignores `null` — so without it, one judged arm beside
+    an unjudged one reported that arm's worker count as shared by both.
 - `ragas_effective_settings` — on each run record, the judge `timeout` and
   `max_workers` the run actually used, or `null` when `RAGAS` was not among the
   run's `modes` and no judge ran. A rendered configuration always carries a

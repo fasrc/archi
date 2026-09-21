@@ -217,8 +217,16 @@ class ResultHandler:
         )
 
     @staticmethod
-    def arms_comparable(records: List[Dict[str, Any]]) -> bool:
-        """Can these arms' scores be set against each other?
+    def arms_incomparability_reason(
+        records: List[Dict[str, Any]],
+    ) -> Optional[str]:
+        """Why these arms' scores cannot be set against each other, or None.
+
+        Returns the reason rather than a bare boolean so the operator-facing
+        warnings can name the predicate that actually failed: the A/B message
+        used to blame corpus provenance unconditionally, sending an operator
+        whose arms were withheld purely over judge pressure to inspect the
+        corpus.
 
         Only when, for every arm, the corpus provenance is established, they all
         observed the same corpus, and the arm actually ran the settings it was
@@ -258,9 +266,9 @@ class ResultHandler:
         for record in records:
             stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is not _NOT_RECORDED and stability is not True:
-                return False
+                return "the corpus was not stable across an arm's own questions"
             if record.get("configuration_divergence"):
-                return False
+                return "an arm did not run the settings it was selected to run"
             fingerprint = record.get("corpus_fingerprint")
             if fingerprint is not None:
                 fingerprints.add(fingerprint)
@@ -273,8 +281,26 @@ class ResultHandler:
                 else (pressure.get("max_workers"), pressure.get("timeout"))
             )
         if len(judge_pressures) > 1:
-            return False
-        return len(fingerprints) <= 1
+            return (
+                "the arms were scored under different judge pressure "
+                "(concurrency, per-row budget, or one arm was not judged), "
+                "so their scored denominators are not comparable"
+            )
+        if len(fingerprints) > 1:
+            return (
+                "corpus provenance does not establish that both arms were "
+                "scored against the same documents"
+            )
+        return None
+
+    @staticmethod
+    def arms_comparable(records: List[Dict[str, Any]]) -> bool:
+        """The boolean view of ``arms_incomparability_reason``.
+
+        One predicate, two shapes: callers that only gate use this, callers
+        that also report use the reason. They cannot drift apart.
+        """
+        return ResultHandler.arms_incomparability_reason(records) is None
 
     @staticmethod
     def leaderboard_rank_label(rank: Optional[int]) -> str:
@@ -816,9 +842,10 @@ class ResultHandler:
         # the two arms were measured under the same conditions. Guarding only
         # the leaderboard would still let a reader draw the unsupported
         # conclusion from this artifact.
-        comparable = ResultHandler.arms_comparable(
+        reason = ResultHandler.arms_incomparability_reason(
             [ResultHandler.results[idx_a], ResultHandler.results[idx_b]]
         )
+        comparable = reason is None
 
         wins_a: Optional[int] = 0
         wins_b: Optional[int] = 0
@@ -841,11 +868,10 @@ class ResultHandler:
                 row["winner_by_metric"] = {}
             wins_a = wins_b = ties = None
             logger.warning(
-                "A/B winners withheld for '%s' vs '%s': corpus provenance does "
-                "not establish that both arms were scored against the same "
-                "documents",
+                "A/B winners withheld for '%s' vs '%s': %s",
                 config_a_meta["name"],
                 config_b_meta["name"],
+                reason,
             )
 
         mean_scores_a: Dict[str, float] = {}

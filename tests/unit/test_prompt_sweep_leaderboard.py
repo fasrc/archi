@@ -320,6 +320,39 @@ def test_shared_context_omits_judge_pressure_when_no_judge_ran():
     assert ctx["warnings"] == []
 
 
+def test_incomparability_reason_names_the_predicate_that_failed():
+    """The operator is told what to investigate, not a guess.
+
+    The A/B warning hardcoded corpus provenance, so an operator whose arms were
+    withheld purely over judge pressure was sent to inspect the corpus. One
+    source of truth: ``arms_comparable`` is this function returning None.
+    """
+    same_corpus = {"corpus_fingerprint": "c1", "corpus_unchanged_at_endpoints": True}
+    judged_16 = {
+        **same_corpus,
+        "ragas_effective_settings": {"max_workers": 16, "timeout": 600},
+    }
+    judged_4 = {
+        **same_corpus,
+        "ragas_effective_settings": {"max_workers": 4, "timeout": 600},
+    }
+
+    assert ResultHandler.arms_incomparability_reason([judged_16, judged_16]) is None
+
+    judge_reason = ResultHandler.arms_incomparability_reason([judged_16, judged_4])
+    assert judge_reason and "judge" in judge_reason
+    assert "corpus" not in judge_reason
+
+    corpus_reason = ResultHandler.arms_incomparability_reason(
+        [judged_16, {**judged_16, "corpus_fingerprint": "c2"}]
+    )
+    assert corpus_reason and "corpus" in corpus_reason
+
+    # arms_comparable stays the boolean view of the same predicate.
+    assert ResultHandler.arms_comparable([judged_16, judged_4]) is False
+    assert ResultHandler.arms_comparable([judged_16, judged_16]) is True
+
+
 def test_rank_label_renders_a_withheld_rank_without_percent_d():
     """A withheld rank must survive the console table.
 
