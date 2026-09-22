@@ -436,10 +436,16 @@ _COMPARISON_AFTER_SUFFIX = r"\(?\s*(?:===|==|!=|~=|<=|>=|<|>)"
 # project named ``vllm-0-9-0-py3-none-any-whl``, so vllm read as absent and every
 # protected-vllm guard skipped — the silent-skip shape this change exists to close.
 _ATTACHED_EXTRAS = r"(?:\[[^\]]*\])?"
+# ``example.zip [foo] ==1.0`` is the project ``example.zip[foo]`` with specifier
+# ``==1.0`` to pip (PEP 508 ``wsp* extras?`` allows whitespace before ``[``).
+# Review finding 2, 2026-09-22: ``_ATTACHED_EXTRAS`` required ``[`` to follow the
+# suffix immediately; a space before ``[foo]`` made it match empty, and ``\s`` then
+# matched that space — the comparison lookahead never fired. A second negative
+# lookahead now also blocks ``\s`` when a detached extras list leads to a comparison.
 _PATH_OR_ARCHIVE_REQUIREMENT = re.compile(
     rf"^(?:\.|[^;]*[\\/]"
     rf"|[^;]*{_ARCHIVE_SUFFIX}{_ATTACHED_EXTRAS}"
-    rf"(?:;|$|\s(?!\s*{_COMPARISON_AFTER_SUFFIX})))",
+    rf"(?:;|$|\s(?!\s*{_COMPARISON_AFTER_SUFFIX})(?!\s*\[[^\]]*\]\s*{_COMPARISON_AFTER_SUFFIX})))",
     re.IGNORECASE,
 )
 
@@ -1733,6 +1739,33 @@ class TestOpaqueRequirementsFailClosed:
             f"pip parses as a named requirement. Only the whitespace before the operator "
             f"separates it from the compact spelling, which is already accepted."
         )
+
+    def test_a_detached_extras_list_before_a_comparison_is_not_an_archive(self):
+        """``example.zip [foo] ==1.0`` is a named requirement with extras to pip.
+
+        Measured at 376b5867, pip 26.1.2: ``install_req_from_line("example.zip [foo] ==1.0")``
+        returns ``name='example-zip', extras=frozenset({'foo'}), specifier=SpecifierSet('==1.0')``.
+        PEP 508 grammar allows ``wsp*`` between the name and the extras list, so the
+        space before ``[foo]`` does not make the line an archive path.
+        Review finding 2, 2026-09-22: ``_ATTACHED_EXTRAS`` required ``[`` to follow the
+        suffix immediately; with a space before ``[foo]``, it matched empty and
+        ``\\s`` matched that space — the comparison lookahead never fired.
+        """
+        # A detached extras list followed by a comparison is not an archive.
+        assert _opaque_requirements("example.zip [foo] ==1.0\n") == [], (
+            "example.zip [foo] ==1.0 is a named requirement to pip; detached extras "
+            "before a comparison must not make the line opaque"
+        )
+        assert (
+            _opaque_requirements("example.tar [foo] (>=1)\n") == []
+        ), "parenthesised specifier after detached extras applies the same rule"
+        # A detached extras list with no following comparison is still opaque.
+        assert _opaque_requirements(
+            "example.zip [foo]\n"
+        ), "example.zip [foo] has no specifier; the archive suffix still makes it opaque"
+        assert _opaque_requirements(
+            "example.zip\n"
+        ), "a bare archive with no extras is still opaque"
 
     @pytest.mark.parametrize("line", ["example.tbz2==1.0", "vllm-0.9.0.tbz2"])
     def test_a_suffix_pip_does_not_accept_is_not_read_as_an_archive(self, line):

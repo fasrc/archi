@@ -94,7 +94,7 @@
 
 ## 3. Finding 4 — pip's short `-C` option is cut (false positive)
 
-- [ ] 3.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 3.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Add a test to `TestCompactOptionFormsAreRecognized`. For each of
       `vllm==0.9.0 -Cfoo=bar`, `vllm==0.9.0 -C foo=bar` and `vllm==0.9.0 \` + `    -Cfoo=bar`,
@@ -115,7 +115,7 @@
 
 ## 4. Finding 2 — a detached extras list is not an archive (false positive)
 
-- [ ] 4.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 4.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Add a test to `TestOpaqueRequirementsFailClosed` (a different name from
       task 1's). Assert `_opaque_requirements` returns `[]` for `example.zip [foo] ==1.0` and
