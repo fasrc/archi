@@ -515,6 +515,23 @@ data_manager:
     # enabled, each document is tagged with one label from `categories`, stored under
     # metadata.llm_category (a key distinct from any source-provided `category`). The
     # chat model's provider_config is sourced from services.chat_app.providers.<provider>.
+    #
+    # Measured cost (2026-09 feature-matrix campaign arm 03, issue #396): about
+    # 19 minutes per 1091-document ingest on the FASRC host -- 4956 s with the
+    # feature on against 3802 s with it off, so enabling adds about 30 % and
+    # disabling saves about 23 %. Read the saving as approximate: the two arms did
+    # not ingest identical corpora (6926 chunks against 6896, 0.43 % apart), so the
+    # campaign calls this comparison "not a clean isolation".
+    #
+    # The campaign resolved no retrieval effect: context_precision moved -0.004 and
+    # -0.002 over two runs against a minimum detectable effect of 0.025 and 0.027.
+    # The default retrieval path does not read metadata.llm_category, but the label
+    # is reachable -- _build_extra_text writes "llm_category:<value>" into
+    # extra_text and CatalogPostgres.search_metadata matches any unmapped key by
+    # substring over that column, so the search_metadata_index tool can filter on
+    # it. Nothing tells the model the vocabulary, so arm 03 shows the label did not
+    # help as wired and as prompted, not that no reader exists. Issue #496;
+    # measurement table in docs/docs/proposals/categories-action-plan.md.
     categorization:
       enabled: {{ data_manager.processing.categorization.enabled | default(false, true) }}
       provider: {{ data_manager.processing.categorization.provider | default('', true) }}

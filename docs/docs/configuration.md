@@ -695,7 +695,7 @@ data_manager:
 | Key | Default | Effect |
 | --- | --- | --- |
 | `html_to_markdown.enabled` | `true` | Convert string HTML content (suffix `html`/`htm`) to ATX Markdown via `markdownify`, flip the suffix and path fields to `.md`, and record `metadata.converted_from = "html"`. The `.md` file then loads through `TextLoader` instead of `BSHTMLLoader`, so headings, lists, tables, and links survive into chunks. For FASRC KB (Echo-KB) pages, the converted Markdown is additionally sliced to the article body between the page's `Table of Contents` and `Bookmarkable Links` (or, when absent, `Last Updated`) landmarks, dropping the surrounding category-filter nav and footer; pages without those landmarks (non-KB sources) keep the full-page conversion. |
-| `categorization.enabled` | `false` | Assign one label from `categories` to each document via an LLM and store it under `metadata.llm_category`. |
+| `categorization.enabled` | `false` | Assign one label from `categories` to each document via an LLM and store it under `metadata.llm_category`. Costs one LLM call per document; **measured at about +19 min per 1091-document ingest with no resolvable retrieval effect** — see "Measured cost" below. |
 | `categorization.provider` / `model` | — | Which chat model to use. `provider` is a key under `services.chat_app.providers`; that block (base_url / mode / models / extra_kwargs) supplies the model's `provider_config`, so a custom local/vLLM endpoint is honored. |
 | `categorization.max_chars` | `4000` | Document content is truncated to this length before the model call (bounds cost/latency). |
 | `categorization.max_concurrency` | `1` | Upper bound on documents in an LLM call at once. Categorization runs inside `persist_resource`, which the scrape phase calls from a pool sized by `scrape_workers` — this knob keeps the request rate to the model provider decided by the model's limits rather than by a fetch-politeness setting. Anything that is not a positive integer coerces to `1`; a bad value never means "unbounded". |
@@ -706,6 +706,26 @@ data_manager:
 - **No-op when disabled.** A **missing** `processing` block means conversion on,
   categorization off (the shipped default). An explicitly all-disabled block makes
   the persistence service behave byte-for-byte identically to the unwrapped service.
+- **Measured cost, and why the default is off.** The 2026-09 feature-matrix campaign
+  ran categorization as its own arm against the baseline, on a 1091-document corpus.
+  Ingest took 3802 s with the feature off against 4956 s with it on — **about 19
+  minutes**, one LLM call per document at `max_concurrency: 1`. Enabling the feature
+  adds about 30 % to ingest; disabling it saves about 23 %. Read the figure as
+  approximate: the two arms did not ingest identical corpora (6926 chunks against
+  6896, 0.43 % apart), and the campaign therefore calls the comparison "not a clean
+  isolation". No quality delta came out of the noise — `context_precision` moved
+  −0.004 / −0.002 against a minimum detectable effect of 0.025 / 0.027, and source
+  accuracy was 0.868 / 0.840 against a baseline of 0.868 (McNemar p = 1 / 0.38).
+  Measurement table: [Categories action plan](proposals/categories-action-plan.md).
+- **The label is reachable, but nothing on the default path reads it.**
+  `metadata.llm_category` has one writer, `CategorizationProcessor`. No retriever,
+  prompt or embedding path consumes it. It is not unreachable, though:
+  `_build_extra_text` writes `llm_category:<value>` into the `extra_text` column, and
+  `CatalogPostgres.search_metadata` matches any key outside `_METADATA_COLUMN_MAP` by
+  substring over that column, so an agent calling `search_metadata_index` can filter on
+  it. Nothing tells the model the vocabulary, so the campaign result means the label did
+  not help **as wired and as prompted** — not that no reader exists. Enable the feature
+  once something reads the label on purpose.
 - **Never blocks ingest.** A conversion that raises, or that yields blank/whitespace
   Markdown (e.g. a script-only page), keeps the original resource. A categorization
   error never raises and defaults to `uncategorized`.
