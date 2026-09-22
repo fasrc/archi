@@ -303,10 +303,17 @@ def _joined_lines(text: str):
     package read as absent; and the separator branch of ``_PATH_OR_ARCHIVE_REQUIREMENT``
     read the same backslash as a path separator and reported the line. Joining first is
     the only reading that records the pin AND declines the false report.
+
+    pip's comment rule (``COMMENT_RE``, same as ``_COMMENT``): a whole-line comment never
+    opens a continuation buffer, even when it ends in ``\\``. Round 6 on 2026-09-22 found
+    the module opening a buffer for ``# comment \\`` and joining the archive requirement
+    after it onto the comment, hiding the archive from every reader.
     """
     buffered = ""
     for raw_line in text.splitlines():
-        if raw_line.endswith("\\"):
+        if raw_line.endswith("\\") and not _COMMENT.match(raw_line):
+            # pip rule: a whole-line comment (COMMENT_RE) never opens a buffer.
+            # Review finding 1, 2026-09-22.
             buffered += raw_line[:-1]
             continue
         yield buffered + raw_line
@@ -1836,6 +1843,34 @@ class TestOpaqueRequirementsFailClosed:
         assert _opaque_requirements(
             "torch==2.7.0\nvllm @ \\\n    ../pkgs/vllm\n"
         ), "joining must not launder a local path into a readable requirement"
+
+    def test_a_comment_line_ending_in_backslash_does_not_continue(self):
+        """A whole-line comment never opens a continuation buffer, even when it ends in ``\\``.
+
+        pip's rule (``COMMENT_RE``, same as ``_COMMENT``): ``COMMENT_RE.match(line)``
+        prevents a line from opening a buffer regardless of the trailing ``\\``.
+        Measured at 376b5867, pip 26.1.2: ``join_lines`` output for ``"# comment \\\\"``
+        followed by ``"vllm-0.9.0-py3-none-any.whl"`` is two separate logical lines —
+        ``[(1, ' # comment \\\\'), (2, 'vllm-0.9.0-py3-none-any.whl')]`` — not one
+        joined line. Review finding 1, 2026-09-22.
+        """
+        # A whole-line comment ending in backslash must not hide the archive after it.
+        assert _opaque_requirements("# comment \\\nvllm-0.9.0-py3-none-any.whl\n") == [
+            "vllm-0.9.0-py3-none-any.whl"
+        ]
+        # Indented spelling (still matches COMMENT_RE.match via the \\s+ branch).
+        assert _opaque_requirements(
+            "   # comment \\\nvllm-0.9.0-py3-none-any.whl\n"
+        ) == ["vllm-0.9.0-py3-none-any.whl"]
+        # Bare-hash spelling.
+        assert _opaque_requirements("#\\\nvllm-0.9.0-py3-none-any.whl\n") == [
+            "vllm-0.9.0-py3-none-any.whl"
+        ]
+        # An INLINE comment ending in backslash still continues: the line
+        # ``vllm==0.9.0  # note \\`` does not match COMMENT_RE.match (starts with 'v'),
+        # so the buffer stays open and numpy joins it. Measured: pip yields one logical
+        # line ``vllm==0.9.0  # note numpy==2.0.0``; _COMMENT.sub strips the tail.
+        assert _parse_pins("vllm==0.9.0  # note \\\nnumpy==2.0.0\n")["vllm"] == "0.9.0"
 
     def test_whitespace_may_separate_a_name_from_its_extras(self):
         """PEP 508 allows ``wsp*`` between the name and the extras list.
