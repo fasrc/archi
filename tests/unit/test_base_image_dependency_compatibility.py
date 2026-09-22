@@ -591,9 +591,13 @@ def _conditional_protected(text: str) -> dict:
     An empty mapping is the healthy answer. ``_requirement_lines`` cuts a line at
     ``;`` so the guards never see the marker, which means a line pip may skip on this
     image reads here as an unconditional pin.
+
+    Physical lines are joined first (pip rule: ``join_lines``), so a marker on the
+    continuation of a backslash-joined line is still detected.
+    Review finding 3, 2026-09-22.
     """
     conditional = {}
-    for raw_line in text.splitlines():
+    for raw_line in _joined_lines(text):
         line = raw_line.strip()
         if not line or line.startswith("#") or line.startswith("-"):
             continue
@@ -1440,6 +1444,21 @@ class TestProtectedPinsAreUnconditional:
             f"unpinned. Drop the marker, or evaluate markers against the image "
             f"environment before relaxing this."
         )
+
+    def test_a_continued_environment_marker_is_reported(self):
+        """A marker split onto the next physical line via backslash-continuation must
+        still be detected.
+
+        pip joins ``vllm==0.9.0 \\`` and ``; python_version < "3.11"`` into one
+        logical line before evaluating the marker. Measured: pip 26.1.2's ``join_lines``
+        yields a single requirement string containing the semicolon-separated marker.
+        ``_conditional_protected`` iterating ``text.splitlines()`` instead sees only
+        the first physical half, finds no ``;``, and returns ``{}`` — hiding the
+        conditional pin. Review finding 3, 2026-09-22.
+        """
+        text = 'vllm==0.9.0 \\\n; python_version < "3.11"\n'
+        assert _conditional_protected(text) == {"vllm": 'python_version < "3.11"'}
+        assert _parse_pins(text) == {"vllm": "0.9.0"}
 
 
 class TestProtectedPackagesAreDeclaredOnce:

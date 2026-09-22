@@ -47,7 +47,7 @@
 
 ## 1. Finding 1 — a comment line never continues (hiding defect)
 
-- [ ] 1.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 1.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Add a test to `TestOpaqueRequirementsFailClosed`. Assert that
       `_opaque_requirements("# comment \\\nvllm-0.9.0-py3-none-any.whl\n")` equals
@@ -76,7 +76,7 @@
 
 ## 2. Finding 3 — the conditional-pin reader reads joined lines (hiding defect)
 
-- [ ] 2.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 2.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Add a test to `TestProtectedPinsAreUnconditional`. Assert that
       `_conditional_protected('vllm==0.9.0 \\\n; python_version < "3.11"\n')` equals
