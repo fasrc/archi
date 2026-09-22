@@ -148,7 +148,7 @@
       `git status --porcelain` is empty.
       Commit only if something changed; otherwise this task commits nothing and you move on.
 
-- [ ] 5.2 Push the branch and open the PR. The branch was cut with `checkout -b`, so its
+- [x] 5.2 Push the branch and open the PR. The branch was cut with `checkout -b`, so its
       upstream is `origin/dev` — push with
       `git push -u origin fix/issue-520-read-four-requirement-spellings` to repoint it.
       Confirm the push landed on **fasrc/archi**, not a fork:
@@ -161,7 +161,7 @@
       link: `gh pr view <pr> --repo fasrc/archi --json closingIssuesReferences` must list 520.
       If it does not, edit the body and re-verify.
 
-- [ ] 5.3 Reply in the four threads on PR #506 — 4058046837, 4058046838, 4058046843 and
+- [x] 5.3 Reply in the four threads on PR #506 — 4058046837, 4058046838, 4058046843 and
       4058046844 — each with the SHA of the commit that closes it (tasks 1, 4, 3 and 2
       respectively). Use the review-comment reply API, not a new top-level comment. Do not use
       `gh pr comment --json`; that flag is unsupported and the call fails before posting.
