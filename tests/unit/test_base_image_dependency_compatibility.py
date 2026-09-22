@@ -389,8 +389,14 @@ _COMMENT = re.compile(r"(^|\s+)#.*$")
 # ``numpy==2.0.0 --hash=sha256:...``. They qualify the requirement, never name it, so
 # they are cut away before matching. Round 5 on 2026-09-20: ``_PIN_PATTERN`` is anchored
 # at ``$``, so a hash left attached made an exactly-pinned protected package read as
-# absent and every pairwise guard skipped it.
-_PER_REQUIREMENT_OPTION = re.compile(r"\s+--\S+.*$")
+# absent and every pairwise guard skipped it. Round 7 on 2026-09-22: ``-C`` is the only
+# short form pip's ``SUPPORTED_OPTIONS_REQ`` carries (``--hash`` and
+# ``-C``/``--config-settings``, measured on pip 26.1.2); the pattern cut only ``--``
+# options, so ``-Cfoo=bar`` and ``-C foo=bar`` survived and the anchored
+# ``_PIN_PATTERN`` recorded no pin. ``(?:\s|\S)`` after ``-C`` keeps a bare trailing
+# ``-C`` from being silently dropped — pip requires a value, so a naked ``-C`` is not
+# a valid option and must not be erased.
+_PER_REQUIREMENT_OPTION = re.compile(r"\s+(?:--\S+|-C(?:\s|\S)).*$")
 
 # A ``${NAME}`` placeholder pip substitutes from the build environment before it reads
 # the line (``ENV_VAR_RE``: uppercase letters, digits and underscores only). Round 3 on
@@ -1952,3 +1958,32 @@ class TestCompactOptionFormsAreRecognized:
     )
     def test_an_inert_option_is_not_reported(self, line):
         assert _requirement_bearing_directives(line) == []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==0.9.0 -Cfoo=bar",
+            "vllm==0.9.0 -C foo=bar",
+            "vllm==0.9.0 \\\n    -Cfoo=bar\n",
+            "vllm==0.9.0 --config-settings=foo=bar",
+        ],
+    )
+    def test_config_settings_short_option_is_cut_from_pin(self, text):
+        """pip 26.1.2 SUPPORTED_OPTIONS_REQ carries exactly --hash and
+        -C/--config-settings; measured, -C is its only short per-requirement option.
+
+        Round 7 on 2026-09-22: _PER_REQUIREMENT_OPTION matched only long (``--``)
+        options, so ``-Cfoo=bar`` and ``-C foo=bar`` survived into the line both
+        readers matched. ``_parse_pins`` recorded nothing (the anchored _PIN_PATTERN
+        failed at ``$``); ``_unpinned_protected`` reported vllm as unguarded.
+        """
+        assert _unpinned_protected(text) == {}
+        assert _parse_pins(text) == {"vllm": "0.9.0"}
+
+    def test_bare_trailing_config_settings_flag_is_not_cut(self):
+        """A bare ``-C`` with no value character is not silently dropped.
+
+        pip requires a value after ``-C``, so a naked ``-C`` at end of line is not a
+        valid per-requirement option and must not be erased by the pattern.
+        """
+        assert list(_requirement_lines("vllm==0.9.0 -C")) == ["vllm==0.9.0 -C"]
