@@ -184,7 +184,9 @@ arm and recording `corpus_unchanged_at_endpoints` in the results.
 A long-but-healthy ingest hits none of them. CPU-only ingest of the full FASRC
 corpus takes ~64 min; with `processing.categorization.enabled: true` it runs one
 extra LLM call per document before embedding, and has been measured at over two
-hours on a loaded host. Under the old absolute deadline that run was killed at
+hours on a loaded host. The 2026-09 feature-matrix campaign put that tax at
++19.2 min (+23 %) on a 1091-document corpus, which is why the FASRC configs now
+ship the feature off. Under the old absolute deadline that run was killed at
 exactly 7200s while every one of its 1433 status polls was succeeding, two
 minutes short of finishing (issue #378).
 

@@ -515,6 +515,16 @@ data_manager:
     # enabled, each document is tagged with one label from `categories`, stored under
     # metadata.llm_category (a key distinct from any source-provided `category`). The
     # chat model's provider_config is sourced from services.chat_app.providers.<provider>.
+    #
+    # Measured cost (2026-09 feature-matrix campaign arm 03, issue #396): +19.2 min
+    # per 1091-document ingest on the FASRC host -- 4956 s with the feature on
+    # against 3802 s with it off, a 23 % tax paid once per document. The campaign
+    # resolved no retrieval effect: context_precision moved -0.004 and -0.002 over
+    # two runs against a minimum detectable effect of 0.025 and 0.027. Nothing
+    # reads the output either -- metadata.llm_category has one writer
+    # (src/data_manager/collectors/processing.py) and no reader. Turn it on only
+    # with a consumer in mind. Issue #496; measurement table in
+    # docs/docs/proposals/categories-action-plan.md.
     categorization:
       enabled: {{ data_manager.processing.categorization.enabled | default(false, true) }}
       provider: {{ data_manager.processing.categorization.provider | default('', true) }}
