@@ -406,8 +406,22 @@ _COMMENT = re.compile(r"(^|\s+)#.*$")
 # ``--config-settings`` to the KEY=VAL branch, which closes the same hole the long
 # spelling already had. A bare trailing ``-C`` carries no value and is likewise never
 # erased.
+#
+# The value is read the way pip reads it, not as raw text. ``get_line_parser`` runs
+# ``shlex.split`` over the option string before ``_handle_config_settings`` partitions
+# on ``=``, so quoted or backslash-escaped whitespace inside the KEY is legal:
+# ``-C "foo bar=baz"`` records the key ``foo bar`` (measured on pip 26.1.2). Round 3 of
+# 2026-09-22 (Codex, comment 4069783454): a raw ``[^\s=]*=`` key stopped at the space
+# inside the quotes, left the option attached, and reported an exactly pinned package
+# as unpinned — a false report on a line pip installs. A quoted value must therefore
+# carry the ``=`` INSIDE the quotes to be cut; ``-C "foo bar"`` still fails closed,
+# because pip rejects it.
+_CONFIG_SETTING_VALUE = (
+    r"(?:\"[^\"]*=[^\"]*\"|'[^']*=[^']*'|(?:[^\s='\"]|\\\s|\"[^\"=]*\"|'[^'=]*')*=)"
+)
 _PER_REQUIREMENT_OPTION = re.compile(
-    r"\s+(?:(?:--config-settings[=\s]|-C)\s*[^\s=]*=|--(?!config-settings\b)\S+).*$"
+    rf"\s+(?:(?:--config-settings[=\s]|-C)\s*{_CONFIG_SETTING_VALUE}"
+    rf"|--(?!config-settings\b)\S+).*$"
 )
 
 # A ``${NAME}`` placeholder pip substitutes from the build environment before it reads
@@ -2182,6 +2196,7 @@ class TestCompactOptionFormsAreRecognized:
             "vllm==0.9.0 --config-settings=foo",
             "vllm==0.9.0 --config-settings foo",
             "vllm==0.9.0 --config-settings=",
+            'vllm==0.9.0 -C "foo bar"',
         ],
     )
     def test_a_config_settings_value_that_is_not_key_equals_val_fails_closed(
@@ -2210,6 +2225,10 @@ class TestCompactOptionFormsAreRecognized:
             "vllm==0.9.0 -Cfoo=",
             "vllm==0.9.0 -C foo=bar=baz",
             "vllm==0.9.0 --config-settings foo=bar",
+            'vllm==0.9.0 -C "foo bar=baz"',
+            "vllm==0.9.0 -C 'foo bar=baz'",
+            "vllm==0.9.0 -C foo\\ bar=baz",
+            'vllm==0.9.0 --config-settings "foo bar=baz"',
         ],
     )
     def test_every_config_settings_value_pip_accepts_is_still_cut(self, text):
