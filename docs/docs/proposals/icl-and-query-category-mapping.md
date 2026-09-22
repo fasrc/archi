@@ -4,7 +4,7 @@
 **Date:** September 2026
 **Status:** Exploration — no milestone proposed; the rung-0 tracking issue is filed as `evidence-trial` before the sweep runs (see "Release-plan judgment")
 **Baseline read:** `origin/dev` @ `4b253e2`, 2026-09-19; every anchor re-checked against `origin/dev` @ `314039d`, 2026-09-21
-**Companion:** [Release Plan 2026](release-plan-2026.md) · [Multi-Collection Routing](multi-collection-routing.md) · [Feature-Matrix Campaign](feature-matrix-campaign-2026.md) · [Categories Action Plan](https://github.com/fasrc/archi/blob/docs/categories-action-plan/docs/docs/proposals/categories-action-plan.md) (PR #512, unmerged; the link becomes relative when it lands)
+**Companion:** [Release Plan 2026](release-plan-2026.md) · [Multi-Collection Routing](multi-collection-routing.md) · [Feature-Matrix Campaign](feature-matrix-campaign-2026.md) · [Categories Action Plan](categories-action-plan.md)
 
 ---
 
@@ -278,7 +278,7 @@ Neither is answerable from this repository, and both are cheap on the dev host:
    draft of this document and [#496](https://github.com/fasrc/archi/issues/496) cite.
    The breadcrumb vocabulary is a **19-item Title Case list that lives only in the
    corpus** (`documents.extra_json` on the host), and the two lists share no values
-   ([Categories Action Plan](https://github.com/fasrc/archi/blob/docs/categories-action-plan/docs/docs/proposals/categories-action-plan.md),
+   ([Categories Action Plan](categories-action-plan.md),
    PR #512). #496 says the labels "duplicate the breadcrumb `category` field the scraper
    already writes"; they duplicate its *purpose*, not its values, so a prompt that
    hard-codes one list filters against the other.
@@ -489,7 +489,7 @@ earlier draft of this document said "do not file yet" and "the honest label woul
 leaves the trial without the adopt/reject record the label requires. The
 pre-registration — arms, pool disjointness, decision rules, baselines — goes in the issue
 body before the first run; the number goes in afterwards. This is decision D3 of the
-[Categories Action Plan](https://github.com/fasrc/archi/blob/docs/categories-action-plan/docs/docs/proposals/categories-action-plan.md)
+[Categories Action Plan](categories-action-plan.md)
 (PR #512).
 
 **If rung 1/2 is ever merged ahead of its named release**, the plan's dark-ship rule
