@@ -453,7 +453,16 @@ _ATTACHED_EXTRAS = r"(?:\[[^\]]*\])?"
 # starting on a letter or a digit. Measured on pip 26.1.2: ``[foo]``, ``[foo,bar]``,
 # ``[ foo , bar ]``, ``[]`` and ``[1foo]`` parse; ``[foo bar]`` ("Expected comma
 # between extra names"), ``[foo,]``, ``[,foo]`` and ``[-foo]`` raise.
-_EXTRA_NAME = r"[A-Za-z0-9][A-Za-z0-9._-]*"
+#
+# The LAST character is constrained as well as the first, because packaging's
+# IDENTIFIER token is ``\b[a-zA-Z0-9][a-zA-Z0-9._-]*\b`` (``packaging._tokenizer``,
+# measured on packaging as shipped with pip 26.1.2). The closing ``\b`` cannot sit
+# between two non-word characters, so ``[foo.]`` and ``[foo-]`` truncate to ``foo``
+# and raise ``Expected matching RIGHT_BRACKET``. Round 2 of 2026-09-22 (Codex
+# adversarial pass on 56baa86d) found both exempted here. The final class is
+# ``[A-Za-z0-9_]`` and NOT ``[A-Za-z0-9]``: ``_`` is a word character, so pip accepts
+# ``[foo_]``, and an alphanumeric-only rule would report a line pip installs.
+_EXTRA_NAME = r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?"
 _VALID_EXTRAS_LIST = rf"\[\s*(?:{_EXTRA_NAME}(?:\s*,\s*{_EXTRA_NAME})*\s*)?\]"
 # ``example.zip [foo] ==1.0`` is the project ``example.zip[foo]`` with specifier
 # ``==1.0`` to pip (PEP 508 ``wsp* extras?`` allows whitespace before ``[``).
@@ -1839,7 +1848,19 @@ class TestOpaqueRequirementsFailClosed:
             "example.zip\n"
         ), "a bare archive with no extras is still opaque"
 
-    @pytest.mark.parametrize("extras", ["[foo bar]", "[foo,]", "[,foo]", "[-foo]"])
+    @pytest.mark.parametrize(
+        "extras",
+        [
+            "[foo bar]",
+            "[foo,]",
+            "[,foo]",
+            "[-foo]",
+            "[foo.]",
+            "[foo-]",
+            "[foo,bar.]",
+            "[foo., bar]",
+        ],
+    )
     def test_a_malformed_detached_extras_list_stays_opaque(self, extras):
         """A detached extras list pip refuses must not buy the line an exemption.
 
@@ -1847,6 +1868,12 @@ class TestOpaqueRequirementsFailClosed:
         ``InvalidRequirement`` for each list below — ``[foo bar]`` wants a comma,
         ``[foo,]`` and ``[,foo]`` want an extra name, ``[-foo]`` wants an identifier —
         so the image build refuses the requirements file.
+
+        Round 2 of 2026-09-22 (Codex adversarial pass on 56baa86d) added the trailing
+        forms. ``[foo.]`` and ``[foo-]`` raise ``Expected matching RIGHT_BRACKET``:
+        packaging's IDENTIFIER token is ``\b[a-zA-Z0-9][a-zA-Z0-9._-]*\b``, and the
+        closing ``\b`` cannot sit between ``.`` and ``]`` — two non-word characters —
+        so the token stops at ``foo`` and the bracket never closes.
 
         Review finding 3 of 2026-09-22 (Codex, comment 4069452153): the lookahead
         added for the detached spelling accepted any bracket content, so
@@ -1861,7 +1888,19 @@ class TestOpaqueRequirementsFailClosed:
         )
 
     @pytest.mark.parametrize(
-        "extras", ["[foo]", "[foo,bar]", "[ foo , bar ]", "[]", "[ ]", "[foo.bar_1]"]
+        "extras",
+        [
+            "[foo]",
+            "[foo,bar]",
+            "[ foo , bar ]",
+            "[]",
+            "[ ]",
+            "[foo.bar_1]",
+            "[foo_]",
+            "[foo..bar]",
+            "[foo--bar]",
+            "[a.b-c_d]",
+        ],
     )
     def test_every_detached_extras_list_pip_accepts_keeps_its_exemption(self, extras):
         """Reading pip's grammar must not turn a valid extras list into a report.
@@ -1869,6 +1908,14 @@ class TestOpaqueRequirementsFailClosed:
         Measured at 5380d135, pip 26.1.2: every list below parses — PEP 508 allows
         whitespace inside the brackets and an empty list, and ``.`` ``-`` ``_`` inside
         an extra name. Narrowing the lookahead must keep all of them exempt.
+
+        ``[foo_]`` is the case that decides the shape of the fix, and it is why the
+        rule is NOT "an extra name ends on an alphanumeric character". Measured at
+        56baa86d: pip ACCEPTS ``example.zip [foo_] ==1.0`` while it rejects
+        ``[foo.]`` and ``[foo-]``, because ``_`` is a word character and packaging's
+        IDENTIFIER token ends on ``\b``. A rule keyed on alphanumerics would report a
+        line pip installs. ``[foo..bar]`` and ``[foo--bar]`` parse too: only the
+        FIRST and LAST characters are constrained.
         """
         assert _opaque_requirements(f"example.zip {extras} ==1.0\n") == []
 
