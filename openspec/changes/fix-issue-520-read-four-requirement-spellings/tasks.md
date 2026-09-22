@@ -134,7 +134,7 @@
 
 ## 5. Prove the whole thing, then publish
 
-- [ ] 5.1 Run the acceptance oracle and confirm every number. Write the probe from the issue
+- [x] 5.1 Run the acceptance oracle and confirm every number. Write the probe from the issue
       body to `/tmp/probe520.py` and run it from the repo root as
       `python3 - < /tmp/probe520.py`. It must print `0 checks give the wrong verdict`.
       **Caution:** `_joined_lines` is a generator — if you add a check of your own, compare
