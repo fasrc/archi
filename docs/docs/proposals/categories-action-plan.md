@@ -323,9 +323,39 @@ corpus is re-ingested, without any change to the scored answers. So:
   script also requires a two-digit arm label, a campaign lock, a stack lock, a `ragas-start`
   ledger row and factor-key agreement with the arm YAML (`:35-38`, `:50`, `:80`, `:124-133`),
   so this is not a one-line relaxation.
+
+  **Decided 2026-09-22 ([#524](https://github.com/fasrc/archi/issues/524)): capture at the
+  run endpoints.** Take the map digest twice — immediately before the first scored question
+  and immediately after the last — and record `category_map_sha256_start`,
+  `category_map_sha256_end` and the corpus fingerprint in the ledger entry. Folding the
+  category metadata into `corpus_fingerprint` itself was rejected: nine files under `src/`
+  and `scripts/` read that value, and three compare it as an equality gate — `corpus_gate`
+  (`compare_runs.py:511-565`), the leaderboard's shared-context check
+  (`service_benchmark.py:970-989`) and `fm_require_pinned_corpus`
+  (`feature_matrix/lib.sh`) — so redefining it would make every archived artifact
+  incomparable with every new one and would fail the campaign's own pinned-corpus checks.
 - **Read only a matching snapshot.** The slice reads the snapshot whose fingerprint equals
-  the artifact's. No snapshot, or a fingerprint mismatch, means **no slice** for that run,
-  and the report says so.
+  the artifact's **and** whose two endpoint digests equal each other. A missing snapshot, a
+  fingerprint mismatch, or a start-to-end digest change means **no slice** for that run, and
+  the report names which of the three failed. A metadata change during scoring is therefore
+  a loud refusal rather than a reproducible-looking table — the same shape Procedure E uses
+  for config divergence.
+- **One question, one category** (decided 2026-09-22,
+  [#525](https://github.com/fasrc/archi/issues/525)). A bank row may declare several source
+  URLs that resolve to different categories. `source_hits` already treats such a row as
+  **one** question — a relative hit if any declared source matched, a strict hit if all did,
+  and a zero-source row in neither numerator nor denominator
+  (`src/utils/benchmark_resilience.py:102-123`) — so the slice never splits it. Each row
+  counts in exactly **one** category, chosen by its **first declared source** after
+  canonicalization. Rows whose sources span more than one category are **counted and
+  reported as their own line**, and are left out of per-category source accuracy: under
+  `any(matches)` such a hit may have come from the source in the other category, so it
+  cannot be attributed. They still count toward each category's coverage, and the overall
+  source-accuracy figure is unchanged. Duplicating the row was rejected because it
+  double-counts one question against denominators the overall figure does not duplicate;
+  multi-label was rejected because it splits one question into several observations. The
+  census in §6.2 uses this same rule, or the preflight and the result disagree about the
+  same row.
 - **Where:** a report change in `scripts/benchmarking/compare_runs.py`, behind tests. The
   script already slices by `anchor_type` and `difficulty` (`SLICE_FIELDS`, `:85`); a derived
   `category` slice joins at that seam. Not a schema change. Not a bank edit.
@@ -370,7 +400,9 @@ corpus is re-ingested, without any change to the scored answers. So:
 This census also reports the **per-article row-share distribution** over canonical URLs and
 **voids the arm when any single article supplies more than 10 % of gold rows** — the July
 record's second benefit-side prerequisite, which a distinct-article count alone cannot see: a
-bank can hold 41 articles across six categories while one article carries a sixth of the rows.
+bank can hold 41 articles across six categories while one article carries a sixth of the
+rows. Attribute multi-source rows by §6.1's rule — one question in one category, taken from
+its first declared source, with cross-category rows counted on their own line.
 
 **All three censuses read the corpus that retrieval actually uses.** Filter every query
 with `NOT is_deleted`: a re-ingest that removes or replaces a page leaves the old row in
