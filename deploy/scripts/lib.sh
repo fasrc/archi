@@ -138,8 +138,8 @@ GPU_IDS="${GPU_IDS-}"
 # CONFIG_REPO/CONFIG_DIR are overridable so test_ensure_config.sh can run
 # against a local fixture instead of the real remote/checkout.
 CONFIG_REPO="${CONFIG_REPO:-git@github.com:fasrc/archi-config.git}"
-CONFIG_REF="${CONFIG_REF:-deploy-pin-2026-09b}"
-CONFIG_SHA="${CONFIG_SHA:-121e29ecc5cdf2730138c005823ef3d5a4651cc0}"
+CONFIG_REF="${CONFIG_REF:-deploy-pin-2026-09d}"
+CONFIG_SHA="${CONFIG_SHA:-9c3da1d064152089cbd4a38ebb81bcfbce61c469}"
 CONFIG_DIR="${CONFIG_DIR:-$REPO_ROOT/config}"
 
 # Resolve the secrets file: absolute path used as-is, relative path is repo-relative.
