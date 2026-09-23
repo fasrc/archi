@@ -52,13 +52,22 @@ Two hosts deploy from this repository, and they must not share one identity.
   cannot bypass the host pin); for `GPU_IDS` empty stays the explicit
   disable. Pinned by `test_host_env.sh`.
 - **No `host.env`** resolves exactly the tracked defaults (`DEPLOYMENT=dev`,
-  `CONFIG=deploy/fasrc-dev/config.yaml`). The GPU host needs no file.
+  `CONFIG=deploy/fasrc-dev/config.yaml`). **Do not read that as a statement about
+  any particular host.** Both hosts that deploy from this repository carry a
+  `host.env`, and the GPU host's pins `CONFIG=config/environments/dev.yaml` — so
+  its deploy renders the *tracked* environment file out of the pinned `config/`
+  checkout, and the git-excluded `deploy/fasrc-dev/config.yaml` is only its
+  fallback if that file is removed. Since `host.env` is git-excluded, the
+  deployed `CONFIG` cannot be inferred from this repository at all: read the
+  host's own `host.env`, or the `--config` path in its deploy log. Assuming the
+  tracked default has produced wrong conclusions about the GPU host more than
+  once (fasrc/archi#496, #535).
 - **Reserved names (issue #363):** `dev` is the GPU host (`holygpu7c0717`, the
   production deployment); `claw` is the no-GPU / no-local-vLLM workstation.
 - **Moved from `deploy/fasrc-dev/scripts/`?** `host.env` is git-ignored, so a `git
   pull` cannot carry it across the move — it stays at the old path while these
   scripts read only this directory. That would hand the host the reserved name
-  `dev` in silence, because `CONFIG` also falls back to the GPU host's file. So a
+  `dev` in silence, because `CONFIG` also falls back to the tracked default. So a
   legacy `host.env` with no new one **aborts every script** and prints the `mv` to
   run. A leftover beside a valid new file only warns.
 - **Self-test:** `bash deploy/scripts/test_host_env.sh` — 23 cases
