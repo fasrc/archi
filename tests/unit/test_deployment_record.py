@@ -156,7 +156,10 @@ def test_an_unknown_verdict_is_not_reported_as_matched_either():
 def test_tracked_edits_prove_a_live_edit_even_without_a_verdict():
     """Dirty paths are positive evidence; they outrank a missing verdict."""
     record = build_deployment_record(
-        _env(ARCHI_CONFIG_PIN_MATCHED="", ARCHI_CONFIG_DIRTY_PATHS="M\tlists/sources.list")
+        _env(
+            ARCHI_CONFIG_PIN_MATCHED="",
+            ARCHI_CONFIG_DIRTY_PATHS="M\tlists/sources.list",
+        )
     )
     assert pin_state(record) == PIN_STATE_LIVE_EDITED
 
@@ -167,9 +170,7 @@ def test_pin_state_names_the_three_states():
         pin_state(build_deployment_record(_env(ARCHI_CONFIG_PIN_MATCHED="no")))
         == PIN_STATE_LIVE_EDITED
     )
-    assert (
-        pin_state(build_deployment_record({})) == PIN_STATE_UNKNOWN
-    )
+    assert pin_state(build_deployment_record({})) == PIN_STATE_UNKNOWN
 
 
 def test_whitespace_only_dirty_paths_are_not_edits():
