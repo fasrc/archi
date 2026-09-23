@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -12,6 +13,8 @@ from langchain_text_splitters.character import CharacterTextSplitter
 
 from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogService
 from src.utils.env import read_secret
+from src.utils.ingest_provenance import build_ingest_config_snapshot
+from src.utils.ingest_run import collect_ingest_counts, record_ingest_run
 from src.utils.logging import get_logger
 
 from .loader_utils import select_loader
@@ -254,6 +257,7 @@ class VectorStoreManager:
 
     def update_vectorstore(self) -> None:
         """Synchronise filesystem documents with the vectorstore."""
+        started_at = datetime.now(timezone.utc)
         store = self.fetch_collection()
 
         sources = PostgresCatalogService.load_sources_catalog(
@@ -283,7 +287,9 @@ class VectorStoreManager:
 
         if hashes_in_data == hashes_in_vstore and not stale_hashes:
             logger.info("Vectorstore is up to date")
+            run_status = "up_to_date"
         else:
+            run_status = "updated"
             logger.info("Vectorstore needs to be updated")
 
             hashes_to_remove = list(hashes_in_vstore - hashes_in_data)
@@ -314,6 +320,34 @@ class VectorStoreManager:
             logger.info("Vectorstore update has been completed")
 
         logger.info(f"N Collection: {store.count()}")
+        # Recorded for BOTH branches: a run that found the store already up to
+        # date still happened, and the status board must not report a stale
+        # "last ingest" after it.
+        self._record_ingest_run(started_at, run_status)
+
+    def _record_ingest_run(self, started_at, status: str) -> None:
+        """Record this run's provenance, with the config that governed it.
+
+        Never raises. The corpus is the product; the record is commentary, so a
+        provenance failure must not fail an ingest that already succeeded.
+        """
+        try:
+            conn = psycopg2.connect(**self._pg_config)
+        except Exception as exc:
+            logger.warning("Could not connect to record the ingest run: %s", exc)
+            return
+        try:
+            record_ingest_run(
+                conn,
+                started_at=started_at,
+                status=status,
+                config_snapshot=build_ingest_config_snapshot(
+                    getattr(self, "_data_manager_config", {})
+                ),
+                counts=collect_ingest_counts(conn),
+            )
+        finally:
+            conn.close()
 
     def _collect_postgres_hashes(self) -> set:
         """Get all resource hashes currently in the PostgreSQL vectorstore."""

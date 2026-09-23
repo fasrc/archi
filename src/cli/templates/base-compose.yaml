@@ -154,6 +154,17 @@ services:
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
       CONFIG_PATH: /rendered-config/config.yaml
+      # Config provenance, exported by ensure_config (deploy/scripts/lib.sh) and
+      # passed through from the deploy environment so config_seed can persist
+      # which config actually deployed. CONFIG_REF is otherwise a shell variable
+      # that never enters a container. Empty when `archi create` is run by hand
+      # rather than through the deploy scripts; the record then stores NULLs and
+      # the status board reports provenance as unavailable.
+      ARCHI_CONFIG_REF: ${ARCHI_CONFIG_REF:-}
+      ARCHI_CONFIG_SHA: ${ARCHI_CONFIG_SHA:-}
+      ARCHI_CONFIG_HEAD: ${ARCHI_CONFIG_HEAD:-}
+      ARCHI_CONFIG_PIN_MATCHED: ${ARCHI_CONFIG_PIN_MATCHED:-}
+      ARCHI_CONFIG_DIRTY_PATHS: ${ARCHI_CONFIG_DIRTY_PATHS:-}
     env_file:
       - .env
     volumes:
