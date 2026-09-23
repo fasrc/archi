@@ -56,12 +56,18 @@ Two hosts deploy from this repository, and they must not share one identity.
   any particular host.** Both hosts that deploy from this repository carry a
   `host.env`, and the GPU host's pins `CONFIG=config/environments/dev.yaml` — so
   its deploy renders the *tracked* environment file out of the pinned `config/`
-  checkout, and the git-excluded `deploy/fasrc-dev/config.yaml` is only its
-  fallback if that file is removed. Since `host.env` is git-excluded, the
-  deployed `CONFIG` cannot be inferred from this repository at all: read the
-  host's own `host.env`, or the `--config` path in its deploy log. Assuming the
-  tracked default has produced wrong conclusions about the GPU host more than
-  once (fasrc/archi#496, #535).
+  checkout, not the git-excluded `deploy/fasrc-dev/config.yaml`.
+  **The tracked default is not a missing-file fallback.** It applies only when
+  `CONFIG` is *unset*, i.e. when `host.env` is removed. Deleting
+  `config/environments/dev.yaml` while `host.env` still names it does **not** fall
+  back: `CONFIG` keeps its non-empty value and `require_config_file` aborts the
+  deploy before `archi create` runs. Recovering the default is an explicit act
+  (remove `host.env`), never an automatic consequence of a missing file.
+  Since `host.env` is git-excluded, the deployed `CONFIG` cannot be inferred from
+  this repository at all: read the host's own `host.env`, or the
+  `config: deploying <path>` line that `archi_deploy` logs on every deploy.
+  Assuming the tracked default has produced wrong conclusions about the GPU host
+  more than once (fasrc/archi#496, #535, #536).
 - **Reserved names (issue #363):** `dev` is the GPU host (`holygpu7c0717`, the
   production deployment); `claw` is the no-GPU / no-local-vLLM workstation.
 - **Moved from `deploy/fasrc-dev/scripts/`?** `host.env` is git-ignored, so a `git
@@ -172,9 +178,13 @@ deploy/scripts/firewall.sh --list      # show archi rules in place
   bounce the container instead.
 - **`nuke` is irreversible** — it wipes the Postgres DB and the ingested corpus.
   The next `create` re-ingests and rebuilds images from scratch (slow).
-- Config: repo-relative, named by `CONFIG` (git-excluded — host-specific). The tracked
-  default is `deploy/fasrc-dev/config.yaml`, the GPU host's own file. Another host points
-  `CONFIG` at its own file from `host.env`. First-time setup:
+- Config: repo-relative, named by `CONFIG` — host-specific, and **not necessarily
+  git-excluded**: it may name a *tracked* file inside the pinned `config/` checkout, which
+  is what both current hosts do (the GPU host points at `config/environments/dev.yaml`
+  from its `host.env`). The tracked default `deploy/fasrc-dev/config.yaml` is git-excluded
+  and is the fallback for a host with **no** `host.env` — **no current host deploys it**,
+  so editing it does not change any running deployment. See the `host.env` section above
+  before assuming which file a host uses. First-time setup on a host with no `host.env`:
   `cp deploy/fasrc-dev/config.example.yaml <your CONFIG path>` and fill in the LLM host,
   paths, etc. Paths here are repo-relative, not relative to this directory: these scripts
   are host-neutral and no longer sit beside any one host's config.

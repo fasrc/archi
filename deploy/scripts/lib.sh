@@ -326,6 +326,10 @@ archi_deploy() {
   check_llm
   cd "$REPO_ROOT"
   log "Deploying (hostmode, --force; data volumes preserved)…"
+  # Record the effective config path. host.env is git-excluded, so after the fact
+  # this log is the only artifact that says which file a deploy actually rendered
+  # — README.md points operators here. Pinned by test_host_env.sh 24-25.
+  log "config: deploying $CONFIG"
   local -a gpu_flag=()
   [ -n "$GPU_IDS" ] && gpu_flag=(--gpu-ids "$GPU_IDS")
   archi create \
