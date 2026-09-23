@@ -328,6 +328,16 @@ corpus is re-ingested, without any change to the scored answers. So:
   run endpoints.** Take the map digest twice — immediately before the first scored question
   and immediately after the last — and record `category_map_sha256_start`,
   `category_map_sha256_end` and the corpus fingerprint in the ledger entry. Folding the
+  **Canonicalize before hashing, or the guard fires on its own noise.** The dump query
+  carries no `ORDER BY`, and PostgreSQL guarantees no row order, so an unchanged map can
+  come back in a different order at the two endpoints and produce
+  `category_map_sha256_start != category_map_sha256_end` — voiding a valid sweep for a
+  reason that has nothing to do with the data. Sort by canonicalized url and serialize
+  canonically (sorted keys, fixed separators, no incidental whitespace), then hash that
+  byte string; `corpus_fingerprint` already takes exactly this precaution, sorting its
+  records before hashing so the digest "does not depend on how the query happened to return
+  them" (`src/utils/benchmark_provenance.py:309-318`). W6 carries an order-invariance test:
+  the same rows returned in a different order must produce the same digest. Folding the
   category metadata into `corpus_fingerprint` itself was rejected: nine files under `src/`
   and `scripts/` read that value, and three compare it as an equality gate — `corpus_gate`
   (`compare_runs.py:511-565`), the leaderboard's shared-context check
@@ -489,14 +499,19 @@ test so they run the same way every time.
 | W3 | Archive `measure-category-boost-ceiling` as shelved | chore | fasrc/archi | D6 |
 | W4 | `categorization.enabled: false` in dev.yaml, ragas.yaml, host config; template comment + docs; redeploy; record ingest time | config + docs + deploy | both repos, FASRC host | D1 |
 | W5 | File the `evidence-trial` tracking issue with the Phase 1 pre-registration | tracker | fasrc/archi | D3 |
-| W6 | **Endpoint-bound** category snapshot + per-category slice in `scripts/benchmarking/compare_runs.py` (§6.1), carrying all three §6.1 decisions: record `category_map_sha256_start`, `category_map_sha256_end` and the corpus fingerprint, and persist the snapshot **captured at the final endpoint**; the slice refuses unless the fingerprint matches, the two endpoint digests are equal, **and** `sha256(category_map.json)` equals the end digest; attribute each row to **one** category by its first declared source, report cross-category rows on their own line and exclude them from per-category accuracy; judge power per metric on that metric's eligible rows. Plus the paired exact (McNemar) test on per-question source hits and on per-question ok/not-ok, ported from `archi-bench-out`'s `mcnemar_exact`. With tests, including one bank row whose two sources fall in different categories | code | fasrc/archi `scripts/benchmarking/` | — |
+| W6 | **Endpoint-bound** category snapshot + per-category slice in `scripts/benchmarking/compare_runs.py` (§6.1), carrying all three §6.1 decisions: record `category_map_sha256_start`, `category_map_sha256_end` and the corpus fingerprint, and persist the snapshot **captured at the final endpoint**; the slice refuses unless the fingerprint matches, the two endpoint digests are equal, **and** `sha256(category_map.json)` equals the end digest; attribute each row to **one** category by its first declared source, report cross-category rows on their own line and exclude them from per-category accuracy; judge power per metric on that metric's eligible rows. Plus the paired exact (McNemar) test on per-question source hits and on per-question ok/not-ok, ported from `archi-bench-out`'s `mcnemar_exact`. With tests, including one bank row whose two sources fall in different categories and one order-invariance test on the map digest. **Scope spans two seams, not one:** the endpoints are inside the run, at `Benchmarker.run()` where `corpus_before` is already taken (`src/bin/service_benchmark.py:2199-2204`), so the capture and the ledger fields are producer-side changes there; `archive_run.sh` runs only after the benchmark container has stopped and cannot observe either endpoint. The slice, the attribution rule and the power rule are consumer-side in `compare_runs.py` | code | fasrc/archi `src/bin/service_benchmark.py` + `scripts/benchmarking/` | — |
 | W7 | Preflight census script (§6.2, all three censuses), with tests; run the bank-coverage census and post the table; plus one unit test that pins `_build_extra_text` and the `search_metadata` substring fallback r0a depends on; plus an r0b exemplar-disjointness check — every r0b exemplar question and its cited URLs absent from `benchmarking/fasrc_ragas_queries.json` and from the anchor set — with its result recorded on the arm | code | fasrc/archi `scripts/benchmarking/`, `tests/unit/` | — |
 | W8 | Run the rung-0 sweep. **Replicate one** deploys with `archi evaluate --config-dir`; **replicate two uses W6's benchmark-only rerun** with a corpus-fingerprint check before and after, never a second `archi evaluate` — a second invocation refuses on the existing deployment, and with `--force` it recreates the stack and the new data-manager re-ingests, which moves the corpus (`src/cli/cli_main.py:850`, `:906-931`). One `archi eval qa` pass per arm per replicate (6 + 6 runs, ≈ +6–9 h), joined with `compare_runs.py --qa-run LABEL=RUN_DIR`. **Verify each QA run belongs to its arm** before joining: `parse_qa_run_specs` only checks that the label exists and `load_qa_run` discards the recorded `agent_spec_sha256`, so a swapped or stale directory can supply another prompt's pass result and flip the `should_refuse` path in G8 — compare each run's recorded agent-spec digest against that arm's prompt digest. **Pass the two same-stack control arms as noise replicates** (artifact `@N` selectors) so G8 has a measured floor. **Pass `--baseline <control-label>` on every comparison and check it in the output.** With no `--baseline` the tool takes the artifact's first arm (`compare_runs.py:2345-2346`), and `archi evaluate --config-dir` collects configs through an **unsorted** `Path.iterdir()` (`src/cli/cli_main.py:792`), so the control would be chosen by filesystem order and every paired delta, G8 result and verdict could be computed against a treatment. **Prepare the gold atoms once and run every arm against that one snapshot.** The converted bank supplies references rather than `expected_atoms`, so each `archi eval qa` invocation re-extracts atoms with the extractor model (`src/evaluation/qa/preparation.py:305-320`) and `compare_runs.py` pairs by item id without checking that the atoms match — separate preparations would compare different grading obligations rather than the prompts. Post verdicts with the void-check record; without the QA runs `qa_block` returns nothing (`compare_runs.py:1625-1626`) | measurement | claw or FASRC host | W2, W4, W5, W6, W7 |
 | W9 | Phase 2 decision recorded on the tracking issue | tracker | fasrc/archi | W8 |
 | W10 | Rung-1 issue with the verdict record (only on `helps`) | tracker | fasrc/archi | W9 |
 
-W6 and W7 are the only code in this plan before a verdict exists. Both are report and
-preflight code under `scripts/benchmarking/`. Neither touches the answer path.
+W6 and W7 are the only code in this plan before a verdict exists. W7 is preflight code
+under `scripts/benchmarking/`. W6 is mostly report code there too, but the endpoint capture
+it now owns is **producer-side**, in `src/bin/service_benchmark.py` beside the existing
+`corpus_before` read — the question endpoints exist only inside the run, and no script that
+starts after the container stops can observe them. Neither item touches the answer path:
+the capture reads document metadata and writes provenance, and nothing in either changes
+what the agent retrieves or says.
 
 ---
 
@@ -564,7 +579,14 @@ Do, in order:
    prepared diff in the final report and treat this step as complete.
 3. W6 — Two parts, test-first. (a) Capture url → extra_json->>'category' for every
    non-deleted document TWICE: immediately before the first scored question and immediately
-   after the last. Record both digests as category_map_sha256_start and
+   after the last. This is PRODUCER-side work in src/bin/service_benchmark.py, at
+   Benchmarker.run() where corpus_before is already read (:2199-2204) -- archive_run.sh runs
+   after the container has stopped and cannot see either endpoint. Sort by canonicalized url
+   and serialize canonically before hashing, as corpus_fingerprint already does
+   (src/utils/benchmark_provenance.py:309-318), and add an order-invariance test: Postgres
+   guarantees no row order, and hashing raw query output would void a valid sweep whenever
+   the two endpoints came back in different orders. Record both digests as
+   category_map_sha256_start and
    category_map_sha256_end, plus the corpus fingerprint, in the ledger entry, and write the
    snapshot CAPTURED AT THE FINAL ENDPOINT to category_map.json next to the artifact. Do not
    re-dump the map at archive time: corpus_fingerprint does not cover extra_json
