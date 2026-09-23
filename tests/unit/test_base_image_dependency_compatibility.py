@@ -303,10 +303,17 @@ def _joined_lines(text: str):
     package read as absent; and the separator branch of ``_PATH_OR_ARCHIVE_REQUIREMENT``
     read the same backslash as a path separator and reported the line. Joining first is
     the only reading that records the pin AND declines the false report.
+
+    pip's comment rule (``COMMENT_RE``, same as ``_COMMENT``): a whole-line comment never
+    opens a continuation buffer, even when it ends in ``\\``. Round 6 on 2026-09-22 found
+    the module opening a buffer for ``# comment \\`` and joining the archive requirement
+    after it onto the comment, hiding the archive from every reader.
     """
     buffered = ""
     for raw_line in text.splitlines():
-        if raw_line.endswith("\\"):
+        if raw_line.endswith("\\") and not _COMMENT.match(raw_line):
+            # pip rule: a whole-line comment (COMMENT_RE) never opens a buffer.
+            # Review finding 1, 2026-09-22.
             buffered += raw_line[:-1]
             continue
         yield buffered + raw_line
@@ -382,8 +389,63 @@ _COMMENT = re.compile(r"(^|\s+)#.*$")
 # ``numpy==2.0.0 --hash=sha256:...``. They qualify the requirement, never name it, so
 # they are cut away before matching. Round 5 on 2026-09-20: ``_PIN_PATTERN`` is anchored
 # at ``$``, so a hash left attached made an exactly-pinned protected package read as
-# absent and every pairwise guard skipped it.
-_PER_REQUIREMENT_OPTION = re.compile(r"\s+--\S+.*$")
+# absent and every pairwise guard skipped it. Round 7 on 2026-09-22: ``-C`` is the only
+# short form pip's ``SUPPORTED_OPTIONS_REQ`` carries (``--hash`` and
+# ``-C``/``--config-settings``, measured on pip 26.1.2); the pattern cut only ``--``
+# options, so ``-Cfoo=bar`` and ``-C foo=bar`` survived and the anchored
+# ``_PIN_PATTERN`` recorded no pin.
+#
+# A config setting is cut only when its value is ``KEY=VAL``, because that is the only
+# shape pip accepts: ``_handle_config_settings`` raises ``Arguments to -C must be of
+# the form KEY=VAL`` for ``-Cfoo``, ``-C foo``, ``--config-settings=foo`` and
+# ``--config-settings=`` alike (measured on pip 26.1.2). Review finding 2 of
+# 2026-09-22 (Codex): cutting ``-C`` plus one following character recorded an exact
+# pin from a line pip refuses, so the guard passed where the parent revision failed
+# closed and the image build was the first reader to object. The ``--`` branch keeps
+# the old breadth for every other long option (``--hash``) but hands
+# ``--config-settings`` to the KEY=VAL branch, which closes the same hole the long
+# spelling already had. A bare trailing ``-C`` carries no value and is likewise never
+# erased.
+#
+# The value is read the way pip reads it, not as raw text. ``get_line_parser`` runs
+# ``shlex.split`` over the option string before ``_handle_config_settings`` partitions
+# on ``=``, so quoted or backslash-escaped whitespace inside the KEY is legal:
+# ``-C "foo bar=baz"`` records the key ``foo bar`` (measured on pip 26.1.2). Round 3 of
+# 2026-09-22 (Codex, comment 4069783454): a raw ``[^\s=]*=`` key stopped at the space
+# inside the quotes, left the option attached, and reported an exactly pinned package
+# as unpinned — a false report on a line pip installs. A quoted value must therefore
+# carry the ``=`` INSIDE the quotes to be cut; ``-C "foo bar"`` still fails closed,
+# because pip rejects it.
+_CONFIG_SETTING_VALUE = (
+    r"(?:\"[^\"]*=[^\"]*\"|'[^']*=[^']*'|(?:[^\s='\"]|\\\s|\"[^\"=]*\"|'[^'=]*')*=)"
+)
+# The delimiter in front of the option is a literal space, not any whitespace.
+# ``break_args_options`` (``pip._internal.req.req_file``) runs ``line.split(" ")`` and
+# opens the option string at the first token that starts with ``-``, so a tab or a
+# no-break space before ``-C`` leaves the option inside the requirement and
+# ``install_req_from_line`` raises. Review round 4 of 2026-09-22 (Codex, comment
+# 4069945613): ``\s+`` cut the option away from ``vllm==0.9.0\t-Cfoo=bar``, the
+# anchored ``_PIN_PATTERN`` then recorded an exact pin, and every pairwise guard read
+# vllm as healthy on a file the image build refuses. Whitespace BEFORE that space stays
+# with the requirement, exactly as pip leaves it in ``args``, and ``_requirement_lines``
+# strips it. A doubled space is a run of spaces to pip too: the empty token it yields
+# names no option.
+#
+# The option NAME ends on ``=``, a space, a tab or the end of the line, and on nothing
+# else. ``break_args_options`` hands the whole option token to ``shlex.split`` (whose
+# whitespace is space, tab, CR and LF — and a logical line can hold neither CR nor LF),
+# and optparse then splits a long option on ``=``. So a no-break space after the name
+# stays INSIDE the name: pip looks up ``--config-settings\u00a0foo`` and
+# ``--hash\u00a0sha256:aa``, finds neither, and exits. Adversarial round 5 of
+# 2026-09-23: ``[=\s]`` and ``--\S+`` both stopped at that character and cut the
+# option away, so an exact pin was recorded from a line pip refuses. This is the
+# same class that 376b5867 had open.
+# The option VALUE is left alone: once the name has ended, a no-break space is ordinary
+# key text to ``_handle_config_settings``, which only partitions on ``=``.
+_PER_REQUIREMENT_OPTION = re.compile(
+    rf"[ ]+(?:(?:--config-settings[= \t]|-C)\s*{_CONFIG_SETTING_VALUE}"
+    rf"|--(?!config-settings\b)\S+(?=[ \t]|$)).*$"
+)
 
 # A ``${NAME}`` placeholder pip substitutes from the build environment before it reads
 # the line (``ENV_VAR_RE``: uppercase letters, digits and underscores only). Round 3 on
@@ -417,16 +479,55 @@ _ARCHIVE_SUFFIX = (
 # already passed, so whitespace alone decided the verdict. Round 2 added the optional
 # ``(``: the grammar also allows the specifier in parentheses, ``example.zip (==1.0)``,
 # which pip reads as the project ``example.zip``.
-_COMPARISON_AFTER_SUFFIX = r"\(?\s*(?:===|==|!=|~=|<=|>=|<|>)"
+# packaging's tokenizer accepts a space and a tab between tokens and nothing else
+# (``WS`` is ``[ \t]+`` in ``packaging._tokenizer``, measured on the copy pip 26.1.2
+# vendors). Round 4 of 2026-09-22 (Codex, comment 4069945622): the exemptions below
+# spelled their whitespace ``\s``, which also matches a no-break space, so
+# ``example.zip [a\u00a0,b] ==1.0`` — a line pip refuses, and one 376b5867 reported —
+# bought an exemption and reached the image build unreported.
+_WSP = r"[ \t]"
+_COMPARISON_AFTER_SUFFIX = rf"\(?{_WSP}*(?:===|==|!=|~=|<=|>=|<|>)"
 # An extras list attached to an archive: ``vllm-0.9.0-py3-none-any.whl[foo]``. pip
 # accepts it and resolves the wheel; round 2 found the guard reading the line as a
 # project named ``vllm-0-9-0-py3-none-any-whl``, so vllm read as absent and every
 # protected-vllm guard skipped — the silent-skip shape this change exists to close.
 _ATTACHED_EXTRAS = r"(?:\[[^\]]*\])?"
+# PEP 508's extras grammar, as packaging enforces it for pip:
+# ``'[' wsp* [ identifier (wsp* ',' wsp* identifier)* wsp* ] ']'``, with an identifier
+# starting on a letter or a digit. Measured on pip 26.1.2: ``[foo]``, ``[foo,bar]``,
+# ``[ foo , bar ]``, ``[]`` and ``[1foo]`` parse; ``[foo bar]`` ("Expected comma
+# between extra names"), ``[foo,]``, ``[,foo]`` and ``[-foo]`` raise.
+#
+# The LAST character is constrained as well as the first, because packaging's
+# IDENTIFIER token is ``\b[a-zA-Z0-9][a-zA-Z0-9._-]*\b`` (``packaging._tokenizer``,
+# measured on packaging as shipped with pip 26.1.2). The closing ``\b`` cannot sit
+# between two non-word characters, so ``[foo.]`` and ``[foo-]`` truncate to ``foo``
+# and raise ``Expected matching RIGHT_BRACKET``. Round 2 of 2026-09-22 (Codex
+# adversarial pass on 56baa86d) found both exempted here. The final class is
+# ``[A-Za-z0-9_]`` and NOT ``[A-Za-z0-9]``: ``_`` is a word character, so pip accepts
+# ``[foo_]``, and an alphanumeric-only rule would report a line pip installs.
+_EXTRA_NAME = r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?"
+_VALID_EXTRAS_LIST = (
+    rf"\[{_WSP}*(?:{_EXTRA_NAME}(?:{_WSP}*,{_WSP}*{_EXTRA_NAME})*{_WSP}*)?\]"
+)
+# ``example.zip [foo] ==1.0`` is the project ``example.zip[foo]`` with specifier
+# ``==1.0`` to pip (PEP 508 ``wsp* extras?`` allows whitespace before ``[``).
+# Review finding 2, 2026-09-22: ``_ATTACHED_EXTRAS`` required ``[`` to follow the
+# suffix immediately; a space before ``[foo]`` made it match empty, and ``\s`` then
+# matched that space — the comparison lookahead never fired. A second negative
+# lookahead now also blocks ``\s`` when a detached extras list leads to a comparison.
+# Review finding 3 of 2026-09-22 (Codex): that second lookahead first accepted any
+# bracket content, so ``example.zip [foo bar] ==1.0`` — which pip refuses — lost the
+# report the parent revision made. It reads ``_VALID_EXTRAS_LIST`` instead, so only a
+# list pip itself accepts suppresses the report.
+# The ``[^ \t\S]`` arm is whitespace OUTSIDE packaging's class — a no-break space and
+# its Unicode kin. It carries no lookahead because no exemption can apply: pip's parse
+# ends at that character whatever follows it, so the line is reported.
 _PATH_OR_ARCHIVE_REQUIREMENT = re.compile(
     rf"^(?:\.|[^;]*[\\/]"
     rf"|[^;]*{_ARCHIVE_SUFFIX}{_ATTACHED_EXTRAS}"
-    rf"(?:;|$|\s(?!\s*{_COMPARISON_AFTER_SUFFIX})))",
+    rf"(?:;|$|[^ \t\S]|{_WSP}(?!{_WSP}*{_COMPARISON_AFTER_SUFFIX})"
+    rf"(?!{_WSP}*{_VALID_EXTRAS_LIST}{_WSP}*{_COMPARISON_AFTER_SUFFIX})))",
     re.IGNORECASE,
 )
 
@@ -584,13 +685,25 @@ def _conditional_protected(text: str) -> dict:
     An empty mapping is the healthy answer. ``_requirement_lines`` cuts a line at
     ``;`` so the guards never see the marker, which means a line pip may skip on this
     image reads here as an unconditional pin.
+
+    Physical lines are joined first (pip rule: ``join_lines``), so a marker on the
+    continuation of a backslash-joined line is still detected.
+    Review finding 3, 2026-09-22.
+
+    The per-requirement options are then cut away, because pip reads the marker only
+    from the requirement half. Its ``break_args_options`` splits the logical line at
+    the first token beginning with ``-``, so a semicolon inside an option value —
+    ``--config-settings=foo=bar;baz`` — is part of that value and never a marker.
+    Review finding 1 of 2026-09-22 (Codex): partitioning the whole line on ``;``
+    read that value as a marker and rejected a valid unconditional pin.
     """
     conditional = {}
-    for raw_line in text.splitlines():
+    for raw_line in _joined_lines(text):
         line = raw_line.strip()
         if not line or line.startswith("#") or line.startswith("-"):
             continue
         line = line.split("#", 1)[0].strip()
+        line = _PER_REQUIREMENT_OPTION.sub("", line).strip()
         requirement, separator, marker = line.partition(";")
         if not separator:
             continue
@@ -1434,6 +1547,61 @@ class TestProtectedPinsAreUnconditional:
             f"environment before relaxing this."
         )
 
+    def test_a_continued_environment_marker_is_reported(self):
+        """A marker split onto the next physical line via backslash-continuation must
+        still be detected.
+
+        pip joins ``vllm==0.9.0 \\`` and ``; python_version < "3.11"`` into one
+        logical line before evaluating the marker. Measured: pip 26.1.2's ``join_lines``
+        yields a single requirement string containing the semicolon-separated marker.
+        ``_conditional_protected`` iterating ``text.splitlines()`` instead sees only
+        the first physical half, finds no ``;``, and returns ``{}`` — hiding the
+        conditional pin. Review finding 3, 2026-09-22.
+        """
+        text = 'vllm==0.9.0 \\\n; python_version < "3.11"\n'
+        assert _conditional_protected(text) == {"vllm": 'python_version < "3.11"'}
+        assert _parse_pins(text) == {"vllm": "0.9.0"}
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==0.9.0 --config-settings=foo=bar;baz\n",
+            "vllm==0.9.0 \\\n    --config-settings=foo=bar;baz\n",
+            "vllm==0.9.0 -Cfoo=bar;baz\n",
+            'vllm==0.9.0 --hash=sha256:aa ; python_version < "3.11"\n',
+        ],
+    )
+    def test_a_semicolon_inside_a_per_requirement_option_is_not_a_marker(self, text):
+        """pip separates the options from the requirement BEFORE it reads the marker.
+
+        Measured at 5380d135, pip 26.1.2: ``break_args_options`` cuts the line at the
+        first token beginning with ``-``, so
+        ``vllm==0.9.0 --config-settings=foo=bar;baz`` parses as the requirement
+        ``vllm==0.9.0`` with NO marker and the config setting ``foo`` = ``bar;baz``.
+        The same split sends the trailing ``; python_version < "3.11"`` of the last
+        spelling into the option string, where it is not a marker either
+        (``install_req_from_line`` reports ``markers=None`` for all four).
+
+        Review finding 1 of 2026-09-22 (Codex, comment 4069452136):
+        ``_conditional_protected`` partitioned the whole logical line on ``;``, so the
+        option value's own semicolon read as an environment marker and the guard
+        rejected a valid unconditional pin. Options are cut away first.
+        """
+        assert _conditional_protected(text) == {}
+        assert _parse_pins(text) == {"vllm": "0.9.0"}
+
+    def test_a_marker_in_front_of_an_option_is_still_reported(self):
+        """Cutting the options must not cut a marker that precedes them.
+
+        Measured at 5380d135, pip 26.1.2: for
+        ``vllm==0.9.0 ; python_version < "3.11" --hash=sha256:aa`` the requirement
+        half keeps the marker (``markers=python_version < "3.11"``), so the guard must
+        still report the conditional pin — and report the marker alone, without the
+        option text trailing it.
+        """
+        text = 'vllm==0.9.0 ; python_version < "3.11" --hash=sha256:aa\n'
+        assert _conditional_protected(text) == {"vllm": 'python_version < "3.11"'}
+
 
 class TestProtectedPackagesAreDeclaredOnce:
     """A protected package must be declared once, in one place.
@@ -1702,6 +1870,154 @@ class TestOpaqueRequirementsFailClosed:
             f"separates it from the compact spelling, which is already accepted."
         )
 
+    def test_a_detached_extras_list_before_a_comparison_is_not_an_archive(self):
+        """``example.zip [foo] ==1.0`` is a named requirement with extras to pip.
+
+        Measured at 376b5867, pip 26.1.2: ``install_req_from_line("example.zip [foo] ==1.0")``
+        returns ``name='example-zip', extras=frozenset({'foo'}), specifier=SpecifierSet('==1.0')``.
+        PEP 508 grammar allows ``wsp*`` between the name and the extras list, so the
+        space before ``[foo]`` does not make the line an archive path.
+        Review finding 2, 2026-09-22: ``_ATTACHED_EXTRAS`` required ``[`` to follow the
+        suffix immediately; with a space before ``[foo]``, it matched empty and
+        ``\\s`` matched that space — the comparison lookahead never fired.
+        """
+        # A detached extras list followed by a comparison is not an archive.
+        assert _opaque_requirements("example.zip [foo] ==1.0\n") == [], (
+            "example.zip [foo] ==1.0 is a named requirement to pip; detached extras "
+            "before a comparison must not make the line opaque"
+        )
+        assert (
+            _opaque_requirements("example.tar [foo] (>=1)\n") == []
+        ), "parenthesised specifier after detached extras applies the same rule"
+        # A detached extras list with no following comparison is still opaque.
+        assert _opaque_requirements(
+            "example.zip [foo]\n"
+        ), "example.zip [foo] has no specifier; the archive suffix still makes it opaque"
+        assert _opaque_requirements(
+            "example.zip\n"
+        ), "a bare archive with no extras is still opaque"
+
+    @pytest.mark.parametrize(
+        "extras",
+        [
+            "[foo bar]",
+            "[foo,]",
+            "[,foo]",
+            "[-foo]",
+            "[foo.]",
+            "[foo-]",
+            "[foo,bar.]",
+            "[foo., bar]",
+        ],
+    )
+    def test_a_malformed_detached_extras_list_stays_opaque(self, extras):
+        """A detached extras list pip refuses must not buy the line an exemption.
+
+        Measured at 5380d135, pip 26.1.2: ``install_req_from_line`` raises
+        ``InvalidRequirement`` for each list below — ``[foo bar]`` wants a comma,
+        ``[foo,]`` and ``[,foo]`` want an extra name, ``[-foo]`` wants an identifier —
+        so the image build refuses the requirements file.
+
+        Round 2 of 2026-09-22 (Codex adversarial pass on 56baa86d) added the trailing
+        forms. ``[foo.]`` and ``[foo-]`` raise ``Expected matching RIGHT_BRACKET``:
+        packaging's IDENTIFIER token is ``\b[a-zA-Z0-9][a-zA-Z0-9._-]*\b``, and the
+        closing ``\b`` cannot sit between ``.`` and ``]`` — two non-word characters —
+        so the token stops at ``foo`` and the bracket never closes.
+
+        Review finding 3 of 2026-09-22 (Codex, comment 4069452153): the lookahead
+        added for the detached spelling accepted any bracket content, so
+        ``example.zip [foo bar] ==1.0`` read as a named requirement and the guard
+        stopped reporting a line the parent revision reported. The lookahead now reads
+        pip's extras grammar, so only a list pip accepts suppresses the report.
+        """
+        line = f"example.zip {extras} ==1.0"
+        assert _opaque_requirements(line + "\n") == [line], (
+            f"pip rejects {line!r}; a detached extras list it refuses must leave the "
+            f"line opaque rather than exempt it"
+        )
+
+    @pytest.mark.parametrize(
+        "extras",
+        [
+            "[foo]",
+            "[foo,bar]",
+            "[ foo , bar ]",
+            "[]",
+            "[ ]",
+            "[foo.bar_1]",
+            "[foo_]",
+            "[foo..bar]",
+            "[foo--bar]",
+            "[a.b-c_d]",
+        ],
+    )
+    def test_every_detached_extras_list_pip_accepts_keeps_its_exemption(self, extras):
+        """Reading pip's grammar must not turn a valid extras list into a report.
+
+        Measured at 5380d135, pip 26.1.2: every list below parses — PEP 508 allows
+        whitespace inside the brackets and an empty list, and ``.`` ``-`` ``_`` inside
+        an extra name. Narrowing the lookahead must keep all of them exempt.
+
+        ``[foo_]`` is the case that decides the shape of the fix, and it is why the
+        rule is NOT "an extra name ends on an alphanumeric character". Measured at
+        56baa86d: pip ACCEPTS ``example.zip [foo_] ==1.0`` while it rejects
+        ``[foo.]`` and ``[foo-]``, because ``_`` is a word character and packaging's
+        IDENTIFIER token ends on ``\b``. A rule keyed on alphanumerics would report a
+        line pip installs. ``[foo..bar]`` and ``[foo--bar]`` parse too: only the
+        FIRST and LAST characters are constrained.
+        """
+        assert _opaque_requirements(f"example.zip {extras} ==1.0\n") == []
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "example.zip [a\u00a0,b] ==1.0",
+            "example.zip [\u00a0foo] ==1.0",
+            "example.zip [foo\u00a0] ==1.0",
+            "example.zip\u00a0[foo] ==1.0",
+            "example.zip [foo]\u00a0==1.0",
+        ],
+    )
+    def test_whitespace_pip_refuses_leaves_a_detached_extras_line_opaque(self, line):
+        """Only a space or a tab separates the tokens of a requirement pip accepts.
+
+        packaging's tokenizer reads whitespace with ``[ \\t]+`` (``WS`` in
+        ``packaging._tokenizer``, measured on the copy pip 26.1.2 vendors), so a
+        no-break space (U+00A0) between two tokens ends the parse. Measured at
+        966411f4, pip 26.1.2: ``install_req_from_line`` raises for every line above,
+        and the parent revision at 376b5867 reported all five as opaque.
+
+        Review round 4 of 2026-09-22 (Codex, comment 4069945622): the detached-extras
+        exemption spelled its whitespace ``\\s``, which matches every Unicode space, so
+        each line bought an exemption pip itself refuses and the image build became
+        the first reader to object.
+        """
+        assert _opaque_requirements(line + "\n") == [line], (
+            f"pip rejects {line!r}; whitespace outside packaging's [ \\t] class must "
+            f"leave the line opaque rather than exempt it"
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "example.zip\t[foo]\t==1.0",
+            "example.zip [a\t,b] ==1.0",
+            "example.zip\t[ foo , bar ]\t(==1.0)",
+        ],
+    )
+    def test_a_tab_around_a_detached_extras_list_keeps_the_exemption(self, line):
+        """A tab is in packaging's whitespace class, so narrowing must keep it.
+
+        Measured at 966411f4, pip 26.1.2: each line above parses as the project
+        ``example.zip`` with its extras and its specifier. Reading the whitespace as
+        ``[ \\t]`` rather than ``\\s`` must not turn a tab-separated line pip installs
+        into a report.
+        """
+        assert _opaque_requirements(line + "\n") == [], (
+            f"pip accepts {line!r}; a tab is packaging's whitespace, so the detached "
+            f"extras exemption must still apply"
+        )
+
     @pytest.mark.parametrize("line", ["example.tbz2==1.0", "vllm-0.9.0.tbz2"])
     def test_a_suffix_pip_does_not_accept_is_not_read_as_an_archive(self, line):
         """``.tbz2`` is not in pip's ``ARCHIVE_EXTENSIONS``; ``.tbz`` is.
@@ -1837,6 +2153,34 @@ class TestOpaqueRequirementsFailClosed:
             "torch==2.7.0\nvllm @ \\\n    ../pkgs/vllm\n"
         ), "joining must not launder a local path into a readable requirement"
 
+    def test_a_comment_line_ending_in_backslash_does_not_continue(self):
+        """A whole-line comment never opens a continuation buffer, even when it ends in ``\\``.
+
+        pip's rule (``COMMENT_RE``, same as ``_COMMENT``): ``COMMENT_RE.match(line)``
+        prevents a line from opening a buffer regardless of the trailing ``\\``.
+        Measured at 376b5867, pip 26.1.2: ``join_lines`` output for ``"# comment \\\\"``
+        followed by ``"vllm-0.9.0-py3-none-any.whl"`` is two separate logical lines —
+        ``[(1, ' # comment \\\\'), (2, 'vllm-0.9.0-py3-none-any.whl')]`` — not one
+        joined line. Review finding 1, 2026-09-22.
+        """
+        # A whole-line comment ending in backslash must not hide the archive after it.
+        assert _opaque_requirements("# comment \\\nvllm-0.9.0-py3-none-any.whl\n") == [
+            "vllm-0.9.0-py3-none-any.whl"
+        ]
+        # Indented spelling (still matches COMMENT_RE.match via the \\s+ branch).
+        assert _opaque_requirements(
+            "   # comment \\\nvllm-0.9.0-py3-none-any.whl\n"
+        ) == ["vllm-0.9.0-py3-none-any.whl"]
+        # Bare-hash spelling.
+        assert _opaque_requirements("#\\\nvllm-0.9.0-py3-none-any.whl\n") == [
+            "vllm-0.9.0-py3-none-any.whl"
+        ]
+        # An INLINE comment ending in backslash still continues: the line
+        # ``vllm==0.9.0  # note \\`` does not match COMMENT_RE.match (starts with 'v'),
+        # so the buffer stays open and numpy joins it. Measured: pip yields one logical
+        # line ``vllm==0.9.0  # note numpy==2.0.0``; _COMMENT.sub strips the tail.
+        assert _parse_pins("vllm==0.9.0  # note \\\nnumpy==2.0.0\n")["vllm"] == "0.9.0"
+
     def test_whitespace_may_separate_a_name_from_its_extras(self):
         """PEP 508 allows ``wsp*`` between the name and the extras list.
 
@@ -1898,3 +2242,185 @@ class TestCompactOptionFormsAreRecognized:
     )
     def test_an_inert_option_is_not_reported(self, line):
         assert _requirement_bearing_directives(line) == []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==0.9.0 -Cfoo=bar",
+            "vllm==0.9.0 -C foo=bar",
+            "vllm==0.9.0 \\\n    -Cfoo=bar\n",
+            "vllm==0.9.0 --config-settings=foo=bar",
+        ],
+    )
+    def test_config_settings_short_option_is_cut_from_pin(self, text):
+        """pip 26.1.2 SUPPORTED_OPTIONS_REQ carries exactly --hash and
+        -C/--config-settings; measured, -C is its only short per-requirement option.
+
+        Round 7 on 2026-09-22: _PER_REQUIREMENT_OPTION matched only long (``--``)
+        options, so ``-Cfoo=bar`` and ``-C foo=bar`` survived into the line both
+        readers matched. ``_parse_pins`` recorded nothing (the anchored _PIN_PATTERN
+        failed at ``$``); ``_unpinned_protected`` reported vllm as unguarded.
+        """
+        assert _unpinned_protected(text) == {}
+        assert _parse_pins(text) == {"vllm": "0.9.0"}
+
+    def test_bare_trailing_config_settings_flag_is_not_cut(self):
+        """A bare ``-C`` with no value character is not silently dropped.
+
+        pip requires a value after ``-C``, so a naked ``-C`` at end of line is not a
+        valid per-requirement option and must not be erased by the pattern.
+        """
+        assert list(_requirement_lines("vllm==0.9.0 -C")) == ["vllm==0.9.0 -C"]
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==0.9.0 -Cfoo",
+            "vllm==0.9.0 -C foo",
+            "vllm==0.9.0 -C foo bar=baz",
+            "vllm==0.9.0 --config-settings=foo",
+            "vllm==0.9.0 --config-settings foo",
+            "vllm==0.9.0 --config-settings=",
+            'vllm==0.9.0 -C "foo bar"',
+        ],
+    )
+    def test_a_config_settings_value_that_is_not_key_equals_val_fails_closed(
+        self, text
+    ):
+        """pip rejects a config setting whose value carries no ``=``; so does the guard.
+
+        Measured at 5380d135, pip 26.1.2: ``_handle_config_settings`` raises
+        ``Arguments to -C must be of the form KEY=VAL`` for every line above, so the
+        image build refuses the requirements file.
+
+        Review finding 2 of 2026-09-22 (Codex, comment 4069452147): the pattern erased
+        ``-C`` plus any single following character, so ``-Cfoo`` was cut away, an exact
+        vllm pin was recorded and the guard reported nothing — the parent revision
+        failed closed on the same line. The long spellings carried the same hole,
+        which ``--\\S+`` had opened before this change. The value must contain ``=``
+        before the option is cut.
+        """
+        assert _parse_pins(text) == {}
+        assert "vllm" in _unpinned_protected(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==0.9.0 -C=",
+            "vllm==0.9.0 -Cfoo=",
+            "vllm==0.9.0 -C foo=bar=baz",
+            "vllm==0.9.0 --config-settings foo=bar",
+            'vllm==0.9.0 -C "foo bar=baz"',
+            "vllm==0.9.0 -C 'foo bar=baz'",
+            "vllm==0.9.0 -C foo\\ bar=baz",
+            'vllm==0.9.0 --config-settings "foo bar=baz"',
+        ],
+    )
+    def test_every_config_settings_value_pip_accepts_is_still_cut(self, text):
+        """The KEY=VAL rule must not turn a valid spelling into a false report.
+
+        Measured at 5380d135, pip 26.1.2: each line above parses, because the value
+        after the flag contains an ``=`` (``-C=`` records the empty key). Narrowing the
+        pattern must keep cutting all four, or the guard reports a pinned package as
+        unpinned.
+        """
+        assert _parse_pins(text) == {"vllm": "0.9.0"}
+        assert _unpinned_protected(text) == {}
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==0.9.0\t-Cfoo=bar",
+            "vllm==0.9.0\u00a0-Cfoo=bar",
+            "vllm==0.9.0\t--hash=sha256:aa",
+            "vllm==0.9.0\t--config-settings=foo=bar",
+            "vllm==0.9.0 \t--hash=sha256:aa",
+        ],
+    )
+    def test_an_option_not_preceded_by_a_space_fails_closed(self, text):
+        """pip breaks a line into requirement and options on literal spaces only.
+
+        ``break_args_options`` (``pip._internal.req.req_file``, pip 26.1.2) runs
+        ``line.split(" ")`` and treats a token as an option only when that token
+        starts with ``-``. A tab or a no-break space before ``-C`` therefore keeps the
+        option inside the requirement, and ``install_req_from_line`` raises on every
+        line above — the image build refuses the file.
+
+        Review round 4 of 2026-09-22 (Codex, comment 4069945613): the pattern opened
+        on ``\\s+``, so it cut the option away, ``_parse_pins`` recorded an exact pin
+        from a line pip rejects and every pairwise guard read vllm as healthy. For the
+        ``-C`` arm that is a regression against 376b5867, which matched no short
+        option at all and failed closed.
+        """
+        assert _parse_pins(text) == {}
+        assert "vllm" in _unpinned_protected(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==0.9.0\t -Cfoo=bar",
+            "vllm==0.9.0\t --hash=sha256:aa",
+            "vllm==0.9.0  --hash=sha256:aa",
+        ],
+    )
+    def test_an_option_preceded_by_a_space_is_still_cut(self, text):
+        """Whitespace before the space stays with the requirement, as pip leaves it.
+
+        Measured at 966411f4, pip 26.1.2: each line above parses. ``break_args_options``
+        splits on the space, so ``vllm==0.9.0\\t`` is the requirement — packaging skips
+        the trailing tab — and the option is parsed separately. An empty token from a
+        doubled space names no option either. Narrowing the delimiter to a space must
+        keep cutting all three, or the guard reports a pinned package as unpinned.
+        """
+        assert _parse_pins(text) == {"vllm": "0.9.0"}
+        assert _unpinned_protected(text) == {}
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==0.9.0 --config-settings\u00a0foo=bar",
+            "vllm==0.9.0 --hash\u00a0sha256:aa",
+        ],
+    )
+    def test_an_option_name_a_no_break_space_ends_fails_closed(self, text):
+        """A long option is recognised only when its name ends the token or hits ``=``.
+
+        ``break_args_options`` hands the whole option token to ``shlex.split``, whose
+        whitespace is space, tab, CR and LF, and optparse then splits a long option on
+        ``=``. A no-break space is none of those, so it stays inside the option NAME:
+        pip 26.1.2 looks up ``--config-settings\\u00a0foo`` and ``--hash\\u00a0sha256:aa``,
+        finds neither, and exits with "no such option".
+
+        Adversarial round 5 of 2026-09-23: the separator class was ``[=\\s]`` and the
+        long-option arm was ``--\\S+``, both of which stopped at the no-break space and
+        cut the option away, so an exact pin was recorded from a line pip refuses. Both
+        rows are pre-existing at 376b5867 rather than regressions, but they are the
+        same whitespace-class question 377dcc3e answered for the delimiter.
+        """
+        assert _parse_pins(text) == {}
+        assert "vllm" in _unpinned_protected(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==0.9.0 --config-settings\tfoo=bar",
+            "vllm==0.9.0 --config-settings  foo=bar",
+            "vllm==0.9.0 --config-settings \u00a0foo=bar",
+            "vllm==0.9.0 --config-settings=\u00a0foo=bar",
+            "vllm==0.9.0 -C\u00a0foo=bar",
+            "vllm==0.9.0 -C  foo=bar",
+            "vllm==0.9.0 --hash\tsha256:aa",
+        ],
+    )
+    def test_a_no_break_space_inside_an_option_value_is_still_cut(self, text):
+        """Once the option name has ended, a no-break space is ordinary value text.
+
+        Measured at 377dcc3e, pip 26.1.2: every line above parses. ``shlex`` ends the
+        name at the space or tab, and ``_handle_config_settings`` then partitions the
+        value on ``=`` without caring what the key contains — ``-C\\u00a0foo=bar``
+        records the key ``\\u00a0foo``. The short form carries no separator at all, so
+        its value starts immediately after ``-C``. Narrowing the NAME boundary must not
+        narrow the value, or the guard reports a pinned package as unpinned.
+        """
+        assert _parse_pins(text) == {"vllm": "0.9.0"}
+        assert _unpinned_protected(text) == {}
