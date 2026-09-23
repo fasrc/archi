@@ -334,12 +334,23 @@ corpus is re-ingested, without any change to the scored answers. So:
   (`service_benchmark.py:970-989`) and `fm_require_pinned_corpus`
   (`feature_matrix/lib.sh`) — so redefining it would make every archived artifact
   incomparable with every new one and would fail the campaign's own pinned-corpus checks.
-- **Read only a matching snapshot.** The slice reads the snapshot whose fingerprint equals
-  the artifact's **and** whose two endpoint digests equal each other. A missing snapshot, a
-  fingerprint mismatch, or a start-to-end digest change means **no slice** for that run, and
-  the report names which of the three failed. A metadata change during scoring is therefore
-  a loud refusal rather than a reproducible-looking table — the same shape Procedure E uses
-  for config divergence.
+- **Read only a matching snapshot.** Three conditions, all required: the snapshot's corpus
+  fingerprint equals the artifact's; the two endpoint digests equal each other; and
+  `sha256(category_map.json)` equals `category_map_sha256_end`. Any one of the three
+  failing, or the snapshot being absent, means **no slice** for that run, and the report
+  names which one failed.
+
+  The third condition is what binds the file to the run, and it is not redundant with the
+  other two. `corpus_fingerprint` hashes only `size_bytes`, `md5(chunk_text)` and parent
+  text (`CORPUS_STATE_QUERY`, `src/bin/service_benchmark.py:106-129`); `extra_json` is not
+  in it, so a metadata-only edit leaves the fingerprint unchanged. A category edit landing
+  **after the final question but before the archive dump** would therefore keep
+  `start == end` — both endpoint digests were taken during the run — and keep the
+  fingerprint equal, and a freshly dumped snapshot would clear every check while describing
+  a map that was never in force during scoring. **The archive persists the snapshot captured
+  at the final endpoint; it does not re-dump the map at archive time.** With that, a
+  metadata change during *or after* scoring is a loud refusal rather than a
+  reproducible-looking table — the same shape Procedure E uses for config divergence.
 - **One question, one category** (decided 2026-09-22,
   [#525](https://github.com/fasrc/archi/issues/525)). A bank row may declare several source
   URLs that resolve to different categories. `source_hits` already treats such a row as
@@ -362,8 +373,15 @@ corpus is re-ingested, without any change to the scored answers. So:
 - **URL canonicalization:** both sides, as PR [#106](https://github.com/fasrc/archi/pull/106)
   did for trailing slashes. Report unresolved gold sources. Do not drop them.
 - **Output:** per category — gold rows, distinct gold articles, source accuracy, item pass
-  rate, blowouts. Any category with fewer than **3 distinct gold articles** is reported as
-  **underpowered** and carries no verdict.
+  rate, blowouts. **Power is judged per metric, on the rows that metric actually uses.**
+  Cross-category rows count toward coverage but are excluded from source accuracy, so a
+  category can hold three distinct gold articles and still have an empty accuracy
+  denominator — every one of its articles reachable only through rows the accuracy figure
+  drops. Report **two** counts per category: distinct gold articles overall, and distinct
+  gold articles represented by **accuracy-eligible** (single-category) rows. A category with
+  fewer than **3 distinct gold articles among a metric's own eligible rows** is
+  **underpowered for that metric** and carries no verdict for it, even when another metric
+  on the same category is powered.
 - **First use is the rung-0 sweep, not the archive.** The `fm-00` and `fm-03` stacks are
   gone (`docker ps`, 2026-09-19), so no snapshot with a matching fingerprint can be taken
   for the arm-00 and arm-03 artifacts. A slice of those runs against the 841-document
@@ -471,7 +489,7 @@ test so they run the same way every time.
 | W3 | Archive `measure-category-boost-ceiling` as shelved | chore | fasrc/archi | D6 |
 | W4 | `categorization.enabled: false` in dev.yaml, ragas.yaml, host config; template comment + docs; redeploy; record ingest time | config + docs + deploy | both repos, FASRC host | D1 |
 | W5 | File the `evidence-trial` tracking issue with the Phase 1 pre-registration | tracker | fasrc/archi | D3 |
-| W6 | Category snapshot at archive time + fingerprint-matched per-category slice in `scripts/benchmarking/compare_runs.py` (§6.1); plus the paired exact (McNemar) test on per-question source hits and on per-question ok/not-ok, ported from `archi-bench-out`'s `mcnemar_exact`; with tests | code | fasrc/archi `scripts/benchmarking/` | — |
+| W6 | **Endpoint-bound** category snapshot + per-category slice in `scripts/benchmarking/compare_runs.py` (§6.1), carrying all three §6.1 decisions: record `category_map_sha256_start`, `category_map_sha256_end` and the corpus fingerprint, and persist the snapshot **captured at the final endpoint**; the slice refuses unless the fingerprint matches, the two endpoint digests are equal, **and** `sha256(category_map.json)` equals the end digest; attribute each row to **one** category by its first declared source, report cross-category rows on their own line and exclude them from per-category accuracy; judge power per metric on that metric's eligible rows. Plus the paired exact (McNemar) test on per-question source hits and on per-question ok/not-ok, ported from `archi-bench-out`'s `mcnemar_exact`. With tests, including one bank row whose two sources fall in different categories | code | fasrc/archi `scripts/benchmarking/` | — |
 | W7 | Preflight census script (§6.2, all three censuses), with tests; run the bank-coverage census and post the table; plus one unit test that pins `_build_extra_text` and the `search_metadata` substring fallback r0a depends on; plus an r0b exemplar-disjointness check — every r0b exemplar question and its cited URLs absent from `benchmarking/fasrc_ragas_queries.json` and from the anchor set — with its result recorded on the arm | code | fasrc/archi `scripts/benchmarking/`, `tests/unit/` | — |
 | W8 | Run the rung-0 sweep. **Replicate one** deploys with `archi evaluate --config-dir`; **replicate two uses W6's benchmark-only rerun** with a corpus-fingerprint check before and after, never a second `archi evaluate` — a second invocation refuses on the existing deployment, and with `--force` it recreates the stack and the new data-manager re-ingests, which moves the corpus (`src/cli/cli_main.py:850`, `:906-931`). One `archi eval qa` pass per arm per replicate (6 + 6 runs, ≈ +6–9 h), joined with `compare_runs.py --qa-run LABEL=RUN_DIR`. **Verify each QA run belongs to its arm** before joining: `parse_qa_run_specs` only checks that the label exists and `load_qa_run` discards the recorded `agent_spec_sha256`, so a swapped or stale directory can supply another prompt's pass result and flip the `should_refuse` path in G8 — compare each run's recorded agent-spec digest against that arm's prompt digest. **Pass the two same-stack control arms as noise replicates** (artifact `@N` selectors) so G8 has a measured floor. **Pass `--baseline <control-label>` on every comparison and check it in the output.** With no `--baseline` the tool takes the artifact's first arm (`compare_runs.py:2345-2346`), and `archi evaluate --config-dir` collects configs through an **unsorted** `Path.iterdir()` (`src/cli/cli_main.py:792`), so the control would be chosen by filesystem order and every paired delta, G8 result and verdict could be computed against a treatment. **Prepare the gold atoms once and run every arm against that one snapshot.** The converted bank supplies references rather than `expected_atoms`, so each `archi eval qa` invocation re-extracts atoms with the extractor model (`src/evaluation/qa/preparation.py:305-320`) and `compare_runs.py` pairs by item id without checking that the atoms match — separate preparations would compare different grading obligations rather than the prompts. Post verdicts with the void-check record; without the QA runs `qa_block` returns nothing (`compare_runs.py:1625-1626`) | measurement | claw or FASRC host | W2, W4, W5, W6, W7 |
 | W9 | Phase 2 decision recorded on the tracking issue | tracker | fasrc/archi | W8 |
@@ -544,14 +562,25 @@ Do, in order:
    (shelved, banner kept) as a docs-only PR to dev, but do NOT apply it or open the PR
    without a recorded D6 decision. D6 is a human gate: with no decision recorded, leave the
    prepared diff in the final report and treat this step as complete.
-3. W6 — Two parts, test-first. (a) At archive time, dump url → extra_json->>'category' for
-   every non-deleted document to category_map.json next to the artifact and record its sha256
-   and the corpus fingerprint in the ledger entry. (b) Add a derived category slice to
-   scripts/benchmarking/compare_runs.py at the SLICE_FIELDS seam that reads ONLY a snapshot
-   whose fingerprint matches the artifact; report per category the gold rows, distinct gold
-   articles, source accuracy, item pass rate, and blowouts; mark categories with fewer than 3
-   distinct gold articles as underpowered; canonicalize URLs on both sides; report unresolved
-   sources; with no matching snapshot, print "no slice" and say why. (c) Port the paired exact
+3. W6 — Two parts, test-first. (a) Capture url → extra_json->>'category' for every
+   non-deleted document TWICE: immediately before the first scored question and immediately
+   after the last. Record both digests as category_map_sha256_start and
+   category_map_sha256_end, plus the corpus fingerprint, in the ledger entry, and write the
+   snapshot CAPTURED AT THE FINAL ENDPOINT to category_map.json next to the artifact. Do not
+   re-dump the map at archive time: corpus_fingerprint does not cover extra_json
+   (CORPUS_STATE_QUERY, src/bin/service_benchmark.py:106-129), so a fresh dump would hide a
+   metadata edit made after the last question. (b) Add a derived category slice to
+   scripts/benchmarking/compare_runs.py at the SLICE_FIELDS seam. It reads a snapshot ONLY
+   when all three hold: the fingerprint matches the artifact, the two endpoint digests are
+   equal, and sha256(category_map.json) equals the end digest; otherwise print "no slice"
+   and name which condition failed. Attribute each bank row to exactly ONE category by its
+   first declared source after canonicalization; report rows whose sources span categories
+   on their own line, count them toward coverage, and exclude them from per-category source
+   accuracy. Report per category the gold rows, distinct gold articles, distinct gold
+   articles on accuracy-eligible rows, source accuracy, item pass rate, and blowouts. Mark a
+   category underpowered FOR A GIVEN METRIC when that metric's own eligible rows carry fewer
+   than 3 distinct gold articles. Canonicalize URLs on both sides; report unresolved sources.
+   Test with a bank row whose two sources fall in different categories. (c) Port the paired exact
    (McNemar) test from archi-bench-out's mcnemar_exact and apply it to per-question source hits
    and to per-question ok/not-ok, with tests: without it W8 cannot produce either primary
    verdict and the sweep is undecidable. Do not run it against the
