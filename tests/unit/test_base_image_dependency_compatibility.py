@@ -430,9 +430,21 @@ _CONFIG_SETTING_VALUE = (
 # with the requirement, exactly as pip leaves it in ``args``, and ``_requirement_lines``
 # strips it. A doubled space is a run of spaces to pip too: the empty token it yields
 # names no option.
+#
+# The option NAME ends on ``=``, a space, a tab or the end of the line, and on nothing
+# else. ``break_args_options`` hands the whole option token to ``shlex.split`` (whose
+# whitespace is space, tab, CR and LF — and a logical line can hold neither CR nor LF),
+# and optparse then splits a long option on ``=``. So a no-break space after the name
+# stays INSIDE the name: pip looks up ``--config-settings\u00a0foo`` and
+# ``--hash\u00a0sha256:aa``, finds neither, and exits. Adversarial round 5 of
+# 2026-09-23: ``[=\s]`` and ``--\S+`` both stopped at that character and cut the
+# option away, so an exact pin was recorded from a line pip refuses. This is the
+# same class that 376b5867 had open.
+# The option VALUE is left alone: once the name has ended, a no-break space is ordinary
+# key text to ``_handle_config_settings``, which only partitions on ``=``.
 _PER_REQUIREMENT_OPTION = re.compile(
-    rf"[ ]+(?:(?:--config-settings[=\s]|-C)\s*{_CONFIG_SETTING_VALUE}"
-    rf"|--(?!config-settings\b)\S+).*$"
+    rf"[ ]+(?:(?:--config-settings[= \t]|-C)\s*{_CONFIG_SETTING_VALUE}"
+    rf"|--(?!config-settings\b)\S+(?=[ \t]|$)).*$"
 )
 
 # A ``${NAME}`` placeholder pip substitutes from the build environment before it reads
@@ -2359,6 +2371,56 @@ class TestCompactOptionFormsAreRecognized:
         the trailing tab — and the option is parsed separately. An empty token from a
         doubled space names no option either. Narrowing the delimiter to a space must
         keep cutting all three, or the guard reports a pinned package as unpinned.
+        """
+        assert _parse_pins(text) == {"vllm": "0.9.0"}
+        assert _unpinned_protected(text) == {}
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==0.9.0 --config-settings\u00a0foo=bar",
+            "vllm==0.9.0 --hash\u00a0sha256:aa",
+        ],
+    )
+    def test_an_option_name_a_no_break_space_ends_fails_closed(self, text):
+        """A long option is recognised only when its name ends the token or hits ``=``.
+
+        ``break_args_options`` hands the whole option token to ``shlex.split``, whose
+        whitespace is space, tab, CR and LF, and optparse then splits a long option on
+        ``=``. A no-break space is none of those, so it stays inside the option NAME:
+        pip 26.1.2 looks up ``--config-settings\\u00a0foo`` and ``--hash\\u00a0sha256:aa``,
+        finds neither, and exits with "no such option".
+
+        Adversarial round 5 of 2026-09-23: the separator class was ``[=\\s]`` and the
+        long-option arm was ``--\\S+``, both of which stopped at the no-break space and
+        cut the option away, so an exact pin was recorded from a line pip refuses. Both
+        rows are pre-existing at 376b5867 rather than regressions, but they are the
+        same whitespace-class question 377dcc3e answered for the delimiter.
+        """
+        assert _parse_pins(text) == {}
+        assert "vllm" in _unpinned_protected(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==0.9.0 --config-settings\tfoo=bar",
+            "vllm==0.9.0 --config-settings  foo=bar",
+            "vllm==0.9.0 --config-settings \u00a0foo=bar",
+            "vllm==0.9.0 --config-settings=\u00a0foo=bar",
+            "vllm==0.9.0 -C\u00a0foo=bar",
+            "vllm==0.9.0 -C  foo=bar",
+            "vllm==0.9.0 --hash\tsha256:aa",
+        ],
+    )
+    def test_a_no_break_space_inside_an_option_value_is_still_cut(self, text):
+        """Once the option name has ended, a no-break space is ordinary value text.
+
+        Measured at 377dcc3e, pip 26.1.2: every line above parses. ``shlex`` ends the
+        name at the space or tab, and ``_handle_config_settings`` then partitions the
+        value on ``=`` without caring what the key contains — ``-C\\u00a0foo=bar``
+        records the key ``\\u00a0foo``. The short form carries no separator at all, so
+        its value starts immediately after ``-C``. Narrowing the NAME boundary must not
+        narrow the value, or the guard reports a pinned package as unpinned.
         """
         assert _parse_pins(text) == {"vllm": "0.9.0"}
         assert _unpinned_protected(text) == {}
