@@ -103,10 +103,16 @@ missing directory, and an existing host never silently follows a moved tag:
 - Every deploy logs **provenance**: the config commit actually deployed, whether
   it matched the pin, and any dirty paths — so any deployment's exact config
   state is reconstructable from the deploy output.
+- **One pin per deployment:** the pin table in `lib.sh` has one ref + sha row
+  for each deployment name (`dev`, `claw`). A deployment with no row does not
+  provision: `ensure_config` aborts and names it.
 - **Bumping the pin:** create a **new** tag in `fasrc/archi-config` (never move
-  an existing one), update `CONFIG_REF` + `CONFIG_SHA` in `lib.sh` in the same
-  PR, then deploy.
-- **Self-test:** `bash deploy/scripts/test_ensure_config.sh` — 10
+  an existing one), update the ref + sha of the **target deployment's row** in
+  `lib.sh` in the same PR, then deploy that host. The other deployments keep
+  their pins.
+- **One-off override:** `CONFIG_REF=... CONFIG_SHA=... ./redeploy.sh`, for any
+  deployment name. Pass both keys: one key alone aborts the deploy.
+- **Self-test:** `bash deploy/scripts/test_ensure_config.sh` — 15
   cases against a local fixture repo; no network, never touches the real
   checkout.
 - Raw `archi create` **bypasses all of this** — see the warning in

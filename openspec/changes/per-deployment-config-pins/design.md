@@ -19,6 +19,9 @@ rejected, because it rebuilds the coupling this change removes.
 
 ## Precedence
 
-`CONFIG_REF="${CONFIG_REF:-$row_ref}"` keeps the existing command-line override. Each
-key falls back to its row independently, as today. An override of only one key then
-fails the existing SHA check, which is the correct result.
+The command-line override is a pair. If the environment sets both keys, the deploy uses
+them. If it sets neither, the deploy uses the row. If it sets only one, `ensure_config`
+aborts before it provisions and names that key. Rejected option: fill the missing key
+from the row, as the single pin did. That mixed pin cannot deploy wrong content, because
+the SHA check stops it, but it fails after the clone with a false "re-pointed tag?"
+message.

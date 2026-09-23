@@ -15,6 +15,7 @@
 #   11. a pin bump in one deployment's row leaves the other deployment's pin unchanged
 #   12. a deployment with no pin row sources cleanly, then ensure_config aborts
 #   13. an environment pin (CONFIG_REF/CONFIG_SHA) overrides the table for any name
+#   14-15. an environment pin with only one of the two keys aborts before provisioning
 # Run: bash deploy/scripts/test_ensure_config.sh
 set -euo pipefail
 
@@ -244,6 +245,22 @@ if [ "$ec" = 0 ] && [ "$(g "$sb/config" rev-parse HEAD)" = "$(cat "$sb/pin_sha")
 else
   notok "13 environment pin (ec=$ec)"; cat "$sb/out" || true
 fi
+
+# --- 14-15: a one-key environment pin aborts; it never mixes with the table row -------
+for partial in "CONFIG_REF=deploy-pin-test" "CONFIG_SHA=$new_sha"; do
+  key="${partial%%=*}"
+  sb="$TESTROOT/partial-$key"; mkdir -p "$sb"; make_fixture "$sb"
+  ec=0
+  env -u CONFIG_REF -u CONFIG_SHA DEPLOYMENT=dev "$partial" \
+      CONFIG_DIR="$sb/config" CONFIG_REPO="file://$sb/remote.git" \
+      bash -c "source '$LIB' && echo SOURCED && ensure_config" > "$sb/out" 2>&1 || ec=$?
+  if [ "$ec" != 0 ] && grep -q SOURCED "$sb/out" && grep -q "only $key" "$sb/out" \
+     && [ ! -e "$sb/config" ]; then
+    ok "partial environment pin ($key only): aborts before provisioning"
+  else
+    notok "partial environment pin ($key only) (ec=$ec)"; cat "$sb/out" || true
+  fi
+done
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

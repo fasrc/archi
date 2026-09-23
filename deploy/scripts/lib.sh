@@ -144,15 +144,26 @@ GPU_IDS="${GPU_IDS-}"
 # One-off override (any name, row or not): CONFIG_REF=... CONFIG_SHA=... ./redeploy.sh
 # CONFIG_REPO/CONFIG_DIR are overridable so test_ensure_config.sh can run
 # against a local fixture instead of the real remote/checkout.
-# Contract pinned by test_ensure_config.sh cases 11-13.
+# Contract pinned by test_ensure_config.sh cases 11-15.
 CONFIG_REPO="${CONFIG_REPO:-git@github.com:fasrc/archi-config.git}"
 case "$DEPLOYMENT" in
   dev)  _pin_ref=deploy-pin-2026-09d; _pin_sha=9c3da1d064152089cbd4a38ebb81bcfbce61c469 ;;
   claw) _pin_ref=deploy-pin-2026-09d; _pin_sha=9c3da1d064152089cbd4a38ebb81bcfbce61c469 ;;
   *)    _pin_ref=; _pin_sha= ;;
 esac
-CONFIG_REF="${CONFIG_REF:-$_pin_ref}"
-CONFIG_SHA="${CONFIG_SHA:-$_pin_sha}"
+# The environment override is a PAIR: one key alone never borrows the other from
+# the row (that mixed pin would abort later as a false "re-pointed tag?"), so
+# ensure_config refuses it by name instead.
+CONFIG_REF="${CONFIG_REF:-}"
+CONFIG_SHA="${CONFIG_SHA:-}"
+CONFIG_PIN_PARTIAL=
+if [ -z "$CONFIG_REF$CONFIG_SHA" ]; then
+  CONFIG_REF="$_pin_ref"; CONFIG_SHA="$_pin_sha"
+elif [ -z "$CONFIG_SHA" ]; then
+  CONFIG_PIN_PARTIAL=CONFIG_REF
+elif [ -z "$CONFIG_REF" ]; then
+  CONFIG_PIN_PARTIAL=CONFIG_SHA
+fi
 unset _pin_ref _pin_sha
 CONFIG_DIR="${CONFIG_DIR:-$REPO_ROOT/config}"
 
@@ -235,6 +246,9 @@ check_llm() {
 # bind-mounted rw) — config/agents/ is the config-repo copy that OTHER hosts
 # bind-mount live (issue #99's capture); it is not consumed by this deployment.
 ensure_config() {
+  if [ -n "$CONFIG_PIN_PARTIAL" ]; then
+    die "config pin override sets only $CONFIG_PIN_PARTIAL: pass CONFIG_REF and CONFIG_SHA together, or neither to use the '$DEPLOYMENT' row"
+  fi
   if [ -z "$CONFIG_REF" ] || [ -z "$CONFIG_SHA" ]; then
     die "no config pin for deployment '$DEPLOYMENT': add its row to the pin table in deploy/scripts/lib.sh, or pass CONFIG_REF=... CONFIG_SHA=... for a one-off"
   fi

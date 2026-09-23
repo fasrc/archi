@@ -7,8 +7,11 @@ the expected commit id (`CONFIG_SHA`) alongside the tag name. The pin SHALL be r
 per deployment: `lib.sh` SHALL hold a tracked table with one `CONFIG_REF`/`CONFIG_SHA`
 row for each deployment name, and the deploy SHALL take the row that matches
 `$DEPLOYMENT`, so a pin bump for one deployment does not change the pin of any other
-deployment. The pin SHALL NOT be read from `host.env`. An explicit `CONFIG_REF` or
-`CONFIG_SHA` in the environment SHALL take precedence over the table. If no row matches
+deployment. The pin SHALL NOT be read from `host.env`. An explicit `CONFIG_REF` and
+`CONFIG_SHA` pair in the environment SHALL take precedence over the table; if the
+environment sets only one of the two keys, `ensure_config` SHALL abort before it
+provisions, naming the key that is set, and SHALL NOT fill the other key from the
+table. If no row matches
 `$DEPLOYMENT` and the environment gives no pin, `ensure_config` SHALL abort before it
 clones or checks out anything, naming the deployment; sourcing `lib.sh` SHALL NOT abort
 for that reason. After fetch, the deploy SHALL verify the tag resolves to `CONFIG_SHA`
@@ -46,3 +49,9 @@ to that ref. If the ref does not resolve after fetch, the deploy SHALL abort.
 #### Scenario: The command-line pin overrides the table
 - **WHEN** `CONFIG_REF` and `CONFIG_SHA` are in the environment
 - **THEN** the deploy uses them for any deployment name, with or without a table row
+
+#### Scenario: A one-key override aborts
+- **WHEN** the environment sets `CONFIG_REF` without `CONFIG_SHA`, or `CONFIG_SHA`
+  without `CONFIG_REF`
+- **THEN** sourcing `lib.sh` succeeds, and `ensure_config` dies naming the key that is
+  set, before it creates `config/`

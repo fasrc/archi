@@ -6,6 +6,8 @@
       `ensure_config` aborts naming it, with no `config/` created
 - [x] 1.3 Add case 13: an environment pin works for a deployment with no row
 - [x] 1.4 Run the test and watch cases 11 and 12 fail
+- [x] 1.5 Add cases 14-15: a one-key environment pin aborts before provisioning (red,
+      then green)
 
 ## 2. Implementation
 
@@ -16,7 +18,8 @@
 
 ## 3. Docs
 
-- [x] 3.1 Update `host.env.example`, `docs/docs/fasrc_archi.md`, and `docs/docs/glossary.md`
+- [x] 3.1 Update `host.env.example`, `deploy/scripts/README.md`, `docs/docs/fasrc_archi.md`,
+      and `docs/docs/glossary.md`
 
 ## 4. Verify
 

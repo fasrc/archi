@@ -709,7 +709,7 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 >
 > **Provisioning is not automatic here.** `ensure_config`, which checks the
 > checkout out at a pinned, SHA-verified ref, has exactly one caller —
-> `deploy/scripts/lib.sh:340` — on the *other* deployment. This page's
+> `deploy/scripts/lib.sh:354` — on the *other* deployment. This page's
 > active path is the repo-root `g.sh` calling `archi create` directly, which never
 > runs it. So on this host `config/` is simply whatever is on disk, at whatever
 > revision someone last left it, with nothing verifying it.
@@ -743,7 +743,7 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 >    against the recorded SHA and abort on mismatch, and only then
 >    `git -C config/ checkout "$resolved"`. A bare `checkout <tag>` accepts
 >    whatever commit the remote tag currently names — that is not the SHA-verified
->    pin `ensure_config` implements (`lib.sh:237-270`), which rejects a re-pointed
+>    pin `ensure_config` implements (`lib.sh:248-284`), which rejects a re-pointed
 >    remote tag outright. (When creating the tag: make a *new* annotated tag —
 >    never move an existing one, as `git fetch --tags` refuses to clobber a moved
 >    tag.)

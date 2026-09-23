@@ -32,7 +32,8 @@ That reason still holds, so the pins stay in the tracked `lib.sh`.
   clones or checks out anything, and names the deployment. Sourcing `lib.sh` does not
   abort, so `status.sh` and `nuke.sh` still work for that name.
 - The command-line override (`CONFIG_REF=... CONFIG_SHA=... ./redeploy.sh`) still wins
-  over the table, for any deployment name.
+  over the table, for any deployment name. It must set both keys: one key alone aborts
+  in `ensure_config`, and is never mixed with the row.
 - `host.env` still refuses the pin keys. No change to `test_host_env.sh` case 7.
 - Docs that describe "the pin" as one value are updated to describe the table.
 
