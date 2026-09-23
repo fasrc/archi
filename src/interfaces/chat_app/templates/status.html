@@ -283,7 +283,8 @@
             <span class="prov-label">Config pin</span>
             <span class="prov-value">
               {{ dep.config_ref or '—' }}{% if dep.config_sha_short %} · {{ dep.config_sha_short }}{% endif %}
-              {% if not dep.live_edited %}<span class="prov-ok">✓ matches pin</span>{% endif %}
+              {% if dep.pin_state == 'matched' %}<span class="prov-ok">✓ matches pin</span>
+              {% elif dep.pin_state == 'unknown' %}<span class="prov-label">pin verdict not recorded</span>{% endif %}
             </span>
           </div>
           {% if dep.live_edited %}

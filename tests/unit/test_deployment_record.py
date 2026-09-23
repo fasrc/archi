@@ -10,8 +10,12 @@ import pytest
 
 from src.utils.deployment_record import (
     DEPLOYMENT_ENV_KEYS,
+    PIN_STATE_LIVE_EDITED,
+    PIN_STATE_MATCHED,
+    PIN_STATE_UNKNOWN,
     build_deployment_record,
     is_live_edited,
+    pin_state,
     record_deployment,
     write_deployment_record,
 )
@@ -133,10 +137,39 @@ def test_an_off_pin_deploy_is_live_edited():
     assert is_live_edited(record) is True
 
 
-def test_an_unknown_verdict_is_live_edited():
-    """Unknown provenance must not render as a clean, on-pin deploy."""
+def test_an_unknown_verdict_is_not_a_live_edit():
+    """Unknown provenance is its own state, not an accusation.
+
+    A hand-run `archi create` records no verdict. Calling that a live edit
+    would accuse a possibly-clean deployment of an edit nothing observed.
+    """
     record = build_deployment_record(_env(ARCHI_CONFIG_PIN_MATCHED=""))
-    assert is_live_edited(record) is True
+    assert is_live_edited(record) is False
+    assert pin_state(record) == PIN_STATE_UNKNOWN
+
+
+def test_an_unknown_verdict_is_not_reported_as_matched_either():
+    record = build_deployment_record(_env(ARCHI_CONFIG_PIN_MATCHED=""))
+    assert pin_state(record) != PIN_STATE_MATCHED
+
+
+def test_tracked_edits_prove_a_live_edit_even_without_a_verdict():
+    """Dirty paths are positive evidence; they outrank a missing verdict."""
+    record = build_deployment_record(
+        _env(ARCHI_CONFIG_PIN_MATCHED="", ARCHI_CONFIG_DIRTY_PATHS="M\tlists/sources.list")
+    )
+    assert pin_state(record) == PIN_STATE_LIVE_EDITED
+
+
+def test_pin_state_names_the_three_states():
+    assert pin_state(build_deployment_record(_env())) == PIN_STATE_MATCHED
+    assert (
+        pin_state(build_deployment_record(_env(ARCHI_CONFIG_PIN_MATCHED="no")))
+        == PIN_STATE_LIVE_EDITED
+    )
+    assert (
+        pin_state(build_deployment_record({})) == PIN_STATE_UNKNOWN
+    )
 
 
 def test_whitespace_only_dirty_paths_are_not_edits():

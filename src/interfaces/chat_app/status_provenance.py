@@ -15,7 +15,11 @@ Nothing here may raise: an unreadable record must degrade to an explicit
 import logging
 from typing import Any, Dict, List, Mapping, Optional
 
-from src.utils.deployment_record import is_live_edited
+from src.utils.deployment_record import (
+    PIN_STATE_UNKNOWN,
+    is_live_edited,
+    pin_state,
+)
 from src.utils.ingest_provenance import (
     build_ingest_config_snapshot,
     compare_ingest_config,
@@ -113,6 +117,7 @@ def build_deployment_panel(row: Optional[Mapping]) -> Dict[str, Any]:
             "config_sha_short": None,
             "config_head_short": None,
             "pin_matched": None,
+            "pin_state": PIN_STATE_UNKNOWN,
             "live_edited": False,
             "dirty_path_count": 0,
             "dirty_paths_preview": [],
@@ -127,6 +132,7 @@ def build_deployment_panel(row: Optional[Mapping]) -> Dict[str, Any]:
         "config_sha_short": _short(row.get("config_sha")),
         "config_head_short": _short(row.get("config_head")),
         "pin_matched": row.get("pin_matched"),
+        "pin_state": pin_state(row),
         "live_edited": is_live_edited(row),
         "dirty_path_count": len(dirty),
         "dirty_paths_preview": dirty[:_DIRTY_PREVIEW_LIMIT],
@@ -158,7 +164,7 @@ def build_knowledge_base_panel(
             "drift": [],
         }
 
-    snapshot = run.get("config_snapshot") or {}
+    snapshot = _as_flag_mapping(run.get("config_snapshot"))
     return {
         "available": True,
         "started_at": run.get("started_at"),
@@ -172,6 +178,19 @@ def build_knowledge_base_panel(
         "config": snapshot,
         "drift": compare_ingest_config(current_snapshot, snapshot),
     }
+
+
+def _as_flag_mapping(value: Any) -> Dict[str, Any]:
+    """Coerce a persisted snapshot to a string-keyed mapping.
+
+    The column accepts arbitrary JSONB. A legacy or hand-written row holding a
+    list or a scalar is truthy, so it would reach the template's ``dictsort``
+    and turn provenance into a 500 — exactly the failure the unavailable-panel
+    requirement exists to prevent.
+    """
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): item for key, item in value.items()}
 
 
 def _fetch_row(cursor, sql: str, columns) -> Optional[Dict[str, Any]]:

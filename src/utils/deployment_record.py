@@ -35,6 +35,12 @@ DEPLOYMENT_ENV_KEYS = (
 # "unknown" in front of an operator as though it were a version.
 _VERSION_PLACEHOLDERS = {"", "unknown"}
 
+# How the deployed config relates to the pin. Kept as three distinct states so
+# "we did not observe a verdict" can never be rendered as "someone edited it".
+PIN_STATE_MATCHED = "matched"
+PIN_STATE_LIVE_EDITED = "live_edited"
+PIN_STATE_UNKNOWN = "unknown"
+
 _INSERT_DEPLOYMENT_RECORD = """
     INSERT INTO deployment_record (
         config_ref, config_sha, config_head, pin_matched, dirty_paths, app_version
@@ -90,17 +96,32 @@ def build_deployment_record(env: Mapping) -> Dict[str, Any]:
     }
 
 
-def is_live_edited(record: Mapping) -> bool:
-    """Report whether the deployed config can be trusted to equal the pin.
+def pin_state(record: Mapping) -> str:
+    """Classify the deployed config against the pin. Three states, not two.
 
-    True when the deploy ran off the pin, when the verdict is unknown, or when
-    the tree carried tracked edits while HEAD sat at the pin. That last case is
-    the subtle one: ``ensure_config`` permits it, so showing the pin alone would
-    misrepresent what is actually running.
+    ``live_edited`` needs evidence: either the deploy ran off the pin, or the
+    tree carried tracked edits. That second case is the subtle one —
+    ``ensure_config`` permits it, so showing the pin alone would misrepresent
+    what is running.
+
+    ``unknown`` is deliberately distinct. A hand-run ``archi create`` records no
+    verdict, and treating that silence as a live edit would accuse a clean
+    deployment of an edit nothing observed. Unknown is not clean either, so it
+    gets its own state rather than being folded into ``matched``.
     """
-    if record.get("pin_matched") is not True:
-        return True
-    return bool((record.get("dirty_paths") or "").strip())
+    matched = record.get("pin_matched")
+    has_tracked_edits = bool((record.get("dirty_paths") or "").strip())
+
+    if has_tracked_edits or matched is False:
+        return PIN_STATE_LIVE_EDITED
+    if matched is None:
+        return PIN_STATE_UNKNOWN
+    return PIN_STATE_MATCHED
+
+
+def is_live_edited(record: Mapping) -> bool:
+    """Whether there is positive evidence the deployed config is not the pin."""
+    return pin_state(record) == PIN_STATE_LIVE_EDITED
 
 
 def write_deployment_record(conn: Any, env: Mapping) -> bool:

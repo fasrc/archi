@@ -302,3 +302,44 @@ def test_manager_swallows_a_connection_failure(monkeypatch):
 
     mgr = _bare_manager(_data_manager_config={})
     mgr._record_ingest_run(STARTED, "updated")  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Review round 1: a failed or interrupted run must be recorded, not skipped
+# ---------------------------------------------------------------------------
+
+
+def test_a_raising_sync_records_a_failed_run_and_reraises(monkeypatch):
+    """Otherwise the board shows the PREVIOUS run as the current corpus."""
+    conn = _FakeConn(rows=[[("embedded", 1)], [(1,)]])
+    monkeypatch.setattr(
+        "src.data_manager.vectorstore.manager.psycopg2.connect",
+        lambda **kwargs: conn,
+    )
+
+    mgr = _bare_manager(_data_manager_config={})
+    monkeypatch.setattr(
+        mgr, "_sync_vectorstore", lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
+    with pytest.raises(RuntimeError):
+        mgr.update_vectorstore()
+
+    _, params = conn.cursor_obj.executed[-1]
+    assert "failed" in params
+
+
+def test_a_successful_sync_records_the_status_it_returned(monkeypatch):
+    conn = _FakeConn(rows=[[("embedded", 1)], [(1,)]])
+    monkeypatch.setattr(
+        "src.data_manager.vectorstore.manager.psycopg2.connect",
+        lambda **kwargs: conn,
+    )
+
+    mgr = _bare_manager(_data_manager_config={})
+    monkeypatch.setattr(mgr, "_sync_vectorstore", lambda: "up_to_date")
+
+    mgr.update_vectorstore()
+
+    _, params = conn.cursor_obj.executed[-1]
+    assert "up_to_date" in params

@@ -313,3 +313,52 @@ def test_load_for_tolerates_an_empty_config(monkeypatch):
     monkeypatch.setattr(psycopg2, "connect", _boom)
 
     assert load_status_provenance_for({})["deployment"]["available"] is False
+
+
+# ---------------------------------------------------------------------------
+# Review round 1: unknown provenance, and malformed persisted snapshots
+# ---------------------------------------------------------------------------
+
+
+def test_an_unrecorded_verdict_is_not_rendered_as_a_live_edit():
+    """A hand-run `archi create` records no verdict; that is not an edit."""
+    panel = build_deployment_panel(_deploy_row(pin_matched=None))
+
+    assert panel["live_edited"] is False
+    assert panel["pin_state"] == "unknown"
+
+
+def test_a_clean_deploy_reports_the_matched_state():
+    assert build_deployment_panel(_deploy_row())["pin_state"] == "matched"
+
+
+def test_dirty_paths_still_prove_a_live_edit_without_a_verdict():
+    row = _deploy_row(pin_matched=None, dirty_paths="M\tlists/sources.list")
+
+    panel = build_deployment_panel(row)
+
+    assert panel["pin_state"] == "live_edited"
+    assert panel["live_edited"] is True
+
+
+def test_an_absent_record_reports_the_unknown_state():
+    assert build_deployment_panel(None)["pin_state"] == "unknown"
+
+
+@pytest.mark.parametrize("bad", [[1, 2], "nope", 7, None])
+def test_a_non_object_snapshot_cannot_reach_the_template(bad):
+    """The JSONB column accepts anything; dictsort in Jinja does not.
+
+    A truthy non-mapping would otherwise 500 the page the unavailable-panel
+    requirement says must keep rendering.
+    """
+    panel = build_knowledge_base_panel(_run_row(config_snapshot=bad), {})
+
+    assert panel["config"] == {}
+    assert panel["drift"] == []
+
+
+def test_snapshot_keys_are_coerced_to_strings():
+    panel = build_knowledge_base_panel(_run_row(config_snapshot={1: "a"}), {})
+
+    assert panel["config"] == {"1": "a"}

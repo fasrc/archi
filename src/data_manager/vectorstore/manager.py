@@ -256,8 +256,23 @@ class VectorStoreManager:
         return store
 
     def update_vectorstore(self) -> None:
-        """Synchronise filesystem documents with the vectorstore."""
+        """Synchronise filesystem documents with the vectorstore.
+
+        Wraps the sync so every outcome is recorded. A run that raises must not
+        leave the status board presenting the PREVIOUS completed run as the
+        current state of the corpus — the board would then attribute a corpus
+        to a run that never finished.
+        """
         started_at = datetime.now(timezone.utc)
+        try:
+            run_status = self._sync_vectorstore()
+        except Exception:
+            self._record_ingest_run(started_at, "failed")
+            raise
+        self._record_ingest_run(started_at, run_status)
+
+    def _sync_vectorstore(self) -> str:
+        """Do the synchronisation; return the terminal run status."""
         store = self.fetch_collection()
 
         sources = PostgresCatalogService.load_sources_catalog(
@@ -317,13 +332,17 @@ class VectorStoreManager:
                     self._add_to_postgres(files_to_add)
                 except Exception as e:
                     logger.error(f"Files could not be added", exc_info=e)
+                    # The ingest carries on (unchanged behaviour), but the run
+                    # did not do what it set out to do. Recording it as
+                    # "updated" would present a partial corpus as a good one.
+                    run_status = "failed"
             logger.info("Vectorstore update has been completed")
 
         logger.info(f"N Collection: {store.count()}")
-        # Recorded for BOTH branches: a run that found the store already up to
+        # Returned for BOTH branches: a run that found the store already up to
         # date still happened, and the status board must not report a stale
         # "last ingest" after it.
-        self._record_ingest_run(started_at, run_status)
+        return run_status
 
     def _record_ingest_run(self, started_at, status: str) -> None:
         """Record this run's provenance, with the config that governed it.
