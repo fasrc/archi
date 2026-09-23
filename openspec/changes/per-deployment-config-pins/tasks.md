@@ -1,0 +1,24 @@
+## 1. Tests first
+
+- [x] 1.1 Add `test_ensure_config.sh` case 11: a copied `lib.sh` with a changed `claw` row
+      resolves the new pin for `claw` and the old pin for `dev`
+- [x] 1.2 Add case 12: an unknown deployment with no environment pin sources cleanly, and
+      `ensure_config` aborts naming it, with no `config/` created
+- [x] 1.3 Add case 13: an environment pin works for a deployment with no row
+- [x] 1.4 Run the test and watch cases 11 and 12 fail
+
+## 2. Implementation
+
+- [x] 2.1 Replace the single pin in `lib.sh` with the per-deployment table (both rows at
+      `deploy-pin-2026-09d`)
+- [x] 2.2 Abort at the top of `ensure_config` when the pin is empty
+- [x] 2.3 Update the bump procedure comment in `lib.sh`
+
+## 3. Docs
+
+- [x] 3.1 Update `host.env.example`, `docs/docs/fasrc_archi.md`, and `docs/docs/glossary.md`
+
+## 4. Verify
+
+- [x] 4.1 `bash deploy/scripts/test_ensure_config.sh` and `bash deploy/scripts/test_host_env.sh` pass
+- [x] 4.2 `bash scripts/gate.sh` green

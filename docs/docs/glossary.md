@@ -319,4 +319,5 @@ fetch it automatically (see [config pin](#config-pin)).
 The exact, named version of the [archi-config](#archi-config) repository that deployments
 install — like ordering a specific edition of a book rather than "whatever's newest". Every
 deploy checks the version it got against a recorded fingerprint and refuses to proceed if
-someone has quietly swapped what the name points to.
+someone has quietly swapped what the name points to. Each deployment has its own pin, so
+moving one host to a newer version does not move the others.
