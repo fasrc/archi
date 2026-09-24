@@ -68,6 +68,7 @@ export FM_POLL_SECONDS=0
 unset RAGAS_ENV_FILE HUIT_API_KEY_FILE OPENAI_API_KEY FM_AGENT_SPEC
 mkdir -p "$T/bin" "$T/state" "$FM_OUT"
 printf 'sha256:abc\n' > "$T/fp"
+printf 'sha256:map1\n' > "$T/mapfp"   # the live category-map digest the data-manager reports
 
 # --- stubs -----------------------------------------------------------------------------
 cat > "$T/bin/docker" <<EOF
@@ -77,6 +78,7 @@ case "\$1" in
   inspect) [ -f "$T/state/\$2" ] && { cat "$T/state/\$2"; exit 0; } || exit 1 ;;
   exec)    sql="\$*"
            case "\$sql" in
+             *CATEGORY_MAP_QUERY*) cat "$T/mapfp" ;;
              *benchmark_provenance*) cat "$T/fp" ;;
              *document_chunks*)  [ -f "$T/nocounts" ] || echo 6096 ;;
              *documents*)        [ -f "$T/nocounts" ] || echo 1132 ;;
@@ -303,6 +305,9 @@ if [ "$RC" = 0 ] && grep -q -- "eval qa --dataset $FM_OUT/qa/fasrc_ragas_queries
 EXPECT_SHA="$(sha256sum "$S/configs/config.yaml" | cut -d' ' -f1)"
 if "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e.get('rendered_config_sha256')=='$EXPECT_SHA' and e.get('corpus_fingerprint')=='sha256:abc' and e.get('arm_config')=='$T/arms/01-rerank-off.yaml' else 1)"; then ok "qa_arm records the rendered config sha256, the arm config, and the corpus fingerprint"; else notok "qa_arm ledger identity fields"; fi
 
+# 47: qa_arm reads the category map around the QA run and writes the readings compare_runs joins on
+if "$FM_PYTHON" -c "import json,sys; r=json.load(open('$FM_OUT/qa/fm-00-arm01-r1/category_map_readings.json')); e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if r=={'start':'sha256:map1','end':'sha256:map1'} and e.get('category_map_sha256_start')=='sha256:map1' and e.get('category_map_sha256_end')=='sha256:map1' else 1)" 2>/dev/null; then ok "qa_arm writes category_map_readings.json and records both map digests"; else notok "qa_arm map readings"; fi
+
 # 13: a drifted fingerprint is refused; --new-corpus is refused after a re-run, honoured only after a fresh deploy of arm 00
 rm -f "$FM_OUT"/benchmarking-fm-00-*.json
 artifact "$FM_OUT/benchmarking-fm-00-20260903_000003.json" '[]' def
@@ -526,6 +531,111 @@ rm -f "$FM_OUT"/benchmarking-fm-00-*.json
 artifact "$FM_OUT/benchmarking-fm-00-20260903_000015.json" '[]' def 5
 run bash "$HERE/archive_run.sh" 00 9 "$T/arms/00-baseline.yaml"
 if [ "$RC" = 0 ] && ! grep -q "started under lock" "$T/stderr"; then ok "a stale ragas-start row sharing the newest second does not decide the lock check"; else notok "same-second start row (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# --- sweep mode (checks 48-53) -------------------------------------------------------------
+# One stack, three arms generated from one manifest; every path absolute so the wrappers'
+# working directory does not matter.
+SW="$T/sweep"; mkdir -p "$SW/prompts" "$SW/qa"
+KB=https://docs.rc.fas.harvard.edu/kb
+printf '[{"user_input": "How do I submit a job?", "sources": ["%s/jobs"]}]\n' "$KB" > "$SW/bank.json"
+printf '[]\n' > "$SW/anchors.json"
+printf 'control\n' > "$SW/prompts/fasrc-docs.md"
+printf 'control\n## Category routing\n\n- A\n' > "$SW/prompts/fasrc-docs-r0a-category.md"
+printf 'control\n## Worked examples\n\nQuestion: How do I request FASSE access?\n\nAnswer: [x](%s/fasse)\n' "$KB" > "$SW/prompts/fasrc-docs-r0b-icl.md"
+cat > "$SW/base.yaml" <<EOF
+name: r0
+services:
+  benchmarking: {queries_path: $SW/bank.json, anchors: {path: $SW/anchors.json}, agent_md_file: $SW/prompts/fasrc-docs.md,
+                 agent_class: FASRCDocsAgent, provider: openai, model: m}
+EOF
+cat > "$SW/manifest.yaml" <<EOF
+base_config: $SW/base.yaml
+out_dir: $SW/configs
+prompts: [$SW/prompts/fasrc-docs.md, $SW/prompts/fasrc-docs-r0a-category.md, $SW/prompts/fasrc-docs-r0b-icl.md]
+EOF
+(cd "$HERE/../../.." && "$FM_PYTHON" scripts/benchmarking/generate_prompt_sweep.py --manifest "$SW/manifest.yaml" >/dev/null)
+printf '{"format":"qa-dataset-v2","items":[]}\n' > "$SW/qa/dataset.json"; printf 'judge: x\n' > "$SW/qa/profile.yaml"
+R0="$ARCHI_DIR/archi-r0"; mkdir -p "$R0/configs" "$R0/secrets"; : > "$R0/compose.yaml"
+cp "$S/configs/config.yaml" "$R0/configs/config.yaml"; printf 'pw\n' > "$R0/secrets/pg_password.txt"
+printf 'running\n' > "$T/state/postgres-r0"; printf 'running\n' > "$T/state/data-manager-r0"; printf 'exited\n' > "$T/state/benchmarking-r0"
+
+# 48: qa_prepare prepares the gold atoms once, before the lock
+: > "$T/archi.calls"
+run bash "$HERE/qa_prepare.sh" --sweep r0 --qa-dataset "$SW/qa/dataset.json" --qa-profile "$SW/qa/profile.yaml"
+if [ "$RC" = 0 ] && grep -qx "eval qa prepare $SW/qa/dataset.json --evaluator-profile $SW/qa/profile.yaml --output-dir $FM_OUT/qa/r0-prepared" "$T/archi.calls"; then ok "qa_prepare --sweep prepares the gold atoms into the stack's prepared workspace"; else notok "qa_prepare (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+printf '{"item_id": "x"}\n' > "$FM_OUT/qa/r0-prepared/preparation.jsonl"
+
+# 49: lock_campaign --sweep writes the sweep lock once; prepare is refused after it
+run bash "$HERE/lock_campaign.sh" --sweep "$SW/configs" --manifest "$SW/manifest.yaml" --stack r0 --qa-dataset "$SW/qa/dataset.json" --qa-profile "$SW/qa/profile.yaml"
+R1=$RC
+run bash "$HERE/lock_campaign.sh" --sweep "$SW/configs" --manifest "$SW/manifest.yaml" --stack r0 --qa-dataset "$SW/qa/dataset.json" --qa-profile "$SW/qa/profile.yaml"
+R2=$RC; grep -q "already locked" "$T/stderr" && R2M=1 || R2M=0
+run bash "$HERE/qa_prepare.sh" --sweep r0 --qa-dataset "$SW/qa/dataset.json" --qa-profile "$SW/qa/profile.yaml"
+if [ "$R1" = 0 ] && [ "$R2" = 2 ] && [ "$R2M" = 1 ] && [ "$RC" = 2 ] && grep -q "already locked" "$T/stderr" \
+   && "$FM_PYTHON" -c "import json,sys; l=json.load(open('$FM_OUT/sweep-r0.lock')); sys.exit(0 if len(l['arms'])==3 and l['arms']['fasrc-docs-r0b-icl']['disjointness']['passed'] and l['qa']['preparation_sha256'] else 1)"; then
+  ok "lock_campaign --sweep pins every arm once and blocks a later prepare"; else notok "sweep lock (rc1=$R1 rc2=$R2 rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 50: run_arm --sweep deploys every arm in one --config-dir run and stamps the stack
+: > "$T/archi.calls"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" --sweep "$SW/configs" --stack r0
+if [ "$RC" = 0 ] && grep -qx "evaluate --config-dir $SW/configs --name r0 --env-file $T/judge.env --hostmode" "$T/archi.calls" \
+   && [ "$(cat "$R0/fm-lock.sha256")" = "$(sha256sum "$FM_OUT/sweep-r0.lock" | cut -d' ' -f1)" ] \
+   && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['kind']=='ragas-start' and e['stack']=='r0' and e.get('sweep') is True else 1)"; then
+  ok "run_arm --sweep deploys the sweep in one run and stamps the stack with the sweep lock"; else notok "run_arm --sweep (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+
+# 51: the rerun needs both pins; a moved category map is refused before any container is touched
+cp "$T/fp" "$FM_OUT/corpus-pin-r0"; printf 'sha256:other\n' > "$FM_OUT/category-map-pin-r0"   # the corpus pin is the live value
+: > "$T/docker.calls"
+run bash "$HERE/run_arm.sh" --sweep "$SW/configs" --stack r0 --rerun
+R1=$RC; grep -q "map pin" "$T/stderr" && R1M=1 || R1M=0; grep -q " up " "$T/docker.calls" && R1U=1 || R1U=0
+printf 'sha256:map1\n' > "$FM_OUT/category-map-pin-r0"
+run bash "$HERE/run_arm.sh" --sweep "$SW/configs" --stack r0 --rerun
+if [ "$R1" = 2 ] && [ "$R1M" = 1 ] && [ "$R1U" = 0 ] && [ "$RC" = 0 ] && grep -q "compose -f $R0/compose.yaml up --no-deps -d benchmark" "$T/docker.calls"; then
+  ok "run_arm --sweep --rerun checks both pins and recreates only the benchmark container"; else notok "sweep rerun (r1=$R1/$R1M/$R1U rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 52: qa_arm --sweep runs one arm's prompt on a copy of the prepared workspace
+: > "$T/archi.calls"
+run bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl
+QA="$FM_OUT/qa/r0-fasrc-docs-r0b-icl-r1"
+if [ "$RC" = 0 ] && grep -q "eval qa run $QA --agent-config .* --agent-spec $SW/prompts/fasrc-docs-r0b-icl.md --attempts 1 --run-workers 1" "$T/archi.calls" \
+   && grep -q "eval qa score $QA --evaluator-profile $SW/qa/profile.yaml" "$T/archi.calls" \
+   && [ -f "$QA/preparation.jsonl" ] \
+   && "$FM_PYTHON" -c "import json,sys; r=json.load(open('$QA/category_map_readings.json')); sys.exit(0 if r=={'start':'sha256:map1','end':'sha256:map1'} else 1)"; then
+  ok "qa_arm --sweep runs and scores one arm on the prepared atoms and writes its map readings"; else notok "qa_arm --sweep (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+
+# 53: archive_run --sweep records every arm of run 1 with the census, in one ledger write
+rm -f "$FM_OUT/corpus-pin-r0" "$FM_OUT/category-map-pin-r0"
+"$FM_PYTHON" - "$FM_OUT" "$SW" <<'PY'
+import hashlib, json, pathlib, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[2]).resolve()))
+out, sw = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+lock = json.loads((out / "sweep-r0.lock").read_text())
+records = ["https://docs.rc.fas.harvard.edu/kb/jobs\tCluster Usage"]
+text = "\n".join(records)
+digest = "sha256:" + hashlib.sha256(text.encode()).hexdigest()
+stem = "benchmarking-r0-20991231_000000"
+entries = []
+for i, (name, arm) in enumerate(sorted(lock["arms"].items()), 1):
+    (out / f"{stem}_category_map_{i}.tsv").write_text(text)
+    entries.append({"configuration": {"services": {"benchmarking": {"name": name}}},
+                    "corpus_fingerprint_before": "sha256:abc", "corpus_fingerprint": "sha256:abc",
+                    "corpus_unchanged_at_endpoints": True,
+                    "category_map_sha256_start": digest, "category_map_sha256_end": digest,
+                    "category_map_unchanged_at_endpoints": True,
+                    "category_map_file": f"{stem}_category_map_{i}.tsv",
+                    "agent_md_sha256": arm["prompt_text_sha256"]})
+(out / f"{stem}.json").write_text(json.dumps({"benchmarking_results": entries, "metadata": {}}))
+routing = lock["arms"][lock["routing_arm"]]["prompt_sha256"]
+exemplar = lock["arms"][lock["exemplar_arm"]]["prompt_sha256"]
+(out / "census.json").write_text(json.dumps({"passed": True, "corpus_fingerprint": "sha256:abc",
+    "category_map_digest": digest, "inputs": {"bank_sha256": lock["bank"]["sha256"],
+    "anchors_sha256": lock["anchors"]["sha256"], "routing_prompt_sha256": routing,
+    "exemplar_prompt_sha256": exemplar, "similarity_threshold": lock["similarity_threshold"]}}))
+PY
+BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" --sweep "$SW/configs" --stack r0 --run 1 --census "$FM_OUT/census.json"
+if [ "$RC" = 0 ] && [ "$(ledger_rows)" = $((BEFORE + 3)) ] && [ "$(cat "$FM_OUT/corpus-pin-r0")" = "sha256:abc" ] && [ -s "$FM_OUT/category-map-pin-r0" ]; then
+  ok "archive_run --sweep records one row per arm and writes both pins on run 1"; else notok "archive_run --sweep (rc=$RC: $(cat "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
