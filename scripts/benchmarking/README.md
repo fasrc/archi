@@ -161,6 +161,35 @@ One thin wrapper per step of the #396 campaign protocol
   any host that has the JSON files: no deployment, no database. Exit codes: 0 ok,
   1 usage, 2 gate refusal, 3 config divergence.
 
+  **Rung-0 sweep additions** (plan `categories-action-plan.md` §5–§6.1):
+  - **Arm selectors.** `--baseline`, `--primary`, `--routes-on-category` and
+    `--qa-run` accept either the printed label (`<artifact>@N`) or the arm's
+    recorded `services.benchmarking.name` — for a sweep, the prompt stem such as
+    `fasrc-docs-r0a-category`. A name two arms share is refused; use the label.
+  - **Paired tests.** Every arm gets an exact two-sided McNemar test against the
+    baseline for `source` (relative hit: any declared source matched, on rows clean
+    in both arms with the same canonical sources) and `completion` (status `ok`).
+    b counts baseline-succeeds/arm-fails, c the reverse, and the direction is
+    reported. `--primary ARM=source|completion` marks the pre-registered primary;
+    the other test is secondary and Holm-adjusted across all secondaries. The "no
+    tool call" count is descriptive.
+  - **Category slice.** An arm's per-category table reads its
+    `_category_map_<N>.tsv` only when the file exists, the corpus is stable at both
+    endpoints, the map did not change between them, and the file's sha256 equals
+    `category_map_sha256_end`; a pair also needs equal corpus fingerprints, even
+    under `--corpus-differs-by-design`. Otherwise the section says which check
+    failed.
+  - **Map rule (G9).** `--routes-on-category ARM` names an arm whose mechanism reads
+    the map (r0a). A map mismatch with the baseline — any of the four readings
+    missing or unavailable, a start differing from its end, or different end
+    digests — voids that comparison: the arm leaves every section and G9 names it.
+    For any other arm a mismatch drops only its slice, unless a benchmark or joined
+    QA trace called `search_metadata_index`, which voids it too.
+  - **QA join.** For an arm that records category-map digests, `--qa-run` refuses
+    (exit 2) a run whose `category_map_readings.json` start and end do not both
+    equal the arm's end digest, and for an arm that records `agent_md_sha256`, a run
+    whose recorded agent spec is a different prompt.
+
 ## Analysis and run helpers
 
 The remaining scripts (notebooks, prompt-sweep generation, the Argilla push/reset

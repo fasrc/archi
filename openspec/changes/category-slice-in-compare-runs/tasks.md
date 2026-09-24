@@ -17,16 +17,16 @@
 
 ## 3. Wire into `compare_runs.py`
 
-- [ ] 3.1 `model: opus` — run the black-seam-scout agent on `compare_runs.py` before editing
-- [ ] 3.2 `model: opus` — RED/GREEN: one selector resolver (label first, then recorded `services.benchmarking.name`; unknown or ambiguous → exit 1 listing candidates) used by `--baseline`, `--primary`, `--routes-on-category` and `--qa-run`; `--primary` test-name validation; report header prints label and name per arm
-- [ ] 3.3 `model: opus` — RED/GREEN: `load_qa_run` reads `category_map_readings.json` and `answers.jsonl` `tool_calls`; `parse_qa_run_specs` applies the join rule
-- [ ] 3.4 `model: opus` — RED/GREEN: `build_report` adds `paired_tests`, `category_slice`, `map_rule` blocks; voided pairs emit no numbers; overall figures unchanged
-- [ ] 3.5 `model: sonnet` — RED/GREEN: `render_markdown` sections for the three blocks, and the `--json` output carries them
+- [x] 3.1 `model: opus` — run the black-seam-scout agent on `compare_runs.py` before editing
+- [x] 3.2 `model: opus` — RED/GREEN: one selector resolver (label first, then recorded `services.benchmarking.name`; unknown or ambiguous → exit 1 listing candidates) used by `--baseline`, `--primary`, `--routes-on-category` and `--qa-run`; `--primary` test-name validation; report header prints label and name per arm
+- [x] 3.3 `model: opus` — RED/GREEN: `load_qa_run` reads `category_map_readings.json` and `answers.jsonl` `tool_calls`; `parse_qa_run_specs` applies the join rule
+- [x] 3.4 `model: opus` — RED/GREEN: `build_report` adds `paired_tests`, `category_slice`, `map_rule` blocks; voided pairs emit no numbers; overall figures unchanged
+- [x] 3.5 `model: sonnet` — RED/GREEN: `render_markdown` sections for the three blocks, and the `--json` output carries them
 
 ## 4. Docs
 
-- [ ] 4.1 `model: haiku` — `scripts/benchmarking/README.md`: `--primary`, `--routes-on-category`, the selector syntax (label or recorded name), the b/c direction, the new report sections, and what voids a comparison
+- [x] 4.1 `model: haiku` — `scripts/benchmarking/README.md`: `--primary`, `--routes-on-category`, the selector syntax (label or recorded name), the b/c direction, the new report sections, and what voids a comparison
 
 ## 5. Verify
 
-- [ ] 5.1 `model: sonnet` — `bash scripts/gate.sh` green; `openspec validate category-slice-in-compare-runs --strict`
+- [x] 5.1 `model: sonnet` — `bash scripts/gate.sh` green; `openspec validate category-slice-in-compare-runs --strict`

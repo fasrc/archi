@@ -68,7 +68,7 @@ import math
 import re
 import statistics
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -197,6 +197,12 @@ class Arm:
     #: the artifact predates the field (unknowable, not unstable).
     corpus_unchanged: Optional[bool] = None
     host: Optional[dict] = None
+    #: The arm entry as recorded, for the category-map and prompt fields.
+    raw: dict = field(default_factory=dict)
+    #: Where the artifact lives; per-arm snapshot files sit beside it.
+    artifact_dir: Optional[Path] = None
+    #: ``services.benchmarking.name`` as recorded — a sweep arm's prompt stem.
+    name: Optional[str] = None
 
     def value(self, question: str, metric: str) -> Any:
         return self.rows.get(question, {}).get(metric)
@@ -323,7 +329,41 @@ def build_arm(document: dict, index: int, path: Path, label: str) -> Arm:
             else (None if "corpus_unchanged_at_endpoints" not in raw else False)
         ),
         host=host,
+        raw=raw,
+        artifact_dir=Path(path).parent,
+        name=(
+            ((raw.get("configuration") or {}).get("services") or {}).get("benchmarking")
+            or {}
+        ).get("name"),
     )
+
+
+def resolve_arm(selector: str, arms: Sequence[Arm], flag: str) -> Arm:
+    """One arm by printed label, else by recorded ``services.benchmarking.name``.
+
+    A sweep arm is known to its operator by its prompt stem, not by the
+    ``<artifact>@N`` position ``load_arms`` prints, so both are accepted; a name
+    shared by two arms (two replicates) must be given as a label instead.
+    """
+    by_label = [arm for arm in arms if arm.label == selector]
+    if by_label:
+        return by_label[0]
+    by_name = [arm for arm in arms if arm.name == selector]
+    if len(by_name) == 1:
+        return by_name[0]
+    candidates = ", ".join(f"{arm.label} ({arm.name})" for arm in arms)
+    problem = "matches more than one arm" if by_name else "matches no arm"
+    raise CompareError(
+        f"{flag} {selector!r} {problem}; arms are {candidates}", EXIT_USAGE
+    )
+
+
+def _category_modules():
+    """The slice and paired-test modules, importable from a plain script run."""
+    _project_root_on_path()
+    from scripts.benchmarking import category_slice, paired_tests
+
+    return category_slice, paired_tests
 
 
 def load_arms(specs: Sequence[str]) -> List[Arm]:
@@ -1598,9 +1638,20 @@ def load_qa_run(directory: str) -> dict:
         if isinstance(item, dict) and isinstance(item.get("item_id"), str)
     }
     durations: Dict[str, List[float]] = {}
-    for row in _read_jsonl(base / "answers.jsonl"):
+    answers = _read_jsonl(base / "answers.jsonl")
+    for row in answers:
         if isinstance(row.get("item_id"), str) and is_finite(row.get("duration_ms")):
             durations.setdefault(row["item_id"], []).append(float(row["duration_ms"]))
+    # Written by `qa_arm.sh --sweep` around the run (#538 rule 1); absent for a
+    # QA run that predates it, which the join rule refuses for a digest-bearing arm.
+    readings_path = base / "category_map_readings.json"
+    try:
+        readings = (
+            json.loads(readings_path.read_text()) if readings_path.exists() else None
+        )
+    except (OSError, ValueError) as exc:
+        raise CompareError(f"cannot read {readings_path}: {exc}", EXIT_USAGE) from None
+    provenance = summary.get("provenance") or {}
     evaluations: Dict[str, List[dict]] = {}
     for row in _read_jsonl(base / "evaluation_results.jsonl"):
         if isinstance(row.get("item_id"), str):
@@ -1615,6 +1666,9 @@ def load_qa_run(directory: str) -> dict:
         "items": items,
         "durations": durations,
         "evaluations": evaluations,
+        "answers": answers,
+        "category_map_readings": readings,
+        "agent_spec_sha256": provenance.get("agent_spec_sha256"),
     }
 
 
@@ -2101,7 +2155,111 @@ def render_markdown(report: dict) -> str:
                 ],
             )
         out.append("")
+    out += render_category_sections(report)
     return "\n".join(out).rstrip("\n")
+
+
+def render_category_sections(report: dict) -> List[str]:
+    """The paired-test and category-slice sections, when the report has them."""
+    out: List[str] = []
+    tests = report.get("paired_tests")
+    if tests:
+        out += [
+            "## Paired tests",
+            "",
+            "Exact two-sided McNemar per question against the baseline. b = baseline "
+            "succeeds and arm fails, c = the reverse. `source` pairs relative source "
+            "hits; `completion` pairs status `ok`. Secondaries are Holm-adjusted; "
+            "`no tool call` is descriptive only.",
+            "",
+        ]
+        rows = []
+        for entry in tests:
+            for test in PAIRED_TESTS:
+                result = entry[test]
+                role = (
+                    "primary"
+                    if entry["primary"] == test
+                    else (
+                        "secondary"
+                        if entry.get("secondary") == test
+                        else "no pre-registered primary"
+                    )
+                )
+                p_holm = (
+                    _fmt(entry.get("secondary_p_holm"))
+                    if entry.get("secondary") == test
+                    else "—"
+                )
+                rows.append(
+                    [
+                        f"{entry['label']} ({entry['name']})",
+                        test,
+                        role,
+                        str(result["pairs"]),
+                        str(result["b"]),
+                        str(result["c"]),
+                        _fmt(result["p"]),
+                        p_holm,
+                        result["direction"],
+                    ]
+                )
+        out += _table(
+            ["arm", "test", "role", "pairs", "b", "c", "p", "p (Holm)", "direction"],
+            rows,
+        )
+        out += [
+            "",
+            "no tool call (descriptive): "
+            + ", ".join(
+                f"{entry['name']} {entry['no_tool_call']}"
+                f" (baseline {entry['baseline_no_tool_call']})"
+                for entry in tests
+            ),
+            "",
+        ]
+    category = report.get("category")
+    if category:
+        out += ["## Category slice", ""]
+        for entry in category:
+            heading = f"**{entry['label']}** ({entry['name']}) — map rule `{entry['map_rule']}`"
+            if entry["slice"] is None:
+                out += [f"{heading}: no slice — {entry['no_slice_reason']}", ""]
+                continue
+            out += [heading, ""]
+            rows = [
+                [
+                    name,
+                    str(values["gold_rows"]),
+                    str(values["coverage"]),
+                    _fmt(values["source_accuracy"]),
+                    str(values["source_rows"]),
+                    _fmt(values["completion"]),
+                    ", ".join(values["underpowered"]) or "—",
+                ]
+                for name, values in entry["slice"]["categories"].items()
+            ]
+            out += _table(
+                [
+                    "category",
+                    "gold rows",
+                    "coverage",
+                    "source acc.",
+                    "source rows",
+                    "completion",
+                    "underpowered for",
+                ],
+                rows,
+            )
+            table = entry["slice"]
+            out += [
+                "",
+                f"cross-category rows: {len(table['cross_category'])}; "
+                f"uncategorized: {len(table['uncategorized'])}; "
+                f"unresolved sources: {len(table['unresolved'])}",
+                "",
+            ]
+    return out
 
 
 def g8_gate(
@@ -2208,7 +2366,12 @@ def build_report(
     return {
         "baseline": baseline.label,
         "arms": [
-            {"label": arm.label, "source": arm.source, "questions": len(arm.rows)}
+            {
+                "label": arm.label,
+                "name": arm.name,
+                "source": arm.source,
+                "questions": len(arm.rows),
+            }
             for arm in arms
         ],
         "counts": question_counts(baseline, anchors),
@@ -2298,28 +2461,193 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="LABEL=RUN_DIR",
         help="an `archi eval qa` run directory to join to an arm (repeatable)",
     )
+    parser.add_argument(
+        "--primary",
+        action="append",
+        default=[],
+        metavar="ARM=source|completion",
+        help=(
+            "the pre-registered primary paired test of a treatment arm (label or "
+            "recorded name); its other test is secondary and Holm-adjusted"
+        ),
+    )
+    parser.add_argument(
+        "--routes-on-category",
+        action="append",
+        default=[],
+        metavar="ARM",
+        help=(
+            "an arm whose mechanism reads the category map (r0a); a map mismatch "
+            "voids every comparison with it"
+        ),
+    )
     parser.add_argument("--json", metavar="PATH", help="write the report as JSON")
     return parser
 
 
+PAIRED_TESTS = ("source", "completion")
+
+
+def parse_primaries(specs: Sequence[str], arms: Sequence[Arm]) -> Dict[str, str]:
+    """``ARM=source|completion`` pairs, keyed by resolved arm label."""
+    primaries: Dict[str, str] = {}
+    for spec in specs:
+        selector, sep, test = spec.partition("=")
+        if not sep or test not in PAIRED_TESTS:
+            raise CompareError(
+                f"--primary expects ARM=source|completion, got {spec!r}", EXIT_USAGE
+            )
+        primaries[resolve_arm(selector, arms, "--primary").label] = test
+    return primaries
+
+
+def category_map_rules(
+    baseline: Arm,
+    arms: Sequence[Arm],
+    routed: set,
+    qa_runs: Dict[str, dict],
+) -> Dict[str, Tuple[str, Optional[str]]]:
+    """``(status, reason)`` per arm against the baseline (#538 rule 3)."""
+    category_slice, _ = _category_modules()
+
+    def traced(arm: Arm) -> bool:
+        answers = (qa_runs.get(arm.label) or {}).get("answers") or []
+        return category_slice.called_metadata_search(arm.rows, answers)
+
+    rules: Dict[str, Tuple[str, Optional[str]]] = {baseline.label: ("ok", None)}
+    for arm in arms:
+        if arm is baseline:
+            continue
+        rules[arm.label] = category_slice.map_rule(
+            baseline.raw,
+            arm.raw,
+            routes_on_category=arm.label in routed or baseline.label in routed,
+            traced=traced(arm) or traced(baseline),
+        )
+    return rules
+
+
+def map_rule_gate(
+    voided: Sequence[Arm], rules: Dict[str, Tuple[str, Optional[str]]]
+) -> dict:
+    """G9: which comparisons the category-map rule voided, and why."""
+    if not voided:
+        return {
+            "id": "G9",
+            "name": "category map",
+            "status": "pass",
+            "detail": "no comparison voided by a category-map mismatch",
+        }
+    return {
+        "id": "G9",
+        "name": "category map",
+        "status": "void",
+        "detail": "; ".join(
+            f"{arm.label} ({arm.name}): {rules[arm.label][1]}" for arm in voided
+        ),
+    }
+
+
+def _no_tool_call(arm: Arm) -> int:
+    return sum(
+        1
+        for row in arm.rows.values()
+        if not any(m.get("type") == "tool_call" for m in row.get("messages") or [])
+    )
+
+
+def paired_tests_block(
+    baseline: Arm, arms: Sequence[Arm], primaries: Dict[str, str]
+) -> List[dict]:
+    """Exact McNemar source and completion tests per arm against the baseline."""
+    _, paired_tests = _category_modules()
+    entries: List[dict] = []
+    for arm in arms:
+        if arm is baseline:
+            continue
+        entries.append(
+            {
+                "label": arm.label,
+                "name": arm.name,
+                "source": paired_tests.source_test(baseline.rows, arm.rows),
+                "completion": paired_tests.completion_test(baseline.rows, arm.rows),
+                "primary": primaries.get(arm.label),
+                "no_tool_call": _no_tool_call(arm),
+                "baseline_no_tool_call": _no_tool_call(baseline),
+            }
+        )
+    secondaries = [
+        (entry, "completion" if entry["primary"] == "source" else "source")
+        for entry in entries
+        if entry["primary"]
+    ]
+    adjusted = paired_tests.holm_adjust(
+        [entry[test]["p"] for entry, test in secondaries]
+    )
+    for (entry, test), p in zip(secondaries, adjusted):
+        entry["secondary"] = test
+        entry["secondary_p_holm"] = p
+    return entries
+
+
+def category_block(
+    baseline: Arm,
+    arms: Sequence[Arm],
+    rules: Dict[str, Tuple[str, Optional[str]]],
+) -> List[dict]:
+    """Per arm: the map rule, and the per-category table or why there is none."""
+    category_slice, _ = _category_modules()
+    entries: List[dict] = []
+    for arm in arms:
+        status, rule_reason = rules.get(arm.label, ("ok", None))
+        check = category_slice.snapshot_check(arm.raw, arm.artifact_dir or Path("."))
+        reason = check.reason
+        if reason is None and arm is not baseline:
+            reason = category_slice.pair_slice_reason(
+                baseline.raw,
+                arm.raw,
+                baseline.artifact_dir or Path("."),
+                arm.artifact_dir or Path("."),
+            )
+        if reason is None and status == "slice-only":
+            reason = rule_reason
+        entries.append(
+            {
+                "label": arm.label,
+                "name": arm.name,
+                "map_rule": status,
+                "no_slice_reason": reason,
+                "slice": (
+                    category_slice.category_table(arm.rows, check.category_of)
+                    if reason is None
+                    else None
+                ),
+            }
+        )
+    return entries
+
+
 def parse_qa_run_specs(specs: Sequence[str], arms: Sequence[Arm]) -> Dict[str, dict]:
-    """Resolve ``LABEL=RUN_DIR`` pairs against the loaded arms."""
+    """Resolve ``LABEL=RUN_DIR`` pairs against the loaded arms.
+
+    The selector is a label or a recorded arm name (``resolve_arm``). A QA run
+    joins only when its map readings match the arm's end digest and it used the
+    arm's prompt (``category_slice.qa_join_reason``); otherwise it is refused at
+    the gate exit code, because its pass rates feed the ``should_refuse`` path in
+    G8.
+    """
     labels = {arm.label for arm in arms}
     runs: Dict[str, dict] = {}
     for spec in specs:
-        label, sep, directory = spec.partition("=")
-        if not sep or not label or not directory:
+        selector, sep, directory = spec.partition("=")
+        if not sep or not selector or not directory:
             raise CompareError(
                 f"--qa-run expects LABEL=RUN_DIR, got {spec!r}; "
                 f"labels are {', '.join(sorted(labels))}",
                 EXIT_USAGE,
             )
-        if label not in labels:
-            raise CompareError(
-                f"--qa-run names no such arm: {label!r}; "
-                f"labels are {', '.join(sorted(labels))}",
-                EXIT_USAGE,
-            )
+        arm = resolve_arm(selector, arms, "--qa-run")
+        label = arm.label
         if label in runs:
             # The QA item pass overrides the refusal heuristic and feeds G8, so
             # last-write-wins could flip a candidate from FAIL to PASS with
@@ -2329,7 +2657,16 @@ def parse_qa_run_specs(specs: Sequence[str], arms: Sequence[Arm]) -> Dict[str, d
                 f"({runs[label]['path']} and {directory}); give one run per arm",
                 EXIT_USAGE,
             )
-        runs[label] = load_qa_run(directory)
+        qa_run = load_qa_run(directory)
+        category_slice, _ = _category_modules()
+        reason = category_slice.qa_join_reason(
+            arm.raw, qa_run["category_map_readings"], qa_run["agent_spec_sha256"]
+        )
+        if reason:
+            raise CompareError(
+                f"--qa-run {directory} cannot join {label}: {reason}", EXIT_GATE
+            )
+        runs[label] = qa_run
     return runs
 
 
@@ -2345,14 +2682,12 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     if args.baseline is None:
         baseline = arms[0]
     else:
-        matches = [arm for arm in arms if arm.label == args.baseline]
-        if not matches:
-            raise CompareError(
-                f"--baseline {args.baseline!r} matches no arm; "
-                f"labels are {', '.join(arm.label for arm in arms)}",
-                EXIT_USAGE,
-            )
-        baseline = matches[0]
+        baseline = resolve_arm(args.baseline, arms, "--baseline")
+    primaries = parse_primaries(args.primary, arms)
+    routed = {
+        resolve_arm(selector, arms, "--routes-on-category").label
+        for selector in args.routes_on_category
+    }
 
     require_same_question_sets(baseline, arms)
     gates = [
@@ -2373,6 +2708,18 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     # file holding an empty list.
     anchors = anchor_questions(args.anchors)
     qa_runs = parse_qa_run_specs(args.qa_run, arms)
+    # #538 rule 3: a comparison the category-map rule voids reports no numbers,
+    # so its arm leaves every section of the report and G9 names it.
+    map_rules = category_map_rules(baseline, arms, routed, qa_runs)
+    voided = [arm for arm in arms if map_rules[arm.label][0] == "void"]
+    gates.append(map_rule_gate(voided, map_rules))
+    arms = [arm for arm in arms if arm not in voided]
+    if len(arms) < 2:
+        raise CompareError(
+            "every comparison is void under the category-map rule: "
+            + "; ".join(f"{arm.label}: {map_rules[arm.label][1]}" for arm in voided),
+            EXIT_GATE,
+        )
     questions = bank_questions(
         baseline, anchors, include_anchors=args.include_anchors_in_bank
     )
@@ -2420,6 +2767,8 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         anchors_in_bank=args.include_anchors_in_bank,
         qa_runs=qa_runs,
     )
+    report["paired_tests"] = paired_tests_block(baseline, arms, primaries)
+    report["category"] = category_block(baseline, arms, map_rules)
     print(render_markdown(report))
     if args.json:
         Path(args.json).write_text(json.dumps(report, indent=2, allow_nan=False))
