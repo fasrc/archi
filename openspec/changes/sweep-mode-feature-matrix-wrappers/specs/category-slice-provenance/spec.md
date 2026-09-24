@@ -72,7 +72,7 @@ The system SHALL, on `qa_arm.sh --sweep <sweep_dir> --stack <name> --arm <stem>`
 - **THEN** the QA run is refused before `archi eval qa` starts
 
 ### Requirement: Multi-arm sweep artifacts archive per arm
-The system SHALL, on `archive_run.sh --sweep <sweep_dir> --stack <name> --run <N>`, accept an artifact with one entry per sweep arm, SHALL refuse unless every arm's corpus fingerprints are usable, equal at both endpoints and equal across arms, SHALL copy the artifact, its `_report.md` and every `_category_map_<N>.tsv` it names, and SHALL append one `ragas` ledger row per arm with the arm stem, its prompt sha256 from the sweep lock, `category_map_sha256_start`, `category_map_sha256_end` and `category_map_file`, writing the corpus pin on run 1.
+The system SHALL, on `archive_run.sh --sweep <sweep_dir> --stack <name> --run <N>`, accept an artifact with one entry per sweep arm, SHALL check every arm before copying any file or appending any ledger row, SHALL refuse unless every arm's corpus fingerprints are usable, equal at both endpoints and equal across arms and every `category_map_file` an arm names exists beside the artifact with `"sha256:" + sha256(file)` equal to that arm's `category_map_sha256_end`, SHALL copy the artifact, its `_report.md` and every `_category_map_<N>.tsv` it names, and SHALL append one `ragas` ledger row per arm with the arm stem, its prompt sha256 from the sweep lock, `category_map_sha256_start`, `category_map_sha256_end`, `category_map_unchanged_at_endpoints` and `category_map_file`, writing the corpus pin on run 1. An arm whose map changed or whose map reading failed is archived with that state recorded, not refused, because #538 rule 2 makes a map failure cost only the slice.
 
 #### Scenario: Three arms archived
 - **WHEN** a three-arm artifact with three snapshots is archived as run 1
@@ -81,6 +81,14 @@ The system SHALL, on `archive_run.sh --sweep <sweep_dir> --stack <name> --run <N
 #### Scenario: Missing snapshot file
 - **WHEN** an arm names a `category_map_file` that is not beside the artifact
 - **THEN** the archive is refused and the arm is named
+
+#### Scenario: Snapshot does not match its digest
+- **WHEN** the third arm's snapshot file hashes to a value other than its `category_map_sha256_end`
+- **THEN** the archive is refused naming that arm, and no file is copied and no ledger row is appended for any arm
+
+#### Scenario: Map changed during an arm
+- **WHEN** an arm records `category_map_unchanged_at_endpoints: false`
+- **THEN** the arm is archived and its ledger row records `false`, so the missing slice is visible in the ledger
 
 #### Scenario: Corpus moved between arms
 - **WHEN** two arms record different end corpus fingerprints
