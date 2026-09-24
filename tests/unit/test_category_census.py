@@ -201,14 +201,24 @@ def test_clean_exemplars_pass():
 
 
 def test_exact_question_collides():
-    bank = [{"user_input": "Which of our lab's two grant accounts should I charge this job to", "sources": []}]
+    bank = [
+        {
+            "user_input": "Which of our lab's two grant accounts should I charge this job to",
+            "sources": [],
+        }
+    ]
     result = cc.exemplar_disjointness(cc.parse_exemplars(EXEMPLAR_PROMPT), bank, 0.5)
     assert result["passed"] is False
     assert result["collisions"][0]["kind"] == "question"
 
 
 def test_paraphrased_question_collides():
-    bank = [{"user_input": "Which of our two grant accounts should I charge this job to?", "sources": []}]
+    bank = [
+        {
+            "user_input": "Which of our two grant accounts should I charge this job to?",
+            "sources": [],
+        }
+    ]
     result = cc.exemplar_disjointness(cc.parse_exemplars(EXEMPLAR_PROMPT), bank, 0.5)
     assert [c["kind"] for c in result["collisions"]] == ["question"]
 
@@ -224,7 +234,9 @@ def test_shared_url_collides_across_a_trailing_slash():
 # --- CLI: one connection, one database state ----------------------------------------
 
 
-MAP_ROWS = [(f"{KB}/{c}-{i}", label) for c, label in enumerate(LABELS) for i in range(3)]
+MAP_ROWS = [
+    (f"{KB}/{c}-{i}", label) for c, label in enumerate(LABELS) for i in range(3)
+]
 
 
 class _Cursor:
@@ -275,9 +287,12 @@ def _files(tmp_path):
     bank = tmp_path / "bank.json"
     bank.write_text(
         json.dumps(
-            [{"user_input": f"q{c}-{i}?", "sources": [url]} for (url, _), (c, i) in zip(
-                MAP_ROWS, [(c, i) for c in range(len(LABELS)) for i in range(3)]
-            )]
+            [
+                {"user_input": f"q{c}-{i}?", "sources": [url]}
+                for (url, _), (c, i) in zip(
+                    MAP_ROWS, [(c, i) for c in range(len(LABELS)) for i in range(3)]
+                )
+            ]
         )
     )
     anchors = tmp_path / "anchors.json"
@@ -292,16 +307,24 @@ def _files(tmp_path):
 def _argv(tmp_path, out):
     bank, anchors, routing, exemplar = _files(tmp_path)
     return [
-        "--pg-dsn", "postgresql://stub",
-        "--bank", str(bank),
-        "--anchors", str(anchors),
-        "--routing-prompt", str(routing),
-        "--exemplar-prompt", str(exemplar),
-        "--json", str(out),
+        "--pg-dsn",
+        "postgresql://stub",
+        "--bank",
+        str(bank),
+        "--anchors",
+        str(anchors),
+        "--routing-prompt",
+        str(routing),
+        "--exemplar-prompt",
+        str(exemplar),
+        "--json",
+        str(out),
     ]
 
 
-def test_cli_reads_everything_on_one_readonly_repeatable_read_connection(tmp_path, capsys):
+def test_cli_reads_everything_on_one_readonly_repeatable_read_connection(
+    tmp_path, capsys
+):
     conns = []
 
     def connect(dsn):
@@ -322,20 +345,27 @@ def test_cli_reads_everything_on_one_readonly_repeatable_read_connection(tmp_pat
 
     report = json.loads(out.read_text())
     assert report["passed"] is True
-    assert report["category_map_digest"] == category_map_digest(category_map_records(MAP_ROWS))
+    assert report["category_map_digest"] == category_map_digest(
+        category_map_records(MAP_ROWS)
+    )
     assert report["corpus_fingerprint"].startswith("sha256:")
     bank, _, routing, _ = _files(tmp_path)
-    assert report["inputs"]["bank_sha256"] == hashlib.sha256(bank.read_bytes()).hexdigest()
-    assert report["inputs"]["routing_prompt_sha256"] == hashlib.sha256(
-        routing.read_bytes()
-    ).hexdigest()
+    assert (
+        report["inputs"]["bank_sha256"] == hashlib.sha256(bank.read_bytes()).hexdigest()
+    )
+    assert (
+        report["inputs"]["routing_prompt_sha256"]
+        == hashlib.sha256(routing.read_bytes()).hexdigest()
+    )
     assert report["inputs"]["similarity_threshold"] == 0.5
     assert "| Storage |" in capsys.readouterr().out
 
 
 def test_cli_exits_2_when_the_fingerprint_reading_fails(tmp_path):
     out = tmp_path / "census.json"
-    code = cc.main(_argv(tmp_path, out), connect=lambda dsn: _Conn(fail_fingerprint=True))
+    code = cc.main(
+        _argv(tmp_path, out), connect=lambda dsn: _Conn(fail_fingerprint=True)
+    )
 
     assert code == 2
     assert json.loads(out.read_text())["passed"] is False

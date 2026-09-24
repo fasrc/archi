@@ -214,7 +214,8 @@ def parse_exemplars(text: str) -> List[Dict[str, Any]]:
             target = ""
     for exemplar in exemplars:
         exemplar["urls"] = [
-            canonical_source_url(url.rstrip(".,;")) for url in _URL.findall(exemplar["answer"])
+            canonical_source_url(url.rstrip(".,;"))
+            for url in _URL.findall(exemplar["answer"])
         ]
     return exemplars
 
@@ -376,7 +377,9 @@ def main(
         report.update(passed=False, failures=[f"database reading failed: {exc}"])
     else:
         docs = reading.pop("docs")
-        rows = {str(row.get("user_input")): list(row.get("sources") or []) for row in bank}
+        rows = {
+            str(row.get("user_input")): list(row.get("sources") or []) for row in bank
+        }
         report.update(reading)
         report["coverage"] = coverage_census(docs)
         report["vocabulary"] = vocabulary_census(docs, labels)

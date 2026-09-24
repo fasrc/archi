@@ -42,7 +42,9 @@ def test_empty_category_maps_to_none():
 
 
 def test_url_with_two_categories_is_ambiguous():
-    assert url_categories([(f"{KB}/a", "A"), (f"{KB}/a", "B")]) == {f"{KB}/a": AMBIGUOUS}
+    assert url_categories([(f"{KB}/a", "A"), (f"{KB}/a", "B")]) == {
+        f"{KB}/a": AMBIGUOUS
+    }
 
 
 def test_repeated_identical_pairs_are_not_ambiguous():

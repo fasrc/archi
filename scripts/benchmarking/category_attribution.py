@@ -73,7 +73,9 @@ class Attribution:
         return sum(1 for sources in self.rows.values() if sources)
 
 
-def _resolve(category_of: Mapping[str, Optional[str]], url: str) -> Tuple[bool, Optional[str]]:
+def _resolve(
+    category_of: Mapping[str, Optional[str]], url: str
+) -> Tuple[bool, Optional[str]]:
     """``(resolved, category)``; unresolved when absent or ambiguous."""
     if url not in category_of or category_of[url] == AMBIGUOUS:
         return False, None
