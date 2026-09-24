@@ -71,7 +71,12 @@ def _write(tmp_path, name="arm.yaml"):
 
 def _handle(tmp_path, **kwargs):
     ResultHandler.handle_results(
-        _write(tmp_path), {}, {}, running_config={}, corpus_before="sha256:corpus", **kwargs
+        _write(tmp_path),
+        {},
+        {},
+        running_config={},
+        corpus_before="sha256:corpus",
+        **kwargs,
     )
     return ResultHandler.results[-1]
 
@@ -105,7 +110,9 @@ def test_a_failed_query_is_a_marker_and_is_logged(caplog):
 
     assert records is None
     assert "connection refused" in digest
-    assert any("Category-map provenance unavailable" in r.message for r in caplog.records)
+    assert any(
+        "Category-map provenance unavailable" in r.message for r in caplog.records
+    )
 
 
 # --- handle_results: three-state endpoints ---------------------------------------
@@ -221,7 +228,11 @@ def test_writes_one_snapshot_per_arm_bound_to_its_end_digest(dump_state, monkeyp
     ]
     for i, records in enumerate(maps, 1):
         _arm(
-            monkeypatch, records, category_map_digest(records), dump_state, f"arm{i}.yaml"
+            monkeypatch,
+            records,
+            category_map_digest(records),
+            dump_state,
+            f"arm{i}.yaml",
         )
 
     ResultHandler.dump_artifacts(Path("bench"))
@@ -232,9 +243,10 @@ def test_writes_one_snapshot_per_arm_bound_to_its_end_digest(dump_state, monkeyp
         name = entry["category_map_file"]
         assert name == f"{artifact.stem}_category_map_{i}.tsv"
         body = (dump_state / name).read_bytes()
-        assert f"sha256:{hashlib.sha256(body).hexdigest()}" == entry[
-            "category_map_sha256_end"
-        ]
+        assert (
+            f"sha256:{hashlib.sha256(body).hexdigest()}"
+            == entry["category_map_sha256_end"]
+        )
 
 
 def test_a_failed_end_reading_writes_no_file(dump_state, monkeypatch):
