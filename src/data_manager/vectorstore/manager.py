@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -12,6 +13,8 @@ from langchain_text_splitters.character import CharacterTextSplitter
 
 from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogService
 from src.utils.env import read_secret
+from src.utils.ingest_provenance import build_ingest_config_snapshot
+from src.utils.ingest_run import collect_ingest_counts, record_ingest_run
 from src.utils.logging import get_logger
 
 from .loader_utils import select_loader
@@ -253,7 +256,23 @@ class VectorStoreManager:
         return store
 
     def update_vectorstore(self) -> None:
-        """Synchronise filesystem documents with the vectorstore."""
+        """Synchronise filesystem documents with the vectorstore.
+
+        Wraps the sync so every outcome is recorded. A run that raises must not
+        leave the status board presenting the PREVIOUS completed run as the
+        current state of the corpus — the board would then attribute a corpus
+        to a run that never finished.
+        """
+        started_at = datetime.now(timezone.utc)
+        try:
+            run_status = self._sync_vectorstore()
+        except Exception:
+            self._record_ingest_run(started_at, "failed")
+            raise
+        self._record_ingest_run(started_at, run_status)
+
+    def _sync_vectorstore(self) -> str:
+        """Do the synchronisation; return the terminal run status."""
         store = self.fetch_collection()
 
         sources = PostgresCatalogService.load_sources_catalog(
@@ -283,7 +302,9 @@ class VectorStoreManager:
 
         if hashes_in_data == hashes_in_vstore and not stale_hashes:
             logger.info("Vectorstore is up to date")
+            run_status = "up_to_date"
         else:
+            run_status = "updated"
             logger.info("Vectorstore needs to be updated")
 
             hashes_to_remove = list(hashes_in_vstore - hashes_in_data)
@@ -311,9 +332,41 @@ class VectorStoreManager:
                     self._add_to_postgres(files_to_add)
                 except Exception as e:
                     logger.error(f"Files could not be added", exc_info=e)
+                    # The ingest carries on (unchanged behaviour), but the run
+                    # did not do what it set out to do. Recording it as
+                    # "updated" would present a partial corpus as a good one.
+                    run_status = "failed"
             logger.info("Vectorstore update has been completed")
 
         logger.info(f"N Collection: {store.count()}")
+        # Returned for BOTH branches: a run that found the store already up to
+        # date still happened, and the status board must not report a stale
+        # "last ingest" after it.
+        return run_status
+
+    def _record_ingest_run(self, started_at, status: str) -> None:
+        """Record this run's provenance, with the config that governed it.
+
+        Never raises. The corpus is the product; the record is commentary, so a
+        provenance failure must not fail an ingest that already succeeded.
+        """
+        try:
+            conn = psycopg2.connect(**self._pg_config)
+        except Exception as exc:
+            logger.warning("Could not connect to record the ingest run: %s", exc)
+            return
+        try:
+            record_ingest_run(
+                conn,
+                started_at=started_at,
+                status=status,
+                config_snapshot=build_ingest_config_snapshot(
+                    getattr(self, "_data_manager_config", {})
+                ),
+                counts=collect_ingest_counts(conn),
+            )
+        finally:
+            conn.close()
 
     def _collect_postgres_hashes(self) -> set:
         """Get all resource hashes currently in the PostgreSQL vectorstore."""

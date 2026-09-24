@@ -709,7 +709,7 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 >
 > **Provisioning is not automatic here.** `ensure_config`, which checks the
 > checkout out at a pinned, SHA-verified ref, has exactly one caller —
-> `deploy/scripts/lib.sh:354` — on the *other* deployment. This page's
+> `deploy/scripts/lib.sh:373` — on the *other* deployment. This page's
 > active path is the repo-root `g.sh` calling `archi create` directly, which never
 > runs it. So on this host `config/` is simply whatever is on disk, at whatever
 > revision someone last left it, with nothing verifying it.

@@ -144,11 +144,11 @@ GPU_IDS="${GPU_IDS-}"
 # One-off override (any name, row or not): CONFIG_REF=... CONFIG_SHA=... ./redeploy.sh
 # CONFIG_REPO/CONFIG_DIR are overridable so test_ensure_config.sh can run
 # against a local fixture instead of the real remote/checkout.
-# Contract pinned by test_ensure_config.sh cases 11-15.
+# Contract pinned by test_ensure_config.sh cases 14-18.
 CONFIG_REPO="${CONFIG_REPO:-git@github.com:fasrc/archi-config.git}"
 case "$DEPLOYMENT" in
-  dev)  _pin_ref=deploy-pin-2026-09d; _pin_sha=9c3da1d064152089cbd4a38ebb81bcfbce61c469 ;;
-  claw) _pin_ref=deploy-pin-2026-09d; _pin_sha=9c3da1d064152089cbd4a38ebb81bcfbce61c469 ;;
+  dev)  _pin_ref=deploy-pin-2026-09e; _pin_sha=48022ed74a1f5eed183268d0f82fd7c6d646f9b5 ;;
+  claw) _pin_ref=deploy-pin-2026-09e; _pin_sha=48022ed74a1f5eed183268d0f82fd7c6d646f9b5 ;;
   *)    _pin_ref=; _pin_sha= ;;
 esac
 # The environment override is a PAIR: one key alone never borrows the other from
@@ -327,6 +327,25 @@ ensure_config() {
   local match=no
   [ "$head" = "$CONFIG_SHA" ] && match=yes
   log "config provenance: HEAD=$head pin=$CONFIG_REF@$CONFIG_SHA match=$match"
+
+  # Export the same provenance so config_seed can persist it and the status
+  # board can show which config is actually deployed. Logging alone leaves these
+  # values invisible to the running application: CONFIG_REF is a shell variable
+  # and never otherwise enters a container.
+  #
+  # The dirty listing is RE-DERIVED here and excludes untracked entries (`??`).
+  # Untracked files are not a live edit — the deploy converges to the pin around
+  # them (see the dirt table in README.md) — and the pre-branch `tracked_dirty`
+  # can be stale, because CONFIG_FORCE=1 stashes edits above that are therefore
+  # no longer part of the deployed config.
+  local deployed_tracked_dirty
+  deployed_tracked_dirty="$(git -C "$CONFIG_DIR" status --porcelain \
+    | grep -v '^??' | grep -v '^$' || true)"
+  export ARCHI_CONFIG_REF="$CONFIG_REF"
+  export ARCHI_CONFIG_SHA="$CONFIG_SHA"
+  export ARCHI_CONFIG_HEAD="$head"
+  export ARCHI_CONFIG_PIN_MATCHED="$match"
+  export ARCHI_CONFIG_DIRTY_PATHS="$deployed_tracked_dirty"
   if [ -n "$stashed" ]; then
     log "config provenance: stashed pre-deploy edits (NOT in the deployed config):"
     printf '%s\n' "$stashed"

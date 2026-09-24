@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import psycopg2
 from flask import Blueprint, jsonify, render_template, request, session
 
+from src.interfaces.chat_app.status_provenance import load_status_provenance_for
 from src.utils.logging import get_logger
 from src.utils.rbac.permission_enum import Permission
 from src.utils.rbac.permissions import has_permission
@@ -139,6 +140,7 @@ def status_board():
         "status.html",
         alerts=alerts,
         is_alert_manager=is_alert_manager(),
+        provenance=load_status_provenance_for(_pg_config),
     )
 
 

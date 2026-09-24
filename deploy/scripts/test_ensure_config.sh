@@ -64,6 +64,26 @@ run_ensure() { # $1=sandbox, rest = extra env VAR=val pairs
   echo "$ec"
 }
 
+# Run ensure_config, then print the provenance it EXPORTS. The exports are what
+# reach config_seed (and thus the status board); the log lines alone never leave
+# the deploy output.
+run_ensure_exports() { # $1=sandbox, rest = extra env VAR=val pairs
+  local sb="$1"; shift
+  local ec=0
+  env "$@" \
+      CONFIG_DIR="$sb/config" \
+      CONFIG_REPO="file://$sb/remote.git" \
+      CONFIG_REF=deploy-pin-test \
+      CONFIG_SHA="$(cat "$sb/pin_sha")" \
+      bash -c "source '$LIB'; ensure_config >/dev/null 2>&1; \
+printf 'EXPORT_REF=[%s]\n' \"\$ARCHI_CONFIG_REF\"; \
+printf 'EXPORT_SHA=[%s]\n' \"\$ARCHI_CONFIG_SHA\"; \
+printf 'EXPORT_HEAD=[%s]\n' \"\$ARCHI_CONFIG_HEAD\"; \
+printf 'EXPORT_MATCHED=[%s]\n' \"\$ARCHI_CONFIG_PIN_MATCHED\"; \
+printf 'EXPORT_DIRTY=[%s]\n' \"\$ARCHI_CONFIG_DIRTY_PATHS\"" > "$sb/exports" 2>&1 || ec=$?
+  echo "$ec"
+}
+
 # --- 1: fresh clone -----------------------------------------------------------
 sb="$TESTROOT/fresh"; mkdir -p "$sb"; make_fixture "$sb"
 ec="$(run_ensure "$sb")"
@@ -198,6 +218,55 @@ else
   notok "10 wrong path type (ec=$ec)"; cat "$sb/out" || true
 fi
 
+# --- 11: provenance is EXPORTED, not only logged ------------------------------------
+# CONFIG_REF is otherwise a shell variable that never enters a container; these
+# exports are the only path by which the running deployment learns its own pin.
+sb="$TESTROOT/exports-clean"; mkdir -p "$sb"; make_fixture "$sb"
+ec="$(run_ensure_exports "$sb")"
+pin="$(cat "$sb/pin_sha")"
+if [ "$ec" = 0 ] \
+   && grep -q "EXPORT_REF=\[deploy-pin-test\]" "$sb/exports" \
+   && grep -q "EXPORT_SHA=\[$pin\]" "$sb/exports" \
+   && grep -q "EXPORT_HEAD=\[$pin\]" "$sb/exports" \
+   && grep -q "EXPORT_MATCHED=\[yes\]" "$sb/exports" \
+   && grep -q "EXPORT_DIRTY=\[\]" "$sb/exports"; then
+  ok "11 exports: ref/sha/head/matched exported, no dirt on a clean deploy"
+else
+  notok "11 exports on clean deploy (ec=$ec)"; cat "$sb/exports" || true
+fi
+
+# --- 12: live edits AT the pin export matched=yes WITH dirty paths -------------------
+# The subtle case the status board must not misreport: the deploy is permitted,
+# HEAD equals the pin, and yet the config running is NOT the pinned config.
+sb="$TESTROOT/exports-live-edit"; mkdir -p "$sb"; make_fixture "$sb"
+git clone -q "file://$sb/remote.git" "$sb/config"
+g "$sb/config" checkout -q "$(cat "$sb/pin_sha")"
+echo "LIVE EDIT" >> "$sb/config/lists/sources.list"
+ec="$(run_ensure_exports "$sb")"
+if [ "$ec" = 0 ] \
+   && grep -q "EXPORT_MATCHED=\[yes\]" "$sb/exports" \
+   && grep -q "sources.list" "$sb/exports"; then
+  ok "12 exports: live edits at the pin export matched=yes AND the dirty path"
+else
+  notok "12 exports with live edits at the pin (ec=$ec)"; cat "$sb/exports" || true
+fi
+
+# --- 13: untracked-only dirt exports NO dirty paths ---------------------------------
+# Untracked files are not a live edit — the deploy converges to the pin around
+# them — so they must not raise the board's live-edited warning.
+sb="$TESTROOT/exports-untracked"; mkdir -p "$sb"; make_fixture "$sb"
+git clone -q "file://$sb/remote.git" "$sb/config"
+echo "local bank" > "$sb/config/local-bank.json"
+ec="$(run_ensure_exports "$sb")"
+if [ "$ec" = 0 ] \
+   && grep -q "EXPORT_MATCHED=\[yes\]" "$sb/exports" \
+   && grep -q "EXPORT_DIRTY=\[\]" "$sb/exports"; then
+  ok "13 exports: untracked-only dirt is not reported as a live edit"
+else
+  notok "13 exports with untracked-only dirt (ec=$ec)"; cat "$sb/exports" || true
+fi
+
+
 # Print the pin a copy of lib.sh resolves for one deployment, with no pin in the
 # environment. The copy lives in a sandbox dir, so no real host.env applies.
 resolve_pin() { # $1=lib.sh path, $2=deployment name
@@ -205,7 +274,7 @@ resolve_pin() { # $1=lib.sh path, $2=deployment name
     bash -c "source '$1'; printf '%s %s\n' \"\$CONFIG_REF\" \"\$CONFIG_SHA\""
 }
 
-# --- 11: a pin bump for one deployment leaves the other unchanged -------------------
+# --- 14: a pin bump for one deployment leaves the other unchanged -------------------
 sb="$TESTROOT/per-deployment"; mkdir -p "$sb/scripts"
 new_sha=0123456789abcdef0123456789abcdef01234567
 sed -E "s|^( +claw\) ).*|\1_pin_ref=deploy-pin-bumped; _pin_sha=$new_sha ;;|" \
@@ -219,12 +288,12 @@ else
 fi
 if [ "$claw_after" = "deploy-pin-bumped $new_sha" ] && [ "$dev_after" = "$dev_before" ] \
    && [ -n "${dev_before% }" ]; then
-  ok "11 per-deployment pin: a claw bump moves claw only"
+  ok "14 per-deployment pin: a claw bump moves claw only"
 else
-  notok "11 per-deployment pin: claw='$claw_after' dev before='$dev_before' after='$dev_after'"
+  notok "14 per-deployment pin: claw='$claw_after' dev before='$dev_before' after='$dev_after'"
 fi
 
-# --- 12: a deployment with no pin row aborts at provisioning, not at source ---------
+# --- 15: a deployment with no pin row aborts at provisioning, not at source ---------
 sb="$TESTROOT/no-row"; mkdir -p "$sb"; make_fixture "$sb"
 ec=0
 env -u CONFIG_REF -u CONFIG_SHA DEPLOYMENT=scratch \
@@ -232,21 +301,21 @@ env -u CONFIG_REF -u CONFIG_SHA DEPLOYMENT=scratch \
     bash -c "source '$LIB' && echo SOURCED && ensure_config" > "$sb/out" 2>&1 || ec=$?
 if [ "$ec" != 0 ] && grep -q SOURCED "$sb/out" && grep -q "scratch" "$sb/out" \
    && grep -q "no config pin" "$sb/out" && [ ! -e "$sb/config" ]; then
-  ok "12 no pin row: sources cleanly, ensure_config aborts naming the deployment"
+  ok "15 no pin row: sources cleanly, ensure_config aborts naming the deployment"
 else
-  notok "12 no pin row (ec=$ec)"; cat "$sb/out" || true
+  notok "15 no pin row (ec=$ec)"; cat "$sb/out" || true
 fi
 
-# --- 13: an environment pin works for a deployment with no row ----------------------
+# --- 16: an environment pin works for a deployment with no row ----------------------
 sb="$TESTROOT/no-row-override"; mkdir -p "$sb"; make_fixture "$sb"
 ec="$(run_ensure "$sb" DEPLOYMENT=scratch)"
 if [ "$ec" = 0 ] && [ "$(g "$sb/config" rev-parse HEAD)" = "$(cat "$sb/pin_sha")" ]; then
-  ok "13 environment pin: overrides the table for any deployment name"
+  ok "16 environment pin: overrides the table for any deployment name"
 else
-  notok "13 environment pin (ec=$ec)"; cat "$sb/out" || true
+  notok "16 environment pin (ec=$ec)"; cat "$sb/out" || true
 fi
 
-# --- 14-15: a one-key environment pin aborts; it never mixes with the table row -------
+# --- 17-18: a one-key environment pin aborts; it never mixes with the table row -------
 for partial in "CONFIG_REF=deploy-pin-test" "CONFIG_SHA=$new_sha"; do
   key="${partial%%=*}"
   sb="$TESTROOT/partial-$key"; mkdir -p "$sb"; make_fixture "$sb"
@@ -261,6 +330,5 @@ for partial in "CONFIG_REF=deploy-pin-test" "CONFIG_SHA=$new_sha"; do
     notok "partial environment pin ($key only) (ec=$ec)"; cat "$sb/out" || true
   fi
 done
-
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

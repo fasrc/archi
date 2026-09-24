@@ -112,7 +112,7 @@ missing directory, and an existing host never silently follows a moved tag:
   their pins.
 - **One-off override:** `CONFIG_REF=... CONFIG_SHA=... ./redeploy.sh`, for any
   deployment name. Pass both keys: one key alone aborts the deploy.
-- **Self-test:** `bash deploy/scripts/test_ensure_config.sh` — 15
+- **Self-test:** `bash deploy/scripts/test_ensure_config.sh` — 18
   cases against a local fixture repo; no network, never touches the real
   checkout.
 - Raw `archi create` **bypasses all of this** — see the warning in
