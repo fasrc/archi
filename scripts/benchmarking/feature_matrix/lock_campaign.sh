@@ -17,6 +17,42 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# Sweep mode: lock_campaign.sh --sweep <sweep_dir> --manifest <yaml> --stack <name>
+#   --qa-dataset <json> --qa-profile <yaml>
+# Pins a rung-0 prompt sweep (every arm config and prompt, bank, anchors, QA inputs, the
+# prepared atoms, the code tree and r0b's exemplar-disjointness result) into
+# $FM_OUT/sweep-<stack>.lock, once. The campaign lock above is not read or written.
+if [ "${1:-}" = --sweep ]; then
+  SWEEP_DIR="${2:?--sweep needs the sweep directory}"; shift 2
+  MANIFEST=""; STACK=""; QA_DATASET=""; QA_PROFILE=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --manifest) MANIFEST="${2:?}"; shift 2 ;;
+      --stack) STACK="${2:?}"; shift 2 ;;
+      --qa-dataset) QA_DATASET="${2:?}"; shift 2 ;;
+      --qa-profile) QA_PROFILE="${2:?}"; shift 2 ;;
+      *) fm_die "unknown option $1" ;;
+    esac
+  done
+  fm_require_stack_name "$STACK"
+  [ -d "$SWEEP_DIR" ] && [ -f "$MANIFEST" ] || fm_die "--sweep needs the generated sweep directory and --manifest"
+  [ -f "$QA_DATASET" ] && [ -f "$QA_PROFILE" ] || fm_die "--qa-dataset and --qa-profile must name existing files"
+  CODE_SHA="$(fm_code_sha)"
+  [ "$CODE_SHA" != unknown ] || fm_die "not inside a git checkout — the lock must pin the code revision the sweep runs"
+  DIRTY="$("$FM_GIT" status --porcelain --untracked-files=no -- src scripts deploy 2>/dev/null || true)"
+  [ -z "$DIRTY" ] || fm_die "commit or stash source changes before locking:
+$DIRTY"
+  mkdir -p "$FM_OUT"
+  LOCK="$(fm_sweep_lock_file "$STACK")"
+  [ ! -e "$LOCK" ] || fm_die "sweep $STACK is already locked at $LOCK; the lock is written once"
+  fm_sweep_tools lock --sweep-dir "$SWEEP_DIR" --manifest "$MANIFEST" --stack "$STACK" \
+    --qa-dataset "$QA_DATASET" --qa-profile "$QA_PROFILE" --prepared "$FM_OUT/qa/$STACK-prepared" \
+    --code-sha "$CODE_SHA" --code-tree "$(fm_code_tree)" --out "$LOCK" || fm_die "sweep lock refused (see above)"
+  fm_ledger_append "$(printf '{"kind":"lock","sweep":true,"stack":"%s","locked":"%s","lock_sha256":"%s","code_sha":"%s"}' "$STACK" "$(fm_now)" "$(fm_sha256 "$LOCK")" "$CODE_SHA")"
+  fm_log "sweep lock written: $LOCK (sha256 $(fm_sha256 "$LOCK" | cut -c1-12))"
+  exit 0
+fi
+
 YAML="${1:-}"; fm_require_arm_yaml 00 "$YAML"; shift
 QA_DATASET=""; QA_PROFILE="config/benchmarking/feature_matrix/qa/evaluator-profile.huit.yaml"; RELOCK=false; ARMS_DIR=""
 while [ $# -gt 0 ]; do
