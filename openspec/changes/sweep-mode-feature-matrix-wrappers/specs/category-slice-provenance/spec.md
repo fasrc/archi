@@ -23,11 +23,19 @@ The system SHALL, when locking a sweep, run the census's exemplar-disjointness c
 - **THEN** the lock is refused and the URL is named
 
 ### Requirement: Run 1 of a sweep archives only with a passing census bound to its corpus
-The system SHALL require `archive_run.sh --sweep … --run 1` to be given `--census <json>` from `category_census.py`, SHALL refuse unless that census passed every gate and its corpus fingerprint equals the fingerprint the artifact records, and SHALL record the census file's sha256 and fingerprint in every ledger row of that run.
+The system SHALL require `archive_run.sh --sweep … --run 1` to be given `--census <json>` from `category_census.py`, SHALL refuse unless that census passed every gate, its corpus fingerprint equals the fingerprint the artifact records, its category-map digest equals every arm's `category_map_sha256_start`, and its bank, anchors, routing-prompt and exemplar-prompt sha256 and similarity threshold equal the sweep lock's, and SHALL record the census file's sha256, fingerprint and map digest in every ledger row of that run.
 
 #### Scenario: Census from another corpus
 - **WHEN** the census JSON records a corpus fingerprint that differs from the artifact's
 - **THEN** the archive is refused and both fingerprints are named
+
+#### Scenario: Census from an older category map
+- **WHEN** the census's corpus fingerprint matches but its category-map digest differs from the arms' start digest
+- **THEN** the archive is refused and both digests are named
+
+#### Scenario: Census run on other inputs
+- **WHEN** the census was run with a routing prompt whose sha256 differs from r0a's in the sweep lock
+- **THEN** the archive is refused and the input is named
 
 #### Scenario: Failed census
 - **WHEN** the census JSON records a failed gate

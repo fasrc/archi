@@ -9,7 +9,8 @@
 - [ ] 2.2 `model: sonnet` — RED/GREEN: routing-list parser for `## Category routing`; drift census names prompt-only and corpus-only labels; non-KB categories excluded
 - [ ] 2.3 `model: sonnet` — RED/GREEN: bank census — ≥ 6 categories gate, > 10 % share gate, the side lines, no row dropped
 - [ ] 2.4 `model: sonnet` — RED/GREEN: exemplar parser and disjointness — clean r0b fixture passes; exact, paraphrase and shared-URL collisions fail with names
-- [ ] 2.5 `model: sonnet` — RED/GREEN: CLI — `--pg-dsn`, `--bank`, `--anchors`, `--routing-prompt`, `--exemplar-prompt`, `--similarity-threshold`, `--json`; corpus fingerprint in the output; exit codes 0 / 1 / 2
+- [ ] 2.5 `model: sonnet` — RED/GREEN: CLI — `--pg-dsn`, `--bank`, `--anchors`, `--routing-prompt`, `--exemplar-prompt`, `--similarity-threshold`, `--json`; exit codes 0 / 1 / 2
+- [ ] 2.6 `model: opus` — RED/GREEN: one connection from `--pg-dsn` in one read-only repeatable-read transaction for every query (stub factory called once, every query on it); output carries the corpus fingerprint, the category-map digest and the input sha256s + threshold; a failed fingerprint or map reading exits 2
 
 ## 3. Fallback pin
 

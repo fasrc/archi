@@ -31,9 +31,16 @@ census on a live stack (W7's "run it and post the table" is an operator step aft
    three source-less `should_refuse` rows have no gold article, so they are not gold rows.
    Leaving them out makes every share larger (k/102, not k/105), so the gate is the stricter
    of the two readings; a fixture pins that direction.
-3. **The census reads `CORPUS_STATE_QUERY` by AST from `src/bin/service_benchmark.py`**, as
-   `fm_fingerprint` does (`feature_matrix/lib.sh:85-99`), so the label matches the harness
-   without importing it.
+3. **One connection, and the census records what it read.** Every census query — the
+   category queries, `CORPUS_STATE_QUERY` (read by AST from `src/bin/service_benchmark.py`, as
+   `fm_fingerprint` does at `feature_matrix/lib.sh:85-99`, so the text matches the harness
+   without importing it) and the category-map query from `record-category-map-digest` — runs on
+   the one `psycopg2` connection opened from `--pg-dsn`, inside one read-only
+   `REPEATABLE READ` transaction, so all readings describe one database state. The JSON records
+   the corpus fingerprint, the **category-map digest** (the corpus fingerprint cannot see a
+   metadata change, #524), and the sha256 of the bank, anchors, routing prompt and exemplar
+   prompt plus the similarity threshold. A failed fingerprint or map reading fails the census
+   (exit 2), never a pass with an unavailable label.
 4. **Question similarity:** normalize (casefold, collapse whitespace, strip punctuation), then
    exact match or word-set Jaccard ≥ 0.5. Exact match alone misses a paraphrase; the threshold
    is recorded in the output so a reviewer can see what "absent" meant.

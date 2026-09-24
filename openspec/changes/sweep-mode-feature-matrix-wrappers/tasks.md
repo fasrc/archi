@@ -12,7 +12,7 @@
 ## 3. QA and archive
 
 - [ ] 3.1 `model: opus` — RED/GREEN: `qa_arm.sh --sweep --arm <stem>` — prompt sha checked against the sweep lock, pin before/after, readings file written (success and `<unavailable:` cases), ledger `qa` row with both digests
-- [ ] 3.2 `model: opus` — RED/GREEN: `archive_run.sh --sweep` — multi-arm accepted, per-arm endpoint checks, cross-arm fingerprint equality, snapshot files copied, missing snapshot refused, one ledger row per arm, pin on run 1; run 1 requires `--census <json>` that passed and whose fingerprint equals the artifact's, recorded in each row; an arm whose prompt sha no longer equals its disjointness record is refused
+- [ ] 3.2 `model: opus` — RED/GREEN: `archive_run.sh --sweep` — multi-arm accepted, per-arm endpoint checks, cross-arm fingerprint equality, snapshot files copied, missing snapshot refused, one ledger row per arm, pin on run 1; run 1 requires `--census <json>` that passed, whose fingerprint equals the artifact's, whose map digest equals every arm's start digest and whose input digests and threshold equal the sweep lock's, recorded in each row; an arm whose prompt sha no longer equals its disjointness record is refused
 - [ ] 3.3 `model: sonnet` — existing `qa_arm.sh` and `archive_run.sh` campaign cases still pass unchanged
 
 ## 4. Docs and verify

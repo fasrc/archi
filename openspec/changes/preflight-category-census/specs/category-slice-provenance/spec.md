@@ -46,7 +46,18 @@ The system SHALL join the bank's gold URLs to the live map with the shared URL r
 
 #### Scenario: Output labelled with the corpus it read
 - **WHEN** the census completes
-- **THEN** the Markdown and JSON outputs carry the corpus fingerprint computed with the harness's `CORPUS_STATE_QUERY`
+- **THEN** the Markdown and JSON outputs carry the corpus fingerprint computed with the harness's `CORPUS_STATE_QUERY`, the category-map digest, and the sha256 of every input file plus the similarity threshold
+
+### Requirement: Every census reading comes from one database state
+The system SHALL run every census query, the corpus-fingerprint query and the category-map query on the single connection opened from `--pg-dsn` inside one read-only repeatable-read transaction, and SHALL fail the census when the fingerprint or the map reading fails.
+
+#### Scenario: One connection
+- **WHEN** the census runs with a stub connection factory
+- **THEN** the factory is called once with the given DSN and every query, including `CORPUS_STATE_QUERY` and the category-map query, runs on that connection
+
+#### Scenario: Fingerprint reading fails
+- **WHEN** the fingerprint query raises
+- **THEN** the census exits 2 and the output records no pass
 
 ### Requirement: r0b exemplars are disjoint from the bank and anchors
 The system SHALL extract every `Question:` block and every URL cited in the `Answer:` blocks under `## Worked examples` of the given exemplar prompt, and SHALL fail when an exemplar question equals a bank or anchor question after normalization or has a word-set Jaccard similarity of 0.5 or more with one, or when a cited URL equals a bank or anchor source after canonicalization.
