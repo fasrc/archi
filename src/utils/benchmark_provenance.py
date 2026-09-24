@@ -35,6 +35,7 @@ run?" without either source still existing. ``code_version`` and
 import hashlib
 import json
 import os
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
@@ -385,6 +386,25 @@ def category_map_digest(records: Sequence[str]) -> str:
     """``sha256:<hex>`` of :func:`category_map_text`, so a file's hash equals it."""
     text = category_map_text(records)
     return f"sha256:{hashlib.sha256(text.encode('utf-8')).hexdigest()}"
+
+
+def prompt_text_sha256(path: Optional[Any]) -> Optional[str]:
+    """Hex sha256 of an agent prompt as ``load_agent_spec`` reads it.
+
+    Hashes ``read_text()`` re-encoded as UTF-8, not the raw bytes: that is the
+    text the harness parses (newline-normalized), so the digest names the
+    prompt the arm actually ran. Plain hex, the same form the QA workflow
+    records as ``agent_spec_sha256``. ``None`` when the arm names no prompt;
+    an ``<unavailable: …>`` marker when it cannot be read, because provenance
+    is never fatal.
+    """
+    if path is None:
+        return None
+    try:
+        text = Path(str(path)).read_text()
+    except OSError as exc:
+        return f"<unavailable: {exc}>"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def config_fingerprint(config: Any) -> str:

@@ -17,6 +17,7 @@ from src.utils.benchmark_provenance import (
     category_map_digest,
     category_map_records,
     category_map_text,
+    prompt_text_sha256,
 )
 
 KB = "https://docs.rc.fas.harvard.edu/kb"
@@ -116,3 +117,23 @@ def test_a_category_change_moves_the_digest():
 def test_empty_map_has_a_stable_digest():
     empty = hashlib.sha256(b"").hexdigest()
     assert category_map_digest(category_map_records([])) == f"sha256:{empty}"
+
+
+# --- prompt_text_sha256: the prompt as load_agent_spec reads it -----------------
+
+
+def test_prompt_digest_hashes_the_text_load_agent_spec_parses(tmp_path):
+    prompt = tmp_path / "arm.md"
+    prompt.write_bytes(b"---\nname: x\n---\r\nbody\r\n")
+
+    expected = hashlib.sha256(prompt.read_text().encode("utf-8")).hexdigest()
+    assert prompt_text_sha256(prompt) == expected
+
+
+def test_prompt_digest_is_none_without_a_path():
+    assert prompt_text_sha256(None) is None
+
+
+def test_prompt_digest_of_an_unreadable_file_is_a_marker(tmp_path):
+    digest = prompt_text_sha256(tmp_path / "missing.md")
+    assert digest.startswith("<unavailable:")
