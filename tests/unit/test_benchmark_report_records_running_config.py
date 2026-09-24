@@ -29,6 +29,13 @@ from src.bin.service_benchmark import ResultHandler
 @pytest.fixture(autouse=True)
 def _reset_results(monkeypatch):
     monkeypatch.setattr(ResultHandler, "results", [])
+    monkeypatch.setattr(ResultHandler, "category_map_records_by_arm", [])
+    # These tests are about the configuration and the corpus; a real map reading
+    # would find no factory and warn, which is covered in
+    # test_benchmark_category_map.py rather than asserted on here.
+    monkeypatch.setattr(
+        ResultHandler, "get_category_map", staticmethod(lambda: ([], "sha256:map"))
+    )
 
 
 def _write(tmp_path, config):

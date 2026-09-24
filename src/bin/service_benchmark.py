@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
-from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -25,9 +24,14 @@ from src.archi.providers.local_provider import normalize_base_url
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
 from src.utils.benchmark_provenance import (
     asserted_config_divergence,
+    canonical_source_url,
+    category_map_digest,
+    category_map_records,
+    category_map_text,
     collect_code_version,
     config_version,
     corpus_fingerprint,
+    prompt_text_sha256,
 )
 from src.utils.benchmark_resilience import (
     OK,
@@ -128,6 +132,16 @@ WHERE d.is_deleted = FALSE
 GROUP BY d.resource_hash, p.parent_index, p.parent_text
 """
 
+# The URL -> category map a per-category slice joins bank sources against.
+# CORPUS_STATE_QUERY never reads extra_json, where `category` lives, so a
+# metadata-only change moves this map at a constant fingerprint (#524); each arm
+# therefore records its own digest of it at both endpoints (#538 rule 1).
+CATEGORY_MAP_QUERY = """
+SELECT url, extra_json->>'category'
+FROM documents
+WHERE NOT is_deleted AND url IS NOT NULL
+"""
+
 #: Distinguishes a provenance field that was never recorded (a result file
 #: written before provenance existed) from one recorded as undetermined.
 _NOT_RECORDED = object()
@@ -179,6 +193,9 @@ class ABResult:
 
 class ResultHandler:
     results = []  # store the results for each config
+    # Parallel to `results`: each arm's end-reading category-map records, or None
+    # when that reading failed. Kept out of the JSON; dump_artifacts writes them.
+    category_map_records_by_arm: List[Optional[List[str]]] = []
     metadata = {}  # store the metadata about the benchmark run
     ab_comparison: Dict[str, Any] = (
         {}
@@ -387,6 +404,33 @@ class ResultHandler:
             return f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
 
     @staticmethod
+    def get_category_map() -> Tuple[Optional[List[str]], str]:
+        """The live URL -> category map as records and digest, or a marker.
+
+        Reads through the same factory pool as ``get_corpus_fingerprint`` and,
+        like it, never raises: a failure returns ``(None, "<unavailable: …>")``,
+        which the endpoint comparison treats as "not observed" (#538 rule 2).
+        """
+        try:
+            factory = PostgresServiceFactory.get_instance()
+            if factory is None:
+                raise RuntimeError(
+                    "PostgresServiceFactory is not initialized; _init_runtime() "
+                    "installs it when this module is run as a script"
+                )
+            records = category_map_records(
+                factory.connection_pool.execute(CATEGORY_MAP_QUERY)
+            )
+            return records, category_map_digest(records)
+        except Exception as exc:  # noqa: BLE001 - provenance is never fatal
+            logger.warning(
+                "Category-map provenance unavailable: %s. This arm gets no "
+                "per-category slice.",
+                exc,
+            )
+            return None, f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
+
+    @staticmethod
     def map_prompts(config: Dict[str, Any]):
         prompts = config.get("services", {}).get("benchmarking", {}).get("prompts")
         if not isinstance(prompts, dict):
@@ -412,6 +456,8 @@ class ResultHandler:
         *,
         running_config: Optional[Dict[str, Any]],
         corpus_before: Optional[str] = None,
+        category_map_before: Optional[str] = None,
+        agent_md_sha256: Optional[str] = None,
         ingest_wall_seconds: Optional[float] = None,
         modes_executed: Optional[Set[str]] = None,
     ):
@@ -488,6 +534,22 @@ class ResultHandler:
                 corpus_after,
             )
 
+        # The same three states for the URL -> category map (#538 rules 1-2).
+        category_map_end_records, category_map_after = ResultHandler.get_category_map()
+        if ResultHandler.corpus_reading_failed(
+            category_map_before
+        ) or ResultHandler.corpus_reading_failed(category_map_after):
+            category_map_unchanged = None
+        else:
+            category_map_unchanged = category_map_before == category_map_after
+        if category_map_unchanged is False:
+            logger.warning(
+                "The category map changed while this arm was running (%s -> %s); "
+                "it gets no per-category slice",
+                category_map_before,
+                category_map_after,
+            )
+
         current_results = {
             "single_question_results": results,
             "total_results": total_results,
@@ -503,6 +565,14 @@ class ResultHandler:
             "corpus_fingerprint_before": corpus_before,
             "corpus_fingerprint": corpus_after,
             "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
+            # The map a per-category slice may read, bound to this arm: the end
+            # records are written by dump_artifacts as `category_map_file`, whose
+            # sha256 equals `category_map_sha256_end` by construction.
+            "category_map_sha256_start": category_map_before,
+            "category_map_sha256_end": category_map_after,
+            "category_map_unchanged_at_endpoints": category_map_unchanged,
+            # The prompt this arm ran, as load_agent_spec parsed it.
+            "agent_md_sha256": agent_md_sha256,
             # What the corpus above COST to build, in harness-observed seconds.
             # Three readings, kept distinct on purpose: key absent = artifact
             # predates the field; null = no ingest was observed (the run reused
@@ -570,6 +640,7 @@ class ResultHandler:
         }
 
         ResultHandler.results.append(current_results)
+        ResultHandler.category_map_records_by_arm.append(category_map_end_records)
 
     @staticmethod
     def add_metadata():
@@ -648,6 +719,7 @@ class ResultHandler:
         `--regenerate-md` on the backfill script rebuilds the report later.
         """
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        ResultHandler.dump_category_maps(benchmark_name, timestamp)
         json_path = ResultHandler.dump(benchmark_name, timestamp)
         try:
             ResultHandler.dump_report(benchmark_name, timestamp)
@@ -661,6 +733,30 @@ class ResultHandler:
                 f"scripts/benchmarking/backfill_report_provenance.py "
                 f"--regenerate-md {json_path}"
             )
+
+    @staticmethod
+    def dump_category_maps(benchmark_name: Path, timestamp: str):
+        """Write each arm's end-reading map as ``<stem>_category_map_<N>.tsv``.
+
+        ``<N>`` is the arm's 1-based position, as ``compare_runs`` labels it.
+        The file is exactly the text that was hashed, so its sha256 equals the
+        arm's ``category_map_sha256_end``. An arm whose end reading failed gets
+        ``category_map_file: null``; a result recorded without the category keys
+        (none the current harness writes) is left untouched.
+        """
+        stem = f"{benchmark_name}-{timestamp}"
+        by_arm = ResultHandler.category_map_records_by_arm
+        for index, entry in enumerate(ResultHandler.results, 1):
+            if "category_map_sha256_end" not in entry:
+                continue
+            records = by_arm[index - 1] if index <= len(by_arm) else None
+            if records is None:
+                entry["category_map_file"] = None
+                continue
+            name = f"{stem}_category_map_{index}.tsv"
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            (OUTPUT_DIR / name).write_bytes(category_map_text(records).encode("utf-8"))
+            entry["category_map_file"] = name
 
     @staticmethod
     def dump_report(benchmark_name: Path, timestamp: str):
@@ -1411,6 +1507,9 @@ class Benchmarker:
         apply_sut_local_provider(benchmark_cfg, get_static_config())
 
         agent_spec = None
+        # Hashed at load time, from the text load_agent_spec parses, so the arm
+        # record names the prompt this chain was built with.
+        self.agent_md_sha256 = prompt_text_sha256(agent_md_file)
         try:
             agent_spec = load_agent_spec(Path(str(agent_md_file)))
         except AgentSpecError as exc:
@@ -1750,14 +1849,11 @@ class Benchmarker:
         legitimately ends in ``/`` (e.g. ``...?redirect=/kb/foo/``) is preserved.
         A value with no scheme (e.g. a ``file_name`` match field) parses as a bare
         path, so the same one-trailing-slash rule applies without special-casing.
+
+        The rule lives in ``benchmark_provenance`` so the category-map records and
+        the category slice join canonicalize exactly as matching does.
         """
-        text = str(value).strip()
-        parts = urlsplit(text)
-        path = parts.path
-        if len(path) > 1 and path.endswith("/"):
-            path = path[:-1]
-            return urlunsplit(parts._replace(path=path))
-        return text
+        return canonical_source_url(value)
 
     def prepare_messages(self, raw_messages):
         """Format the langchain Messages into something we can store and view later."""
@@ -2200,12 +2296,15 @@ class Benchmarker:
             # Read the corpus BEFORE the arm's questions, so the report can show
             # whether they were all scored against the same documents.
             corpus_before = ResultHandler.get_corpus_fingerprint()
+            _, category_map_before = ResultHandler.get_category_map()
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
                 Path(self.current_config),
                 question_wise_results,
                 total_results,
                 corpus_before=corpus_before,
+                category_map_before=category_map_before,
+                agent_md_sha256=getattr(self, "agent_md_sha256", None),
                 # The chain's own snapshot, taken by archi.__init__ before these
                 # questions ran -- not a fresh query, which would report the
                 # config as it stands now rather than as the arm used it.

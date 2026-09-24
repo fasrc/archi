@@ -35,7 +35,9 @@ run?" without either source still existing. ``code_version`` and
 import hashlib
 import json
 import os
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from urllib.parse import urlsplit, urlunsplit
 
 __all__ = [
     "ARM_OVERRIDE_PATHS",
@@ -316,6 +318,93 @@ def corpus_fingerprint(rows: Iterable[Sequence[Any]]) -> str:
         records.append(f"{_escape(key)}:{rendered}")
     digest = hashlib.sha256("\n".join(sorted(records)).encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
+
+
+def canonical_source_url(value: Any) -> str:
+    """Canonical form of a gold/retrieved source value, for comparison only.
+
+    Strips surrounding whitespace and a single trailing ``/`` from the URL
+    *path* — the one difference that actually occurs between an authored bank
+    URL and the ingested ``documents.url`` (PR #106). Deliberately conservative:
+    it does NOT lowercase (paths are case-sensitive), normalize the scheme, or
+    drop the query/fragment, because over-matching would silently conflate
+    distinct pages — a worse failure than the miss it fixes, and an invisible one.
+
+    The slash is stripped from the path only, so a query or fragment that
+    legitimately ends in ``/`` (e.g. ``...?redirect=/kb/foo/``) is preserved.
+    A value with no scheme (e.g. a ``file_name`` match field) parses as a bare
+    path, so the same one-trailing-slash rule applies without special-casing.
+
+    The harness's source matching, the category-map records and the category
+    slice join all use this one rule, so they agree about which page a URL names.
+    """
+    text = str(value).strip()
+    parts = urlsplit(text)
+    path = parts.path
+    if len(path) > 1 and path.endswith("/"):
+        path = path[:-1]
+        return urlunsplit(parts._replace(path=path))
+    return text
+
+
+def _escape_map_field(value: str) -> str:
+    """Make a category-map field unable to forge the tab/newline separators."""
+    return (
+        value.replace("%", "%25")
+        .replace("\t", "%09")
+        .replace("\n", "%0A")
+        .replace("\r", "%0D")
+    )
+
+
+def category_map_records(rows: Iterable[Sequence[Any]]) -> List[str]:
+    """Sorted ``<canonical_url>\\t<category>`` records for a URL -> category map.
+
+    *rows* are ``(url, category)`` pairs, one per non-deleted document. A
+    document without a URL cannot be joined to a bank source, so it contributes
+    no record; a missing category is an empty field. Duplicate URLs stay as
+    separate records — the consumer reports a URL with two categories as
+    unresolved rather than choosing one. Sorting makes the digest independent
+    of the order the query returned the rows in (#538 rule 5).
+    """
+    records: List[str] = []
+    for url, category in rows:
+        if url is None or not str(url).strip():
+            continue
+        canonical = _escape_map_field(canonical_source_url(url))
+        field = "" if category is None else _escape_map_field(str(category))
+        records.append(f"{canonical}\t{field}")
+    return sorted(records)
+
+
+def category_map_text(records: Sequence[str]) -> str:
+    """The exact text that is hashed and written to the per-arm snapshot file."""
+    return "\n".join(records)
+
+
+def category_map_digest(records: Sequence[str]) -> str:
+    """``sha256:<hex>`` of :func:`category_map_text`, so a file's hash equals it."""
+    text = category_map_text(records)
+    return f"sha256:{hashlib.sha256(text.encode('utf-8')).hexdigest()}"
+
+
+def prompt_text_sha256(path: Optional[Any]) -> Optional[str]:
+    """Hex sha256 of an agent prompt as ``load_agent_spec`` reads it.
+
+    Hashes ``read_text()`` re-encoded as UTF-8, not the raw bytes: that is the
+    text the harness parses (newline-normalized), so the digest names the
+    prompt the arm actually ran. Plain hex, the same form the QA workflow
+    records as ``agent_spec_sha256``. ``None`` when the arm names no prompt;
+    an ``<unavailable: …>`` marker when it cannot be read, because provenance
+    is never fatal.
+    """
+    if path is None:
+        return None
+    try:
+        text = Path(str(path)).read_text()
+    except OSError as exc:
+        return f"<unavailable: {exc}>"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def config_fingerprint(config: Any) -> str:
