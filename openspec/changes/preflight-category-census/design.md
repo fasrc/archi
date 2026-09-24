@@ -24,8 +24,13 @@ census on a live stack (W7's "run it and post the table" is an operator step aft
    category, with a sentinel for "URL mapped to two categories"). No I/O, so the census and the
    slice pass the same inputs and get the same answer, and tests need no database.
 2. **Coverage and concentration differ on purpose** (#538 rule 4): coverage = distinct
-   articles per category over every source; row share = rows citing the article / total rows
-   with at least one source; ownership uses only the first source.
+   articles per category over every source; ownership uses only the first source; row share =
+   rows citing the article / **gold rows**, where a gold row is a bank row that declares at
+   least one source — the same denominator `source_hits` and `_source_scorable_count` use
+   (`src/utils/benchmark_resilience.py:102-123`, `service_benchmark.py:1940-1952`). The
+   three source-less `should_refuse` rows have no gold article, so they are not gold rows.
+   Leaving them out makes every share larger (k/102, not k/105), so the gate is the stricter
+   of the two readings; a fixture pins that direction.
 3. **The census reads `CORPUS_STATE_QUERY` by AST from `src/bin/service_benchmark.py`**, as
    `fm_fingerprint` does (`feature_matrix/lib.sh:85-99`), so the label matches the harness
    without importing it.

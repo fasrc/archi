@@ -28,16 +28,22 @@ map digest itself (producer change); running the sweep (plan W8, human-gated).
    (`sweep-<stack>.lock`) so a running campaign's `campaign.lock` is never read or rewritten by
    a sweep. The stack stamp reuses `fm-lock.sha256` with the sweep lock's hash, so
    `fm_require_stack_lock`-style checks work with a lock-file argument.
-3. **Stack names are validated, not derived.** `--stack` is required in sweep mode and must
+3. **One arm identity everywhere: the prompt stem.** `generate_prompt_sweep.py` writes each arm
+   as `<prompt-stem>.yaml` and sets `services.benchmarking.name` to the same stem (`:127-133`),
+   and the artifact records that name in each arm's `configuration`. `qa_arm.sh --arm`, the
+   sweep lock's arm keys and the ledger rows all use it, and `compare_runs.py` resolves the
+   same string through its recorded-name selector (consumer change), so no second mapping
+   exists.
+4. **Stack names are validated, not derived.** `--stack` is required in sweep mode and must
    match `^[a-z0-9][a-z0-9-]{0,40}$`, the same concern `fm_require_arm` guards (the name
    reaches deployment paths).
-4. **The category-map reading runs like `fm_fingerprint`**: a `python -c` snippet executed in
+5. **The category-map reading runs like `fm_fingerprint`**: a `python -c` snippet executed in
    `data-manager-<stack>` that imports the shared helper from `src.utils.benchmark_provenance`
    and prints the digest, printing `<unavailable: …>` on any exception instead of failing the
    wrapper — the three-state contract of #538 rule 2 lives in the consumer.
-5. **Per-arm prompt sha goes into the ledger row**, so the "every arm's prompt hashed per run"
+6. **Per-arm prompt sha goes into the ledger row**, so the "every arm's prompt hashed per run"
    void check in plan §5 is answered from the ledger, not re-derived later.
-6. **Pin on run 1 from the artifact**, as the campaign's `archive_run.sh` does, after checking
+7. **Pin on run 1 from the artifact**, as the campaign's `archive_run.sh` does, after checking
    all arms agree on one fingerprint.
 
 ## Risks / Trade-offs

@@ -11,6 +11,28 @@ The system SHALL, on `lock_campaign.sh --sweep <sweep_dir> --manifest <yaml> --s
 - **WHEN** one generated config differs from the others in a retrieval setting
 - **THEN** the lock is refused and the differing key is named
 
+### Requirement: The exemplar-disjointness result is recorded on its arm
+The system SHALL, when locking a sweep, run the census's exemplar-disjointness check on every arm prompt that has a `## Worked examples` section, SHALL record per such arm the prompt sha256, pass or fail, the exemplar count and the similarity threshold in the sweep lock, and SHALL refuse the lock when any arm fails; `qa_arm.sh --sweep` and `archive_run.sh --sweep` SHALL refuse an arm whose prompt sha256 no longer equals the one its disjointness record names.
+
+#### Scenario: r0b recorded
+- **WHEN** the r0 sweep is locked
+- **THEN** the r0b entry carries `disjointness: {prompt_sha256, passed: true, exemplars: 3, threshold: 0.5}` and control and r0a carry none
+
+#### Scenario: Contaminated exemplar
+- **WHEN** an r0b exemplar cites a bank source URL
+- **THEN** the lock is refused and the URL is named
+
+### Requirement: Run 1 of a sweep archives only with a passing census bound to its corpus
+The system SHALL require `archive_run.sh --sweep … --run 1` to be given `--census <json>` from `category_census.py`, SHALL refuse unless that census passed every gate and its corpus fingerprint equals the fingerprint the artifact records, and SHALL record the census file's sha256 and fingerprint in every ledger row of that run.
+
+#### Scenario: Census from another corpus
+- **WHEN** the census JSON records a corpus fingerprint that differs from the artifact's
+- **THEN** the archive is refused and both fingerprints are named
+
+#### Scenario: Failed census
+- **WHEN** the census JSON records a failed gate
+- **THEN** the archive is refused and the gate is named
+
 ### Requirement: Sweep replicates run on one stack between corpus checks
 The system SHALL, on `run_arm.sh --sweep <sweep_dir> --stack <name>`, refuse unless the sweep lock exists and every config in the directory still matches it, run `archi evaluate --config-dir <sweep_dir> --name <name> --hostmode`, stamp the stack with the sweep lock and append a `ragas-start` ledger row; and on `--sweep … --rerun` SHALL refuse unless the stack carries the active sweep lock stamp, Postgres and the data-manager are running, no benchmark is in flight and the corpus fingerprint equals the pin, then recreate only the benchmark container and check the pin again.
 

@@ -48,4 +48,6 @@ category-map reading before and after each QA run, taken by the wrapper that sta
 - The category-map reading inside the data-manager container reuses the helper from
   `record-category-map-digest`, so the stack image must carry that change (the sweep is
   deployed after it merges).
+- Uses `category_census.py` from `preflight-category-census` (disjointness at lock time, the
+  census JSON at archive time); order: producer, census, consumer, this change.
 - No Python behavior outside the reading snippet; no effect on a running campaign.

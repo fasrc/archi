@@ -30,6 +30,21 @@ The system SHALL report, for every non-baseline arm, a *source* test pairing per
 - **WHEN** the report is rendered
 - **THEN** it also shows strict source accuracy and the count of questions with no `tool_call` message per arm, labelled descriptive
 
+### Requirement: Arm selectors resolve to one arm by label or recorded name
+The system SHALL resolve every arm selector in `--baseline`, `--primary`, `--routes-on-category` and `--qa-run` first against the labels `compare_runs.py` prints (`<artifact-stem>` or `<artifact-stem>@<N>`) and otherwise against the arm's recorded `configuration.services.benchmarking.name`, SHALL fail with a usage error naming the candidates when a selector matches no arm or more than one, and SHALL print both the label and the recorded name for every arm in the report header.
+
+#### Scenario: Sweep arm selected by name
+- **WHEN** a three-arm sweep artifact's second arm records `services.benchmarking.name: fasrc-docs-r0a-category` and the operator passes `--routes-on-category fasrc-docs-r0a-category`
+- **THEN** the rule applies to `<artifact-stem>@2`
+
+#### Scenario: Unknown selector
+- **WHEN** `--primary r0a=source` names no label and no recorded name
+- **THEN** the run exits 1 and lists the available labels and names
+
+#### Scenario: Two replicates share names
+- **WHEN** two artifacts are compared and both carry an arm named `fasrc-docs-r0a-category`
+- **THEN** a bare name is ambiguous and refused, and the `<stem>@<N>` label selects one
+
 ### Requirement: Primary and Holm-adjusted secondary tests
 The system SHALL accept `--primary LABEL=source|completion` for each treatment arm, SHALL mark that test as the arm's primary with its raw p, and SHALL report the arm's other test as secondary with a Holm-adjusted p computed across all secondaries in the report.
 

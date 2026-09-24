@@ -34,7 +34,7 @@ The system SHALL compare the distinct `category` values over the same KB documen
 - **THEN** the census fails and names `IQSS` as prompt-only
 
 ### Requirement: Bank coverage and concentration census
-The system SHALL join the bank's gold URLs to the live map with the shared URL rule, SHALL report per category the owned gold rows and the coverage, SHALL fail when fewer than 6 categories have coverage or any article's row share exceeds 10 %, and SHALL report underpowered categories and the cross-category, uncategorized and unresolved lines without dropping any row.
+The system SHALL join the bank's gold URLs to the live map with the shared URL rule, SHALL report per category the owned gold rows and the coverage, SHALL fail when fewer than 6 categories have coverage or any article's row share — rows citing it in any source position divided by the gold rows, the bank rows that declare at least one source — exceeds 10 %, and SHALL report underpowered categories and the cross-category, uncategorized and unresolved lines without dropping any row.
 
 #### Scenario: Six categories required
 - **WHEN** the bank's sources cover five categories

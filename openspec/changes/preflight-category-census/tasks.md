@@ -1,6 +1,6 @@
 ## 1. Shared attribution (`scripts/benchmarking/category_attribution.py`)
 
-- [ ] 1.1 `model: opus` — RED: tests — first-source owner; cross-category line; uncategorized first source not moved; unresolved URL and two-category URL reported; coverage over every source; row share over every citation (the 20 % second-source case); per-metric power (the cross-category-only article case)
+- [ ] 1.1 `model: opus` — RED: tests — first-source owner; cross-category line; uncategorized first source not moved; unresolved URL and two-category URL reported; coverage over every source; row share over every citation (the 20 % second-source case) with the gold-row denominator (a fixture of 20 sourced rows and 10 source-less rows where one article is cited by 3: 15 % of gold rows fails the gate, where 3 / 30 = 10 % would have passed it, proving the source-less rows are excluded); per-metric power (the cross-category-only article case)
 - [ ] 1.2 `model: opus` — GREEN: implement the module (pure, no I/O)
 
 ## 2. Census script (`scripts/benchmarking/category_census.py`)
@@ -18,3 +18,7 @@
 ## 4. Verify
 
 - [ ] 4.1 `model: sonnet` — `bash scripts/gate.sh` green; `openspec validate preflight-category-census --strict`
+
+## 5. Run it (after merge; W7's "run the bank-coverage census and post the table")
+
+- [ ] 5.1 `model: sonnet` — run `category_census.py --json` against `postgres-claw` with the bank, anchors, r0a routing prompt and r0b exemplar prompt from archi-config main; post the Markdown table, the command line, the exit status and the corpus fingerprint on #540, and keep the JSON for `archive_run.sh --sweep --census` (sweep-mode change)

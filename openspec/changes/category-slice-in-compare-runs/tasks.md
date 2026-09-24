@@ -17,7 +17,7 @@
 ## 3. Wire into `compare_runs.py`
 
 - [ ] 3.1 `model: opus` — run the black-seam-scout agent on `compare_runs.py` before editing
-- [ ] 3.2 `model: opus` — RED/GREEN: `--primary` and `--routes-on-category` parsing and validation (unknown label, bad test name)
+- [ ] 3.2 `model: opus` — RED/GREEN: one selector resolver (label first, then recorded `services.benchmarking.name`; unknown or ambiguous → exit 1 listing candidates) used by `--baseline`, `--primary`, `--routes-on-category` and `--qa-run`; `--primary` test-name validation; report header prints label and name per arm
 - [ ] 3.3 `model: opus` — RED/GREEN: `load_qa_run` reads `category_map_readings.json` and `answers.jsonl` `tool_calls`; `parse_qa_run_specs` applies the join rule
 - [ ] 3.4 `model: opus` — RED/GREEN: `build_report` adds `paired_tests`, `category_slice`, `map_rule` blocks; voided pairs emit no numbers; overall figures unchanged
 - [ ] 3.5 `model: sonnet` — RED/GREEN: `render_markdown` sections for the three blocks, and the `--json` output carries them
