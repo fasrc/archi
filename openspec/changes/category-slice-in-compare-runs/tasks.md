@@ -1,9 +1,9 @@
 ## 1. Paired tests (`scripts/benchmarking/paired_tests.py`)
 
-- [ ] 1.1 `model: sonnet` — RED: `mcnemar_exact` tests — n = 0, symmetry, parity with the archi-bench-out reference over b, c in 0..20
-- [ ] 1.2 `model: sonnet` — GREEN: port `mcnemar_exact`
-- [ ] 1.3 `model: sonnet` — RED/GREEN: `holm_adjust` (monotone, capped at 1, order restored)
-- [ ] 1.4 `model: sonnet` — RED/GREEN: `paired_binary` for relative source hits (clean-in-both, declared sources, equal canonical source lists; differing questions listed) and for completion (common set, status ok); b = baseline success/arm failure, c = arm success/baseline failure, direction reported
+- [x] 1.1 `model: sonnet` — RED: `mcnemar_exact` tests — n = 0, symmetry, parity with the archi-bench-out reference over b, c in 0..20
+- [x] 1.2 `model: sonnet` — GREEN: port `mcnemar_exact`
+- [x] 1.3 `model: sonnet` — RED/GREEN: `holm_adjust` (monotone, capped at 1, order restored)
+- [x] 1.4 `model: sonnet` — RED/GREEN: `paired_binary` for relative source hits (clean-in-both, declared sources, equal canonical source lists; differing questions listed) and for completion (common set, status ok); b = baseline success/arm failure, c = arm success/baseline failure, direction reported
 
 ## 2. Snapshot and counting (`scripts/benchmarking/category_slice.py`)
 
