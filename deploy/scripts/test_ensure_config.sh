@@ -12,6 +12,10 @@
 #    8. wrong CONFIG_SHA on a fresh host aborts naming both ids
 #    9. provenance recorded on every run
 #   10. wrong path type (agents as a file) aborts
+#   11. a pin bump in one deployment's row leaves the other deployment's pin unchanged
+#   12. a deployment with no pin row sources cleanly, then ensure_config aborts
+#   13. an environment pin (CONFIG_REF/CONFIG_SHA) overrides the table for any name
+#   14-15. an environment pin with only one of the two keys aborts before provisioning
 # Run: bash deploy/scripts/test_ensure_config.sh
 set -euo pipefail
 
@@ -262,5 +266,69 @@ else
   notok "13 exports with untracked-only dirt (ec=$ec)"; cat "$sb/exports" || true
 fi
 
+
+# Print the pin a copy of lib.sh resolves for one deployment, with no pin in the
+# environment. The copy lives in a sandbox dir, so no real host.env applies.
+resolve_pin() { # $1=lib.sh path, $2=deployment name
+  env -u CONFIG_REF -u CONFIG_SHA DEPLOYMENT="$2" \
+    bash -c "source '$1'; printf '%s %s\n' \"\$CONFIG_REF\" \"\$CONFIG_SHA\""
+}
+
+# --- 14: a pin bump for one deployment leaves the other unchanged -------------------
+sb="$TESTROOT/per-deployment"; mkdir -p "$sb/scripts"
+new_sha=0123456789abcdef0123456789abcdef01234567
+sed -E "s|^( +claw\) ).*|\1_pin_ref=deploy-pin-bumped; _pin_sha=$new_sha ;;|" \
+  "$LIB" > "$sb/scripts/lib.sh"
+dev_before="$(resolve_pin "$LIB" dev)"
+if ! cmp -s "$LIB" "$sb/scripts/lib.sh"; then
+  claw_after="$(resolve_pin "$sb/scripts/lib.sh" claw)"
+  dev_after="$(resolve_pin "$sb/scripts/lib.sh" dev)"
+else
+  claw_after="(no claw row in the pin table)"; dev_after=""
+fi
+if [ "$claw_after" = "deploy-pin-bumped $new_sha" ] && [ "$dev_after" = "$dev_before" ] \
+   && [ -n "${dev_before% }" ]; then
+  ok "14 per-deployment pin: a claw bump moves claw only"
+else
+  notok "14 per-deployment pin: claw='$claw_after' dev before='$dev_before' after='$dev_after'"
+fi
+
+# --- 15: a deployment with no pin row aborts at provisioning, not at source ---------
+sb="$TESTROOT/no-row"; mkdir -p "$sb"; make_fixture "$sb"
+ec=0
+env -u CONFIG_REF -u CONFIG_SHA DEPLOYMENT=scratch \
+    CONFIG_DIR="$sb/config" CONFIG_REPO="file://$sb/remote.git" \
+    bash -c "source '$LIB' && echo SOURCED && ensure_config" > "$sb/out" 2>&1 || ec=$?
+if [ "$ec" != 0 ] && grep -q SOURCED "$sb/out" && grep -q "scratch" "$sb/out" \
+   && grep -q "no config pin" "$sb/out" && [ ! -e "$sb/config" ]; then
+  ok "15 no pin row: sources cleanly, ensure_config aborts naming the deployment"
+else
+  notok "15 no pin row (ec=$ec)"; cat "$sb/out" || true
+fi
+
+# --- 16: an environment pin works for a deployment with no row ----------------------
+sb="$TESTROOT/no-row-override"; mkdir -p "$sb"; make_fixture "$sb"
+ec="$(run_ensure "$sb" DEPLOYMENT=scratch)"
+if [ "$ec" = 0 ] && [ "$(g "$sb/config" rev-parse HEAD)" = "$(cat "$sb/pin_sha")" ]; then
+  ok "16 environment pin: overrides the table for any deployment name"
+else
+  notok "16 environment pin (ec=$ec)"; cat "$sb/out" || true
+fi
+
+# --- 17-18: a one-key environment pin aborts; it never mixes with the table row -------
+for partial in "CONFIG_REF=deploy-pin-test" "CONFIG_SHA=$new_sha"; do
+  key="${partial%%=*}"
+  sb="$TESTROOT/partial-$key"; mkdir -p "$sb"; make_fixture "$sb"
+  ec=0
+  env -u CONFIG_REF -u CONFIG_SHA DEPLOYMENT=dev "$partial" \
+      CONFIG_DIR="$sb/config" CONFIG_REPO="file://$sb/remote.git" \
+      bash -c "source '$LIB' && echo SOURCED && ensure_config" > "$sb/out" 2>&1 || ec=$?
+  if [ "$ec" != 0 ] && grep -q SOURCED "$sb/out" && grep -q "only $key" "$sb/out" \
+     && [ ! -e "$sb/config" ]; then
+    ok "partial environment pin ($key only): aborts before provisioning"
+  else
+    notok "partial environment pin ($key only) (ec=$ec)"; cat "$sb/out" || true
+  fi
+done
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
