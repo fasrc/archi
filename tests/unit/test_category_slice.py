@@ -65,7 +65,10 @@ def test_missing_file_has_no_snapshot(tmp_path):
 
 def test_unstable_corpus_is_named(tmp_path):
     entry = _entry(tmp_path, corpus_unchanged_at_endpoints=False)
-    assert cs.snapshot_check(entry, tmp_path).reason == "corpus not stable at the endpoints"
+    assert (
+        cs.snapshot_check(entry, tmp_path).reason
+        == "corpus not stable at the endpoints"
+    )
 
 
 def test_map_changed_is_named(tmp_path):
@@ -99,7 +102,10 @@ def test_pair_on_different_corpora_has_no_slice(tmp_path):
 
 
 def test_pair_of_bound_snapshots_slices(tmp_path):
-    assert cs.pair_slice_reason(_entry(tmp_path), _entry(tmp_path), tmp_path, tmp_path) is None
+    assert (
+        cs.pair_slice_reason(_entry(tmp_path), _entry(tmp_path), tmp_path, tmp_path)
+        is None
+    )
 
 
 # --- category table -----------------------------------------------------------------------
@@ -159,18 +165,24 @@ def test_power_is_per_metric_and_underpowered_metric_has_no_verdict():
 
 
 def test_benchmark_trace_names_the_metadata_tool():
-    rows = {"q": {"messages": [{"type": "tool_call", "tool_name": "search_metadata_index"}]}}
+    rows = {
+        "q": {"messages": [{"type": "tool_call", "tool_name": "search_metadata_index"}]}
+    }
     assert cs.called_metadata_search(rows, []) is True
 
 
 def test_qa_trace_names_the_metadata_tool():
-    answers = [{"tool_calls": [{"name": "search_vectorstore_hybrid"}]},
-               {"tool_calls": [{"name": "search_metadata_index"}]}]
+    answers = [
+        {"tool_calls": [{"name": "search_vectorstore_hybrid"}]},
+        {"tool_calls": [{"name": "search_metadata_index"}]},
+    ]
     assert cs.called_metadata_search({}, answers) is True
 
 
 def test_no_trace_of_the_metadata_tool():
-    rows = {"q": {"messages": [{"type": "tool_call", "tool_name": "search_local_files"}]}}
+    rows = {
+        "q": {"messages": [{"type": "tool_call", "tool_name": "search_local_files"}]}
+    }
     assert cs.called_metadata_search(rows, [{"tool_calls": []}]) is False
 
 
@@ -182,7 +194,9 @@ def _readings(start="sha256:m", end="sha256:m"):
 
 
 def test_matching_maps_stand():
-    assert cs.map_rule(_readings(), _readings(), routes_on_category=False, traced=False) == (
+    assert cs.map_rule(
+        _readings(), _readings(), routes_on_category=False, traced=False
+    ) == (
         "ok",
         None,
     )
@@ -190,26 +204,38 @@ def test_matching_maps_stand():
 
 def test_routed_arm_with_a_different_map_is_void():
     status, reason = cs.map_rule(
-        _readings(), _readings("sha256:x", "sha256:x"), routes_on_category=True, traced=False
+        _readings(),
+        _readings("sha256:x", "sha256:x"),
+        routes_on_category=True,
+        traced=False,
     )
     assert status == "void" and "category map" in reason
 
 
 def test_routed_arm_with_a_failed_start_and_matching_end_is_void():
     arm = _readings("<unavailable: boom>", "sha256:m")
-    assert cs.map_rule(_readings(), arm, routes_on_category=True, traced=False)[0] == "void"
+    assert (
+        cs.map_rule(_readings(), arm, routes_on_category=True, traced=False)[0]
+        == "void"
+    )
 
 
 def test_unrouted_pair_with_different_maps_loses_only_the_slice():
     status, _ = cs.map_rule(
-        _readings(), _readings("sha256:x", "sha256:x"), routes_on_category=False, traced=False
+        _readings(),
+        _readings("sha256:x", "sha256:x"),
+        routes_on_category=False,
+        traced=False,
     )
     assert status == "slice-only"
 
 
 def test_unrouted_pair_with_a_metadata_trace_is_void():
     status, reason = cs.map_rule(
-        _readings(), _readings("sha256:x", "sha256:x"), routes_on_category=False, traced=True
+        _readings(),
+        _readings("sha256:x", "sha256:x"),
+        routes_on_category=False,
+        traced=True,
     )
     assert status == "void" and "search_metadata_index" in reason
 
@@ -240,7 +266,9 @@ def test_missing_qa_readings_are_refused():
 
 def test_unavailable_qa_reading_is_refused():
     arm = {"category_map_sha256_end": "sha256:m"}
-    reason = cs.qa_join_reason(arm, {"start": "<unavailable: x>", "end": "sha256:m"}, None)
+    reason = cs.qa_join_reason(
+        arm, {"start": "<unavailable: x>", "end": "sha256:m"}, None
+    )
     assert reason == "a QA map reading failed"
 
 

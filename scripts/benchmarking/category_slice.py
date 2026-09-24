@@ -44,8 +44,10 @@ POWER_METRICS = ("completion", "source")
 
 
 def _usable(reading: Any) -> bool:
-    return isinstance(reading, str) and bool(reading) and not reading.startswith(
-        UNAVAILABLE
+    return (
+        isinstance(reading, str)
+        and bool(reading)
+        and not reading.startswith(UNAVAILABLE)
     )
 
 
