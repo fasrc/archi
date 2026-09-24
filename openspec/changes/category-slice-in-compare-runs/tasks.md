@@ -7,13 +7,13 @@
 
 ## 2. Snapshot and counting (`scripts/benchmarking/category_slice.py`)
 
-- [ ] 2.1 `model: sonnet` — RED/GREEN: load a snapshot; the four checks in order, each failure named; legacy arm → "no snapshot"; a pair with different corpus fingerprints → "no slice" even under `--corpus-differs-by-design`
-- [ ] 2.2 `model: opus` — RED/GREEN: build the per-category table from `category_attribution` (from `preflight-category-census`) over the snapshot map; the two-source-different-categories test from #525 and the uncategorized-first-source test from #538, asserted end to end through the slice; overall figures unchanged
-- [ ] 2.3 `model: sonnet` — RED/GREEN: per-metric power shown per row of the table, with no verdict for an underpowered metric
-- [ ] 2.4 `model: sonnet` — RED/GREEN: trace scan over benchmark `messages` and QA `tool_calls`
-- [ ] 2.5 `model: opus` — RED/GREEN: map-mismatch rule over all four readings — routed arm void, failed start or end reading void (including a failed start with a matching end), unrouted pair slice-only, trace hit void, legacy no-op
-- [ ] 2.6 `model: sonnet` — RED/GREEN: QA join rule — equal readings join; end differs, readings missing, a reading unavailable → refusal named; legacy arm joins
-- [ ] 2.7 `model: opus` — RED/GREEN: QA agent-spec identity — first confirm whether `agent_spec.resolved.md` (`src/evaluation/qa/workflow.py:347-367`) is the prompt file's exact bytes; if it is, compare `agent_spec_sha256` to the arm's `agent_md_sha256`, else compare against the digest of the resolver's output for that file; a mismatch refuses the QA run naming both digests
+- [x] 2.1 `model: sonnet` — RED/GREEN: load a snapshot; the four checks in order, each failure named; legacy arm → "no snapshot"; a pair with different corpus fingerprints → "no slice" even under `--corpus-differs-by-design`
+- [x] 2.2 `model: opus` — RED/GREEN: build the per-category table from `category_attribution` (from `preflight-category-census`) over the snapshot map; the two-source-different-categories test from #525 and the uncategorized-first-source test from #538, asserted end to end through the slice; overall figures unchanged
+- [x] 2.3 `model: sonnet` — RED/GREEN: per-metric power shown per row of the table, with no verdict for an underpowered metric
+- [x] 2.4 `model: sonnet` — RED/GREEN: trace scan over benchmark `messages` and QA `tool_calls`
+- [x] 2.5 `model: opus` — RED/GREEN: map-mismatch rule over all four readings — routed arm void, failed start or end reading void (including a failed start with a matching end), unrouted pair slice-only, trace hit void, legacy no-op
+- [x] 2.6 `model: sonnet` — RED/GREEN: QA join rule — equal readings join; end differs, readings missing, a reading unavailable → refusal named; legacy arm joins
+- [x] 2.7 `model: opus` — RED/GREEN: QA agent-spec identity — first confirm whether `agent_spec.resolved.md` (`src/evaluation/qa/workflow.py:347-367`) is the prompt file's exact bytes — confirmed: it is `read_text(encoding="utf-8")` of the spec (`runtime.py:307`) written back unchanged, so its sha256 equals `prompt_text_sha256`; if it is, compare `agent_spec_sha256` to the arm's `agent_md_sha256`, else compare against the digest of the resolver's output for that file; a mismatch refuses the QA run naming both digests
 
 ## 3. Wire into `compare_runs.py`
 
