@@ -1,9 +1,9 @@
 ## 1. Shared pure helpers (`src/utils/benchmark_provenance.py`)
 
-- [ ] 1.1 `model: sonnet` — RED: tests for `canonical_source_url` (trailing slash, root path, whitespace, query/fragment kept, non-string input) in a new `tests/unit/test_category_map_digest.py`
+- [x] 1.1 `model: sonnet` — RED: tests for `canonical_source_url` (trailing slash, root path, whitespace, query/fragment kept, non-string input) in a new `tests/unit/test_category_map_digest.py`
 - [ ] 1.2 `model: sonnet` — GREEN: add `canonical_source_url`; point `Benchmarker._canonical_source` at it; `tests/unit/test_benchmark_source_url_match.py` stays green unchanged
-- [ ] 1.3 `model: sonnet` — RED: tests for `category_map_records` / `category_map_digest` — order invariance, category change moves the digest, missing category → empty field, no-URL row skipped, tab/newline/`%` escaped, duplicate URL kept, `sha256:` prefix
-- [ ] 1.4 `model: sonnet` — GREEN: implement both helpers
+- [x] 1.3 `model: sonnet` — RED: tests for `category_map_records` / `category_map_digest` — order invariance, category change moves the digest, missing category → empty field, no-URL row skipped, tab/newline/`%` escaped, duplicate URL kept, `sha256:` prefix
+- [x] 1.4 `model: sonnet` — GREEN: implement both helpers
 
 ## 2. Harness readings (`src/bin/service_benchmark.py`)
 
