@@ -296,6 +296,25 @@ ensure_config() {
   local match=no
   [ "$head" = "$CONFIG_SHA" ] && match=yes
   log "config provenance: HEAD=$head pin=$CONFIG_REF@$CONFIG_SHA match=$match"
+
+  # Export the same provenance so config_seed can persist it and the status
+  # board can show which config is actually deployed. Logging alone leaves these
+  # values invisible to the running application: CONFIG_REF is a shell variable
+  # and never otherwise enters a container.
+  #
+  # The dirty listing is RE-DERIVED here and excludes untracked entries (`??`).
+  # Untracked files are not a live edit — the deploy converges to the pin around
+  # them (see the dirt table in README.md) — and the pre-branch `tracked_dirty`
+  # can be stale, because CONFIG_FORCE=1 stashes edits above that are therefore
+  # no longer part of the deployed config.
+  local deployed_tracked_dirty
+  deployed_tracked_dirty="$(git -C "$CONFIG_DIR" status --porcelain \
+    | grep -v '^??' | grep -v '^$' || true)"
+  export ARCHI_CONFIG_REF="$CONFIG_REF"
+  export ARCHI_CONFIG_SHA="$CONFIG_SHA"
+  export ARCHI_CONFIG_HEAD="$head"
+  export ARCHI_CONFIG_PIN_MATCHED="$match"
+  export ARCHI_CONFIG_DIRTY_PATHS="$deployed_tracked_dirty"
   if [ -n "$stashed" ]; then
     log "config provenance: stashed pre-deploy edits (NOT in the deployed config):"
     printf '%s\n' "$stashed"

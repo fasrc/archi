@@ -9,6 +9,7 @@ Actions:
 1) Ensure schema/columns via ConfigService (it will apply DDL best-effort).
 2) Upsert static_config from YAML.
 3) Initialize dynamic_config only if empty.
+4) Record this deploy's config provenance (ARCHI_CONFIG_* from ensure_config).
 Exits 0 on success, non-zero on failure.
 """
 
@@ -19,6 +20,7 @@ import sys
 import yaml
 
 from src.utils.config_service import ConfigService
+from src.utils.deployment_record import record_deployment
 from src.utils.postgres_service_factory import PostgresServiceFactory
 
 
@@ -134,6 +136,7 @@ def seed_entry(config_path: str, env: dict):
     PostgresServiceFactory.set_instance(factory)
     cs = factory.config_service
     seed(config, cs)
+    record_deployment(cs, env)
     print("Config seeding completed")
 
 
