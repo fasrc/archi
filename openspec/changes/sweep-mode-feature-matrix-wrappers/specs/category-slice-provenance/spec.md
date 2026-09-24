@@ -15,8 +15,12 @@ The system SHALL, on `lock_campaign.sh --sweep <sweep_dir> --manifest <yaml> --s
 - **WHEN** the manifest now points r0a at a different prompt than the generated r0a config names
 - **THEN** the regenerated config differs from the one in the sweep directory and the lock is refused naming the stem
 
-### Requirement: Gold atoms are prepared once per sweep
-The system SHALL, on `qa_prepare.sh --sweep <stack>`, run `archi eval qa prepare` once on the locked QA dataset into `$FM_OUT/qa/<stack>-prepared`, SHALL record the sha256 of its `preparation.jsonl` in the sweep lock, and every sweep QA run SHALL copy that prepared directory and run `archi eval qa run` and `score` on the copy after checking the copy's `preparation.jsonl` sha256 against the lock.
+### Requirement: Gold atoms are prepared once per sweep, before the lock
+The system SHALL, on `qa_prepare.sh --sweep <stack> --qa-dataset <json> --qa-profile <yaml>`, run `archi eval qa prepare` once into `$FM_OUT/qa/<stack>-prepared` before the sweep is locked, SHALL refuse when a sweep lock for that stack already exists, and `lock_campaign.sh --sweep` SHALL require that prepared directory and record the sha256 of its `preparation.jsonl`, so the lock is written once and never rewritten; every sweep QA run SHALL copy that prepared directory and run `archi eval qa run` and `score` on the copy after checking the copy's `preparation.jsonl` sha256 against the lock.
+
+#### Scenario: Prepare after locking
+- **WHEN** `qa_prepare.sh --sweep` runs for a stack that already has a sweep lock
+- **THEN** it is refused, so the lock and every stack stamp taken from it stay valid
 
 #### Scenario: Same atoms for every arm
 - **WHEN** QA runs for control, r0a and r0b in both replicates complete
@@ -65,7 +69,15 @@ The system SHALL require `archive_run.sh --sweep … --run 1` to be given `--cen
 - **THEN** the archive is refused and the gate is named
 
 ### Requirement: Sweep replicates run on one stack between corpus checks
-The system SHALL, on `run_arm.sh --sweep <sweep_dir> --stack <name>`, refuse unless the sweep lock exists and every config in the directory still matches it, run `archi evaluate --config-dir <sweep_dir> --name <name> --hostmode`, stamp the stack with the sweep lock and append a `ragas-start` ledger row; and on `--sweep … --rerun` SHALL refuse unless the stack carries the active sweep lock stamp, Postgres and the data-manager are running, no benchmark is in flight and the corpus fingerprint equals the pin, then recreate only the benchmark container and check the pin again.
+The system SHALL, on `run_arm.sh --sweep <sweep_dir> --stack <name>`, refuse unless the sweep lock exists and every config in the directory and every prompt file those configs name still match their locked sha256, run `archi evaluate --config-dir <sweep_dir> --name <name> --hostmode`, stamp the stack with the sweep lock and append a `ragas-start` ledger row; and on `--sweep … --rerun` SHALL refuse unless the stack carries the active sweep lock stamp, every config and prompt still matches the lock, Postgres and the data-manager are running, no benchmark is in flight, the corpus fingerprint equals the corpus pin and the live category-map digest equals the map pin, then recreate only the benchmark container and check both pins again.
+
+#### Scenario: Prompt edited after locking
+- **WHEN** r0b's prompt file changes after the sweep was locked
+- **THEN** the run and the rerun are refused naming the prompt, before any container is touched
+
+#### Scenario: Category map moved between replicates
+- **WHEN** a document's category changes after run 1 was archived and before `--rerun`
+- **THEN** the rerun is refused naming the pinned and live map digests
 
 #### Scenario: Second replicate
 - **WHEN** replicate 1 was archived (writing the pin) and `--rerun` is invoked
@@ -95,7 +107,7 @@ The system SHALL, on `qa_arm.sh --sweep <sweep_dir> --stack <name> --arm <stem>`
 - **THEN** the QA run is refused before `archi eval qa` starts
 
 ### Requirement: Multi-arm sweep artifacts archive per arm
-The system SHALL, on `archive_run.sh --sweep <sweep_dir> --stack <name> --run <N>`, accept an artifact with one entry per sweep arm, SHALL check every arm before copying any file or appending any ledger row, SHALL refuse unless every arm's corpus fingerprints are usable, equal at both endpoints and equal across arms, and every arm with a usable `category_map_sha256_end` names exactly one `category_map_file` that exists beside the artifact with `"sha256:" + sha256(file)` equal to that digest (an arm may name no file only when its end reading failed), SHALL copy the artifact, its `_report.md` and every `_category_map_<N>.tsv` it names, and SHALL append one `ragas` ledger row per arm with the arm stem, its prompt sha256 from the sweep lock, `category_map_sha256_start`, `category_map_sha256_end`, `category_map_unchanged_at_endpoints` and `category_map_file`, writing the corpus pin on run 1. An arm whose map changed or whose map reading failed is archived with that state recorded, not refused, because #538 rule 2 makes a map failure cost only the slice.
+The system SHALL, on `archive_run.sh --sweep <sweep_dir> --stack <name> --run <N>`, accept an artifact whose arms' recorded `services.benchmarking.name` values match the locked stems one to one, refusing a duplicate, missing or extra name, SHALL refuse an artifact older than the stack's latest `ragas-start` row or already named by a ledger row, SHALL check every arm before copying any file or appending any ledger row, SHALL refuse unless every arm's corpus fingerprints are usable, equal at both endpoints and equal across arms, and every arm with a usable `category_map_sha256_end` names exactly one `category_map_file` that exists beside the artifact with `"sha256:" + sha256(file)` equal to that digest (an arm may name no file only when its end reading failed), SHALL copy the artifact, its `_report.md` and every `_category_map_<N>.tsv` it names, and SHALL append one `ragas` ledger row per arm with the arm stem, its prompt sha256 from the sweep lock, `category_map_sha256_start`, `category_map_sha256_end`, `category_map_unchanged_at_endpoints` and `category_map_file`, writing the corpus pin and the category-map pin (the end digest the arms share) on run 1. An arm whose map changed or whose map reading failed is archived with that state recorded, not refused, because #538 rule 2 makes a map failure cost only the slice.
 
 #### Scenario: Three arms archived
 - **WHEN** a three-arm artifact with three snapshots is archived as run 1
@@ -116,6 +128,14 @@ The system SHALL, on `archive_run.sh --sweep <sweep_dir> --stack <name> --run <N
 #### Scenario: Map changed during an arm
 - **WHEN** an arm records `category_map_unchanged_at_endpoints: false`
 - **THEN** the arm is archived and its ledger row records `false`, so the missing slice is visible in the ledger
+
+#### Scenario: Arm names do not match the lock
+- **WHEN** two artifact arms record the same name, or a locked stem has no arm
+- **THEN** the archive is refused naming the duplicate or missing stem, before any file is copied
+
+#### Scenario: Rerun produced no new artifact
+- **WHEN** the newest artifact predates the latest `ragas-start` row, or a ledger row already names it
+- **THEN** the archive is refused, so run 1 cannot be archived again as run 2
 
 #### Scenario: Corpus moved between arms
 - **WHEN** two arms record different end corpus fingerprints

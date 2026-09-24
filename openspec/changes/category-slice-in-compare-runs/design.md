@@ -17,12 +17,12 @@ directory, `{"start": <digest>, "end": <digest>}`.
 ## Goals / Non-Goals
 
 **Goals:** the two paired tests with primary/secondary handling; the category slice behind
-the four snapshot checks; the counting rules; the cross-arm void; the QA join rule.
+the four snapshot checks; the counting rules; the cross-arm void; the QA join rule, including
+the plan W8 check that each QA run used its arm's prompt (against the arm's `agent_md_sha256`,
+which `record-category-map-digest` records).
 
 **Non-Goals:** reading Postgres (the slice reads only the snapshot file); the bank-coverage
-census (W7); proving a QA run's agent spec equals its arm's prompt (plan W8 lists it as a
-procedure check; it needs a prompt digest in the artifact that nothing records yet — filed as
-a follow-up, not built here); changing any existing gate or exit code.
+census (W7); changing any existing gate or exit code.
 
 ## Decisions
 
@@ -37,7 +37,7 @@ a follow-up, not built here); changing any existing gate or exit code.
    2026-09-24). Strict accuracy (`recomputed_source_accuracy`, `:1058`) is shown as descriptive.
 3. **Completion is `status == "ok"`** (`Arm.has_clean_row`, `:200-203`), paired over the G4
    common set (operator, 2026-09-24). The no-`tool_call` count (the archi-bench-out
-   `is_blowout` definition) is descriptive and named "no retrieval call", never "blowout".
+   `is_blowout` definition) is descriptive and named "no tool call", never "blowout".
 4. **Holm over secondaries only.** Primaries are pre-registered and read raw; the family for
    adjustment is the set of secondaries in the report (the plan's two for rung 0).
 5. **Snapshot path is relative to the artifact.** `category_map_file` is a basename; the slice

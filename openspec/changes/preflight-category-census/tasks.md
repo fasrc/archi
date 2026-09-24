@@ -6,7 +6,7 @@
 ## 2. Census script (`scripts/benchmarking/category_census.py`)
 
 - [ ] 2.1 `model: sonnet` — RED/GREEN: coverage census on stubbed rows — deleted rows excluded by the query, 90 % gate
-- [ ] 2.2 `model: sonnet` — RED/GREEN: routing-list parser for `## Category routing`; drift census names prompt-only and corpus-only labels; non-KB categories excluded
+- [ ] 2.2 `model: sonnet` — RED/GREEN: routing-list parser for `## Category routing`; drift census names prompt-only and corpus-only labels; non-KB categories excluded; empty or missing categories excluded from the label set (the 95 % coverage case passes both checks)
 - [ ] 2.3 `model: sonnet` — RED/GREEN: bank census — ≥ 6 categories gate, > 10 % share gate, the side lines, no row dropped
 - [ ] 2.4 `model: sonnet` — RED/GREEN: exemplar parser and disjointness — clean r0b fixture passes; exact, paraphrase and shared-URL collisions fail with names
 - [ ] 2.5 `model: sonnet` — RED/GREEN: CLI — `--pg-dsn`, `--bank`, `--anchors`, `--routing-prompt`, `--exemplar-prompt`, `--similarity-threshold`, `--json`; exit codes 0 / 1 / 2

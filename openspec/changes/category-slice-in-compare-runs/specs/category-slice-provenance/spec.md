@@ -141,7 +141,11 @@ The system SHALL accept `--routes-on-category LABEL` (repeatable), SHALL treat a
 - **THEN** no map rule applies and the comparison behaves as before
 
 ### Requirement: A QA run joins only with matching map readings
-The system SHALL, for an arm that records `category_map_sha256_end`, join a `--qa-run` only if the run directory's `category_map_readings.json` holds `start` and `end` digests that are both usable and both equal to that arm's end digest, and SHALL otherwise refuse that QA run with the reason named.
+The system SHALL, for an arm that records `category_map_sha256_end`, join a `--qa-run` only if the run directory's `category_map_readings.json` holds `start` and `end` digests that are both usable and both equal to that arm's end digest, SHALL, for an arm that records `agent_md_sha256`, join it only if the QA run's recorded `agent_spec_sha256` identifies the same prompt, and SHALL otherwise refuse that QA run with the reason named.
+
+#### Scenario: QA run of another prompt
+- **WHEN** the arm records `agent_md_sha256` and the QA run's recorded `agent_spec_sha256` identifies a different prompt
+- **THEN** the QA run is refused with "QA run used a different agent spec", naming both digests
 
 #### Scenario: Map edited during the QA run
 - **WHEN** the QA run's start equals the arm's end digest and its end differs

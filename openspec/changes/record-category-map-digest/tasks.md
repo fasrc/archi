@@ -13,6 +13,8 @@
 - [ ] 2.4 `model: opus` — RED: `handle_results` tests — equal digests → `true`; different → `false` + warning; either failed → `null`; both failed with the same text → `null`; corpus-fingerprint keys unchanged
 - [ ] 2.5 `model: opus` — GREEN: take the start reading beside `corpus_before` in `run()`, pass it as `category_map_before`, take the end reading in `handle_results`, write the three keys, hold the end records outside the JSON
 
+- [ ] 2.6 `model: opus` — RED/GREEN: each arm entry records `agent_md_sha256` of the prompt file the harness read for that arm (`null` when none); first confirm where the harness reads `agent_md_file` per arm and hash those same bytes
+
 ## 3. Persisted snapshot (`dump_artifacts`)
 
 - [ ] 3.1 `model: opus` — RED: `dump_artifacts` test with three arms — three `_category_map_<N>.tsv` files, `sha256(file)` equals each arm's end digest, `category_map_file` set; failed end reading → no file, `null`

@@ -23,7 +23,11 @@ The system SHALL count non-deleted documents whose canonical URL contains `/kb/`
 - **THEN** the census exits 2 and names the share
 
 ### Requirement: Vocabulary drift census scoped to the routing prompt
-The system SHALL compare the distinct `category` values over the same KB documents with the bullet list under `## Category routing` in the given routing prompt, and SHALL fail naming each label present on only one side.
+The system SHALL compare the distinct non-empty `category` values over the same KB documents with the bullet list under `## Category routing` in the given routing prompt, and SHALL fail naming each label present on only one side; a document with a missing or empty category counts against coverage only, never as a vocabulary label.
+
+#### Scenario: Uncategorized documents do not cause drift
+- **WHEN** 95 % of KB documents carry one of the 19 labels and 5 % carry none
+- **THEN** coverage passes and the vocabulary check passes
 
 #### Scenario: Indico categories out of scope
 - **WHEN** Indico documents (not under `/kb/`) carry their own event categories

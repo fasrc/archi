@@ -13,6 +13,7 @@
 - [ ] 2.4 `model: sonnet` — RED/GREEN: trace scan over benchmark `messages` and QA `tool_calls`
 - [ ] 2.5 `model: opus` — RED/GREEN: map-mismatch rule over all four readings — routed arm void, failed start or end reading void (including a failed start with a matching end), unrouted pair slice-only, trace hit void, legacy no-op
 - [ ] 2.6 `model: sonnet` — RED/GREEN: QA join rule — equal readings join; end differs, readings missing, a reading unavailable → refusal named; legacy arm joins
+- [ ] 2.7 `model: opus` — RED/GREEN: QA agent-spec identity — first confirm whether `agent_spec.resolved.md` (`src/evaluation/qa/workflow.py:347-367`) is the prompt file's exact bytes; if it is, compare `agent_spec_sha256` to the arm's `agent_md_sha256`, else compare against the digest of the resolver's output for that file; a mismatch refuses the QA run naming both digests
 
 ## 3. Wire into `compare_runs.py`
 
@@ -28,5 +29,4 @@
 
 ## 5. Verify
 
-- [ ] 5.1 `model: sonnet` — file the follow-up issue for the QA-run agent-spec check (W8's "verify each QA run belongs to its arm")
-- [ ] 5.2 `model: sonnet` — `bash scripts/gate.sh` green; `openspec validate category-slice-in-compare-runs --strict`
+- [ ] 5.1 `model: sonnet` — `bash scripts/gate.sh` green; `openspec validate category-slice-in-compare-runs --strict`

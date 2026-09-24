@@ -68,6 +68,13 @@ The system SHALL write each arm's end-reading records, byte-for-byte the string 
 - **WHEN** one invocation runs three arms
 - **THEN** three files `_category_map_1.tsv`, `_2.tsv`, `_3.tsv` share the artifact's stem, one per arm, each matching its own arm's end digest
 
+### Requirement: Each arm records the digest of the prompt it ran
+The system SHALL record in each arm entry `agent_md_sha256`, the sha256 of the agent prompt file named by that arm's `services.benchmarking.agent_md_file` as the harness read it for the arm, or `null` when the arm names no prompt file.
+
+#### Scenario: Two arms, two prompts
+- **WHEN** a sweep runs control and r0b
+- **THEN** each arm entry carries the sha256 of its own prompt file, and the two values differ
+
 ### Requirement: The corpus fingerprint keeps its meaning
 The system SHALL leave `CORPUS_STATE_QUERY`, `corpus_fingerprint`, `corpus_fingerprint_before`, `corpus_fingerprint` and `corpus_unchanged_at_endpoints` unchanged, so no archived artifact becomes incomparable with a new one.
 
