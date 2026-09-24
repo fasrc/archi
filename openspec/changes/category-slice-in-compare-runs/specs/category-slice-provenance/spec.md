@@ -57,7 +57,7 @@ The system SHALL accept `--primary LABEL=source|completion` for each treatment a
 - **THEN** both of its tests are shown unadjusted and labelled "no pre-registered primary"
 
 ### Requirement: The slice reads only a snapshot bound to the run
-The system SHALL build an arm's per-category slice only when four checks pass — the arm names a `category_map_file` that exists beside the artifact, the arm's corpus fingerprint is recorded and `corpus_unchanged_at_endpoints` is `true`, `category_map_unchanged_at_endpoints` is `true`, and `"sha256:" + sha256(file bytes)` equals `category_map_sha256_end` — and SHALL otherwise report "no slice" with the first failing check named.
+The system SHALL build an arm's per-category slice only when four checks pass — the arm names a `category_map_file` that exists beside the artifact, the arm's corpus fingerprint is recorded and `corpus_unchanged_at_endpoints` is `true`, `category_map_unchanged_at_endpoints` is `true`, and `"sha256:" + sha256(file bytes)` equals `category_map_sha256_end` — SHALL build a per-category comparison between two arms only when both pass and their corpus fingerprints are equal, whatever `--corpus-differs-by-design` says, and SHALL otherwise report "no slice" with the first failing check named.
 
 #### Scenario: Artifact without category keys
 - **WHEN** an artifact predates `record-category-map-digest`
@@ -74,6 +74,10 @@ The system SHALL build an arm's per-category slice only when four checks pass �
 #### Scenario: Snapshot file replaced
 - **WHEN** the file's hash differs from `category_map_sha256_end`
 - **THEN** the arm reports "no slice: snapshot does not match the end digest"
+
+#### Scenario: Pair on different corpora
+- **WHEN** both arms pass the four checks but record different corpus fingerprints, and `--corpus-differs-by-design` is passed
+- **THEN** the pair reports "no slice: arms scored different corpora", while the override still applies to the non-slice sections as today
 
 ### Requirement: Category ownership, coverage and the side lines
 The system SHALL assign each bank row to the category of its first declared source after canonicalization with the shared URL rule, SHALL put a row whose first source has no category on an "uncategorized" line, SHALL put a row whose sources resolve to more than one category on a "cross-category" line while it keeps its owner, SHALL report a source URL absent from the snapshot or mapped to two categories as unresolved, and SHALL compute each category's coverage as the distinct gold articles over every declared source of every row.

@@ -7,7 +7,7 @@
 
 ## 2. Snapshot and counting (`scripts/benchmarking/category_slice.py`)
 
-- [ ] 2.1 `model: sonnet` — RED/GREEN: load a snapshot; the four checks in order, each failure named; legacy arm → "no snapshot"
+- [ ] 2.1 `model: sonnet` — RED/GREEN: load a snapshot; the four checks in order, each failure named; legacy arm → "no snapshot"; a pair with different corpus fingerprints → "no slice" even under `--corpus-differs-by-design`
 - [ ] 2.2 `model: opus` — RED/GREEN: build the per-category table from `category_attribution` (from `preflight-category-census`) over the snapshot map; the two-source-different-categories test from #525 and the uncategorized-first-source test from #538, asserted end to end through the slice; overall figures unchanged
 - [ ] 2.3 `model: sonnet` — RED/GREEN: per-metric power shown per row of the table, with no verdict for an underpowered metric
 - [ ] 2.4 `model: sonnet` — RED/GREEN: trace scan over benchmark `messages` and QA `tool_calls`
