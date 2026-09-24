@@ -68,6 +68,7 @@ export FM_POLL_SECONDS=0
 unset RAGAS_ENV_FILE HUIT_API_KEY_FILE OPENAI_API_KEY FM_AGENT_SPEC
 mkdir -p "$T/bin" "$T/state" "$FM_OUT"
 printf 'sha256:abc\n' > "$T/fp"
+printf 'sha256:map1\n' > "$T/mapfp"   # the live category-map digest the data-manager reports
 
 # --- stubs -----------------------------------------------------------------------------
 cat > "$T/bin/docker" <<EOF
@@ -77,6 +78,7 @@ case "\$1" in
   inspect) [ -f "$T/state/\$2" ] && { cat "$T/state/\$2"; exit 0; } || exit 1 ;;
   exec)    sql="\$*"
            case "\$sql" in
+             *CATEGORY_MAP_QUERY*) cat "$T/mapfp" ;;
              *benchmark_provenance*) cat "$T/fp" ;;
              *document_chunks*)  [ -f "$T/nocounts" ] || echo 6096 ;;
              *documents*)        [ -f "$T/nocounts" ] || echo 1132 ;;
@@ -302,6 +304,9 @@ if [ "$RC" = 0 ] && grep -q -- "eval qa --dataset $FM_OUT/qa/fasrc_ragas_queries
   ok "qa_arm overwrites the SUT fields, drops evaluations, calls archi eval qa serially"; else notok "qa_arm agent config + call (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
 EXPECT_SHA="$(sha256sum "$S/configs/config.yaml" | cut -d' ' -f1)"
 if "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e.get('rendered_config_sha256')=='$EXPECT_SHA' and e.get('corpus_fingerprint')=='sha256:abc' and e.get('arm_config')=='$T/arms/01-rerank-off.yaml' else 1)"; then ok "qa_arm records the rendered config sha256, the arm config, and the corpus fingerprint"; else notok "qa_arm ledger identity fields"; fi
+
+# 47: qa_arm reads the category map around the QA run and writes the readings compare_runs joins on
+if "$FM_PYTHON" -c "import json,sys; r=json.load(open('$FM_OUT/qa/fm-00-arm01-r1/category_map_readings.json')); e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if r=={'start':'sha256:map1','end':'sha256:map1'} and e.get('category_map_sha256_start')=='sha256:map1' and e.get('category_map_sha256_end')=='sha256:map1' else 1)" 2>/dev/null; then ok "qa_arm writes category_map_readings.json and records both map digests"; else notok "qa_arm map readings"; fi
 
 # 13: a drifted fingerprint is refused; --new-corpus is refused after a re-run, honoured only after a fresh deploy of arm 00
 rm -f "$FM_OUT"/benchmarking-fm-00-*.json

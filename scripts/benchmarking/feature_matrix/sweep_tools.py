@@ -325,8 +325,13 @@ def archive(
     dest: Path,
     census: Optional[Path] = None,
     finished: Optional[str] = None,
+    lock_sha256: Optional[str] = None,
 ) -> List[dict]:
-    """Check every arm, then copy, pin and record the run in one ledger write."""
+    """Check every arm, then copy, pin and record the run in one ledger write.
+
+    *lock_sha256* is the sweep lock file's sha256, the value the shell wrappers
+    stamp stacks and ledger rows with; it defaults to a digest of *lock*.
+    """
     artifact = Path(artifact)
     document = json.loads(artifact.read_text())
     entries = document.get("benchmarking_results") or []
@@ -440,7 +445,7 @@ def archive(
                 "category_map_unchanged_at_endpoints"
             ),
             "category_map_file": entry.get("category_map_file"),
-            "lock_sha256": lock_sha(lock),
+            "lock_sha256": lock_sha256 or lock_sha(lock),
         }
         if census_report is not None:
             first = next(
@@ -562,6 +567,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 dest=Path(args.dest),
                 census=Path(args.census) if args.census else None,
                 finished=args.finished,
+                lock_sha256=_sha(Path(args.lock)),
             )
             print(f"archived run {args.run}: {len(rows)} arm rows")
     except SweepError as exc:

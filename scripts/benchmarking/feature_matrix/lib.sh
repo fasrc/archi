@@ -328,3 +328,69 @@ EOF
 }
 
 fm_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# --- sweep mode (change sweep-mode-feature-matrix-wrappers) ------------------------------
+# A rung-0 prompt sweep is one stack running every arm of a `generate_prompt_sweep.py`
+# directory in one `archi evaluate --config-dir` invocation. Its lock (sweep-<stack>.lock)
+# pins every arm's config and prompt instead of the campaign's single prompt; the
+# decisions live in sweep_tools.py, which these wrappers call.
+
+# The stack name reaches deployment paths, so it is validated like an arm label.
+fm_require_stack_name() { [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || fm_die "bad stack name '${1:-}' (lowercase letters, digits and '-', at most 41 characters)"; }
+
+fm_sweep_lock_file() { printf '%s/sweep-%s.lock\n' "$FM_OUT" "$1"; }
+fm_map_pin_file()    { printf '%s/category-map-pin-%s\n' "$FM_OUT" "$1"; }
+fm_sweep_tools()     { "$FM_PYTHON" "$(dirname "${BASH_SOURCE[0]}")/sweep_tools.py" "$@"; }
+
+# The live category-map digest, computed exactly as the harness records it: the harness's
+# own CATEGORY_MAP_QUERY (read from its source) through the shared digest helper, inside the
+# stack's data-manager. Never fails the caller: a failed reading prints `<unavailable: ...>`
+# and the consumer (compare_runs' QA join rule) decides what it costs (#538 rule 2).
+fm_category_map_digest() { # $1 = stack name
+  local out
+  out="$("$FM_DOCKER" exec -w /root/archi "data-manager-$1" python -c '
+import ast, pathlib
+src = pathlib.Path("src/bin/service_benchmark.py").read_text()
+queries = [node.value.value for node in ast.parse(src).body
+           if isinstance(node, ast.Assign)
+           and any(getattr(t, "id", None) == "CATEGORY_MAP_QUERY" for t in node.targets)]
+try:
+    from src.utils.benchmark_provenance import category_map_digest, category_map_records
+    from src.utils.postgres_service_factory import PostgresServiceFactory
+    rows = PostgresServiceFactory.from_env().connection_pool.execute(queries[0])
+    print(category_map_digest(category_map_records(rows)))
+except Exception as exc:
+    print(f"<unavailable: {exc}>")
+' 2>/dev/null | tr -d '\n' || true)"
+  [ -n "$out" ] || out="<unavailable: could not read the category map from data-manager-$1>"
+  printf '%s\n' "$out"
+}
+
+# Every sweep step runs this first: the locked code tree with no tracked change, every
+# locked file unchanged, and — after the first run (pass --stamped) — the stack stamped
+# with this lock.
+fm_require_sweep_lock() { # $1 = stack name, [$2 = --stamped]
+  local lock have want dirty
+  lock="$(fm_sweep_lock_file "$1")"
+  [ -f "$lock" ] || fm_die "no sweep lock at $lock — run qa_prepare.sh --sweep and lock_campaign.sh --sweep first"
+  want="$(fm_sweep_tools verify --lock "$lock" --field code_tree)"
+  have="$(fm_code_tree)"
+  [ "$have" = "$want" ] || fm_die "the checkout's runtime trees ($have) are not the locked sweep code ($want)"
+  dirty="$("$FM_GIT" status --porcelain --untracked-files=no -- src scripts deploy pyproject.toml requirements 2>/dev/null || true)"
+  [ -z "$dirty" ] || fm_die "uncommitted source changes would run unlocked code:
+$dirty"
+  fm_sweep_tools verify --lock "$lock" || fm_die "the sweep's locked inputs changed (see above)"
+  if [ "${2:-}" = --stamped ]; then
+    local f; f="$(fm_stack_lock_file "$1")"
+    [ -f "$f" ] || fm_die "stack $1 carries no sweep lock stamp ($f) — it was not deployed by run_arm.sh --sweep"
+    [ "$(tr -d '[:space:]' < "$f")" = "$(fm_sha256 "$lock")" ] || fm_die "stack $1 was deployed under a different lock than $lock"
+  fi
+}
+
+# QA readings file for compare_runs' join rule (#538 rule 1), written for every QA run.
+fm_write_map_readings() { # $1 = QA output dir, $2 = start digest, $3 = end digest
+  FM_DIR="$1" FM_START="$2" FM_END="$3" "$FM_PYTHON" -c '
+import json, os
+with open(os.path.join(os.environ["FM_DIR"], "category_map_readings.json"), "w") as f:
+    json.dump({"start": os.environ["FM_START"], "end": os.environ["FM_END"]}, f, indent=1)'
+}

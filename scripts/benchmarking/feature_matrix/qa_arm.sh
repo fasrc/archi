@@ -92,6 +92,9 @@ OUT_DIR="$FM_OUT/qa/$STACK-arm$ARM-r$RUN"
 [ ! -e "$OUT_DIR" ] || fm_die "output dir exists: $OUT_DIR (pick --run N+1)"
 STARTED="$(fm_now)"
 fm_log "QA run for arm $ARM on $STACK → $OUT_DIR"
+# The category map is read around the QA run too (#538 rule 1): compare_runs joins a QA
+# run to a digest-bearing arm only when both readings equal the arm's end digest.
+MAP_START="$(fm_category_map_digest "$STACK")"
 PG_PASSWORD_FILE="$STACK_DIR/secrets/pg_password.txt" \
 HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}" \
 OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
@@ -105,9 +108,11 @@ OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
 # The QA run takes an hour or more and nothing samples the corpus for it the way the harness
 # does for RAGAS arms: prove it is still the pinned corpus AFTER the run, or the answers may
 # span two corpus states and the row must not be written.
+MAP_END="$(fm_category_map_digest "$STACK")"
+fm_write_map_readings "$OUT_DIR" "$MAP_START" "$MAP_END"
 AFTER="$(fm_fingerprint "$STACK")"
 [ "$AFTER" = "$FINGERPRINT" ] || fm_die "corpus changed during the QA run (pin $FINGERPRINT, now $AFTER); output kept at $OUT_DIR but NOT recorded — the run is void"
-fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s","fingerprint_source":"live-stack-equals-pin","dataset_sha256":"%s","profile_sha256":"%s","spec_sha256":"%s","lock_sha256":"%s","code_sha":"%s"}' \
+fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s","fingerprint_source":"live-stack-equals-pin","dataset_sha256":"%s","profile_sha256":"%s","spec_sha256":"%s","lock_sha256":"%s","code_sha":"%s","category_map_sha256_start":"%s","category_map_sha256_end":"%s"}' \
   "$ARM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$DATASET" "$PROFILE" "$SPEC" "$YAML" "$CFG_SHA" "$FINGERPRINT" \
-  "$(fm_sha256 "$DATASET")" "$(fm_sha256 "$PROFILE")" "$(fm_sha256 "$SPEC")" "$(fm_lock_sha)" "$(fm_code_sha)")"
+  "$(fm_sha256 "$DATASET")" "$(fm_sha256 "$PROFILE")" "$(fm_sha256 "$SPEC")" "$(fm_lock_sha)" "$(fm_code_sha)" "$MAP_START" "$MAP_END")"
 fm_log "done; report: $OUT_DIR/report.md  summary: $OUT_DIR/summary.json"
