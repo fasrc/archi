@@ -32,6 +32,37 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# Sweep mode: archive_run.sh --sweep <sweep_dir> --stack <name> --run <N> [--census <json>] [--wait]
+# Archives one multi-arm sweep artifact (the newest benchmarking-<stack>-*.json in FM_OUT):
+# every arm is checked before anything is written (sweep_tools.py archive), then the artifact,
+# its report and every _category_map_<N>.tsv are copied to $FM_OUT/archive/<stack>, one
+# ledger row per arm is appended in one write, and run 1 writes the corpus and map pins.
+if [ "${1:-}" = --sweep ]; then
+  SWEEP_DIR="${2:?--sweep needs the sweep directory}"; shift 2
+  STACK=""; RUN=""; CENSUS=""; WAIT=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --stack) STACK="${2:?}"; shift 2 ;;
+      --run) RUN="${2:?}"; shift 2 ;;
+      --census) CENSUS="${2:?}"; shift 2 ;;
+      --wait) WAIT=true; shift ;;
+      *) fm_die "unknown option $1" ;;
+    esac
+  done
+  fm_require_stack_name "$STACK"; fm_require_run_number "$RUN"
+  fm_require_sweep_lock "$STACK" --stamped
+  if [ "$WAIT" = true ]; then
+    while [ "$(fm_container_state "benchmarking-$STACK")" = "running" ]; do sleep "${FM_POLL_SECONDS:-30}"; done
+  fi
+  [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "benchmarking-$STACK is still running (use --wait)"
+  ARTIFACT="$(ls -t "$FM_OUT"/benchmarking-"$STACK"-*.json 2>/dev/null | head -1 || true)"
+  [ -n "$ARTIFACT" ] || fm_die "no artifact benchmarking-$STACK-*.json under $FM_OUT"
+  fm_sweep_tools archive --lock "$(fm_sweep_lock_file "$STACK")" --artifact "$ARTIFACT" --stack "$STACK" \
+    --run "$RUN" --ledger "$(fm_ledger)" --pins-dir "$FM_OUT" --dest "$FM_OUT/archive/$STACK" \
+    ${CENSUS:+--census "$CENSUS"} --finished "$(fm_now)" || fm_die "refusing to archive $ARTIFACT (see above)"
+  exit 0
+fi
+
 ARM="${1:-}"; fm_require_arm "$ARM"; RUN="${2:-}"; [ -n "$RUN" ] || fm_die "usage: archive_run.sh <arm> <run> <arm.yaml> [--stack <name>] [--wait] [--new-corpus]"; fm_require_run_number "$RUN"
 YAML="${3:-}"; fm_require_arm_yaml "$ARM" "$YAML"; shift 3
 fm_require_lock "$YAML"

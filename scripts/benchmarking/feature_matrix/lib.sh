@@ -387,6 +387,27 @@ $dirty"
   fi
 }
 
+# A secret-free agent config for `archi eval qa` from a stack's rendered config, with
+# services.chat_app.{agent_class,default_provider,default_model} overwritten from
+# services.benchmarking (an evaluate stack renders the template defaults into chat_app, and
+# the QA CLI reads chat_app) and the evaluations block dropped.
+fm_write_agent_config() { # $1 = rendered config.yaml, $2 = output path
+  FM_RENDERED="$1" FM_AGENT_CFG="$2" "$FM_PYTHON" - <<'EOF'
+import os, yaml
+c = yaml.safe_load(open(os.environ["FM_RENDERED"]))
+b = c["services"]["benchmarking"]; ca = c["services"].setdefault("chat_app", {})
+ca["agent_class"] = b["agent_class"]
+ca["default_provider"] = b["provider"]
+ca["default_model"] = b["model"]
+# the console refuses a config that carries its own evaluations block; the CLI does not
+# need it either
+ca.pop("evaluations", None)
+with open(os.environ["FM_AGENT_CFG"], "w") as f:
+    yaml.safe_dump(c, f, sort_keys=False)
+print(f"agent config: {ca['agent_class']} / {ca['default_provider']} / {ca['default_model']}")
+EOF
+}
+
 # QA readings file for compare_runs' join rule (#538 rule 1), written for every QA run.
 fm_write_map_readings() { # $1 = QA output dir, $2 = start digest, $3 = end digest
   FM_DIR="$1" FM_START="$2" FM_END="$3" "$FM_PYTHON" -c '

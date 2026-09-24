@@ -135,6 +135,34 @@ One thin wrapper per step of the #396 campaign protocol
 - **`test_feature_matrix_wrappers.sh`** — hermetic 45-check self-test (stubbed
   `docker`/`archi`, temp stack), run by `scripts/gate.sh`.
 
+### Sweep mode (rung-0 prompt sweep, plan W8)
+
+A prompt sweep runs every arm of a `generate_prompt_sweep.py` directory on **one** stack
+in one `archi evaluate --config-dir` invocation, so the wrappers take `--sweep` instead of
+an arm label and a `sweep-<stack>.lock` instead of the campaign lock. In order:
+
+```bash
+D=feature_matrix   # scripts/benchmarking/feature_matrix
+python scripts/benchmarking/generate_prompt_sweep.py -m <manifest.yaml>          # arm configs
+$D/qa_prepare.sh   --sweep r0 --qa-dataset <qa-v2.json> --qa-profile <profile>   # gold atoms, once
+$D/lock_campaign.sh --sweep <sweep_dir> --manifest <manifest.yaml> --stack r0 \
+                    --qa-dataset <qa-v2.json> --qa-profile <profile>             # pins every arm
+RAGAS_ENV_FILE=<judge.env> $D/run_arm.sh --sweep <sweep_dir> --stack r0          # replicate 1
+python scripts/benchmarking/category_census.py --pg-dsn <postgres-r0 dsn> ... --json census.json
+$D/archive_run.sh --sweep <sweep_dir> --stack r0 --run 1 --census census.json --wait
+$D/qa_arm.sh --sweep <sweep_dir> --stack r0 --arm <prompt-stem>                  # once per arm
+$D/run_arm.sh --sweep <sweep_dir> --stack r0 --rerun                             # replicate 2
+$D/archive_run.sh --sweep <sweep_dir> --stack r0 --run 2 --wait
+$D/qa_arm.sh --sweep <sweep_dir> --stack r0 --arm <prompt-stem> --run 2          # once per arm
+```
+
+Every step verifies the whole lock first (code tree, every arm config and prompt, bank,
+anchors, QA inputs, prepared atoms). The rerun needs both pins archive run 1 writes — the
+corpus pin and the category-map pin — before and after recreating the benchmark container.
+Archive checks every arm before writing anything and appends all rows in one write; run 1
+needs a passing census bound to the run's corpus, map and inputs. Every QA run (sweep or
+not) writes `category_map_readings.json`, which `compare_runs.py --qa-run` requires.
+
 ## Comparing two runs
 
 - **`compare_runs.py`** — the paired, gated comparison of two or more benchmark

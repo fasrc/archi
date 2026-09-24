@@ -26,6 +26,61 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# Sweep mode: qa_arm.sh --sweep <sweep_dir> --stack <name> --arm <prompt-stem> [--run N]
+# One arm of a locked prompt sweep, with that arm's own prompt, on a COPY of the prepared
+# gold atoms (qa_prepare.sh --sweep): `archi eval qa run` then `score`, between two corpus
+# pin checks and two category-map readings written to category_map_readings.json.
+if [ "${1:-}" = --sweep ]; then
+  SWEEP_DIR="${2:?--sweep needs the sweep directory}"; shift 2
+  STACK=""; STEM=""; RUN=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --stack) STACK="${2:?}"; shift 2 ;;
+      --arm) STEM="${2:?}"; shift 2 ;;
+      --run) RUN="${2:?}"; shift 2 ;;
+      *) fm_die "unknown option $1" ;;
+    esac
+  done
+  fm_require_stack_name "$STACK"
+  fm_require_sweep_lock "$STACK" --stamped
+  LOCK="$(fm_sweep_lock_file "$STACK")"
+  SPEC="$(fm_sweep_tools verify --lock "$LOCK" --field "arms.$STEM.prompt")"
+  [ -n "$SPEC" ] || fm_die "arm '$STEM' is not in the sweep lock $LOCK"
+  PROFILE="$(fm_sweep_tools verify --lock "$LOCK" --field qa.profile)"
+  PREPARED="$(fm_sweep_tools verify --lock "$LOCK" --field qa.prepared)"
+  STACK_DIR="$(fm_stack_dir "$STACK")"
+  [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "a RAGAS run is in flight on $STACK; QA runs are serial"
+  [ -f "$STACK_DIR/secrets/pg_password.txt" ] || fm_die "no $STACK_DIR/secrets/pg_password.txt"
+  if [ -z "$RUN" ]; then
+    RUN=1
+    while [ -e "$FM_OUT/qa/$STACK-$STEM-r$RUN" ]; do RUN=$((RUN + 1)); done
+  fi
+  fm_require_run_number "$RUN"
+  OUT_DIR="$FM_OUT/qa/$STACK-$STEM-r$RUN"
+  [ ! -e "$OUT_DIR" ] || fm_die "output dir exists: $OUT_DIR (pick --run N+1)"
+  fm_require_pinned_corpus "$STACK"
+  FINGERPRINT="$(tr -d '[:space:]' < "$(fm_pin_file "$STACK")")"
+  AGENT_CFG="$FM_OUT/qa/$STACK-$STEM.agent-config.yaml"
+  fm_write_agent_config "$STACK_DIR/configs/config.yaml" "$AGENT_CFG"
+  cp -R "$PREPARED" "$OUT_DIR"
+  STARTED="$(fm_now)"
+  MAP_START="$(fm_category_map_digest "$STACK")"
+  fm_log "QA run for sweep arm $STEM on $STACK → $OUT_DIR"
+  export PG_PASSWORD_FILE="$STACK_DIR/secrets/pg_password.txt"
+  export HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}"
+  export OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1
+  "$FM_ARCHI" eval qa run "$OUT_DIR" --agent-config "$AGENT_CFG" --agent-spec "$SPEC" --attempts 1 --run-workers 1
+  "$FM_ARCHI" eval qa score "$OUT_DIR" --evaluator-profile "$PROFILE" --score-workers "${FM_SCORE_WORKERS:-4}"
+  MAP_END="$(fm_category_map_digest "$STACK")"
+  fm_write_map_readings "$OUT_DIR" "$MAP_START" "$MAP_END"
+  AFTER="$(fm_fingerprint "$STACK")"
+  [ "$AFTER" = "$FINGERPRINT" ] || fm_die "corpus changed during the QA run (pin $FINGERPRINT, now $AFTER); output kept at $OUT_DIR but NOT recorded — the run is void"
+  fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","sweep":true,"stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","spec":"%s","spec_sha256":"%s","corpus_fingerprint":"%s","category_map_sha256_start":"%s","category_map_sha256_end":"%s","lock_sha256":"%s","code_sha":"%s"}' \
+    "$STEM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$SPEC" "$(fm_sha256 "$SPEC")" "$FINGERPRINT" "$MAP_START" "$MAP_END" "$(fm_sha256 "$LOCK")" "$(fm_code_sha)")"
+  fm_log "done; join with: compare_runs.py <artifact> --qa-run $STEM=$OUT_DIR"
+  exit 0
+fi
+
 ARM="${1:-}"; fm_require_arm "$ARM"; YAML="${2:-}"; fm_require_arm_yaml "$ARM" "$YAML"; shift 2
 STACK="fm-$ARM"; RUN=""
 DATASET="$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
@@ -73,20 +128,7 @@ fm_log "stack $STACK is on arm $ARM (config sha256 ${CFG_SHA:0:12}, corpus $FING
 
 mkdir -p "$FM_OUT/qa"
 AGENT_CFG="$FM_OUT/qa/$ARM.agent-config.yaml"
-FM_RENDERED="$RENDERED" FM_AGENT_CFG="$AGENT_CFG" "$FM_PYTHON" - <<'EOF'
-import os, yaml
-c = yaml.safe_load(open(os.environ["FM_RENDERED"]))
-b = c["services"]["benchmarking"]; ca = c["services"].setdefault("chat_app", {})
-ca["agent_class"] = b["agent_class"]
-ca["default_provider"] = b["provider"]
-ca["default_model"] = b["model"]
-# the console refuses a config that carries its own evaluations block; the CLI does not
-# need it either
-ca.pop("evaluations", None)
-with open(os.environ["FM_AGENT_CFG"], "w") as f:
-    yaml.safe_dump(c, f, sort_keys=False)
-print(f"agent config: {ca['agent_class']} / {ca['default_provider']} / {ca['default_model']}")
-EOF
+fm_write_agent_config "$RENDERED" "$AGENT_CFG"
 
 OUT_DIR="$FM_OUT/qa/$STACK-arm$ARM-r$RUN"
 [ ! -e "$OUT_DIR" ] || fm_die "output dir exists: $OUT_DIR (pick --run N+1)"

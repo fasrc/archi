@@ -12,6 +12,55 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# Sweep mode (a rung-0 prompt sweep: every arm in one stack, one `--config-dir` run):
+#   run_arm.sh --sweep <sweep_dir> --stack <name>           deploy + ingest + run every arm
+#   run_arm.sh --sweep <sweep_dir> --stack <name> --rerun   re-run ONLY the benchmark container
+# Both verify the whole sweep lock first (fm_require_sweep_lock); the rerun also needs the
+# corpus pin and the category-map pin, before and after recreating the container.
+if [ "${1:-}" = --sweep ]; then
+  SWEEP_DIR="${2:?--sweep needs the sweep directory}"; shift 2
+  STACK=""; RERUN=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --stack) STACK="${2:?}"; shift 2 ;;
+      --rerun) RERUN=true; shift ;;
+      *) fm_die "unknown option $1" ;;
+    esac
+  done
+  fm_require_stack_name "$STACK"
+  LOCK="$(fm_sweep_lock_file "$STACK")"
+  mkdir -p "$FM_OUT"
+  if [ "$RERUN" = false ]; then
+    fm_require_sweep_lock "$STACK"
+    ENV_FILE="${RAGAS_ENV_FILE:-}"
+    [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] || fm_die "RAGAS_ENV_FILE must name the judge env file (HUIT_API_KEY); got '${ENV_FILE}'"
+    [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "benchmarking-$STACK is still running"
+    fm_log "sweep $STACK: deploy + ingest + run every arm in $SWEEP_DIR"
+    "$FM_ARCHI" evaluate --config-dir "$SWEEP_DIR" --name "$STACK" --env-file "$ENV_FILE" --hostmode
+    [ -d "$(fm_stack_dir "$STACK")" ] || fm_die "archi evaluate returned without creating $(fm_stack_dir "$STACK")"
+    fm_sha256 "$LOCK" > "$(fm_stack_lock_file "$STACK")"
+  else
+    fm_require_sweep_lock "$STACK" --stamped
+    fm_require_stack_up "$STACK"
+    [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "a benchmark run is still in flight on $STACK"
+    MAP_PIN="$(fm_map_pin_file "$STACK")"
+    [ -f "$MAP_PIN" ] || fm_die "no category-map pin for $STACK at $MAP_PIN — archive run 1 first"
+    check_pins() {
+      fm_require_pinned_corpus "$STACK"
+      local now pin; now="$(fm_category_map_digest "$STACK")"; pin="$(tr -d '[:space:]' < "$MAP_PIN")"
+      [ "$now" = "$pin" ] || fm_die "category map $now != map pin $pin for $STACK — the replicate would read a different map"
+    }
+    check_pins
+    "$FM_DOCKER" rm -f "benchmarking-$STACK" >/dev/null 2>&1 || true
+    "$FM_DOCKER" compose -f "$(fm_stack_dir "$STACK")/compose.yaml" up --no-deps -d benchmark
+    check_pins
+  fi
+  fm_ledger_append "$(printf '{"kind":"ragas-start","sweep":true,"stack":"%s","sweep_dir":"%s","started":"%s","rerun":%s,"lock_sha256":"%s","code_sha":"%s"}' "$STACK" "$SWEEP_DIR" "$(fm_now)" "$RERUN" "$(fm_sha256 "$LOCK")" "$(fm_code_sha)")"
+  fm_log "follow:  $FM_DOCKER logs -f benchmarking-$STACK"
+  fm_log "then:    scripts/benchmarking/feature_matrix/archive_run.sh --sweep $SWEEP_DIR --stack $STACK --run <N> --wait"
+  exit 0
+fi
+
 ARM="${1:-}"; fm_require_arm "$ARM"; shift
 STACK="fm-$ARM"; RERUN=false; YAML=""
 while [ $# -gt 0 ]; do
