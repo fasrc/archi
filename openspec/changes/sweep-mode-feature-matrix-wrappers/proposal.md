@@ -20,8 +20,14 @@ category-map reading before and after each QA run, taken by the wrapper that sta
   (`archi evaluate --config-dir … --name <stack> --hostmode`), stamping the stack with the
   sweep lock; and **`--sweep … --rerun`**: recreate only the benchmark container, between
   two corpus-pin checks, as the campaign's `--rerun` does.
+- **`qa_prepare.sh --sweep <stack>`** (new): prepares the gold atoms once per sweep and pins
+  `preparation.jsonl` in the sweep lock, as plan W8 requires ("Prepare the gold atoms once and
+  run every arm against that one snapshot"; each `archi eval qa` invocation otherwise
+  re-extracts atoms, `src/evaluation/qa/preparation.py:305-320`).
 - **`qa_arm.sh --sweep <sweep_dir> --stack <name> --arm <config-stem>`**: the QA run for one
-  sweep arm with that arm's own prompt (hash-checked against the sweep lock), a corpus-pin
+  sweep arm with that arm's own prompt, on a copy of the prepared workspace
+  (`archi eval qa run` + `score`), with the prompt, QA dataset and profile hash-checked against
+  the sweep lock, a corpus-pin
   check before and after, and a category-map reading before and after written to
   `<qa_dir>/category_map_readings.json` (`{"start", "end"}`), which `compare_runs.py` reads for
   the QA join rule.

@@ -22,3 +22,7 @@
 
 - [ ] 4.1 `model: sonnet` — `bash scripts/gate.sh` green (patch coverage ≥ 80 %)
 - [ ] 4.2 `model: sonnet` — `openspec validate record-category-map-digest --strict`
+
+## 5. End-to-end check (after merge, per `AGENTS.md:58-63`)
+
+- [ ] 5.1 `model: sonnet` — on the claw workstation, `archi evaluate --config-dir` a two-arm sweep over the 5-row anchor bank against an explicit stack (`benchmarking-<stack>`, `postgres-<stack>`, `data-manager-<stack>`); confirm the image runs the new code (the harness log line and `importlib` path of `src.utils.benchmark_provenance`), then check the artifact has the three new keys per arm, two `_category_map_<N>.tsv` siblings exist, and `sha256(file)` equals each arm's end digest; record the commands and output on the PR

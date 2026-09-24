@@ -16,7 +16,15 @@ The system SHALL compute the two-sided exact McNemar p-value from discordant cou
 - **THEN** p is unchanged
 
 ### Requirement: Per-arm source and completion tests against the baseline
-The system SHALL report, for every non-baseline arm, a *source* test pairing per-question relative hits (any declared source matched) over questions with declared sources that are clean in both arms, and a *completion* test pairing status `ok` versus not `ok` over the common question set, each with b, c, n and p.
+The system SHALL report, for every non-baseline arm, a *source* test pairing per-question relative hits (any declared source matched) over questions with declared sources that are clean in both arms and whose canonical declared source lists are equal in both arms, and a *completion* test pairing status `ok` versus not `ok` over the common question set, each with b = questions where the baseline succeeds and the arm fails, c = questions where the arm succeeds and the baseline fails, n = b + c, p, and a direction of `arm better` when c > b, `arm worse` when b > c, else `no difference`.
+
+#### Scenario: Direction of a significant result
+- **WHEN** b = 2 and c = 12
+- **THEN** the test reports `arm better` with the exact p for (2, 12)
+
+#### Scenario: Gold sources changed between artifacts
+- **WHEN** a question's canonical declared sources differ between the baseline and the arm
+- **THEN** that question is left out of the source test and listed by name, and it stays in the completion test
 
 #### Scenario: Relative hit on a two-source row
 - **WHEN** a row declares two sources and only one matched
@@ -106,7 +114,7 @@ The system SHALL mark a category underpowered for a metric, with no verdict for 
 - **THEN** the category is powered for completion and underpowered for source accuracy
 
 ### Requirement: A map mismatch voids comparisons with a map-reading arm
-The system SHALL accept `--routes-on-category LABEL` (repeatable), SHALL treat an arm pair's maps as mismatched when either end digest is missing or unavailable or the two differ, SHALL void a mismatched comparison that includes a named arm, and for any other mismatched pair SHALL drop only the per-category slice unless either side called `search_metadata_index` in its benchmark `messages` or in a joined QA run's `answers.jsonl` `tool_calls`, in which case it SHALL void the comparison.
+The system SHALL accept `--routes-on-category LABEL` (repeatable), SHALL treat an arm pair's maps as mismatched when any of the four readings (each arm's start and end) is missing or unavailable, when either arm's start and end differ, or when the two end digests differ, SHALL void a mismatched comparison that includes a named arm, and for any other mismatched pair SHALL drop only the per-category slice unless either side called `search_metadata_index` in its benchmark `messages` or in a joined QA run's `answers.jsonl` `tool_calls`, in which case it SHALL void the comparison.
 
 #### Scenario: r0a against control with different maps
 - **WHEN** r0a is named and its end digest differs from the control's
@@ -114,6 +122,10 @@ The system SHALL accept `--routes-on-category LABEL` (repeatable), SHALL treat a
 
 #### Scenario: r0a reading failed
 - **WHEN** r0a is named and its end digest is `<unavailable: …>`
+- **THEN** the r0a comparison is void
+
+#### Scenario: r0a start reading failed, end matches
+- **WHEN** r0a is named, its start digest is `<unavailable: …>`, and its end digest equals the control's end digest
 - **THEN** the r0a comparison is void
 
 #### Scenario: r0b against control, no metadata search
