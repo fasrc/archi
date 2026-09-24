@@ -392,3 +392,27 @@ def test_run_two_checks_both_pins_and_refuses_a_reused_run(sweep):
     (sweep / "out/ledger.json").write_text(json.dumps(ledger))
     with pytest.raises(st.SweepError, match="map pin"):
         _archive(sweep, lock, moved, 2)
+
+
+def test_a_retry_after_a_failed_ledger_write_completes(sweep, monkeypatch):
+    """Pins and copies land before the ledger replace; a retry of run 1 finishes."""
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep)
+    _ledger(sweep)
+    census = _census(sweep, digest, lock)
+
+    real_replace = os.replace
+
+    def failing_replace(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(st.os, "replace", failing_replace)
+    with pytest.raises(OSError):
+        _archive(sweep, lock, artifact, 1, census)
+    assert (sweep / "out/corpus-pin-r0").exists()
+    assert len(json.loads((sweep / "out/ledger.json").read_text())) == 1
+
+    monkeypatch.setattr(st.os, "replace", real_replace)
+    rows = _archive(sweep, lock, artifact, 1, census)
+    assert len(rows) == 3
+    assert len(json.loads((sweep / "out/ledger.json").read_text())) == 4
