@@ -15,6 +15,21 @@ The system SHALL, on `lock_campaign.sh --sweep <sweep_dir> --manifest <yaml> --s
 - **WHEN** the manifest now points r0a at a different prompt than the generated r0a config names
 - **THEN** the regenerated config differs from the one in the sweep directory and the lock is refused naming the stem
 
+### Requirement: Every sweep step verifies the whole lock
+The system SHALL provide one check, `fm_require_sweep_lock <stack>`, that every sweep step (`run_arm.sh --sweep` and `--rerun`, `qa_arm.sh --sweep`, `archive_run.sh --sweep`) runs before it acts, and that refuses unless the checkout's code tree equals the locked code tree with no tracked modification, every locked file (manifest, arm configs, arm prompts, bank, anchors, QA dataset, evaluator profile, prepared `preparation.jsonl`) still hashes to its locked sha256, and — for every step after the first run — the stack carries the lock's stamp.
+
+#### Scenario: Source changed after locking
+- **WHEN** a tracked file under `src/` changes after the sweep was locked
+- **THEN** every sweep step is refused naming the locked and current code trees
+
+#### Scenario: Bank edited after locking
+- **WHEN** the bank file's content changes after the sweep was locked
+- **THEN** the run is refused before `archi evaluate` touches the stack
+
+#### Scenario: QA against another stack
+- **WHEN** `qa_arm.sh --sweep` names a stack that lacks this lock's stamp
+- **THEN** the QA run is refused before any QA phase starts
+
 ### Requirement: Gold atoms are prepared once per sweep, before the lock
 The system SHALL, on `qa_prepare.sh --sweep <stack> --qa-dataset <json> --qa-profile <yaml>`, run `archi eval qa prepare` once into `$FM_OUT/qa/<stack>-prepared` before the sweep is locked, SHALL refuse when a sweep lock for that stack already exists, and `lock_campaign.sh --sweep` SHALL require that prepared directory and record the sha256 of its `preparation.jsonl`, so the lock is written once and never rewritten; every sweep QA run SHALL copy that prepared directory and run `archi eval qa run` and `score` on the copy after checking the copy's `preparation.jsonl` sha256 against the lock.
 
@@ -107,7 +122,7 @@ The system SHALL, on `qa_arm.sh --sweep <sweep_dir> --stack <name> --arm <stem>`
 - **THEN** the QA run is refused before `archi eval qa` starts
 
 ### Requirement: Multi-arm sweep artifacts archive per arm
-The system SHALL, on `archive_run.sh --sweep <sweep_dir> --stack <name> --run <N>`, accept an artifact whose arms' recorded `services.benchmarking.name` values match the locked stems one to one, refusing a duplicate, missing or extra name, SHALL refuse an artifact older than the stack's latest `ragas-start` row or already named by a ledger row, SHALL check every arm before copying any file or appending any ledger row, SHALL refuse unless every arm's corpus fingerprints are usable, equal at both endpoints and equal across arms, and every arm with a usable `category_map_sha256_end` names exactly one `category_map_file` that exists beside the artifact with `"sha256:" + sha256(file)` equal to that digest (an arm may name no file only when its end reading failed), SHALL copy the artifact, its `_report.md` and every `_category_map_<N>.tsv` it names, and SHALL append one `ragas` ledger row per arm with the arm stem, its prompt sha256 from the sweep lock, `category_map_sha256_start`, `category_map_sha256_end`, `category_map_unchanged_at_endpoints` and `category_map_file`, writing the corpus pin and the category-map pin (the end digest the arms share) on run 1. An arm whose map changed or whose map reading failed is archived with that state recorded, not refused, because #538 rule 2 makes a map failure cost only the slice.
+The system SHALL, on `archive_run.sh --sweep <sweep_dir> --stack <name> --run <N>`, accept an artifact whose arms' recorded `services.benchmarking.name` values match the locked stems one to one, refusing a duplicate, missing or extra name, SHALL refuse an artifact older than the stack's latest `ragas-start` row or already named by a ledger row, SHALL check every arm before copying any file or appending any ledger row, SHALL refuse unless every arm's corpus fingerprints are usable, equal at both endpoints and equal across arms, and every arm with a usable `category_map_sha256_end` names exactly one `category_map_file` that exists beside the artifact with `"sha256:" + sha256(file)` equal to that digest (an arm may name no file only when its end reading failed), SHALL copy the artifact, its `_report.md` and every `_category_map_<N>.tsv` it names, and SHALL append one `ragas` ledger row per arm with the arm stem, its prompt sha256 from the sweep lock, `category_map_sha256_start`, `category_map_sha256_end`, `category_map_unchanged_at_endpoints` and `category_map_file`, SHALL refuse unless every arm's recorded `agent_md_sha256` equals its locked prompt sha256, and SHALL write on run 1 the corpus pin and the category-map pin, which is the census's map digest (always present, because run 1 requires a passing census). An arm whose map changed or whose map reading failed is archived with that state recorded, not refused, because #538 rule 2 makes a map failure cost only the slice.
 
 #### Scenario: Three arms archived
 - **WHEN** a three-arm artifact with three snapshots is archived as run 1
@@ -128,6 +143,14 @@ The system SHALL, on `archive_run.sh --sweep <sweep_dir> --stack <name> --run <N
 #### Scenario: Map changed during an arm
 - **WHEN** an arm records `category_map_unchanged_at_endpoints: false`
 - **THEN** the arm is archived and its ledger row records `false`, so the missing slice is visible in the ledger
+
+#### Scenario: Prompt changed between preflight and run
+- **WHEN** an arm's recorded `agent_md_sha256` differs from its locked prompt sha256
+- **THEN** the archive is refused naming the arm and both digests
+
+#### Scenario: Map pin with no usable arm reading
+- **WHEN** run 1's arms have no usable map reading and the census passed
+- **THEN** the map pin is the census's map digest and the rerun checks the live map against it
 
 #### Scenario: Arm names do not match the lock
 - **WHEN** two artifact arms record the same name, or a locked stem has no arm

@@ -54,7 +54,7 @@ The system SHALL resolve every arm selector in `--baseline`, `--primary`, `--rou
 - **THEN** a bare name is ambiguous and refused, and the `<stem>@<N>` label selects one
 
 ### Requirement: Primary and Holm-adjusted secondary tests
-The system SHALL accept `--primary LABEL=source|completion` for each treatment arm, SHALL mark that test as the arm's primary with its raw p, and SHALL report the arm's other test as secondary with a Holm-adjusted p computed across all secondaries in the report.
+The system SHALL accept `--primary LABEL=source|completion` for each treatment arm (the rung-0 assignment is pre-registered in the plan §5 and on #540), SHALL mark that test as the arm's primary with its raw p, and SHALL report the arm's other test as secondary with a Holm-adjusted p computed across all secondaries in the report.
 
 #### Scenario: Two arms, two secondaries
 - **WHEN** r0a's primary is source and r0b's primary is completion
