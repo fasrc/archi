@@ -25,6 +25,11 @@ RAGAS_METRICS = [
     "context_precision",
     "context_recall",
     "answer_correctness",
+    "factual_correctness_recall",
+    "factual_correctness_precision",
+    "noise_sensitivity",
+    "answer_accuracy",
+    "response_groundedness",
 ]
 
 # Inline style fragments applied directly to elements because Argilla's

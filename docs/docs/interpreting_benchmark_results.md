@@ -113,6 +113,11 @@ subset of the available information.**
 | `context_precision` | Of the chunks retrieved, how many were actually useful? | chunks + reference answer |
 | `context_recall` | Did retrieval find everything the reference answer needed? | chunks + reference answer |
 | `answer_correctness` | Is the answer *correct* against the reference answer? | answer + reference answer |
+| `factual_correctness_recall` | What share of the reference answer's claims does the answer cover? | answer + reference answer |
+| `factual_correctness_precision` | What share of the answer's claims does the reference support? | answer + reference answer |
+| `noise_sensitivity` | What share of the answer's claims are *wrong*? **Lower is better.** | question + answer + chunks + reference answer |
+| `answer_accuracy` | Does the answer agree with the reference? (two judge ratings, averaged) | question + answer + reference answer |
+| `response_groundedness` | Is the answer supported by the chunks? (two judge ratings, averaged) | answer + chunks |
 
 Read that last column carefully, because it determines what each metric can
 detect.
@@ -137,9 +142,29 @@ detect.
     that omits it reports the original four, so an older run's JSON carries no
     `aggregate_answer_correctness` key at all.
 
-- **Three metrics require a non-empty reference answer** — the two `context_*`
-  metrics and `answer_correctness`. Rows without one are silently excluded from
-  those metrics only. (In code: `src/utils/benchmark_schema.py`,
+- **The generation-side metrics are opt-in too** (the last five rows). They
+  grade the answer rather than retrieval, the half a prompt edit can move:
+
+    - `factual_correctness_recall` and `factual_correctness_precision` split
+      what `answer_correctness` blends. Recall falls when the answer *leaves
+      facts out*; precision falls when it *adds claims the reference does not
+      make*. A "be thorough" prompt can raise the first and lower the second, and
+      one blended score hides that trade. Neither includes an embedding
+      similarity term.
+    - `noise_sensitivity` is the only metric where **lower is better**. It counts
+      answer claims that are incorrect given the reference, attributing them to
+      the retrieved chunks (ragas' `relevant` mode). `faithfulness` asks only
+      whether a claim is *in* the chunks, not whether it is right. The
+      leaderboard, the A/B winner and `compare_runs`' regression checks all read
+      its direction from `LOWER_IS_BETTER_METRICS` in
+      `src/utils/benchmark_schema.py`.
+    - `answer_accuracy` and `response_groundedness` are ragas' NVIDIA metrics:
+      each asks the judge twice and averages, so they are steadier on small banks
+      but give no per-claim explanation.
+
+- **Seven metrics require a non-empty reference answer** — every metric above
+  except `answer_relevancy`, `faithfulness` and `response_groundedness`. Rows
+  without one are silently excluded from those metrics only. (In code: `src/utils/benchmark_schema.py`,
   `_METRIC_REQUIRED_COLUMN`.) This is why the metrics can each be averaged over a
   *different number of questions* in the same run — see
   [Denominator drift](#34-denominator-drift-the-quiet-one).
@@ -170,7 +195,7 @@ else changed too.
 | If you change… | Expect movement in | Should barely move |
 |---|---|---|
 | chunking, reranking, retrieval weights | `context_precision`, `context_recall`, both source metrics | `answer_relevancy` |
-| the system prompt, or the SUT model | `faithfulness`, `answer_relevancy`, `answer_correctness` | the `context_*` metrics |
+| the system prompt, or the SUT model | `faithfulness`, `answer_relevancy`, `answer_correctness`, and the five generation-side metrics | the `context_*` metrics — but the agent writes its own search queries, so a prompt edit *can* move them; if it does, the prompt changed retrieval too |
 
 `answer_correctness` is the one metric that can move when nothing else does. If a
 change makes the bot *right* more often without changing what it retrieved or how

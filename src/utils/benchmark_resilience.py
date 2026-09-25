@@ -133,6 +133,11 @@ _RAGAS_AGG = {
     "aggregate_context_precision": "context_precision",
     "aggregate_context_recall": "context_recall",
     "aggregate_answer_correctness": "answer_correctness",
+    "aggregate_factual_correctness_recall": "factual_correctness_recall",
+    "aggregate_factual_correctness_precision": "factual_correctness_precision",
+    "aggregate_noise_sensitivity": "noise_sensitivity",
+    "aggregate_answer_accuracy": "answer_accuracy",
+    "aggregate_response_groundedness": "response_groundedness",
 }
 
 

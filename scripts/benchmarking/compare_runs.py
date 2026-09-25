@@ -86,7 +86,23 @@ METRICS: Tuple[str, ...] = (
     "context_precision",
     "context_recall",
     "answer_correctness",
+    "factual_correctness_recall",
+    "factual_correctness_precision",
+    "noise_sensitivity",
+    "answer_accuracy",
+    "response_groundedness",
 )
+
+#: Metrics where a smaller score is better (benchmark_schema
+#: LOWER_IS_BETTER_METRICS; kept local so this module loads without src).
+LOWER_IS_BETTER = frozenset({"noise_sensitivity"})
+
+
+def worsening(metric: str, delta: float) -> float:
+    """How much worse a treatment-minus-baseline ``delta`` is: positive when the
+    metric got worse, whichever direction is better for it."""
+    return delta if metric in LOWER_IS_BETTER else -delta
+
 
 #: Fields the bank may slice by. Reported only when the field is present in
 #: every arm, because a slice that exists on one side is not a comparison.
@@ -1647,13 +1663,13 @@ def anchor_block(
                         continue
                     delta = value - float(baseline.value(question, metric))
                     deltas[metric] = delta
-                    if anchor_type != "easy_retrieve" or delta >= 0:
+                    if anchor_type != "easy_retrieve" or worsening(metric, delta) <= 0:
                         continue
                     sigma = sigmas.get(metric)
                     threshold = (
                         sigma if sigma is not None else ANCHOR_DROP_WITHOUT_SIGMA
                     )
-                    if -delta > threshold:
+                    if worsening(metric, delta) > threshold:
                         alarms.append(metric)
                         thresholds[metric] = threshold
             arm_entry = {
@@ -2646,8 +2662,7 @@ def g8_gate(
         for row in paired
         if row["mean"] is not None
         and row["sigma"] is not None
-        and row["mean"] < 0
-        and -row["mean"] > row["sigma"]
+        and worsening(row["metric"], row["mean"]) > row["sigma"]
     ]
     detail = []
     if failures:

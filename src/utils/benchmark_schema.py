@@ -113,7 +113,95 @@ _METRIC_REQUIRED_COLUMN: Dict[str, Optional[str]] = {
     "answer_correctness": "reference",
     "answer_relevancy": None,
     "faithfulness": None,
+    # Generation-side metrics (opt-in): they grade the ANSWER, the half a prompt
+    # edit can move. Factual correctness is split into recall (omission) and
+    # precision (over-claiming) so one blended score cannot hide the trade.
+    "factual_correctness_recall": "reference",
+    "factual_correctness_precision": "reference",
+    "noise_sensitivity": "reference",
+    "answer_accuracy": "reference",
+    "response_groundedness": None,
 }
+
+# Display label per metric; its key order is THE ordered list of every metric
+# the harness can score (``RAGAS_METRIC_NAMES``). Other modules
+# (leaderboard, aggregates, report, compare_runs, Argilla, prompt sweep) keep
+# their own copies for historical reasons; test_ragas_generation_metrics.py pins
+# each copy to this one.
+RAGAS_METRIC_LABELS: Dict[str, str] = {
+    "answer_relevancy": "Answer Relevancy",
+    "faithfulness": "Faithfulness",
+    "context_precision": "Context Precision",
+    "context_recall": "Context Recall",
+    "answer_correctness": "Answer Correctness",
+    "factual_correctness_recall": "Factual Correctness (recall)",
+    "factual_correctness_precision": "Factual Correctness (precision)",
+    "noise_sensitivity": "Noise Sensitivity (lower is better)",
+    "answer_accuracy": "Answer Accuracy",
+    "response_groundedness": "Response Groundedness",
+}
+RAGAS_METRIC_NAMES: Tuple[str, ...] = tuple(RAGAS_METRIC_LABELS)
+
+# Metrics where a SMALLER score is the better one. Anything that picks a winner,
+# ranks variants, or flags a regression must consult this.
+LOWER_IS_BETTER_METRICS: frozenset = frozenset({"noise_sensitivity"})
+
+# Metric -> (ragas class name, constructor kwargs) for the metrics that are
+# built rather than pre-instantiated. ``name`` is always pinned so the result
+# column is predictable (see ``ragas_result_column``).
+_RAGAS_METRIC_CONSTRUCTORS: Dict[str, Tuple[str, Dict[str, str]]] = {
+    "factual_correctness_recall": ("FactualCorrectness", {"mode": "recall"}),
+    "factual_correctness_precision": ("FactualCorrectness", {"mode": "precision"}),
+    "noise_sensitivity": ("NoiseSensitivity", {"mode": "relevant"}),
+    "answer_accuracy": ("AnswerAccuracy", {}),
+    "response_groundedness": ("ResponseGroundedness", {}),
+}
+
+
+def build_ragas_metric_objects(
+    metrics_module: Any, names: Sequence[str]
+) -> Dict[str, Any]:
+    """The ragas metric object for each of ``names``, taken from
+    ``metrics_module`` (``ragas.metrics``; a fake in unit tests).
+
+    The five original metrics are ragas' pre-instantiated singletons; the rest
+    are constructed with a pinned ``name``. An unregistered name raises
+    ``KeyError`` rather than being silently skipped.
+    """
+    objects: Dict[str, Any] = {}
+    for name in names:
+        if name not in _METRIC_REQUIRED_COLUMN:
+            raise KeyError(f"unknown RAGAS metric: {name}")
+        if name in _RAGAS_METRIC_CONSTRUCTORS:
+            class_name, kwargs = _RAGAS_METRIC_CONSTRUCTORS[name]
+            objects[name] = getattr(metrics_module, class_name)(**kwargs, name=name)
+        else:
+            objects[name] = getattr(metrics_module, name)
+    return objects
+
+
+def ragas_result_column(metric_obj: Any) -> str:
+    """The ``evaluate(...).to_pandas()`` column ragas writes ``metric_obj``'s
+    scores under.
+
+    ragas 0.3.5 (``evaluation.py``) keys any metric satisfying its ``ModeMetric``
+    protocol — an object with both ``name`` and ``mode`` — as
+    ``name(mode=<mode>)``, and every other metric as plain ``name``.
+    """
+    if not hasattr(metric_obj, "mode"):
+        return metric_obj.name
+    return f"{metric_obj.name}(mode={metric_obj.mode})"
+
+
+def metric_winner(metric: str, score_a: float, score_b: float) -> str:
+    """``"a"``, ``"b"`` or ``"tie"`` for one metric, honoring its direction.
+    A NaN on either side is a tie: there is nothing to compare."""
+    if math.isnan(score_a) or math.isnan(score_b) or abs(score_a - score_b) < 1e-9:
+        return "tie"
+    a_higher = score_a > score_b
+    if metric in LOWER_IS_BETTER_METRICS:
+        return "b" if a_higher else "a"
+    return "a" if a_higher else "b"
 
 
 def normalize_record(record: Any) -> Any:

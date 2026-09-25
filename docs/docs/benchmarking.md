@@ -34,6 +34,12 @@ metrics are on by default and a fifth is opt-in:
   can tell a right answer from a wrong one. Enable it by adding
   `answer_correctness` to
   `services.benchmarking.mode_settings.ragas_settings.enabled_metrics`.
+- **Generation-side metrics** (opt-in, same list): `factual_correctness_recall`
+  (did the answer leave facts out?), `factual_correctness_precision` (did it add
+  unsupported claims?), `noise_sensitivity` (share of wrong claims; **lower is
+  better**), `answer_accuracy` and `response_groundedness` (two-rating averaged
+  variants of correctness and faithfulness). See
+  [Interpreting benchmark results §2.1](interpreting_benchmark_results.md).
 
 ---
 
@@ -272,8 +278,10 @@ prompts:
 ```
 
 `primary_metric` is one of `answer_relevancy`, `faithfulness`,
-`context_precision`, `context_recall`, `answer_correctness` (default
-`faithfulness` — grounding is the load-bearing property for a "never guess"
+`context_precision`, `context_recall`, `answer_correctness`,
+`factual_correctness_recall`, `factual_correctness_precision`,
+`noise_sensitivity` (ranked lowest-first), `answer_accuracy`,
+`response_groundedness` (default `faithfulness` — grounding is the load-bearing property for a "never guess"
 support bot). Every enabled metric is reported per variant regardless; this only
 sets the ranking key.
 

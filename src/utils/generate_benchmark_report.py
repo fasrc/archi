@@ -28,6 +28,22 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Display label per RAGAS metric, in report order. This CLI imports nothing from
+# src, so it keeps its own copy of benchmark_schema.RAGAS_METRIC_LABELS;
+# test_ragas_generation_metrics.py pins the two together.
+RAGAS_METRIC_LABELS = {
+    "answer_relevancy": "Answer Relevancy",
+    "faithfulness": "Faithfulness",
+    "context_precision": "Context Precision",
+    "context_recall": "Context Recall",
+    "answer_correctness": "Answer Correctness",
+    "factual_correctness_recall": "Factual Correctness (recall)",
+    "factual_correctness_precision": "Factual Correctness (precision)",
+    "noise_sensitivity": "Noise Sensitivity (lower is better)",
+    "answer_accuracy": "Answer Accuracy",
+    "response_groundedness": "Response Groundedness",
+}
+
 
 def get_single_question_results(config_data):
     """Return the single question results regardless of key format."""
@@ -829,13 +845,7 @@ def format_html_output(
             html_parts.append(f"</div>")
 
         # RAGAS Metrics
-        ragas_metrics = {
-            "answer_relevancy": "Answer Relevancy",
-            "faithfulness": "Faithfulness",
-            "context_precision": "Context Precision",
-            "context_recall": "Context Recall",
-            "answer_correctness": "Answer Correctness",
-        }
+        ragas_metrics = RAGAS_METRIC_LABELS
 
         if "RAGAS" in config_data.get("services", {}).get("benchmarking", {}).get(
             "modes", []
@@ -1280,13 +1290,7 @@ def format_markdown_output(
                 clean_name = metric.replace("aggregate_", "").replace("_", " ").title()
                 parts.append(f"| {md_escape(clean_name)} | {_score_cell(value)} |")
 
-    ragas_metrics = {
-        "answer_relevancy": "Answer Relevancy",
-        "faithfulness": "Faithfulness",
-        "context_precision": "Context Precision",
-        "context_recall": "Context Recall",
-        "answer_correctness": "Answer Correctness",
-    }
+    ragas_metrics = RAGAS_METRIC_LABELS
 
     for i, (qid, q_data) in enumerate(questions.items(), 1):
         parts += ["", "---", "", f"## Question {i}: {md_escape(qid)}"]

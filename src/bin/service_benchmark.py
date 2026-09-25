@@ -1,3 +1,4 @@
+import importlib
 import json
 import math
 import os
@@ -47,9 +48,14 @@ from src.utils.benchmark_resilience import (
 )
 from src.utils.benchmark_schema import (
     DEFAULT_ENABLED_METRICS,
+    LOWER_IS_BETTER_METRICS,
+    RAGAS_METRIC_NAMES,
+    build_ragas_metric_objects,
     json_safe,
+    metric_winner,
     normalize_bank,
     ragas_effective_settings,
+    ragas_result_column,
     ragas_run_config_kwargs,
     required_fields_for_modes,
     score_metrics_per_eligibility,
@@ -792,13 +798,7 @@ class ResultHandler:
         results_a = ResultHandler.results[idx_a]["single_question_results"]
         results_b = ResultHandler.results[idx_b]["single_question_results"]
 
-        ragas_metrics = [
-            "answer_relevancy",
-            "faithfulness",
-            "context_precision",
-            "context_recall",
-            "answer_correctness",
-        ]
+        ragas_metrics = list(RAGAS_METRIC_NAMES)
 
         paired: List[ABResult] = []
         all_keys = list(results_a.keys()) + [k for k in results_b if k not in results_a]
@@ -835,17 +835,9 @@ class ResultHandler:
             ragas_a = {m: qa.get(m, float("nan")) for m in shared_metrics}
             ragas_b = {m: qb.get(m, float("nan")) for m in shared_metrics}
 
-            winner_by_metric: Dict[str, str] = {}
-            for m in ragas_a:
-                sa, sb = ragas_a.get(m, float("nan")), ragas_b.get(m, float("nan"))
-                if math.isnan(sa) or math.isnan(sb):
-                    winner_by_metric[m] = "tie"
-                elif abs(sa - sb) < 1e-9:
-                    winner_by_metric[m] = "tie"
-                elif sa > sb:
-                    winner_by_metric[m] = "a"
-                else:
-                    winner_by_metric[m] = "b"
+            winner_by_metric: Dict[str, str] = {
+                m: metric_winner(m, ragas_a[m], ragas_b[m]) for m in ragas_a
+            }
 
             paired.append(
                 ABResult(
@@ -987,11 +979,7 @@ class ResultHandler:
     # Leaderboard metric name -> the aggregate key the run loop writes onto
     # total_results (service_benchmark.py RAGAS block). Order is display order.
     LEADERBOARD_METRICS: List[Tuple[str, str]] = [
-        ("answer_relevancy", "aggregate_answer_relevancy"),
-        ("faithfulness", "aggregate_faithfulness"),
-        ("context_precision", "aggregate_context_precision"),
-        ("context_recall", "aggregate_context_recall"),
-        ("answer_correctness", "aggregate_answer_correctness"),
+        (name, f"aggregate_{name}") for name in RAGAS_METRIC_NAMES
     ]
 
     @staticmethod
@@ -1218,11 +1206,14 @@ class ResultHandler:
                     f"to run; these differ: {', '.join(divergence)}"
                 )
 
-        # Complete rows first, then by descending primary score; incomplete last.
+        # Complete rows first, then best primary score first (descending, or
+        # ascending for a lower-is-better metric); incomplete last.
+        best_first = 1.0 if primary_metric in LOWER_IS_BETTER_METRICS else -1.0
         rows.sort(
             key=lambda r: (
                 1 if r["incomplete"] else 0,
-                -(r["primary_score"] if r["primary_score"] is not None else 0.0),
+                best_first
+                * (r["primary_score"] if r["primary_score"] is not None else 0.0),
             )
         )
 
@@ -1944,31 +1935,20 @@ class Benchmarker:
         # Lazy import: ragas (and its transitive `datasets` dep) is benchmark-only
         # and absent from the unit-test environment. See the module-header note.
         from ragas import EvaluationDataset, RunConfig, evaluate
+
+        # import_module, not ``from ragas import metrics``: it reads the
+        # submodule straight from sys.modules, which the unit-test stub relies on.
+        ragas_metrics = importlib.import_module("ragas.metrics")
         from ragas.embeddings import LangchainEmbeddingsWrapper
         from ragas.llms import LangchainLLMWrapper
-        from ragas.metrics import (
-            answer_correctness,
-            answer_relevancy,
-            context_precision,
-            context_recall,
-            faithfulness,
-        )
 
-        # Use the PRE-INSTANTIATED ``answer_correctness`` rather than building a
-        # FactualCorrectness: scores are read back as ``to_pandas()[metric]``, and
-        # only the pre-instantiated object's result column is named exactly after
-        # the metric (FactualCorrectness's can carry a mode suffix).
-        all_metrics = {
-            "answer_relevancy": answer_relevancy,
-            "faithfulness": faithfulness,
-            "context_precision": context_precision,
-            "context_recall": context_recall,
-            "answer_correctness": answer_correctness,
-        }
         enabled_metrics = self.benchmarking_configs["mode_settings"]["ragas_settings"][
             "enabled_metrics"
         ]
-        metrics = [name for name in all_metrics if name in enabled_metrics]
+        metrics = [name for name in RAGAS_METRIC_NAMES if name in enabled_metrics]
+        # Built per name with a pinned ``name``; a mode metric's scores come back
+        # under ``name(mode=...)``, which ragas_result_column resolves.
+        all_metrics = build_ragas_metric_objects(ragas_metrics, metrics)
 
         ragas_settings = self.config["services"]["benchmarking"]["mode_settings"][
             "ragas_settings"
@@ -1999,7 +1979,8 @@ class Benchmarker:
                 run_config=runconfig,
                 batch_size=batch_size,
             )
-            return evaluation.to_pandas()[metric].tolist()
+            column = ragas_result_column(all_metrics[metric])
+            return evaluation.to_pandas()[column].tolist()
 
         return score_metrics_per_eligibility(
             rows, keys, metrics, results_by_key, score_fn
