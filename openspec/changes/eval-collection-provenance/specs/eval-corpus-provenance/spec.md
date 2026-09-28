@@ -162,6 +162,10 @@ An evaluation run SHALL stop before its first question when the searched collect
 - **WHEN** one arm has no `retrieval_identity`
 - **THEN** the comparison runs, and the report notes that the identity of that arm is not recorded
 
+#### Scenario: QA run answered from another corpus
+- **WHEN** a `--qa-run` summary records corpus readings that are unavailable, that differ from each other, or whose version or digest differs from the joined arm's `corpus_fingerprint`
+- **THEN** the QA run is refused at the gate exit code with a corpus reason, and a QA run that recorded no reading joins as before
+
 ### Requirement: Archive tooling accepts the versioned digest
 `archive_run.sh` SHALL treat a `sha256/v2:` reading as usable, SHALL refuse a pin and an artifact whose prefixes differ with a version reason except on the closing-baseline re-pin (arm 00, fresh deploy, `--new-corpus`), which moves the pin to the new version and records the old pin, and the other readers of the digest SHALL accept it unchanged.
 

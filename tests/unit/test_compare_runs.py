@@ -26,6 +26,7 @@ answer would silently pass*, not to decorate the implementation:
 import itertools
 import json
 import math
+import pathlib
 import re
 import statistics
 import sys
@@ -3270,3 +3271,87 @@ def test_one_recorded_and_one_unrecorded_host_prints_no_warning(
 
 def test_recorded_accepts_a_v2_reading():
     assert cr._recorded("sha256/v2:abc") == "sha256/v2:abc"
+
+
+def _qa_with_corpus(directory, item_id, **corpus):
+    """A QA run whose summary records the corpus readings of its answering phase."""
+    run = _qa_run(directory, item_id)
+    summary_path = pathlib.Path(run) / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["provenance"] = corpus
+    summary_path.write_text(json.dumps(summary))
+    return run
+
+
+_STABLE = {
+    "corpus_fingerprint_before": "sha256/v2:a",
+    "corpus_fingerprint": "sha256/v2:a",
+    "corpus_unchanged_at_endpoints": True,
+}
+
+
+@pytest.mark.parametrize(
+    "corpus, expected",
+    [
+        (_STABLE, None),
+        ({}, None),
+        (
+            {
+                "corpus_fingerprint_before": None,
+                "corpus_fingerprint": None,
+                "corpus_unchanged_at_endpoints": None,
+            },
+            None,
+        ),
+        ({**_STABLE, "corpus_fingerprint": "sha256/v2:b"}, "changed"),
+        ({**_STABLE, "corpus_unchanged_at_endpoints": False}, "changed"),
+        ({**_STABLE, "corpus_fingerprint_before": "<unavailable: x>"}, "unavailable"),
+        (
+            {
+                "corpus_fingerprint_before": "sha256/v2:z",
+                "corpus_fingerprint": "sha256/v2:z",
+                "corpus_unchanged_at_endpoints": True,
+            },
+            "different corpus",
+        ),
+        (
+            {
+                "corpus_fingerprint_before": "sha256:a",
+                "corpus_fingerprint": "sha256:a",
+                "corpus_unchanged_at_endpoints": True,
+            },
+            "versions differ",
+        ),
+    ],
+    ids=[
+        "same-stable-corpus",
+        "legacy-run",
+        "no-search-tool",
+        "moved-during-answering",
+        "flagged-unstable",
+        "unavailable-reading",
+        "other-corpus",
+        "other-version",
+    ],
+)
+def test_a_qa_run_joins_only_on_the_arms_corpus(
+    _artifact, tmp_path, capsys, corpus, expected
+):
+    """Its pass rates feed G8, so its answers must come from the arm's corpus."""
+    question, reference = "how do I request a GPU", "use --gres=gpu:1"
+    rows = [_row(question, reference=reference, faithfulness=0.5)]
+    base = str(_artifact(rows, fingerprint="sha256/v2:a"))
+    treat = str(_artifact(rows, fingerprint="sha256/v2:a"))
+    arms = cr.load_arms([base, treat])
+    run = _qa_with_corpus(
+        tmp_path / "qa", derive_item_id(question, reference), **corpus
+    )
+
+    code = cr.main([base, treat, "--qa-run", f"{arms[1].label}={run}"])
+
+    if expected is None:
+        assert code == cr.EXIT_OK
+    else:
+        assert code == cr.EXIT_GATE
+        err = capsys.readouterr().err
+        assert "cannot join" in err and expected in err

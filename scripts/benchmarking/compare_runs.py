@@ -1955,7 +1955,48 @@ def load_qa_run(directory: str) -> dict:
         "answers": answers,
         "category_map_readings": readings,
         "agent_spec_sha256": provenance.get("agent_spec_sha256"),
+        # The corpus readings that bracket the QA run's answering phase (#570);
+        # absent for a run that predates them, null for a run with no search.
+        "corpus": {
+            key: provenance.get(key)
+            for key in (
+                "corpus_fingerprint_before",
+                "corpus_fingerprint",
+                "corpus_unchanged_at_endpoints",
+            )
+        },
     }
+
+
+def qa_corpus_reason(arm: Arm, qa_run: dict) -> Optional[str]:
+    """Why a QA run cannot join *arm* on corpus grounds, or ``None``.
+
+    Its pass rates feed G8, so its answers must come from the corpus the arm
+    was scored on. A run that recorded no reading (it predates the readings, or
+    its agent had no search tool) is unknowable, not unequal, and joins.
+    """
+    corpus = qa_run.get("corpus") or {}
+    before = corpus.get("corpus_fingerprint_before")
+    after = corpus.get("corpus_fingerprint")
+    if before is None and after is None:
+        return None
+    if not _recorded(before) or not _recorded(after):
+        return f"its corpus reading is unavailable (before={before!r}, after={after!r})"
+    if before != after or corpus.get("corpus_unchanged_at_endpoints") is not True:
+        return f"the corpus changed while it answered ({before} -> {after})"
+    if not _recorded(arm.corpus_fingerprint):
+        return None
+    if fingerprint_version(after) != fingerprint_version(arm.corpus_fingerprint):
+        return (
+            f"the fingerprint versions differ (QA run {after}, arm "
+            f"{arm.corpus_fingerprint}); re-run it on the re-pinned stack"
+        )
+    if after != arm.corpus_fingerprint:
+        return (
+            f"it answered from a different corpus ({after}) than the arm "
+            f"({arm.corpus_fingerprint})"
+        )
+    return None
 
 
 def qa_block(
@@ -2969,7 +3010,7 @@ def parse_qa_run_specs(specs: Sequence[str], arms: Sequence[Arm]) -> Dict[str, d
         category_slice, _ = _category_modules()
         reason = category_slice.qa_join_reason(
             arm.raw, qa_run["category_map_readings"], qa_run["agent_spec_sha256"]
-        )
+        ) or qa_corpus_reason(arm, qa_run)
         if reason:
             raise CompareError(
                 f"--qa-run {directory} cannot join {label}: {reason}", EXIT_GATE
