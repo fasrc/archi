@@ -338,11 +338,18 @@ def build_arm(document: dict, index: int, path: Path, label: str) -> Arm:
         host=host,
         raw=raw,
         artifact_dir=Path(path).parent,
-        name=(
-            ((raw.get("configuration") or {}).get("services") or {}).get("benchmarking")
-            or {}
-        ).get("name"),
+        name=_recorded_name(raw.get("configuration")),
     )
+
+
+def _recorded_name(configuration: Any) -> Any:
+    """``services.benchmarking.name``, or None when any step is not a mapping.
+
+    A non-mapping ``configuration`` must reach G10 as "not recorded" rather
+    than crash here while the arm is built.
+    """
+    name = recorded_setting(configuration, "services.benchmarking.name")
+    return None if name is _ABSENT else name
 
 
 def resolve_arm(selector: str, arms: Sequence[Arm], flag: str) -> Arm:
@@ -698,8 +705,8 @@ def _show_setting(value: Any) -> str:
     return json.dumps(value, sort_keys=True)
 
 
-def answer_path_gate(arms: Sequence[Arm], allow_differs: Sequence[str] = ()) -> dict:
-    """G10: all arms must record identical answer-path configuration settings."""
+def validate_answer_path_waivers(allow_differs: Sequence[str]) -> None:
+    """Refuse a --config-differs-by-design value that names no refusable path."""
     accepted = ", ".join(ANSWER_PATH_REFUSED)
     for name in allow_differs:
         if name not in ANSWER_PATH_REFUSED:
@@ -709,6 +716,11 @@ def answer_path_gate(arms: Sequence[Arm], allow_differs: Sequence[str] = ()) -> 
                 EXIT_USAGE,
             )
 
+
+def answer_path_gate(arms: Sequence[Arm], allow_differs: Sequence[str] = ()) -> dict:
+    """G10: all arms must record identical answer-path configuration settings."""
+    validate_answer_path_waivers(allow_differs)
+
     unrecorded = [
         arm.label for arm in arms if not isinstance(arm.raw.get("configuration"), dict)
     ]
@@ -716,6 +728,7 @@ def answer_path_gate(arms: Sequence[Arm], allow_differs: Sequence[str] = ()) -> 
     refusing: List[str] = []
     named_differing: List[str] = []
     detail_parts: List[str] = []
+    not_refused: List[str] = []
 
     for path in ANSWER_PATH_REFUSED:
         rendered: Dict[str, str] = {}
@@ -730,6 +743,7 @@ def answer_path_gate(arms: Sequence[Arm], allow_differs: Sequence[str] = ()) -> 
         if len(set(rendered.values())) > 1 or unrecorded:
             if path in allow_differs:
                 named_differing.append(path)
+                not_refused.append(f"{path}: {shown} (waived by design)")
             else:
                 refusing.append(f"{path}: {shown}")
 
@@ -744,9 +758,10 @@ def answer_path_gate(arms: Sequence[Arm], allow_differs: Sequence[str] = ()) -> 
         if len(set(rendered_r.values())) > 1:
             shown_r = ", ".join(f"{label}={v}" for label, v in rendered_r.items())
             detail_parts.append(f"{path} differs (reported, not refused): {shown_r}")
+            not_refused.append(f"{path}: {shown_r} (reported, not refused)")
 
     if refusing:
-        diffs = "\n".join(refusing)
+        diffs = "\n".join(refusing + not_refused)
         raise CompareError(
             f"G10 refused: the arms recorded different answer-path settings:\n"
             f"{diffs}\n"
@@ -2802,6 +2817,7 @@ def parse_qa_run_specs(specs: Sequence[str], arms: Sequence[Arm]) -> Dict[str, d
 
 def run(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
+    validate_answer_path_waivers(args.config_differs_by_design)
     arms = load_arms(args.specs)
     if len(arms) < 2:
         raise CompareError(

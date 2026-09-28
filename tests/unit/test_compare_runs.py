@@ -1311,6 +1311,81 @@ def test_g10_null_configuration_counts_as_not_recorded(_artifact, capsys):
     assert "not recorded" in err
 
 
+@pytest.mark.parametrize(
+    "treat_cfg",
+    ["unknown", {"services": "unknown"}, {"services": {"benchmarking": "unknown"}}],
+)
+def test_g10_non_mapping_configuration_is_refused_not_crashed(
+    _artifact, capsys, treat_cfg
+):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=[treat_cfg],
+        )
+    )
+
+    code = cr.main([base, treat])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "G10" in err
+
+
+def test_g10_unknown_override_path_is_a_usage_error_before_other_gates(
+    _artifact, capsys
+):
+    base = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="corpus-1"))
+    treat = str(_artifact([_row("q1", faithfulness=0.6)], fingerprint="corpus-2"))
+
+    code = cr.main([base, treat, "--config-differs-by-design", "typo"])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_USAGE
+    assert "'typo'" in err
+
+
+def test_g10_refusal_still_names_the_waived_and_reported_differences(_artifact, capsys):
+    treat_cfg = {
+        "services": {
+            "chat_app": {"recursion_limit": 25},
+            "benchmarking": {"agent_md_file": "treat.md"},
+        }
+    }
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=treat_cfg,
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    refused = err.partition("waived")[0]
+    assert "services.chat_app.recursion_limit" in refused
+    assert "services.chat_app.context_editing" in err
+    assert "32768" in err
+    assert "services.benchmarking.agent_md_file" in err
+    assert '"treat.md"' in err
+
+
 # --- G8: the anchors ---------------------------------------------------------
 
 
