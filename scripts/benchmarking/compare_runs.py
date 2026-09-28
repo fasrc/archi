@@ -33,6 +33,13 @@ program:
   divergence is a *backfilled* artifact: an equal digest then means "these files
   recorded the same configuration file", never "these runs used the same
   settings", and the report says so.
+* **G10 — one answer path.** The arms must have been run with the same
+  answer-path settings: ``services.chat_app.context_editing`` and
+  ``services.chat_app.recursion_limit``. A mismatch refuses with exit 2. To
+  waive one setting, use ``--config-differs-by-design DOTTED.PATH`` (repeatable;
+  accepts only the two refused paths; both values are printed and the row is
+  marked ``OVERRIDDEN``). ``services.benchmarking.agent_md_file`` is reported
+  rather than refused — prompt arms vary it on purpose.
 
 Two facts about the real artifacts shape the rest of the tool.
 
