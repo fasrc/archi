@@ -36,11 +36,11 @@
 
 ## 6. QA workflow provenance (D8)
 
-- [ ] 6.1 `model: opus` — Write failing unit tests for the QA run start: with `search_vectorstore_hybrid` in the spec tools, `manifest.json` gets `retrieval_identity` and `corpus_fingerprint_before` and the guard runs; without it, both are null and no connection opens
-- [ ] 6.2 `model: opus` — Write failing unit tests for the end of answering: after the last attempt and before `manifest["status"] = "run_completed"` (`workflow.py:587-597`), the manifest gets `corpus_fingerprint` and `corpus_unchanged_at_endpoints`
-- [ ] 6.3 `model: opus` — Write failing unit tests for scoring: `summary.provenance` gains `corpus_fingerprint_before`, `corpus_fingerprint`, `corpus_unchanged_at_endpoints`, and `retrieval_identity` copied from the manifest, and the fingerprint routine is not called during `score()` (`:862`) or the retry scoring path (`:1187`)
-- [ ] 6.4 `model: opus` — Write failing unit tests for `retry()`: when it executes fresh attempts (`workflow.py:941-949`) it runs the guard and records both readings and the identity in the retry manifest (`:1102-1111`)
-- [ ] 6.5 `model: opus` — Implement in `src/evaluation/qa/workflow.py` (run start near `LazyVectorstore(config)`, end of answering, `retry()`, and both scoring blocks) and `runtime.py` as needed; reuse `live_corpus_fingerprint` and `collection_readiness`
+- [x] 6.1 `model: opus` — Write failing unit tests for the QA run start: with `search_vectorstore_hybrid` in the spec tools, `manifest.json` gets `retrieval_identity` and `corpus_fingerprint_before` and the guard runs; without it, both are null and no connection opens
+- [x] 6.2 `model: opus` — Write failing unit tests for the end of answering: after the last attempt and before `manifest["status"] = "run_completed"` (`workflow.py:587-597`), the manifest gets `corpus_fingerprint` and `corpus_unchanged_at_endpoints`
+- [x] 6.3 `model: opus` — Write failing unit tests for scoring: `summary.provenance` gains `corpus_fingerprint_before`, `corpus_fingerprint`, `corpus_unchanged_at_endpoints`, and `retrieval_identity` copied from the manifest, and the fingerprint routine is not called during `score()` (`:862`) or the retry scoring path (`:1187`)
+- [x] 6.4 `model: opus` — Write failing unit tests for `retry()`: when it executes fresh attempts (`workflow.py:941-949`) it runs the guard and records both readings and the identity in the retry manifest (`:1102-1111`)
+- [x] 6.5 `model: opus` — Implement in `src/evaluation/qa/workflow.py` (run start near `LazyVectorstore(config)`, end of answering, `retry()`, and both scoring blocks) and `runtime.py` as needed; reuse `live_corpus_fingerprint` and `collection_readiness`
 
 ## 7. Comparison gates (D7)
 

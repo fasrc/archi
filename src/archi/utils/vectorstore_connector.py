@@ -7,6 +7,18 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def postgres_connection_params(config) -> dict:
+    """psycopg2 connection parameters for the config's Postgres service."""
+    pg_config = config["services"]["postgres"]
+    return {
+        "host": pg_config.get("host", "localhost"),
+        "port": pg_config.get("port", 5432),
+        "user": pg_config.get("user", "postgres"),
+        "password": read_secret("PG_PASSWORD"),
+        "dbname": pg_config.get("database", pg_config.get("dbname", "archi")),
+    }
+
+
 class VectorstoreConnector:
     """
     A class to manage the connection to the PostgreSQL vectorstore with pgvector.
@@ -44,15 +56,7 @@ class VectorstoreConnector:
 
     def _init_postgres_params(self):
         """Initialize PostgreSQL vectorstore parameters."""
-        pg_config = self.config["services"]["postgres"]
-
-        self.pg_config = {
-            "host": pg_config.get("host", "localhost"),
-            "port": pg_config.get("port", 5432),
-            "user": pg_config.get("user", "postgres"),
-            "password": read_secret("PG_PASSWORD"),
-            "dbname": pg_config.get("database", pg_config.get("dbname", "archi")),
-        }
+        self.pg_config = postgres_connection_params(self.config)
 
         # Optional distance metric setting
         vectorstore_config = self.config.get("services", {}).get("vectorstore", {})
