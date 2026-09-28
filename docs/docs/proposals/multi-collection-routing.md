@@ -82,6 +82,59 @@ graph LR
 
 **The core limitation:** archi boots with one `VectorstoreConnector` bound to one `collection_name` for the lifetime of the process. To serve multiple collections, each request needs to resolve to the correct collection — but `VectorstoreConnector` is initialized once in `archi.__init__()` and reused for every call.
 
+### What "bound to one collection" means
+
+Line anchors in this section are against `origin/dev` at the time of writing.
+
+`VectorstoreConnector` holds three things: one embedding model instance, one collection name, and the Postgres connection settings. It computes the collection name one time, as `collection_name + "_with_" + embedding_name` (`vectorstore_connector.py:36`). `get_vectorstore()` makes a new `PostgresVectorStore` on each call, but each new store gets the same name (`vectorstore_connector.py:75`).
+
+The binding is stronger than "one connector per process":
+
+- **Only `archi.__init__()` makes the connector** (`archi.py:22`). `archi.update()` reloads the config and rebuilds the pipeline, but it does not rebuild the connector. The chat app calls `archi.update()` when the operator selects a different config (`app.py:604`). A new agent class and a new agent spec take effect, but a new `collection_name` does not. (The model is not certain to change either: `update()` reuses the `default_provider` and `default_model` kwargs from the first construction, `archi.py:34-38`.) The process continues to search the old collection until a restart.
+- **`config_name` does not select a config.** `archi.update()` accepts `config_name` and then ignores it: it always reads the single active config (`archi.py:30-31`). The `config_name → collection` mapping in this proposal thus has no config to read from today. The mapping must come from the new `collections` section.
+- **The embedding model is part of the collection name.** One connector means one embedding model, and a query embeds with that model only. A collection group can use one `ANY(ARRAY[...])` query only if all member collections use the same embedding model. Collections with different embedding models need one query each, and the scores from different models are not comparable for a merge.
+- **The embedding model is the expensive part of a connector.** The benchmark code lists this embedding instance as one of three shared-state blockers to parallel `archi()` instances (`service_benchmark.py:1535-1542`). A pool with one connector per collection loads one model per collection. The pool must share one model instance per `embedding_name`, and keep only the collection name per entry.
+
+### Isolation is weaker than "each query is scoped"
+
+The "What Already Exists" table says that each query is scoped to its collection. That is true for rows with a tag. It is not true for rows without a tag, or for the write path.
+
+- **Rows without a tag go to all collections.** Both search paths filter with `collection = %s OR collection IS NULL` (`postgres_vectorstore.py:345`, `postgres_vectorstore.py:477`). A chunk with no `collection` key is visible in every collection. With one public and one private collection, a private chunk without a tag leaks to public users. Collection-level auth cannot stop this leak, because the leak is in the SQL filter, not in the request path. A migration must tag every row, and the filter must then drop the `IS NULL` branch.
+- **One URL can be in one collection only.** `documents.resource_hash` is `UNIQUE` (`init.sql:209`), and chunks are unique on `(document_id, chunk_index)` (`init.sql:284`). There are two write paths, and a second collection breaks each one differently:
+  - *The data manager* (the production ingest) uses a plain `INSERT` (`manager.py:809`, `manager.py:996`). The second collection's insert hits the unique key, rolls back to its savepoint, and sets the shared `documents` row to `ingestion_status = 'failed'` (`manager.py:828-837`). The page stays in the first collection only, and the status of the first collection's copy now reads as failed.
+  - *`PostgresVectorStore.add_texts()`* uses an upsert that replaces the text, the embedding, and the metadata (`postgres_vectorstore.py:221`). Here the second write overwrites the first collection's chunks and moves the page into the second collection. No error occurs.
+
+  Task 5 (a `collection` column on `documents`) must also change these two unique keys to include the collection. Test both write paths with one page in two collections.
+- **Some deletes and the reset ignore the collection.** The data manager's removal of stale chunks is scoped to its collection (`manager.py:487-490`). But `PostgresVectorStore.delete(document_id=...)` removes the chunks of the document for all collections (`postgres_vectorstore.py:590`). `reset_collection` runs `TRUNCATE TABLE document_chunks` (`manager.py:195`), which empties every collection, not only the configured one.
+
+### What it means for archi in general
+
+- **One deployment is one knowledge base.** Two audiences need two full stacks (two databases, two data managers, two chat services), or one shared stack where every user sees every document.
+- **A config change can go wrong without a sign.** An operator who changes `collection_name` and switches configs in the UI sees the new agent, but gets answers from the old collection. Only a restart applies the change.
+- **A wrong collection name is not an error.** The connector counts the chunks in the collection, but it logs the count only at debug level (`vectorstore_connector.py:71-72`). If the name matches no rows, hybrid search logs a warning and falls back to semantic search (`postgres_vectorstore.py:547`), which also finds no tagged rows. The agent then answers from untagged rows or from no context. The user sees a weak answer, not a configuration error.
+- **The task list must also fix the write path.** The routing tasks (2, 3, 6, 7) change the read path. Without changes to the unique keys, the delete, and the reset, a second collection can fail or corrupt the first at the next ingest.
+
+### What it means for the eval
+
+The evaluation stack assumes one corpus per deployment, and one collection per corpus. Each run is thus an evaluation of one collection, and the run records do not say which collection.
+
+- **Each eval path finds its collection in a different place.** The goldenset benchmark (`service_benchmark.py`) builds `archi()` (`service_benchmark.py:1527`), so its collection comes from the running config in Postgres. The QA workflow builds its own `VectorstoreConnector` from the resolved agent config that it loaded into memory (`runtime.py:333`, `workflow.py:364-370`). It writes that config to `agent_config.resolved.yaml`, and a resumed run reads the file again (`workflow.py:946`). The two paths can search different collections on the same stack. Both paths save a full config that contains the name (the QA path in `agent_config.resolved.yaml`, the benchmark in `running_configuration` at `service_benchmark.py:558`). But neither path records the collection as a separate field, and no comparison gate checks it.
+- **The corpus fingerprint ignores collections.** `CORPUS_STATE_QUERY` (`service_benchmark.py:110`) hashes all live documents, chunks, and parents in the database, but retrieval reads one collection plus the untagged rows. With two collections, this causes two errors:
+  - *False "corpus changed":* an ingest into collection B changes the fingerprint of an eval that searches only collection A. The G3 gate in `compare_runs.py` (one pinned corpus) then rejects a fair comparison.
+  - *False "corpus unchanged":* the fingerprint hashes chunk text, not the `collection` tag. A move of chunks from one collection to a different collection changes what retrieval returns, but the fingerprint stays the same. Task 4 (per-source tagging) makes this move a routine operation. This is the same class of defect as a change to `category` only, which the fingerprint also does not see (see the `CATEGORY_MAP_QUERY` comment at `service_benchmark.py:134-137`).
+- **A wrong collection looks like a quality regression.** If an arm's config names a collection with no rows, the agent gets almost no context. The fingerprint still matches the pin, because the fingerprint reads the full database. The arm then scores low on faithfulness and context metrics, and the provenance says that the corpus was correct. Only the debug-level chunk count shows the real cause.
+- **Some eval tools know about collections, and others do not.** `dump_chunk_overlap_corpus.sql` and `measure_chunk_overlap.py` take the collection as an input and use the same `IS NULL` rule as retrieval (`dump_chunk_overlap_corpus.sql:41`). The fingerprint and the category map (`CATEGORY_MAP_QUERY`) read the full `documents` table, and `documents` has no collection column. A per-category slice thus cannot be limited to one collection.
+- **An embedding A/B test needs two stacks.** Two collections with different embedding models in one database is the natural rig to compare embedding models on the same corpus. The unique keys above make that impossible: the second ingest overwrites the first.
+- **A collection group cannot be evaluated.** There is no code path that searches more than one collection, so no eval can measure the merge and re-rank of task 7. The group feature needs its own eval arm before it can ship with evidence.
+
+For the eval, the minimum changes are these:
+
+1. Record the searched collection name, and its embedding name, on every run and every arm.
+2. Limit the fingerprint queries to that collection (plus the untagged rows while they exist), and hash the `collection` tag of each chunk.
+3. Stop a run before its first question if the collection has zero chunks.
+
+These three changes are independent of routing and are useful with one collection too.
+
 ---
 
 ## Design
