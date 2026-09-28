@@ -20,7 +20,7 @@ Every evaluation run SHALL record the collection tag it searched, the embedding 
 - **THEN** `embedding_model` equals that kwarg value, and when neither kwarg exists it equals the class name
 
 ### Requirement: The corpus fingerprint covers the searched collection and only rows retrieval can reach
-The corpus fingerprint SHALL hash only chunks that the searched collection's retrieval filter admits, only parent nodes that such a chunk references, and only live documents that own such a chunk; it SHALL include each chunk's `collection` tag and null-vector flag in the chunk digest, and each document's URL, display name, source type, and title in the document digest with every nullable field coalesced to a sentinel; it SHALL NOT include the `embedding_model` tag or any other `extra_json` field.
+The corpus fingerprint SHALL hash only chunks that the searched collection's retrieval filter admits, only parent nodes that such a chunk references, and only live documents that own such a chunk; it SHALL encode every row value as a JSON array of fields; it SHALL include each chunk's `collection` tag and null-vector flag, and the citation fields (URL, display name, source type, title, filename) from the document row for a linked chunk and from the row's own metadata for a documentless chunk and for a parent node; it SHALL NOT include `size_bytes`, the `embedding_model` tag, or any other `extra_json` field.
 
 #### Scenario: Ingest into another collection leaves the digest unchanged
 - **WHEN** chunks are added under a different `collection` tag
@@ -50,6 +50,22 @@ The corpus fingerprint SHALL hash only chunks that the searched collection's ret
 - **WHEN** a document has `url IS NULL` and its title changes
 - **THEN** the fingerprint changes
 
+#### Scenario: Field boundaries are unambiguous
+- **WHEN** one document has `display_name = "a|b"`, `source_type = "c"` and another state has `display_name = "a"`, `source_type = "b|c"`, with every other field equal
+- **THEN** the two fingerprints differ
+
+#### Scenario: Documentless chunk citation metadata is covered
+- **WHEN** the `url` in the metadata of a chunk with `document_id IS NULL` changes
+- **THEN** the fingerprint changes
+
+#### Scenario: Parent node metadata is covered
+- **WHEN** the `title` in a referenced parent node's metadata changes
+- **THEN** the fingerprint changes
+
+#### Scenario: Size-only change is not a corpus change
+- **WHEN** a document's `size_bytes` changes and no chunk, parent, or citation field changes
+- **THEN** the fingerprint is unchanged
+
 #### Scenario: Category-only change is not a corpus change
 - **WHEN** only `extra_json->>'category'` changes on a document
 - **THEN** the fingerprint is unchanged
@@ -74,11 +90,15 @@ The URL-to-category map that a run records SHALL cover only documents that own a
 - **THEN** the run's category-map digest changes
 
 ### Requirement: One routine computes the fingerprint for every consumer
-The golden-set harness, the QA workflow, the feature-matrix sweep, and the category census SHALL compute the corpus fingerprint and the category map through functions in `src/utils/benchmark_provenance.py` that take the configuration as a required argument, and no consumer SHALL read the query text out of another module's source.
+The golden-set harness, the QA workflow, the feature-matrix sweep, and the category census SHALL compute the corpus fingerprint and the category map through functions in `src/utils/benchmark_provenance.py`: a row layer that runs on the caller's cursor and a convenience layer that takes the configuration as a required argument; no consumer SHALL read the query text out of another module's source.
 
 #### Scenario: Sweep and harness agree by construction
 - **WHEN** the feature-matrix pin check and the harness compute the fingerprint of one unchanged stack
 - **THEN** the two digests are equal
+
+#### Scenario: Census reads one snapshot
+- **WHEN** the category census reads the category map and the corpus state
+- **THEN** both queries run on one `REPEATABLE READ` cursor, and the census keeps its `(url, category)` tuples
 
 #### Scenario: Container snippet installs the factory
 - **WHEN** the feature-matrix snippet runs inside the stack's data-manager container
@@ -116,7 +136,7 @@ An evaluation run SHALL stop before its first question when the searched collect
 - **THEN** the run continues and records `embedding_model_source = "chunks"`
 
 ### Requirement: Comparison gates distinguish version, collection, and embedding differences
-`compare_runs.py` SHALL refuse arms whose fingerprint version prefixes differ with a version reason before any corpus check, SHALL name both collections in the G3 reason when recorded collections differ, SHALL allow arms whose `embedding_model` differs and label it as the varied factor, and SHALL allow an unrecorded identity with a note.
+`compare_runs.py` SHALL refuse arms whose fingerprint version prefixes differ with a version reason before any corpus check, for the main arms and for every noise replicate; SHALL name both collections in the G3 reason when recorded collections differ; SHALL label `embedding_model` as the varied factor only when the fingerprints are equal and both arms record `embedding_model_source = "chunks"` with `untagged_chunk_count = 0`, and SHALL refuse the comparison when the embedding differs and either arm's provenance is unverified; and SHALL allow an unrecorded identity with a note when the embedding does not differ.
 
 #### Scenario: v1 pin against v2 run
 - **WHEN** one arm's fingerprint starts with `sha256:` and the other's with `sha256/v2:`
@@ -127,8 +147,16 @@ An evaluation run SHALL stop before its first question when the searched collect
 - **THEN** the G3 reason names both collections
 
 #### Scenario: Embedding A/B
-- **WHEN** the arms' fingerprints are equal and they differ only in `embedding_model`
+- **WHEN** the arms' fingerprints are equal, they differ only in `embedding_model`, and both record `embedding_model_source = "chunks"` with `untagged_chunk_count = 0`
 - **THEN** the comparison runs, and the report header states the varied factor with both model identifiers
+
+#### Scenario: Unverified embedding provenance
+- **WHEN** the arms differ in `embedding_model` and one arm records `embedding_model_source` other than `"chunks"`, or `untagged_chunk_count > 0`, or no identity
+- **THEN** the comparison is refused, the reason names that arm, and no flag admits it
+
+#### Scenario: v1 noise replicate against a v2 baseline
+- **WHEN** a noise replicate's fingerprint starts with `sha256:` and the baseline's with `sha256/v2:`
+- **THEN** the comparison is refused with the version reason before the replicate corpus check, and `--corpus-differs-by-design` does not admit it
 
 #### Scenario: Identity not recorded
 - **WHEN** one arm has no `retrieval_identity`
