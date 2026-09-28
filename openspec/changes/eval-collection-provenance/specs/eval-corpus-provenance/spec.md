@@ -20,7 +20,7 @@ Every evaluation run SHALL record the collection tag it searched, the embedding 
 - **THEN** `embedding_model` equals that kwarg value, and when neither kwarg exists it equals the class name
 
 ### Requirement: The corpus fingerprint covers the searched collection and only rows retrieval can reach
-The corpus fingerprint SHALL hash only chunks that the searched collection's retrieval filter admits, only parent nodes that such a chunk references, and only live documents that own such a chunk; it SHALL encode every row value as a JSON array of fields; it SHALL include each chunk's `collection` tag and null-vector flag, and the citation fields (URL, display name, source type, title, filename) from the document row for a linked chunk and from the row's own metadata for a documentless chunk and for a parent node; it SHALL NOT include `size_bytes`, the `embedding_model` tag, or any other `extra_json` field.
+The corpus fingerprint SHALL hash only chunks that the searched collection's retrieval filter admits, only parent nodes that such a chunk references, and only live documents that own such a chunk; it SHALL encode every row value as a JSON array of fields; it SHALL include each chunk's `collection` tag and null-vector flag, and the citation fields (URL, display name, source type, title, filename) from each chunk's and each parent node's own metadata, and the URL, display name, source type, and title columns of each linked document row; it SHALL NOT include `size_bytes`, the `embedding_model` tag, or any other `extra_json` field.
 
 #### Scenario: Ingest into another collection leaves the digest unchanged
 - **WHEN** chunks are added under a different `collection` tag
@@ -56,6 +56,10 @@ The corpus fingerprint SHALL hash only chunks that the searched collection's ret
 
 #### Scenario: Documentless chunk citation metadata is covered
 - **WHEN** the `url` in the metadata of a chunk with `document_id IS NULL` changes
+- **THEN** the fingerprint changes
+
+#### Scenario: Linked chunk citation metadata is covered
+- **WHEN** the `filename` in the metadata of a chunk that has a document row changes
 - **THEN** the fingerprint changes
 
 #### Scenario: Parent node metadata is covered

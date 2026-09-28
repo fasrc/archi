@@ -470,3 +470,27 @@ class TestCategoryMapBehavior:
             '\'{"category": "x"}\' WHERE id = 1'
         )
         assert self._map(pg) == [("https://a", "x")]
+
+
+class TestLinkedChunkCitationMetadata:
+    """A linked chunk's own citation fields reach the agent too.
+
+    ``filename`` comes only from the chunk's metadata, and ``_merge_row_metadata``
+    overlays a document column only when it is non-empty, so the chunk's own
+    ``url``/``title`` surface when the document leaves them empty.
+    """
+
+    def test_a_filename_change_on_a_linked_chunk_moves_it(self, pg):
+        assert _moves(
+            pg,
+            "UPDATE document_chunks SET metadata = metadata || "
+            '\'{"filename": "renamed.md"}\' WHERE document_id = 1 AND chunk_index = 0',
+        )
+
+    def test_a_linked_chunk_url_moves_it_when_the_document_has_none(self, pg):
+        pg.execute("UPDATE documents SET url = NULL WHERE id = 1")
+        assert _moves(
+            pg,
+            "UPDATE document_chunks SET metadata = metadata || "
+            '\'{"url": "https://chunk-url"}\' WHERE document_id = 1 AND chunk_index = 0',
+        )

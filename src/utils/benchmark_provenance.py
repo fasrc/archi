@@ -328,9 +328,9 @@ def corpus_fingerprint(rows: Iterable[Sequence[Any]], version: str = "") -> str:
 
 
 # The metadata keys that reach the agent and its citations through
-# ``_merge_row_metadata`` and the hierarchical retriever. A linked chunk gets
-# them from its document row; a documentless chunk and a parent node carry them
-# in their own ``metadata``. The whole ``metadata`` object is never hashed:
+# ``_merge_row_metadata`` and the hierarchical retriever. Every chunk and parent
+# node carries them in its own ``metadata``; for a linked chunk the document's
+# non-empty columns override them, so the doc row hashes those columns too. The whole ``metadata`` object is never hashed:
 # ``parent_id`` is a SERIAL that changes on every ingest, the ingest status
 # fields churn, ``embedding_model`` must stay out (the digest is model-neutral),
 # and ``category`` belongs to the category-map digest.
@@ -353,17 +353,15 @@ WITH scoped AS (
 """
 
 
-def _citations(alias: str, when: str = "") -> str:
-    fields = (f"{alias}->>'{name}'" for name in CITATION_FIELDS)
-    if when:
-        fields = (f"CASE WHEN {when} THEN {field} END" for field in fields)
-    return ", ".join(fields)
+def _citations(alias: str) -> str:
+    return ", ".join(f"{alias}->>'{name}'" for name in CITATION_FIELDS)
 
 
 # Fingerprint v2 (#570). Each value is md5 of a JSON array, which keeps field
 # boundaries and keeps NULL apart from "". Rows:
-#   chunk   text, collection tag, null-vector flag, and the citation fields of a
-#           documentless chunk (a linked chunk gets them from its doc row);
+#   chunk   text, collection tag, null-vector flag, and the chunk's own citation
+#           fields: ``filename`` exists only there, and the retrieval overlay keeps
+#           the chunk's ``url``/``title`` wherever the document leaves them empty;
 #   parent  only parents an in-scope chunk references: text, the ordered list
 #           of in-scope child indexes, and the parent's citation fields;
 #   doc     only live documents that own an in-scope chunk: the columns the
@@ -376,7 +374,7 @@ SELECT 'chunk:' || COALESCE(s.resource_hash, s.meta->>'resource_hash', \
 s.meta->>'chunk_id', 'id:' || s.id::text) || ':' || s.chunk_index::text,
        md5(jsonb_build_array(
            s.chunk_text, s.meta->>'collection', s.no_vector,
-           {_citations("s.meta", "s.doc_id IS NULL")}
+           {_citations("s.meta")}
        )::text)
 FROM scoped s
 UNION ALL
