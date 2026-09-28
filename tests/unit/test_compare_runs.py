@@ -134,6 +134,7 @@ def _artifact(tmp_path):
         total=None,
         metadata=None,
         corpus_unchanged="absent",
+        configuration=None,
     ):
         arm_rows = arms if arms is not None else [rows or []]
         count = len(arm_rows)
@@ -141,6 +142,8 @@ def _artifact(tmp_path):
         digests = _per_arm(digest, count)
         divergences = _per_arm(divergence, count)
         totals = _per_arm(total, count)
+        effective_cfg = {} if configuration is None else configuration
+        configurations = _per_arm(effective_cfg, count)
         results = []
         for index, these in enumerate(arm_rows):
             arm = {
@@ -149,7 +152,6 @@ def _artifact(tmp_path):
                 },
                 "total_results": _honest_totals(these, totals[index]),
                 "configuration_file": f"configs/arm{index + 1}.yaml",
-                "configuration": {},
                 "config_version": {
                     "digest": digests[index],
                     "source": "test fixture",
@@ -159,6 +161,9 @@ def _artifact(tmp_path):
                     "key_settings": {},
                 },
             }
+            cfg = configurations[index]
+            if cfg != "absent":
+                arm["configuration"] = cfg
             if fingerprints[index] is not None:
                 arm["corpus_fingerprint"] = fingerprints[index]
             if corpus_unchanged != "absent":
@@ -791,6 +796,117 @@ def test_null_divergence_prints_the_procedure_e_caveat(_artifact, capsys):
     out = capsys.readouterr().out
     assert "Procedure E" in out
     assert "backfilled" in out
+
+
+# --- G10: the answer-path gate ---------------------------------------------
+
+_G10_BOUND = {
+    "services": {
+        "chat_app": {
+            "recursion_limit": 50,
+            "context_editing": {"trigger": 32768, "keep": 1},
+        }
+    }
+}
+_G10_LIMIT_ONLY = {"services": {"chat_app": {"recursion_limit": 50}}}
+
+
+def test_g10_refuses_when_context_editing_is_absent(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_LIMIT_ONLY,
+        )
+    )
+
+    code = cr.main([base, treat])
+
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "G10" in err
+    assert "services.chat_app.context_editing" in err
+    assert "32768" in err
+    assert "absent" in err
+
+
+def test_g10_refuses_when_context_editing_is_null(_artifact, capsys):
+    treat_cfg = {
+        "services": {"chat_app": {"recursion_limit": 50, "context_editing": None}}
+    }
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=treat_cfg,
+        )
+    )
+
+    code = cr.main([base, treat])
+
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "null" in err
+    assert "32768" in err
+
+
+def test_g10_passes_and_shows_row_for_identical_answer_paths(
+    _artifact, capsys, tmp_path
+):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main([base, treat])
+    assert code == cr.EXIT_OK
+    out = capsys.readouterr().out
+    g10_line = [line for line in out.splitlines() if line.startswith("| G10 ")][0]
+    assert g10_line.startswith("| G10 one answer path | pass |")
+
+    code2 = cr.main([base, treat, "--json", str(out_json)])
+    capsys.readouterr()
+    assert code2 == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert len(g10_entries) == 1
+    g10 = g10_entries[0]
+    assert g10["status"] == "pass"
+    assert "services.chat_app.context_editing" in g10["detail"]
+    assert "services.chat_app.recursion_limit" in g10["detail"]
+
+
+def test_g10_constants_are_stable():
+    assert cr.ANSWER_PATH_REFUSED == (
+        "services.chat_app.context_editing",
+        "services.chat_app.recursion_limit",
+    )
+    assert cr.ANSWER_PATH_REPORTED == ("services.benchmarking.agent_md_file",)
 
 
 # --- G8: the anchors ---------------------------------------------------------

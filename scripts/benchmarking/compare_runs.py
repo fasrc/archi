@@ -659,6 +659,75 @@ def divergence_gate(arms: Sequence[Arm], ignore: bool) -> dict:
     }
 
 
+# --- G10: the answer-path gate -----------------------------------------------
+
+ANSWER_PATH_REFUSED = (
+    "services.chat_app.context_editing",
+    "services.chat_app.recursion_limit",
+)
+ANSWER_PATH_REPORTED = ("services.benchmarking.agent_md_file",)
+
+_ABSENT = object()
+
+
+def recorded_setting(configuration: Any, path: str) -> Any:
+    """Walk a dotted path through a mapping; return _ABSENT for any missing step."""
+    if not isinstance(configuration, dict):
+        return _ABSENT
+    node: Any = configuration
+    for key in path.split("."):
+        if not isinstance(node, dict) or key not in node:
+            return _ABSENT
+        node = node[key]
+    return node
+
+
+def _show_setting(value: Any) -> str:
+    """Render a setting value for the refusal message and gate row."""
+    if value is _ABSENT:
+        return "absent"
+    if value is None:
+        return "null"
+    return json.dumps(value, sort_keys=True)
+
+
+def answer_path_gate(arms: Sequence[Arm]) -> dict:
+    """G10: all arms must record identical answer-path configuration settings."""
+    differing: List[str] = []
+    detail_parts: List[str] = []
+
+    for path in ANSWER_PATH_REFUSED:
+        per_arm = {
+            arm.label: recorded_setting(arm.raw.get("configuration"), path)
+            for arm in arms
+        }
+        rendered = {label: _show_setting(v) for label, v in per_arm.items()}
+        shown = ", ".join(f"{label}={v}" for label, v in rendered.items())
+        if len(set(rendered.values())) > 1:
+            differing.append(f"{path}: {shown}")
+        detail_parts.append(f"{path}: {shown}")
+
+    if differing:
+        diffs = "\n".join(differing)
+        raise CompareError(
+            f"G10 refused: the arms recorded different answer-path settings:\n"
+            f"{diffs}\n"
+            "The context bound and the recursion limit decide which questions the "
+            "agent can finish, so the delta would measure the configuration rather "
+            "than the system under test. Re-run with one answer-path configuration, "
+            "or pass --config-differs-by-design <path> if the difference is the "
+            "treatment.",
+            EXIT_GATE,
+        )
+
+    return {
+        "id": "G10",
+        "name": "one answer path",
+        "status": "pass",
+        "detail": "; ".join(detail_parts),
+    }
+
+
 # --- pairing and statistics --------------------------------------------------
 
 
@@ -2699,6 +2768,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         },
         corpus_gate(arms, args.corpus_differs_by_design),
         divergence_gate(arms, args.ignore_config_divergence),
+        answer_path_gate(arms),
     ]
 
     # The default anchors file is tracked in the repository. If it is absent the
