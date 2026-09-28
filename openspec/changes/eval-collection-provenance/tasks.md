@@ -6,19 +6,19 @@
 
 ## 2. Backfill of existing artifacts (D2)
 
-- [ ] 2.1 Write failing unit tests for the backfill stamp: arm with `running_configuration` gets `retrieval_identity` with `source = "reconstructed from running_configuration"`; stamped arm is unchanged; arm without `running_configuration` is skipped and reported
-- [ ] 2.2 Implement the stamp in `scripts/benchmarking/backfill_report_provenance.py`, additive, in the existing skip-if-stamped flow
+- [ ] 2.1 Write failing unit tests for the backfill stamp: arm with `running_configuration` gets `retrieval_identity` with `source = "reconstructed from running_configuration"`; stamped arm is unchanged; arm without `running_configuration` is skipped and reported; a report whose metadata already has `code_version` or `config_versions` still gets its unstamped arms stamped and keeps the version keys
+- [ ] 2.2 Implement the stamp in `scripts/benchmarking/backfill_report_provenance.py` as a per-arm pass that runs independent of the file-level `STAMP_KEYS` skip (`:70`, `:99`); additive, never overwrites
 - [ ] 2.3 Run `python scripts/benchmarking/backfill_report_provenance.py --dry-run` over `bench_out/banks/golden/results/` and record the count of stamped versus skipped arms in the PR body
 
 ## 3. Fingerprint v2 query and shared routine (D3, D5)
 
-- [ ] 3.1 Write failing unit tests for `corpus_state_query(collection) -> (sql, params)` against a fixture database or a SQL-shape assertion: chunk rows use `LEFT JOIN documents`, the retrieval filter `(collection = %s OR collection IS NULL)`, `(d.id IS NULL OR d.is_deleted = FALSE)`; the chunk key falls back through `d.resource_hash`, `metadata resource_hash`, `metadata chunk_id`, `'id:' || c.id`; the chunk value hashes text, `collection` tag, and `embedding_model` tag; the chunk value includes the null-vector flag; parent rows require an in-scope child; doc rows require an in-scope chunk and hash `size_bytes`, `url`, `display_name`, `source_type`, and `extra_json->>'title'` only
-- [ ] 3.2 Write failing behavior tests with an in-memory row model: ingest into another collection leaves the digest unchanged; a `collection` tag change moves it; orphan parents added or removed leave it unchanged; a `document_id IS NULL` chunk text change moves it; a `url`, `display_name`, `source_type`, or `title` change moves it; a `category`-only change does not; a vector set to `NULL` moves it; the digest starts with `sha256/v2:`
-- [ ] 3.3 Implement `corpus_state_query()`, `live_corpus_fingerprint(pool, config=None)`, and a `version` argument on `corpus_fingerprint()` in `src/utils/benchmark_provenance.py`
-- [ ] 3.4 Replace `CORPUS_STATE_QUERY` and `get_corpus_fingerprint`'s body in `src/bin/service_benchmark.py` with a call to `live_corpus_fingerprint(pool, running_config)`; keep the never-raises contract and the unavailable marker
-- [ ] 3.5 Replace `_harness_query("CORPUS_STATE_QUERY")` in `scripts/benchmarking/category_census.py` with `live_corpus_fingerprint`; delete `_harness_query` if nothing else uses it
-- [ ] 3.6 Rewrite `fm_fingerprint` in `scripts/benchmarking/feature_matrix/lib.sh` to import and call `live_corpus_fingerprint`; keep an import-failure message that names the routine and says to rebuild the stack from the campaign SHA
-- [ ] 3.7 Extend `scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh` so the pin check and the harness fixture produce one equal `sha256/v2:` digest, and the import-failure path prints the rebuild message
+- [ ] 3.1 Write failing unit tests for `corpus_state_query(collection) -> (sql, params)` against a fixture database or a SQL-shape assertion: chunk rows use `LEFT JOIN documents`, the retrieval filter `(collection = %s OR collection IS NULL)`, `(d.id IS NULL OR d.is_deleted = FALSE)`; the chunk key falls back through `d.resource_hash`, `metadata resource_hash`, `metadata chunk_id`, `'id:' || c.id`; the chunk value hashes text, `collection` tag, and `embedding_model` tag; the chunk value hashes text, `collection` tag, and null-vector flag, and not the `embedding_model` tag; parent rows require an in-scope child; doc rows require an in-scope chunk and hash `size_bytes`, `url`, `display_name`, `source_type`, and `extra_json->>'title'` only, each nullable field coalesced to a sentinel so a `NULL` and an empty string differ
+- [ ] 3.2 Write failing behavior tests with an in-memory row model: ingest into another collection leaves the digest unchanged; a `collection` tag change moves it; orphan parents added or removed leave it unchanged; a `document_id IS NULL` chunk text change moves it; a `url`, `display_name`, `source_type`, or `title` change moves it; a `category`-only change does not; a vector set to `NULL` moves it; a re-embed under a different `embedding_model` tag does not; a title change on a document with `url IS NULL` moves it; the digest starts with `sha256/v2:`
+- [ ] 3.3 Implement `corpus_state_query(collection)`, `category_map_query(collection)`, `live_corpus_fingerprint(pool, config)`, `live_category_map(pool, config)` (config required, no `get_full_config()` default), and a `version` argument on `corpus_fingerprint()` in `src/utils/benchmark_provenance.py`; unit tests: a relabel in another collection leaves the category digest unchanged, a relabel in scope moves it
+- [ ] 3.4 Replace `CORPUS_STATE_QUERY`, `CATEGORY_MAP_QUERY`, and the bodies of `get_corpus_fingerprint` and `get_category_map` in `src/bin/service_benchmark.py` with calls to the routines, passing the running config; keep the never-raises contract and the unavailable marker
+- [ ] 3.5 Replace both `_harness_query(...)` calls in `scripts/benchmarking/category_census.py` (`:272`, `:274`) with `live_category_map` and `live_corpus_fingerprint`; delete `_harness_query`
+- [ ] 3.6 Rewrite `fm_fingerprint` in `scripts/benchmarking/feature_matrix/lib.sh`: build the factory with `PostgresServiceFactory.from_env()`, install it with `PostgresServiceFactory.set_instance(factory)`, read `get_full_config()`, and call `live_corpus_fingerprint(factory.connection_pool, config)`; keep an import-failure message that names the routine and says to rebuild the stack from the campaign SHA
+- [ ] 3.7 Extend `scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh` so the exact container snippet (factory install, config read, routine call) and the harness fixture produce one equal `sha256/v2:` digest, a snippet without the factory install fails with `ConfigNotReadyError` in the fixture, and the import-failure path prints the rebuild message
 
 ## 4. Chunk embedding-model tag at ingest (D4)
 
@@ -29,22 +29,26 @@
 
 ## 5. Start guard and identity recording in the harness (D6, D1)
 
-- [ ] 5.1 Write failing unit tests for `collection_readiness(pool, identity)`: zero chunks raises with collection and embedding name in the message; rows present but zero non-null vectors raises with both counts in the message; a differing tag raises with both values; all-null tags return `embedding_model_source = "config (chunks untagged)"` and log a warning; matching tags return `"chunks"`; the result carries `chunk_count`
-- [ ] 5.2 Implement `collection_readiness()` in `src/utils/benchmark_provenance.py` (one `SELECT count(*), count(embedding), array_agg(DISTINCT metadata->>'embedding_model')` with the retrieval filter); the result carries `chunk_count` and `usable_chunk_count`
+- [ ] 5.1 Write failing unit tests for `collection_readiness(pool, identity)`: zero chunks raises with collection and embedding name in the message; rows present but zero non-null vectors raises with both counts in the message; a differing tag raises with both values; all-null tags return `embedding_model_source = "config (chunks untagged)"` and log a warning; a mix of matching tags and N null tags returns `"chunks (N untagged)"`, `untagged_chunk_count = N`, and logs a warning; all matching tags return `"chunks"`; the result carries `chunk_count` and `usable_chunk_count`
+- [ ] 5.2 Implement `collection_readiness()` in `src/utils/benchmark_provenance.py` (one `SELECT count(*), count(embedding), count(*) FILTER (WHERE tag IS NULL), array_agg(DISTINCT tag) FILTER (WHERE tag IS NOT NULL)` with the retrieval filter); the result carries `chunk_count`, `usable_chunk_count`, and `untagged_chunk_count`
 - [ ] 5.3 Call the guard in `service_benchmark.py` after `archi()` is built and before `corpus_before` is taken; write `retrieval_identity` (with `chunk_count` and `embedding_model_source`) into the per-arm record next to `corpus_fingerprint`
-- [ ] 5.4 Add a unit test that a harness arm record contains `retrieval_identity` with all six fields
+- [ ] 5.4 Add a unit test that a harness arm record contains `retrieval_identity` with all seven fields
 
 ## 6. QA workflow provenance (D8)
 
 - [ ] 6.1 Write failing unit tests for the QA run start: with `search_vectorstore_hybrid` in the spec tools, `manifest.json` gets `retrieval_identity` and `corpus_fingerprint_before` and the guard runs; without it, both are null and no connection opens
-- [ ] 6.2 Write failing unit tests for scoring end: `summary.provenance` gains `corpus_fingerprint`, `corpus_unchanged_at_endpoints`, and `retrieval_identity`
-- [ ] 6.3 Implement in `src/evaluation/qa/workflow.py` (run start near `LazyVectorstore(config)`, scoring end in the `summary["provenance"]` block) and `runtime.py` as needed; reuse `live_corpus_fingerprint` and `collection_readiness`
+- [ ] 6.2 Write failing unit tests for the end of answering: after the last attempt and before `manifest["status"] = "run_completed"` (`workflow.py:587-597`), the manifest gets `corpus_fingerprint` and `corpus_unchanged_at_endpoints`
+- [ ] 6.3 Write failing unit tests for scoring: `summary.provenance` gains `corpus_fingerprint_before`, `corpus_fingerprint`, `corpus_unchanged_at_endpoints`, and `retrieval_identity` copied from the manifest, and the fingerprint routine is not called during `score()` (`:862`) or the retry scoring path (`:1187`)
+- [ ] 6.4 Write failing unit tests for `retry()`: when it executes fresh attempts (`workflow.py:941-949`) it runs the guard and records both readings and the identity in the retry manifest (`:1102-1111`)
+- [ ] 6.5 Implement in `src/evaluation/qa/workflow.py` (run start near `LazyVectorstore(config)`, end of answering, `retry()`, and both scoring blocks) and `runtime.py` as needed; reuse `live_corpus_fingerprint` and `collection_readiness`
 
 ## 7. Comparison gates (D7)
 
 - [ ] 7.1 Write failing unit tests in the `compare_runs` test module: `sha256:` versus `sha256/v2:` is refused with a version reason before G3; unequal fingerprints with unequal `collection` name both collections in the G3 reason; arms that differ only in `embedding_model` compare and the header states the varied factor; a missing `retrieval_identity` on one arm compares with a note
 - [ ] 7.2 Extend `Arm` in `scripts/benchmarking/compare_runs.py` with `retrieval_identity`; add `fingerprint_version_gate()` ahead of `corpus_gate()`; extend the G3 reason; add the varied-factor header and the unrecorded note
-- [ ] 7.3 Confirm `archive_run.sh` and `sweep_tools.py` treat the digest as an opaque string (no `sha256:` prefix parse); add a test if either parses it
+- [ ] 7.3 Replace `usable()` in `scripts/benchmarking/feature_matrix/archive_run.sh:174` (`x.startswith("sha256:")`) with a version-aware predicate that accepts `sha256:` and `sha256/v2:` and refuses a pin/artifact version mix with a version reason; extend `test_feature_matrix_wrappers.sh` to archive a `sha256/v2:` artifact and to refuse a v1 pin against a v2 artifact
+- [ ] 7.4 Add unit tests that `category_slice._usable`, `sweep_tools._usable`, and `compare_runs._recorded` accept a `sha256/v2:` reading (they test only for the unavailable marker today)
+- [ ] 7.5 Add `collection` and `embedding_model` to the ledger rows built by `archive_run.sh` (from the artifact's `retrieval_identity`), `qa_arm.sh` (from the run manifest, both `fm_ledger_append` calls at `:78` and `:157`), and `sweep_tools.py`; extend `test_feature_matrix_wrappers.sh` to assert the two fields on a RAGAS row and a QA row
 
 ## 8. Docstrings and docs (D9)
 
@@ -57,4 +61,5 @@
 
 - [ ] 9.1 `bash scripts/gate.sh` passes (black, isort, `pytest tests/unit/`, diff-cover ≥ 80% versus `origin/dev`)
 - [ ] 9.2 `bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh` passes
-- [ ] 9.3 Open the PR to `fasrc/archi:dev` with `Closes #570`; the PR body lists the migration order from `design.md` (merge → backfill → redeploy → re-pin → campaign) and the dry-run counts from 2.3
+- [ ] 9.3 Validate end to end on the claw stack (AGENTS.md, "Deployment & Validation Policy"): deploy the branch with the `archi-dev-deploy-verify` procedure, run one smoke benchmark arm and one QA run, confirm `retrieval_identity`, both `sha256/v2:` readings, and the guard's log line in the artifacts and the container logs; record the container names and the artifact paths for the PR body
+- [ ] 9.4 Open the PR to `fasrc/archi:dev` with `Closes #570`; the PR body lists the migration order from `design.md` (validate on claw → merge → backfill → redeploy → re-pin → campaign), the dry-run counts from 2.3, and the claw validation evidence from 9.3

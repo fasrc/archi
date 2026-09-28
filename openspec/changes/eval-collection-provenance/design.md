@@ -38,24 +38,27 @@ Line anchors are against `origin/dev` at `c501bbaf` (2026-09-28). Re-derive them
 
 ### D1. One identity helper, derived from config
 
-`retrieval_identity(config) -> RetrievalIdentity` in `src/utils/benchmark_provenance.py` returns `collection` (the same formula as `vectorstore_connector.py:36`), `embedding_name`, and `embedding_model`. `embedding_model` is `kwargs["model_name"]` for `HuggingFaceEmbeddings` and `kwargs["model"]` for `OpenAIEmbeddings` (`base-config.yaml:260`, `:265`); when neither key exists, it is the class name. The helper never imports the embedding class or opens a connection, so the backfill and the QA path can call it on a plain dict.
+`retrieval_identity(config) -> RetrievalIdentity` in `src/utils/benchmark_provenance.py` returns `collection` (the same formula as `vectorstore_connector.py:36`), `embedding_name`, and `embedding_model`. `embedding_model` is `kwargs["model_name"]` for `HuggingFaceEmbeddings` and `kwargs["model"]` for `OpenAIEmbeddings` (`base-config.yaml:260`, `:265`); when neither key exists, it is the class name. The helper never imports the embedding class or opens a connection, so the backfill and the QA path can call it on a plain dict. The sweep ledger rows (`archive_run.sh`, `qa_arm.sh`, `sweep_tools.py`) copy `collection` and `embedding_model` from the artifact or the run manifest, so a campaign ledger tells #216 arms apart without a read of each artifact.
 
 *Alternative rejected:* read the identity from a live `VectorstoreConnector`. The QA path builds the connector lazily and only when the spec uses the search tool, and the backfill has no connector at all.
 
 ### D2. Backfill first
 
-`backfill_report_provenance.py` gains one stamp: when an arm has `running_configuration`, write `retrieval_identity` with `"source": "reconstructed from running_configuration"`. Existing keys are never overwritten; a stamped arm is skipped. This follows the script's own rule: stamp what the artifact proves, invent nothing. Reports without `running_configuration` (before #272) get no identity.
+`backfill_report_provenance.py` gains one stamp: when an arm has `running_configuration`, write `retrieval_identity` with `"source": "reconstructed from running_configuration"`. The stamp is independent of the script's file-level skip. Today `stamp_file()` returns `skipped (already stamped)` when the metadata has any of `code_version`, `config_version`, `config_versions` (`backfill_report_provenance.py:70`, `:99`), before it looks at an arm. The era-F and era-G reports carry those keys, so that skip would pass over exactly the arms this stamp is for. The identity pass iterates every arm of every report and stamps the arms that lack `retrieval_identity`; the version keys stay as they are. Existing keys are never overwritten. This follows the script's own rule: stamp what the artifact proves, invent nothing. Arms without `running_configuration` (before #272) get no identity.
 
 ### D3. Fingerprint v2 hashes what retrieval can reach, and only that
 
 The v2 query takes one parameter, the collection tag, and returns the same `(key, value)` rows for `corpus_fingerprint`:
 
-- `chunk` rows: `FROM document_chunks c LEFT JOIN documents d ON d.id = c.document_id`, with the retrieval filter `(c.metadata->>'collection' = %s OR c.metadata->>'collection' IS NULL)` and `(d.id IS NULL OR d.is_deleted = FALSE)`. Key: `chunk:<ref>:<chunk_index>` where `<ref>` is `COALESCE(d.resource_hash, c.metadata->>'resource_hash', c.metadata->>'chunk_id', 'id:' || c.id)`. Value: `md5(chunk_text || '|' || COALESCE(collection tag, '') || '|' || COALESCE(embedding_model tag, '') || '|' || (c.embedding IS NULL)::text)`. The null-vector flag is part of the value because the schema allows a `NULL` embedding (`init.sql:275`) and semantic search still returns such a row when fewer than `k` rows have a vector (`ORDER BY distance ASC` sorts `NULL` last, `postgres_vectorstore.py:378-380`).
+- `chunk` rows: `FROM document_chunks c LEFT JOIN documents d ON d.id = c.document_id`, with the retrieval filter `(c.metadata->>'collection' = %s OR c.metadata->>'collection' IS NULL)` and `(d.id IS NULL OR d.is_deleted = FALSE)`. Key: `chunk:<ref>:<chunk_index>` where `<ref>` is `COALESCE(d.resource_hash, c.metadata->>'resource_hash', c.metadata->>'chunk_id', 'id:' || c.id)`. Value: `md5(chunk_text || '|' || COALESCE(collection tag, '\x00none') || '|' || (c.embedding IS NULL)::text)`. The `embedding_model` tag is not part of the value; see "model-neutral" below. The null-vector flag is part of the value because the schema allows a `NULL` embedding (`init.sql:275`) and semantic search still returns such a row when fewer than `k` rows have a vector (`ORDER BY distance ASC` sorts `NULL` last, `postgres_vectorstore.py:378-380`).
 - `parent` rows: only parents with at least one in-scope child (`INNER JOIN` through `parent_id`). Key and value as in v1.
-- `doc` rows: only live documents with at least one in-scope chunk. Value: `md5(size_bytes || '|' || url || '|' || display_name || '|' || source_type || '|' || COALESCE(extra_json->>'title', ''))`. These are the document columns retrieval returns with every chunk (`postgres_vectorstore.py:367-375`) and overlays into the chunk metadata that reaches the agent and the citations (`_merge_row_metadata`, `postgres_vectorstore.py:23-45`). The rest of `extra_json` stays out on purpose: `category` lives there, and #524/#538 decided that a category-only change moves the per-arm category-map digest, not the corpus fingerprint.
+- `doc` rows: only live documents with at least one in-scope chunk. Value: `md5(COALESCE(size_bytes::text, '\x00none') || '|' || COALESCE(url, '\x00none') || '|' || display_name || '|' || source_type || '|' || COALESCE(extra_json->>'title', '\x00none'))`. `url` and `size_bytes` are nullable (`init.sql:219`, `:226`); `display_name` and `source_type` are `NOT NULL` (`:215-216`). `||` with a `NULL` operand yields `NULL`, and then `md5()` yields `NULL` for the whole row, so every nullable field is coalesced to a sentinel that differs from the empty string. These are the document columns retrieval returns with every chunk (`postgres_vectorstore.py:367-375`) and overlays into the chunk metadata that reaches the agent and the citations (`_merge_row_metadata`, `postgres_vectorstore.py:23-45`). The rest of `extra_json` stays out on purpose: `category` lives there, and #524/#538 decided that a category-only change moves the per-arm category-map digest, not the corpus fingerprint.
+- `category_map_query(collection)`: the URL → category map (`CATEGORY_MAP_QUERY`, `service_benchmark.py:139-143`) gets the same scope: documents with at least one in-scope chunk and `url IS NOT NULL`. Today it reads every live document, so a relabel in another collection moves the per-arm category digest of a run that never searched it.
 - The digest is `sha256/v2:<hex>`. `corpus_fingerprint()` itself is unchanged; the caller supplies the prefix through a `version` argument.
 
-Effects: an ingest into another collection does not move the digest. A move of chunks between collections does. The #411 cleanup does not. A failed document with no chunks drops out (retrieval never sees it). A chunk written through `add_texts()` with no document link is included. A change to a document's URL, display name, source type, or title moves the digest; a category-only change does not.
+Effects: an ingest into another collection does not move the digest. A move of chunks between collections does. The #411 cleanup does not. A failed document with no chunks drops out (retrieval never sees it). A chunk written through `add_texts()` with no document link is included. A change to a document's URL, display name, source type, or title moves the digest; a category-only change does not. A re-embed of identical text with another model does not move the digest; the identity records the model.
+
+**Model-neutral on purpose.** The #216 arms re-embed identical text with models A and B. If the `embedding_model` tag were part of the chunk value, every chunk value would differ, G3 would refuse the pair, and an override flag would hide any text or metadata drift that happened at the same time. The model identity travels beside the digest instead: `retrieval_identity.embedding_model`, verified against the chunk tags by the guard (D6). Equal digests plus different identities is the exact state a valid embedding A/B is in.
 
 *Alternative rejected:* hash the embedding vectors. Float output can differ across hardware and kernels for one model, so two identical ingests would get different digests. The per-chunk `embedding_model` tag (D4) carries the model identity instead.
 
@@ -73,29 +76,36 @@ The tag needs a re-ingest to appear; the deploy that ships this change re-ingest
 
 ### D5. One routine, no AST
 
-`live_corpus_fingerprint(pool, config=None) -> str` in `benchmark_provenance.py` derives the collection with D1 (from `config`, or from `get_full_config()` when `config` is None), runs the v2 query through the given pool, and returns the digest. The harness's `get_corpus_fingerprint` calls it. The QA workflow calls it. `lib.sh`'s container snippet imports and calls it (the snippet keeps its "this image predates ..." error when the import fails, as today). `category_census.py` calls it and drops `_harness_query`. Drift between consumers becomes impossible by construction, which is what the AST read tried to give.
+`live_corpus_fingerprint(pool, config) -> str` and `live_category_map(pool, config) -> (records, digest)` in `benchmark_provenance.py` derive the collection with D1 from the given `config`, run the v2 queries through the given pool, and return the results. `config` is a required argument, not a default: `get_full_config()` reads through `PostgresServiceFactory.get_instance()` and raises `ConfigNotReadyError` when no factory is installed (`config_access.py:15-20`), and the `lib.sh` snippet builds its pool with `PostgresServiceFactory.from_env()` without an install (`lib.sh:96-97`). The harness's `get_corpus_fingerprint` and `get_category_map` call the routines with the running config. The QA workflow calls them with its resolved config. `lib.sh`'s container snippet installs the factory it builds (`PostgresServiceFactory.set_instance(factory)`), reads `get_full_config()`, and calls the routine; it keeps its "this image predates ..." error when the import fails, as today. `category_census.py` calls both routines and drops `_harness_query`. Drift between consumers becomes impossible by construction, which is what the AST read tried to give.
 
 ### D6. Start guard in both eval paths
 
 Before the first question, the harness (after `archi()` is built) and the QA workflow (only when `search_vectorstore_hybrid` is in `spec.tools`) run one check:
 
-1. `SELECT count(*), count(embedding), array_agg(DISTINCT metadata->>'embedding_model')` for the searched collection (with the retrieval filter). `count(embedding)` counts rows with a vector.
+1. `SELECT count(*), count(embedding), count(*) FILTER (WHERE metadata->>'embedding_model' IS NULL), array_agg(DISTINCT metadata->>'embedding_model') FILTER (WHERE metadata->>'embedding_model' IS NOT NULL)` for the searched collection (with the retrieval filter). The four values are `chunk_count`, `usable_chunk_count`, `untagged_chunk_count`, and the set of tags.
 2. Zero chunks, or zero chunks with a vector: raise with the collection, the embedding name, and both counts in the message. This is fatal before scoring; there are no scores to lose. A collection whose rows all have a `NULL` vector has no semantic result to give.
 3. Any tag that differs from the running `embedding_model`: raise, with both values in the message.
-4. Tags all `NULL` (legacy rows): record `embedding_model_source = "config (chunks untagged)"` and log a warning. Tags all equal to the running model: record `"chunks"`.
+4. `embedding_model_source`: every chunk untagged (legacy rows) → `"config (chunks untagged)"` with a warning; some chunks untagged and every tag equal to the running model → `"chunks (N untagged)"` with a warning, because N vectors have no recorded model; every chunk tagged and equal → `"chunks"`. The untagged count is a direct count. (`array_agg` keeps `NULL` elements on Postgres, verified on `postgres-claw`, but a count makes the mixed state a recorded number rather than an array inspection.)
 
-The check records `chunk_count` and `usable_chunk_count` with the identity. The harness's existing ingest wait (`_ingest_is_progressing`) stays; it watches the endpoint state, not the collection.
+The check records `chunk_count`, `usable_chunk_count`, and `untagged_chunk_count` with the identity. The harness's existing ingest wait (`_ingest_is_progressing`) stays; it watches the endpoint state, not the collection.
 
 ### D7. Gates in `compare_runs.py`
 
 - **Version:** if the arms' fingerprint prefixes differ, refuse with "fingerprint versions differ; re-pin and re-run". This check runs before the G3 equality check, so a v1/v2 mix is never reported as "different corpora".
 - **G3 reason:** when fingerprints differ and the recorded `collection` values differ, the reason names both collections.
-- **Embedding:** when `embedding_model` differs, the comparison runs and the report header states "varied factor: embedding_model A → B". #216 needs exactly this.
+- **Embedding:** when the fingerprints are equal and `embedding_model` differs, the comparison runs and the report header states "varied factor: embedding_model A → B". #216 needs exactly this. The digest is model-neutral (D3), so equal digests prove that the text, the collection, and the document fields were the same, and the identities prove which model each arm used.
 - **Unrecorded identity:** allowed with a note, as `corpus_unchanged_at_endpoints` is today (absent is unknowable, not unequal).
 
 ### D8. QA workflow provenance
 
-At run start the QA workflow records `retrieval_identity` and `corpus_fingerprint_before` in `manifest.json` next to `agent`. At scoring end it records `corpus_fingerprint`, `corpus_unchanged_at_endpoints`, and the identity in `summary.provenance`. The sweep's outer `live-stack-equals-pin` check stays as is.
+Retrieval happens in `run()` and in `retry()`. `score()` can run hours later and retrieves nothing. So the two fingerprint readings bracket the answering phase, not the whole workflow:
+
+- At run start, after the guard (D6), `run()` records `retrieval_identity` and `corpus_fingerprint_before` in `manifest.json` next to `agent` (`workflow.py:364-380`).
+- When the attempts finish, before `manifest["status"] = "run_completed"` (`workflow.py:587-597`), `run()` records `corpus_fingerprint` and `corpus_unchanged_at_endpoints` in the manifest.
+- `retry()` builds a fresh vectorstore and executes new attempts (`workflow.py:941-949`) and writes its own manifest (`:1102-1111`). It runs the same guard and takes the same two readings.
+- `score()` (`:862`) and the retry scoring path (`:1187`) copy the manifest's readings and identity into `summary.provenance`. They take no new reading. A corpus change between answering and scoring is not a change the answers saw, and a change during answering that was reverted before scoring must still show.
+
+The sweep's outer `live-stack-equals-pin` check stays as is.
 
 ### D9. Docstrings and docs
 
@@ -105,6 +115,7 @@ At run start the QA workflow records `retrieval_identity` and `corpus_fingerprin
 
 - [Every v1 pin becomes stale on deploy] → The version gate refuses a v1/v2 mix with a clear reason. The campaign re-pins once, after the deploy. The v1 artifacts stay valid among themselves.
 - [The `lib.sh` snippet runs inside the data-manager container, which must carry the new routine] → Keep the existing failure message pattern: an import error names the missing routine and tells the operator to rebuild the stack from the campaign SHA. `test_feature_matrix_wrappers.sh` covers the snippet.
+- [The `sha256/v2:` prefix fails `archive_run.sh`'s usable-fingerprint test, `x.startswith("sha256:")` (`archive_run.sh:174`), so no v2 artifact could set the new pin] → That predicate becomes version-aware: it accepts both prefixes and refuses a pin/artifact version mix. The other readers (`category_slice._usable`, `sweep_tools._usable`, `compare_runs._recorded`) test only for the unavailable marker and accept v2 as they are; each gets a test.
 - [The `doc` row semantics change: a failed document drops out] → Intended. A document with no chunks in scope is invisible to retrieval. The change is part of the v2 version bump, not a silent shift.
 - [`add_texts()` has no ingest caller, so its tag has no production test path] → Unit tests cover it directly; the tag costs one dict write. Leaving it out would make D3's "every retrievable chunk" claim false for a public write path.
 - [Legacy rows have no `embedding_model` tag until re-ingest] → The guard records "config (chunks untagged)" and warns, it does not refuse. The deploy that ships this change re-ingests, so the window is one deploy.
@@ -113,6 +124,7 @@ At run start the QA workflow records `retrieval_identity` and `corpus_fingerprin
 
 ## Migration Plan
 
+0. Before the implementation PR opens, validate on the claw stack (AGENTS.md, "Deployment & Validation Policy"): deploy the branch with the `archi-dev-deploy-verify` procedure, run one smoke benchmark arm and one QA run, and confirm `retrieval_identity`, both `sha256/v2:` readings, and the guard's log line in the artifacts and the logs. Name the containers checked in the PR body.
 1. Merge this change to `dev`.
 2. Run the backfill over `bench_out/` (dry run, then write). Commit the stamped artifacts in `fasrc/archi-bench-out`.
 3. Redeploy the dev host (`deploy/scripts/redeploy.sh`). The re-ingest populates the chunk tags. Do not do this inside a running campaign.

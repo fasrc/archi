@@ -5,18 +5,22 @@ Every evaluation run SHALL record the collection tag it searched, the embedding 
 
 #### Scenario: Golden-set arm records the identity
 - **WHEN** the golden-set harness finishes an arm
-- **THEN** the arm's record contains `retrieval_identity` with `collection`, `embedding_name`, `embedding_model`, `chunk_count`, `usable_chunk_count`, and `embedding_model_source`
+- **THEN** the arm's record contains `retrieval_identity` with `collection`, `embedding_name`, `embedding_model`, `chunk_count`, `usable_chunk_count`, `untagged_chunk_count`, and `embedding_model_source`
 
 #### Scenario: QA run records the identity
 - **WHEN** the QA workflow starts a run whose agent spec uses the vectorstore search tool
 - **THEN** `manifest.json` contains `retrieval_identity` with the same fields
+
+#### Scenario: Sweep ledger row carries the identity
+- **WHEN** `archive_run.sh`, `qa_arm.sh`, or `sweep_tools.py` appends a ledger row for an arm
+- **THEN** the row contains `collection` and `embedding_model` copied from the arm's artifact or run manifest
 
 #### Scenario: Embedding model comes from the class-specific kwarg
 - **WHEN** the config's `embedding_name` is `HuggingFaceEmbeddings` with `kwargs.model_name` set, or `OpenAIEmbeddings` with `kwargs.model` set
 - **THEN** `embedding_model` equals that kwarg value, and when neither kwarg exists it equals the class name
 
 ### Requirement: The corpus fingerprint covers the searched collection and only rows retrieval can reach
-The corpus fingerprint SHALL hash only chunks that the searched collection's retrieval filter admits, only parent nodes that such a chunk references, and only live documents that own such a chunk; it SHALL include each chunk's `collection` tag, `embedding_model` tag, and null-vector flag in the chunk digest, and each document's URL, display name, source type, and title in the document digest, and it SHALL NOT include any other `extra_json` field.
+The corpus fingerprint SHALL hash only chunks that the searched collection's retrieval filter admits, only parent nodes that such a chunk references, and only live documents that own such a chunk; it SHALL include each chunk's `collection` tag and null-vector flag in the chunk digest, and each document's URL, display name, source type, and title in the document digest with every nullable field coalesced to a sentinel; it SHALL NOT include the `embedding_model` tag or any other `extra_json` field.
 
 #### Scenario: Ingest into another collection leaves the digest unchanged
 - **WHEN** chunks are added under a different `collection` tag
@@ -38,6 +42,14 @@ The corpus fingerprint SHALL hash only chunks that the searched collection's ret
 - **WHEN** a document's `url`, `display_name`, `source_type`, or `extra_json->>'title'` changes and nothing else changes
 - **THEN** the fingerprint changes
 
+#### Scenario: Re-embed with another model is not a corpus change
+- **WHEN** identical chunk text is re-embedded and every chunk's `embedding_model` tag changes from A to B
+- **THEN** the fingerprint is unchanged and `retrieval_identity.embedding_model` differs between the two runs
+
+#### Scenario: Document with a NULL url is covered
+- **WHEN** a document has `url IS NULL` and its title changes
+- **THEN** the fingerprint changes
+
 #### Scenario: Category-only change is not a corpus change
 - **WHEN** only `extra_json->>'category'` changes on a document
 - **THEN** the fingerprint is unchanged
@@ -50,12 +62,27 @@ The corpus fingerprint SHALL hash only chunks that the searched collection's ret
 - **WHEN** the fingerprint is computed
 - **THEN** the value starts with `sha256/v2:`
 
+### Requirement: The category-map digest covers the searched collection only
+The URL-to-category map that a run records SHALL cover only documents that own at least one chunk the searched collection's retrieval filter admits.
+
+#### Scenario: Relabel in another collection
+- **WHEN** a document with chunks only in another collection changes its `category`
+- **THEN** the run's category-map digest is unchanged
+
+#### Scenario: Relabel in scope
+- **WHEN** a document with an in-scope chunk changes its `category`
+- **THEN** the run's category-map digest changes
+
 ### Requirement: One routine computes the fingerprint for every consumer
-The golden-set harness, the QA workflow, the feature-matrix sweep, and the category census SHALL compute the corpus fingerprint through one function in `src/utils/benchmark_provenance.py`, and no consumer SHALL read the query text out of another module's source.
+The golden-set harness, the QA workflow, the feature-matrix sweep, and the category census SHALL compute the corpus fingerprint and the category map through functions in `src/utils/benchmark_provenance.py` that take the configuration as a required argument, and no consumer SHALL read the query text out of another module's source.
 
 #### Scenario: Sweep and harness agree by construction
 - **WHEN** the feature-matrix pin check and the harness compute the fingerprint of one unchanged stack
 - **THEN** the two digests are equal
+
+#### Scenario: Container snippet installs the factory
+- **WHEN** the feature-matrix snippet runs inside the stack's data-manager container
+- **THEN** it installs the Postgres factory it builds before it reads the config, and the digest equals the harness's digest for the same stack
 
 #### Scenario: Stack image predates the routine
 - **WHEN** the feature-matrix snippet cannot import the routine inside the stack container
@@ -80,6 +107,10 @@ An evaluation run SHALL stop before its first question when the searched collect
 - **WHEN** every chunk in the collection has no `embedding_model` tag
 - **THEN** the run continues, logs a warning, and records `embedding_model_source = "config (chunks untagged)"`
 
+#### Scenario: Partially tagged collection
+- **WHEN** some chunks carry the run's `embedding_model` and N chunks carry no tag
+- **THEN** the run continues, logs a warning, and records `embedding_model_source = "chunks (N untagged)"` and `untagged_chunk_count = N`
+
 #### Scenario: Tags agree with the run
 - **WHEN** every tagged chunk carries the run's `embedding_model`
 - **THEN** the run continues and records `embedding_model_source = "chunks"`
@@ -96,12 +127,23 @@ An evaluation run SHALL stop before its first question when the searched collect
 - **THEN** the G3 reason names both collections
 
 #### Scenario: Embedding A/B
-- **WHEN** the arms differ only in `embedding_model`
+- **WHEN** the arms' fingerprints are equal and they differ only in `embedding_model`
 - **THEN** the comparison runs, and the report header states the varied factor with both model identifiers
 
 #### Scenario: Identity not recorded
 - **WHEN** one arm has no `retrieval_identity`
 - **THEN** the comparison runs, and the report notes that the identity of that arm is not recorded
+
+### Requirement: Archive tooling accepts the versioned digest
+`archive_run.sh` SHALL treat a `sha256/v2:` reading as usable, SHALL refuse a pin and an artifact whose prefixes differ with a version reason, and the other readers of the digest SHALL accept it unchanged.
+
+#### Scenario: Archive a v2 artifact
+- **WHEN** `archive_run.sh` reads an artifact whose two readings start with `sha256/v2:` and are equal
+- **THEN** it records the pin
+
+#### Scenario: Pin and artifact versions differ
+- **WHEN** the recorded pin starts with `sha256:` and the artifact's readings start with `sha256/v2:`
+- **THEN** `archive_run.sh` refuses, and the reason says the fingerprint versions differ
 
 ### Requirement: The backfill derives the identity from the recorded running configuration
 The provenance backfill SHALL stamp `retrieval_identity` on every arm that carries `running_configuration`, label the stamp as reconstructed from it, and SHALL NOT overwrite an existing key or stamp an arm that has no `running_configuration`.
@@ -109,6 +151,10 @@ The provenance backfill SHALL stamp `retrieval_identity` on every arm that carri
 #### Scenario: Arm with running configuration
 - **WHEN** the backfill reads an arm whose `running_configuration.data_manager` names a collection and an embedding
 - **THEN** it writes `retrieval_identity` with `source = "reconstructed from running_configuration"`
+
+#### Scenario: Report already version-stamped
+- **WHEN** a report's metadata already has `code_version` or `config_versions` and an arm lacks `retrieval_identity`
+- **THEN** the backfill stamps that arm and leaves the version keys unchanged
 
 #### Scenario: Arm already stamped
 - **WHEN** the backfill reads an arm that already has `retrieval_identity`
