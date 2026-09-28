@@ -6,9 +6,9 @@
 
 ## 2. Backfill of existing artifacts (D2)
 
-- [ ] 2.1 `model: sonnet` — Write failing unit tests for the backfill stamp: arm with `running_configuration` gets `retrieval_identity` with `source = "reconstructed from running_configuration"`; stamped arm is unchanged; arm without `running_configuration` is skipped and reported; a report whose metadata already has `code_version` or `config_versions` still gets its unstamped arms stamped and keeps the version keys
-- [ ] 2.2 `model: sonnet` — Implement the stamp in `scripts/benchmarking/backfill_report_provenance.py` as a per-arm pass that runs independent of the file-level `STAMP_KEYS` skip (`:70`, `:99`); additive, never overwrites
-- [ ] 2.3 `model: haiku` — Run `python scripts/benchmarking/backfill_report_provenance.py --dry-run` over `bench_out/banks/golden/results/` and record the count of stamped versus skipped arms in the PR body
+- [x] 2.1 `model: sonnet` — Write failing unit tests for the backfill stamp: arm with `running_configuration` gets `retrieval_identity` with `source = "reconstructed from running_configuration"`; stamped arm is unchanged; arm without `running_configuration` is skipped and reported; a report whose metadata already has `code_version` or `config_versions` still gets its unstamped arms stamped and keeps the version keys
+- [x] 2.2 `model: sonnet` — Implement the stamp in `scripts/benchmarking/backfill_report_provenance.py` as a per-arm pass that runs independent of the file-level `STAMP_KEYS` skip (`:70`, `:99`); additive, never overwrites
+- [x] 2.3 `model: haiku` — Run `python scripts/benchmarking/backfill_report_provenance.py --dry-run` over `bench_out/banks/golden/results/` and record the count of stamped versus skipped arms in the PR body
 
 ## 3. Fingerprint v2 query and shared routine (D3, D5)
 
