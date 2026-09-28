@@ -533,3 +533,22 @@ def test_the_connector_passes_the_configured_model_to_the_store(monkeypatch):
     connector_module.VectorstoreConnector(config).get_vectorstore()
 
     assert built["embedding_model"] == "Qwen/Q"
+
+
+def test_a_resolved_class_object_yields_its_name():
+    """``get_full_config(resolve_embeddings=True)`` swaps the name for the class.
+
+    The chat app's uploader builds its manager from that config, so its chunk
+    tags must still name the class, as the harness's unresolved config does.
+    """
+
+    class FakeEmbeddings:
+        pass
+
+    resolved = _identity_config("custom", {"dim": 8}, cls=FakeEmbeddings)
+    unresolved = _identity_config("custom", {"dim": 8}, cls="FakeEmbeddings")
+    assert retrieval_identity(resolved).embedding_model == "FakeEmbeddings"
+    assert (
+        retrieval_identity(resolved).embedding_model
+        == retrieval_identity(unresolved).embedding_model
+    )

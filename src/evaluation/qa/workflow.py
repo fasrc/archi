@@ -961,19 +961,6 @@ class QAWorkflow:
             )
         else:
             config = spec = vectorstore = None
-        # Fresh attempts retrieve, so they get their own guard and readings; a
-        # retry that only re-scores carries the parent's forward.
-        fresh_attempts = bool(
-            plan["execution_attempt_count"]
-        ) and corpus_provenance.uses_search(spec)
-        corpus_readings = (
-            corpus_provenance.start_readings(config, spec)
-            if fresh_attempts
-            else {
-                key: deepcopy(parent_manifest.get(key))
-                for key in corpus_provenance.PROVENANCE_KEYS
-            }
-        )
 
         if plan["live_validation_attempt_count"]:
             resolver = OracleResolver(EvaluatorMCPRegistry.load(mcp_config_path))
@@ -987,6 +974,21 @@ class QAWorkflow:
                     parent_store.store_live_validation(prepared.item_id, validation)
                 else:
                     parent_store.promote_live_retry_to_execution(prepared.item_id)
+
+        # Fresh attempts retrieve, so they get their own guard and readings; a
+        # retry that only re-scores carries the parent's forward. Counted after
+        # the live pre-check, which can promote a live retry to an execution.
+        fresh_attempts = bool(
+            parent_store.execution_retry_count()
+        ) and corpus_provenance.uses_search(spec)
+        corpus_readings = (
+            corpus_provenance.start_readings(config, spec)
+            if fresh_attempts
+            else {
+                key: deepcopy(parent_manifest.get(key))
+                for key in corpus_provenance.PROVENANCE_KEYS
+            }
+        )
 
         output_dir.mkdir(parents=True, exist_ok=True)
         snapshot = parent_manifest["input"]["snapshot"]

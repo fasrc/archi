@@ -131,7 +131,7 @@ The sweep's outer `live-stack-equals-pin` check stays as is.
 2. Run the backfill over `bench_out/` (dry run, then write). Commit the stamped artifacts in `fasrc/archi-bench-out`.
 3. Redeploy the dev host (`deploy/scripts/redeploy.sh`). The re-ingest populates the chunk tags. Do not do this inside a running campaign.
 4. Optional: run the #411 one-off cleanup. Under v2 it does not move the fingerprint.
-5. Re-pin: run one baseline arm; `archive_run.sh` records the v2 digest.
+5. Re-pin: run one baseline arm (arm 00) on a fresh deploy, then `archive_run.sh 00 <run> <yaml> --new-corpus` moves each campaign stack's v1 pin to the v2 digest and records the old pin in `repinned_from`. A stack with no pin gets the v2 digest on its first archive.
 6. Start the campaign. The first #216 arm records `embedding_model` and the guard verifies the chunk tags.
 
 Rollback: revert the merge and redeploy. Artifacts stamped by the backfill keep their extra keys; nothing reads them in v1 code.

@@ -22,7 +22,8 @@
 #     only for arm 00, only when the stack's latest ragas-start was a fresh deploy (not a
 #     re-run or re-seed), and the old and new fingerprints are both recorded in the row.
 #     A pin and readings of different fingerprint versions (sha256: vs sha256/v2:) are
-#     refused with a version reason, --new-corpus or not: the stack needs a re-pin.
+#     refused with a version reason. The move to a new version is a re-pin, so it takes
+#     the same closing-baseline path: arm 00, fresh deploy, --new-corpus.
 #   - the arm YAML's fixed factors differ from the campaign lock, the YAML is not the locked
 #     file for that arm label, or the stack was deployed under a different lock,
 #   - no ragas-start row exists for the stack (nothing ties the artifact to a lock or a
@@ -189,8 +190,9 @@ pin_file, run = os.environ["FM_PIN_FILE"], int(os.environ["FM_RUN"])
 previous_pin = None
 if os.path.exists(pin_file):
     pin = open(pin_file).read().strip()
-    if version(pin) != version(fp):
-        print(f"REFUSED: the fingerprint versions differ (pin {pin} is {version(pin)!r}, the artifact's readings are {version(fp)!r}); a pin of one version never equals a reading of another — re-pin the stack under {version(fp)!r}", file=sys.stderr); sys.exit(2)
+    # A version change is a re-pin: it takes the closing-baseline path below, like a new corpus.
+    if version(pin) != version(fp) and os.environ["FM_NEW_CORPUS"] != "true":
+        print(f"REFUSED: the fingerprint versions differ (pin {pin} is {version(pin)!r}, the artifact's readings are {version(fp)!r}); a pin of one version never equals a reading of another — re-pin the stack under {version(fp)!r} with the closing baseline: arm 00, fresh deploy, --new-corpus", file=sys.stderr); sys.exit(2)
     if fp != pin:
         if os.environ["FM_NEW_CORPUS"] != "true":
             print(f"REFUSED: fingerprint {fp} != pin {pin} for this stack (a re-pin is only the closing baseline: arm 00, fresh deploy, --new-corpus)", file=sys.stderr); sys.exit(2)

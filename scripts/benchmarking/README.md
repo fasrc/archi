@@ -144,9 +144,10 @@ One thin wrapper per step of the #396 campaign protocol
   the chunk tags. The guard stops a run before its first question if the collection has no
   chunk, no chunk with a vector, or a chunk tagged with another model. A v1 pin
   (`sha256:`) never equals a v2 digest, so re-pin once after the deploy that ships v2: run
-  one baseline arm and let `archive_run.sh` record the new pin. `category_census.py` now
+  arm 00 on a fresh deploy and archive it with `archive_run.sh 00 <run> <yaml> --new-corpus`,
+  which moves the pin to v2 and records the old pin in `repinned_from`. `category_census.py` now
   takes `--collection` (the searched collection tag) and scopes both of its readings to it.
-- **`test_feature_matrix_wrappers.sh`** — hermetic 45-check self-test (stubbed
+- **`test_feature_matrix_wrappers.sh`** — hermetic 58-check self-test (stubbed
   `docker`/`archi`, temp stack), run by `scripts/gate.sh`.
 
 ### Sweep mode (rung-0 prompt sweep, plan W8)

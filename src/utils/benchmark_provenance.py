@@ -885,7 +885,10 @@ def retrieval_identity(config: Any) -> RetrievalIdentity:
     kwargs = _as_mapping(entry.get("kwargs")) or {}
     model = next((kwargs[k] for k in _MODEL_KWARGS if kwargs.get(k)), None)
     if model is None:
+        # A resolved config (``get_full_config(resolve_embeddings=True)``)
+        # holds the class itself; name it as the unresolved config does.
         model = entry.get("class") or embedding_name
+        model = getattr(model, "__name__", model)
     return RetrievalIdentity(
         collection=collection,
         embedding_name=embedding_name,
@@ -964,12 +967,14 @@ class CollectionNotReadyError(RuntimeError):
 
 _READINESS_QUERY = """
 SELECT count(*),
-       count(embedding),
-       count(*) FILTER (WHERE metadata->>'embedding_model' IS NULL),
-       array_agg(DISTINCT metadata->>'embedding_model')
-           FILTER (WHERE metadata->>'embedding_model' IS NOT NULL)
-FROM document_chunks
-WHERE (metadata->>'collection' = %s OR metadata->>'collection' IS NULL)
+       count(c.embedding),
+       count(*) FILTER (WHERE c.metadata->>'embedding_model' IS NULL),
+       array_agg(DISTINCT c.metadata->>'embedding_model')
+           FILTER (WHERE c.metadata->>'embedding_model' IS NOT NULL)
+FROM document_chunks c
+LEFT JOIN documents d ON d.id = c.document_id
+WHERE (c.metadata->>'collection' = %s OR c.metadata->>'collection' IS NULL)
+  AND (d.id IS NULL OR d.is_deleted = FALSE)
 """
 
 

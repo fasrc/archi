@@ -163,7 +163,7 @@ An evaluation run SHALL stop before its first question when the searched collect
 - **THEN** the comparison runs, and the report notes that the identity of that arm is not recorded
 
 ### Requirement: Archive tooling accepts the versioned digest
-`archive_run.sh` SHALL treat a `sha256/v2:` reading as usable, SHALL refuse a pin and an artifact whose prefixes differ with a version reason, and the other readers of the digest SHALL accept it unchanged.
+`archive_run.sh` SHALL treat a `sha256/v2:` reading as usable, SHALL refuse a pin and an artifact whose prefixes differ with a version reason except on the closing-baseline re-pin (arm 00, fresh deploy, `--new-corpus`), which moves the pin to the new version and records the old pin, and the other readers of the digest SHALL accept it unchanged.
 
 #### Scenario: Archive a v2 artifact
 - **WHEN** `archive_run.sh` reads an artifact whose two readings start with `sha256/v2:` and are equal
@@ -172,6 +172,10 @@ An evaluation run SHALL stop before its first question when the searched collect
 #### Scenario: Pin and artifact versions differ
 - **WHEN** the recorded pin starts with `sha256:` and the artifact's readings start with `sha256/v2:`
 - **THEN** `archive_run.sh` refuses, and the reason says the fingerprint versions differ
+
+#### Scenario: Closing baseline re-pins a v1 stack under v2
+- **WHEN** the recorded pin starts with `sha256:`, arm 00 ran on a fresh deploy, and `archive_run.sh` archives its `sha256/v2:` artifact with `--new-corpus`
+- **THEN** the pin becomes the v2 digest and the ledger row records the old pin in `repinned_from`
 
 ### Requirement: The backfill derives the identity from the recorded running configuration
 The provenance backfill SHALL stamp `retrieval_identity` on every arm that carries `running_configuration`, label the stamp as reconstructed from it, and SHALL NOT overwrite an existing key or stamp an arm that has no `running_configuration`.

@@ -116,8 +116,11 @@ class TestProvenance:
         [(sql, params)] = pool.calls
         assert params == ("fasrc_with_HuggingFaceEmbeddings",)
         assert (
-            "(metadata->>'collection' = %s OR metadata->>'collection' IS NULL)" in sql
+            "(c.metadata->>'collection' = %s OR c.metadata->>'collection' IS NULL)"
+            in sql
         )
+        assert "(d.id IS NULL OR d.is_deleted = FALSE)" in sql
+        assert "LEFT JOIN documents d ON d.id = c.document_id" in sql
 
     def test_an_identity_without_a_collection_is_refused(self):
         with pytest.raises(CollectionNotReadyError, match="collection"):
@@ -154,8 +157,12 @@ def pg():
     cursor.execute(f"CREATE SCHEMA {schema}")
     cursor.execute(f"SET search_path TO {schema}, public")
     cursor.execute(
-        "CREATE TABLE document_chunks (id SERIAL PRIMARY KEY, embedding vector(3), "
-        "metadata JSONB)"
+        "CREATE TABLE documents (id SERIAL PRIMARY KEY, "
+        "is_deleted BOOLEAN NOT NULL DEFAULT FALSE)"
+    )
+    cursor.execute(
+        "CREATE TABLE document_chunks (id SERIAL PRIMARY KEY, document_id INTEGER, "
+        "embedding vector(3), metadata JSONB)"
     )
     try:
         yield cursor
@@ -178,3 +185,16 @@ def test_the_counts_come_from_real_sql(pg):
 
     assert (chunk_count, usable, untagged) == (4, 3, 1)
     assert sorted(tags) == ["A", "B"]
+
+
+def test_chunks_of_a_deleted_document_are_not_counted(pg):
+    """Retrieval never returns them, so they must not pass or fail the guard."""
+    pg.execute("INSERT INTO documents (is_deleted) VALUES (FALSE), (TRUE)")
+    pg.execute(
+        "INSERT INTO document_chunks (document_id, embedding, metadata) VALUES "
+        '(1, \'[1,0,0]\', \'{"collection": "C", "embedding_model": "A"}\'), '
+        '(2, \'[0,1,0]\', \'{"collection": "C", "embedding_model": "OLD"}\'), '
+        "(2, '[0,0,1]', '{\"collection\": \"C\"}')"
+    )
+
+    assert readiness_counts(pg, "C") == (1, 1, 0, ["A"])

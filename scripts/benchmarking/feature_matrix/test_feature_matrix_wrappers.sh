@@ -59,6 +59,7 @@
 #   57. archive_run.sh copies collection and embedding_model from the artifact's retrieval_identity
 #       into the ledger row, and writes nulls when the artifact recorded none
 #   58. qa_arm.sh copies collection and embedding_model from the QA run manifest into the ledger
+#   59. the closing baseline with --new-corpus moves a v1 pin to v2 and records the old pin
 #       row, and writes nulls when the manifest recorded none
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
@@ -693,6 +694,14 @@ BEFORE="$(ledger_rows)"
 run bash "$HERE/archive_run.sh" 00 10 "$T/arms/00-baseline.yaml"
 if [ "$RC" = 2 ] && grep -q "fingerprint versions differ" "$T/stderr" && [ "$(cat "$FM_OUT/corpus-pin-fm-00")" = sha256:def ] && [ "$(ledger_rows)" = "$BEFORE" ]; then
   ok "archive refuses a sha256: pin against a sha256/v2: artifact with a version reason"; else notok "archive version mix (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 59: the closing baseline (arm 00, fresh deploy, --new-corpus) moves a v1 pin to v2 and keeps the old pin
+touch "$FM_OUT/benchmarking-fm-00-20260903_000017.json"   # the artifact the check-56 fresh deploy wrote
+run bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml" --new-corpus
+if [ "$RC" = 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-00")" = sha256/v2:def ] \
+   && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['repinned_from']=='sha256:def' and e['corpus_fingerprint']=='sha256/v2:def' else 1)"; then
+  ok "the closing baseline re-pins a v1 stack under v2 and records the old pin"; else notok "cross-version re-pin (rc=$RC: $(cat "$T/stderr"))"; fi
+printf 'sha256:def\n' > "$FM_OUT/corpus-pin-fm-00"   # the later checks run on the v1 fixture pin
 
 # 58: qa_arm copies the identity from the run manifest; a run with no manifest identity records nulls
 printf '{"retrieval_identity": {"collection": "fasrc_with_HuggingFaceEmbeddings", "embedding_name": "HuggingFaceEmbeddings", "embedding_model": "all-MiniLM-L6-v2"}}\n' > "$T/qa-identity"

@@ -888,7 +888,9 @@ def test_an_embedding_difference_with_unverified_provenance_is_refused(
     # Two runs over an untagged legacy collection can both have been served by
     # one older model, whatever their configs say, so no flag admits this.
     base = _with_identity(
-        _artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"),
+        _artifact(
+            [_row("q1", faithfulness=0.5)], name="base.json", fingerprint="sha256/v2:a"
+        ),
         _identity("model-a"),
     )
     treat_path = _artifact(
@@ -906,7 +908,10 @@ def test_an_embedding_difference_with_unverified_provenance_is_refused(
     assert code == cr.EXIT_GATE
     err = capsys.readouterr().err
     assert "embedding provenance unverified" in err
-    assert "treat" in err
+    # The refusal names the unverified arm, and only that arm.
+    flagged = err.split("embedding provenance unverified for ", 1)[1].split(": ")[0]
+    assert flagged.startswith("treat (")
+    assert "base (" not in flagged
 
 
 @pytest.mark.parametrize(
