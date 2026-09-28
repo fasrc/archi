@@ -54,7 +54,7 @@
 
 ## 1. The gate: refuse a differing answer path, pass an identical one
 
-- [ ] 1.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 1.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Extend the `_artifact` fixture's `make(...)` with a keyword
       `configuration=None`. `None` (the default) keeps today's `"configuration": {}` for every
@@ -107,7 +107,7 @@
 
 ## 2. The override: waive one named path, print both values, reject an unknown path
 
-- [ ] 2.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 2.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Add tests asserting:
       (a) the task-1 pair (bound vs absent) with
