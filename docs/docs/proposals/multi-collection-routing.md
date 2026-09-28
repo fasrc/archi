@@ -174,6 +174,8 @@ graph LR
 
 The change is in `archi._prepare_call_kwargs()`: instead of always using `self.vs_connector`, it resolves the collection from the request's `config_name` and picks (or creates) the right `VectorstoreConnector` from a pool.
 
+The name must reach `_prepare_call_kwargs()` as an argument of each call. Today the chat app passes `config_name` only to the shared `update_config()` and then calls `self.archi(...)` without it (`app.py:1981-1986`). If the collection is read from shared state, two concurrent requests for different collections can each search the collection of the other. `invoke()` and `stream()` must therefore take the collection name per call, as they already take a per-call `pipeline` (`archi.py:91-106`).
+
 ### Configuration
 
 ```yaml
@@ -236,6 +238,8 @@ WHERE metadata->>'collection' = 'runbooks_with_bge'
 WHERE metadata->>'collection' = ANY(ARRAY['cluster-docs_with_bge', 'runbooks_with_bge'])
 ```
 
+All collections in a group must use the same embedding model. The single `ANY` query embeds the question one time, and a similarity score between vectors from two different models has no meaning, even when the dimensions match. Config validation rejects a group whose collections use different embedding models.
+
 Collection groups inherit the pipeline and model config from their first collection, or can override:
 
 ```yaml
@@ -294,13 +298,13 @@ Edge cases:
 
 | # | Task | Touches |
 |---|---|---|
-| 1 | Add `collections` + `collection_groups` config sections | `base-config.yaml` |
-| 2 | Map `config_name` → `collection_name` in request path | `archi.py` |
-| 3 | Pool `VectorstoreConnector` instances by collection | `vectorstore_connector.py` |
+| 1 | Add `collections` + `collection_groups` config sections; reject a group whose collections use different embedding models | `base-config.yaml`, config validation |
+| 2 | Map `config_name` → `collection_name` in request path, and pass the collection to `invoke()`/`stream()` per call, not through shared state | `archi.py`, `app.py` |
+| 3 | Pool `VectorstoreConnector` instances by collection, with one shared embedding model instance per `embedding_name` | `vectorstore_connector.py` |
 | 4 | Per-source collection tagging in data-manager | `data_manager.py`, `manager.py` |
-| 5 | Add `collection` column to `documents` table | `init.sql` |
+| 5 | Add a backfilled `collection` column to `documents` through a migration (`init.sql` runs only on a new database; upgrades apply only `migrations/*.sql`) | `init.sql`, `migrations/` |
 | 6 | Support `ANY(ARRAY[...])` filter for collection groups | `postgres_vectorstore.py` |
-| 7 | Merge + re-rank results from multi-collection queries | `semantic_retriever.py` |
+| 7 | Merge + re-rank results from multi-collection queries, with an eval arm that measures the merge | `semantic_retriever.py`, benchmark |
 
 ### Collection-Level Auth (3 tasks)
 
@@ -327,7 +331,7 @@ Edge cases:
 
 | # | Task | Touches |
 |---|---|---|
-| 14 | Widen the `documents` unique key to `(resource_hash, collection)`; thread the collection through the catalog upsert, lookups, and caches | `init.sql`, `catalog_postgres.py` |
+| 14 | Replace `UNIQUE(resource_hash)` with `UNIQUE(resource_hash, collection)` in `init.sql` and in a migration; thread the collection through every hash-keyed read and write: the catalog upsert, lookups, caches, `delete_resource()`, `update_ingestion_status()`, and the data manager's direct `UPDATE documents` statements | `init.sql`, `migrations/`, `catalog_postgres.py`, `manager.py` |
 | 15 | Tag every untagged chunk, then drop the `IS NULL` branch from search, count, and stale-chunk removal | `postgres_vectorstore.py`, `manager.py`, migration |
 | 16 | Scope `PostgresVectorStore.delete()` and `reset_collection` to one collection | `postgres_vectorstore.py`, `manager.py` |
 
@@ -336,7 +340,7 @@ Edge cases:
 | # | Task | Touches |
 |---|---|---|
 | 17 | Record the searched collection, embedding name, and embedding model on every run; gate comparisons on the collection | `service_benchmark.py`, `src/evaluation/qa/`, `compare_runs.py` |
-| 18 | Scope the corpus fingerprint to the searched collection, include chunks with no document link, and hash the collection tag | `service_benchmark.py`, `benchmark_provenance.py` |
+| 18 | Scope the corpus fingerprint and the category map to the searched collection, include chunks with no document link, and hash the collection tag | `service_benchmark.py`, `benchmark_provenance.py` |
 | 19 | Stop a run before its first question if its collection has zero chunks | `service_benchmark.py`, `src/evaluation/qa/workflow.py` |
 
 ---
