@@ -27,10 +27,13 @@ from src.utils.benchmark_provenance import (
     canonical_source_url,
     category_map_text,
     collect_code_version,
+    collection_readiness,
     config_version,
     live_category_map,
     live_corpus_fingerprint,
     prompt_text_sha256,
+    retrieval_identity,
+    retrieval_record,
 )
 from src.utils.benchmark_resilience import (
     OK,
@@ -348,6 +351,27 @@ class ResultHandler:
             return f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
 
     @staticmethod
+    def check_collection(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """The start guard: the arm's ``retrieval_identity``, or a fatal error.
+
+        Runs before the arm's first question. Raises ``CollectionNotReadyError``
+        when the searched collection is empty, has no vector, or holds chunks
+        another model embedded. Unlike the corpus readings this raises: no
+        question has run, so there are no scores to lose, and an arm scored
+        against the wrong vectors is worse than no arm.
+        """
+        identity = retrieval_identity(config)
+        readiness = collection_readiness(_factory_pool(), identity)
+        logger.info(
+            "Searching collection %s (embedding_model=%s, source=%s, %d chunks)",
+            identity.collection,
+            identity.embedding_model,
+            readiness["embedding_model_source"],
+            readiness["chunk_count"],
+        )
+        return retrieval_record(identity, readiness)
+
+    @staticmethod
     def get_category_map(
         config: Optional[Dict[str, Any]],
     ) -> Tuple[Optional[List[str]], str]:
@@ -398,6 +422,7 @@ class ResultHandler:
         agent_md_sha256: Optional[str] = None,
         ingest_wall_seconds: Optional[float] = None,
         modes_executed: Optional[Set[str]] = None,
+        retrieval_identity: Optional[Dict[str, Any]] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -502,6 +527,8 @@ class ResultHandler:
             # re-ingest and score different questions against different
             # corpora; a single reading taken afterwards would report the final
             # state as though it had covered the whole arm.
+            # What the arm searched, checked by the start guard (#570).
+            "retrieval_identity": retrieval_identity,
             "corpus_fingerprint_before": corpus_before,
             "corpus_fingerprint": corpus_after,
             "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
@@ -2241,6 +2268,7 @@ class Benchmarker:
             # Read the corpus BEFORE the arm's questions, so the report can show
             # whether they were all scored against the same documents.
             arm_config = getattr(self.chain, "config", None)
+            arm_identity = ResultHandler.check_collection(arm_config)
             corpus_before = ResultHandler.get_corpus_fingerprint(arm_config)
             _, category_map_before = ResultHandler.get_category_map(arm_config)
             question_wise_results, total_results = self._process_config(modes_being_run)
@@ -2266,6 +2294,7 @@ class Benchmarker:
                 # `corpus_unchanged_at_endpoints`: a re-ingest landing wholly
                 # between two arms leaves that boolean True on both sides.
                 ingest_wall_seconds=ingest_wall_seconds,
+                retrieval_identity=arm_identity,
             )
             self.load_new_configuration()
 

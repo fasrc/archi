@@ -29,10 +29,10 @@
 
 ## 5. Start guard and identity recording in the harness (D6, D1)
 
-- [ ] 5.1 `model: sonnet` — Write failing unit tests for `collection_readiness(pool, identity)`: zero chunks raises with collection and embedding name in the message; rows present but zero non-null vectors raises with both counts in the message; a differing tag raises with both values; all-null tags return `embedding_model_source = "config (chunks untagged)"` and log a warning; a mix of matching tags and N null tags returns `"chunks (N untagged)"`, `untagged_chunk_count = N`, and logs a warning; all matching tags return `"chunks"`; the result carries `chunk_count` and `usable_chunk_count`
-- [ ] 5.2 `model: sonnet` — Implement `collection_readiness()` in `src/utils/benchmark_provenance.py` (one `SELECT count(*), count(embedding), count(*) FILTER (WHERE tag IS NULL), array_agg(DISTINCT tag) FILTER (WHERE tag IS NOT NULL)` with the retrieval filter); the result carries `chunk_count`, `usable_chunk_count`, and `untagged_chunk_count`
-- [ ] 5.3 `model: opus` — Call the guard in `service_benchmark.py` after `archi()` is built and before `corpus_before` is taken; write `retrieval_identity` (with `chunk_count` and `embedding_model_source`) into the per-arm record next to `corpus_fingerprint`
-- [ ] 5.4 `model: sonnet` — Add a unit test that a harness arm record contains `retrieval_identity` with all seven fields
+- [x] 5.1 `model: sonnet` — Write failing unit tests for `collection_readiness(pool, identity)`: zero chunks raises with collection and embedding name in the message; rows present but zero non-null vectors raises with both counts in the message; a differing tag raises with both values; all-null tags return `embedding_model_source = "config (chunks untagged)"` and log a warning; a mix of matching tags and N null tags returns `"chunks (N untagged)"`, `untagged_chunk_count = N`, and logs a warning; all matching tags return `"chunks"`; the result carries `chunk_count` and `usable_chunk_count`
+- [x] 5.2 `model: sonnet` — Implement `collection_readiness()` in `src/utils/benchmark_provenance.py` (one `SELECT count(*), count(embedding), count(*) FILTER (WHERE tag IS NULL), array_agg(DISTINCT tag) FILTER (WHERE tag IS NOT NULL)` with the retrieval filter); the result carries `chunk_count`, `usable_chunk_count`, and `untagged_chunk_count`
+- [x] 5.3 `model: opus` — Call the guard in `service_benchmark.py` after `archi()` is built and before `corpus_before` is taken; write `retrieval_identity` (with `chunk_count` and `embedding_model_source`) into the per-arm record next to `corpus_fingerprint`
+- [x] 5.4 `model: sonnet` — Add a unit test that a harness arm record contains `retrieval_identity` with all seven fields
 
 ## 6. QA workflow provenance (D8)
 

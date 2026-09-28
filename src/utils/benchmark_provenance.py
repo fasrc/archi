@@ -956,3 +956,98 @@ def container_category_map_digest() -> str:
     """The searched collection's category-map digest, read in a stack."""
     factory, config = _container_factory_and_config()
     return live_category_map(factory.connection_pool, config)[2]
+
+
+class CollectionNotReadyError(RuntimeError):
+    """The searched collection cannot give this run a valid score."""
+
+
+_READINESS_QUERY = """
+SELECT count(*),
+       count(embedding),
+       count(*) FILTER (WHERE metadata->>'embedding_model' IS NULL),
+       array_agg(DISTINCT metadata->>'embedding_model')
+           FILTER (WHERE metadata->>'embedding_model' IS NOT NULL)
+FROM document_chunks
+WHERE (metadata->>'collection' = %s OR metadata->>'collection' IS NULL)
+"""
+
+
+def readiness_counts(cursor: Any, collection: str) -> Tuple[int, int, int, list]:
+    """``(chunk_count, usable_chunk_count, untagged_chunk_count, tags)``.
+
+    Counted under the retrieval filter, so the rows are the ones a search in
+    *collection* can return.
+    """
+    cursor.execute(_READINESS_QUERY, (collection,))
+    chunk_count, usable, untagged, tags = cursor.fetchone()
+    return int(chunk_count), int(usable), int(untagged), list(tags or [])
+
+
+def collection_readiness(pool: Any, identity: RetrievalIdentity) -> Dict[str, Any]:
+    """Refuse an empty or mismatched collection; say how well the model is known.
+
+    Raises ``CollectionNotReadyError`` when the collection has no chunk, no
+    chunk with a vector, or a chunk tagged with a model other than
+    ``identity.embedding_model``. Otherwise returns the counts and
+    ``embedding_model_source``: ``"chunks"`` when every chunk carries the run's
+    model, ``"chunks (N untagged)"`` when N chunks carry no tag, and
+    ``"config (chunks untagged)"`` when none does. The last two warn: those
+    vectors have no recorded model.
+    """
+    if identity.collection is None:
+        raise CollectionNotReadyError("the run's config names no collection")
+    chunk_count, usable, untagged, tags = _read_on_pool(
+        pool, readiness_counts, identity.collection
+    )
+    where = (
+        f"collection {identity.collection!r} "
+        f"(embedding_name={identity.embedding_name!r})"
+    )
+    if chunk_count == 0:
+        raise CollectionNotReadyError(f"{where} has no chunks; ingest it first")
+    if usable == 0:
+        raise CollectionNotReadyError(
+            f"{where} has no chunk with a vector: chunk_count={chunk_count}, "
+            f"usable_chunk_count={usable}"
+        )
+    others = sorted(tag for tag in tags if tag != identity.embedding_model)
+    if others:
+        raise CollectionNotReadyError(
+            f"{where} holds chunks embedded by {', '.join(others)}, but this run "
+            f"queries with {identity.embedding_model}; re-embed or fix the config"
+        )
+    if untagged == chunk_count:
+        source = "config (chunks untagged)"
+    elif untagged:
+        source = f"chunks ({untagged} untagged)"
+    else:
+        source = "chunks"
+    if untagged:
+        _logger().warning(
+            "%s: %d of %d chunks carry no embedding_model tag, so their model "
+            "is not verified; the run records embedding_model_source=%r",
+            where,
+            untagged,
+            chunk_count,
+            source,
+        )
+    return {
+        "chunk_count": chunk_count,
+        "usable_chunk_count": usable,
+        "untagged_chunk_count": untagged,
+        "embedding_model_source": source,
+    }
+
+
+def retrieval_record(
+    identity: RetrievalIdentity, readiness: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """The ``retrieval_identity`` block a run writes: identity plus the counts."""
+    return {**identity.as_dict(), **readiness}
+
+
+def _logger() -> Any:
+    from src.utils.logging import get_logger
+
+    return get_logger(__name__)

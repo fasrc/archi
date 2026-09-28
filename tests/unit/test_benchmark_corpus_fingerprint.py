@@ -303,3 +303,54 @@ class TestTheHarnessReadsTheSharedV2Routine:
     def test_the_v1_query_is_gone(self):
         assert not hasattr(sb, "CORPUS_STATE_QUERY")
         assert not hasattr(sb, "CATEGORY_MAP_QUERY")
+
+
+class TestTheStartGuard:
+    """``check_collection`` runs before the arm's first question (#570)."""
+
+    def _pool(self, monkeypatch, row):
+        from src.utils import benchmark_provenance
+
+        pool = _install_pool(monkeypatch, _FakePool())
+        monkeypatch.setattr(
+            benchmark_provenance, "readiness_counts", lambda cursor, collection: row
+        )
+        return pool
+
+    def test_a_ready_collection_returns_the_seven_field_record(self, monkeypatch):
+        self._pool(monkeypatch, (5, 5, 0, ["m"]))
+        record = ResultHandler.check_collection(RUNNING_CONFIG)
+        assert record == {
+            "collection": COLLECTION,
+            "embedding_name": "HuggingFaceEmbeddings",
+            "embedding_model": "m",
+            "chunk_count": 5,
+            "usable_chunk_count": 5,
+            "untagged_chunk_count": 0,
+            "embedding_model_source": "chunks",
+        }
+
+    def test_an_empty_collection_stops_the_run(self, monkeypatch):
+        from src.utils.benchmark_provenance import CollectionNotReadyError
+
+        self._pool(monkeypatch, (0, 0, 0, []))
+        with pytest.raises(CollectionNotReadyError):
+            ResultHandler.check_collection(RUNNING_CONFIG)
+
+    def test_the_arm_record_carries_the_identity(self, monkeypatch, tmp_path):
+        _install_pool(monkeypatch, _FakePool(rows=[]))
+        config_path = tmp_path / "arm.yaml"
+        config_path.write_text(yaml.safe_dump({"services": {"benchmarking": {}}}))
+        monkeypatch.setattr(ResultHandler, "results", [])
+        monkeypatch.setattr(ResultHandler, "category_map_records_by_arm", [])
+        identity = {"collection": COLLECTION, "embedding_model": "m"}
+
+        ResultHandler.handle_results(
+            config_path,
+            {},
+            {},
+            running_config=RUNNING_CONFIG,
+            retrieval_identity=identity,
+        )
+
+        assert ResultHandler.results[-1]["retrieval_identity"] == identity
