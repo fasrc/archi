@@ -33,6 +33,13 @@ program:
   divergence is a *backfilled* artifact: an equal digest then means "these files
   recorded the same configuration file", never "these runs used the same
   settings", and the report says so.
+* **G10 — one answer path.** The arms must have been run with the same
+  answer-path settings: ``services.chat_app.context_editing`` and
+  ``services.chat_app.recursion_limit``. A mismatch refuses with exit 2. To
+  waive one setting, use ``--config-differs-by-design DOTTED.PATH`` (repeatable;
+  accepts only the two refused paths; both values are printed and the row is
+  marked ``OVERRIDDEN``). ``services.benchmarking.agent_md_file`` is reported
+  rather than refused — prompt arms vary it on purpose.
 
 Two facts about the real artifacts shape the rest of the tool.
 
@@ -331,11 +338,18 @@ def build_arm(document: dict, index: int, path: Path, label: str) -> Arm:
         host=host,
         raw=raw,
         artifact_dir=Path(path).parent,
-        name=(
-            ((raw.get("configuration") or {}).get("services") or {}).get("benchmarking")
-            or {}
-        ).get("name"),
+        name=_recorded_name(raw.get("configuration")),
     )
+
+
+def _recorded_name(configuration: Any) -> Any:
+    """``services.benchmarking.name``, or None when any step is not a mapping.
+
+    A non-mapping ``configuration`` must reach G10 as "not recorded" rather
+    than crash here while the arm is built.
+    """
+    name = recorded_setting(configuration, "services.benchmarking.name")
+    return None if name is _ABSENT else name
 
 
 def resolve_arm(selector: str, arms: Sequence[Arm], flag: str) -> Arm:
@@ -656,6 +670,125 @@ def divergence_gate(arms: Sequence[Arm], ignore: bool) -> dict:
         "name": "config divergence",
         "status": "pass",
         "detail": "divergence_from_selected_file is empty for every arm",
+    }
+
+
+# --- G10: the answer-path gate -----------------------------------------------
+
+ANSWER_PATH_REFUSED = (
+    "services.chat_app.context_editing",
+    "services.chat_app.recursion_limit",
+)
+ANSWER_PATH_REPORTED = ("services.benchmarking.agent_md_file",)
+
+_ABSENT = object()
+
+
+def recorded_setting(configuration: Any, path: str) -> Any:
+    """Walk a dotted path through a mapping; return _ABSENT for any missing step."""
+    if not isinstance(configuration, dict):
+        return _ABSENT
+    node: Any = configuration
+    for key in path.split("."):
+        if not isinstance(node, dict) or key not in node:
+            return _ABSENT
+        node = node[key]
+    return node
+
+
+def _show_setting(value: Any) -> str:
+    """Render a setting value for the refusal message and gate row."""
+    if value is _ABSENT:
+        return "absent"
+    if value is None:
+        return "null"
+    return json.dumps(value, sort_keys=True)
+
+
+def validate_answer_path_waivers(allow_differs: Sequence[str]) -> None:
+    """Refuse a --config-differs-by-design value that names no refusable path."""
+    accepted = ", ".join(ANSWER_PATH_REFUSED)
+    for name in allow_differs:
+        if name not in ANSWER_PATH_REFUSED:
+            raise CompareError(
+                f"G10: {name!r} is not a refusable answer-path setting. "
+                f"Accepted paths for --config-differs-by-design: {accepted}",
+                EXIT_USAGE,
+            )
+
+
+def answer_path_gate(arms: Sequence[Arm], allow_differs: Sequence[str] = ()) -> dict:
+    """G10: all arms must record identical answer-path configuration settings."""
+    validate_answer_path_waivers(allow_differs)
+
+    unrecorded = [
+        arm.label for arm in arms if not isinstance(arm.raw.get("configuration"), dict)
+    ]
+
+    refusing: List[str] = []
+    named_differing: List[str] = []
+    detail_parts: List[str] = []
+    not_refused: List[str] = []
+
+    for path in ANSWER_PATH_REFUSED:
+        rendered: Dict[str, str] = {}
+        for arm in arms:
+            cfg = arm.raw.get("configuration")
+            if not isinstance(cfg, dict):
+                rendered[arm.label] = "not recorded"
+            else:
+                rendered[arm.label] = _show_setting(recorded_setting(cfg, path))
+        shown = ", ".join(f"{label}={v}" for label, v in rendered.items())
+        detail_parts.append(f"{path}: {shown}")
+        if len(set(rendered.values())) > 1 or unrecorded:
+            if path in allow_differs:
+                named_differing.append(path)
+                not_refused.append(f"{path}: {shown} (waived by design)")
+            else:
+                refusing.append(f"{path}: {shown}")
+
+    for path in ANSWER_PATH_REPORTED:
+        rendered_r: Dict[str, str] = {}
+        for arm in arms:
+            cfg = arm.raw.get("configuration")
+            if not isinstance(cfg, dict):
+                rendered_r[arm.label] = "not recorded"
+            else:
+                rendered_r[arm.label] = _show_setting(recorded_setting(cfg, path))
+        if len(set(rendered_r.values())) > 1:
+            shown_r = ", ".join(f"{label}={v}" for label, v in rendered_r.items())
+            detail_parts.append(f"{path} differs (reported, not refused): {shown_r}")
+            not_refused.append(f"{path}: {shown_r} (reported, not refused)")
+
+    if refusing:
+        diffs = "\n".join(refusing + not_refused)
+        raise CompareError(
+            f"G10 refused: the arms recorded different answer-path settings:\n"
+            f"{diffs}\n"
+            "The context bound and the recursion limit decide which questions the "
+            "agent can finish, so the delta would measure the configuration rather "
+            "than the system under test. Re-run with one answer-path configuration, "
+            "or pass --config-differs-by-design <path> if the difference is the "
+            "treatment.",
+            EXIT_GATE,
+        )
+
+    if named_differing:
+        paths_str = ", ".join(
+            f"--config-differs-by-design {p}" for p in named_differing
+        )
+        return {
+            "id": "G10",
+            "name": "one answer path",
+            "status": f"OVERRIDDEN ({paths_str})",
+            "detail": "; ".join(detail_parts),
+        }
+
+    return {
+        "id": "G10",
+        "name": "one answer path",
+        "status": "pass",
+        "detail": "; ".join(detail_parts),
     }
 
 
@@ -2440,6 +2573,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="allow unequal or unrecorded corpus fingerprints (Procedure B)",
     )
     parser.add_argument(
+        "--config-differs-by-design",
+        action="append",
+        default=[],
+        metavar="DOTTED.PATH",
+        help=(
+            "waive G10 for the named answer-path setting "
+            "(accepted: services.chat_app.context_editing, "
+            "services.chat_app.recursion_limit); "
+            "repeatable; prints both values and marks the G10 row OVERRIDDEN"
+        ),
+    )
+    parser.add_argument(
         "--ignore-config-divergence",
         action="store_true",
         help="continue despite a non-empty divergence_from_selected_file",
@@ -2672,6 +2817,7 @@ def parse_qa_run_specs(specs: Sequence[str], arms: Sequence[Arm]) -> Dict[str, d
 
 def run(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
+    validate_answer_path_waivers(args.config_differs_by_design)
     arms = load_arms(args.specs)
     if len(arms) < 2:
         raise CompareError(
@@ -2699,6 +2845,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         },
         corpus_gate(arms, args.corpus_differs_by_design),
         divergence_gate(arms, args.ignore_config_divergence),
+        answer_path_gate(arms, args.config_differs_by_design),
     ]
 
     # The default anchors file is tracked in the repository. If it is absent the

@@ -529,7 +529,7 @@ pre-reg that the corpora differ by design. Worked example:
 
 ### Procedure C: compare two arms
 
-`scripts/benchmarking/compare_runs.py` does this. It implements G3–G8 in one
+`scripts/benchmarking/compare_runs.py` does this. It implements G3–G10 in one
 tested place, so a comparison cannot skip a gate by accident:
 
 ```bash
@@ -547,6 +547,7 @@ it is compared against the first. `path@2` picks one arm out of a sweep, and
 | `--noise-floor METRIC=SIGMA,...` | the noise floor from [Procedure A](#procedure-a-measure-the-noise-floor). Without one, nothing is ever called SIGNIFICANT (G2) |
 | `--noise-runs FILE ...` | measure sigma here instead: every arm of every file is one replicate, and sigma is the standard deviation of the **recomputed** means (needs two or more). Replicates face the same bank, corpus, code/config identity and divergence checks as the arms, and sigma is measured over the *same* questions the paired table uses — sigma *is* the G7 threshold, so a stale or foreign replicate would move the bar rather than describe it |
 | `--corpus-differs-by-design` | the only way past the G3 corpus gate; prints both fingerprints and the Procedure B warning |
+| `--config-differs-by-design DOTTED.PATH` | the only way past the G10 answer-path gate for one named setting; accepts only `services.chat_app.context_editing` and `services.chat_app.recursion_limit`; repeatable; prints both values and marks the row OVERRIDDEN; never hides the difference |
 | `--ignore-config-divergence` | the only way past a non-empty `divergence_from_selected_file` |
 | `--anchors PATH` | the anchors file (default `examples/benchmarking/anchor_questions.json`). Required: the default is tracked, so a missing file means a broken checkout rather than a run without anchors. For a deliberately anchor-free comparison, point it at a file holding `[]` |
 | `--include-anchors-in-bank` | average the five anchors into the bank aggregates. Off by default — see [Gap 3](#gap-3-anchors-are-averaged-into-the-bank-aggregates) |
@@ -575,6 +576,15 @@ files are.
   questions against two of them even when it started and finished on the same
   one. `--corpus-differs-by-design` continues and prints the Procedure B
   warning; it does not make the arms comparable.
+- **The arms recorded different answer-path settings, or an arm recorded no
+  `configuration` at all** — the bound (`services.chat_app.context_editing`)
+  and the limit (`services.chat_app.recursion_limit`) decide which questions the
+  agent can finish, so a delta between arms set up differently does not measure
+  what it claims to measure (G10). In the 2026-09-19 case, 6 of 109 questions
+  were lost because the treatment arm had a lower recursion limit. To waive one
+  setting, use `--config-differs-by-design DOTTED.PATH`; both values are still
+  printed. `services.benchmarking.agent_md_file` is reported rather than
+  refused — prompt arms vary it on purpose.
 - **`divergence_from_selected_file` is non-empty** — the run did not use the
   settings you selected (Procedure E), so its scores belong to neither arm.
 
@@ -849,7 +859,8 @@ pointing at it still lands somewhere truthful.
 `scripts/benchmarking/compare_runs.py` exists. It refuses to run when the
 question sets differ (G4, with no override), when the corpus fingerprints differ
 or were never recorded (G3), or when `divergence_from_selected_file` is non-empty
-(Procedure E); and it prints the paired table, the slices, and the anchor
+(Procedure E), or when the arms recorded different answer-path settings (G10);
+and it prints the paired table, the slices, and the anchor
 pass/fail block. See [Procedure C](#procedure-c-compare-two-arms).
 
 Two limits are worth stating rather than discovering:
