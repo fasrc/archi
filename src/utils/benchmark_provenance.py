@@ -35,6 +35,7 @@ run?" without either source still existing. ``code_version`` and
 import hashlib
 import json
 import os
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlsplit, urlunsplit
@@ -727,3 +728,56 @@ def reconstruct_version_stamp(
             "key_settings": settings_at_paths(recorded_config, KEY_SETTING_PATHS),
         },
     }
+
+
+# Constructor kwargs that name the model, per embedding class (base-config.yaml).
+_MODEL_KWARGS = ("model_name", "model")
+
+
+@dataclass(frozen=True)
+class RetrievalIdentity:
+    """What a run searched: the collection tag and the model behind its vectors.
+
+    ``embedding_name`` is the config key of the embedding class, and it does not
+    change when #216 swaps the model: only ``embedding_model`` does. A field is
+    ``None`` when the config does not say.
+    """
+
+    collection: Optional[str]
+    embedding_name: Optional[str]
+    embedding_model: Optional[str]
+
+    def as_dict(self) -> Dict[str, Optional[str]]:
+        return asdict(self)
+
+
+def retrieval_identity(config: Any) -> RetrievalIdentity:
+    """Derive the retrieval identity from a config dict, with no connection.
+
+    The collection formula is the one ``VectorstoreConnector`` uses, so the value
+    equals the tag the search filters on. The model is the class's model kwarg
+    (``model_name`` for HuggingFace, ``model`` for OpenAI), else the class name.
+    The embedding class is never imported, so a recorded
+    ``running_configuration`` is enough input.
+    """
+    data_manager = _as_mapping((_as_mapping(config) or {}).get("data_manager"))
+    if data_manager is None:
+        return RetrievalIdentity(None, None, None)
+    embedding_name = data_manager.get("embedding_name")
+    collection_name = data_manager.get("collection_name")
+    collection = (
+        f"{collection_name}_with_{embedding_name}"
+        if collection_name is not None and embedding_name is not None
+        else None
+    )
+    class_map = _as_mapping(data_manager.get("embedding_class_map")) or {}
+    entry = _as_mapping(class_map.get(embedding_name)) or {}
+    kwargs = _as_mapping(entry.get("kwargs")) or {}
+    model = next((kwargs[k] for k in _MODEL_KWARGS if kwargs.get(k)), None)
+    if model is None:
+        model = entry.get("class") or embedding_name
+    return RetrievalIdentity(
+        collection=collection,
+        embedding_name=embedding_name,
+        embedding_model=None if model is None else str(model),
+    )
