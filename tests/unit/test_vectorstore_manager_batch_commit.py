@@ -155,3 +155,95 @@ def test_add_to_postgres_commits_every_25_files(monkeypatch):
     assert fake_conn.commit.call_count == 2
     # All documents are marked embedding at start of run.
     assert catalog.update_ingestion_status.call_count >= 26
+
+
+def _tagging_config(embedding_name="HuggingFaceEmbeddings", kwargs=None):
+    return {
+        "stemming": {"enabled": False},
+        "collection_name": "fasrc",
+        "embedding_name": embedding_name,
+        "embedding_class_map": {
+            embedding_name: {
+                "class": embedding_name,
+                "kwargs": {"model_name": "Qwen/Q"} if kwargs is None else kwargs,
+            }
+        },
+    }
+
+
+def _flat_chunk_metadata(monkeypatch, data_manager_config):
+    import json
+
+    manager = VectorStoreManager.__new__(VectorStoreManager)
+    manager.parallel_workers = 1
+    manager.collection_name = "fasrc_with_HuggingFaceEmbeddings"
+    manager.hierarchical_chunking = False
+    manager._data_manager_config = data_manager_config
+    manager._pg_config = {"host": "localhost"}
+    catalog = MagicMock()
+    catalog.get_document_id.return_value = 1
+    catalog.get_metadata_for_hash.return_value = {}
+    manager._catalog = catalog
+    split_doc = SimpleNamespace(page_content="hello world", metadata={})
+    manager.text_splitter = SimpleNamespace(split_documents=lambda docs: [split_doc])
+    manager.embedding_model = SimpleNamespace(
+        embed_documents=lambda chunks: [[0.1, 0.2, 0.3] for _ in chunks]
+    )
+    manager.loader = lambda _path: SimpleNamespace(load=lambda: [split_doc])
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = MagicMock()
+    fake_conn.cursor.return_value.__exit__.return_value = False
+    written = []
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras,
+        "execute_values",
+        lambda cursor, sql, rows, *a, **k: written.extend(rows),
+    )
+    monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
+    monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
+
+    manager._add_to_postgres({"hash-0": "/tmp/file-0.txt"})
+
+    metadatas = []
+    for row in written:
+        for value in row:
+            if isinstance(value, str) and value.startswith("{"):
+                metadatas.append(json.loads(value))
+    assert metadatas, written
+    return metadatas
+
+
+def test_flat_chunks_carry_the_embedding_model(monkeypatch):
+    for metadata in _flat_chunk_metadata(monkeypatch, _tagging_config()):
+        assert metadata["embedding_model"] == "Qwen/Q"
+        assert metadata["collection"] == "fasrc_with_HuggingFaceEmbeddings"
+
+
+def test_a_class_without_a_model_kwarg_tags_the_class_name(monkeypatch):
+    config = _tagging_config("FakeEmbeddings", kwargs={})
+    for metadata in _flat_chunk_metadata(monkeypatch, config):
+        assert metadata["embedding_model"] == "FakeEmbeddings"
+
+
+def test_fetch_collection_passes_the_configured_model(monkeypatch):
+    built = {}
+
+    class FakeStore:
+        def __init__(self, **kwargs):
+            built.update(kwargs)
+
+        def count(self):
+            return 0
+
+    monkeypatch.setattr(manager_module, "PostgresVectorStore", FakeStore)
+    manager = VectorStoreManager.__new__(VectorStoreManager)
+    manager._data_manager_config = _tagging_config()
+    manager._pg_config = {"host": "localhost"}
+    manager.embedding_model = object()
+    manager.collection_name = "fasrc_with_HuggingFaceEmbeddings"
+    manager.distance_metric = "cosine"
+
+    manager.fetch_collection()
+
+    assert built["embedding_model"] == "Qwen/Q"

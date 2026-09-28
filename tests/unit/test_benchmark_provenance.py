@@ -501,3 +501,35 @@ def test_identity_collection_equals_the_connector_collection(monkeypatch):
 
     assert connector.collection_name == retrieval_identity(config).collection
     assert connector.embedding_model.kwargs == {"model_name": "m"}
+
+
+def test_the_connector_passes_the_configured_model_to_the_store(monkeypatch):
+    from src.archi.utils import vectorstore_connector as connector_module
+
+    built = {}
+
+    class FakeStore:
+        def __init__(self, **kwargs):
+            built.update(kwargs)
+
+        def count(self):
+            return 0
+
+    monkeypatch.setattr(
+        connector_module.ConfigService,
+        "_resolve_embedding_classes",
+        staticmethod(
+            lambda class_map: {
+                name: {**entry, "class": lambda **kw: object()}
+                for name, entry in class_map.items()
+            }
+        ),
+    )
+    monkeypatch.setattr(connector_module, "read_secret", lambda name: "secret")
+    monkeypatch.setattr(connector_module, "PostgresVectorStore", FakeStore)
+    config = _identity_config("HuggingFaceEmbeddings", {"model_name": "Qwen/Q"})
+    config["services"] = {"postgres": {}}
+
+    connector_module.VectorstoreConnector(config).get_vectorstore()
+
+    assert built["embedding_model"] == "Qwen/Q"

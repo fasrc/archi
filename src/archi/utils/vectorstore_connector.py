@@ -1,4 +1,5 @@
 from src.data_manager.vectorstore.postgres_vectorstore import PostgresVectorStore
+from src.utils.benchmark_provenance import retrieval_identity
 from src.utils.config_service import ConfigService
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
@@ -66,6 +67,7 @@ class VectorstoreConnector:
             embedding_function=self.embedding_model,
             collection_name=self.collection_name,
             distance_metric=self.distance_metric,
+            embedding_model=retrieval_identity(self.config).embedding_model,
         )
 
         count = vectorstore.count()

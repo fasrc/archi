@@ -22,10 +22,10 @@
 
 ## 4. Chunk embedding-model tag at ingest (D4)
 
-- [ ] 4.1 `model: sonnet` — Write failing unit tests in the data-manager test module: flat write site sets `metadata["embedding_model"]`; hierarchical write site sets it on children and parents; a class with no model kwarg yields the class name
-- [ ] 4.2 `model: sonnet` — Implement the tag at `manager.py` flat site (`entry_metadata`) and hierarchical site (`base_metadata`) through `retrieval_identity(self._data_manager_config-bearing config).embedding_model`
-- [ ] 4.3 `model: sonnet` — Write failing unit tests for `PostgresVectorStore`: `embedding_model` constructor argument; default derived from the embedding function's `model_name` or `model` attribute, else its class name; `add_texts()` writes `metadata["embedding_model"]` next to `collection`
-- [ ] 4.4 `model: sonnet` — Implement the constructor argument and the `add_texts()` tag in `postgres_vectorstore.py`; pass `retrieval_identity(...).embedding_model` from both construction sites (`vectorstore_connector.py:64`, `manager.py:248`)
+- [x] 4.1 `model: sonnet` — Write failing unit tests in the data-manager test module: flat write site sets `metadata["embedding_model"]`; hierarchical write site sets it on children and parents; a class with no model kwarg yields the class name
+- [x] 4.2 `model: sonnet` — Implement the tag at `manager.py` flat site (`entry_metadata`) and hierarchical site (`base_metadata`) through `retrieval_identity(self._data_manager_config-bearing config).embedding_model`
+- [x] 4.3 `model: sonnet` — Write failing unit tests for `PostgresVectorStore`: `embedding_model` constructor argument; default derived from the embedding function's `model_name` or `model` attribute, else its class name; `add_texts()` writes `metadata["embedding_model"]` next to `collection`
+- [x] 4.4 `model: sonnet` — Implement the constructor argument and the `add_texts()` tag in `postgres_vectorstore.py`; pass `retrieval_identity(...).embedding_model` from both construction sites (`vectorstore_connector.py:64`, `manager.py:248`)
 
 ## 5. Start guard and identity recording in the harness (D6, D1)
 
