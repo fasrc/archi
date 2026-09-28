@@ -287,3 +287,7 @@ def test_file_hash_helper_matches_the_digest(tmp_path):
     name, digest = _snapshot(tmp_path, [(f"{KB}/a", "A")])
     body = (tmp_path / name).read_bytes()
     assert digest == f"sha256:{hashlib.sha256(body).hexdigest()}"
+
+
+def test_a_v2_reading_is_usable():
+    assert cs._usable("sha256/v2:abc")

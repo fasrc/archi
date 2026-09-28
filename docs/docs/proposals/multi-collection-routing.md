@@ -130,11 +130,15 @@ The evaluation stack assumes one corpus per deployment, and one collection per c
 
 For the eval, the minimum changes are these:
 
-1. Record the searched collection name, and its embedding name, on every run and every arm.
+1. Record the searched collection name, its embedding name, and its embedding model (`model_name`) on every run and every arm. The embedding name is not enough: #216 swaps the model and keeps the name.
 2. Limit the fingerprint queries to that collection (plus the untagged rows while they exist), start from every chunk that retrieval can return (including chunks with no document link), and hash the `collection` tag of each chunk.
 3. Stop a run before its first question if the collection has zero chunks.
 
 These three changes are independent of routing and are useful with one collection too. They are tracked in [#570](https://github.com/fasrc/archi/issues/570), and listed as tasks 17-19 below.
+
+Do them in this order: 17 (backfill first), 19, 18, then re-pin. Task 17 includes a backfill that stamps the identity on existing reports, so the old baselines carry it with no re-run. Task 18 changes the fingerprint to v2, and a v1 pin never equals a v2 digest, so the campaign re-pins once, after the deploy.
+
+The #411 orphan-parent cleanup does not move the v2 fingerprint. Fingerprint v2 hashes only the parent nodes that an in-scope chunk references, and an orphan parent has no such chunk.
 
 ---
 

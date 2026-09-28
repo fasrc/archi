@@ -21,6 +21,8 @@
 #     legitimate re-pin is the closing baseline (plan §6 step 7): --new-corpus is honoured
 #     only for arm 00, only when the stack's latest ragas-start was a fresh deploy (not a
 #     re-run or re-seed), and the old and new fingerprints are both recorded in the row.
+#     A pin and readings of different fingerprint versions (sha256: vs sha256/v2:) are
+#     refused with a version reason, --new-corpus or not: the stack needs a re-pin.
 #   - the arm YAML's fixed factors differ from the campaign lock, the YAML is not the locked
 #     file for that arm label, or the stack was deployed under a different lock,
 #   - no ragas-start row exists for the stack (nothing ties the artifact to a lock or a
@@ -28,7 +30,8 @@
 # On run 1 of a stack it writes the corpus pin every later re-run and re-seed checks.
 # Appends: fingerprint, snapshot id, config + code digests, ingest_wall_seconds, live
 # document and chunk counts (from the stack's Postgres), per-metric scored counts
-# recomputed from finite values (#279), and the degraded-row count.
+# recomputed from finite values (#279), the degraded-row count, and the searched
+# collection and embedding model from the artifact's retrieval_identity (null if unrecorded).
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -171,7 +174,11 @@ if div:
     print(f"REFUSED: the run did not use the selected settings — divergence_from_selected_file = {div}", file=sys.stderr); sys.exit(2)
 fp = arm.get("corpus_fingerprint")
 fp_before = arm.get("corpus_fingerprint_before")
-def usable(x): return isinstance(x, str) and x.startswith("sha256:")
+# The digest prefix names its version (v1 "sha256:", v2 "sha256/v2:"); readings of two
+# versions never compare equal, so a mix is a version finding, not a corpus change.
+def version(x):
+    return next((v for v in ("sha256/v2:", "sha256:") if isinstance(x, str) and x.startswith(v)), None)
+def usable(x): return version(x) is not None
 if not usable(fp) or not usable(fp_before):
     print(f"REFUSED: the artifact lacks usable endpoint fingerprints (before={fp_before!r}, after={fp!r})", file=sys.stderr); sys.exit(2)
 # The harness samples the corpus at both ends of the arm. Questions scored across two
@@ -182,6 +189,8 @@ pin_file, run = os.environ["FM_PIN_FILE"], int(os.environ["FM_RUN"])
 previous_pin = None
 if os.path.exists(pin_file):
     pin = open(pin_file).read().strip()
+    if version(pin) != version(fp):
+        print(f"REFUSED: the fingerprint versions differ (pin {pin} is {version(pin)!r}, the artifact's readings are {version(fp)!r}); a pin of one version never equals a reading of another — re-pin the stack under {version(fp)!r}", file=sys.stderr); sys.exit(2)
     if fp != pin:
         if os.environ["FM_NEW_CORPUS"] != "true":
             print(f"REFUSED: fingerprint {fp} != pin {pin} for this stack (a re-pin is only the closing baseline: arm 00, fresh deploy, --new-corpus)", file=sys.stderr); sys.exit(2)
@@ -202,6 +211,8 @@ rows = arm.get("single_question_results") or {}
 def finite(x): return isinstance(x, (int, float)) and math.isfinite(x)
 metrics = sorted({k for r in rows.values() for k in r if k in ("answer_relevancy", "faithfulness", "context_precision", "context_recall", "answer_correctness")})
 scored = {m: f"{sum(1 for r in rows.values() if r.get('status', 'ok') == 'ok' and finite(r.get(m)))} of {len(rows)}" for m in metrics}
+identity = arm.get("retrieval_identity")
+identity = identity if isinstance(identity, dict) else {}
 def num(s):
     try: return int(s)
     except (TypeError, ValueError): return None
@@ -210,6 +221,7 @@ entry = {
     "finished": os.environ["FM_FINISHED"], "artifact": p,
     "arm_config": os.environ["FM_ARM_YAML"], "configuration_file": arm.get("configuration_file"),
     "corpus_fingerprint": fp, "corpus_fingerprint_before": fp_before, "fingerprint_source": "artifact", "repinned_from": previous_pin,
+    "collection": identity.get("collection"), "embedding_model": identity.get("embedding_model"),
     "lock_sha256": os.environ["FM_LOCK_SHA"],
     "corpus_snapshot_id": (d.get("metadata") or {}).get("corpus_snapshot_id"),
     "config_digest": cv.get("digest"), "code_digest": ((d.get("metadata") or {}).get("code_version") or {}).get("digest"),

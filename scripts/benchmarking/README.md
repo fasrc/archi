@@ -129,9 +129,23 @@ One thin wrapper per step of the #396 campaign protocol
   `divergence_from_selected_file` is non-empty, and a later run whose fingerprint
   drifted; writes the corpus pin on run 1. The pin moves only for the closing baseline
   (`--new-corpus`: arm 00, after a fresh deploy, old pin recorded). Every wrapper refuses
-  an arm label that does not match the YAML's own `name`. The live fingerprint is the
-  harness's own routine (`CORPUS_STATE_QUERY` + `corpus_fingerprint`), run inside the
-  data-manager container.
+  an arm label that does not match the YAML's own `name`. The live fingerprint comes from
+  one shared routine in `src/utils/benchmark_provenance.py`: `container_corpus_fingerprint`,
+  run inside the stack's data-manager container, calls `live_corpus_fingerprint`, which the
+  harness, the QA workflow, and `category_census.py` also use. So every reader computes one
+  digest. The digest is fingerprint v2, with the prefix `sha256/v2:`. It covers only the
+  collection the stack's config searches (plus untagged rows), and only rows retrieval can
+  reach: every chunk in scope (chunks with no document link too), the documents that own
+  them, and only the parent nodes a chunk references. It hashes chunk text, the
+  `collection` tag, a flag for a `NULL` vector, and the citation fields (URL, display name,
+  source type, title, filename). It leaves out `size_bytes`. It is model-neutral: a
+  re-embed of the same text with another model does not move it. The model is recorded
+  beside it as `retrieval_identity.embedding_model`, and a start guard checks it against
+  the chunk tags. The guard stops a run before its first question if the collection has no
+  chunk, no chunk with a vector, or a chunk tagged with another model. A v1 pin
+  (`sha256:`) never equals a v2 digest, so re-pin once after the deploy that ships v2: run
+  one baseline arm and let `archive_run.sh` record the new pin. `category_census.py` now
+  takes `--collection` (the searched collection tag) and scopes both of its readings to it.
 - **`test_feature_matrix_wrappers.sh`** — hermetic 45-check self-test (stubbed
   `docker`/`archi`, temp stack), run by `scripts/gate.sh`.
 

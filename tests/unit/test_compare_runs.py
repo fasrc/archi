@@ -749,6 +749,196 @@ def test_unavailable_fingerprint_counts_as_unrecorded(_artifact):
     assert cr.load_arms([str(path)])[0].corpus_fingerprint is None
 
 
+# --- #570: fingerprint version, collection, and embedding gates -------------
+
+
+def _identity(
+    model="model-a", *, collection="docs_with_HF", source="chunks", untagged=0
+):
+    """A ``retrieval_identity`` block shaped like ``retrieval_record``."""
+    return {
+        "collection": collection,
+        "embedding_name": "HuggingFaceEmbeddings",
+        "embedding_model": model,
+        "chunk_count": 10,
+        "usable_chunk_count": 10,
+        "untagged_chunk_count": untagged,
+        "embedding_model_source": source,
+    }
+
+
+def _with_identity(path, identity):
+    """Record ``identity`` on the single arm of an artifact written by the fixture."""
+    document = json.loads(path.read_text())
+    document["benchmarking_results"][0]["retrieval_identity"] = identity
+    path.write_text(json.dumps(document))
+    return str(path)
+
+
+def _config_for(model):
+    """A recorded ``configuration`` whose data manager names ``model``."""
+    return {
+        "data_manager": {
+            "collection_name": "docs",
+            "embedding_name": "HF",
+            "embedding_class_map": {
+                "HF": {
+                    "class": "HuggingFaceEmbeddings",
+                    "kwargs": {"model_name": model},
+                }
+            },
+        }
+    }
+
+
+@pytest.mark.parametrize("flag", [[], ["--corpus-differs-by-design"]])
+def test_a_v1_fingerprint_against_a_v2_one_is_refused_with_a_version_reason(
+    _artifact, capsys, flag
+):
+    # A v1 and a v2 digest never match, whatever the corpus. Reporting the pair
+    # as "different corpora" would invite the G3 override for what is really a
+    # stale pin.
+    base = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256:aaa"))
+    treat = str(_artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:aaa"))
+
+    code = cr.main([base, treat, *flag])
+
+    assert code == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "fingerprint versions differ" in err
+    assert "re-pin" in err
+    assert "G3" not in err
+
+
+@pytest.mark.parametrize("allow", [False, True])
+def test_a_v1_noise_replicate_against_a_v2_baseline_is_refused_by_version(
+    _artifact, allow
+):
+    baseline = cr.load_arms(
+        [str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"))]
+    )[0]
+    one = _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:a")
+    stale = _artifact([_row("q1", faithfulness=0.7)], fingerprint="sha256:a")
+
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.noise_floor_from_runs(
+            [str(one), str(stale)], baseline=baseline, allow_corpus_differs=allow
+        )
+
+    assert excinfo.value.code == cr.EXIT_GATE
+    message = str(excinfo.value)
+    assert "fingerprint versions differ" in message
+    assert "re-pin" in message
+    assert "G3" not in message
+
+
+def test_the_g3_reason_names_both_collections_when_they_differ(_artifact, capsys):
+    base = _with_identity(
+        _artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"),
+        _identity(collection="docs_with_HF"),
+    )
+    treat = _with_identity(
+        _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:b"),
+        _identity(collection="wiki_with_HF"),
+    )
+
+    code = cr.main([base, treat])
+
+    assert code == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "G3" in err
+    assert "docs_with_HF" in err and "wiki_with_HF" in err
+
+
+def test_an_embedding_ab_with_verified_provenance_states_the_varied_factor(
+    _artifact, capsys
+):
+    # The digest is model-neutral: equal digests prove the text and collection
+    # were the same, and the verified identities prove which model each used.
+    base = _with_identity(
+        _artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"),
+        _identity("model-a"),
+    )
+    treat = _with_identity(
+        _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:a"),
+        _identity("model-b"),
+    )
+
+    assert cr.main([base, treat]) == cr.EXIT_OK
+
+    header = capsys.readouterr().out.split("## Provenance")[0]
+    assert "varied factor" in header.lower()
+    assert "embedding_model" in header
+    assert "model-a" in header and "model-b" in header
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        _identity("model-b", source="config (chunks untagged)", untagged=10),
+        _identity("model-b", source="chunks (3 untagged)", untagged=3),
+        None,
+    ],
+    ids=["config-untagged", "chunks-partly-untagged", "no-identity"],
+)
+@pytest.mark.parametrize("flag", [[], ["--corpus-differs-by-design"]])
+def test_an_embedding_difference_with_unverified_provenance_is_refused(
+    _artifact, capsys, identity, flag
+):
+    # Two runs over an untagged legacy collection can both have been served by
+    # one older model, whatever their configs say, so no flag admits this.
+    base = _with_identity(
+        _artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"),
+        _identity("model-a"),
+    )
+    treat_path = _artifact(
+        [_row("q1", faithfulness=0.6)],
+        name="treat.json",
+        fingerprint="sha256/v2:a",
+        configuration=_config_for("model-b"),
+    )
+    treat = (
+        str(treat_path) if identity is None else _with_identity(treat_path, identity)
+    )
+
+    code = cr.main([base, treat, *flag])
+
+    assert code == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "embedding provenance unverified" in err
+    assert "treat" in err
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    [_config_for("model-a"), {}],
+    ids=["config-names-the-same-model", "model-unknowable"],
+)
+def test_an_unrecorded_identity_without_an_embedding_difference_is_noted(
+    _artifact, capsys, configuration
+):
+    # Absent is unknowable, not unequal, as for corpus_unchanged_at_endpoints.
+    base = _with_identity(
+        _artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"),
+        _identity("model-a"),
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            name="treat.json",
+            fingerprint="sha256/v2:a",
+            configuration=configuration,
+        )
+    )
+
+    assert cr.main([base, treat]) == cr.EXIT_OK
+
+    out = capsys.readouterr().out
+    assert "retrieval_identity" in out
+    assert re.search(r"`treat`[^\n]*not recorded", out)
+    assert "varied factor" not in out.lower()
+
+
 # --- Procedure E: the divergence gate ----------------------------------------
 
 
@@ -3071,3 +3261,7 @@ def test_one_recorded_and_one_unrecorded_host_prints_no_warning(
     out = capsys.readouterr().out
     assert result == cr.EXIT_OK
     assert "host mismatch" not in out.lower()
+
+
+def test_recorded_accepts_a_v2_reading():
+    assert cr._recorded("sha256/v2:abc") == "sha256/v2:abc"

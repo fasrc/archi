@@ -54,6 +54,12 @@
 #   46. among ragas-start rows that share one UTC second, the LAST one is the run that started
 #   54. the fingerprint and category-map snippets call the shared v2 routines, never the harness
 #       source, and an image that predates the routine names it and says to rebuild
+#   55. archive_run.sh records the pin from an artifact whose two readings are equal sha256/v2: digests
+#   56. archive_run.sh refuses a sha256: pin against a sha256/v2: artifact with a version reason
+#   57. archive_run.sh copies collection and embedding_model from the artifact's retrieval_identity
+#       into the ledger row, and writes nulls when the artifact recorded none
+#   58. qa_arm.sh copies collection and embedding_model from the QA run manifest into the ledger
+#       row, and writes nulls when the manifest recorded none
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -93,6 +99,8 @@ cat > "$T/bin/archi" <<EOF
 printf '%s\n' "\$*" >> "$T/archi.calls"
 # like the real CLI, \`eval qa\` creates its --output-dir
 prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && mkdir -p "\$a"; prev="\$a"; done
+# the run manifest records the retrieval identity when the test provides one
+prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$a/manifest.json"; prev="\$a"; done
 # a corpus that drifts WHILE the QA run is in flight
 [ "\$1 \$2" = "eval qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
 exit 0
@@ -192,6 +200,7 @@ mk_arm "$T/arms/03-categorization-off.yaml" fm-03  sentence  true false false tr
 printf 'HUIT_API_KEY=x\n' > "$T/judge.env"
 
 artifact() { # $1 = path, $2 = divergence JSON, $3 = fingerprint, $4 = k in the recorded running configuration (default 5), $5 = fingerprint BEFORE the run (default = $3)
+  # FP_PREFIX (default sha256:) is the digest version prefix; IDENTITY (default null) is the recorded retrieval_identity
   cat > "$1" <<EOF
 {"metadata": {"corpus_snapshot_id": "snap-1", "code_version": {"digest": "sha256:code"}},
  "benchmarking_results": [{
@@ -201,7 +210,8 @@ artifact() { # $1 = path, $2 = divergence JSON, $3 = fingerprint, $4 = k in the 
      "stemming": {"enabled": false},
      "retrievers": {"hierarchical_rerank": {"enabled": true, "candidate_pool_size": 20, "num_documents_to_retrieve": ${4:-5}}}}},
    "config_version": {"digest": "sha256:cfg", "divergence_from_selected_file": $2},
-   "corpus_fingerprint": "sha256:$3", "corpus_fingerprint_before": "sha256:${5:-$3}", "corpus_unchanged_at_endpoints": $( [ "${5:-$3}" = "$3" ] && echo true || echo false ), "ingest_wall_seconds": 4321.0,
+   "retrieval_identity": ${IDENTITY:-null},
+   "corpus_fingerprint": "${FP_PREFIX:-sha256:}$3", "corpus_fingerprint_before": "${FP_PREFIX:-sha256:}${5:-$3}", "corpus_unchanged_at_endpoints": $( [ "${5:-$3}" = "$3" ] && echo true || echo false ), "ingest_wall_seconds": 4321.0,
    "total_results": {"aggregate_context_precision": 0.5, "context_precision_scored": "3 of 3", "aggregate_faithfulness": 0.6},
    "single_question_results": {
      "question_1": {"question": "q1", "status": "ok", "context_precision": 0.4, "faithfulness": 0.6, "time_elapsed": 10},
@@ -654,6 +664,49 @@ if [ "$OLD_RC" != 0 ] && printf '%s' "$OLD_OUT" | grep -q "no container_corpus_f
    && ! grep -q "service_benchmark.py\|CORPUS_STATE_QUERY\|CATEGORY_MAP_QUERY" "$HERE/lib.sh"; then
   ok "container snippets call the shared v2 routines and an old image says to rebuild"
 else notok "container snippets (rc=$OLD_RC: $OLD_OUT | $MAP_OUT)"; fi
+
+# 55 + 57: a fresh stack pins from an artifact whose two readings are equal v2 digests; the row carries the identity
+mkdir -p "$ARCHI_DIR/archi-fm-v2"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-v2
+FP_PREFIX=sha256/v2: IDENTITY='{"collection": "fasrc_with_HuggingFaceEmbeddings", "embedding_name": "HuggingFaceEmbeddings", "embedding_model": "all-MiniLM-L6-v2"}' \
+  artifact "$FM_OUT/benchmarking-fm-v2-20260903_000016.json" '[]' vvv 5
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-v2
+if [ "$RC" = 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-v2" 2>/dev/null)" = sha256/v2:vvv ] \
+   && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['corpus_fingerprint']=='sha256/v2:vvv' else 1)"; then
+  ok "archive records the pin from equal sha256/v2: readings"; else notok "archive v2 artifact (rc=$RC: $(cat "$T/stderr"))"; fi
+if "$FM_PYTHON" - "$FM_OUT/ledger.json" "$FM_OUT/benchmarking-fm-00-20260903_000002.json" <<'PY2'
+import json, sys
+rows = json.load(open(sys.argv[1]))
+e = rows[-1]
+assert e["kind"] == "ragas" and e["stack"] == "fm-v2", e
+assert e["collection"] == "fasrc_with_HuggingFaceEmbeddings" and e["embedding_model"] == "all-MiniLM-L6-v2", e
+old = [r for r in rows if r.get("artifact") == sys.argv[2]][0]   # check 6: the artifact recorded no identity
+assert "collection" in old and old["collection"] is None and "embedding_model" in old and old["embedding_model"] is None, old
+PY2
+then ok "archive copies collection and embedding_model into the ledger row, null when unrecorded"; else notok "archive ledger identity fields"; fi
+
+# 56: a v1 pin against a v2 artifact is refused with the version reason, not a corpus reason
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+FP_PREFIX=sha256/v2: artifact "$FM_OUT/benchmarking-fm-00-20260903_000017.json" '[]' def 5
+BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" 00 10 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 2 ] && grep -q "fingerprint versions differ" "$T/stderr" && [ "$(cat "$FM_OUT/corpus-pin-fm-00")" = sha256:def ] && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "archive refuses a sha256: pin against a sha256/v2: artifact with a version reason"; else notok "archive version mix (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 58: qa_arm copies the identity from the run manifest; a run with no manifest identity records nulls
+printf '{"retrieval_identity": {"collection": "fasrc_with_HuggingFaceEmbeddings", "embedding_name": "HuggingFaceEmbeddings", "embedding_model": "all-MiniLM-L6-v2"}}\n' > "$T/qa-identity"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/qa-identity"
+if [ "$RC" = 0 ] && "$FM_PYTHON" - "$FM_OUT/ledger.json" "$FM_OUT/qa/fm-00-arm00-r1" <<'PY2'
+import json, sys
+rows = json.load(open(sys.argv[1]))
+e = rows[-1]
+assert e["kind"] == "qa" and e["collection"] == "fasrc_with_HuggingFaceEmbeddings" and e["embedding_model"] == "all-MiniLM-L6-v2", e
+old = [r for r in rows if r.get("output_dir") == sys.argv[2]][0]   # check 38: no manifest identity
+assert "collection" in old and old["collection"] is None and "embedding_model" in old and old["embedding_model"] is None, old
+PY2
+then ok "qa_arm copies collection and embedding_model from the run manifest, null when unrecorded"; else notok "qa_arm ledger identity fields (rc=$RC: $(cat "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

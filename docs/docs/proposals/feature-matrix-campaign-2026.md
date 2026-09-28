@@ -325,7 +325,7 @@ time of day across arms where possible, and the ledger records start and end tim
 | Invariant | Gate | Check |
 |---|---|---|
 | Same questions in both arms | G4 | question text sets equal; no override |
-| Same corpus for a retrieval arm | G3 | `corpus_fingerprint` equal to the baseline pin. The wrappers compute the live fingerprint with the harness's own `CORPUS_STATE_QUERY` and `corpus_fingerprint` routine (documents, chunks, parent nodes; sha256), run inside the stack's data-manager container, so the pin taken from an artifact and the live check are one digest |
+| Same corpus for a retrieval arm | G3 | `corpus_fingerprint` equal to the baseline pin. The wrappers compute the live fingerprint with the shared `live_corpus_fingerprint` routine in `benchmark_provenance.py` (fingerprint v2, prefix `sha256/v2:`: scoped to the searched collection; its chunks, the documents that own them, and the parent nodes they reference), run inside the stack's data-manager container, so the pin taken from an artifact and the live check are one digest. A v1 pin never equals a v2 digest, so re-pin after the deploy that ships v2 |
 | Different corpus for an ingest arm is declared | G3 | `--corpus-differs-by-design`, with both fingerprints and the document/chunk counts printed |
 | The run used the selected settings | Procedure E | `divergence_from_selected_file` empty on every artifact |
 | Same code | Procedure E | `metadata.code_version.digest` equal across the campaign |

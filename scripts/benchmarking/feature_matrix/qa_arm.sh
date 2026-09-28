@@ -13,7 +13,8 @@
 #    otherwise yield a plausible QA record for the wrong configuration. Also proves the
 #    corpus still equals the stack's pin (the fingerprint the RAGAS runs were archived
 #    with), else refuses: a drifted corpus is not comparable. The ledger entry records the
-#    rendered config's sha256 and the pinned corpus fingerprint.
+#    rendered config's sha256, the pinned corpus fingerprint, and the collection and
+#    embedding model from the run manifest's retrieval_identity (null if unrecorded).
 # 1. Writes a secret-free agent config from the stack's rendered configs/config.yaml with
 #    services.chat_app.{agent_class,default_provider,default_model} overwritten from
 #    services.benchmarking.{agent_class,provider,model}. An evaluate stack renders the
@@ -25,6 +26,20 @@
 # Never run concurrently with a RAGAS run on the same stack: latency would be shared.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+# The ledger fragment "collection":…,"embedding_model":… copied from the QA run manifest's
+# retrieval_identity; null values when the manifest is missing or recorded no identity.
+qa_identity() { # $1 = QA output dir
+  FM_QA_DIR="$1" "$FM_PYTHON" -c '
+import json, os
+try:
+    m = json.load(open(os.path.join(os.environ["FM_QA_DIR"], "manifest.json")))
+except (OSError, ValueError):
+    m = None
+i = m.get("retrieval_identity") if isinstance(m, dict) else None
+i = i if isinstance(i, dict) else {}
+print(json.dumps({"collection": i.get("collection"), "embedding_model": i.get("embedding_model")})[1:-1])'
+}
 
 # Sweep mode: qa_arm.sh --sweep <sweep_dir> --stack <name> --arm <prompt-stem> [--run N]
 # One arm of a locked prompt sweep, with that arm's own prompt, on a COPY of the prepared
@@ -75,8 +90,8 @@ if [ "${1:-}" = --sweep ]; then
   fm_write_map_readings "$OUT_DIR" "$MAP_START" "$MAP_END"
   AFTER="$(fm_fingerprint "$STACK")"
   [ "$AFTER" = "$FINGERPRINT" ] || fm_die "corpus changed during the QA run (pin $FINGERPRINT, now $AFTER); output kept at $OUT_DIR but NOT recorded — the run is void"
-  fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","sweep":true,"stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","spec":"%s","spec_sha256":"%s","corpus_fingerprint":"%s","category_map_sha256_start":"%s","category_map_sha256_end":"%s","lock_sha256":"%s","code_sha":"%s"}' \
-    "$STEM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$SPEC" "$(fm_sha256 "$SPEC")" "$FINGERPRINT" "$MAP_START" "$MAP_END" "$(fm_sha256 "$LOCK")" "$(fm_code_sha)")"
+  fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","sweep":true,"stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","spec":"%s","spec_sha256":"%s","corpus_fingerprint":"%s","category_map_sha256_start":"%s","category_map_sha256_end":"%s","lock_sha256":"%s","code_sha":"%s",%s}' \
+    "$STEM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$SPEC" "$(fm_sha256 "$SPEC")" "$FINGERPRINT" "$MAP_START" "$MAP_END" "$(fm_sha256 "$LOCK")" "$(fm_code_sha)" "$(qa_identity "$OUT_DIR")")"
   fm_log "done; join with: compare_runs.py <artifact> --qa-run $STEM=$OUT_DIR"
   exit 0
 fi
@@ -154,7 +169,7 @@ MAP_END="$(fm_category_map_digest "$STACK")"
 fm_write_map_readings "$OUT_DIR" "$MAP_START" "$MAP_END"
 AFTER="$(fm_fingerprint "$STACK")"
 [ "$AFTER" = "$FINGERPRINT" ] || fm_die "corpus changed during the QA run (pin $FINGERPRINT, now $AFTER); output kept at $OUT_DIR but NOT recorded — the run is void"
-fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s","fingerprint_source":"live-stack-equals-pin","dataset_sha256":"%s","profile_sha256":"%s","spec_sha256":"%s","lock_sha256":"%s","code_sha":"%s","category_map_sha256_start":"%s","category_map_sha256_end":"%s"}' \
+fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s","fingerprint_source":"live-stack-equals-pin","dataset_sha256":"%s","profile_sha256":"%s","spec_sha256":"%s","lock_sha256":"%s","code_sha":"%s","category_map_sha256_start":"%s","category_map_sha256_end":"%s",%s}' \
   "$ARM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$DATASET" "$PROFILE" "$SPEC" "$YAML" "$CFG_SHA" "$FINGERPRINT" \
-  "$(fm_sha256 "$DATASET")" "$(fm_sha256 "$PROFILE")" "$(fm_sha256 "$SPEC")" "$(fm_lock_sha)" "$(fm_code_sha)" "$MAP_START" "$MAP_END")"
+  "$(fm_sha256 "$DATASET")" "$(fm_sha256 "$PROFILE")" "$(fm_sha256 "$SPEC")" "$(fm_lock_sha)" "$(fm_code_sha)" "$MAP_START" "$MAP_END" "$(qa_identity "$OUT_DIR")")"
 fm_log "done; report: $OUT_DIR/report.md  summary: $OUT_DIR/summary.json"
