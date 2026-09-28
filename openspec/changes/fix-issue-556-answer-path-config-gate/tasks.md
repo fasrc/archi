@@ -207,7 +207,7 @@
 
 ## 5. Publish
 
-- [ ] 5.1 Push the branch and open the PR. The branch was cut with `checkout -b`, so its
+- [x] 5.1 Push the branch and open the PR. The branch was cut with `checkout -b`, so its
       upstream is `origin/dev` — push with
       `git push -u origin fix/issue-556-answer-path-config-gate` to repoint it. Confirm the
       push landed on **fasrc/archi**, not a fork:
