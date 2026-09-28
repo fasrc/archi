@@ -92,11 +92,14 @@ login:
 # the container can authenticate with whatever RUN_FLAGS carries (the forwarded
 # CLAUDE_CODE_OAUTH_TOKEN, else the `make login` credential in $(CLAUDE_DIR)). A
 # dead login exits non-zero here, so a systemd ExecStartPre that runs this stops
-# the unit BEFORE a nightly drain spends its slot on 401s. `--bare` skips hooks,
-# plugins and MCP so the probe costs one tiny model call and nothing else. Only
-# `--bare` and `-p` are used: both are in the image's claude 2.1.173 (`claude
-# --help`, 2026-09-28), while `--max-turns` is NOT — an unknown flag would refuse
-# every night as a usage error, so do not add flags without checking that help.
+# the unit BEFORE a nightly drain spends its slot on 401s. Deliberately NOT
+# `--bare`: bare mode skips the CLAUDE_CODE_OAUTH_TOKEN auth path and answers
+# "Not logged in · Please run /login" even with a valid token (measured 2026-09-28
+# on the image's claude 2.1.173 and the host's 2.1.283), which is exactly the
+# message an expired login prints — a probe that used it reported a healthy token
+# as dead. Only `-p` is used; it is in 2.1.173 (`claude --help`), while
+# `--max-turns` is NOT — an unknown flag would refuse every night as a usage
+# error, so do not add flags without checking that help first.
 # Bounded: a hung pull, container start or API call must not hold the unit for
 # its whole TimeoutStartSec (5h), so `timeout` kills the client after
 # AUTH_CHECK_TIMEOUT seconds and the named container is removed if it lingers.
@@ -105,7 +108,7 @@ auth-check: check-base
 	@mkdir -p $(CLAUDE_DIR)
 	@if out=$$(timeout -k 10 $(AUTH_CHECK_TIMEOUT) \
 	    $(RUNTIME) run --rm $(RUN_FLAGS) --name $(IMAGE)-auth-check $(IMAGE) \
-	    claude --bare -p "Reply with exactly: OK" 2>&1); then \
+	    claude -p "Reply with exactly: OK" 2>&1); then \
 	  echo "auth-check: the loop container can authenticate to Claude."; \
 	else \
 	  rc=$$?; $(RUNTIME) rm -f $(IMAGE)-auth-check >/dev/null 2>&1 || true; \
