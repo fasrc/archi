@@ -17,6 +17,14 @@ CLAUDE_DIR := $(WORKSPACE)/.ralph/claude-home
 # Not needed when RALPH_REVIEW_GATE=0 (offline loop).
 export GH_TOKEN ?= $(shell gh auth token 2>/dev/null)
 
+# Claude auth for the container, two ways. PREFERRED: CLAUDE_CODE_OAUTH_TOKEN, a
+# one-year subscription token from `claude setup-token`, kept in the unattended
+# unit's EnvironmentFile and forwarded here exactly like GH_TOKEN (bare `-e NAME`:
+# never inlined, not passed when unset). FALLBACK: the interactive `make login`
+# credential in $(CLAUDE_DIR), which stopped refreshing after a few weeks twice
+# (2026-08-24, 2026-09-27) and killed every nightly turn with a 401 until a human
+# logged in again. `make auth-check` probes whichever is in effect.
+#
 # --userns=keep-id is PODMAN-SPECIFIC (host UID/GID mapping). If RUNTIME=docker,
 # drop it or replace with `--user $$(id -u):$$(id -g)`.
 RUN_FLAGS := \
@@ -24,17 +32,19 @@ RUN_FLAGS := \
   -e RALPH_MODEL \
   -e RALPH_TASKS \
   -e GH_TOKEN \
+  -e CLAUDE_CODE_OAUTH_TOKEN \
   -e GH_REPO=fasrc/archi \
   -v $(WORKSPACE):/workspace \
   -v $(CLAUDE_DIR):/home/claude/.claude
 
-.PHONY: help hooks build check-base login loop loop-headless loop-once shell clean
+.PHONY: help hooks build check-base login auth-check loop loop-headless loop-once shell clean
 
 help:
 	@echo "Targets:"
 	@echo "  hooks      install the pre-commit gate hook (git config core.hooksPath hooks)"
 	@echo "  build      build $(IMAGE) FROM $(BASE_IMAGE) (build the base first)"
-	@echo "  login      one-time: authenticate Claude Code"
+	@echo "  login      fallback: interactive Claude login into $(CLAUDE_DIR) (prefer CLAUDE_CODE_OAUTH_TOKEN from 'claude setup-token')"
+	@echo "  auth-check probe that the container can authenticate to Claude (no TTY; exit 1 on a dead login)"
 	@echo "  loop       run the Ralph Loop in the foreground (Ctrl-C to stop)"
 	@echo "  loop-once  run exactly one turn"
 	@echo "  shell      interactive shell in the container"
@@ -77,6 +87,37 @@ check-base:
 login:
 	@mkdir -p $(CLAUDE_DIR)
 	$(RUNTIME) run --rm -it $(RUN_FLAGS) --name $(IMAGE)-login $(IMAGE) claude login
+
+# Pre-run auth probe, fail-closed and TTY-free: one minimal `--print` call proves
+# the container can authenticate with whatever RUN_FLAGS carries (the forwarded
+# CLAUDE_CODE_OAUTH_TOKEN, else the `make login` credential in $(CLAUDE_DIR)). A
+# dead login exits non-zero here, so a systemd ExecStartPre that runs this stops
+# the unit BEFORE a nightly drain spends its slot on 401s. `--bare` skips hooks,
+# plugins and MCP so the probe costs one tiny model call and nothing else. Only
+# `--bare` and `-p` are used: both are in the image's claude 2.1.173 (`claude
+# --help`, 2026-09-28), while `--max-turns` is NOT — an unknown flag would refuse
+# every night as a usage error, so do not add flags without checking that help.
+# Bounded: a hung pull, container start or API call must not hold the unit for
+# its whole TimeoutStartSec (5h), so `timeout` kills the client after
+# AUTH_CHECK_TIMEOUT seconds and the named container is removed if it lingers.
+AUTH_CHECK_TIMEOUT ?= 120
+auth-check: check-base
+	@mkdir -p $(CLAUDE_DIR)
+	@if out=$$(timeout -k 10 $(AUTH_CHECK_TIMEOUT) \
+	    $(RUNTIME) run --rm $(RUN_FLAGS) --name $(IMAGE)-auth-check $(IMAGE) \
+	    claude --bare -p "Reply with exactly: OK" 2>&1); then \
+	  echo "auth-check: the loop container can authenticate to Claude."; \
+	else \
+	  rc=$$?; $(RUNTIME) rm -f $(IMAGE)-auth-check >/dev/null 2>&1 || true; \
+	  printf '%s\n' "$$out" | tail -n 5 | sed 's/^/auth-check: claude said: /' >&2; \
+	  if [ "$$rc" -eq 124 ] || [ "$$rc" -eq 137 ]; then \
+	    echo "auth-check: the probe timed out after $(AUTH_CHECK_TIMEOUT)s (container start, pull, or API hang)." >&2; \
+	  fi; \
+	  echo "auth-check: the loop container CANNOT authenticate to Claude (expired 'make login'" >&2; \
+	  echo "            credential, or no CLAUDE_CODE_OAUTH_TOKEN). Fix: run 'claude setup-token' and" >&2; \
+	  echo "            put CLAUDE_CODE_OAUTH_TOKEN in the unit's EnvironmentFile, or 'make login'." >&2; \
+	  exit 1; \
+	fi
 
 loop: hooks check-base
 	@mkdir -p $(CLAUDE_DIR)
