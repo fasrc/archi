@@ -182,7 +182,7 @@
 
 ## 4. Name the gate where the gates are listed, then prove the whole thing
 
-- [ ] 4.1 Edit the module docstring of `compare_runs.py`: add one bullet after the
+- [x] 4.1 Edit the module docstring of `compare_runs.py`: add one bullet after the
       **Procedure E** bullet, in the same voice as the others, that names **G10 — one answer
       path**, the two refused paths, `--config-differs-by-design`, and that
       `agent_md_file` is reported rather than refused. Leave the `Exit codes` line as it is.
