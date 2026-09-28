@@ -691,9 +691,19 @@ def _show_setting(value: Any) -> str:
     return json.dumps(value, sort_keys=True)
 
 
-def answer_path_gate(arms: Sequence[Arm]) -> dict:
+def answer_path_gate(arms: Sequence[Arm], allow_differs: Sequence[str] = ()) -> dict:
     """G10: all arms must record identical answer-path configuration settings."""
-    differing: List[str] = []
+    accepted = ", ".join(ANSWER_PATH_REFUSED)
+    for name in allow_differs:
+        if name not in ANSWER_PATH_REFUSED:
+            raise CompareError(
+                f"G10: {name!r} is not a refusable answer-path setting. "
+                f"Accepted paths for --config-differs-by-design: {accepted}",
+                EXIT_USAGE,
+            )
+
+    refusing: List[str] = []
+    named_differing: List[str] = []
     detail_parts: List[str] = []
 
     for path in ANSWER_PATH_REFUSED:
@@ -703,12 +713,15 @@ def answer_path_gate(arms: Sequence[Arm]) -> dict:
         }
         rendered = {label: _show_setting(v) for label, v in per_arm.items()}
         shown = ", ".join(f"{label}={v}" for label, v in rendered.items())
-        if len(set(rendered.values())) > 1:
-            differing.append(f"{path}: {shown}")
         detail_parts.append(f"{path}: {shown}")
+        if len(set(rendered.values())) > 1:
+            if path in allow_differs:
+                named_differing.append(path)
+            else:
+                refusing.append(f"{path}: {shown}")
 
-    if differing:
-        diffs = "\n".join(differing)
+    if refusing:
+        diffs = "\n".join(refusing)
         raise CompareError(
             f"G10 refused: the arms recorded different answer-path settings:\n"
             f"{diffs}\n"
@@ -719,6 +732,17 @@ def answer_path_gate(arms: Sequence[Arm]) -> dict:
             "treatment.",
             EXIT_GATE,
         )
+
+    if named_differing:
+        paths_str = ", ".join(
+            f"--config-differs-by-design {p}" for p in named_differing
+        )
+        return {
+            "id": "G10",
+            "name": "one answer path",
+            "status": f"OVERRIDDEN ({paths_str})",
+            "detail": "; ".join(detail_parts),
+        }
 
     return {
         "id": "G10",
@@ -2509,6 +2533,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="allow unequal or unrecorded corpus fingerprints (Procedure B)",
     )
     parser.add_argument(
+        "--config-differs-by-design",
+        action="append",
+        default=[],
+        metavar="DOTTED.PATH",
+        help=(
+            "waive G10 for the named answer-path setting "
+            "(accepted: services.chat_app.context_editing, "
+            "services.chat_app.recursion_limit); "
+            "repeatable; prints both values and marks the G10 row OVERRIDDEN"
+        ),
+    )
+    parser.add_argument(
         "--ignore-config-divergence",
         action="store_true",
         help="continue despite a non-empty divergence_from_selected_file",
@@ -2768,7 +2804,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         },
         corpus_gate(arms, args.corpus_differs_by_design),
         divergence_gate(arms, args.ignore_config_divergence),
-        answer_path_gate(arms),
+        answer_path_gate(arms, args.config_differs_by_design),
     ]
 
     # The default anchors file is tracked in the repository. If it is absent the

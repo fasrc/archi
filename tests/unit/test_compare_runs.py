@@ -909,6 +909,201 @@ def test_g10_constants_are_stable():
     assert cr.ANSWER_PATH_REPORTED == ("services.benchmarking.agent_md_file",)
 
 
+def test_g10_override_waives_named_path(_artifact, capsys, tmp_path):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_LIMIT_ONLY,
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    out = capsys.readouterr().out
+    assert code == cr.EXIT_OK
+    g10_lines = [line for line in out.splitlines() if line.startswith("| G10 ")]
+    assert g10_lines, "no G10 row in output"
+    g10_line = g10_lines[0]
+    assert "OVERRIDDEN" in g10_line
+    assert "--config-differs-by-design services.chat_app.context_editing" in g10_line
+    assert "32768" in out
+    assert "absent" in out
+
+    code2 = cr.main(
+        [
+            base,
+            treat,
+            "--config-differs-by-design",
+            "services.chat_app.context_editing",
+            "--json",
+            str(out_json),
+        ]
+    )
+    capsys.readouterr()
+    assert code2 == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert g10_entries
+    g10 = g10_entries[0]
+    assert "OVERRIDDEN" in g10["status"]
+    assert "32768" in g10["detail"] or "absent" in g10["detail"]
+
+
+def test_g10_override_wrong_path_does_not_waive(_artifact, capsys):
+    base_cfg = {"services": {"chat_app": {"recursion_limit": 50}}}
+    treat_cfg = {"services": {"chat_app": {"recursion_limit": 25}}}
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=base_cfg,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=treat_cfg,
+        )
+    )
+
+    code_no_flag = cr.main([base, treat])
+    err_no_flag = capsys.readouterr().err
+    assert code_no_flag == cr.EXIT_GATE
+    assert "services.chat_app.recursion_limit" in err_no_flag
+    assert "50" in err_no_flag
+    assert "25" in err_no_flag
+
+    code_wrong = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    capsys.readouterr()
+    assert code_wrong == cr.EXIT_GATE
+
+    code_right = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.recursion_limit"]
+    )
+    capsys.readouterr()
+    assert code_right == cr.EXIT_OK
+
+
+def test_g10_override_one_path_both_differing(_artifact, capsys):
+    treat_cfg = {"services": {"chat_app": {"recursion_limit": 25}}}
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=treat_cfg,
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "services.chat_app.recursion_limit" in err
+
+
+def test_g10_unknown_path_is_usage_error(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.default_model"]
+    )
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_USAGE
+    assert "services.chat_app.context_editing" in err
+    assert "services.chat_app.recursion_limit" in err
+
+
+def test_g10_reported_path_cannot_be_waived(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+
+    code = cr.main(
+        [
+            base,
+            treat,
+            "--config-differs-by-design",
+            "services.benchmarking.agent_md_file",
+        ]
+    )
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_USAGE
+    assert "services.chat_app.context_editing" in err
+    assert "services.chat_app.recursion_limit" in err
+
+
+def test_g10_override_nondiffering_path_stays_pass(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    out = capsys.readouterr().out
+    assert code == cr.EXIT_OK
+    g10_lines = [line for line in out.splitlines() if line.startswith("| G10 ")]
+    assert g10_lines
+    assert "pass" in g10_lines[0]
+    assert "OVERRIDDEN" not in g10_lines[0]
+
+
 # --- G8: the anchors ---------------------------------------------------------
 
 
