@@ -1104,6 +1104,213 @@ def test_g10_override_nondiffering_path_stays_pass(_artifact, capsys):
     assert "OVERRIDDEN" not in g10_lines[0]
 
 
+def test_g10_agent_md_file_reported_when_different(_artifact, capsys, tmp_path):
+    cfg_a = {
+        "services": {
+            "chat_app": {
+                "recursion_limit": 50,
+                "context_editing": {"trigger": 32768, "keep": 1},
+            },
+            "benchmarking": {"agent_md_file": "prompts/a.md"},
+        }
+    }
+    cfg_b = {
+        "services": {
+            "chat_app": {
+                "recursion_limit": 50,
+                "context_editing": {"trigger": 32768, "keep": 1},
+            },
+            "benchmarking": {"agent_md_file": "prompts/b.md"},
+        }
+    }
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)], fingerprint="corpus-1", configuration=cfg_a
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)], fingerprint="corpus-1", configuration=cfg_b
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main([base, treat])
+    out = capsys.readouterr().out
+    assert code == cr.EXIT_OK
+    g10_lines = [line for line in out.splitlines() if line.startswith("| G10 ")]
+    assert g10_lines
+    assert g10_lines[0].startswith("| G10 one answer path | pass |")
+
+    code2 = cr.main([base, treat, "--json", str(out_json)])
+    capsys.readouterr()
+    assert code2 == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert g10_entries
+    detail = g10_entries[0]["detail"]
+    assert "agent_md_file" in detail
+    assert "prompts/a.md" in detail
+    assert "prompts/b.md" in detail
+
+
+def test_g10_agent_md_file_absent_from_detail_when_equal(_artifact, tmp_path):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main([base, treat, "--json", str(out_json)])
+    assert code == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert g10_entries
+    assert "agent_md_file" not in g10_entries[0]["detail"]
+
+
+def test_g10_both_arms_unrecorded_refused(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+
+    code = cr.main([base, treat])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "G10" in err
+    assert "not recorded" in err
+
+
+def test_g10_one_arm_unrecorded_refused(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+
+    code = cr.main([base, treat])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    treat_label = "run_2"
+    assert f"{treat_label}=not recorded" in err
+
+
+def test_g10_unrecorded_waived_by_both_paths(_artifact, capsys, tmp_path):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main(
+        [
+            base,
+            treat,
+            "--config-differs-by-design",
+            "services.chat_app.context_editing",
+            "--config-differs-by-design",
+            "services.chat_app.recursion_limit",
+            "--json",
+            str(out_json),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == cr.EXIT_OK
+    g10_lines = [line for line in out.splitlines() if line.startswith("| G10 ")]
+    assert g10_lines
+    assert "OVERRIDDEN" in g10_lines[0]
+
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert g10_entries
+    assert "not recorded" in g10_entries[0]["detail"]
+
+
+def test_g10_unrecorded_waived_partial_still_refuses(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    capsys.readouterr()
+    assert code == cr.EXIT_GATE
+
+
+def test_g10_null_configuration_counts_as_not_recorded(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=[None],
+        )
+    )
+
+    code = cr.main([base, treat])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "not recorded" in err
+
+
 # --- G8: the anchors ---------------------------------------------------------
 
 

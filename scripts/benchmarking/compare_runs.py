@@ -702,23 +702,41 @@ def answer_path_gate(arms: Sequence[Arm], allow_differs: Sequence[str] = ()) -> 
                 EXIT_USAGE,
             )
 
+    unrecorded = [
+        arm.label for arm in arms if not isinstance(arm.raw.get("configuration"), dict)
+    ]
+
     refusing: List[str] = []
     named_differing: List[str] = []
     detail_parts: List[str] = []
 
     for path in ANSWER_PATH_REFUSED:
-        per_arm = {
-            arm.label: recorded_setting(arm.raw.get("configuration"), path)
-            for arm in arms
-        }
-        rendered = {label: _show_setting(v) for label, v in per_arm.items()}
+        rendered: Dict[str, str] = {}
+        for arm in arms:
+            cfg = arm.raw.get("configuration")
+            if not isinstance(cfg, dict):
+                rendered[arm.label] = "not recorded"
+            else:
+                rendered[arm.label] = _show_setting(recorded_setting(cfg, path))
         shown = ", ".join(f"{label}={v}" for label, v in rendered.items())
         detail_parts.append(f"{path}: {shown}")
-        if len(set(rendered.values())) > 1:
+        if len(set(rendered.values())) > 1 or unrecorded:
             if path in allow_differs:
                 named_differing.append(path)
             else:
                 refusing.append(f"{path}: {shown}")
+
+    for path in ANSWER_PATH_REPORTED:
+        rendered_r: Dict[str, str] = {}
+        for arm in arms:
+            cfg = arm.raw.get("configuration")
+            if not isinstance(cfg, dict):
+                rendered_r[arm.label] = "not recorded"
+            else:
+                rendered_r[arm.label] = _show_setting(recorded_setting(cfg, path))
+        if len(set(rendered_r.values())) > 1:
+            shown_r = ", ".join(f"{label}={v}" for label, v in rendered_r.items())
+            detail_parts.append(f"{path} differs (reported, not refused): {shown_r}")
 
     if refusing:
         diffs = "\n".join(refusing)
