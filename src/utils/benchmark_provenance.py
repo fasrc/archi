@@ -288,7 +288,7 @@ def _escape(value: Any) -> str:
     return str(value).replace("%", "%25").replace(":", "%3A").replace("\n", "%0A")
 
 
-def corpus_fingerprint(rows: Iterable[Sequence[Any]]) -> str:
+def corpus_fingerprint(rows: Iterable[Sequence[Any]], version: str = "") -> str:
     """Digest of the corpus, equal exactly when the supplied state is equal.
 
     *rows* are opaque ``(key, value)`` pairs. Order is irrelevant -- the rows are
@@ -305,9 +305,14 @@ def corpus_fingerprint(rows: Iterable[Sequence[Any]]) -> str:
     an unchanged corpus produce the same value here. That is what makes "these
     arms saw the same corpus" a checkable claim rather than an assumption.
 
+    *version* goes into the prefix (``sha256/v2:``), so a digest of one query
+    can never equal a digest of another query over the same rows.
+
     What it does NOT cover: re-embedding the same text with a different model
-    leaves every key and value here unchanged. That shows up instead as a
-    divergence on ``data_manager.embedding_name`` in the recorded configuration.
+    leaves every key and value here unchanged, on purpose. The model travels
+    beside the digest as ``retrieval_identity.embedding_model``, checked against
+    the chunks' ``embedding_model`` tags. ``embedding_name`` does not show it:
+    #216 changes only ``model_name``.
     """
     records: List[str] = []
     for row in rows:
@@ -318,7 +323,112 @@ def corpus_fingerprint(rows: Iterable[Sequence[Any]]) -> str:
         rendered = "\x00none" if value is None else _escape(value)
         records.append(f"{_escape(key)}:{rendered}")
     digest = hashlib.sha256("\n".join(sorted(records)).encode("utf-8")).hexdigest()
-    return f"sha256:{digest}"
+    prefix = f"sha256/{version}" if version else "sha256"
+    return f"{prefix}:{digest}"
+
+
+# The metadata keys that reach the agent and its citations through
+# ``_merge_row_metadata`` and the hierarchical retriever. A linked chunk gets
+# them from its document row; a documentless chunk and a parent node carry them
+# in their own ``metadata``. The whole ``metadata`` object is never hashed:
+# ``parent_id`` is a SERIAL that changes on every ingest, the ingest status
+# fields churn, ``embedding_model`` must stay out (the digest is model-neutral),
+# and ``category`` belongs to the category-map digest.
+CITATION_FIELDS = ("url", "display_name", "source_type", "title", "filename")
+
+# What retrieval in one collection can return: the filter
+# ``PostgresVectorStore`` applies, with the ``LEFT JOIN`` it uses, so a chunk
+# with no document link is in scope.
+_SCOPED_CHUNKS = """
+WITH scoped AS (
+    SELECT c.id, c.chunk_index, c.chunk_text, c.metadata AS meta,
+           (c.embedding IS NULL) AS no_vector,
+           d.id AS doc_id, d.resource_hash, d.url, d.display_name,
+           d.source_type, d.extra_json
+    FROM document_chunks c
+    LEFT JOIN documents d ON d.id = c.document_id
+    WHERE (c.metadata->>'collection' = %s OR c.metadata->>'collection' IS NULL)
+      AND (d.id IS NULL OR d.is_deleted = FALSE)
+)
+"""
+
+
+def _citations(alias: str, when: str = "") -> str:
+    fields = (f"{alias}->>'{name}'" for name in CITATION_FIELDS)
+    if when:
+        fields = (f"CASE WHEN {when} THEN {field} END" for field in fields)
+    return ", ".join(fields)
+
+
+# Fingerprint v2 (#570). Each value is md5 of a JSON array, which keeps field
+# boundaries and keeps NULL apart from "". Rows:
+#   chunk   text, collection tag, null-vector flag, and the citation fields of a
+#           documentless chunk (a linked chunk gets them from its doc row);
+#   parent  only parents an in-scope chunk references: text, the ordered list
+#           of in-scope child indexes, and the parent's citation fields;
+#   doc     only live documents that own an in-scope chunk: the columns the
+#           retrieval overlay reads. ``size_bytes`` is out, because retrieval
+#           never reads it and the chunk rows catch every text change.
+CORPUS_STATE_V2_QUERY = (
+    _SCOPED_CHUNKS
+    + f"""
+SELECT 'chunk:' || COALESCE(s.resource_hash, s.meta->>'resource_hash', \
+s.meta->>'chunk_id', 'id:' || s.id::text) || ':' || s.chunk_index::text,
+       md5(jsonb_build_array(
+           s.chunk_text, s.meta->>'collection', s.no_vector,
+           {_citations("s.meta", "s.doc_id IS NULL")}
+       )::text)
+FROM scoped s
+UNION ALL
+SELECT DISTINCT 'doc:' || s.resource_hash,
+       md5(jsonb_build_array(
+           s.url, s.display_name, s.source_type, s.extra_json->>'title'
+       )::text)
+FROM scoped s
+WHERE s.doc_id IS NOT NULL
+UNION ALL
+SELECT 'parent:' || COALESCE(pd.resource_hash, p.metadata->>'resource_hash', \
+'id:' || p.id::text) || ':' || p.parent_index::text,
+       md5(jsonb_build_array(
+           p.parent_text,
+           array_agg(s.chunk_index ORDER BY s.chunk_index),
+           {_citations("p.metadata")}
+       )::text)
+FROM document_parent_nodes p
+JOIN scoped s ON s.meta->>'parent_id' = p.id::text
+LEFT JOIN documents pd ON pd.id = p.document_id
+GROUP BY p.id, pd.resource_hash
+"""
+)
+
+# The URL -> category map, in the same scope: a relabel of a document that no
+# in-scope chunk belongs to is invisible to the run.
+CATEGORY_MAP_V2_QUERY = """
+SELECT d.url, d.extra_json->>'category'
+FROM documents d
+WHERE NOT d.is_deleted AND d.url IS NOT NULL
+  AND EXISTS (
+      SELECT 1 FROM document_chunks c
+      WHERE c.document_id = d.id
+        AND (c.metadata->>'collection' = %s OR c.metadata->>'collection' IS NULL)
+  )
+"""
+
+
+def corpus_state_rows(cursor: Any, collection: str) -> List[Tuple[Any, Any]]:
+    """The v2 ``(key, value)`` rows for *collection*, read on the caller's cursor.
+
+    The caller owns the transaction, so a census can read this and the
+    category map in one snapshot.
+    """
+    cursor.execute(CORPUS_STATE_V2_QUERY, (collection,))
+    return [tuple(row) for row in cursor.fetchall()]
+
+
+def category_map_rows(cursor: Any, collection: str) -> List[Tuple[Any, Any]]:
+    """Raw ``(url, category)`` rows for *collection*, on the caller's cursor."""
+    cursor.execute(CATEGORY_MAP_V2_QUERY, (collection,))
+    return [tuple(row) for row in cursor.fetchall()]
 
 
 def canonical_source_url(value: Any) -> str:
@@ -781,3 +891,68 @@ def retrieval_identity(config: Any) -> RetrievalIdentity:
         embedding_name=embedding_name,
         embedding_model=None if model is None else str(model),
     )
+
+
+def _searched_collection(config: Any) -> str:
+    collection = retrieval_identity(config).collection
+    if collection is None:
+        raise ValueError(
+            "config names no collection (data_manager.collection_name and "
+            "embedding_name are required)"
+        )
+    return collection
+
+
+def _read_on_pool(pool: Any, read: Any, collection: str) -> Any:
+    with pool.get_connection() as connection:
+        with connection.cursor() as cursor:
+            return read(cursor, collection)
+
+
+def live_corpus_fingerprint(pool: Any, config: Any) -> str:
+    """The v2 fingerprint of the collection *config* searches, read on *pool*.
+
+    *config* is required: the default ``get_full_config()`` needs an installed
+    ``PostgresServiceFactory``, and a caller that built its own pool may not
+    have one. Every consumer reads through this, so their digests agree.
+    """
+    rows = _read_on_pool(pool, corpus_state_rows, _searched_collection(config))
+    return corpus_fingerprint(rows, version="v2")
+
+
+def live_category_map(pool: Any, config: Any) -> Tuple[list, List[str], str]:
+    """``(rows, records, digest)`` of the category map in *config*'s collection."""
+    rows = _read_on_pool(pool, category_map_rows, _searched_collection(config))
+    records = category_map_records(rows)
+    return rows, records, category_map_digest(records)
+
+
+def _container_factory_and_config() -> Tuple[Any, Any]:
+    """Build the factory from the environment, install it, and read the config.
+
+    The install comes first: ``get_full_config()`` reads through
+    ``PostgresServiceFactory.get_instance()`` and raises ``ConfigNotReadyError``
+    when no factory is installed.
+    """
+    from src.utils import config_access
+    from src.utils.postgres_service_factory import PostgresServiceFactory
+
+    factory = PostgresServiceFactory.from_env()
+    PostgresServiceFactory.set_instance(factory)
+    return factory, config_access.get_full_config()
+
+
+def container_corpus_fingerprint() -> str:
+    """The v2 fingerprint as ``feature_matrix/lib.sh`` reads it in a stack.
+
+    It runs inside the stack's data-manager, with that stack's config, so the
+    sweep's pin check and the harness compute one digest.
+    """
+    factory, config = _container_factory_and_config()
+    return live_corpus_fingerprint(factory.connection_pool, config)
+
+
+def container_category_map_digest() -> str:
+    """The searched collection's category-map digest, read in a stack."""
+    factory, config = _container_factory_and_config()
+    return live_category_map(factory.connection_pool, config)[2]

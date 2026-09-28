@@ -15,28 +15,72 @@ deliberately left alone, because nothing in production ever initializes it -- se
 ``TestReadsThroughTheInitializedPool`` and issue #273.
 """
 
+from contextlib import contextmanager
+
 import pytest
 import yaml
 
 import src.bin.service_benchmark as sb
 from src.bin.service_benchmark import ResultHandler
-from src.utils.benchmark_provenance import corpus_fingerprint
+from src.utils.benchmark_provenance import CORPUS_STATE_V2_QUERY, corpus_fingerprint
 from src.utils.connection_pool import ConnectionPool
 from src.utils.postgres_service_factory import PostgresServiceFactory
 
-LIVE_ROWS = [("aaa", 10), ("bbb", 20)]
+LIVE_ROWS = [("aaa", "10"), ("bbb", "20")]
+RUNNING_CONFIG = {
+    "data_manager": {
+        "collection_name": "fasrc",
+        "embedding_name": "HuggingFaceEmbeddings",
+        "embedding_class_map": {
+            "HuggingFaceEmbeddings": {"kwargs": {"model_name": "m"}}
+        },
+    }
+}
+COLLECTION = "fasrc_with_HuggingFaceEmbeddings"
+
+
+def _v2(rows=LIVE_ROWS):
+    return corpus_fingerprint(rows, version="v2")
+
+
+class _FakeCursor:
+    def __init__(self, pool):
+        self.pool = pool
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, query, params=None):
+        self.pool.queries.append(query)
+        self.pool.params.append(params)
+
+    def fetchall(self):
+        return list(self.pool.rows)
 
 
 class _FakePool:
-    """Records the SQL it was asked to run and replays canned rows."""
+    """``ConnectionPool`` stand-in: records the SQL and replays canned rows."""
 
-    def __init__(self, rows=LIVE_ROWS):
+    def __init__(self, rows=LIVE_ROWS, error=None):
         self.rows = rows
+        self.error = error
         self.queries = []
+        self.params = []
 
-    def execute(self, query, params=None, *, fetch=True):
-        self.queries.append(query)
-        return self.rows
+    @contextmanager
+    def get_connection(self):
+        if self.error is not None:
+            raise self.error
+        pool = self
+
+        class _Connection:
+            def cursor(self):
+                return _FakeCursor(pool)
+
+        yield _Connection()
 
 
 @pytest.fixture(autouse=True)
@@ -49,6 +93,10 @@ def _reset(tmp_path, monkeypatch):
     monkeypatch.delenv("ARCHI_CORPUS_SNAPSHOT_ID", raising=False)
     # Leave no factory behind for the next test, and start from none.
     monkeypatch.setattr(PostgresServiceFactory, "_instance", None)
+    # add_metadata reads the corpus of the collection the last arm searched.
+    monkeypatch.setattr(
+        ResultHandler, "results", [{"running_configuration": RUNNING_CONFIG}]
+    )
 
 
 def _install_pool(monkeypatch, pool):
@@ -66,7 +114,7 @@ def test_records_a_fingerprint_derived_from_the_corpus(monkeypatch):
 
     ResultHandler.add_metadata()
 
-    assert ResultHandler.metadata["corpus_fingerprint"] == corpus_fingerprint(LIVE_ROWS)
+    assert ResultHandler.metadata["corpus_fingerprint"] == _v2()
 
 
 def test_two_runs_over_an_unchanged_corpus_agree(monkeypatch):
@@ -87,7 +135,7 @@ def test_a_changed_corpus_produces_a_different_fingerprint(monkeypatch):
     before = ResultHandler.metadata["corpus_fingerprint"]
 
     ResultHandler.metadata = {}
-    _install_pool(monkeypatch, _FakePool(rows=LIVE_ROWS + [("ccc", 30)]))
+    _install_pool(monkeypatch, _FakePool(rows=LIVE_ROWS + [("ccc", "30")]))
     ResultHandler.add_metadata()
 
     assert ResultHandler.metadata["corpus_fingerprint"] != before
@@ -103,11 +151,7 @@ def test_deleted_documents_are_excluded_from_the_corpus(monkeypatch):
 
 
 def test_an_unreadable_corpus_is_marked_rather_than_crashing(monkeypatch):
-    class _Broken:
-        def execute(self, *a, **k):
-            raise RuntimeError("connection refused")
-
-    _install_pool(monkeypatch, _Broken())
+    _install_pool(monkeypatch, _FakePool(error=RuntimeError("connection refused")))
 
     ResultHandler.add_metadata()
 
@@ -161,9 +205,9 @@ class TestReadsThroughTheInitializedPool:
         """The whole defect in one assertion: a digest, not a marker."""
         _install_pool(monkeypatch, _FakePool())
 
-        fingerprint = ResultHandler.get_corpus_fingerprint()
+        fingerprint = ResultHandler.get_corpus_fingerprint(RUNNING_CONFIG)
 
-        assert fingerprint == corpus_fingerprint(LIVE_ROWS)
+        assert fingerprint == _v2()
         assert not ResultHandler.corpus_reading_failed(fingerprint)
 
     def test_the_bare_connection_pool_singleton_is_not_consulted(self, monkeypatch):
@@ -177,14 +221,14 @@ class TestReadsThroughTheInitializedPool:
         monkeypatch.setattr(ConnectionPool, "get_instance", classmethod(_record))
         _install_pool(monkeypatch, _FakePool())
 
-        assert ResultHandler.get_corpus_fingerprint() == corpus_fingerprint(LIVE_ROWS)
+        assert ResultHandler.get_corpus_fingerprint(RUNNING_CONFIG) == _v2()
         assert calls == []
 
     def test_an_uninitialized_factory_is_marked_and_says_so(self, monkeypatch):
         """No factory is a real possibility -- it must not crash the run."""
         monkeypatch.setattr(PostgresServiceFactory, "_instance", None)
 
-        fingerprint = ResultHandler.get_corpus_fingerprint()
+        fingerprint = ResultHandler.get_corpus_fingerprint(RUNNING_CONFIG)
 
         assert ResultHandler.corpus_reading_failed(fingerprint)
         assert "PostgresServiceFactory" in fingerprint
@@ -198,14 +242,10 @@ class TestReadsThroughTheInitializedPool:
         it, and nothing in the run's own logs said the collection had failed.
         """
 
-        class _Broken:
-            def execute(self, *a, **k):
-                raise RuntimeError("connection refused")
-
-        _install_pool(monkeypatch, _Broken())
+        _install_pool(monkeypatch, _FakePool(error=RuntimeError("connection refused")))
 
         with caplog.at_level("WARNING", logger="src.bin.service_benchmark"):
-            ResultHandler.get_corpus_fingerprint()
+            ResultHandler.get_corpus_fingerprint(RUNNING_CONFIG)
 
         assert any(
             "connection refused" in record.getMessage()
@@ -218,12 +258,10 @@ class TestReadsThroughTheInitializedPool:
     ):
         """Provenance is never fatal -- a finished benchmark keeps its results."""
 
-        class _Broken:
-            def execute(self, *a, **k):
-                raise RuntimeError("connection refused")
-
-        _install_pool(monkeypatch, _Broken())
-        ResultHandler.results = [{"scores": {"relevancy": 0.68}}]
+        _install_pool(monkeypatch, _FakePool(error=RuntimeError("connection refused")))
+        ResultHandler.results = [
+            {"scores": {"relevancy": 0.68}, "running_configuration": RUNNING_CONFIG}
+        ]
 
         ResultHandler.add_metadata()
 
@@ -231,49 +269,37 @@ class TestReadsThroughTheInitializedPool:
         assert ResultHandler.results[0]["scores"]["relevancy"] == 0.68
 
 
-class TestTheDigestCoversWhatTheAgentActuallyReceives:
-    """Codex findings 5 and 6 on #272.
+class TestTheHarnessReadsTheSharedV2Routine:
+    """The harness hashes through ``live_corpus_fingerprint`` (#570).
 
-    The digest existed to make "these arms saw the same corpus" checkable. Two
-    gaps meant it could answer wrongly in both directions:
-
-    * It keyed chunks by ``document_chunks.document_id``, a SERIAL row id. Two
-      ingests of an identical corpus get different serials, so the digests
-      differ and comparable runs are REJECTED -- the cross-deployment property
-      the field claims is exactly what it could not deliver.
-    * It hashed only leaf ``chunk_text``. This deployment runs
-      ``hierarchical_rerank`` for every chunk, so the agent is handed
-      ``document_parent_nodes.parent_text``. Re-grouping children or rewriting
-      parent text left the digest unchanged, so arms that fed the agent
-      different context were CERTIFIED comparable.
+    The SQL itself, and what it covers, is tested in
+    ``test_corpus_fingerprint_v2.py``; here the harness must send that query,
+    scoped to the collection its running config searches.
     """
 
-    def _query(self, monkeypatch):
+    def test_the_query_is_the_shared_v2_query(self, monkeypatch):
         pool = _install_pool(monkeypatch, _FakePool())
-        ResultHandler.get_corpus_fingerprint()
-        return pool.queries[0]
+        ResultHandler.get_corpus_fingerprint(RUNNING_CONFIG)
+        assert pool.queries == [CORPUS_STATE_V2_QUERY]
+        assert pool.params == [(COLLECTION,)]
 
-    def test_chunks_are_keyed_by_content_identity_not_a_serial_row_id(
-        self, monkeypatch
-    ):
-        """Finding 6: a fresh ingest of the same corpus must digest the same."""
-        assert "'chunk:' || d.resource_hash" in self._query(monkeypatch)
+    def test_the_digest_carries_the_v2_prefix(self, monkeypatch):
+        _install_pool(monkeypatch, _FakePool())
+        assert ResultHandler.get_corpus_fingerprint(RUNNING_CONFIG).startswith(
+            "sha256/v2:"
+        )
 
-    def test_parent_context_text_is_hashed(self, monkeypatch):
-        """Finding 5: parent text is what the agent reads under reranking."""
-        query = self._query(monkeypatch)
+    def test_no_running_config_is_a_marker_not_a_crash(self, monkeypatch):
+        _install_pool(monkeypatch, _FakePool())
+        fingerprint = ResultHandler.get_corpus_fingerprint(None)
+        assert ResultHandler.corpus_reading_failed(fingerprint)
+        assert "collection" in fingerprint
 
-        assert "document_parent_nodes" in query
-        assert "parent_text" in query
+    def test_add_metadata_reads_the_last_arms_collection(self, monkeypatch):
+        pool = _install_pool(monkeypatch, _FakePool())
+        ResultHandler.add_metadata()
+        assert pool.params[-1] == (COLLECTION,)
 
-    def test_the_child_to_parent_grouping_is_hashed(self, monkeypatch):
-        """Regrouping children changes the context even if every text is intact."""
-        assert "parent_id" in self._query(monkeypatch)
-
-    def test_parents_are_keyed_by_content_identity_too(self, monkeypatch):
-        """A parent's serial id is as unstable as a document's."""
-        assert "'parent:' || d.resource_hash" in self._query(monkeypatch)
-
-    def test_deleted_documents_are_excluded_from_every_branch(self, monkeypatch):
-        """The old chunk half had no is_deleted filter; the corpus is live rows."""
-        assert self._query(monkeypatch).count("is_deleted = FALSE") == 3
+    def test_the_v1_query_is_gone(self):
+        assert not hasattr(sb, "CORPUS_STATE_QUERY")
+        assert not hasattr(sb, "CATEGORY_MAP_QUERY")

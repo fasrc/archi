@@ -24,6 +24,7 @@ metadata change, #524) and the sha256 of every input, so ``archive_run.sh
 Usage::
 
     python scripts/benchmarking/category_census.py --pg-dsn postgresql://... \\
+        --collection default_collection_with_HuggingFaceEmbeddings \\
         --bank config/benchmarking/fasrc_ragas_queries.json \\
         --anchors examples/benchmarking/anchor_questions.json \\
         --routing-prompt config/benchmarking/prompt_sweep_r0/fasrc-docs-r0a-category.md \\
@@ -36,7 +37,6 @@ Exit codes: 0 every gate passed, 1 usage or unreadable input, 2 a gate failed.
 from __future__ import annotations
 
 import argparse
-import ast
 import hashlib
 import json
 import re
@@ -57,10 +57,11 @@ from src.utils.benchmark_provenance import (  # noqa: E402
     canonical_source_url,
     category_map_digest,
     category_map_records,
+    category_map_rows,
     corpus_fingerprint,
+    corpus_state_rows,
 )
 
-HARNESS = REPO_ROOT / "src" / "bin" / "service_benchmark.py"
 COVERAGE_THRESHOLD = 0.90
 MIN_COVERED_CATEGORIES = 6
 MAX_ARTICLE_SHARE = 0.10
@@ -70,17 +71,6 @@ DEFAULT_SIMILARITY = 0.5
 EXIT_OK, EXIT_USAGE, EXIT_GATE = 0, 1, 2
 
 Docs = Sequence[Tuple[Optional[str], Optional[str]]]
-
-
-def _harness_query(name: str) -> str:
-    """A query constant read from the harness source, so the text cannot drift."""
-    tree = ast.parse(HARNESS.read_text())
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-            getattr(target, "id", None) == name for target in node.targets
-        ):
-            return node.value.value  # type: ignore[attr-defined]
-    raise RuntimeError(f"{HARNESS} defines no {name}")
 
 
 def _is_kb(url: Optional[str]) -> bool:
@@ -263,16 +253,22 @@ def exemplar_disjointness(
 # --- database readings ---------------------------------------------------------------
 
 
-def read_database(dsn: str, connect: Callable[[str], Any]) -> Dict[str, Any]:
-    """Map rows, map digest and corpus fingerprint from one database state."""
+def read_database(
+    dsn: str, connect: Callable[[str], Any], collection: str
+) -> Dict[str, Any]:
+    """Map rows, map digest and corpus fingerprint from one database state.
+
+    Both readings run on one cursor inside one ``REPEATABLE READ`` transaction,
+    through the same row functions the harness uses, scoped to *collection*.
+    """
     conn = connect(dsn)
     try:
         conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
         with conn.cursor() as cur:
-            cur.execute(_harness_query("CATEGORY_MAP_QUERY"))
-            docs = [tuple(row) for row in cur.fetchall()]
-            cur.execute(_harness_query("CORPUS_STATE_QUERY"))
-            fingerprint = corpus_fingerprint(cur.fetchall())
+            docs = category_map_rows(cur, collection)
+            fingerprint = corpus_fingerprint(
+                corpus_state_rows(cur, collection), version="v2"
+            )
         conn.rollback()
     finally:
         conn.close()
@@ -332,6 +328,12 @@ def render_markdown(report: Dict[str, Any]) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--pg-dsn", required=True)
+    parser.add_argument(
+        "--collection",
+        required=True,
+        help="the collection tag the arms search, e.g. "
+        "default_collection_with_HuggingFaceEmbeddings",
+    )
     parser.add_argument("--bank", required=True, type=Path)
     parser.add_argument("--anchors", required=True, type=Path)
     parser.add_argument("--routing-prompt", required=True, type=Path)
@@ -370,9 +372,13 @@ def main(
         print(f"category_census: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
-    report: Dict[str, Any] = {"inputs": inputs, "failures": []}
+    report: Dict[str, Any] = {
+        "inputs": inputs,
+        "collection": args.collection,
+        "failures": [],
+    }
     try:
-        reading = read_database(args.pg_dsn, connect)
+        reading = read_database(args.pg_dsn, connect, args.collection)
     except Exception as exc:  # noqa: BLE001 - any failed reading fails the census
         report.update(passed=False, failures=[f"database reading failed: {exc}"])
     else:

@@ -34,7 +34,9 @@ def _reset_results(monkeypatch):
     # would find no factory and warn, which is covered in
     # test_benchmark_category_map.py rather than asserted on here.
     monkeypatch.setattr(
-        ResultHandler, "get_category_map", staticmethod(lambda: ([], "sha256:map"))
+        ResultHandler,
+        "get_category_map",
+        staticmethod(lambda _config: ([], "sha256:map")),
     )
 
 
@@ -52,7 +54,7 @@ def _pin_corpus(monkeypatch, value):
     which is correct behaviour, but it is not what the caller is asserting on.
     """
     monkeypatch.setattr(
-        ResultHandler, "get_corpus_fingerprint", staticmethod(lambda: value)
+        ResultHandler, "get_corpus_fingerprint", staticmethod(lambda _config: value)
     )
 
 

@@ -52,6 +52,8 @@
 #   44. a non-factor data_manager change is refused by the lock
 #   45. run_arm.sh prints the next unused run number in its archive hint
 #   46. among ragas-start rows that share one UTC second, the LAST one is the run that started
+#   54. the fingerprint and category-map snippets call the shared v2 routines, never the harness
+#       source, and an image that predates the routine names it and says to rebuild
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -78,7 +80,7 @@ case "\$1" in
   inspect) [ -f "$T/state/\$2" ] && { cat "$T/state/\$2"; exit 0; } || exit 1 ;;
   exec)    sql="\$*"
            case "\$sql" in
-             *CATEGORY_MAP_QUERY*) cat "$T/mapfp" ;;
+             *container_category_map_digest*) cat "$T/mapfp" ;;
              *benchmark_provenance*) cat "$T/fp" ;;
              *document_chunks*)  [ -f "$T/nocounts" ] || echo 6096 ;;
              *documents*)        [ -f "$T/nocounts" ] || echo 1132 ;;
@@ -636,6 +638,22 @@ BEFORE="$(ledger_rows)"
 run bash "$HERE/archive_run.sh" --sweep "$SW/configs" --stack r0 --run 1 --census "$FM_OUT/census.json"
 if [ "$RC" = 0 ] && [ "$(ledger_rows)" = $((BEFORE + 3)) ] && [ "$(cat "$FM_OUT/corpus-pin-r0")" = "sha256:abc" ] && [ -s "$FM_OUT/category-map-pin-r0" ]; then
   ok "archive_run --sweep records one row per arm and writes both pins on run 1"; else notok "archive_run --sweep (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 54: the container snippets call the shared routines; an old image says to rebuild
+OLD="$T/old-image"; mkdir -p "$OLD/src/utils"; : > "$OLD/src/__init__.py"; : > "$OLD/src/utils/__init__.py"
+printf 'def corpus_fingerprint(rows):\n    return "sha256:old"\n' > "$OLD/src/utils/benchmark_provenance.py"
+SNIPPETS="$(bash -c '. "$1/lib.sh"; printf "%s\n@@\n%s" "$FM_FINGERPRINT_PY" "$FM_CATEGORY_MAP_PY"' _ "$HERE")"
+FP_PY="${SNIPPETS%%@@*}"; MAP_PY="${SNIPPETS#*@@}"
+OLD_OUT="$(cd "$OLD" && "$FM_PYTHON" -c "$FP_PY" 2>&1)" && OLD_RC=0 || OLD_RC=$?
+MAP_OUT="$(cd "$OLD" && "$FM_PYTHON" -c "$MAP_PY" 2>&1)"
+if [ "$OLD_RC" != 0 ] && printf '%s' "$OLD_OUT" | grep -q "no container_corpus_fingerprint" \
+   && printf '%s' "$OLD_OUT" | grep -q "rebuild the stack from the campaign SHA" \
+   && printf '%s' "$MAP_OUT" | grep -q "^<unavailable: " \
+   && grep -q "container_corpus_fingerprint" "$T/docker.calls" \
+   && grep -q "container_category_map_digest" "$T/docker.calls" \
+   && ! grep -q "service_benchmark.py\|CORPUS_STATE_QUERY\|CATEGORY_MAP_QUERY" "$HERE/lib.sh"; then
+  ok "container snippets call the shared v2 routines and an old image says to rebuild"
+else notok "container snippets (rc=$OLD_RC: $OLD_OUT | $MAP_OUT)"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

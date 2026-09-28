@@ -148,7 +148,7 @@ $D/qa_prepare.sh   --sweep r0 --qa-dataset <qa-v2.json> --qa-profile <profile>  
 $D/lock_campaign.sh --sweep <sweep_dir> --manifest <manifest.yaml> --stack r0 \
                     --qa-dataset <qa-v2.json> --qa-profile <profile>             # pins every arm
 RAGAS_ENV_FILE=<judge.env> $D/run_arm.sh --sweep <sweep_dir> --stack r0          # replicate 1
-python scripts/benchmarking/category_census.py --pg-dsn <postgres-r0 dsn> ... --json census.json
+python scripts/benchmarking/category_census.py --pg-dsn <postgres-r0 dsn> --collection <collection tag> ... --json census.json
 $D/archive_run.sh --sweep <sweep_dir> --stack r0 --run 1 --census census.json --wait
 $D/qa_arm.sh --sweep <sweep_dir> --stack r0 --arm <prompt-stem>                  # once per arm
 $D/run_arm.sh --sweep <sweep_dir> --stack r0 --rerun                             # replicate 2

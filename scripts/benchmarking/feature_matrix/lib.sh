@@ -73,29 +73,25 @@ fm_require_stack_up() { # $1 = stack name; Postgres and the data-manager must st
   done
 }
 
-# The corpus fingerprint, computed EXACTLY as the benchmark artifact records it: the
-# harness's CORPUS_STATE_QUERY (documents, chunks and parent nodes — the retrievable
-# state, not just the document list) hashed by src.utils.benchmark_provenance
-# .corpus_fingerprint (sorted (key, value) rows, sha256). The pin archive_run.sh writes
-# comes from the artifact, so the live check must speak the same digest or every re-run
-# would refuse — or, worse, certify a stack whose chunks drifted under an unchanged
-# document list. The snippet runs inside the stack's data-manager container, which
-# carries the same source tree and the Postgres connection env; the query text is read
-# from the harness source (not re-typed here) so the two cannot drift apart.
+# The corpus fingerprint, computed EXACTLY as the benchmark artifact records it: fingerprint
+# v2 of the collection the stack's config searches, through the one routine the harness, the
+# QA workflow and the census also call (src.utils.benchmark_provenance, #570). The pin
+# archive_run.sh writes comes from the artifact, so the live check must speak the same digest
+# or every re-run would refuse — or, worse, certify a stack whose chunks drifted. The snippet
+# runs inside the stack's data-manager container, which carries the stack's source tree and
+# its Postgres connection env; the routine installs the factory it builds before it reads the
+# config. An image that predates the routine cannot import it, and says so.
+FM_FINGERPRINT_PY='
+import sys
+try:
+    from src.utils.benchmark_provenance import container_corpus_fingerprint
+except ImportError:
+    sys.exit("this image carries no container_corpus_fingerprint (it predates corpus "
+             "fingerprint v2); rebuild the stack from the campaign SHA")
+print(container_corpus_fingerprint())
+'
 fm_fingerprint() { # $1 = stack name
-  "$FM_DOCKER" exec -w /root/archi "data-manager-$1" python -c '
-import ast, pathlib, sys
-src = pathlib.Path("src/bin/service_benchmark.py").read_text()
-queries = [node.value.value for node in ast.parse(src).body
-           if isinstance(node, ast.Assign)
-           and any(getattr(t, "id", None) == "CORPUS_STATE_QUERY" for t in node.targets)]
-if not queries:
-    sys.exit("this image carries a harness with no CORPUS_STATE_QUERY (it predates the "
-             "corpus fingerprint); rebuild the stack from the campaign SHA")
-from src.utils.benchmark_provenance import corpus_fingerprint
-from src.utils.postgres_service_factory import PostgresServiceFactory
-print(corpus_fingerprint(PostgresServiceFactory.from_env().connection_pool.execute(queries[0])))
-' | tr -d '[:space:]'
+  "$FM_DOCKER" exec -w /root/archi "data-manager-$1" python -c "$FM_FINGERPRINT_PY" | tr -d '[:space:]'
 }
 
 fm_require_pinned_corpus() { # $1 = stack name → refuses unless the fingerprint equals the recorded pin
@@ -342,26 +338,20 @@ fm_sweep_lock_file() { printf '%s/sweep-%s.lock\n' "$FM_OUT" "$1"; }
 fm_map_pin_file()    { printf '%s/category-map-pin-%s\n' "$FM_OUT" "$1"; }
 fm_sweep_tools()     { "$FM_PYTHON" "$(dirname "${BASH_SOURCE[0]}")/sweep_tools.py" "$@"; }
 
-# The live category-map digest, computed exactly as the harness records it: the harness's
-# own CATEGORY_MAP_QUERY (read from its source) through the shared digest helper, inside the
-# stack's data-manager. Never fails the caller: a failed reading prints `<unavailable: ...>`
-# and the consumer (compare_runs' QA join rule) decides what it costs (#538 rule 2).
-fm_category_map_digest() { # $1 = stack name
-  local out
-  out="$("$FM_DOCKER" exec -w /root/archi "data-manager-$1" python -c '
-import ast, pathlib
-src = pathlib.Path("src/bin/service_benchmark.py").read_text()
-queries = [node.value.value for node in ast.parse(src).body
-           if isinstance(node, ast.Assign)
-           and any(getattr(t, "id", None) == "CATEGORY_MAP_QUERY" for t in node.targets)]
+# The live category-map digest, computed exactly as the harness records it: the searched
+# collection's URL -> category map through the shared routine, inside the stack's
+# data-manager. Never fails the caller: a failed reading prints `<unavailable: ...>` and the
+# consumer (compare_runs' QA join rule) decides what it costs (#538 rule 2).
+FM_CATEGORY_MAP_PY='
 try:
-    from src.utils.benchmark_provenance import category_map_digest, category_map_records
-    from src.utils.postgres_service_factory import PostgresServiceFactory
-    rows = PostgresServiceFactory.from_env().connection_pool.execute(queries[0])
-    print(category_map_digest(category_map_records(rows)))
+    from src.utils.benchmark_provenance import container_category_map_digest
+    print(container_category_map_digest())
 except Exception as exc:
     print(f"<unavailable: {exc}>")
-' 2>/dev/null | tr -d '\n' || true)"
+'
+fm_category_map_digest() { # $1 = stack name
+  local out
+  out="$("$FM_DOCKER" exec -w /root/archi "data-manager-$1" python -c "$FM_CATEGORY_MAP_PY" 2>/dev/null | tr -d '\n' || true)"
   [ -n "$out" ] || out="<unavailable: could not read the category map from data-manager-$1>"
   printf '%s\n' "$out"
 }
