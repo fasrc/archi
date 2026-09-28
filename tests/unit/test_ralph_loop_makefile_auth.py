@@ -76,6 +76,15 @@ def test_auth_check_target_is_bounded_by_a_timeout():
     assert "rm -f $(IMAGE)-auth-check" in recipe
 
 
+def test_auth_check_does_not_use_bare_mode():
+    """`claude --bare` skips the CLAUDE_CODE_OAUTH_TOKEN auth path and prints the
+    same "Not logged in" line an expired login prints (measured 2026-09-28 on the
+    image's 2.1.173 and the host's 2.1.283), so a probe using it reports a healthy
+    token as dead every night."""
+    recipe = _target_recipe(_makefile(), "auth-check")
+    assert "--bare" not in recipe, recipe
+
+
 def test_login_target_is_kept_as_the_fallback():
     recipe = _target_recipe(_makefile(), "login")
     assert "claude login" in recipe
