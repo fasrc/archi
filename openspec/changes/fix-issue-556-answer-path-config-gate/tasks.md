@@ -147,7 +147,7 @@
 
 ## 3. The reported path, and an arm with no recorded configuration
 
-- [ ] 3.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 3.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Add tests asserting:
       (a) two arms whose refused paths are identical and whose
