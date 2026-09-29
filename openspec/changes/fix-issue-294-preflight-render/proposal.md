@@ -23,8 +23,11 @@ were rejected.
   untouched.
 - `create --dry` runs the preflight too, so a dry run is a full render check. It still
   creates nothing on the host.
-- Move the idempotent `VolumeManager.create_required_volumes()` above the teardown in both
-  commands (never under `--dry`).
+- In `create()`, move volume creation (`VolumeManager.create_required_volumes(compose_config)`,
+  without the config) above the teardown (never under `--dry`). Local-file staging
+  (`VolumeManager.stage_local_files()`) stays below the teardown: it copies into the
+  data-manager volume that the running deployment still mounts. `evaluate()` keeps both
+  after the teardown.
 - Update the comments in `src/cli/cli_main.py` and the note in `docs/docs/fasrc_archi.md`
   that point at #294 as open.
 

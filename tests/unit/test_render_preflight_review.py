@@ -163,3 +163,78 @@ data_manager:
     assert "Is a directory" in result.output, result.output
     assert teardowns == [], f"teardowns={teardowns}\noutput:\n{result.output}"
     assert existing.exists()
+
+
+def test_create_force_stages_local_files_only_after_teardown(
+    env_file, archi_home, monkeypatch
+):
+    """Volume creation may precede the teardown; local-file staging must not.
+
+    Staging copies into the data-manager volume that the running deployment
+    still mounts (it survives --force), so it must wait for the teardown.
+    """
+    from click.testing import CliRunner
+
+    from src.cli import cli_main
+    from src.cli.managers import volume_manager as vm
+    from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.templates_manager import TemplateManager
+    from tests.unit.test_cli_create_dev_smoke import (
+        EXAMPLE_CONFIG,
+        SENTINEL,
+        _existing_deployment,
+    )
+    from tests.unit.test_render_preflight import _satisfied_base_images
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing {EXAMPLE_CONFIG}")
+
+    _satisfied_base_images(monkeypatch)
+    _existing_deployment(archi_home)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(TemplateManager, "_probe_port", lambda self, port: None)
+    monkeypatch.setattr(
+        TemplateManager, "preflight_render", lambda self, *a, **kw: None
+    )
+
+    events = []
+    monkeypatch.setattr(
+        vm.VolumeManager, "_create_volume", lambda self, name: events.append("volume")
+    )
+    monkeypatch.setattr(
+        vm, "stage_local_files_to_volume", lambda **kw: events.append("stage")
+    )
+    monkeypatch.setattr(
+        DeploymentManager,
+        "delete_deployment",
+        lambda self, **kwargs: events.append("teardown"),
+    )
+
+    def _render(self, *a, **kw):
+        events.append("render")
+        raise RuntimeError(SENTINEL)
+
+    monkeypatch.setattr(TemplateManager, "prepare_deployment_files", _render)
+
+    result = CliRunner().invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert "teardown" in events, result.output
+    teardown = events.index("teardown")
+    assert "volume" in events[:teardown], events
+    assert "stage" in events, events
+    assert "stage" not in events[:teardown], events
+    assert events.index("stage") < events.index("render"), events

@@ -292,11 +292,11 @@ def create(
             compose_config, config_manager, secrets_manager, **other_flags
         )
 
+        # Volumes only, no config: staging local_files copies into the data-manager
+        # volume the running deployment still mounts, so it waits for the teardown.
         if not dry:
             volume_manager = VolumeManager(compose_config.use_podman)
-            volume_manager.create_required_volumes(
-                compose_config, config_manager.config
-            )
+            volume_manager.create_required_volumes(compose_config)
 
         # Everything above this line can still refuse the deployment — service
         # selection, config validation, secret validation, the compose plan,
@@ -335,6 +335,7 @@ def create(
             return
 
         # Actual deployment
+        volume_manager.stage_local_files(compose_config, config_manager.config)
         base_dir.mkdir(parents=True, exist_ok=True)
 
         secrets_manager.write_secrets_to_files(base_dir, all_secrets)
