@@ -142,7 +142,7 @@ Returns the metadata schema and available filter keys. Helps the agent understan
 
 ### `fetch_catalog_document`
 
-Pull the full text of a specific file by its hash. Supports truncation with `max_chars`.
+Pull the full text of a specific file by its hash. Supports truncation with `max_chars`. The server caps `max_chars` at 6000 characters, a request with no `max_chars` returns at most 4000, and `0`, a negative, or a malformed value means the 6000 cap, not "no limit".
 
 - **Use for:** Reading a specific document after finding it via search
 

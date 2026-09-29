@@ -1,5 +1,11 @@
 """Tests for the server-side catalog document character clamp (issue #260)."""
 
+from pathlib import Path
+from unittest.mock import patch
+
+from flask import Flask
+
+from src.interfaces.uploader_app import app as uploader_app_module
 from src.interfaces.uploader_app.document_limits import (
     DEFAULT_CATALOG_DOCUMENT_CHARS,
     MAX_CATALOG_DOCUMENT_CHARS,
@@ -55,3 +61,62 @@ def test_malformed_values_fall_back_to_the_ceiling():
 
 def test_max_catalog_document_chars_is_6000():
     assert MAX_CATALOG_DOCUMENT_CHARS == 6000
+
+
+def _api_catalog_document_body():
+    app_py = Path("src/interfaces/uploader_app/app.py").read_text()
+    start = app_py.index("def api_catalog_document")
+    end = app_py.index("\n    def ", start)
+    return app_py[start:end]
+
+
+def test_endpoint_uses_the_clamp_helper_and_drops_the_manual_guard():
+    app_py = Path("src/interfaces/uploader_app/app.py").read_text()
+    assert (
+        "from src.interfaces.uploader_app.document_limits import clamp_document_chars"
+        in app_py
+    )
+    body = _api_catalog_document_body()
+    assert 'clamp_document_chars(request.args.get("max_chars"))' in body
+    assert "if max_chars and" not in body
+    assert "type=int" not in body
+
+
+class _StubCatalog:
+    def __init__(self):
+        self.refreshed = False
+
+    def refresh(self):
+        self.refreshed = True
+
+    def get_filepath_for_hash(self, resource_hash):
+        return f"/tmp/{resource_hash}.txt"
+
+    def get_metadata_for_hash(self, resource_hash):
+        return {"hash": resource_hash}
+
+
+def _client_for_catalog_document():
+    wrapper = object.__new__(uploader_app_module.FlaskAppWrapper)
+    wrapper.catalog = _StubCatalog()
+    flask_app = Flask(__name__)
+    flask_app.add_url_rule(
+        "/api/catalog/document/<resource_hash>",
+        "api_catalog_document",
+        wrapper.api_catalog_document,
+        methods=["GET"],
+    )
+    return flask_app.test_client(), wrapper
+
+
+def test_endpoint_clamps_the_real_response_text():
+    client, wrapper = _client_for_catalog_document()
+    with patch.object(uploader_app_module, "load_text_from_path", return_value=DOC):
+        absent = client.get("/api/catalog/document/abc123")
+        ceiling = client.get("/api/catalog/document/abc123?max_chars=0")
+        honoured = client.get("/api/catalog/document/abc123?max_chars=100")
+
+    assert wrapper.catalog.refreshed
+    assert len(absent.get_json()["text"]) == DEFAULT_CATALOG_DOCUMENT_CHARS
+    assert len(ceiling.get_json()["text"]) == MAX_CATALOG_DOCUMENT_CHARS
+    assert honoured.get_json()["text"] == DOC[:100]
