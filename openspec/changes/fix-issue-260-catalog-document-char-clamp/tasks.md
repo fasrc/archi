@@ -70,7 +70,7 @@ and a commit — no task ends red.
 
 ## 3. Publish
 
-- [ ] 3.1 Push the branch and open the PR. The branch was cut with `checkout -b`, so its
+- [x] 3.1 Push the branch and open the PR. The branch was cut with `checkout -b`, so its
       upstream is `origin/dev` — push with
       `git push -u origin fix/issue-260-catalog-document-char-clamp` to repoint it. Confirm
       the push landed on **fasrc/archi**, not a fork:
