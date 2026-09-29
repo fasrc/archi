@@ -25,12 +25,28 @@ Rules for every task:
 ## 3. PR 3: offline scorer and merge
 
 - [ ] 3.1 Add tests for claiming: claim-at-start takes the READY bundles that match the judge, skips other judges, and exactly one of two racing claimants wins (`mkdir`).
+- [ ] 3.1a Add tests for stale-claim recovery, with `squeue` and `sacct` replaced by stubs:
+  - a claim whose job is `TIMEOUT` in `sacct` and absent from `squeue` is taken over, and only the unsaved pairs are scored;
+  - a claim whose job is running is not taken;
+  - of two jobs that race to take one stale claim, exactly one wins;
+  - a requeued job with the same job id keeps its claim.
+- [ ] 3.1b Add tests for the scorer identity: a code-version mismatch or a package-digest mismatch makes the bundle `FAILED` with both values in the reason, and no scores are written. No flag overrides this.
 - [ ] 3.2 Add tests for the time budget: the first bundle is always claimed, and a later bundle that needs more time than is left stays READY.
 - [ ] 3.3 Add tests for checkpoints: chunked scoring appends to `scores.partial.jsonl`, and a restart after 40 of 109 rows scores only the other 69, with one value for each `(key, metric)`.
 - [ ] 3.4 Add a test: a bundle whose digest does not match becomes `FAILED` with a reason, and the other bundles become `SCORED`.
 - [ ] 3.5 Add a test: offline aggregates equal inline aggregates for the same rows and the same stub judge.
 - [ ] 3.6 Write the scorer (`src/evaluation/judge/` or `src/utils/judge_scorer.py`) and its CLI entry `scripts/benchmarking/judge/score.py`.
-- [ ] 3.7 Add tests for the merge: the judged file has the per-row scores, the aggregates, the leaderboard, A/B, `judge_status: scored` and `judge_identity`. The pending file is unchanged, a second merge gives identical bytes, and a digest mismatch exits non-zero. Then write `scripts/benchmarking/judge/merge.py`.
+- [ ] 3.6a Add tests for `judge_identity` and `judge_execution` (design D10):
+  - two jobs with the same settings give equal identities and different execution records;
+  - a precision change (`bf16` against `fp8`) changes the identity;
+  - the inline path records the same identity shape.
+- [ ] 3.7 Add tests for the merge, then write `scripts/benchmarking/judge/merge.py`. The tests check that:
+  - the judged file has the per-row scores, the aggregates, the leaderboard, A/B, `judge_status: scored`, `judge_identity` and `judge_execution`;
+  - the pending file is unchanged, and a second merge gives identical bytes;
+  - a digest mismatch exits non-zero;
+  - a merge killed while it writes leaves no judged file and no `MERGED`, and the next merge cleans up and completes;
+  - two concurrent merges leave one complete file;
+  - an existing judged file with different bytes is never overwritten.
 
 ## 4. PR 4: Slurm scripts, gates, docs
 
@@ -38,7 +54,11 @@ Rules for every task:
 - [ ] 4.2 Write `scripts/benchmarking/slurm/archi_judge.sbatch`. It has `#SBATCH -J archi-judge --requeue --open-mode=append`, and the partition, GPU count and `-t` are settings at the top of the script. It starts vLLM in Apptainer on `127.0.0.1` with a random `--api-key`, waits for `/v1/models`, runs the scorer, and stops vLLM through a `trap`. It then submits the merge job with `--dependency=afterok:$SLURM_JOB_ID`. It must have a `--dry-run` that prints the resolved commands, with a test for it.
 - [ ] 4.3 Write `scripts/benchmarking/slurm/judge_merge.sbatch` (CPU only), with a `--dry-run` test.
 - [ ] 4.4 Add tests for G8 in `scripts/benchmarking/compare_runs.py`: a pending arm exits non-zero and is named. Then write the gate.
-- [ ] 4.5 Add tests for G9: arms with different judge identities (inline Sonnet against offline Llama) are refused, and the output names both judges. Then write the gate. Also add a test that two older inline artifacts with the same judge still compare.
+- [ ] 4.5 Add tests for G9, then write the gate. The tests check that:
+  - arms whose `judge_identity` differs are refused, and the differing fields are named (inline Sonnet against offline Llama; `bf16` against `fp8`);
+  - two offline arms with equal identity from separate jobs compare;
+  - two older inline artifacts with the same judge still compare;
+  - an old artifact never matches a new one that records a digest.
 - [ ] 4.6 Document the operator steps in `docs/docs/benchmarking.md`: image and weights download, the `scrontab` entry, `judge_mode: deferred`, how to read the queue, and how to copy judged files into `bench_out/`.
 
 ## 5. Operator (after PR 4 merges, not automated)

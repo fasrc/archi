@@ -54,10 +54,12 @@ The extraction is a separate, mechanical PR with no change in behavior. `service
 ```
 <queue>/<run_id>-arm<N>/
   manifest.json        judge settings, judge model id + revision, code_version,
+                       package digest of the run's environment (D10),
                        result file name, arm index, rows sha256
   rows.jsonl           {key, user_input, retrieved_contexts, response, reference}
   READY                written last by publish
-  claim.d/             mkdir = atomic claim; claim.d/job holds the job id
+  claim.d/             mkdir = atomic claim; claim.d/job holds the Slurm job id
+                       (a requeued job keeps its id, so it still owns the claim)
   scores.partial.jsonl append-only {key, metric, value, error}
   judge_scores.json    final: per-key scores, aggregates, NaN counts, judge_identity
   SCORED | FAILED      terminal marker (FAILED holds the reason)
@@ -71,7 +73,7 @@ The extraction is a separate, mechanical PR with no change in behavior. `service
 ### D4. Submitter: one job, via scrontab
 
 `scripts/benchmarking/slurm/judge_submit.sh` does three things:
-1. It counts READY folders that have no `claim.d`.
+1. It counts **available** bundles: READY folders with no terminal marker, and with either no `claim.d` or a stale claim (D5a).
 2. It runs `squeue -h -u "$USER" -n archi-judge`.
 3. It runs `sbatch` only if the count is 1 or more and no job exists.
 
@@ -84,6 +86,23 @@ The extraction is a separate, mechanical PR with no change in behavior. `service
 - Before each claim, it checks the budget: time left (from `squeue -h -j $SLURM_JOB_ID -o %L`) against the rows-per-minute rate it has measured so far. The first bundle is always claimed.
 - Bundles that are not claimed stay READY for the next job. The submitter's next tick submits that job.
 - All arms of a campaign that one job scores therefore share the same weights, precision and server settings.
+
+### D5a. Stale-claim recovery
+
+`--requeue` keeps the job ID, so a preempted job that Slurm requeues still owns its claims. Some jobs end without a terminal marker and without a requeue: a job that reaches its time limit, a cancelled job, or a node failure. Those jobs leave `claim.d` behind with no owner.
+
+A claim is **stale** when all three conditions are true:
+1. the bundle has no `SCORED` or `FAILED` marker;
+2. the job ID in `claim.d/job` is not in `squeue -h -j <id>`, which means it is not pending, running, or requeued;
+3. `sacct` reports that job ID in a terminal state.
+
+Condition 3 prevents a false stale report during a short `squeue` gap.
+
+A new job takes over a stale claim in two steps:
+1. It renames `claim.d` to `claim.stale.<old job id>.<UTC>` with one atomic `rename`. Only one job can win that rename.
+2. It claims the bundle with the normal `mkdir`.
+
+The original job is known to be finished, so the takeover cannot race with it. Scoring resumes from `scores.partial.jsonl` (D7), so the work that the dead job completed is kept. `judge_submit.sh --status` lists stale claims.
 
 ### D6. Judge server on the node's loopback interface, with a per-job API key
 
@@ -102,25 +121,60 @@ The scorer builds the judge with `evaluator_provider: huggingface`, `evaluator_o
 2. checks the bundle digest against the digest recorded in the pending arm;
 3. writes the per-row scores and the `total_results` aggregates;
 4. rebuilds the leaderboard and the A/B comparisons with the existing `ResultHandler` code;
-5. writes `<name>.judged.json`, with `judge_status: scored` and `judge_identity`.
+5. writes `<name>.judged.json`, with `judge_status: scored`, `judge_identity` and `judge_execution` (D10).
 
-It does not change the pending file. Output is canonical JSON (sorted keys, `allow_nan=False`, the same writer as `dump`), so a second run gives identical bytes. A person, or a later dev-host timer, copies the judged files into `bench_out/` and commits them.
+It does not change the pending file. Output is canonical JSON (sorted keys, `allow_nan=False`, the same writer as `dump`), so a second run gives identical bytes.
+
+The merge is safe when two merges run at the same time (the afterok job and a manual run) and when a merge is killed while it writes:
+- It writes to a unique temporary file in the same folder, calls `fsync`, validates the file by loading it again, and moves it into place with an atomic `rename`.
+- It writes `MERGED` only after the rename.
+- If a judged file already exists: identical bytes are a no-op success. Different bytes make it exit non-zero, and it never overwrites.
+- A reader must trust a judged file only when `MERGED` exists. A killed merge therefore leaves only a temporary file, which the next merge ignores and removes.
+
+A person, or a later dev-host timer, copies the judged files into `bench_out/` and commits them.
+
+### D10. Judge identity, scorer identity, and execution record
+
+The design keeps three records separate:
+
+- **`judge_identity`** decides comparability, and G9 compares it field by field:
+  - the model id and HF revision SHA;
+  - the weight precision (`bf16`, `fp8`, and so on);
+  - the vLLM image digest, and the server settings that change output (`--max-model-len`, `--dtype`, the quantization, the chat template);
+  - the decoding settings that the scorer sends (temperature, top_p, max tokens);
+  - the **scorer identity** below.
+
+  It excludes every per-job value, so arms that separate jobs scored with the same settings stay comparable.
+- **Scorer identity**:
+  - the repository commit of the scorer code;
+  - the scorer Apptainer image digest;
+  - a SHA-256 of the sorted `pip freeze` output of the scorer's environment (this pins ragas, langchain and every other dependency);
+  - the ragas version as a readable copy of the same fact;
+  - the metric list and the per-metric settings from the manifest.
+
+  ragas holds its prompt templates inside the pinned package, so the package digest covers them.
+- **`judge_execution`** is the record of the job, and nothing compares it: the job id, node name, start and end times, the list of claimed bundles, and the requeue count.
+
+**The scorer fails closed.** It refuses a bundle when the manifest's `code_version` differs from the scorer's own code. It also refuses a bundle when the manifest names a scorer image digest or package digest that differs from the running environment. It marks that bundle `FAILED` with both values. There is no override. To score such a bundle, rebuild the scorer image at the manifest's commit.
+
+The inline path records the same `judge_identity` shape: provider `huit_bedrock`, the Bedrock model id, and the benchmark image's package digest. Inline and offline arms can then be compared by the same rule, and they differ on the model, as they must.
 
 ### D9. Two new gates in compare_runs.py
 
 - **G8, judged.** Refuse any arm with `judge_status: pending`.
-- **G9, one judge.** Refuse a RAGAS comparison when the arms' judge identities differ. For an inline arm, the identity is `(evaluator_provider, evaluator_model)`. For an offline arm, it is `(model id, revision)`.
+- **G9, one judge.** Refuse a RAGAS comparison when the arms' `judge_identity` (D10) differ in any field, and name the fields that differ. An old inline artifact with no `judge_identity` gets `(evaluator_provider, evaluator_model)` from its recorded settings. It is then comparable only with other old inline artifacts that have the same pair, because a missing digest never equals a recorded one.
 
 There is no override flag, because the result of a mixed comparison has no meaning.
 
 ## Risks / Trade-offs
 
 - [The new judge disagrees with Sonnet, or gives more NaN rows] → Before the switch, score one fm-00 bundle with each candidate and with inline Sonnet. Compare row-level rank agreement and NaN counts for each metric. Choose with those numbers. G9 prevents a silent mix.
-- [vLLM output at temperature 0 changes a little with the other requests in the same batch] → Record the job id and the list of claimed bundles in each `judge_identity`. The effect is expected to be far below run-to-run noise, and the record makes it possible to check later.
+- [vLLM output at temperature 0 changes a little with the other requests in the same batch] → Record the job id and the list of claimed bundles in each `judge_execution` (not in `judge_identity`, so it does not block comparison). The effect is expected to be far below run-to-run noise, and the record makes it possible to check later.
 - [Queue wait on `gpu_h200` is long] → Claim-at-start makes a long wait add more bundles to the job. The operator can switch the sbatch partition to `gpu_requeue` (D7 makes that safe) or to 1 × H200 with FP8. Precision is part of `judge_identity`.
 - [A lost scrontab entry or a crashed submitter leaves bundles READY with no job] → The submitter logs each tick. A READY bundle older than 24 hours is reported by `judge_submit.sh --status`.
 - [Many parallel ragas requests over a small chunk give less throughput] → `max_workers` and the chunk size are manifest settings. Measure rows per minute in the first job and adjust.
-- [The scorer's Python environment differs from the benchmark image, so the ragas or langchain versions drift] → Run the scorer in an Apptainer image built from the benchmark image, and record its digest in `judge_identity`. The manifest records `code_version`, and the scorer refuses to run when its code version differs (an operator override is logged).
+- [The scorer's Python environment differs from the benchmark image, so the ragas or langchain versions drift] → Run the scorer in an Apptainer image built from the benchmark image. The scorer identity (D10) pins the code, the image digest and the package digest, and any mismatch fails closed, with no override.
+- [A job ends without a requeue and leaves its claim] → Stale-claim recovery (D5a).
 - [`service_benchmark.py` is large and black-sensitive] → D2 extraction goes first, as its own mechanical PR, and new logic lives in the new module.
 
 ## Migration Plan
