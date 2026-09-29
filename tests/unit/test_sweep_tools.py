@@ -416,3 +416,25 @@ def test_a_retry_after_a_failed_ledger_write_completes(sweep, monkeypatch):
     rows = _archive(sweep, lock, artifact, 1, census)
     assert len(rows) == 3
     assert len(json.loads((sweep / "out/ledger.json").read_text())) == 4
+
+
+def test_a_v2_reading_is_usable():
+    assert st._usable("sha256/v2:abc")
+
+
+def test_ledger_rows_carry_the_retrieval_identity(sweep):
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep)
+    data = json.loads(artifact.read_text())
+    identity = {"collection": "fasrc_with_HF", "embedding_model": "all-MiniLM"}
+    data["benchmarking_results"][0]["retrieval_identity"] = identity
+    artifact.write_text(json.dumps(data))
+    _ledger(sweep)
+
+    rows = _archive(sweep, lock, artifact, 1, _census(sweep, digest, lock))
+
+    assert (rows[0]["collection"], rows[0]["embedding_model"]) == (
+        "fasrc_with_HF",
+        "all-MiniLM",
+    )
+    assert (rows[1]["collection"], rows[1]["embedding_model"]) == (None, None)

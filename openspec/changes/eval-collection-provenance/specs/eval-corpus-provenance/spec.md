@@ -20,7 +20,7 @@ Every evaluation run SHALL record the collection tag it searched, the embedding 
 - **THEN** `embedding_model` equals that kwarg value, and when neither kwarg exists it equals the class name
 
 ### Requirement: The corpus fingerprint covers the searched collection and only rows retrieval can reach
-The corpus fingerprint SHALL hash only chunks that the searched collection's retrieval filter admits, only parent nodes that such a chunk references, and only live documents that own such a chunk; it SHALL encode every row value as a JSON array of fields; it SHALL include each chunk's `collection` tag and null-vector flag, and the citation fields (URL, display name, source type, title, filename) from the document row for a linked chunk and from the row's own metadata for a documentless chunk and for a parent node; it SHALL NOT include `size_bytes`, the `embedding_model` tag, or any other `extra_json` field.
+The corpus fingerprint SHALL hash only chunks that the searched collection's retrieval filter admits, only parent nodes that such a chunk references, and only live documents that own such a chunk; it SHALL encode every row value as a JSON array of fields; it SHALL include each chunk's `collection` tag and null-vector flag, and the citation fields (URL, display name, source type, title, filename) from each chunk's and each parent node's own metadata, and the URL, display name, source type, and title columns of each linked document row; it SHALL NOT include `size_bytes`, the `embedding_model` tag, or any other `extra_json` field.
 
 #### Scenario: Ingest into another collection leaves the digest unchanged
 - **WHEN** chunks are added under a different `collection` tag
@@ -56,6 +56,10 @@ The corpus fingerprint SHALL hash only chunks that the searched collection's ret
 
 #### Scenario: Documentless chunk citation metadata is covered
 - **WHEN** the `url` in the metadata of a chunk with `document_id IS NULL` changes
+- **THEN** the fingerprint changes
+
+#### Scenario: Linked chunk citation metadata is covered
+- **WHEN** the `filename` in the metadata of a chunk that has a document row changes
 - **THEN** the fingerprint changes
 
 #### Scenario: Parent node metadata is covered
@@ -162,8 +166,12 @@ An evaluation run SHALL stop before its first question when the searched collect
 - **WHEN** one arm has no `retrieval_identity`
 - **THEN** the comparison runs, and the report notes that the identity of that arm is not recorded
 
+#### Scenario: QA run answered from another corpus
+- **WHEN** a `--qa-run` summary records corpus readings that are unavailable, that differ from each other, or whose version or digest differs from the joined arm's `corpus_fingerprint`
+- **THEN** the QA run is refused at the gate exit code with a corpus reason, and a QA run that recorded no reading joins as before
+
 ### Requirement: Archive tooling accepts the versioned digest
-`archive_run.sh` SHALL treat a `sha256/v2:` reading as usable, SHALL refuse a pin and an artifact whose prefixes differ with a version reason, and the other readers of the digest SHALL accept it unchanged.
+`archive_run.sh` SHALL treat a `sha256/v2:` reading as usable, SHALL refuse a pin and an artifact whose prefixes differ with a version reason except on the closing-baseline re-pin (arm 00, fresh deploy, `--new-corpus`), which moves the pin to the new version and records the old pin, and the other readers of the digest SHALL accept it unchanged.
 
 #### Scenario: Archive a v2 artifact
 - **WHEN** `archive_run.sh` reads an artifact whose two readings start with `sha256/v2:` and are equal
@@ -172,6 +180,10 @@ An evaluation run SHALL stop before its first question when the searched collect
 #### Scenario: Pin and artifact versions differ
 - **WHEN** the recorded pin starts with `sha256:` and the artifact's readings start with `sha256/v2:`
 - **THEN** `archive_run.sh` refuses, and the reason says the fingerprint versions differ
+
+#### Scenario: Closing baseline re-pins a v1 stack under v2
+- **WHEN** the recorded pin starts with `sha256:`, arm 00 ran on a fresh deploy, and `archive_run.sh` archives its `sha256/v2:` artifact with `--new-corpus`
+- **THEN** the pin becomes the v2 digest and the ledger row records the old pin in `repinned_from`
 
 ### Requirement: The backfill derives the identity from the recorded running configuration
 The provenance backfill SHALL stamp `retrieval_identity` on every arm that carries `running_configuration`, label the stamp as reconstructed from it, and SHALL NOT overwrite an existing key or stamp an arm that has no `running_configuration`.

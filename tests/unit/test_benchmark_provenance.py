@@ -20,6 +20,7 @@ from src.utils.benchmark_provenance import (
     asserted_config_divergence,
     config_divergence,
     corpus_fingerprint,
+    retrieval_identity,
 )
 
 
@@ -417,3 +418,137 @@ class TestAssertedConfigDivergence:
         assert asserted_config_divergence({"enabled": False}, {"enabled": None}) == [
             "enabled"
         ]
+
+
+def _identity_config(embedding_name, kwargs, cls=None):
+    return {
+        "data_manager": {
+            "collection_name": "fasrc",
+            "embedding_name": embedding_name,
+            "embedding_class_map": {
+                embedding_name: {"class": cls or embedding_name, "kwargs": kwargs}
+            },
+        }
+    }
+
+
+class TestRetrievalIdentity:
+    """The collection and embedding model a run searched, derived from config."""
+
+    def test_huggingface_model_comes_from_model_name(self):
+        config = _identity_config(
+            "HuggingFaceEmbeddings",
+            {"model_name": "Qwen/Qwen3-Embedding-0.6B", "model_kwargs": {}},
+        )
+        identity = retrieval_identity(config)
+        assert identity.embedding_model == "Qwen/Qwen3-Embedding-0.6B"
+        assert identity.embedding_name == "HuggingFaceEmbeddings"
+
+    def test_openai_model_comes_from_model(self):
+        config = _identity_config(
+            "OpenAIEmbeddings", {"model": "text-embedding-3-small"}
+        )
+        assert retrieval_identity(config).embedding_model == "text-embedding-3-small"
+
+    def test_class_without_a_model_kwarg_yields_the_class_name(self):
+        config = _identity_config("custom", {"dim": 8}, cls="FakeEmbeddings")
+        assert retrieval_identity(config).embedding_model == "FakeEmbeddings"
+
+    def test_collection_uses_the_connector_formula(self):
+        config = _identity_config("HuggingFaceEmbeddings", {"model_name": "m"})
+        assert (
+            retrieval_identity(config).collection == "fasrc_with_HuggingFaceEmbeddings"
+        )
+
+    def test_missing_data_manager_returns_a_null_identity(self):
+        identity = retrieval_identity({})
+        assert identity.collection is None
+        assert identity.embedding_name is None
+        assert identity.embedding_model is None
+
+    def test_identity_serializes_to_a_plain_dict(self):
+        config = _identity_config("OpenAIEmbeddings", {"model": "m"})
+        assert retrieval_identity(config).as_dict() == {
+            "collection": "fasrc_with_OpenAIEmbeddings",
+            "embedding_name": "OpenAIEmbeddings",
+            "embedding_model": "m",
+        }
+
+
+def test_identity_collection_equals_the_connector_collection(monkeypatch):
+    """The helper and the live connector must agree on the searched tag."""
+    from src.archi.utils import vectorstore_connector as connector_module
+
+    class FakeEmbeddings:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(
+        connector_module.ConfigService,
+        "_resolve_embedding_classes",
+        staticmethod(
+            lambda class_map: {
+                name: {**entry, "class": FakeEmbeddings}
+                for name, entry in class_map.items()
+            }
+        ),
+    )
+    monkeypatch.setattr(connector_module, "read_secret", lambda name: "secret")
+    config = _identity_config("HuggingFaceEmbeddings", {"model_name": "m"})
+    config["services"] = {"postgres": {}}
+
+    connector = connector_module.VectorstoreConnector(config)
+
+    assert connector.collection_name == retrieval_identity(config).collection
+    assert connector.embedding_model.kwargs == {"model_name": "m"}
+
+
+def test_the_connector_passes_the_configured_model_to_the_store(monkeypatch):
+    from src.archi.utils import vectorstore_connector as connector_module
+
+    built = {}
+
+    class FakeStore:
+        def __init__(self, **kwargs):
+            built.update(kwargs)
+
+        def count(self):
+            return 0
+
+    monkeypatch.setattr(
+        connector_module.ConfigService,
+        "_resolve_embedding_classes",
+        staticmethod(
+            lambda class_map: {
+                name: {**entry, "class": lambda **kw: object()}
+                for name, entry in class_map.items()
+            }
+        ),
+    )
+    monkeypatch.setattr(connector_module, "read_secret", lambda name: "secret")
+    monkeypatch.setattr(connector_module, "PostgresVectorStore", FakeStore)
+    config = _identity_config("HuggingFaceEmbeddings", {"model_name": "Qwen/Q"})
+    config["services"] = {"postgres": {}}
+
+    connector_module.VectorstoreConnector(config).get_vectorstore()
+
+    assert built["embedding_model"] == "Qwen/Q"
+
+
+def test_a_resolved_class_object_yields_its_name():
+    """``get_full_config(resolve_embeddings=True)`` swaps the name for the class.
+
+    The chat app's uploader builds its manager from that config, so its chunk
+    tags must still name the class, as the harness's unresolved config does.
+    """
+
+    class FakeEmbeddings:
+        pass
+
+    resolved = _identity_config("custom", {"dim": 8}, cls=FakeEmbeddings)
+    unresolved = _identity_config("custom", {"dim": 8}, cls="FakeEmbeddings")
+    assert retrieval_identity(resolved).embedding_model == "FakeEmbeddings"
+    assert (
+        retrieval_identity(resolved).embedding_model
+        == retrieval_identity(unresolved).embedding_model
+    )

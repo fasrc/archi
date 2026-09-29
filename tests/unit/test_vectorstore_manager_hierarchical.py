@@ -709,3 +709,42 @@ def test_build_hierarchical_payload_sentence_strategy_ignores_markdown_files(
     )
 
     assert captured == ["sentence"]
+
+
+def test_hierarchical_children_and_parents_carry_the_embedding_model(monkeypatch):
+    manager = _make_manager()
+    manager._data_manager_config = {
+        "stemming": {"enabled": False},
+        "collection_name": "fasrc",
+        "embedding_name": "OpenAIEmbeddings",
+        "embedding_class_map": {
+            "OpenAIEmbeddings": {"kwargs": {"model": "text-embedding-3-small"}}
+        },
+    }
+    nodes = [
+        HierarchicalNode(
+            parent_index=0,
+            parent_text="Parent context.",
+            child_texts=["Child one.", "Child two."],
+            metadata={},
+        )
+    ]
+    monkeypatch.setattr(
+        manager_module,
+        "build_hierarchical_nodes",
+        lambda doc, strategy=None, **_kwargs: nodes,
+    )
+
+    [parent] = manager._build_hierarchical_payload(
+        docs=[SimpleNamespace(page_content="ignored", metadata={})],
+        file_level_metadata={},
+        filename="doc.html",
+        filehash="hash-1",
+        apply_stemming=False,
+    )
+
+    assert parent["parent_metadata"]["embedding_model"] == "text-embedding-3-small"
+    assert all(
+        md["embedding_model"] == "text-embedding-3-small"
+        for md in parent["child_metadatas"]
+    )

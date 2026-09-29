@@ -810,3 +810,78 @@ class TestLiveWorkflow:
             ("live-0", "post_run"),
             ("live-1", "post_run"),
         ]
+
+
+def test_a_retry_that_promotes_a_live_retry_takes_its_own_readings(
+    monkeypatch, tmp_path, runtimes
+):
+    """The promoted attempt answers fresh, so it gets a guard and two readings.
+
+    The parent failed only a live pre-run check, so its plan has no execution
+    retry. The retry's pre-run check then matches the baseline and promotes the
+    attempt to a fresh execution against today's corpus (#570).
+    """
+    import src.evaluation.qa.provenance as provenance
+
+    config = {
+        "services": {
+            "chat_app": {
+                "agent_class": "FakeAgent",
+                "default_provider": "fake",
+                "default_model": "fake-model",
+            }
+        },
+        "data_manager": {
+            "collection_name": "fasrc",
+            "embedding_name": "HuggingFaceEmbeddings",
+            "embedding_class_map": {
+                "HuggingFaceEmbeddings": {"kwargs": {"model_name": "Qwen/Q"}}
+            },
+        },
+    }
+    spec = SimpleNamespace(tools=["search_vectorstore_hybrid"])
+    monkeypatch.setattr(
+        workflow_module,
+        "load_agent_inputs",
+        lambda *_args: (config, spec, "---\n---\n", object),
+    )
+    monkeypatch.setattr(workflow_module, "LazyVectorstore", lambda cfg: object())
+    guards = []
+    readings = iter(["sha256/v2:p1", "sha256/v2:p2", "sha256/v2:r1", "sha256/v2:r2"])
+    monkeypatch.setattr(provenance, "direct_pool", lambda cfg: object())
+    monkeypatch.setattr(
+        provenance,
+        "collection_readiness",
+        lambda pool, identity: guards.append(1)
+        or {
+            "chunk_count": 1,
+            "usable_chunk_count": 1,
+            "untagged_chunk_count": 0,
+            "embedding_model_source": "chunks",
+        },
+    )
+    monkeypatch.setattr(
+        provenance, "live_corpus_fingerprint", lambda pool, cfg: next(readings)
+    )
+    dataset = tmp_path / "dataset.json"
+    parent = tmp_path / "parent"
+    successor = tmp_path / "successor"
+    _dataset(dataset)
+    baseline = {"value": 7, "revision": "r1"}
+    changed = {"value": 8, "revision": "r2"}
+    invoker = SequenceInvoker([baseline, changed, baseline, baseline])
+    monkeypatch.setattr(
+        workflow_module.EvaluatorMCPRegistry,
+        "load",
+        classmethod(lambda cls, path=None: invoker),
+    )
+    workflow = QAWorkflow()
+    workflow.composite(dataset, tmp_path / "agent.yaml", tmp_path / "agent.md", parent)
+    assert read_json(parent / "manifest.json")["corpus_fingerprint"] == "sha256/v2:p2"
+
+    manifest = workflow.retry(parent, successor)
+
+    assert manifest["phases"]["run"]["actual_agent_executions"] == 1
+    assert len(guards) == 2
+    assert manifest["corpus_fingerprint_before"] == "sha256/v2:r1"
+    assert manifest["corpus_fingerprint"] == "sha256/v2:r2"

@@ -59,9 +59,10 @@ that file. They are reported in their own block and excluded from the bank
 aggregates by default (Gap 3: averaging a tripwire into the score you are trying
 to move both dilutes the signal and hides the tripwire).
 
-Standard library only, plus two reuses from the project: ``normalize_bank`` for
-the anchors file (so a legacy-dialect anchors file still matches) and
-``derive_item_id`` for the optional ``archi eval qa`` join.
+Standard library only, plus three reuses from the project: ``normalize_bank`` for
+the anchors file (so a legacy-dialect anchors file still matches),
+``retrieval_identity`` for an arm that recorded none (so its config names its
+embedding model), and ``derive_item_id`` for the optional ``archi eval qa`` join.
 
 Exit codes: 0 ok, 1 usage/IO, 2 gate refusal, 3 config-divergence stop.
 """
@@ -210,6 +211,8 @@ class Arm:
     artifact_dir: Optional[Path] = None
     #: ``services.benchmarking.name`` as recorded — a sweep arm's prompt stem.
     name: Optional[str] = None
+    #: ``retrieval_identity`` as recorded (#570), or None when the arm has none.
+    retrieval_identity: Optional[dict] = None
 
     def value(self, question: str, metric: str) -> Any:
         return self.rows.get(question, {}).get(metric)
@@ -339,6 +342,11 @@ def build_arm(document: dict, index: int, path: Path, label: str) -> Arm:
         raw=raw,
         artifact_dir=Path(path).parent,
         name=_recorded_name(raw.get("configuration")),
+        retrieval_identity=(
+            raw["retrieval_identity"]
+            if isinstance(raw.get("retrieval_identity"), dict)
+            else None
+        ),
     )
 
 
@@ -562,6 +570,43 @@ def host_mismatch_note(arms: Sequence[Arm]) -> Optional[str]:
     return None
 
 
+def fingerprint_version(fingerprint: Optional[str]) -> Optional[str]:
+    """The digest's version prefix (``sha256``, ``sha256/v2``), or None."""
+    if fingerprint is None or ":" not in fingerprint:
+        return None
+    return fingerprint.partition(":")[0]
+
+
+def fingerprint_version_gate(
+    fingerprints: Dict[str, Optional[str]], scope: str
+) -> None:
+    """Refuse a mix of fingerprint versions before any corpus check (#570).
+
+    A digest of one version never equals a digest of another, whatever the
+    corpus, so G3 would report a v1/v2 mix as "different corpora" and
+    ``--corpus-differs-by-design`` would wave a stale pin through. No flag
+    admits it.
+    """
+    versions = {
+        name: version
+        for name, value in fingerprints.items()
+        if (version := fingerprint_version(value)) is not None
+    }
+    if len(set(versions.values())) > 1:
+        shown = ", ".join(f"{name}={version}" for name, version in versions.items())
+        raise CompareError(
+            f"fingerprint versions differ for {scope} ({shown}); re-pin and "
+            "re-run. Digests of different versions never match, so this is a "
+            "stale pin rather than a corpus difference, and "
+            "--corpus-differs-by-design does not admit it.",
+            EXIT_GATE,
+        )
+
+
+def _recorded_collection(arm: Arm) -> Optional[str]:
+    return _recorded((arm.retrieval_identity or {}).get("collection"))
+
+
 def corpus_gate(arms: Sequence[Arm], allow_differs: bool) -> dict:
     """G3: both arms must have run against one pinned corpus."""
     values = {arm.label: arm.corpus_fingerprint for arm in arms}
@@ -597,6 +642,12 @@ def corpus_gate(arms: Sequence[Arm], allow_differs: bool) -> dict:
         )
     else:
         reason = f"the arms ran against different corpora: {shown}"
+        collections = {arm.label: _recorded_collection(arm) for arm in arms}
+        if len({value for value in collections.values() if value}) > 1:
+            reason += "; they searched different collections: " + ", ".join(
+                f"{label}={value or 'not recorded'}"
+                for label, value in collections.items()
+            )
     if not allow_differs:
         raise CompareError(
             f"G3 refused: {reason}. Retrieval metrics move for free across "
@@ -618,6 +669,101 @@ def corpus_gate(arms: Sequence[Arm], allow_differs: bool) -> dict:
             "pre-registration."
         ),
     }
+
+
+def _embedding_model(arm: Arm) -> Optional[str]:
+    """The model the arm searched with: recorded, else derived from its config.
+
+    An arm without ``retrieval_identity`` still records the configuration it
+    ran, and the shared helper derives the same model from it the harness
+    would have recorded.
+    """
+    if arm.retrieval_identity is not None:
+        return _recorded(arm.retrieval_identity.get("embedding_model"))
+    for key in ("running_configuration", "configuration"):
+        config = arm.raw.get(key)
+        if isinstance(config, dict):
+            identity = _utils_function("benchmark_provenance", "retrieval_identity")
+            return identity(config).embedding_model
+    return None
+
+
+def _embedding_verified(arm: Arm) -> bool:
+    """Whether every chunk the arm searched carries the arm's model tag."""
+    identity = arm.retrieval_identity or {}
+    untagged = identity.get("untagged_chunk_count")
+    return (
+        identity.get("embedding_model_source") == "chunks"
+        and isinstance(untagged, int)
+        and not isinstance(untagged, bool)
+        and untagged == 0
+    )
+
+
+def _embedding_provenance(arm: Arm) -> str:
+    identity = arm.retrieval_identity
+    if identity is None:
+        return f"{arm.label} (no retrieval_identity)"
+    return (
+        f"{arm.label} (embedding_model_source="
+        f"{identity.get('embedding_model_source')}, untagged_chunk_count="
+        f"{identity.get('untagged_chunk_count')})"
+    )
+
+
+def embedding_gate(baseline: Arm, arms: Sequence[Arm]) -> dict:
+    """Name ``embedding_model`` as the varied factor, or refuse (#570, D7).
+
+    The fingerprint is model-neutral, so equal fingerprints prove the text and
+    the collection were the same, and only the identities show which model
+    served each arm. That proof needs verified provenance on both arms: a run
+    over untagged chunks can have been served by an older model whatever its
+    config says, so an embedding difference with unverified provenance is
+    refused and no flag admits it. An unrecorded identity with no embedding
+    difference is unknowable, not unequal, and is noted.
+    """
+    varied: List[str] = []
+    unverified: List[Arm] = []
+    notes = [
+        f"Note: the retrieval_identity of `{arm.label}` is not recorded, so the "
+        "report cannot show which collection it searched or which model "
+        "embedded its chunks."
+        for arm in arms
+        if arm.retrieval_identity is None
+    ]
+    base_model = _embedding_model(baseline)
+    for arm in arms:
+        model = _embedding_model(arm) if arm is not baseline else None
+        if base_model is None or model is None or model == base_model:
+            continue
+        bad = [one for one in (baseline, arm) if not _embedding_verified(one)]
+        if bad:
+            unverified += [one for one in bad if one not in unverified]
+            continue
+        if (
+            baseline.corpus_fingerprint is not None
+            and baseline.corpus_fingerprint == arm.corpus_fingerprint
+        ):
+            varied.append(
+                f"`embedding_model` `{base_model}` → `{model}` "
+                f"(`{baseline.label}` → `{arm.label}`)"
+            )
+    if unverified:
+        models = ", ".join(
+            f"{arm.label}={_embedding_model(arm) or 'not recorded'}" for arm in arms
+        )
+        raise CompareError(
+            "embedding provenance unverified for "
+            + ", ".join(_embedding_provenance(arm) for arm in unverified)
+            + f": the arms differ in embedding_model ({models}). Only an arm "
+            "whose every chunk carries its model tag (embedding_model_source="
+            "chunks, untagged_chunk_count=0) shows which model served it; two "
+            "runs over an untagged collection can both have been served by one "
+            "older model, whatever their configs say. Re-ingest and re-run; no "
+            "flag admits this.",
+            EXIT_GATE,
+        )
+    return {"varied_factor": varied, "identity_notes": notes}
 
 
 def divergence_gate(arms: Sequence[Arm], ignore: bool) -> dict:
@@ -999,6 +1145,9 @@ def check_noise_replicates(
             EXIT_USAGE,
         )
     scope = list(replicates) + ([baseline] if baseline is not None else [])
+    fingerprint_version_gate(
+        {arm.source: arm.corpus_fingerprint for arm in scope}, "the noise replicates"
+    )
     unstable = [arm.source for arm in scope if arm.corpus_unchanged is False]
     if unstable and not allow_corpus_differs:
         raise CompareError(
@@ -1339,35 +1488,39 @@ def _project_root_on_path() -> None:
         sys.path.insert(0, str(REPO_ROOT))
 
 
-def _normalize_bank():
-    """The harness's own bank normalizer, without the package side effects.
+def _utils_function(module_name: str, name: str) -> Any:
+    """A function from a pure-stdlib ``src/utils`` file, without the package
+    side effects.
 
     ``src/utils/__init__.py`` imports the config service, which imports
-    ``psycopg2`` — so the ordinary ``from src.utils.benchmark_schema import ...``
+    ``psycopg2`` — so the ordinary ``from src.utils.<module> import ...``
     needs a database driver on a host that is only reading finished artifacts.
-    ``benchmark_schema.py`` is itself pure stdlib, so it is loaded straight from
-    its own file when the package import is unavailable. Same file, same
-    function: this is not a copy of the dialect rules.
+    ``benchmark_schema.py`` and ``benchmark_provenance.py`` are themselves pure
+    stdlib at import, so the file is loaded straight from disk when the package
+    import is unavailable. Same file, same function: this is not a copy.
     """
     _project_root_on_path()
     try:
-        from src.utils.benchmark_schema import normalize_bank
-
-        return normalize_bank
+        return getattr(importlib.import_module(f"src.utils.{module_name}"), name)
     except ImportError:
         pass
-    source = REPO_ROOT / "src" / "utils" / "benchmark_schema.py"
-    spec = importlib.util.spec_from_file_location("archi_benchmark_schema", source)
+    source = REPO_ROOT / "src" / "utils" / f"{module_name}.py"
+    spec = importlib.util.spec_from_file_location(f"archi_{module_name}", source)
     if spec is None or spec.loader is None:  # pragma: no cover - unreachable
-        raise CompareError(f"cannot load the bank normalizer from {source}", EXIT_USAGE)
+        raise CompareError(f"cannot load {name} from {source}", EXIT_USAGE)
     module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
     except Exception as exc:  # pragma: no cover - environment, not logic
         raise CompareError(
-            f"cannot load the bank normalizer from {source}: {exc}", EXIT_USAGE
+            f"cannot load {name} from {source}: {exc}", EXIT_USAGE
         ) from None
-    return module.normalize_bank
+    return getattr(module, name)
+
+
+def _normalize_bank():
+    """The harness's own bank normalizer (see ``_utils_function``)."""
+    return _utils_function("benchmark_schema", "normalize_bank")
 
 
 def anchor_questions(path: str, *, required: bool = True) -> Dict[str, dict]:
@@ -1802,7 +1955,48 @@ def load_qa_run(directory: str) -> dict:
         "answers": answers,
         "category_map_readings": readings,
         "agent_spec_sha256": provenance.get("agent_spec_sha256"),
+        # The corpus readings that bracket the QA run's answering phase (#570);
+        # absent for a run that predates them, null for a run with no search.
+        "corpus": {
+            key: provenance.get(key)
+            for key in (
+                "corpus_fingerprint_before",
+                "corpus_fingerprint",
+                "corpus_unchanged_at_endpoints",
+            )
+        },
     }
+
+
+def qa_corpus_reason(arm: Arm, qa_run: dict) -> Optional[str]:
+    """Why a QA run cannot join *arm* on corpus grounds, or ``None``.
+
+    Its pass rates feed G8, so its answers must come from the corpus the arm
+    was scored on. A run that recorded no reading (it predates the readings, or
+    its agent had no search tool) is unknowable, not unequal, and joins.
+    """
+    corpus = qa_run.get("corpus") or {}
+    before = corpus.get("corpus_fingerprint_before")
+    after = corpus.get("corpus_fingerprint")
+    if before is None and after is None:
+        return None
+    if not _recorded(before) or not _recorded(after):
+        return f"its corpus reading is unavailable (before={before!r}, after={after!r})"
+    if before != after or corpus.get("corpus_unchanged_at_endpoints") is not True:
+        return f"the corpus changed while it answered ({before} -> {after})"
+    if not _recorded(arm.corpus_fingerprint):
+        return None
+    if fingerprint_version(after) != fingerprint_version(arm.corpus_fingerprint):
+        return (
+            f"the fingerprint versions differ (QA run {after}, arm "
+            f"{arm.corpus_fingerprint}); re-run it on the re-pinned stack"
+        )
+    if after != arm.corpus_fingerprint:
+        return (
+            f"it answered from a different corpus ({after}) than the arm "
+            f"({arm.corpus_fingerprint})"
+        )
+    return None
 
 
 def qa_block(
@@ -1990,6 +2184,9 @@ def render_markdown(report: dict) -> str:
         + f". Paired on {report['paired_question_count']} bank questions "
         f"(anchors {'included' if report['anchors_in_bank'] else 'excluded'})."
     )
+    for factor in report.get("varied_factor", []):
+        out.append("")
+        out.append(f"Varied factor: {factor}.")
     out.append("")
 
     out += ["## Provenance", ""]
@@ -2003,6 +2200,9 @@ def render_markdown(report: dict) -> str:
     out.append("")
     if report.get("host_mismatch"):
         out.append(report["host_mismatch"])
+        out.append("")
+    for note in report.get("identity_notes", []):
+        out.append(note)
         out.append("")
 
     out += ["## Gates", ""]
@@ -2493,7 +2693,9 @@ def build_report(
     anchors_path: str,
     anchors_in_bank: bool,
     qa_runs: Optional[Dict[str, dict]] = None,
+    retrieval: Optional[dict] = None,
 ) -> dict:
+    retrieval = retrieval or {}
     paired = paired_block(baseline, arms, questions, sigmas)
     anchor_entries = anchor_block(baseline, arms, anchors, sigmas, qa_runs or {})
     return {
@@ -2513,6 +2715,8 @@ def build_report(
         "anchors_in_bank": anchors_in_bank,
         "provenance": provenance_rows(arms, anchors),
         "host_mismatch": host_mismatch_note(arms),
+        "varied_factor": list(retrieval.get("varied_factor", [])),
+        "identity_notes": list(retrieval.get("identity_notes", [])),
         "gates": list(gates) + [g8_gate(anchor_entries, paired, baseline.label)],
         "noise_floor": dict(sigmas),
         "paired": paired,
@@ -2806,7 +3010,7 @@ def parse_qa_run_specs(specs: Sequence[str], arms: Sequence[Arm]) -> Dict[str, d
         category_slice, _ = _category_modules()
         reason = category_slice.qa_join_reason(
             arm.raw, qa_run["category_map_readings"], qa_run["agent_spec_sha256"]
-        )
+        ) or qa_corpus_reason(arm, qa_run)
         if reason:
             raise CompareError(
                 f"--qa-run {directory} cannot join {label}: {reason}", EXIT_GATE
@@ -2836,6 +3040,9 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     }
 
     require_same_question_sets(baseline, arms)
+    fingerprint_version_gate(
+        {arm.label: arm.corpus_fingerprint for arm in arms}, "the arms"
+    )
     gates = [
         {
             "id": "G4",
@@ -2847,6 +3054,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         divergence_gate(arms, args.ignore_config_divergence),
         answer_path_gate(arms, args.config_differs_by_design),
     ]
+    retrieval = embedding_gate(baseline, arms)
 
     # The default anchors file is tracked in the repository. If it is absent the
     # checkout or package is incomplete, and continuing with G8 reported as
@@ -2913,6 +3121,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         anchors_path=args.anchors,
         anchors_in_bank=args.include_anchors_in_bank,
         qa_runs=qa_runs,
+        retrieval=retrieval,
     )
     report["paired_tests"] = paired_tests_block(baseline, arms, primaries)
     report["category"] = category_block(baseline, arms, map_rules)

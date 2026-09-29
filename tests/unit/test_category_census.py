@@ -252,6 +252,7 @@ class _Cursor:
 
     def execute(self, query, params=None):
         self.conn.queries.append(query)
+        self.conn.calls.append((self, params))
         if "extra_json->>'category'" in query:
             self._rows = MAP_ROWS
         elif self.conn.fail_fingerprint:
@@ -266,6 +267,7 @@ class _Cursor:
 class _Conn:
     def __init__(self, fail_fingerprint=False):
         self.queries = []
+        self.calls = []
         self.session = None
         self.fail_fingerprint = fail_fingerprint
         self.closed = False
@@ -309,6 +311,8 @@ def _argv(tmp_path, out):
     return [
         "--pg-dsn",
         "postgresql://stub",
+        "--collection",
+        "fasrc_with_HuggingFaceEmbeddings",
         "--bank",
         str(bank),
         "--anchors",
@@ -348,7 +352,8 @@ def test_cli_reads_everything_on_one_readonly_repeatable_read_connection(
     assert report["category_map_digest"] == category_map_digest(
         category_map_records(MAP_ROWS)
     )
-    assert report["corpus_fingerprint"].startswith("sha256:")
+    assert report["corpus_fingerprint"].startswith("sha256/v2:")
+    assert report["collection"] == "fasrc_with_HuggingFaceEmbeddings"
     bank, _, routing, _ = _files(tmp_path)
     assert (
         report["inputs"]["bank_sha256"] == hashlib.sha256(bank.read_bytes()).hexdigest()
@@ -375,3 +380,29 @@ def test_cli_exits_1_on_a_missing_input(tmp_path):
     argv = _argv(tmp_path, tmp_path / "c.json")
     argv[argv.index("--bank") + 1] = str(tmp_path / "missing.json")
     assert cc.main(argv, connect=lambda dsn: _Conn()) == 1
+
+
+def test_both_readings_run_on_one_cursor_scoped_to_the_collection():
+    """One snapshot: the map digest and the fingerprint describe one state."""
+    conn = _Conn()
+
+    reading = cc.read_database("dsn", lambda dsn: conn, "coll_with_E")
+
+    assert len(conn.calls) == 2
+    first_cursor, second_cursor = (cursor for cursor, _ in conn.calls)
+    assert first_cursor is second_cursor
+    assert [params for _, params in conn.calls] == [("coll_with_E",)] * 2
+    assert reading["docs"] == [tuple(row) for row in MAP_ROWS]
+    assert all(isinstance(row, tuple) for row in reading["docs"])
+
+
+def test_the_harness_source_is_no_longer_parsed():
+    assert not hasattr(cc, "_harness_query")
+
+
+def test_cli_requires_a_collection(tmp_path):
+    argv = _argv(tmp_path, tmp_path / "c.json")
+    index = argv.index("--collection")
+    del argv[index : index + 2]
+    with pytest.raises(SystemExit):
+        cc.main(argv, connect=lambda dsn: _Conn())

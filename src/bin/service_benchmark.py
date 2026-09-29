@@ -25,13 +25,15 @@ from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
 from src.utils.benchmark_provenance import (
     asserted_config_divergence,
     canonical_source_url,
-    category_map_digest,
-    category_map_records,
     category_map_text,
     collect_code_version,
+    collection_readiness,
     config_version,
-    corpus_fingerprint,
+    live_category_map,
+    live_corpus_fingerprint,
     prompt_text_sha256,
+    retrieval_identity,
+    retrieval_record,
 )
 from src.utils.benchmark_resilience import (
     OK,
@@ -81,66 +83,10 @@ EXTRA_METADATA_PATH = "/root/archi/git_info.yaml"
 PACKAGE_DIR = str(Path(__file__).resolve().parent.parent)
 OUTPUT_DIR = Path(OUTPUT_PATH)
 
-# The corpus's retrievable state, as opaque (key, value) pairs for
-# `corpus_fingerprint`. Every row is keyed by `documents.resource_hash`, never by
-# a SERIAL row id: two ingests of an identical corpus -- a rebuilt deployment, a
-# re-seeded database -- get different serials, so keying by `document_id` made the
-# cross-run comparison this field exists for impossible, rejecting runs that were
-# in fact comparable.
-#
-# Three kinds of row, because retrieval reads all three:
-#
-#   doc     the live document list and byte sizes.
-#   chunk   per-chunk content digests. `resource_hash` is `md5(url)`, an identity
-#           hash deliberately stable across content updates, so the document list
-#           alone would miss an edit that preserved the byte count. Hashing per
-#           chunk index also catches re-chunking.
-#   parent  `document_parent_nodes.parent_text`, plus the ordered list of child
-#           chunk indexes grouped under it. Under `hierarchical_rerank` -- enabled
-#           for every chunk in the FASRC deployment -- what reaches the agent is
-#           the parent text, not the leaf chunks, and parents are neither embedded
-#           nor indexed so no other part of this query sees them. Hashing leaves
-#           alone would certify two arms as having seen the same corpus while the
-#           context they were given differed. The child list is folded in because
-#           re-grouping children changes that context even when every individual
-#           text is untouched.
-#
-# Deleted documents are excluded from all three: soft-deleted rows stay in the
-# tables but are not part of the corpus.
-CORPUS_STATE_QUERY = """
-SELECT 'doc:' || d.resource_hash, d.size_bytes::text
-FROM documents d
-WHERE d.is_deleted = FALSE
-UNION ALL
-SELECT 'chunk:' || d.resource_hash || ':' || c.chunk_index::text,
-       md5(c.chunk_text)
-FROM document_chunks c
-JOIN documents d ON d.id = c.document_id
-WHERE d.is_deleted = FALSE
-UNION ALL
-SELECT 'parent:' || d.resource_hash || ':' || p.parent_index::text,
-       md5(
-           p.parent_text || '|' ||
-           COALESCE(
-               string_agg(c.chunk_index::text, ',' ORDER BY c.chunk_index), ''
-           )
-       )
-FROM document_parent_nodes p
-JOIN documents d ON d.id = p.document_id
-LEFT JOIN document_chunks c ON c.metadata->>'parent_id' = p.id::text
-WHERE d.is_deleted = FALSE
-GROUP BY d.resource_hash, p.parent_index, p.parent_text
-"""
-
-# The URL -> category map a per-category slice joins bank sources against.
-# CORPUS_STATE_QUERY never reads extra_json, where `category` lives, so a
-# metadata-only change moves this map at a constant fingerprint (#524); each arm
-# therefore records its own digest of it at both endpoints (#538 rule 1).
-CATEGORY_MAP_QUERY = """
-SELECT url, extra_json->>'category'
-FROM documents
-WHERE NOT is_deleted AND url IS NOT NULL
-"""
+# The corpus fingerprint and the category map are read through the shared
+# routines in src.utils.benchmark_provenance (fingerprint v2, #570): scoped to
+# the collection the arm's running config searches, and identical to what the
+# QA workflow, the feature-matrix sweep, and the census compute.
 
 #: Distinguishes a provenance field that was never recorded (a result file
 #: written before provenance existed) from one recorded as undetermined.
@@ -189,6 +135,17 @@ class ABResult:
     llm_judge_a: Dict[str, Any] = field(default_factory=dict)
     llm_judge_b: Dict[str, Any] = field(default_factory=dict)
     llm_judge_pairwise: Dict[str, Any] = field(default_factory=dict)
+
+
+def _factory_pool():
+    """The pool `_init_runtime` installed on the factory, or a clear error."""
+    factory = PostgresServiceFactory.get_instance()
+    if factory is None:
+        raise RuntimeError(
+            "PostgresServiceFactory is not initialized; _init_runtime() "
+            "installs it when this module is run as a script"
+        )
+    return factory.connection_pool
 
 
 class ResultHandler:
@@ -359,41 +316,31 @@ class ResultHandler:
         )
 
     @staticmethod
-    def get_corpus_fingerprint() -> str:
-        """Digest of the live corpus, or a marker explaining why it is missing.
+    def get_corpus_fingerprint(config: Optional[Dict[str, Any]]) -> str:
+        """Digest of the searched corpus, or a marker explaining why it is missing.
 
         Unlike the per-invocation nonce above, equal digests mean equal corpora,
         so "these arms were scored against the same documents" becomes a
         checkable claim.
 
-        Covers the retrievable state, not just the document list -- see
-        ``CORPUS_STATE_QUERY`` for what is hashed and why. Re-embedding the same
-        text with a different model is NOT covered; that appears as a divergence
-        on ``data_manager.embedding_name`` in the recorded configuration.
+        *config* is the running config; it names the collection. The digest is
+        ``live_corpus_fingerprint``'s v2 digest -- see ``CORPUS_STATE_V2_QUERY``
+        for what is hashed and why. Re-embedding the same text with a different
+        model is NOT covered, on purpose: ``retrieval_identity.embedding_model``
+        records the model, checked against the chunks' tags.
 
         Reads through the pool the run actually opened -- the one `_init_runtime`
         installed on PostgresServiceFactory -- and NOT `ConnectionPool.get_instance`.
-        The two are unrelated singletons: the factory builds its pools directly
-        (`from_config`, and the lazy `connection_pool` property), so nothing ever
-        populates `ConnectionPool._instance`, and asking it for the pool raised
-        `ValueError` on every real run. Because provenance failure is swallowed
-        below, that filed an unavailable-marker instead of crashing, so the field
-        was inert wherever it was consumed while the unit tests stayed green --
-        they monkeypatched the very call that could not work (#273).
+        The two are unrelated singletons: nothing ever populates
+        `ConnectionPool._instance`, and asking it for the pool raised `ValueError`
+        on every real run while the unit tests stayed green (#273).
 
         Never raises: a finished benchmark must not lose its scores because
-        provenance could not be collected. It does now warn, because an artifact
-        key nobody thinks to check is how the inert version survived review.
+        provenance could not be collected. It warns, because an artifact key
+        nobody thinks to check is how the inert version survived review.
         """
         try:
-            factory = PostgresServiceFactory.get_instance()
-            if factory is None:
-                raise RuntimeError(
-                    "PostgresServiceFactory is not initialized; _init_runtime() "
-                    "installs it when this module is run as a script"
-                )
-            rows = factory.connection_pool.execute(CORPUS_STATE_QUERY)
-            return corpus_fingerprint(rows)
+            return live_corpus_fingerprint(_factory_pool(), config)
         except Exception as exc:  # noqa: BLE001 - provenance is never fatal
             logger.warning(
                 "Corpus provenance unavailable: %s. This run cannot be shown to "
@@ -404,24 +351,39 @@ class ResultHandler:
             return f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
 
     @staticmethod
-    def get_category_map() -> Tuple[Optional[List[str]], str]:
-        """The live URL -> category map as records and digest, or a marker.
+    def check_collection(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """The start guard: the arm's ``retrieval_identity``, or a fatal error.
+
+        Runs before the arm's first question. Raises ``CollectionNotReadyError``
+        when the searched collection is empty, has no vector, or holds chunks
+        another model embedded. Unlike the corpus readings this raises: no
+        question has run, so there are no scores to lose, and an arm scored
+        against the wrong vectors is worse than no arm.
+        """
+        identity = retrieval_identity(config)
+        readiness = collection_readiness(_factory_pool(), identity)
+        logger.info(
+            "Searching collection %s (embedding_model=%s, source=%s, %d chunks)",
+            identity.collection,
+            identity.embedding_model,
+            readiness["embedding_model_source"],
+            readiness["chunk_count"],
+        )
+        return retrieval_record(identity, readiness)
+
+    @staticmethod
+    def get_category_map(
+        config: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[List[str]], str]:
+        """The searched collection's URL -> category map as records and digest.
 
         Reads through the same factory pool as ``get_corpus_fingerprint`` and,
         like it, never raises: a failure returns ``(None, "<unavailable: …>")``,
         which the endpoint comparison treats as "not observed" (#538 rule 2).
         """
         try:
-            factory = PostgresServiceFactory.get_instance()
-            if factory is None:
-                raise RuntimeError(
-                    "PostgresServiceFactory is not initialized; _init_runtime() "
-                    "installs it when this module is run as a script"
-                )
-            records = category_map_records(
-                factory.connection_pool.execute(CATEGORY_MAP_QUERY)
-            )
-            return records, category_map_digest(records)
+            _, records, digest = live_category_map(_factory_pool(), config)
+            return records, digest
         except Exception as exc:  # noqa: BLE001 - provenance is never fatal
             logger.warning(
                 "Category-map provenance unavailable: %s. This arm gets no "
@@ -460,6 +422,7 @@ class ResultHandler:
         agent_md_sha256: Optional[str] = None,
         ingest_wall_seconds: Optional[float] = None,
         modes_executed: Optional[Set[str]] = None,
+        retrieval_identity: Optional[Dict[str, Any]] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -514,7 +477,7 @@ class ResultHandler:
                 ", ".join(divergence),
             )
 
-        corpus_after = ResultHandler.get_corpus_fingerprint()
+        corpus_after = ResultHandler.get_corpus_fingerprint(running_config)
         # None, not False, when either reading is missing or failed. A failure is
         # not an observation: get_corpus_fingerprint reports one as
         # "<unavailable: ...>", and two identical failures compare equal, so
@@ -535,7 +498,9 @@ class ResultHandler:
             )
 
         # The same three states for the URL -> category map (#538 rules 1-2).
-        category_map_end_records, category_map_after = ResultHandler.get_category_map()
+        category_map_end_records, category_map_after = ResultHandler.get_category_map(
+            running_config
+        )
         if ResultHandler.corpus_reading_failed(
             category_map_before
         ) or ResultHandler.corpus_reading_failed(category_map_after):
@@ -562,6 +527,8 @@ class ResultHandler:
             # re-ingest and score different questions against different
             # corpora; a single reading taken afterwards would report the final
             # state as though it had covered the whole arm.
+            # What the arm searched, checked by the start guard (#570).
+            "retrieval_identity": retrieval_identity,
             "corpus_fingerprint_before": corpus_before,
             "corpus_fingerprint": corpus_after,
             "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
@@ -703,7 +670,12 @@ class ResultHandler:
                 for record in ResultHandler.results
             ],
             "corpus_snapshot_id": ResultHandler.get_corpus_snapshot_id(),
-            "corpus_fingerprint": ResultHandler.get_corpus_fingerprint(),
+            # The collection the last arm searched: v2 is per collection.
+            "corpus_fingerprint": ResultHandler.get_corpus_fingerprint(
+                (ResultHandler.results[-1] if ResultHandler.results else {}).get(
+                    "running_configuration"
+                )
+            ),
         }
 
         ResultHandler.metadata.update(meta_data)
@@ -2295,8 +2267,10 @@ class Benchmarker:
         while self.all_config_files:
             # Read the corpus BEFORE the arm's questions, so the report can show
             # whether they were all scored against the same documents.
-            corpus_before = ResultHandler.get_corpus_fingerprint()
-            _, category_map_before = ResultHandler.get_category_map()
+            arm_config = getattr(self.chain, "config", None)
+            arm_identity = ResultHandler.check_collection(arm_config)
+            corpus_before = ResultHandler.get_corpus_fingerprint(arm_config)
+            _, category_map_before = ResultHandler.get_category_map(arm_config)
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
                 Path(self.current_config),
@@ -2320,6 +2294,7 @@ class Benchmarker:
                 # `corpus_unchanged_at_endpoints`: a re-ingest landing wholly
                 # between two arms leaves that boolean True on both sides.
                 ingest_wall_seconds=ingest_wall_seconds,
+                retrieval_identity=arm_identity,
             )
             self.load_new_configuration()
 

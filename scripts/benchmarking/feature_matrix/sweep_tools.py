@@ -428,6 +428,8 @@ def archive(
     out_rows: List[dict] = []
     map_digest = census_report.get("category_map_digest") if census_report else None
     for name, entry in zip(names, entries):
+        identity = entry.get("retrieval_identity")
+        identity = identity if isinstance(identity, dict) else {}
         row = {
             "arm": name,
             "kind": "ragas",
@@ -438,6 +440,8 @@ def archive(
             "artifact": str(Path(dest) / artifact.name),
             "artifact_sha256": digest,
             "corpus_fingerprint": fingerprint,
+            "collection": identity.get("collection"),
+            "embedding_model": identity.get("embedding_model"),
             "prompt_sha256": lock["arms"][name]["prompt_sha256"],
             "category_map_sha256_start": entry.get("category_map_sha256_start"),
             "category_map_sha256_end": entry.get("category_map_sha256_end"),

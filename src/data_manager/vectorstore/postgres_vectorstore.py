@@ -20,6 +20,19 @@ from langchain_core.vectorstores import VectorStore
 from src.utils.logging import get_logger
 
 
+def _embedding_model_of(embedding_function: Any) -> str:
+    """The model an embedding function names, else its class name.
+
+    LangChain's HuggingFace class names the model in ``model_name`` and the
+    OpenAI class in ``model``, the same kwargs the config uses.
+    """
+    for attribute in ("model_name", "model"):
+        value = getattr(embedding_function, attribute, None)
+        if isinstance(value, str) and value:
+            return value
+    return type(embedding_function).__name__
+
+
 def _merge_row_metadata(row: Dict[str, Any]) -> Dict[str, Any]:
     """Merge a retrieved chunk's metadata with its document-level fields.
 
@@ -90,6 +103,7 @@ class PostgresVectorStore(VectorStore):
         *,
         # Optional: pre-connected cursor (for connection pooling)
         connection: Optional[psycopg2.extensions.connection] = None,
+        embedding_model: Optional[str] = None,
     ):
         """
         Initialize PostgresVectorStore.
@@ -100,12 +114,18 @@ class PostgresVectorStore(VectorStore):
             collection_name: Logical collection name (stored in metadata for filtering)
             distance_metric: Distance metric - 'cosine', 'l2', or 'inner_product'
             connection: Optional pre-existing connection (for pooling)
+            embedding_model: The model that produced the vectors, written to each
+                chunk ``add_texts`` stores. Defaults to the embedding function's
+                ``model_name`` or ``model`` attribute, else its class name.
         """
         self._pg_config = pg_config
         self._embedding_function = embedding_function
         self._collection_name = collection_name
         self._distance_metric = distance_metric
         self._external_connection = connection
+        self.embedding_model = embedding_model or _embedding_model_of(
+            embedding_function
+        )
 
         # Map distance metric to pgvector operator
         self._distance_ops = {
@@ -183,6 +203,7 @@ class PostgresVectorStore(VectorStore):
         # Add collection name to metadata
         for meta in metadatas:
             meta["collection"] = self._collection_name
+            meta["embedding_model"] = self.embedding_model
 
         # Generate embeddings
         logger.debug("Generating embeddings for %d texts", len(texts_list))

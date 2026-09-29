@@ -12,6 +12,7 @@ import psycopg2.extras
 from langchain_text_splitters.character import CharacterTextSplitter
 
 from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogService
+from src.utils.benchmark_provenance import retrieval_identity
 from src.utils.env import read_secret
 from src.utils.ingest_provenance import build_ingest_config_snapshot
 from src.utils.ingest_run import collect_ingest_counts, record_ingest_run
@@ -180,6 +181,19 @@ class VectorStoreManager:
             f"VectorStoreManager initialized: collection={self.collection_name}"
         )
 
+    def _tag_embedding_model(self, metadata: Dict[str, Any]) -> None:
+        """Record which model embedded this chunk, beside its collection tag.
+
+        The collection tag names the embedding class, not the model, so two
+        models of one class share a tag. The eval start guard compares this tag
+        with the model a run queries with (#570).
+        """
+        model = retrieval_identity(
+            {"data_manager": self._data_manager_config}
+        ).embedding_model
+        if model is not None:
+            metadata["embedding_model"] = model
+
     def delete_existing_collection_if_reset(self) -> None:
         """Delete the collection if reset_collection is enabled.
 
@@ -250,6 +264,9 @@ class VectorStoreManager:
             embedding_function=self.embedding_model,
             collection_name=self.collection_name,
             distance_metric=pg_distance,
+            embedding_model=retrieval_identity(
+                {"data_manager": self._data_manager_config}
+            ).embedding_model,
         )
         count = store.count()
         logger.info(f"N in PostgreSQL collection: {count}")
@@ -630,6 +647,7 @@ class VectorStoreManager:
                 entry_metadata["filename"] = filename
                 entry_metadata["resource_hash"] = filehash
                 entry_metadata["collection"] = self.collection_name
+                self._tag_embedding_model(entry_metadata)
                 metadatas.append(entry_metadata)
 
             if not chunks:
@@ -911,6 +929,7 @@ class VectorStoreManager:
                 base_metadata["filename"] = filename
                 base_metadata["resource_hash"] = filehash
                 base_metadata["collection"] = self.collection_name
+                self._tag_embedding_model(base_metadata)
 
                 parent_metadata = dict(base_metadata)
                 parent_metadata["parent_index"] = parent_index

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,11 @@ import yaml
 
 import src.bin.service_benchmark as sb
 from src.bin.service_benchmark import ResultHandler
-from src.utils.benchmark_provenance import category_map_digest, category_map_records
+from src.utils.benchmark_provenance import (
+    CATEGORY_MAP_V2_QUERY,
+    category_map_digest,
+    category_map_records,
+)
 from src.utils.postgres_service_factory import PostgresServiceFactory
 
 KB = "https://docs.rc.fas.harvard.edu/kb"
@@ -28,18 +33,54 @@ DIGEST = category_map_digest(RECORDS)
 
 
 class _FakePool:
-    def __init__(self, rows):
+    """``ConnectionPool`` stand-in: records the SQL and replays canned rows."""
+
+    def __init__(self, rows, error=None):
         self.rows = rows
+        self.error = error
         self.queries = []
+        self.params = []
 
-    def execute(self, query, params=None, *, fetch=True):
-        self.queries.append(query)
-        return self.rows
+    @contextmanager
+    def get_connection(self):
+        if self.error is not None:
+            raise self.error
+        pool = self
+
+        class _Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def execute(self, query, params=None):
+                pool.queries.append(query)
+                pool.params.append(params)
+
+            def fetchall(self):
+                return list(pool.rows)
+
+        class _Connection:
+            def cursor(self):
+                return _Cursor()
+
+        yield _Connection()
 
 
-class _BrokenPool:
-    def execute(self, *a, **k):
-        raise RuntimeError("connection refused")
+def _broken_pool():
+    return _FakePool([], error=RuntimeError("connection refused"))
+
+
+RUNNING_CONFIG = {
+    "data_manager": {
+        "collection_name": "fasrc",
+        "embedding_name": "HuggingFaceEmbeddings",
+        "embedding_class_map": {
+            "HuggingFaceEmbeddings": {"kwargs": {"model_name": "m"}}
+        },
+    }
+}
 
 
 @pytest.fixture(autouse=True)
@@ -48,7 +89,9 @@ def _reset(monkeypatch):
     monkeypatch.setattr(ResultHandler, "category_map_records_by_arm", [])
     monkeypatch.setattr(PostgresServiceFactory, "_instance", None)
     monkeypatch.setattr(
-        ResultHandler, "get_corpus_fingerprint", staticmethod(lambda: "sha256:corpus")
+        ResultHandler,
+        "get_corpus_fingerprint",
+        staticmethod(lambda _config: "sha256:corpus"),
     )
 
 
@@ -59,7 +102,9 @@ def _install_pool(pool):
 
 def _pin_map(monkeypatch, records, digest):
     monkeypatch.setattr(
-        ResultHandler, "get_category_map", staticmethod(lambda: (records, digest))
+        ResultHandler,
+        "get_category_map",
+        staticmethod(lambda _config: (records, digest)),
     )
 
 
@@ -87,26 +132,34 @@ def _handle(tmp_path, **kwargs):
 def test_reads_the_map_through_the_initialized_pool():
     pool = _install_pool(_FakePool(MAP_ROWS))
 
-    records, digest = ResultHandler.get_category_map()
+    records, digest = ResultHandler.get_category_map(RUNNING_CONFIG)
 
     assert records == RECORDS and digest == DIGEST
-    [query] = pool.queries
-    assert "extra_json->>'category'" in query
-    assert "NOT is_deleted" in query and "url IS NOT NULL" in query
+    assert pool.queries == [CATEGORY_MAP_V2_QUERY]
+    assert pool.params == [("fasrc_with_HuggingFaceEmbeddings",)]
+
+
+def test_no_running_config_is_a_marker_not_a_crash():
+    _install_pool(_FakePool(MAP_ROWS))
+
+    records, digest = ResultHandler.get_category_map(None)
+
+    assert records is None
+    assert digest.startswith(ResultHandler.CORPUS_UNAVAILABLE)
 
 
 def test_no_factory_is_a_marker_not_a_crash():
-    records, digest = ResultHandler.get_category_map()
+    records, digest = ResultHandler.get_category_map(RUNNING_CONFIG)
 
     assert records is None
     assert digest.startswith(ResultHandler.CORPUS_UNAVAILABLE)
 
 
 def test_a_failed_query_is_a_marker_and_is_logged(caplog):
-    _install_pool(_BrokenPool())
+    _install_pool(_broken_pool())
 
     with caplog.at_level("WARNING", logger="src.bin.service_benchmark"):
-        records, digest = ResultHandler.get_category_map()
+        records, digest = ResultHandler.get_category_map(RUNNING_CONFIG)
 
     assert records is None
     assert "connection refused" in digest
