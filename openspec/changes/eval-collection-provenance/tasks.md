@@ -55,11 +55,11 @@
 - [x] 8.1 `model: haiku` — Correct the `corpus_fingerprint` docstring (`benchmark_provenance.py`) and the `get_corpus_fingerprint` docstring (`service_benchmark.py`): the embedding identity comes from the chunk tag and `embedding_model`, not from `embedding_name`
 - [x] 8.2 `model: sonnet` — Update the fingerprint paragraph in `scripts/benchmarking/README.md` (line ~133): one routine, v2 scope, re-pin on deploy
 - [x] 8.3 `model: sonnet` — Update `docs/docs/proposals/multi-collection-routing.md`: "minimum change 1" says embedding model (`model_name`); add the order "17 (backfill first), 19, 18, then re-pin" and the #411 note; `mkdocs build --strict` passes
-- [ ] 8.4 `model: haiku` — Comment on #570 with the change name and the revised plan; comment on #411 that fingerprint v2 is immune to its cleanup
+- [x] 8.4 `model: haiku` — Comment on #570 with the change name and the revised plan; comment on #411 that fingerprint v2 is immune to its cleanup
 
 ## 9. Gate and hand-off
 
 - [x] 9.1 `model: haiku` — `bash scripts/gate.sh` passes (black, isort, `pytest tests/unit/`, diff-cover ≥ 80% versus `origin/dev`)
 - [x] 9.2 `model: haiku` — `bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh` passes
 - [x] 9.3 `model: opus` — Validate end to end on the claw stack (AGENTS.md, "Deployment & Validation Policy"): deploy the branch with the `archi-dev-deploy-verify` procedure, run one smoke benchmark arm and one QA run, confirm `retrieval_identity`, both `sha256/v2:` readings, and the guard's log line in the artifacts and the container logs; record the container names and the artifact paths for the PR body
-- [ ] 9.4 `model: sonnet` — Open the PR to `fasrc/archi:dev` with `Closes #570`; the PR body lists the migration order from `design.md` (validate on claw → merge → backfill → redeploy → re-pin → campaign), the dry-run counts from 2.3, and the claw validation evidence from 9.3
+- [x] 9.4 `model: sonnet` — Open the PR to `fasrc/archi:dev` with `Closes #570`; the PR body lists the migration order from `design.md` (validate on claw → merge → backfill → redeploy → re-pin → campaign), the dry-run counts from 2.3, and the claw validation evidence from 9.3
