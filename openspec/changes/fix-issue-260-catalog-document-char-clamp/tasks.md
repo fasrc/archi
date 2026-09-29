@@ -37,7 +37,7 @@ and a commit — no task ends red.
 
 ## 2. Wire the endpoint, guard the call site, document the ceiling
 
-- [ ] 2.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 2.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Append to `tests/unit/test_catalog_document_limits.py` (after the last
       existing test, and check that the last test keeps all of its assertions) a test that
