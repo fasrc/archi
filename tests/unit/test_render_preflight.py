@@ -55,7 +55,10 @@ def _capture_tm_args(
     """Run cli_main.create and capture the TemplateManager instance and its args.
 
     Patches: ContainerProbe→satisfied, check_docker_available→True,
-    VolumeManager.create_required_volumes→no-op, TemplateManager._probe_port→None.
+    VolumeManager.create_required_volumes→no-op, TemplateManager._probe_port→None,
+    TemplateManager.preflight_render→capturing no-op (D5: preflight runs before
+    prepare_deployment_files; tests that need the real preflight must save and
+    restore TemplateManager.preflight_render themselves).
     Returns captured dict with keys: tm, plan, config_manager, secrets_manager, options.
     """
     cfg = config_path or EXAMPLE_CONFIG
@@ -75,6 +78,17 @@ def _capture_tm_args(
         monkeypatch.setattr(cli_main, "validate_port_config", lambda *a, **kw: ({}, []))
 
     captured = {}
+
+    def _capturing_preflight(self, plan, cfg_mgr, sec, **opts):
+        # Capture args here so configs that fail the real preflight (e.g. bad
+        # port values) can still populate `captured` for subsequent direct calls.
+        captured["tm"] = self
+        captured["plan"] = plan
+        captured["config_manager"] = cfg_mgr
+        captured["secrets_manager"] = sec
+        captured["options"] = opts
+
+    monkeypatch.setattr(TemplateManager, "preflight_render", _capturing_preflight)
 
     def _capturing_prepare(self, plan, cfg_mgr, sec, **opts):
         captured["tm"] = self
@@ -129,8 +143,14 @@ def test_preflight_render_returns_none_discards_temp_dir(
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing {EXAMPLE_CONFIG}")
 
+    from src.cli.managers.templates_manager import TemplateManager
+
+    _real_preflight = (
+        TemplateManager.preflight_render
+    )  # save before _capture_tm_args patches it
     captured = _capture_tm_args(monkeypatch, env_file)
     assert "tm" in captured, "failed to capture TemplateManager args"
+    monkeypatch.setattr(TemplateManager, "preflight_render", _real_preflight)
 
     tm = captured["tm"]
     plan = captured["plan"]
@@ -182,16 +202,20 @@ def test_preflight_render_runs_full_stage_list_skips_source_copy(
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing {EXAMPLE_CONFIG}")
 
+    from src.cli.managers.templates_manager import TemplateContext, TemplateManager
+
+    _real_preflight = (
+        TemplateManager.preflight_render
+    )  # save before _capture_tm_args patches it
     captured = _capture_tm_args(monkeypatch, env_file)
     assert "tm" in captured
+    monkeypatch.setattr(TemplateManager, "preflight_render", _real_preflight)
 
     tm = captured["tm"]
     plan = captured["plan"]
     config_manager = captured["config_manager"]
     secrets_manager = captured["secrets_manager"]
     options = captured["options"]
-
-    from src.cli.managers.templates_manager import TemplateContext, TemplateManager
 
     # Compute expected stage list before patching _build_workflow.
     context_for_expected = TemplateContext(
@@ -253,19 +277,22 @@ def test_preflight_render_skips_probe_invalid_port_still_raises(
     bad_config = tmp_path / "config-bad-port.yaml"
     bad_config.write_text(yaml.safe_dump(data))
 
+    from src.cli.managers.templates_manager import TemplateManager
+
     # Bypass cli_main's own port check so the run reaches TemplateManager with the bad config.
+    # Save original before _capture_tm_args patches preflight_render to a no-op.
+    _real_preflight = TemplateManager.preflight_render
     captured = _capture_tm_args(
         monkeypatch, env_file, config_path=bad_config, bypass_port_check=True
     )
     assert "tm" in captured
+    monkeypatch.setattr(TemplateManager, "preflight_render", _real_preflight)
 
     tm = captured["tm"]
     plan = captured["plan"]
     config_manager = captured["config_manager"]
     secrets_manager = captured["secrets_manager"]
     options = captured["options"]
-
-    from src.cli.managers.templates_manager import TemplateManager
 
     probe_calls: List[int] = []
     monkeypatch.setattr(
@@ -287,16 +314,20 @@ def test_preflight_render_propagates_stage_exception_unchanged(
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing {EXAMPLE_CONFIG}")
 
+    from src.cli.managers.templates_manager import TemplateManager
+
+    _real_preflight = (
+        TemplateManager.preflight_render
+    )  # save before _capture_tm_args patches it
     captured = _capture_tm_args(monkeypatch, env_file)
     assert "tm" in captured
+    monkeypatch.setattr(TemplateManager, "preflight_render", _real_preflight)
 
     tm = captured["tm"]
     plan = captured["plan"]
     config_manager = captured["config_manager"]
     secrets_manager = captured["secrets_manager"]
     options = captured["options"]
-
-    from src.cli.managers.templates_manager import TemplateManager
 
     sentinel_exc = ValueError("late-render-sentinel")
 
@@ -340,8 +371,14 @@ def test_preflight_render_does_not_mutate_options(archi_home, env_file, monkeypa
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing {EXAMPLE_CONFIG}")
 
+    from src.cli.managers.templates_manager import TemplateManager
+
+    _real_preflight = (
+        TemplateManager.preflight_render
+    )  # save before _capture_tm_args patches it
     captured = _capture_tm_args(monkeypatch, env_file)
     assert "tm" in captured
+    monkeypatch.setattr(TemplateManager, "preflight_render", _real_preflight)
 
     tm = captured["tm"]
     plan = captured["plan"]
@@ -364,11 +401,13 @@ def test_preflight_render_idempotent(archi_home, env_file, monkeypatch, tmp_path
 
     from src.cli.managers.templates_manager import TemplateManager
 
-    # Save original before _capture_tm_args patches it.
+    # Save originals before _capture_tm_args patches them.
     original_prepare = TemplateManager.prepare_deployment_files
+    _real_preflight = TemplateManager.preflight_render
 
     captured = _capture_tm_args(monkeypatch, env_file)
     assert "tm" in captured
+    monkeypatch.setattr(TemplateManager, "preflight_render", _real_preflight)
 
     tm = captured["tm"]
     plan = captured["plan"]
@@ -404,4 +443,281 @@ def test_preflight_render_idempotent(archi_home, env_file, monkeypatch, tmp_path
         f"preflight_render mutated shared state: "
         f"only-in-A={sorted(set(files_a)-set(files_b))}, "
         f"only-in-B={sorted(set(files_b)-set(files_a))}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 2.1 — create() preflight before teardown
+# ---------------------------------------------------------------------------
+
+
+def test_create_force_preflight_failure_keeps_existing_deployment(
+    env_file, archi_home, monkeypatch
+):
+    """create --force must not tear down the existing deployment when the preflight fails."""
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.templates_manager import TemplateManager
+
+    _satisfied_base_images(monkeypatch)
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(TemplateManager, "_probe_port", lambda self, port: None)
+
+    sentinel_exc = ValueError("late-render-sentinel")
+
+    def _raising_stage(ctx):
+        raise sentinel_exc
+
+    monkeypatch.setattr(
+        TemplateManager, "_build_workflow", lambda self, ctx: [_raising_stage]
+    )
+
+    from click.testing import CliRunner
+
+    result = CliRunner().invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert (
+        result.exit_code != 0
+    ), f"expected non-zero exit when preflight fails. output:\n{result.output}"
+    assert (
+        "late-render-sentinel" in result.output
+    ), f"expected sentinel in output. output:\n{result.output}"
+    assert teardowns == [], (
+        f"existing deployment was torn down before the preflight ran. "
+        f"teardowns={teardowns}\noutput:\n{result.output}"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed despite preflight failure. "
+        f"output:\n{result.output}"
+    )
+
+
+def test_create_dry_force_preflight_failure_keeps_existing_deployment(
+    env_file, archi_home, monkeypatch
+):
+    """create --dry --force must not call remove_existing_deployment when the preflight fails."""
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+    from src.cli.managers.templates_manager import TemplateManager
+    from src.cli.managers.volume_manager import VolumeManager
+
+    _satisfied_base_images(monkeypatch)
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(TemplateManager, "_probe_port", lambda self, port: None)
+
+    sentinel_exc = ValueError("late-render-sentinel")
+
+    def _raising_stage(ctx):
+        raise sentinel_exc
+
+    monkeypatch.setattr(
+        TemplateManager, "_build_workflow", lambda self, ctx: [_raising_stage]
+    )
+
+    remove_calls = []
+    monkeypatch.setattr(
+        cli_main,
+        "remove_existing_deployment",
+        lambda *a, **kw: remove_calls.append(a),
+    )
+
+    volume_calls = []
+    monkeypatch.setattr(
+        VolumeManager,
+        "create_required_volumes",
+        lambda self, *a, **kw: volume_calls.append(True),
+    )
+
+    from click.testing import CliRunner
+
+    result = CliRunner().invoke(
+        cli_main.create,
+        [
+            "--dry",
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert result.exit_code != 0, (
+        f"expected non-zero exit when preflight fails. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}"
+    )
+    assert (
+        "late-render-sentinel" in result.output
+    ), f"expected sentinel in output. output:\n{result.output}"
+    assert (
+        teardowns == []
+    ), f"delete_deployment was called under --dry. teardowns={teardowns}\noutput:\n{result.output}"
+    assert (
+        existing / "marker.txt"
+    ).exists(), f"existing deployment directory was removed. output:\n{result.output}"
+    assert remove_calls == [], (
+        f"remove_existing_deployment was called before the preflight failed. "
+        f"output:\n{result.output}"
+    )
+    assert (
+        volume_calls == []
+    ), f"create_required_volumes was called under --dry. output:\n{result.output}"
+
+
+def test_create_force_records_preflight_volumes_teardown_render_order(
+    env_file, archi_home, monkeypatch
+):
+    """create --force must run preflight, then volumes, then teardown, then render."""
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.templates_manager import TemplateManager
+    from src.cli.managers.volume_manager import VolumeManager
+
+    _satisfied_base_images(monkeypatch)
+    _existing_deployment(archi_home)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(TemplateManager, "_probe_port", lambda self, port: None)
+
+    events: List[str] = []
+
+    _orig_preflight = TemplateManager.preflight_render
+
+    def _recording_preflight(self, plan, cfg_mgr, sec, **opts):
+        events.append("preflight")
+        return _orig_preflight(self, plan, cfg_mgr, sec, **opts)
+
+    monkeypatch.setattr(TemplateManager, "preflight_render", _recording_preflight)
+
+    monkeypatch.setattr(
+        VolumeManager,
+        "create_required_volumes",
+        lambda self, *a, **kw: events.append("volumes"),
+    )
+
+    monkeypatch.setattr(
+        DeploymentManager,
+        "delete_deployment",
+        lambda self, **kwargs: events.append("teardown"),
+    )
+
+    def _recording_render(self, *a, **kw):
+        events.append("render")
+        raise RuntimeError(SENTINEL)
+
+    monkeypatch.setattr(TemplateManager, "prepare_deployment_files", _recording_render)
+
+    from click.testing import CliRunner
+
+    result = CliRunner().invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert events == ["preflight", "volumes", "teardown", "render"], (
+        f"expected ['preflight', 'volumes', 'teardown', 'render'], got {events}\n"
+        f"output:\n{result.output}"
+    )
+
+
+def test_create_dry_runs_preflight_no_volume_no_dir(env_file, archi_home, monkeypatch):
+    """create --dry must run the preflight but create no volumes and no deployment directory."""
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+    from src.cli.managers.templates_manager import TemplateManager
+    from src.cli.managers.volume_manager import VolumeManager
+
+    _satisfied_base_images(monkeypatch)
+    monkeypatch.setattr(TemplateManager, "_probe_port", lambda self, port: None)
+
+    preflight_calls: List[bool] = []
+    _orig_preflight = TemplateManager.preflight_render
+
+    def _recording_preflight(self, plan, cfg_mgr, sec, **opts):
+        preflight_calls.append(True)
+        return _orig_preflight(self, plan, cfg_mgr, sec, **opts)
+
+    monkeypatch.setattr(TemplateManager, "preflight_render", _recording_preflight)
+
+    volume_calls: List[bool] = []
+    monkeypatch.setattr(
+        VolumeManager,
+        "create_required_volumes",
+        lambda self, *a, **kw: volume_calls.append(True),
+    )
+
+    from click.testing import CliRunner
+
+    result = CliRunner().invoke(
+        cli_main.create,
+        [
+            "--dry",
+            "-n",
+            "smoke",
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert (
+        result.exit_code == 0
+    ), f"expected exit 0 for --dry. exit_code={result.exit_code}\noutput:\n{result.output}"
+    assert preflight_calls == [
+        True
+    ], f"expected preflight called once, got {preflight_calls}. output:\n{result.output}"
+    assert (
+        volume_calls == []
+    ), f"create_required_volumes must not be called under --dry. output:\n{result.output}"
+    assert not (
+        archi_home / "archi-smoke"
+    ).exists(), (
+        f"archi-smoke directory must not be created by --dry. output:\n{result.output}"
     )

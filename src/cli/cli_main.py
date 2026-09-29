@@ -283,11 +283,27 @@ def create(
             compose_config, use_podman=other_flags.get("podman", False), dry=dry
         )
 
+        # Full render into a temporary directory before any destructive step (#294):
+        # any deterministic render failure refuses here and leaves the existing
+        # deployment intact.  --dry performs the same check so a dry run reports
+        # the same failure a real run would hit.
+        template_manager = TemplateManager(env, verbosity)
+        template_manager.preflight_render(
+            compose_config, config_manager, secrets_manager, **other_flags
+        )
+
+        if not dry:
+            volume_manager = VolumeManager(compose_config.use_podman)
+            volume_manager.create_required_volumes(
+                compose_config, config_manager.config
+            )
+
         # Everything above this line can still refuse the deployment — service
         # selection, config validation, secret validation, the compose plan,
-        # the pure port checks, and the base images.  So the --force teardown goes here and
-        # nowhere earlier: a create that was always going to fail must not cost
-        # the operator a running deployment first (fasrc/archi#287).
+        # the pure port checks, the base images, and the full render (#294).
+        # So the --force teardown goes here and nowhere earlier: a create that
+        # was always going to fail must not cost the operator a running
+        # deployment first (fasrc/archi#287).
         #
         # It cannot move below the --dry return either, or a dry run would stop
         # reporting the removal it would have performed.
@@ -319,13 +335,9 @@ def create(
             return
 
         # Actual deployment
-        template_manager = TemplateManager(env, verbosity)
         base_dir.mkdir(parents=True, exist_ok=True)
 
         secrets_manager.write_secrets_to_files(base_dir, all_secrets)
-
-        volume_manager = VolumeManager(compose_config.use_podman)
-        volume_manager.create_required_volumes(compose_config, config_manager.config)
 
         template_manager.prepare_deployment_files(
             compose_config,

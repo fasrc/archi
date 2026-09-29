@@ -41,7 +41,7 @@
 
 ## 1. `TemplateManager.preflight_render` — render into a temp directory and discard it
 
-- [ ] 1.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 1.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** In the new `tests/unit/test_render_preflight.py`, build a real
       `TemplateManager` and its inputs the way `create()` does for `EXAMPLE_CONFIG`
@@ -89,7 +89,7 @@
 
 ## 2. `create()`: preflight before the teardown, volumes above it, `--dry` renders
 
-- [ ] 2.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 2.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Add to `tests/unit/test_render_preflight.py`:
       (a) `create --force` on an existing deployment (`_existing_deployment`,

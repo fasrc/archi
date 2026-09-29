@@ -1002,22 +1002,41 @@ def test_force_create_still_tears_down_once_validation_passes(
 ):
     """The fix must not be 'never tear down'.
 
-    With valid inputs the forced teardown still runs, and still runs before the
-    replacement deployment directory is created.
+    With valid inputs the forced teardown still runs, and runs after the
+    preflight render and volumes but before the real deployment write.
     """
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
 
     from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.templates_manager import TemplateManager
+    from src.cli.managers.volume_manager import VolumeManager
 
     _existing_deployment(archi_home)
-    teardowns = _record_teardowns(monkeypatch)
     monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
 
-    def _stop_before_host_mutation(*args, **kwargs):
+    events = []
+    teardowns = []
+
+    def _recording_preflight(self, *a, **kw):
+        events.append("preflight")
+
+    monkeypatch.setattr(TemplateManager, "preflight_render", _recording_preflight)
+    monkeypatch.setattr(
+        VolumeManager, "create_required_volumes", lambda self, *a, **kw: None
+    )
+
+    def _recording_teardown(self, **kwargs):
+        teardowns.append(kwargs)
+        events.append("teardown")
+
+    monkeypatch.setattr(DeploymentManager, "delete_deployment", _recording_teardown)
+
+    def _recording_render(self, *a, **kw):
         raise RuntimeError(SENTINEL)
 
-    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
+    monkeypatch.setattr(TemplateManager, "prepare_deployment_files", _recording_render)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -1045,6 +1064,9 @@ def test_force_create_still_tears_down_once_validation_passes(
         f"which proves the teardown ran before the replacement was written. "
         f"output:\n{result.output}\n"
     )
+    assert events.index("preflight") < events.index(
+        "teardown"
+    ), f"preflight must run before the teardown. events={events}\noutput:\n{result.output}\n"
 
 
 def test_force_evaluate_still_removes_existing_runtime(
@@ -1441,19 +1463,32 @@ def test_force_create_continues_when_teardown_fails(env_file, archi_home, monkey
 
     from src.cli import cli_main
     from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.templates_manager import TemplateManager
+    from src.cli.managers.volume_manager import VolumeManager
 
     _existing_deployment(archi_home)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    events = []
+
+    def _recording_preflight(self, *a, **kw):
+        events.append("preflight")
+
+    monkeypatch.setattr(TemplateManager, "preflight_render", _recording_preflight)
+    monkeypatch.setattr(
+        VolumeManager, "create_required_volumes", lambda self, *a, **kw: None
+    )
 
     def _failing_delete(self, **kwargs):
+        events.append("teardown")
         raise RuntimeError("compose stop failed")
 
     monkeypatch.setattr(DeploymentManager, "delete_deployment", _failing_delete)
-    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
 
-    def _stop_before_host_mutation(*args, **kwargs):
+    def _recording_render(self, *a, **kw):
         raise RuntimeError(SENTINEL)
 
-    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
+    monkeypatch.setattr(TemplateManager, "prepare_deployment_files", _recording_render)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -1479,6 +1514,9 @@ def test_force_create_continues_when_teardown_fails(env_file, archi_home, monkey
     assert (
         SENTINEL in result.output
     ), f"a failed teardown should not abort the create. output:\n{result.output}\n"
+    assert events.index("preflight") < events.index(
+        "teardown"
+    ), f"preflight must run before the teardown. events={events}\noutput:\n{result.output}\n"
 
 
 def test_force_create_with_missing_secret_fails_under_verbose_logging(
