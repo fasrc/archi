@@ -124,10 +124,11 @@ def test_endpoint_clamps_the_real_response_text():
     assert honoured.get_json()["text"] == DOC[:100]
 
 
-def test_importing_the_helper_does_not_load_the_agent_pipeline_package():
+def test_the_helper_never_loads_the_agent_pipeline_package():
     probe = (
         "import sys\n"
-        "import src.interfaces.uploader_app.document_limits\n"
+        "from src.interfaces.uploader_app.document_limits import clamp_document_chars\n"
+        "assert clamp_document_chars('100') == 100\n"
         "print('src.archi.pipelines' in sys.modules)\n"
     )
     result = subprocess.run(

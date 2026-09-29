@@ -67,19 +67,20 @@ values are within the ceiling. The spec states this.
 
 ### D4 — Import cost
 
-`document_limits.py` imports `src.archi.pipelines.agents.tools.result_limits`, which runs the
+The first version of `document_limits.py` imported `src.archi.pipelines.agents.tools.result_limits`, which runs the
 `tools` package `__init__` (langchain, mcp adapters). The data-manager image is built from the
 same `a2rchi-python-base` image as the chat image, and its `requirements.txt` includes
 `langchain-mcp-adapters` and `langchain`. As a result, the import is safe in the data-manager
 container. A unit test imports the helper module, so an import failure fails the gate.
 
-The helper imports `resolve_requested_chars` inside `clamp_document_chars`, not at module
-load. `src.archi.pipelines/__init__.py` imports every agent class and the MCP adapters, and
-the uploader app loaded none of that before this change. A lazy import keeps the uploader's
-startup unchanged, and a missing agent dependency can fail only this endpoint, not the whole
-service. This is the same pattern as `_default_model_factory` in
-`src/data_manager/collectors/processing.py`. A unit test runs a clean interpreter and asserts
-that importing the helper does not load `src.archi.pipelines`.
+Review round 2 replaced that import. `src.archi.pipelines/__init__.py` imports every agent
+class and the MCP adapters, and the uploader app loaded none of that before this change. A
+lazy import only moved the cost from startup to each request that gives `max_chars`. As a
+result, `TRUNCATION_MARKER` and `resolve_requested_chars` moved unchanged to
+`src/utils/requested_chars.py`, which imports only `typing`. `result_limits.py` re-exports
+both names, so the agent tools and their tests keep their imports. The rule text is moved byte-for-byte, so
+task 1.1's "do not change `result_limits.py`" still holds for the rule itself. A unit test runs a clean
+interpreter, calls `clamp_document_chars`, and asserts that `src.archi.pipelines` is not loaded.
 
 ### D5 — A source-text guard for the call site
 
