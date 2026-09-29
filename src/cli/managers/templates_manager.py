@@ -498,7 +498,13 @@ class TemplateManager:
         )
         with tempfile.TemporaryDirectory(prefix="archi-preflight-") as tmp:
             context.base_dir = Path(tmp)
-            self._run_workflow(context)
+            try:
+                self._run_workflow(context)
+            except Exception:
+                logger.error(
+                    "Render preflight failed; existing deployment was not changed"
+                )
+                raise
 
     def prepare_deployment_files(
         self,
@@ -531,10 +537,7 @@ class TemplateManager:
             try:
                 stage(context)
             except Exception:
-                logger.error(
-                    f"Template stage {stage.__name__} failed; "
-                    "existing deployment was not changed"
-                )
+                logger.error(f"Template stage {stage.__name__} failed")
                 raise
             logger.debug(f"Completed template stage {stage.__name__}")
 
@@ -823,13 +826,13 @@ class TemplateManager:
 
     def _stage_benchmarking(self, context: TemplateContext) -> None:
         query_file = context.pop_option("query_file")
-        if query_file and Path(str(query_file)).is_file():
-            query_file_dest = context.base_dir / "queries.txt"
-            shutil.copyfile(query_file, query_file_dest)
-        else:
+        if not query_file:
             logger.warning(
                 "Benchmarking requested but no query file provided; skipping copy"
             )
+        else:
+            query_file_dest = context.base_dir / "queries.txt"
+            shutil.copyfile(query_file, query_file_dest)
 
         # Anchors default ON, but the image ships no `examples/` and /root/data is a
         # named volume — so the bank only reaches the runtime via this staged copy

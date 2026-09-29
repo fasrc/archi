@@ -91,8 +91,11 @@ def benchmark_config(tmp_path):
     ollama_url) so validate_configs passes with services=["postgres",
     "benchmarking"].  agent_md_file uses an absolute path to an existing repo
     file so the exists() check in _validate_benchmarking_config passes.
+    queries_path names a real bank: without one, evaluate() stages "." and the
+    render (and so the preflight) refuses it.
     """
     agent_md = REPO_ROOT / "examples" / "agents" / "cms-comp-ops.md"
+    queries = REPO_ROOT / "examples" / "benchmarking" / "queries.json"
     miscellanea = (
         REPO_ROOT / "examples" / "deployments" / "basic-openai" / "miscellanea.list"
     )
@@ -127,6 +130,7 @@ services:
   benchmarking:
     agent_class: CMSCompOpsAgent
     agent_md_file: {str(agent_md)}
+    queries_path: {str(queries)}
     provider: openai
     model: gpt-4o
     ollama_url: http://localhost:11434
