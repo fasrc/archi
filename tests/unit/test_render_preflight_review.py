@@ -238,3 +238,21 @@ def test_create_force_stages_local_files_only_after_teardown(
     assert "stage" in events, events
     assert "stage" not in events[:teardown], events
     assert events.index("stage") < events.index("render"), events
+
+
+def test_create_required_volumes_stages_only_when_config_given(monkeypatch):
+    from src.cli.managers.volume_manager import VolumeManager
+
+    calls = []
+    monkeypatch.setattr(VolumeManager, "_create_volume", lambda self, n: None)
+    monkeypatch.setattr(
+        VolumeManager, "stage_local_files", lambda self, plan, cfg: calls.append(cfg)
+    )
+    plan = type("Plan", (), {"get_required_volumes": lambda self: ["v"]})()
+    manager = VolumeManager(use_podman=False)
+
+    manager.create_required_volumes(plan)
+    assert calls == []
+
+    manager.create_required_volumes(plan, {"k": 1})
+    assert calls == [{"k": 1}]
