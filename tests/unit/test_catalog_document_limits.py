@@ -1,5 +1,7 @@
 """Tests for the server-side catalog document character clamp (issue #260)."""
 
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -120,3 +122,19 @@ def test_endpoint_clamps_the_real_response_text():
     assert len(absent.get_json()["text"]) == DEFAULT_CATALOG_DOCUMENT_CHARS
     assert len(ceiling.get_json()["text"]) == MAX_CATALOG_DOCUMENT_CHARS
     assert honoured.get_json()["text"] == DOC[:100]
+
+
+def test_importing_the_helper_does_not_load_the_agent_pipeline_package():
+    probe = (
+        "import sys\n"
+        "import src.interfaces.uploader_app.document_limits\n"
+        "print('src.archi.pipelines' in sys.modules)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=Path(__file__).resolve().parents[2],
+    )
+    assert result.stdout.strip().splitlines()[-1] == "False"

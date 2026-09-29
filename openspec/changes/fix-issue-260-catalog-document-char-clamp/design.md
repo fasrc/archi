@@ -73,6 +73,14 @@ same `a2rchi-python-base` image as the chat image, and its `requirements.txt` in
 `langchain-mcp-adapters` and `langchain`. As a result, the import is safe in the data-manager
 container. A unit test imports the helper module, so an import failure fails the gate.
 
+The helper imports `resolve_requested_chars` inside `clamp_document_chars`, not at module
+load. `src.archi.pipelines/__init__.py` imports every agent class and the MCP adapters, and
+the uploader app loaded none of that before this change. A lazy import keeps the uploader's
+startup unchanged, and a missing agent dependency can fail only this endpoint, not the whole
+service. This is the same pattern as `_default_model_factory` in
+`src/data_manager/collectors/processing.py`. A unit test runs a clean interpreter and asserts
+that importing the helper does not load `src.archi.pipelines`.
+
 ### D5 — A source-text guard for the call site
 
 Because `app.py` is not importable in unit tests, a test reads `app.py` as text (the same
