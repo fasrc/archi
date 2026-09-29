@@ -10,6 +10,7 @@ from click.testing import CliRunner
 
 from tests.unit.test_cli_create_dev_smoke import (
     EXAMPLE_CONFIG,
+    REPO_ROOT,
     SENTINEL,
     _existing_deployment,
     _record_teardowns,
@@ -720,4 +721,279 @@ def test_create_dry_runs_preflight_no_volume_no_dir(env_file, archi_home, monkey
         archi_home / "archi-smoke"
     ).exists(), (
         f"archi-smoke directory must not be created by --dry. output:\n{result.output}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 3.1 — evaluate() preflight before teardown
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_force_preflight_failure_keeps_existing_runtime(
+    env_file, archi_home, benchmark_config, monkeypatch
+):
+    """evaluate --force must not tear down the runtime when the preflight fails."""
+    from src.cli import cli_main
+    from src.cli.managers.templates_manager import TemplateManager
+
+    _satisfied_base_images(monkeypatch)
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+    monkeypatch.setattr(TemplateManager, "_probe_port", lambda self, port: None)
+
+    sentinel_exc = ValueError("late-render-sentinel")
+
+    def _raising_stage(ctx):
+        raise sentinel_exc
+
+    monkeypatch.setattr(
+        TemplateManager, "_build_workflow", lambda self, ctx: [_raising_stage]
+    )
+
+    result = CliRunner().invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert (
+        result.exit_code != 0
+    ), f"expected non-zero exit when preflight fails. output:\n{result.output}"
+    assert (
+        "late-render-sentinel" in result.output
+    ), f"expected sentinel in output. output:\n{result.output}"
+    assert teardowns == [], (
+        f"runtime was torn down before the preflight ran. "
+        f"teardowns={teardowns}\noutput:\n{result.output}"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing runtime was removed despite preflight failure. "
+        f"output:\n{result.output}"
+    )
+
+
+def test_evaluate_force_config_dir_basename_collision_keeps_existing_runtime(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """evaluate --force --config-dir must not tear down when agent_md basenames collide."""
+    from src.cli import cli_main
+    from src.cli.managers.templates_manager import TemplateManager
+
+    _satisfied_base_images(monkeypatch)
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+    monkeypatch.setattr(TemplateManager, "_probe_port", lambda self, port: None)
+
+    miscellanea = (
+        REPO_ROOT / "examples" / "deployments" / "basic-openai" / "miscellanea.list"
+    )
+
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    agent_a = dir_a / "agent.md"
+    agent_b = dir_b / "agent.md"
+    agent_a.write_text("# Agent A")
+    agent_b.write_text("# Agent B")
+
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+
+    def _config_text(name, agent_md_path):
+        return f"""\
+name: {name}
+
+services:
+  benchmarking:
+    agent_class: CMSCompOpsAgent
+    agent_md_file: {agent_md_path}
+    provider: openai
+    model: gpt-4o
+    ollama_url: http://localhost:11434
+
+data_manager:
+  sources:
+    links:
+      input_lists:
+        - {miscellanea}
+  embedding_name: HuggingFaceEmbeddings
+"""
+
+    (config_dir / "a.yaml").write_text(_config_text("bench-a", str(agent_a)))
+    (config_dir / "b.yaml").write_text(_config_text("bench-b", str(agent_b)))
+
+    result = CliRunner().invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "--config-dir",
+            str(config_dir),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert (
+        result.exit_code != 0
+    ), f"expected non-zero exit on basename collision. output:\n{result.output}"
+    assert (
+        "same basename 'agent.md'" in result.output
+    ), f"expected basename-collision message in output. output:\n{result.output}"
+    assert teardowns == [], (
+        f"runtime was torn down before preflight detected the collision. "
+        f"teardowns={teardowns}\noutput:\n{result.output}"
+    )
+
+
+def test_evaluate_force_missing_agent_md_file_keeps_existing_runtime(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """evaluate --force must not tear down when agent_md_file does not exist.
+
+    config_manager.py:347-348 already refuses this before the teardown on origin/dev,
+    so this test is green at the start — it is kept as a regression test.
+    """
+    from src.cli import cli_main
+
+    _satisfied_base_images(monkeypatch)
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+
+    miscellanea = (
+        REPO_ROOT / "examples" / "deployments" / "basic-openai" / "miscellanea.list"
+    )
+    config_text = f"""\
+name: smoke-missing-agent
+
+services:
+  benchmarking:
+    agent_class: CMSCompOpsAgent
+    agent_md_file: /does/not/exist/agent.md
+    provider: openai
+    model: gpt-4o
+    ollama_url: http://localhost:11434
+
+data_manager:
+  sources:
+    links:
+      input_lists:
+        - {miscellanea}
+  embedding_name: HuggingFaceEmbeddings
+"""
+    config_file = tmp_path / "missing-agent.yaml"
+    config_file.write_text(config_text)
+
+    result = CliRunner().invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(config_file),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert (
+        result.exit_code != 0
+    ), f"expected non-zero exit when agent_md_file is missing. output:\n{result.output}"
+    assert (
+        "agent_md_file not found" in result.output
+    ), f"expected 'agent_md_file not found' in output. output:\n{result.output}"
+    assert teardowns == [], (
+        f"runtime was torn down before agent_md_file validation. "
+        f"teardowns={teardowns}\noutput:\n{result.output}"
+    )
+
+
+def test_evaluate_force_records_preflight_teardown_volumes_render_order(
+    env_file, archi_home, benchmark_config, monkeypatch
+):
+    """evaluate --force must run preflight, then teardown, then volumes, then render.
+
+    The preflight runs before the teardown so a deterministic render failure never
+    costs the operator a running deployment.  Volumes stay after the teardown (their
+    original position) so the base_dir.exists() guard is reached even when docker is
+    unavailable in the test environment.
+    """
+    import shutil
+
+    from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.templates_manager import TemplateManager
+    from src.cli.managers.volume_manager import VolumeManager
+
+    _satisfied_base_images(monkeypatch)
+    existing = _existing_deployment(archi_home)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+    monkeypatch.setattr(TemplateManager, "_probe_port", lambda self, port: None)
+
+    events: List[str] = []
+
+    def _recording_preflight(self, plan, cfg_mgr, sec, **opts):
+        events.append("preflight")
+
+    monkeypatch.setattr(TemplateManager, "preflight_render", _recording_preflight)
+
+    def _delete_recording(self, **kwargs):
+        events.append("teardown")
+        shutil.rmtree(existing, ignore_errors=True)
+
+    monkeypatch.setattr(DeploymentManager, "delete_deployment", _delete_recording)
+
+    monkeypatch.setattr(
+        VolumeManager,
+        "create_required_volumes",
+        lambda self, *a, **kw: events.append("volumes"),
+    )
+
+    def _recording_render(self, *a, **kw):
+        events.append("render")
+        raise RuntimeError(SENTINEL)
+
+    monkeypatch.setattr(TemplateManager, "prepare_deployment_files", _recording_render)
+
+    result = CliRunner().invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert events == ["preflight", "teardown", "volumes", "render"], (
+        f"expected ['preflight', 'teardown', 'volumes', 'render'], got {events}\n"
+        f"output:\n{result.output}"
     )

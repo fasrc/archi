@@ -1072,41 +1072,51 @@ def test_force_create_still_tears_down_once_validation_passes(
 def test_force_evaluate_still_removes_existing_runtime(
     env_file, archi_home, benchmark_config, monkeypatch
 ):
-    """Splitting the helper must not break archi evaluate --force.
+    """evaluate --force tears down the existing runtime and the preflight runs before it.
 
-    evaluate() calls handle_existing_deployment() followed by
-    remove_existing_deployment(), then refuses if the directory still exists. It
-    depends on the destructive half running at that call site, which is why the
-    split had to update it rather than leave only the precondition behind.
+    evaluate() calls handle_existing_deployment() followed by preflight_render()
+    (fasrc/archi#294), then remove_existing_deployment(), then refuses if the
+    directory still exists.  The destructive half must still run at its call site,
+    which is why the split had to update it rather than leave only the precondition
+    behind.
 
-    The TemplateManager sentinel stops the run before any host mutation so the
-    test never creates real volumes or containers.  The sentinel appearing in
-    the output proves the run reached deployment setup, meaning the teardown
-    genuinely ran rather than the test passing vacuously because validation
-    refused first.
+    prepare_deployment_files raises SENTINEL to stop before any real host mutation,
+    proving the teardown ran before the replacement was written.  The events list
+    also proves the preflight ran before the teardown.
     """
     import shutil
 
     from src.cli import cli_main
     from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.templates_manager import TemplateManager
+    from src.cli.managers.volume_manager import VolumeManager
 
     existing = _existing_deployment(archi_home)
 
     teardowns = []
+    events = []
 
     def _delete(self, **kwargs):
         teardowns.append(kwargs)
+        events.append("teardown")
         shutil.rmtree(existing, ignore_errors=True)
 
-    def _stop_before_host_mutation(*args, **kwargs):
+    def _recording_preflight(self, plan, cfg_mgr, sec, **opts):
+        events.append("preflight")
+
+    def _raise_sentinel(self, *a, **kw):
         raise RuntimeError(SENTINEL)
 
     monkeypatch.setattr(DeploymentManager, "delete_deployment", _delete)
+    monkeypatch.setattr(TemplateManager, "preflight_render", _recording_preflight)
+    monkeypatch.setattr(
+        VolumeManager, "create_required_volumes", lambda self, *a, **kw: None
+    )
+    monkeypatch.setattr(TemplateManager, "prepare_deployment_files", _raise_sentinel)
     monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
     monkeypatch.setattr(
         cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
     )
-    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -1134,6 +1144,10 @@ def test_force_evaluate_still_removes_existing_runtime(
     assert SENTINEL in result.output, (
         f"expected the run to reach deployment setup and stop at the sentinel, "
         f"which proves the teardown ran before the replacement was written. "
+        f"output:\n{result.output}\n"
+    )
+    assert events.index("preflight") < events.index("teardown"), (
+        f"preflight must run before the teardown. events={events}\n"
         f"output:\n{result.output}\n"
     )
 

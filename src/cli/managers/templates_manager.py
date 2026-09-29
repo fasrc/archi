@@ -823,13 +823,13 @@ class TemplateManager:
 
     def _stage_benchmarking(self, context: TemplateContext) -> None:
         query_file = context.pop_option("query_file")
-        if not query_file:
+        if query_file and Path(str(query_file)).is_file():
+            query_file_dest = context.base_dir / "queries.txt"
+            shutil.copyfile(query_file, query_file_dest)
+        else:
             logger.warning(
                 "Benchmarking requested but no query file provided; skipping copy"
             )
-        else:
-            query_file_dest = context.base_dir / "queries.txt"
-            shutil.copyfile(query_file, query_file_dest)
 
         # Anchors default ON, but the image ships no `examples/` and /root/data is a
         # named volume — so the bank only reaches the runtime via this staged copy
