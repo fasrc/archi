@@ -1209,6 +1209,61 @@ stored in the workspace. Evaluator prompts and rationales also contain or may
 reveal them. Restrict access to datasets, the evaluation root, run artifacts,
 logs, and reports according to the sensitivity of the evaluation set.
 
+#### Price a run from recorded tokens
+
+Token records are written wherever an LLM call is made during evaluation.
+
+**Where `usage` appears:**
+
+- `preparation.jsonl` — rows with `atom_source: "inferred"` carry a `usage` key.
+- `answers.jsonl` — every `answer_ready` and `execution_failed` row carries `"usage"`
+  (`null` if the runtime reported no counts).
+- `evaluation_results.jsonl` — every `scored` and `evaluation_failed` row carries `"usage"`.
+- `summary.json` → `provenance.usage` — three keys `prepare`, `run`, and `score` hold
+  the phase totals (each is `null` if no rows reported usage for that phase).
+- Benchmark arm entries → `judge_usage` — the ragas judge's token usage for that arm
+  (`null` when ragas did not run).
+
+**Shape (the same everywhere):**
+
+```json
+{
+  "input_tokens": 1234,
+  "output_tokens": 56,
+  "calls": 2,
+  "unreported_calls": 0,
+  "by_model": [
+    {
+      "provider": "huit_bedrock",
+      "model": "claude-x",
+      "input_tokens": 1234,
+      "output_tokens": 56,
+      "calls": 2,
+      "unreported_calls": 0
+    }
+  ]
+}
+```
+
+**Calculating cost:**
+
+Sum over every entry in `by_model` using your provider's per-token rates:
+
+```
+cost = Σ (entry["input_tokens"] × rate_in + entry["output_tokens"] × rate_out)
+```
+
+where `rate_in` and `rate_out` are the per-token input and output prices for that
+`(provider, model)` pair, sourced from the provider's current pricing page.
+
+**Limits:**
+
+- `unreported_calls > 0` means that many LLM calls finished without sending token counts;
+  those tokens were consumed but are not measurable here.
+- A call that raised before it finished left no usage event and is not counted in any field.
+- A retry run directory copies rows from its parent; those rows carry the parent run's usage,
+  so the retry totals include them.
+
 ## Troubleshooting
 
 ### The run remains `prepared`

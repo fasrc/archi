@@ -144,7 +144,7 @@
 
 ## 7. Docs
 
-- [ ] 7.1 In `docs/docs/evaluation.md`, under `### Cost, concurrency, and data handling`, add a
+- [x] 7.1 In `docs/docs/evaluation.md`, under `### Cost, concurrency, and data handling`, add a
       `#### Price a run from recorded tokens` subsection: where `usage` appears (the three row
       files, `summary.json` `provenance.usage`, benchmark `judge_usage`), the D3 shape, the
       arithmetic `input_tokens × rate_in + output_tokens × rate_out` summed over `by_model`
