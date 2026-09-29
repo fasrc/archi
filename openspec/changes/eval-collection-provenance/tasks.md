@@ -59,7 +59,7 @@
 
 ## 9. Gate and hand-off
 
-- [ ] 9.1 `model: haiku` — `bash scripts/gate.sh` passes (black, isort, `pytest tests/unit/`, diff-cover ≥ 80% versus `origin/dev`)
-- [ ] 9.2 `model: haiku` — `bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh` passes
-- [ ] 9.3 `model: opus` — Validate end to end on the claw stack (AGENTS.md, "Deployment & Validation Policy"): deploy the branch with the `archi-dev-deploy-verify` procedure, run one smoke benchmark arm and one QA run, confirm `retrieval_identity`, both `sha256/v2:` readings, and the guard's log line in the artifacts and the container logs; record the container names and the artifact paths for the PR body
+- [x] 9.1 `model: haiku` — `bash scripts/gate.sh` passes (black, isort, `pytest tests/unit/`, diff-cover ≥ 80% versus `origin/dev`)
+- [x] 9.2 `model: haiku` — `bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh` passes
+- [x] 9.3 `model: opus` — Validate end to end on the claw stack (AGENTS.md, "Deployment & Validation Policy"): deploy the branch with the `archi-dev-deploy-verify` procedure, run one smoke benchmark arm and one QA run, confirm `retrieval_identity`, both `sha256/v2:` readings, and the guard's log line in the artifacts and the container logs; record the container names and the artifact paths for the PR body
 - [ ] 9.4 `model: sonnet` — Open the PR to `fasrc/archi:dev` with `Closes #570`; the PR body lists the migration order from `design.md` (validate on claw → merge → backfill → redeploy → re-pin → campaign), the dry-run counts from 2.3, and the claw validation evidence from 9.3
