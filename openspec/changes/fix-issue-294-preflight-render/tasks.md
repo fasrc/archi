@@ -187,7 +187,7 @@
 
 ## 5. Publish
 
-- [ ] 5.1 Push the branch and open the PR. The branch has no upstream — push with
+- [x] 5.1 Push the branch and open the PR. The branch has no upstream — push with
       `git push -u origin fix/issue-294-preflight-render`. Confirm the push landed on
       **fasrc/archi**, not a fork: `git ls-remote --heads origin fix/issue-294-preflight-render`
       must print the same SHA as `git rev-parse HEAD`. If it prints nothing, the push went
