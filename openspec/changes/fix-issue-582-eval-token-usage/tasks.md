@@ -85,7 +85,7 @@
 
 ## 3. QA preparation rows
 
-- [ ] 3.1 In `tests/unit/evaluation/qa/test_preparation.py`, add tests, then implement design
+- [x] 3.1 In `tests/unit/evaluation/qa/test_preparation.py`, add tests, then implement design
       D5 (preparation part) in `src/evaluation/qa/preparation.py`, one commit
       (`feat: record extractor usage on preparation rows`). Assert: an inferred-atoms item with
       an extractor fake exposing `last_usage` writes that dict as `usage` in `to_dict()`; an
