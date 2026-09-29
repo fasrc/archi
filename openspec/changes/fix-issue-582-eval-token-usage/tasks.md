@@ -112,7 +112,7 @@
 
 ## 5. Phase totals in summary.json
 
-- [ ] 5.1 In `tests/unit/evaluation/qa/test_workflow.py`, add a test that runs the existing
+- [x] 5.1 In `tests/unit/evaluation/qa/test_workflow.py`, add a test that runs the existing
       end-to-end fake workflow (find the fixture the other score tests use) with fakes that
       report usage, then read `summary.json`: `provenance.usage.prepare/run/score` equal the
       sums of the rows in `preparation.jsonl`, `answers.jsonl`, `evaluation_results.jsonl`.
