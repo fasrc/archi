@@ -120,7 +120,7 @@
       if none exists, cover the retry site through the same helper call and say so in the
       commit body. Implement in `src/evaluation/qa/workflow.py` as two thin call sites to
       `phase_usage_totals` (design D6). One commit (`feat: qa summary records phase usage`).
-- [ ] 5.2 In `tests/unit/test_compare_runs.py`, add a test (in a new section marked
+- [x] 5.2 In `tests/unit/test_compare_runs.py`, add a test (in a new section marked
       `# --- #582: usage keys are additive ---` placed above an existing section marker, not at
       the end of the file) that writes a QA run directory whose rows carry `usage` and one
       identical directory without it, and asserts `cr.load_qa_run` returns equal results for
