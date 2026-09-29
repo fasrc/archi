@@ -134,7 +134,7 @@
 
 ## 3. `evaluate()`: the same order, and the two agent_md_file routes
 
-- [ ] 3.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 3.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Add to `tests/unit/test_render_preflight.py`, modelled on
       `test_force_evaluate_still_removes_existing_runtime` (patch
@@ -174,7 +174,7 @@
 
 ## 4. Docs
 
-- [ ] 4.1 Edit `docs/docs/fasrc_archi.md`, the `--force` note (grep
+- [x] 4.1 Edit `docs/docs/fasrc_archi.md`, the `--force` note (grep
       `This does not make \`--force\` safe in general`). Replace the sentences that say
       closing the class "means rendering the replacement … ([#294](...))" with: the whole
       replacement is now rendered into a temporary directory and discarded before anything
