@@ -260,3 +260,120 @@ def test_get_ragas_results_scores_answer_correctness_against_the_reference(
     assert out["aggregate_answer_correctness"] == 0.9
     assert results_by_key["question_1"]["answer_correctness"] == 0.9
     assert "answer_correctness" not in results_by_key["question_2"]
+
+
+# --- #582: ragas judge usage ---
+
+
+def test_ragas_judge_identity_returns_evaluator_provider_and_model():
+    from src.bin.service_benchmark import ragas_judge_identity
+
+    config = {
+        "services": {
+            "benchmarking": {
+                "provider": "openai",
+                "model": "gpt-4o",
+                "mode_settings": {
+                    "ragas_settings": {
+                        "evaluator_provider": "Anthropic",
+                        "evaluator_model": "claude-3-5-sonnet",
+                    }
+                },
+            }
+        }
+    }
+    provider, model = ragas_judge_identity(config)
+    assert provider == "anthropic"
+    assert model == "claude-3-5-sonnet"
+
+
+def test_ragas_judge_identity_falls_back_to_benchmark_provider_and_model():
+    from src.bin.service_benchmark import ragas_judge_identity
+
+    config = {
+        "services": {
+            "benchmarking": {
+                "provider": "OpenAI",
+                "model": "gpt-4o",
+                "mode_settings": {"ragas_settings": {}},
+            }
+        }
+    }
+    provider, model = ragas_judge_identity(config)
+    assert provider == "openai"
+    assert model == "gpt-4o"
+
+
+def test_get_ragas_results_sets_judge_usage_from_callbacks(monkeypatch):
+    """get_ragas_results passes UsageRecorder in callbacks; _judge_usage accumulates."""
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
+
+    _install_ragas_stub(monkeypatch)
+
+    def evaluate_with_usage(dataset, metrics=None, **kwargs):
+        for cb in kwargs.get("callbacks", []):
+            if hasattr(cb, "on_llm_end"):
+                msg = AIMessage(
+                    content="ok",
+                    usage_metadata={
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                )
+                cb.on_llm_end(LLMResult(generations=[[ChatGeneration(message=msg)]]))
+        cols = {m.name: [0.9 for _ in dataset] for m in metrics}
+        return types.SimpleNamespace(to_pandas=lambda: pd.DataFrame(cols))
+
+    monkeypatch.setattr(sys.modules["ragas"], "evaluate", evaluate_with_usage)
+
+    bench = _ragas_bench(["answer_relevancy", "faithfulness"])
+    bench.config["services"]["benchmarking"]["provider"] = "openai"
+    bench.config["services"]["benchmarking"]["model"] = "judge-model"
+
+    rows = [
+        {
+            "user_input": "q1",
+            "retrieved_contexts": ["c1"],
+            "response": "a1",
+            "reference": "r1",
+        }
+    ]
+    keys = ["question_1"]
+    results_by_key = {"question_1": {}}
+
+    bench.get_ragas_results(rows, keys, results_by_key)
+
+    usage = bench._judge_usage
+    assert usage is not None
+    # Two metrics, one evaluate call each — 10 input + 5 output per call.
+    assert usage["calls"] == 2
+    assert usage["input_tokens"] == 20
+    assert usage["output_tokens"] == 10
+    assert len(usage["by_model"]) == 1
+    assert usage["by_model"][0]["provider"] == "openai"
+    assert usage["by_model"][0]["model"] == "judge-model"
+
+
+def test_get_ragas_results_judge_usage_is_none_when_no_metric_scores(monkeypatch):
+    """All rows are drafts; ragas is never called, so _judge_usage stays None."""
+    _install_ragas_stub(monkeypatch)
+    bench = _ragas_bench(["context_recall"])
+    bench.config["services"]["benchmarking"]["provider"] = "openai"
+    bench.config["services"]["benchmarking"]["model"] = "judge-model"
+
+    rows = [
+        {
+            "user_input": "q1",
+            "retrieved_contexts": ["c1"],
+            "response": "a1",
+            "reference": "",
+        }
+    ]
+    keys = ["question_1"]
+    results_by_key = {"question_1": {}}
+
+    bench.get_ragas_results(rows, keys, results_by_key)
+
+    assert bench._judge_usage is None

@@ -534,3 +534,59 @@ def test_ingest_wall_seconds_is_not_copied_onto_the_run_metadata(tmp_path, monke
     ResultHandler.add_metadata()
 
     assert "ingest_wall_seconds" not in ResultHandler.metadata
+
+
+# --- #582: judge_usage on the arm record ---
+
+
+def test_judge_usage_is_recorded_when_ragas_ran(tmp_path):
+    """handle_results records the judge_usage dict when RAGAS ran."""
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "calls": 2,
+        "unreported_calls": 0,
+        "by_model": [
+            {
+                "provider": "openai",
+                "model": "gpt-4o",
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "calls": 2,
+                "unreported_calls": 0,
+            }
+        ],
+    }
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(modes=("RAGAS",), timeout=60)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        judge_usage=usage,
+    )
+    record = ResultHandler.results[0]
+    assert "judge_usage" in record
+    assert record["judge_usage"] == usage
+
+
+def test_judge_usage_is_none_when_ragas_did_not_run(tmp_path):
+    """When RAGAS was not a mode, judge_usage is null regardless of the arg passed."""
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "calls": 2,
+        "unreported_calls": 0,
+        "by_model": [],
+    }
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(modes=("SOURCES",))),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"SOURCES"},
+        judge_usage=usage,
+    )
+    record = ResultHandler.results[0]
+    assert "judge_usage" in record
+    assert record["judge_usage"] is None

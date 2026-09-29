@@ -129,7 +129,7 @@
 
 ## 6. Benchmark judge usage
 
-- [ ] 6.1 In `tests/unit/test_benchmark_ragas_dialect.py` and
+- [x] 6.1 In `tests/unit/test_benchmark_ragas_dialect.py` and
       `tests/unit/test_benchmark_report_records_running_config.py`, add tests, then implement
       design D7 in `src/bin/service_benchmark.py`, one commit
       (`feat: record ragas judge usage per arm`). Assert: a pure `ragas_judge_identity` returns
