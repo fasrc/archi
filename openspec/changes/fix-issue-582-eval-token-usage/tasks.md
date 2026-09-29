@@ -98,7 +98,7 @@
 
 ## 4. QA answer and judgment rows
 
-- [ ] 4.1 In `tests/unit/evaluation/qa/test_phases.py` and `test_runtime.py`, add tests, then
+- [x] 4.1 In `tests/unit/evaluation/qa/test_phases.py` and `test_runtime.py`, add tests, then
       implement design D5 (run and score parts) in `src/evaluation/qa/runtime.py`
       (`ArchiAgentRuntime`) and `src/evaluation/qa/phases.py`, one commit
       (`feat: record agent and judge usage on qa rows`). Assert: `ArchiAgentRuntime.run` with a

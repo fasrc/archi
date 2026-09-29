@@ -425,18 +425,21 @@ class ArchiAgentRuntime:
     def run(self, question: str) -> str:
         self.tool_calls = []
         timing_callback = ToolTimingCallback()
+        chat = self.config["services"]["chat_app"]
+        usage_recorder = UsageRecorder(chat["default_provider"], chat["default_model"])
         pipeline, vectorstore = self._runtime_for_attempt()
         try:
             output = pipeline.invoke(
                 history=[("User", question)],
                 vectorstore=vectorstore,
-                callbacks=[timing_callback],
+                callbacks=[timing_callback, usage_recorder],
             )
         finally:
             self.tool_calls = sorted(
                 timing_callback.traces,
                 key=lambda timing: timing["ordinal"],
             )
+            self.usage = usage_recorder.snapshot()
         answer = output.answer
         if not isinstance(answer, str) or not answer.strip():
             raise ValueError("Archi produced no usable terminal answer")

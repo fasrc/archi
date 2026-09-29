@@ -569,12 +569,15 @@ def test_archi_runtime_uses_normal_pipeline_invocation(monkeypatch):
         shared,
     ).run("question")
 
+    from src.utils.llm_usage import UsageRecorder
+
     assert answer == "final answer"
     assert "strict_tool_loading" not in observed["init"]
     assert observed["invoke"]["history"] == [("User", "question")]
     assert observed["invoke"]["vectorstore"] is vectorstore
-    assert len(observed["invoke"]["callbacks"]) == 1
+    assert len(observed["invoke"]["callbacks"]) == 2
     assert isinstance(observed["invoke"]["callbacks"][0], ToolTimingCallback)
+    assert isinstance(observed["invoke"]["callbacks"][1], UsageRecorder)
 
 
 def test_archi_runtime_collects_tool_timings(monkeypatch):
@@ -674,3 +677,75 @@ def test_archi_runtime_rejects_empty_answer():
         ArchiAgentRuntime(_config(), SimpleNamespace(tools=[]), Pipeline).run(
             "question"
         )
+
+
+# --- #582: ArchiAgentRuntime records usage ---
+
+
+def test_archi_runtime_records_usage_after_successful_run():
+    """run() sets self.usage with default_provider/default_model after a successful invoke."""
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
+
+    class Pipeline:
+        def __init__(self, **kwargs):
+            pass
+
+        def invoke(self, **kwargs):
+            msg = AIMessage(
+                content="r",
+                usage_metadata={
+                    "input_tokens": 30,
+                    "output_tokens": 12,
+                    "total_tokens": 42,
+                },
+            )
+            result = LLMResult(generations=[[ChatGeneration(message=msg)]])
+            for cb in kwargs["callbacks"]:
+                if "on_llm_end" in type(cb).__dict__:
+                    cb.on_llm_end(result)
+            return _Output("final answer")
+
+    agent = ArchiAgentRuntime(_config(), SimpleNamespace(tools=[]), Pipeline)
+    agent.run("question")
+
+    assert agent.usage is not None
+    assert agent.usage["input_tokens"] == 30
+    assert agent.usage["output_tokens"] == 12
+    entry = agent.usage["by_model"][0]
+    assert entry["provider"] == "fake"
+    assert entry["model"] == "fake-model"
+
+
+def test_archi_runtime_records_usage_when_invoke_raises():
+    """Usage is still captured in finally even when pipeline.invoke raises."""
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
+
+    class Pipeline:
+        def __init__(self, **kwargs):
+            pass
+
+        def invoke(self, **kwargs):
+            msg = AIMessage(
+                content="r",
+                usage_metadata={
+                    "input_tokens": 20,
+                    "output_tokens": 7,
+                    "total_tokens": 27,
+                },
+            )
+            result = LLMResult(generations=[[ChatGeneration(message=msg)]])
+            for cb in kwargs["callbacks"]:
+                if "on_llm_end" in type(cb).__dict__:
+                    cb.on_llm_end(result)
+            raise RuntimeError("pipeline error")
+
+    agent = ArchiAgentRuntime(_config(), SimpleNamespace(tools=[]), Pipeline)
+
+    with pytest.raises(RuntimeError, match="pipeline error"):
+        agent.run("question")
+
+    assert agent.usage is not None
+    assert agent.usage["input_tokens"] == 20
+    assert agent.usage["output_tokens"] == 7
