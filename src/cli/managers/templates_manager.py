@@ -5,6 +5,7 @@ import platform
 import shutil
 import socket
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -472,6 +473,33 @@ class TemplateManager:
             "grader": self._copy_grader_assets,
         }
 
+    def preflight_render(
+        self,
+        plan: DeploymentPlan,
+        config_manager,
+        secrets_manager,
+        **options,
+    ) -> None:
+        """Render all stages into a temporary directory and discard the result.
+
+        Skips the source copy (build=False — large, and unable to fail on config input,
+        per design D2) and the live port-availability probe (allow_port_reuse=True — the
+        existing deployment still holds its ports before the teardown, so probing there
+        would report a false conflict for every port the replacement reuses, per design D3).
+        The pure port-configuration check still runs.  The temporary directory is removed
+        on success and on failure.
+        """
+        preflight_options = {**options, "build": False, "allow_port_reuse": True}
+        context = TemplateContext(
+            plan=plan,
+            config_manager=config_manager,
+            secrets_manager=secrets_manager,
+            options=dict(preflight_options),
+        )
+        with tempfile.TemporaryDirectory(prefix="archi-preflight-") as tmp:
+            context.base_dir = Path(tmp)
+            self._run_workflow(context)
+
     def prepare_deployment_files(
         self,
         plan: DeploymentPlan,
@@ -493,12 +521,22 @@ class TemplateManager:
         # stage), so it is tied to the code that actually lands in the image and is
         # skipped when no build happens (``restart --no-build``).
 
-        for stage in self._build_workflow(context):
-            logger.debug(f"Starting template stage {stage.__name__}")
-            stage(context)
-            logger.debug(f"Completed template stage {stage.__name__}")
+        self._run_workflow(context)
 
         logger.info(f"Finished preparing deployment artifacts for {plan.name}")
+
+    def _run_workflow(self, context: TemplateContext) -> None:
+        for stage in self._build_workflow(context):
+            logger.debug(f"Starting template stage {stage.__name__}")
+            try:
+                stage(context)
+            except Exception:
+                logger.error(
+                    f"Template stage {stage.__name__} failed; "
+                    "existing deployment was not changed"
+                )
+                raise
+            logger.debug(f"Completed template stage {stage.__name__}")
 
     # workflow construction
     def _build_workflow(
@@ -1147,7 +1185,8 @@ class TemplateManager:
         # The probe runs here — after teardown — not pre-teardown: the existing
         # deployment still holds its ports, so an early probe would report a false
         # conflict for every port the replacement reuses, refusing exactly the
-        # re-creates that should succeed (spec acceptance criterion 5).
+        # re-creates that should succeed (spec acceptance criterion 5).  The preflight
+        # skips this probe (allow_port_reuse=True) for the same reason.
         if not allow_port_reuse:
             for port, services in sorted(port_to_services.items()):
                 error = self._probe_port(port)
