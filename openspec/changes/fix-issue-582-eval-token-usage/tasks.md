@@ -47,7 +47,7 @@
 
 ## 1. The usage helper
 
-- [ ] 1.1 Create `tests/unit/test_llm_usage.py` and `src/utils/llm_usage.py` (design D1–D3).
+- [x] 1.1 Create `tests/unit/test_llm_usage.py` and `src/utils/llm_usage.py` (design D1–D3).
       Tests first, then code, one commit (`feat: llm usage recorder helper`). Tests build
       `LLMResult(generations=[[ChatGeneration(message=AIMessage(...))]])` by hand and call
       `UsageRecorder.on_llm_end` directly. Cover:
