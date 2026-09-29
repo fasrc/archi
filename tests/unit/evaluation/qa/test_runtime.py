@@ -76,7 +76,7 @@ def test_evaluator_uses_structured_output_schema():
     observed = {}
 
     class Runnable:
-        def invoke(self, messages):
+        def invoke(self, messages, config=None):
             observed["messages"] = messages
             return {"atoms": []}
 
@@ -97,7 +97,7 @@ def test_evaluator_compares_complete_answer_to_gold_atoms():
     invocations = []
 
     class Runnable:
-        def invoke(self, messages):
+        def invoke(self, messages, config=None):
             invocations.append(messages)
             return {
                 "judgments": [
@@ -156,6 +156,158 @@ def test_evaluator_requires_zero_temperature():
     LangChainEvaluatorRuntime(load_profile(None), model_factory)
 
     assert calls == [{"temperature": 0}, {"temperature": 0}]
+
+
+def _usage_firing_factory():
+    """Return a model_factory whose invoke fires on_llm_end with token usage."""
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
+
+    class _Runnable:
+        def __init__(self, return_value):
+            self._ret = return_value
+
+        def invoke(self, messages, config=None):
+            if config and "callbacks" in config:
+                msg = AIMessage(
+                    content="r",
+                    usage_metadata={
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                )
+                result = LLMResult(generations=[[ChatGeneration(message=msg)]])
+                for cb in config["callbacks"]:
+                    cb.on_llm_end(result)
+            return self._ret
+
+    class _Model:
+        def __init__(self, return_value):
+            self._ret = return_value
+
+        def with_structured_output(self, schema):
+            return _Runnable(self._ret)
+
+    def factory(return_value):
+        def model_factory(provider, model, provider_config, **kwargs):
+            return _Model(return_value)
+
+        return model_factory
+
+    return factory
+
+
+def test_evaluator_records_atoms_extractor_usage_after_extract_gold():
+    from src.evaluation.qa.profile import EvaluatorProfile, ModelDescriptor
+
+    profile = EvaluatorProfile(
+        version=1,
+        atoms_extractor=ModelDescriptor(provider="extractor-co", model="ext-model"),
+        evaluator=ModelDescriptor(provider="eval-co", model="eval-model"),
+    )
+    factory = _usage_firing_factory()({"atoms": []})
+    ev = LangChainEvaluatorRuntime(profile, factory)
+    ev.extract_gold("q", "a")
+
+    assert ev.last_usage is not None
+    entry = ev.last_usage["by_model"][0]
+    assert entry["provider"] == "extractor-co"
+    assert entry["model"] == "ext-model"
+    assert entry["input_tokens"] == 10
+    assert entry["output_tokens"] == 5
+
+
+def test_evaluator_records_evaluator_usage_after_compare():
+    from src.evaluation.qa.profile import EvaluatorProfile, ModelDescriptor
+
+    profile = EvaluatorProfile(
+        version=1,
+        atoms_extractor=ModelDescriptor(provider="extractor-co", model="ext-model"),
+        evaluator=ModelDescriptor(provider="eval-co", model="eval-model"),
+    )
+    factory = _usage_firing_factory()({"judgments": []})
+    ev = LangChainEvaluatorRuntime(profile, factory)
+    ev.compare("q", [Atom(id="a1", text="fact", required=True)], "answer")
+
+    assert ev.last_usage is not None
+    entry = ev.last_usage["by_model"][0]
+    assert entry["provider"] == "eval-co"
+    assert entry["model"] == "eval-model"
+
+
+def test_evaluator_last_usage_resets_between_calls():
+    """A second call replaces last_usage rather than accumulating."""
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
+
+    tokens = iter([10, 99])
+
+    class _Runnable:
+        def invoke(self, messages, config=None):
+            t = next(tokens)
+            if config and "callbacks" in config:
+                msg = AIMessage(
+                    content="r",
+                    usage_metadata={
+                        "input_tokens": t,
+                        "output_tokens": 1,
+                        "total_tokens": t + 1,
+                    },
+                )
+                result = LLMResult(generations=[[ChatGeneration(message=msg)]])
+                for cb in config["callbacks"]:
+                    cb.on_llm_end(result)
+            return {"atoms": []}
+
+    class _Model:
+        def with_structured_output(self, schema):
+            return _Runnable()
+
+    def model_factory(provider, model, provider_config, **kwargs):
+        return _Model()
+
+    ev = LangChainEvaluatorRuntime(load_profile(None), model_factory)
+    ev.extract_gold("q1", "a1")
+    ev.extract_gold("q2", "a2")
+
+    assert ev.last_usage["input_tokens"] == 99
+
+
+def test_evaluator_last_usage_set_even_when_structured_raises():
+    """last_usage is populated in finally, so it survives a parsing failure."""
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
+
+    class _Runnable:
+        def invoke(self, messages, config=None):
+            if config and "callbacks" in config:
+                msg = AIMessage(
+                    content="r",
+                    usage_metadata={
+                        "input_tokens": 50,
+                        "output_tokens": 3,
+                        "total_tokens": 53,
+                    },
+                )
+                result = LLMResult(generations=[[ChatGeneration(message=msg)]])
+                for cb in config["callbacks"]:
+                    cb.on_llm_end(result)
+            return "not-a-dict"
+
+    class _Model:
+        def with_structured_output(self, schema):
+            return _Runnable()
+
+    def model_factory(provider, model, provider_config, **kwargs):
+        return _Model()
+
+    ev = LangChainEvaluatorRuntime(load_profile(None), model_factory)
+    with pytest.raises(ValueError, match="non-object"):
+        ev.extract_gold("q", "a")
+
+    assert ev.last_usage is not None
+    assert ev.last_usage["input_tokens"] == 50
 
 
 class _Output:

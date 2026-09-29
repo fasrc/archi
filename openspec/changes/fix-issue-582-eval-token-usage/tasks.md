@@ -72,7 +72,7 @@
 
 ## 2. QA evaluator runtime records `last_usage`
 
-- [ ] 2.1 In `tests/unit/evaluation/qa/test_runtime.py`, add tests, then implement design D4
+- [x] 2.1 In `tests/unit/evaluation/qa/test_runtime.py`, add tests, then implement design D4
       in `src/evaluation/qa/runtime.py`, one commit (`feat: qa evaluator records token usage`).
       Use a fake `model_factory` whose model's `with_structured_output(schema).invoke(messages,
       config=None)` calls `on_llm_end` on each callback in `config["callbacks"]` with an

@@ -15,6 +15,8 @@ import yaml
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage, ToolMessage
 
+from src.utils.llm_usage import UsageRecorder
+
 from .constants import (  # isort: skip
     COMPARATOR_SYSTEM_PROMPT,
     GOLD_SYSTEM_PROMPT,
@@ -206,6 +208,7 @@ class LangChainEvaluatorRuntime:
             from src.archi.providers import get_model
 
             model_factory = get_model
+        self._descriptors = dict(profile.components())
         self._models = {
             component: model_factory(
                 descriptor.provider,
@@ -215,17 +218,23 @@ class LangChainEvaluatorRuntime:
             )
             for component, descriptor in profile.components()
         }
+        self.last_usage: Optional[Dict[str, Any]] = None
 
     @staticmethod
     def _structured(
-        model: Any, schema: Dict[str, Any], prompt: str, payload: Dict[str, Any]
+        model: Any,
+        schema: Dict[str, Any],
+        prompt: str,
+        payload: Dict[str, Any],
+        config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         structured = model.with_structured_output(schema)
         result = structured.invoke(
             [
                 ("system", prompt),
                 ("human", json.dumps(payload, ensure_ascii=False, sort_keys=True)),
-            ]
+            ],
+            config=config,
         )
         if hasattr(result, "model_dump"):
             result = result.model_dump()
@@ -234,12 +243,19 @@ class LangChainEvaluatorRuntime:
         return result
 
     def extract_gold(self, question: str, answer: str) -> Dict[str, Any]:
-        return self._structured(
-            self._models["atoms_extractor"],
-            GOLD_ATOM_SCHEMA,
-            GOLD_SYSTEM_PROMPT,
-            {"question": question, "answer": answer},
-        )
+        descriptor = self._descriptors["atoms_extractor"]
+        recorder = UsageRecorder(descriptor.provider, descriptor.model)
+        self.last_usage = None
+        try:
+            return self._structured(
+                self._models["atoms_extractor"],
+                GOLD_ATOM_SCHEMA,
+                GOLD_SYSTEM_PROMPT,
+                {"question": question, "answer": answer},
+                config={"callbacks": [recorder]},
+            )
+        finally:
+            self.last_usage = recorder.snapshot()
 
     def compare(
         self,
@@ -247,16 +263,23 @@ class LangChainEvaluatorRuntime:
         gold_atoms: Sequence[Atom],
         answer: str,
     ) -> Dict[str, Any]:
-        return self._structured(
-            self._models["evaluator"],
-            JUDGMENT_SCHEMA,
-            COMPARATOR_SYSTEM_PROMPT,
-            {
-                "question": question,
-                "gold_atoms": [atom.to_dict() for atom in gold_atoms],
-                "answer": answer,
-            },
-        )
+        descriptor = self._descriptors["evaluator"]
+        recorder = UsageRecorder(descriptor.provider, descriptor.model)
+        self.last_usage = None
+        try:
+            return self._structured(
+                self._models["evaluator"],
+                JUDGMENT_SCHEMA,
+                COMPARATOR_SYSTEM_PROMPT,
+                {
+                    "question": question,
+                    "gold_atoms": [atom.to_dict() for atom in gold_atoms],
+                    "answer": answer,
+                },
+                config={"callbacks": [recorder]},
+            )
+        finally:
+            self.last_usage = recorder.snapshot()
 
 
 def _validate_local_file(path: Path, suffixes: set, label: str) -> Path:
