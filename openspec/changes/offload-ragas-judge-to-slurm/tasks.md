@@ -17,40 +17,61 @@ Rules for every task:
 
 - [ ] 2.1 Add tests for `judge_mode` parsing: absent or `inline` gives inline, `deferred` gives deferred, and any other value is refused.
 - [ ] 2.2 Render `judge_mode` and `judge_bundle_dir` in `src/cli/templates/base-config.yaml`, with a render test.
-- [ ] 2.3 Add a test: the bundle writer makes `rows.jsonl` equal to the inline ragas records for each key, and a `manifest.json` that has every field in the spec and the correct SHA-256. Then write the writer (`src/utils/judge_bundle.py`).
+- [ ] 2.3 Add a test: the bundle writer makes `rows.jsonl` equal to the inline ragas records for each key, a `manifest.json` that has every field in the spec (including the arm count of the result) and the correct SHA-256, and `BUNDLE_COMPLETE` after every other file. Then write the writer (`src/utils/judge_bundle.py`).
 - [ ] 2.4 Add a test: a deferred arm makes no judge-factory call, records `judge_status: pending` and the bundle digest, and has no RAGAS aggregates. Then add the call site in `_process_config`.
 - [ ] 2.5 Add a test: a result JSON with no `judge_status` loads as `inline`.
-- [ ] 2.6 Add tests for `scripts/benchmarking/judge/publish.py`: `READY` is written last, a digest mismatch exits non-zero with no `READY`, and a stop in the middle leaves no `READY`. Then write the script, and call it from `run_goldenset_eval.sh` when `judge_mode` is `deferred`.
+- [ ] 2.5a Add tests for the `link` primitive (design D3) in one shared helper: exactly one of two writers of the same name wins; the loser never replaces the winner's bytes; a writer whose `link` returns `EEXIST` while its temporary file has link count 2 reports success; the name never exists without its full content.
+- [ ] 2.6 Add tests for `scripts/benchmarking/judge/publish.py`. The tests check that:
+  - `READY` is written last, with the `link` primitive;
+  - a digest mismatch exits non-zero with no `READY`, and a stop in the middle leaves no `READY`;
+  - a bundle with no `BUNDLE_COMPLETE` is not copied;
+  - a second run over a bundle that is READY with the same digest changes nothing and exits 0, and a different digest exits non-zero and changes nothing.
+  Then write the script. `run_goldenset_eval.sh` does not call it.
+- [ ] 2.7 Write the `archi-judge-publish.service` and `archi-judge-publish.timer` user units (every 5 minutes) in `fasrc/archi-config` beside the other host timers, as a separate PR in that repository. `publish.py --status` lists complete bundles that are not yet in the queue.
 
 ## 3. PR 3: offline scorer and merge
 
-- [ ] 3.1 Add tests for claiming: claim-at-start takes the READY bundles that match the judge, skips other judges, and exactly one of two racing claimants wins (`mkdir`).
+- [ ] 3.0 Add tests for the match rule in `scripts/benchmarking/judge/queue.py` (standard library only), then write it. A bundle matches only when its judge model id and revision equal `judge.env`, and its `code_version` and package digest equal `scorer-identity.json`. A bundle that does not match gets a reason that names the judge it waits for, or both scorer values.
+- [ ] 3.1 Add tests for claiming: claim-at-start takes the READY bundles that match (3.0) and skips the others; exactly one of two racing claimants wins (`link` of `claim.1`); a claim file holds the job id at the moment its name exists.
 - [ ] 3.1a Add tests for stale-claim recovery, with `squeue` and `sacct` replaced by stubs:
   - a claim whose job is `TIMEOUT` in `sacct` and absent from `squeue` is taken over, and only the unsaved pairs are scored;
   - a claim whose job is running is not taken;
-  - of two jobs that race to take one stale claim, exactly one wins;
+  - of two jobs that race to take one stale claim, exactly one `link` of `claim.<gen+1>` wins;
+  - a slow job that read `claim.1` as stale after another job made `claim.2` fails its `link` and leaves `claim.2` unchanged;
+  - no takeover removes or renames a claim file;
   - a requeued job with the same job id keeps its claim.
-- [ ] 3.1b Add tests for the scorer identity: a code-version mismatch or a package-digest mismatch makes the bundle `FAILED` with both values in the reason, and no scores are written. No flag overrides this.
+- [ ] 3.1b Add tests for the scorer identity:
+  - a code-version mismatch or a package-digest mismatch writes no score and no terminal marker, the bundle stays READY, and `--status` names both values. No flag overrides this;
+  - after a matching `scorer-identity.json` is configured, the same bundle is available and is claimed;
+  - a live-environment mismatch found after a claim writes no score and no marker, and the job continues with its other bundles.
 - [ ] 3.2 Add tests for the time budget: the first bundle is always claimed, and a later bundle that needs more time than is left stays READY.
-- [ ] 3.3 Add tests for checkpoints: chunked scoring appends to `scores.partial.jsonl`, and a restart after 40 of 109 rows scores only the other 69, with one value for each `(key, metric)`.
+- [ ] 3.3 Add tests for checkpoints. The tests check that:
+  - chunked scoring appends newline-terminated lines to `scores.partial.jsonl`, and a restart after 40 of 109 rows scores only the other 69, with one value for each `(key, metric)`;
+  - a file that ends with half a JSON line (a kill inside the write) is truncated to the last complete line, and the pair in the half line is scored again;
+  - an invalid line that is not the last line makes the bundle `FAILED` with the line number;
+  - a repeated `(key, metric)` pair uses its first record.
 - [ ] 3.4 Add a test: a bundle whose digest does not match becomes `FAILED` with a reason, and the other bundles become `SCORED`.
 - [ ] 3.5 Add a test: offline aggregates equal inline aggregates for the same rows and the same stub judge.
 - [ ] 3.6 Write the scorer (`src/evaluation/judge/` or `src/utils/judge_scorer.py`) and its CLI entry `scripts/benchmarking/judge/score.py`.
 - [ ] 3.6a Add tests for `judge_identity` and `judge_execution` (design D10):
   - two jobs with the same settings give equal identities and different execution records;
   - a precision change (`bf16` against `fp8`) changes the identity;
+  - an embedding change (OpenAI against HuggingFace, or a different model name reported by the built object) changes the identity;
   - the inline path records the same identity shape.
 - [ ] 3.7 Add tests for the merge, then write `scripts/benchmarking/judge/merge.py`. The tests check that:
-  - the judged file has the per-row scores, the aggregates, the leaderboard, A/B, `judge_status: scored`, `judge_identity` and `judge_execution`;
+  - the merge groups bundles by result file, and writes nothing while any arm is not `SCORED` (it names the pending arms and exits 0); after the last arm is `SCORED`, one judged file holds all arms;
+  - a `FAILED` arm makes the merge write nothing for that result and exit non-zero;
+  - the judged file has every arm's per-row scores and aggregates, the leaderboard, A/B, `judge_status: scored`, and each arm's `judge_identity` and `judge_execution`;
   - the pending file is unchanged, and a second merge gives identical bytes;
   - a digest mismatch exits non-zero;
-  - a merge killed while it writes leaves no judged file and no `MERGED`, and the next merge cleans up and completes;
+  - a merge killed while it writes leaves no judged file and no `MERGED`, and the next merge completes, and removes the temporary file only when it is older than 1 hour;
   - two concurrent merges leave one complete file;
+  - two concurrent merges with different bytes: exactly one `link` wins, and the other exits non-zero;
   - an existing judged file with different bytes is never overwritten.
 
 ## 4. PR 4: Slurm scripts, gates, docs
 
-- [ ] 4.1 Add tests for `scripts/benchmarking/slurm/judge_submit.sh`, with `squeue` and `sbatch` replaced by stubs on `PATH`. It submits nothing if a job exists or no bundle is READY, and exactly one job if a bundle is READY and no job exists. `--status` lists READY bundles older than 24 hours.
+- [ ] 4.1 Add tests for `scripts/benchmarking/slurm/judge_submit.sh`, with `squeue` and `sbatch` replaced by stubs on `PATH`. It submits nothing if a job exists or no bundle is available, nothing if the only READY bundles do not match the configured judge or scorer (3.0), and exactly one job if a matching bundle is READY and no job exists. `--status` lists READY bundles older than 24 hours, bundles that do not match with the reason, and stale claims.
 - [ ] 4.2 Write `scripts/benchmarking/slurm/archi_judge.sbatch`. It has `#SBATCH -J archi-judge --requeue --open-mode=append`, and the partition, GPU count and `-t` are settings at the top of the script. It starts vLLM in Apptainer on `127.0.0.1` with a random `--api-key`, waits for `/v1/models`, runs the scorer, and stops vLLM through a `trap`. It then submits the merge job with `--dependency=afterok:$SLURM_JOB_ID`. It must have a `--dry-run` that prints the resolved commands, with a test for it.
 - [ ] 4.3 Write `scripts/benchmarking/slurm/judge_merge.sbatch` (CPU only), with a `--dry-run` test.
 - [ ] 4.4 Add tests for G8 in `scripts/benchmarking/compare_runs.py`: a pending arm exits non-zero and is named. Then write the gate.
@@ -66,4 +87,4 @@ Rules for every task:
 - [ ] 5.1 Pull the vLLM image to a SIF, and the judge weights to lab or netscratch storage. Record the image tag and the model revision.
 - [ ] 5.2 Make one deferred fm-00 run and publish it. Run the judge job by hand on the chosen partition, and record the queue wait, the load time and the rows per minute.
 - [ ] 5.3 Compare judges: score the same bundle with each candidate, and compare with an inline Sonnet run of the same answers (row-level rank agreement and NaN counts for each metric). Record the choice on the tracking issue.
-- [ ] 5.4 Install the `scrontab` entry, and switch the golden-set config in `fasrc/archi-config` to `judge_mode: deferred`.
+- [ ] 5.4 Install the `scrontab` entry and the `archi-judge-publish.timer` units, and switch the golden-set config in `fasrc/archi-config` to `judge_mode: deferred`.

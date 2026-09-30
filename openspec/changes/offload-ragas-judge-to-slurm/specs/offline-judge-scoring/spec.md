@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: A deferred run writes a judge bundle instead of calling the judge
-When `ragas_settings.judge_mode` is `deferred`, the benchmark SHALL answer every question and write a judge bundle for each arm, and it SHALL NOT make any RAGAS judge call. The bundle has two files. `rows.jsonl` has one line per scorable row, with the row's key and the full `user_input`, `retrieved_contexts`, `response` and `reference` that the inline path gives to ragas. `manifest.json` records the enabled metrics, `timeout`, `max_workers`, the embedding model, the judge model id and revision, the run's `code_version`, the SHA-256 of the run environment's sorted `pip freeze`, the result file name, the arm index, and the SHA-256 of `rows.jsonl`. When `judge_mode` is absent or `inline`, the run SHALL score inline exactly as before.
+When `ragas_settings.judge_mode` is `deferred`, the benchmark SHALL answer every question and write a judge bundle for each arm, and it SHALL NOT make any RAGAS judge call. The bundle has two files. `rows.jsonl` has one line per scorable row, with the row's key and the full `user_input`, `retrieved_contexts`, `response` and `reference` that the inline path gives to ragas. `manifest.json` records the enabled metrics, `timeout`, `max_workers`, the embedding model, the judge model id and revision, the run's `code_version`, the SHA-256 of the run environment's sorted `pip freeze`, the result file name, the arm index, the arm count of the result, and the SHA-256 of `rows.jsonl`. The bundle writer writes a `BUNDLE_COMPLETE` marker after every other bundle file. When `judge_mode` is absent or `inline`, the run SHALL score inline exactly as before.
 
 #### Scenario: Deferred run makes no judge call
 - **WHEN** a run with `judge_mode: deferred` completes with 3 scorable rows
@@ -29,7 +29,19 @@ A deferred run's result JSON SHALL record `judge_status: pending` for each defer
 - **THEN** its judge status is `inline`
 
 ### Requirement: Publishing a bundle writes the READY marker last
-The publish step SHALL copy the bundle into a folder in the shared queue directory, check each file against the manifest's SHA-256, and create the `READY` marker only after every file is in place.
+The publish step SHALL copy each bundle that has `BUNDLE_COMPLETE` into a folder in the shared queue directory, check each file against the manifest's SHA-256, and create the `READY` marker only after every file is in place. A scheduled timer on the dev host SHALL run the publish step, so that publishing does not depend on the process that started the run. The publish step SHALL skip a queue folder that is already READY with the same digest, and it SHALL exit non-zero, and change nothing, for a queue folder with a different digest.
+
+#### Scenario: Detached run is published
+- **WHEN** a deferred run was started with `--no-follow`, and its bundle gets `BUNDLE_COMPLETE` after the wrapper script exited
+- **THEN** the next run of the publish timer makes the queue folder READY
+
+#### Scenario: Bundle still being written
+- **WHEN** the publish step finds a bundle folder with no `BUNDLE_COMPLETE`
+- **THEN** it does not copy it
+
+#### Scenario: Publish runs twice
+- **WHEN** the publish step runs again over a bundle that is already READY in the queue with the same digest
+- **THEN** it changes nothing and exits 0
 
 #### Scenario: Interrupted publish is never READY
 - **WHEN** the publish step stops after it copies `rows.jsonl` but before it writes `READY`
@@ -40,7 +52,14 @@ The publish step SHALL copy the bundle into a folder in the shared queue directo
 - **THEN** the publish step exits non-zero and writes no `READY` marker
 
 ### Requirement: The submitter keeps at most one judge job
-The submitter SHALL submit an `archi-judge` job only when at least one bundle is available (READY, with no terminal marker, and unclaimed or with a stale claim), and no `archi-judge` job of the same user is pending or running.
+The submitter SHALL submit an `archi-judge` job only when at least one bundle is available (READY, with no terminal marker, unclaimed or with a stale claim, and matching the job's judge and scorer), and no `archi-judge` job of the same user is pending or running.
+
+A bundle SHALL match a job only when the manifest's judge model id and revision equal the job's judge configuration, and the manifest's `code_version` and package digest equal the job's scorer identity. The submitter and the judge job SHALL use one shared function for this rule.
+
+#### Scenario: Only bundles for another judge
+- **WHEN** the queue holds only READY bundles whose manifest names a judge model or revision that the configured job does not load
+- **THEN** the submitter submits nothing on every tick
+- **AND** `judge_submit.sh --status` lists those bundles and the judge each one waits for
 
 #### Scenario: Job already queued
 - **WHEN** two bundles are READY and an `archi-judge` job is pending
@@ -55,7 +74,11 @@ The submitter SHALL submit an `archi-judge` job only when at least one bundle is
 - **THEN** the submitter submits exactly one job
 
 ### Requirement: The judge job claims bundles when it starts
-The judge job SHALL claim bundles when it starts, not when it is submitted. It SHALL claim each READY bundle whose manifest names the loaded judge model and revision, through an atomic `mkdir` of the bundle's claim folder. It SHALL leave a bundle for another judge unclaimed.
+The judge job SHALL claim bundles when it starts, not when it is submitted. It SHALL claim each READY bundle that matches it, by an atomic, no-replace `link` of a claim file that already holds its job id. It SHALL leave a bundle that does not match unclaimed.
+
+#### Scenario: Job killed right after its claim
+- **WHEN** a job is cancelled at the first moment after its claim file name exists
+- **THEN** the claim file holds that job's id, and stale-claim recovery can check that job
 
 #### Scenario: Bundle added during the queue wait
 - **WHEN** a bundle becomes READY after the job was submitted but before it started
@@ -70,38 +93,50 @@ The judge job SHALL claim bundles when it starts, not when it is submitted. It S
 - **THEN** the job does not claim it, and the bundle stays READY
 
 ### Requirement: A claim whose job has ended is recovered
-The judge job and the submitter SHALL treat a bundle's claim as stale when the bundle has no `SCORED` or `FAILED` marker, the job id in `claim.d/job` is not in `squeue`, and `sacct` reports that job in a terminal state. A job SHALL take over a stale claim by an atomic rename of `claim.d` to `claim.stale.<old job id>.<UTC>`, followed by a new `mkdir` claim, and it SHALL resume from the bundle's saved scores.
+The judge job and the submitter SHALL treat a bundle's current claim (the `claim.<gen>` file with the highest `gen`) as stale when the bundle has no `SCORED` or `FAILED` marker, the job id in that claim is not in `squeue`, and `sacct` reports that job in a terminal state. A job SHALL take over a stale `claim.<gen>` only by a no-replace `link` of `claim.<gen+1>`, it SHALL NOT remove or rename any claim file, and it SHALL resume from the bundle's saved scores.
+
+#### Scenario: Slow job after a takeover
+- **WHEN** job A read `claim.1` as stale, and job B took it over with `claim.2` before job A acted
+- **THEN** job A's `link` of `claim.2` fails, job A skips the bundle, and job B's claim is unchanged
 
 #### Scenario: Job hit its time limit while it held a claim
-- **WHEN** a bundle's `claim.d/job` names a job that `sacct` reports as `TIMEOUT`, and the bundle has 50 saved `(key, metric)` scores and no terminal marker
+- **WHEN** a bundle's current claim names a job that `sacct` reports as `TIMEOUT`, and the bundle has 50 saved `(key, metric)` scores and no terminal marker
 - **THEN** the submitter counts the bundle as available
 - **AND** the next job takes over the claim and scores only the pairs that are not saved
 
 #### Scenario: Claimant is still running
-- **WHEN** a bundle's `claim.d/job` names a job that `squeue` lists as running
+- **WHEN** a bundle's current claim names a job that `squeue` lists as running
 - **THEN** the claim is not stale, and no other job takes it
 
 #### Scenario: Two jobs take over one stale claim
 - **WHEN** two jobs find the same stale claim at the same time
-- **THEN** exactly one rename succeeds, and the other job skips the bundle
+- **THEN** exactly one `link` of the next claim file succeeds, and the other job skips the bundle
 
 #### Scenario: Requeued job keeps its claim
 - **WHEN** Slurm requeues a preempted job with the same job id
 - **THEN** the job still owns its claims, and it resumes them
 
-### Requirement: The scorer refuses a bundle from different code or packages
-The scorer SHALL mark a bundle `FAILED`, with both values in the reason, when the manifest's `code_version` differs from the scorer's code version, or the manifest's package digest differs from the SHA-256 of the scorer environment's sorted `pip freeze`. No setting SHALL override this refusal.
+### Requirement: The scorer never scores a bundle from different code or packages
+The scorer SHALL NOT score a bundle when the manifest's `code_version` differs from the scorer's code version, or the manifest's package digest differs from the SHA-256 of the scorer environment's sorted `pip freeze`. No setting SHALL override this refusal. The refusal SHALL NOT write a terminal marker: the bundle stays READY for a scorer that matches, and `judge_submit.sh --status` reports both values.
 
 #### Scenario: Package drift
 - **WHEN** the manifest records a package digest and the scorer environment has a different ragas version
-- **THEN** the bundle is `FAILED`, the reason names both digests, and no score is written
+- **THEN** no score is written, the bundle has no `SCORED` or `FAILED` marker, and `--status` names both digests
+
+#### Scenario: Matching scorer installed later
+- **WHEN** a bundle waited for a scorer at its manifest's commit, and a scorer image built at that commit is then configured
+- **THEN** the submitter counts the bundle as available, and the next job claims and scores it
 
 #### Scenario: Matching environment
 - **WHEN** the code version and the package digest both match
 - **THEN** the scorer scores the bundle
 
 ### Requirement: The judge job saves each row's score and resumes after a requeue
-The judge job SHALL append each scored `(key, metric)` result to the bundle's `scores.partial.jsonl` as soon as it is available. After a restart, it SHALL skip the pairs that are already recorded.
+The judge job SHALL append each scored `(key, metric)` result to the bundle's `scores.partial.jsonl` as one newline-terminated line, as soon as it is available. After a restart, it SHALL truncate a torn last line (no final newline, or not valid JSON), mark the bundle `FAILED` for an invalid line that is not the last line, use the first record of a repeated pair, and skip the pairs that are already recorded.
+
+#### Scenario: Kill during an append
+- **WHEN** a job is killed while it writes a record, and `scores.partial.jsonl` ends with half a JSON line
+- **THEN** the requeued job truncates the half line, keeps every complete record, and scores the pair that the half line held
 
 #### Scenario: Requeue in the middle of a bundle
 - **WHEN** a job is killed after it scored 40 of 109 rows for a metric, and Slurm requeues it
@@ -130,7 +165,11 @@ The offline scorer and the inline benchmark path SHALL call one shared scoring f
 - **THEN** both paths give equal aggregates and scored counts
 
 ### Requirement: The judge identity excludes per-job values
-Each judged arm SHALL record a `judge_identity` with the model id and revision, the weight precision, the vLLM image digest, the output-relevant server settings, the decoding settings, and the scorer identity (scorer commit, scorer image digest, package digest, ragas version, metric settings). It SHALL record the job id, node, times, claimed bundles and requeue count in a separate `judge_execution` record.
+Each judged arm SHALL record a `judge_identity` with the model id and revision, the weight precision, the vLLM image digest, the output-relevant server settings, the decoding settings, the embedding (provider class, the model name that the built embedding object reports, and its revision where the provider gives one), and the scorer identity (scorer commit, scorer image digest, package digest, ragas version, metric settings).
+
+#### Scenario: Embedding differs
+- **WHEN** two arms have the same judge model and settings, but one was scored with the OpenAI embedding and the other with the HuggingFace embedding
+- **THEN** their `judge_identity` records differ in the embedding fields It SHALL record the job id, node, times, claimed bundles and requeue count in a separate `judge_execution` record.
 
 #### Scenario: Same settings, different jobs
 - **WHEN** two arms were scored by two different jobs with identical model, precision, image, server, decoding and scorer settings
@@ -141,7 +180,20 @@ Each judged arm SHALL record a `judge_identity` with the model id and revision, 
 - **THEN** their `judge_identity` records differ in the precision field
 
 ### Requirement: The merge writes a judged result and never edits the pending one
-The merge step SHALL write a new judged result JSON next to the pending one. The judged result SHALL have the per-row metric scores, the recomputed `total_results` RAGAS aggregates, the leaderboard and the A/B comparisons, `judge_status: scored`, the `judge_identity`, the `judge_execution`, and the bundle SHA-256. The merge SHALL NOT change the pending file. Running the merge again on the same scores SHALL give an identical file. The merge SHALL write through a temporary file that it validates and renames atomically, and it SHALL write `MERGED` only after the rename. It SHALL NOT overwrite an existing judged file whose bytes differ.
+The merge step SHALL write one new judged result JSON next to the pending one, from all arms of that result together, and only when every arm's bundle is `SCORED`. The judged result SHALL have every arm's per-row metric scores and recomputed `total_results` RAGAS aggregates, the leaderboard and the A/B comparisons, `judge_status: scored`, and each arm's `judge_identity`, `judge_execution` and bundle SHA-256. The merge SHALL NOT change the pending file. Running the merge again on the same scores SHALL give an identical file. The merge SHALL write through a temporary file that it validates and then publishes with an atomic, no-replace `link`, and it SHALL write `MERGED` only after the judged file exists. It SHALL NOT replace an existing judged file, and it SHALL exit non-zero when an existing judged file has different bytes.
+
+#### Scenario: One arm still pending
+- **WHEN** a result has two arms, arm 0's bundle is `SCORED`, and arm 1's bundle is still READY
+- **THEN** the merge writes no judged file for that result, names arm 1 as pending, and exits 0
+- **AND** after arm 1 is `SCORED`, the next merge writes one judged file with both arms
+
+#### Scenario: One arm failed
+- **WHEN** one arm's bundle of a result is `FAILED`
+- **THEN** the merge writes no judged file for that result, names the failed arm, and exits non-zero
+
+#### Scenario: Two merges compute different bytes at the same time
+- **WHEN** two merges of the same result both find no judged file, and they computed different bytes
+- **THEN** exactly one `link` succeeds, the other merge exits non-zero, and the judged file holds the first merge's bytes
 
 #### Scenario: Merge is idempotent
 - **WHEN** the merge runs twice on the same scores
@@ -150,10 +202,10 @@ The merge step SHALL write a new judged result JSON next to the pending one. The
 #### Scenario: Merge killed while it writes
 - **WHEN** a merge stops after it wrote part of its temporary file
 - **THEN** no `<name>.judged.json` and no `MERGED` marker exist
-- **AND** the next merge ignores and removes the temporary file, and writes the judged file
+- **AND** the next merge ignores the temporary file, removes it once it is older than 1 hour, and writes the judged file
 
 #### Scenario: Two merges at the same time
-- **WHEN** two merges of the same bundle run at the same time
+- **WHEN** two merges of the same result run at the same time
 - **THEN** exactly one judged file exists afterwards, it is complete, and `MERGED` exists
 
 #### Scenario: Conflicting judged file
