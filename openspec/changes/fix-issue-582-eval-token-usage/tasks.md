@@ -157,7 +157,7 @@
 
 ## 8. Publish
 
-- [ ] 8.1 Run `bash scripts/gate.sh` on the tip and confirm it exits 0. Run
+- [x] 8.1 Run `bash scripts/gate.sh` on the tip and confirm it exits 0. Run
       `grep -rn usage_metadata src/evaluation/qa/ src/bin/service_benchmark.py src/utils/llm_usage.py`
       and confirm it now prints matches. Confirm `git diff origin/dev --stat -- docs/` lists
       only `docs/docs/evaluation.md`. Push with `git push -u origin fix/issue-582-eval-token-usage`.
