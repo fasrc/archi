@@ -657,6 +657,16 @@ class TestLiveWorkflow:
         store = EvaluationWorkspace.open_retry_parent(run_dir)
         store.close()
 
+    def test_crashing_post_drift_retry_plan_classifies_as_live_validation(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        run_dir = _crashing_post_drift_run(monkeypatch, tmp_path)
+
+        plan = QAWorkflow().retry_plan(run_dir)
+
+        assert plan["live_validation_attempt_count"] >= 1
+        assert plan["execution_attempt_count"] == 0
+
     def test_skip_live_omits_calls_and_scoring_membership(
         self, monkeypatch, tmp_path, runtimes
     ):
