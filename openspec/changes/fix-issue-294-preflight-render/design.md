@@ -79,7 +79,8 @@ success and on failure (the context manager guarantees it).
 `template_manager.preflight_render(compose_config, config_manager, secrets_manager, **other_flags)`
 → (not dry) `VolumeManager(...).create_required_volumes(compose_config)` (volumes only) →
 `remove_existing_deployment(...)` → `if dry:` summary and return (create only) →
-`volume_manager.stage_local_files(...)` (create only; it copies into the data-manager volume
+`volume_manager.stage_local_files(...)` (in `evaluate()`, after the `base_dir.exists()`
+refusal; it copies into the data-manager volume
 that the running deployment still mounts, so it must not precede the teardown) →
 `base_dir.mkdir` → secrets →
 `template_manager.prepare_deployment_files(...)` (same instance) → start. `evaluate()`

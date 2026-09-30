@@ -26,8 +26,8 @@ were rejected.
 - In `create()`, move volume creation (`VolumeManager.create_required_volumes(compose_config)`,
   without the config) above the teardown (never under `--dry`). Local-file staging
   (`VolumeManager.stage_local_files()`) stays below the teardown: it copies into the
-  data-manager volume that the running deployment still mounts. `evaluate()` keeps both
-  after the teardown.
+  data-manager volume that the running deployment still mounts. `evaluate()` uses the same
+  order: volumes above the teardown, staging below it.
 - Update the comments in `src/cli/cli_main.py` and the note in `docs/docs/fasrc_archi.md`
   that point at #294 as open.
 

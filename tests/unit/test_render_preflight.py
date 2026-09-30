@@ -930,15 +930,16 @@ data_manager:
     )
 
 
-def test_evaluate_force_records_preflight_teardown_volumes_render_order(
+def test_evaluate_force_records_preflight_volumes_teardown_stage_render_order(
     env_file, archi_home, benchmark_config, monkeypatch
 ):
-    """evaluate --force must run preflight, then teardown, then volumes, then render.
+    """evaluate --force: preflight, volumes, teardown, local-file staging, render.
 
-    The preflight runs before the teardown so a deterministic render failure never
-    costs the operator a running deployment.  Volumes stay after the teardown (their
-    original position) so the base_dir.exists() guard is reached even when docker is
-    unavailable in the test environment.
+    As in create, every step that can refuse (the render preflight and volume
+    creation) runs before the teardown, so a missing volume that cannot be created
+    never costs the operator the running runtime.  The teardown keeps volumes
+    (remove_volumes=False).  Staging writes into a volume the old runtime still
+    mounts, so it waits for the teardown.
     """
     import shutil
 
@@ -969,9 +970,12 @@ def test_evaluate_force_records_preflight_teardown_volumes_render_order(
     monkeypatch.setattr(DeploymentManager, "delete_deployment", _delete_recording)
 
     monkeypatch.setattr(
+        VolumeManager, "_create_volume", lambda self, name: events.append("volumes")
+    )
+    monkeypatch.setattr(
         VolumeManager,
-        "create_required_volumes",
-        lambda self, *a, **kw: events.append("volumes"),
+        "stage_local_files",
+        lambda self, plan, cfg: events.append("stage"),
     )
 
     def _recording_render(self, *a, **kw):
@@ -993,7 +997,12 @@ def test_evaluate_force_records_preflight_teardown_volumes_render_order(
         ],
     )
 
-    assert events == ["preflight", "teardown", "volumes", "render"], (
-        f"expected ['preflight', 'teardown', 'volumes', 'render'], got {events}\n"
-        f"output:\n{result.output}"
-    )
+    # One "volumes" entry per required volume; collapse repeats.
+    order = [e for i, e in enumerate(events) if i == 0 or events[i - 1] != e]
+    assert order == [
+        "preflight",
+        "volumes",
+        "teardown",
+        "stage",
+        "render",
+    ], f"got {events}\noutput:\n{result.output}"

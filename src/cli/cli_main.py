@@ -919,6 +919,11 @@ def evaluate(
             **other_flags,
         )
 
+        # Volumes only, as in create: a volume that cannot be created refuses here,
+        # before the teardown.  Staging local_files waits for the teardown.
+        volume_manager = VolumeManager(compose_config.use_podman)
+        volume_manager.create_required_volumes(compose_config)
+
         remove_existing_deployment(
             base_dir, name, force, False, other_flags.get("podman", False)
         )
@@ -932,8 +937,7 @@ def evaluate(
 
         secrets_manager.write_secrets_to_files(base_dir, all_secrets)
 
-        volume_manager = VolumeManager(compose_config.use_podman)
-        volume_manager.create_required_volumes(compose_config, config_manager.config)
+        volume_manager.stage_local_files(compose_config, config_manager.config)
 
         template_manager.prepare_deployment_files(
             compose_config,
