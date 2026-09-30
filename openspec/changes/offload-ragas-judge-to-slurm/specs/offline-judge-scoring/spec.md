@@ -1,7 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: A deferred run writes a judge bundle instead of calling the judge
-When `ragas_settings.judge_mode` is `deferred`, the benchmark SHALL answer every question and write a judge bundle for each arm, and it SHALL NOT make any RAGAS judge call. The bundle has two files. `rows.jsonl` has one line per scorable row, with the row's key and the full `user_input`, `retrieved_contexts`, `response` and `reference` that the inline path gives to ragas. `manifest.json` records the enabled metrics, `timeout`, `max_workers`, the embedding model, the judge model id and revision, the run's `code_version`, the SHA-256 of the run environment's sorted `pip freeze`, the result file name, the arm index, the arm count of the result, and the SHA-256 of `rows.jsonl`. The bundle writer writes a `BUNDLE_COMPLETE` marker after every other bundle file. When `judge_mode` is absent or `inline`, the run SHALL score inline exactly as before.
+When `ragas_settings.judge_mode` is `deferred`, the benchmark SHALL answer every question and write a judge bundle for each arm, and it SHALL NOT make any RAGAS judge call. The bundle has two files. `rows.jsonl` has one line per scorable row, with the row's key and the full `user_input`, `retrieved_contexts`, `response` and `reference` that the inline path gives to ragas. `manifest.json` records the enabled metrics, `timeout`, `max_workers`, the embedding model, the judge model id and revision, the run's `code_version`, the SHA-256 of the run environment's sorted `pip freeze`, the result basename, the arm index, the arm count of the result, and the SHA-256 of `rows.jsonl`. The run SHALL fix the result basename once, before its first arm, and SHALL use it for both the bundles and the result JSON. The bundle writer writes a `BUNDLE_COMPLETE` marker after every other bundle file.
+
+#### Scenario: Bundle names the result before the result exists
+- **WHEN** a deferred run with two arms writes the bundle of arm 0
+- **THEN** the manifest names the result basename, and the result JSON that the run writes at the end has that basename When `judge_mode` is absent or `inline`, the run SHALL score inline exactly as before.
 
 #### Scenario: Deferred run makes no judge call
 - **WHEN** a run with `judge_mode: deferred` completes with 3 scorable rows
@@ -51,8 +55,16 @@ The publish step SHALL copy each bundle that has `BUNDLE_COMPLETE` into a folder
 - **WHEN** the copied `rows.jsonl` does not match the manifest's SHA-256
 - **THEN** the publish step exits non-zero and writes no `READY` marker
 
-### Requirement: The submitter keeps at most one judge job
-The submitter SHALL submit an `archi-judge` job only when at least one bundle is available (READY, with no terminal marker, unclaimed or with a stale claim, and matching the job's judge and scorer), and no `archi-judge` job of the same user is pending or running.
+### Requirement: The submitter keeps at most one running judge job
+The submitter SHALL submit an `archi-judge` job only when at least one bundle is available (READY, with no terminal marker, unclaimed or with a stale claim, and matching the job's judge and scorer), and no `archi-judge` job of the same user is pending or running. Every `archi-judge` job SHALL be submitted with `--dependency=singleton`, and a job SHALL count its available bundles before it starts the judge server, and exit without loading a model when it has none. The submitter SHALL also submit an `archi-judge-merge` job for each result whose arms are all `SCORED`, whose pending JSON is in the queue, and that has no `MERGED`, when no merge job of the same user exists.
+
+#### Scenario: Two submitters at the same time
+- **WHEN** a scheduled run and a manual run of the submitter both see one available bundle and no job, and both submit
+- **THEN** Slurm runs the two jobs one after the other, and the second job exits without loading a model
+
+#### Scenario: Judge job killed before it submitted the merge
+- **WHEN** every arm of a result is `SCORED`, no `MERGED` exists, and no merge job exists
+- **THEN** the next submitter run submits one merge job
 
 A bundle SHALL match a job only when the manifest's judge model id and revision equal the job's judge configuration, and the manifest's `code_version` and package digest equal the job's scorer identity. The submitter and the judge job SHALL use one shared function for this rule.
 
@@ -123,6 +135,11 @@ The scorer SHALL NOT score a bundle when the manifest's `code_version` differs f
 - **WHEN** the manifest records a package digest and the scorer environment has a different ragas version
 - **THEN** no score is written, the bundle has no `SCORED` or `FAILED` marker, and `--status` names both digests
 
+#### Scenario: Scorer sidecar out of date
+- **WHEN** `scorer-identity.json` matches a bundle's manifest, but the job's live scorer environment differs from the sidecar
+- **THEN** the job creates `SCORER_STALE.<sidecar digest>`, claims nothing, loads no model, and exits non-zero
+- **AND** the submitter submits no job for that sidecar until the sidecar changes
+
 #### Scenario: Matching scorer installed later
 - **WHEN** a bundle waited for a scorer at its manifest's commit, and a scorer image built at that commit is then configured
 - **THEN** the submitter counts the bundle as available, and the next job claims and scores it
@@ -132,11 +149,15 @@ The scorer SHALL NOT score a bundle when the manifest's `code_version` differs f
 - **THEN** the scorer scores the bundle
 
 ### Requirement: The judge job saves each row's score and resumes after a requeue
-The judge job SHALL append each scored `(key, metric)` result to the bundle's `scores.partial.jsonl` as one newline-terminated line, as soon as it is available. After a restart, it SHALL truncate a torn last line (no final newline, or not valid JSON), mark the bundle `FAILED` for an invalid line that is not the last line, use the first record of a repeated pair, and skip the pairs that are already recorded.
+The judge job SHALL append each scored `(key, metric)` result, as one newline-terminated line and as soon as it is available, to the bundle's checkpoint file for its own `judge_identity` (`scores.<identity digest>.partial.jsonl`). It SHALL NOT read or use a checkpoint file of a different identity. After a restart, it SHALL truncate a torn last line (no final newline, or not valid JSON), mark the bundle `FAILED` for an invalid line that is not the last line, use the first record of a repeated pair, and skip the pairs that are already recorded.
 
 #### Scenario: Kill during an append
-- **WHEN** a job is killed while it writes a record, and `scores.partial.jsonl` ends with half a JSON line
+- **WHEN** a job is killed while it writes a record, and its checkpoint file ends with half a JSON line
 - **THEN** the requeued job truncates the half line, keeps every complete record, and scores the pair that the half line held
+
+#### Scenario: Replacement job with a different precision
+- **WHEN** a `bf16` job saved 40 scores for a bundle and timed out, and an `fp8` job of the same model revision takes over the stale claim
+- **THEN** the `fp8` job scores every pair again in its own checkpoint file, and the final scores come only from the `fp8` file
 
 #### Scenario: Requeue in the middle of a bundle
 - **WHEN** a job is killed after it scored 40 of 109 rows for a metric, and Slurm requeues it
@@ -180,12 +201,20 @@ Each judged arm SHALL record a `judge_identity` with the model id and revision, 
 - **THEN** their `judge_identity` records differ in the precision field
 
 ### Requirement: The merge writes a judged result and never edits the pending one
-The merge step SHALL write one new judged result JSON next to the pending one, from all arms of that result together, and only when every arm's bundle is `SCORED`. The judged result SHALL have every arm's per-row metric scores and recomputed `total_results` RAGAS aggregates, the leaderboard and the A/B comparisons, `judge_status: scored`, and each arm's `judge_identity`, `judge_execution` and bundle SHA-256. The merge SHALL NOT change the pending file. Running the merge again on the same scores SHALL give an identical file. The merge SHALL write through a temporary file that it validates and then publishes with an atomic, no-replace `link`, and it SHALL write `MERGED` only after the judged file exists. It SHALL NOT replace an existing judged file, and it SHALL exit non-zero when an existing judged file has different bytes.
+The merge step SHALL write one new judged result JSON beside the pending one in the queue's results folder, from all arms of that result together, and only when every arm's bundle is `SCORED` and the pending result JSON is in that folder. The merge SHALL compute cross-arm RAGAS outputs (leaderboard and A/B metrics) only when every arm has the same `judge_identity`; otherwise it SHALL omit them and record `cross_arm_ragas: refused` with the fields that differ. The judged result SHALL have every arm's per-row metric scores and recomputed `total_results` RAGAS aggregates, the leaderboard and the A/B comparisons, `judge_status: scored`, and each arm's `judge_identity`, `judge_execution` and bundle SHA-256. The merge SHALL NOT change the pending file. Running the merge again on the same scores SHALL give an identical file. The merge SHALL write through a temporary file that it validates and then publishes with an atomic, no-replace `link`, and it SHALL write `MERGED` only after the judged file exists. It SHALL NOT replace an existing judged file, and it SHALL exit non-zero when an existing judged file has different bytes.
 
 #### Scenario: One arm still pending
 - **WHEN** a result has two arms, arm 0's bundle is `SCORED`, and arm 1's bundle is still READY
 - **THEN** the merge writes no judged file for that result, names arm 1 as pending, and exits 0
 - **AND** after arm 1 is `SCORED`, the next merge writes one judged file with both arms
+
+#### Scenario: Pending result JSON not yet published
+- **WHEN** every arm of a result is `SCORED`, and the pending result JSON is not yet in the queue's results folder
+- **THEN** the merge writes nothing for that result and exits 0
+
+#### Scenario: Arms scored by different judge identities
+- **WHEN** arm 0 was scored with `bf16` weights and arm 1 with `fp8` weights, and both are `SCORED`
+- **THEN** the judged file has each arm's scores and identity, no RAGAS metric in the leaderboard or the A/B comparisons, and `cross_arm_ragas: refused` naming the precision field
 
 #### Scenario: One arm failed
 - **WHEN** one arm's bundle of a result is `FAILED`
@@ -217,7 +246,11 @@ The merge step SHALL write one new judged result JSON next to the pending one, f
 - **THEN** the merge exits non-zero and writes no judged file
 
 ### Requirement: Comparison refuses pending runs and mixed judges
-`compare_runs.py` SHALL refuse a run whose judge status is `pending`, and it SHALL refuse to compare RAGAS metrics across arms whose `judge_identity` differs in any field, naming the fields that differ. An artifact with no `judge_identity` SHALL get `(evaluator_provider, evaluator_model)` from its recorded settings, and a missing field SHALL never equal a recorded one.
+`compare_runs.py` and the campaign archiver (`scripts/benchmarking/feature_matrix/archive_run.sh`) SHALL refuse a run whose judge status is `pending`, through one shared check. `compare_runs.py` SHALL also refuse to compare RAGAS metrics across arms whose `judge_identity` differs in any field, naming the fields that differ. An artifact with no `judge_identity` SHALL get `(evaluator_provider, evaluator_model)` from its recorded settings, and a missing field SHALL never equal a recorded one.
+
+#### Scenario: Campaign archiver and a pending run
+- **WHEN** `archive_run.sh` selects an artifact with `judge_status: pending`
+- **THEN** it exits non-zero, names the judged file to wait for, and appends nothing to the campaign ledger
 
 #### Scenario: Pending run
 - **WHEN** one arm has `judge_status: pending`

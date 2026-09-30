@@ -52,34 +52,57 @@ The extraction is a separate, mechanical PR with no change in behavior. `service
 ### D3. Bundle layout and state markers on shared storage
 
 ```
-<queue>/<run_id>-arm<N>/
+<queue>/<result basename>-arm<N>/
   manifest.json        judge settings, judge model id + revision, embedding setting,
                        code_version, package digest of the run's environment (D10),
-                       result file name, arm index, arm count of the result,
+                       result basename, arm index, arm count of the result,
                        rows sha256
   rows.jsonl           {key, user_input, retrieved_contexts, response, reference}
   READY                written last by publish
   claim.<gen>          a file that holds the Slurm job id; gen = 1, 2, 3 ...
                        (a requeued job keeps its id, so it still owns the claim)
-  scores.partial.jsonl append-only {key, metric, value, error}
+  scores.<identity digest>.partial.jsonl
+                       append-only {key, metric, value, error}; one file for each
+                       judge_identity (D7)
+  INCOMPATIBLE.<sidecar digest>
+                       not terminal: a job with that scorer sidecar found a live
+                       mismatch (D10)
   judge_scores.json    final: per-key scores, aggregates, NaN counts, judge_identity
   SCORED | FAILED      terminal marker (FAILED holds the reason)
   MERGED               written by the merge job
+<queue>/results/
+  <result basename>.json         the pending result JSON, copied by publish
+  <result basename>.judged.json  written by the merge (D8)
+<queue>/SCORER_STALE.<sidecar digest>
+                       not terminal: a job found that its scorer sidecar does not
+                       describe its live environment (D10)
 ```
+
+- **The result basename is fixed when the run starts, not when it ends.** Today `ResultHandler.dump_artifacts` picks the timestamp only when it writes the result (`src/bin/service_benchmark.py:692`), and `dump` builds the file name from it (`:756-758`), after every arm has finished. A bundle that is written at the scoring call cannot know that name. The change therefore picks `<benchmark_name>-<UTC timestamp>` once, before the first arm, and passes it to both the bundle writer and `dump_artifacts`. The JSON and its `_report.md` still share one timestamp, so the backfill script's invariant holds.
 
 - Markers are separate empty files, not one state field that is rewritten, so that each change of state is one atomic create.
 - **One primitive for every exclusive create: `link(2)`.** The writer writes a unique temporary file (`.tmp.<host>.<pid>.<random>`), calls `fsync`, and then calls `link(tmp, name)`. `link` is atomic on NFS, and it fails with `EEXIST` if `name` exists, so exactly one writer wins and a loser never replaces the winner. The file has its full content at the moment its name appears. The writer then removes its temporary file. NFS can report `EEXIST` for a `link` that succeeded, when it resends the request. A writer that gets `EEXIST` therefore checks the link count of its temporary file: a count of 2 means that its own `link` succeeded. Claims (D5, D5a), `READY` (publish), and the judged file (D8) all use this primitive. `rename` is not used for these, because it replaces an existing name. `mkdir` is not used for claims, because a claim folder exists for a time with no owner in it. `flock` is not reliable on network storage.
 - The benchmark container writes the bundle under the run's `out_dir`, which is already bind-mounted, and it writes a local `BUNDLE_COMPLETE` marker last. The compose templates therefore get no new mount.
-- **Publishing does not depend on the process that started the run.** `run_goldenset_eval.sh` returns at once with `--no-follow`, and Ctrl+C stops it while the container continues (`scripts/benchmarking/run_goldenset_eval.sh:72-76`). The wrapper therefore does not publish. A systemd user timer on the dev host, `archi-judge-publish.timer` (every 5 minutes, with its units in `fasrc/archi-config` beside the other host timers), runs `scripts/benchmarking/judge/publish.py` over the benchmark output folder. For each bundle with `BUNDLE_COMPLETE`, the publish step copies the bundle to `<queue>`, checks the digests, and then creates `READY` with `link`. The step is idempotent: a queue folder that already has `READY` and the same digest is skipped, and a folder with a different digest makes it exit non-zero and report the conflict.
+- **Publishing does not depend on the process that started the run.** `run_goldenset_eval.sh` returns at once with `--no-follow`, and Ctrl+C stops it while the container continues (`scripts/benchmarking/run_goldenset_eval.sh:72-76`). The wrapper therefore does not publish. A systemd user timer on the dev host, `archi-judge-publish.timer` (every 5 minutes, with its units in `fasrc/archi-config` beside the other host timers), runs `scripts/benchmarking/judge/publish.py` over the benchmark output folder. Each run of the publish step does three things, and each one is idempotent:
+1. For each bundle with `BUNDLE_COMPLETE`, it copies the bundle to `<queue>`, checks the digests, and then creates `READY` with `link`. A queue folder that already has `READY` and the same digest is skipped. A folder with a different digest makes it exit non-zero and report the conflict.
+2. When the pending result JSON of a published bundle exists in the output folder, it copies that JSON to `<queue>/results/` with `link`. The merge reads it only from there (D8).
+3. When a judged file exists in `<queue>/results/` and the bundles of its result have `MERGED`, it copies the judged file back into the output folder, beside the pending file. The campaign tools then find it where they find other results.
 
 ### D4. Submitter: one job, via scrontab
 
-`scripts/benchmarking/slurm/judge_submit.sh` does three things:
+`scripts/benchmarking/slurm/judge_submit.sh` does these things:
 1. It counts **available** bundles: READY folders with no terminal marker, with no claim or a stale claim (D5a), and that **match** the judge job it will submit (D4a).
 2. It runs `squeue -h -u "$USER" -n archi-judge`.
 3. It runs `sbatch` only if the count is 1 or more and no job exists.
+4. It **reconciles merges**: for each result whose arms are all `SCORED`, with its pending JSON in `<queue>/results/` and no `MERGED`, it submits `archi-judge-merge` if no job of that name exists. The merge is idempotent (D8), so a duplicate costs one short CPU job.
 
 `scrontab` runs it every 15 minutes, and a person can also run it by hand. Slurm stores `scrontab` entries, so they do not depend on one login node, while a normal crontab lives on one login node of the pool.
+
+**Two submitters at the same time.** A scheduled tick and a manual run can both see work and no job, and both call `sbatch`. The design does not try to prevent this with a lock file. Slurm serializes the jobs itself:
+- Every `archi-judge` job is submitted with `--dependency=singleton`, so Slurm starts at most one job of that name and user at a time. A second job stays pending until the first ends.
+- The job counts its available bundles (D4a, D5a) **before** it starts vLLM. With none, it exits in seconds and loads no model. A duplicate job therefore finds the work done and costs only a short allocation.
+
+The merge is also submitted from the judge job (`--dependency=afterok`) as the fast path. Step 4 is the durable path: a judge job that is killed after its last `SCORED` marker and before its `sbatch` of the merge leaves no gap, because the next tick submits the merge.
 
 ### D4a. One match rule for the submitter and the job
 
@@ -87,11 +110,14 @@ A bundle **matches** a judge job when both of these are true:
 - the manifest's judge model id and revision equal the model and revision in the job's judge configuration (`judge.env`, which the sbatch script also reads);
 - the manifest's `code_version` and package digest equal the scorer identity (D10) of the scorer image that the job will run. The scorer image build writes that identity to `scorer-identity.json` beside the image.
 
+The match rule also excludes a bundle while one of these records names the digest of the configured `scorer-identity.json`: `<queue>/SCORER_STALE.<digest>` or the bundle's `INCOMPATIBLE.<digest>` (D10). A new sidecar has a new digest, so a rebuilt scorer makes the bundle available again with no manual cleanup.
+
 The submitter and the judge job call one function for this rule (`scripts/benchmarking/judge/queue.py`, standard library only, so that it runs on a login node). A bundle that does not match is **not** a failure. It stays READY, with no terminal marker, until a job with a matching judge and scorer exists. The submitter does not count it, so a queue that holds only such bundles submits no job. `judge_submit.sh --status` lists each one with the reason: the judge it waits for, or both scorer values that differ.
 
 ### D5. Claim at start, one judge per job, time budget
 
-- At start, the job loads the model that its sbatch script names. That is one model and one revision for each job.
+- At start, the job first checks its live scorer identity against its sidecar (D10), and then counts its available bundles (D4a, D5a). With a stale sidecar or no available bundle, it exits before it loads a model (D4).
+- It then loads the model that its sbatch script names. That is one model and one revision for each job.
 - It lists the READY folders in `<queue>`, oldest first. It claims each bundle that matches the job (D4a), with no claim or a stale claim, by a `link` of `claim.<gen>` (D3). It checks the match before the claim, so it never claims a bundle that it cannot score.
 - Before each claim, it checks the budget: time left (from `squeue -h -j $SLURM_JOB_ID -o %L`) against the rows-per-minute rate it has measured so far. The first bundle is always claimed.
 - Bundles that are not claimed stay READY for the next job. The submitter's next tick submits that job.
@@ -112,7 +138,7 @@ Condition 3 prevents a false stale report during a short `squeue` gap. A claim f
 
 A new job takes over a stale `claim.<gen>` with one `link` of `claim.<gen+1>`. The old claim file stays in place as a record. If two jobs find the same stale claim, both try `claim.<gen+1>`, and exactly one `link` succeeds. A slow job that read `claim.<gen>` as stale after another job already took it over also tries `claim.<gen+1>`, and it fails, because that name exists. The takeover therefore never removes or replaces a live claim. (A rename-based takeover does not have this property: a slow job can rename away the new, live claim of the job that won.)
 
-The original job is known to be finished, so the takeover cannot race with it. Scoring resumes from `scores.partial.jsonl` (D7), so the work that the dead job completed is kept. `judge_submit.sh --status` lists stale claims.
+The original job is known to be finished, so the takeover cannot race with it. Scoring resumes from the checkpoint of the new job's own `judge_identity` (D7). The work of a dead job with the same identity is kept. The work of a dead job with a different identity is not used. `judge_submit.sh --status` lists stale claims.
 
 ### D6. Judge server on the node's loopback interface, with a per-job API key
 
@@ -122,7 +148,9 @@ The scorer builds the judge with `evaluator_provider: huggingface`, `evaluator_o
 
 ### D7. Save each row's score and resume
 
-`get_ragas_results` scores each metric over its eligible rows in one ragas call. The offline scorer calls the shared function over **chunks** of rows (the default is 8), and it appends each chunk's results to `scores.partial.jsonl` with `fsync`. Each record is one line that ends with a newline.
+`get_ragas_results` scores each metric over its eligible rows in one ragas call. The offline scorer calls the shared function over **chunks** of rows (the default is 8), and it appends each chunk's results to a checkpoint file with `fsync`. Each record is one line that ends with a newline.
+
+**A checkpoint belongs to one judge identity.** The file is `scores.<identity digest>.partial.jsonl`, where the digest is the SHA-256 of the canonical `judge_identity` (D10). The match rule (D4a) does not compare precision, the vLLM image, the server settings, the decoding settings or the embedding, so a replacement job can differ from a dead job in those fields. A job reads and appends only the file of its own identity. Scores from a different identity are therefore never combined with its own, and they are never labelled with its identity. `judge_scores.json` records the identity, and its scores come from one file only.
 
 An append is not atomic, so a kill during the write can leave a torn last line. When the scorer starts, it reads the file with these rules:
 - A last line with no final newline, or a last line that is not valid JSON, is a torn write. The scorer truncates the file to the end of the last complete line before it appends again.
@@ -135,13 +163,13 @@ It then skips the `(key, metric)` pairs that are already recorded. The final agg
 
 `scripts/benchmarking/judge/merge.py` runs as a CPU job with `--dependency=afterok:<judge job>`. It also runs by hand.
 
-**The unit of a merge is one result JSON, not one bundle.** One result JSON holds every arm of a run (`ResultHandler.dump`, `src/bin/service_benchmark.py:756`), and the leaderboard and the A/B comparisons need all arms. Each bundle's manifest records the result file name, its arm index and the arm count of the result. The merge groups bundles by result file name, and for each result it:
-1. waits: if any arm of the result has no bundle, or a bundle that is not `SCORED`, it writes nothing for that result, reports the missing arms, and exits 0. A later merge completes the result. If any arm is `FAILED`, it writes nothing, names the arm, and exits non-zero;
-2. reads the pending result JSON;
+**The unit of a merge is one result JSON, not one bundle.** One result JSON holds every arm of a run (`ResultHandler.dump`, `src/bin/service_benchmark.py:756`), and the leaderboard and the A/B comparisons need all arms. Each bundle's manifest records the result basename (D3), its arm index and the arm count of the result. The merge groups bundles by result basename, and for each result it:
+1. waits: if any arm of the result has no bundle, or a bundle that is not `SCORED`, or if `<queue>/results/<basename>.json` does not exist yet, it writes nothing for that result, reports what it waits for, and exits 0. A later merge completes the result. If any arm is `FAILED`, it writes nothing, names the arm, and exits non-zero;
+2. reads the pending result JSON from `<queue>/results/`;
 3. checks each bundle digest against the digest recorded in its pending arm;
 4. writes every arm's per-row scores and `total_results` aggregates;
-5. rebuilds the leaderboard and the A/B comparisons with the existing `ResultHandler` code;
-6. writes `<name>.judged.json`, with `judge_status: scored` and, for each arm, `judge_identity` and `judge_execution` (D10).
+5. **checks that every arm has the same `judge_identity`** (the G9 rule, D9) before it computes anything across arms. If the identities are equal, it rebuilds the leaderboard and the A/B comparisons with the existing `ResultHandler` code. If they differ, it leaves out every RAGAS metric from the leaderboard and the A/B comparisons, and it records `cross_arm_ragas: refused` with the fields that differ. The per-arm scores stay, each with its own identity. A judged file therefore never holds a cross-arm RAGAS comparison that G9 would refuse;
+6. writes `<basename>.judged.json` in `<queue>/results/`, with `judge_status: scored` and, for each arm, `judge_identity` and `judge_execution` (D10).
 
 A judged file is therefore written once, from the complete set of arms, and a later merge never needs to change it.
 
@@ -153,7 +181,7 @@ The merge is safe when two merges run at the same time (the afterok job and a ma
 - It writes `MERGED` in each bundle of the result only after the judged file exists with its bytes.
 - A reader must trust a judged file only when `MERGED` exists. A killed merge therefore leaves only a temporary file. A later merge removes temporary files that are older than 1 hour, so it never removes the file of a merge that is still running.
 
-A person, or a later dev-host timer, copies the judged files into `bench_out/` and commits them.
+The publish timer copies each judged file back into the output folder (D3). A person copies judged files into `bench_out/` and commits them.
 
 ### D10. Judge identity, scorer identity, and execution record
 
@@ -178,7 +206,11 @@ The design keeps three records separate:
   ragas holds its prompt templates inside the pinned package, so the package digest covers them.
 - **`judge_execution`** is the record of the job, and nothing compares it: the job id, node name, start and end times, the list of claimed bundles, and the requeue count.
 
-**The scorer fails closed.** It never scores a bundle whose manifest `code_version` or package digest differs from its own scorer identity. There is no override. The refusal is not a terminal state: through the match rule (D4a), the job does not claim such a bundle, and the bundle stays READY with no marker. To score it, build a scorer image at the manifest's commit. The next job that runs that image matches the bundle and claims it. The running scorer also checks its live environment against the manifest after the claim, because `scorer-identity.json` can be out of date. On a difference, it writes no score and no marker, logs both values, and continues with its other bundles. The claim goes stale when the job ends, and `--status` reports the difference.
+**The scorer fails closed.** It never scores a bundle whose manifest `code_version` or package digest differs from its own scorer identity. There is no override. The refusal is not a terminal state: through the match rule (D4a), the job does not claim such a bundle, and the bundle stays READY with no marker. To score it, build a scorer image at the manifest's commit. The next job that runs that image matches the bundle and claims it. `scorer-identity.json` can be out of date, and then the submitter and the job both match a bundle that the live scorer must refuse. Without a record, each tick would submit a new GPU job that claims the bundle, refuses it and exits, with no end. Two checks stop this:
+- **At job start, before vLLM and before any claim,** the job computes its live scorer identity and compares it with the sidecar. On a difference, it creates `<queue>/SCORER_STALE.<sidecar digest>` with both values, claims nothing, and exits non-zero. The match rule then excludes every bundle for that sidecar (D4a), so the submitter stops.
+- **After a claim,** the job compares its live identity with the manifest again. On a difference, it creates the bundle's `INCOMPATIBLE.<sidecar digest>` with both values, writes no score, and continues with its other bundles. The match rule excludes that bundle for that sidecar.
+
+Neither record is terminal. A rebuilt scorer has a new sidecar digest, and the bundles become available again. `--status` reports both records.
 
 The inline path records the same `judge_identity` shape: provider `huit_bedrock`, the Bedrock model id, and the benchmark image's package digest. Inline and offline arms can then be compared by the same rule, and they differ on the model, as they must.
 
@@ -188,6 +220,8 @@ The inline path records the same `judge_identity` shape: provider `huit_bedrock`
 - **G9, one judge.** Refuse a RAGAS comparison when the arms' `judge_identity` (D10) differ in any field, and name the fields that differ. An old inline artifact with no `judge_identity` gets `(evaluator_provider, evaluator_model)` from its recorded settings. It is then comparable only with other old inline artifacts that have the same pair, because a missing digest never equals a recorded one.
 
 There is no override flag, because the result of a mixed comparison has no meaning.
+
+**The campaign archiver obeys G8 too.** `scripts/benchmarking/feature_matrix/archive_run.sh` takes the newest `benchmarking-<stack>-*.json` (`:91`), never runs `compare_runs.py`, and writes the arm's aggregates into the campaign ledger (`:212-239`). A pending artifact would therefore enter the ledger with no RAGAS metrics. The archiver refuses an artifact with `judge_status: pending`, and names the judged file to wait for. It accepts the judged file (`judge_status: scored`) when the publish timer has copied it into the output folder. The G8 check is one shared function that `compare_runs.py` and the archiver both call.
 
 ## Risks / Trade-offs
 

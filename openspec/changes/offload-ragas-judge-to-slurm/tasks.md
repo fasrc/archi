@@ -17,6 +17,7 @@ Rules for every task:
 
 - [ ] 2.1 Add tests for `judge_mode` parsing: absent or `inline` gives inline, `deferred` gives deferred, and any other value is refused.
 - [ ] 2.2 Render `judge_mode` and `judge_bundle_dir` in `src/cli/templates/base-config.yaml`, with a render test.
+- [ ] 2.2a Add a test: the run fixes its result basename once, before the first arm, and `dump_artifacts` writes the JSON and the `_report.md` with that basename. Then pass the basename from the run start to `dump_artifacts` and to the bundle writer.
 - [ ] 2.3 Add a test: the bundle writer makes `rows.jsonl` equal to the inline ragas records for each key, a `manifest.json` that has every field in the spec (including the arm count of the result) and the correct SHA-256, and `BUNDLE_COMPLETE` after every other file. Then write the writer (`src/utils/judge_bundle.py`).
 - [ ] 2.4 Add a test: a deferred arm makes no judge-factory call, records `judge_status: pending` and the bundle digest, and has no RAGAS aggregates. Then add the call site in `_process_config`.
 - [ ] 2.5 Add a test: a result JSON with no `judge_status` loads as `inline`.
@@ -25,7 +26,9 @@ Rules for every task:
   - `READY` is written last, with the `link` primitive;
   - a digest mismatch exits non-zero with no `READY`, and a stop in the middle leaves no `READY`;
   - a bundle with no `BUNDLE_COMPLETE` is not copied;
-  - a second run over a bundle that is READY with the same digest changes nothing and exits 0, and a different digest exits non-zero and changes nothing.
+  - a second run over a bundle that is READY with the same digest changes nothing and exits 0, and a different digest exits non-zero and changes nothing;
+  - the pending result JSON is copied to `<queue>/results/` when it exists, and not before;
+  - a judged file with `MERGED` on all its bundles is copied back into the output folder.
   Then write the script. `run_goldenset_eval.sh` does not call it.
 - [ ] 2.7 Write the `archi-judge-publish.service` and `archi-judge-publish.timer` user units (every 5 minutes) in `fasrc/archi-config` beside the other host timers, as a separate PR in that repository. `publish.py --status` lists complete bundles that are not yet in the queue.
 
@@ -43,13 +46,15 @@ Rules for every task:
 - [ ] 3.1b Add tests for the scorer identity:
   - a code-version mismatch or a package-digest mismatch writes no score and no terminal marker, the bundle stays READY, and `--status` names both values. No flag overrides this;
   - after a matching `scorer-identity.json` is configured, the same bundle is available and is claimed;
-  - a live-environment mismatch found after a claim writes no score and no marker, and the job continues with its other bundles.
+  - a live environment that differs from the sidecar at job start creates `SCORER_STALE.<sidecar digest>`, claims nothing, and loads no model; the match rule then excludes every bundle for that sidecar, and a new sidecar digest makes them available again;
+  - a live-environment mismatch found after a claim creates the bundle's `INCOMPATIBLE.<sidecar digest>`, writes no score, and the job continues with its other bundles; the match rule then excludes that bundle for that sidecar.
 - [ ] 3.2 Add tests for the time budget: the first bundle is always claimed, and a later bundle that needs more time than is left stays READY.
 - [ ] 3.3 Add tests for checkpoints. The tests check that:
-  - chunked scoring appends newline-terminated lines to `scores.partial.jsonl`, and a restart after 40 of 109 rows scores only the other 69, with one value for each `(key, metric)`;
+  - chunked scoring appends newline-terminated lines to `scores.<identity digest>.partial.jsonl`, and a restart after 40 of 109 rows scores only the other 69, with one value for each `(key, metric)`;
   - a file that ends with half a JSON line (a kill inside the write) is truncated to the last complete line, and the pair in the half line is scored again;
   - an invalid line that is not the last line makes the bundle `FAILED` with the line number;
-  - a repeated `(key, metric)` pair uses its first record.
+  - a repeated `(key, metric)` pair uses its first record;
+  - a job with a different `judge_identity` (for example `fp8` after `bf16`) does not read the other identity's file, and its final scores come only from its own file.
 - [ ] 3.4 Add a test: a bundle whose digest does not match becomes `FAILED` with a reason, and the other bundles become `SCORED`.
 - [ ] 3.5 Add a test: offline aggregates equal inline aggregates for the same rows and the same stub judge.
 - [ ] 3.6 Write the scorer (`src/evaluation/judge/` or `src/utils/judge_scorer.py`) and its CLI entry `scripts/benchmarking/judge/score.py`.
@@ -61,6 +66,8 @@ Rules for every task:
 - [ ] 3.7 Add tests for the merge, then write `scripts/benchmarking/judge/merge.py`. The tests check that:
   - the merge groups bundles by result file, and writes nothing while any arm is not `SCORED` (it names the pending arms and exits 0); after the last arm is `SCORED`, one judged file holds all arms;
   - a `FAILED` arm makes the merge write nothing for that result and exit non-zero;
+  - a result whose pending JSON is not yet in `<queue>/results/` gets nothing, and the merge exits 0;
+  - arms with different `judge_identity` values keep their per-arm scores, and the leaderboard and A/B comparisons have no RAGAS metric, with `cross_arm_ragas: refused` naming the fields;
   - the judged file has every arm's per-row scores and aggregates, the leaderboard, A/B, `judge_status: scored`, and each arm's `judge_identity` and `judge_execution`;
   - the pending file is unchanged, and a second merge gives identical bytes;
   - a digest mismatch exits non-zero;
@@ -71,10 +78,10 @@ Rules for every task:
 
 ## 4. PR 4: Slurm scripts, gates, docs
 
-- [ ] 4.1 Add tests for `scripts/benchmarking/slurm/judge_submit.sh`, with `squeue` and `sbatch` replaced by stubs on `PATH`. It submits nothing if a job exists or no bundle is available, nothing if the only READY bundles do not match the configured judge or scorer (3.0), and exactly one job if a matching bundle is READY and no job exists. `--status` lists READY bundles older than 24 hours, bundles that do not match with the reason, and stale claims.
-- [ ] 4.2 Write `scripts/benchmarking/slurm/archi_judge.sbatch`. It has `#SBATCH -J archi-judge --requeue --open-mode=append`, and the partition, GPU count and `-t` are settings at the top of the script. It starts vLLM in Apptainer on `127.0.0.1` with a random `--api-key`, waits for `/v1/models`, runs the scorer, and stops vLLM through a `trap`. It then submits the merge job with `--dependency=afterok:$SLURM_JOB_ID`. It must have a `--dry-run` that prints the resolved commands, with a test for it.
+- [ ] 4.1 Add tests for `scripts/benchmarking/slurm/judge_submit.sh`, with `squeue` and `sbatch` replaced by stubs on `PATH`. It submits nothing if a job exists or no bundle is available, nothing if the only READY bundles do not match the configured judge or scorer (3.0), and exactly one job if a matching bundle is READY and no job exists. Every `sbatch` of `archi-judge` has `--dependency=singleton`. For a result whose arms are all `SCORED` with no `MERGED` and no merge job, it submits one `archi-judge-merge` job. `--status` lists READY bundles older than 24 hours, bundles that do not match with the reason, `SCORER_STALE` and `INCOMPATIBLE` records, and stale claims.
+- [ ] 4.2 Write `scripts/benchmarking/slurm/archi_judge.sbatch`. It has `#SBATCH -J archi-judge --requeue --open-mode=append`, and the partition, GPU count and `-t` are settings at the top of the script. It checks the live scorer identity against the sidecar and counts its available bundles first, and exits without starting vLLM when the sidecar is stale or no bundle is available. It starts vLLM in Apptainer on `127.0.0.1` with a random `--api-key`, waits for `/v1/models`, runs the scorer, and stops vLLM through a `trap`. It then submits the merge job with `--dependency=afterok:$SLURM_JOB_ID`. It must have a `--dry-run` that prints the resolved commands, with a test for it.
 - [ ] 4.3 Write `scripts/benchmarking/slurm/judge_merge.sbatch` (CPU only), with a `--dry-run` test.
-- [ ] 4.4 Add tests for G8 in `scripts/benchmarking/compare_runs.py`: a pending arm exits non-zero and is named. Then write the gate.
+- [ ] 4.4 Add tests for G8 as one shared check, used by `scripts/benchmarking/compare_runs.py` and `scripts/benchmarking/feature_matrix/archive_run.sh`: a pending arm exits non-zero and is named; the archiver appends nothing to the ledger for a pending artifact and names the judged file to wait for; it archives a `judge_status: scored` judged file. Then write the gate.
 - [ ] 4.5 Add tests for G9, then write the gate. The tests check that:
   - arms whose `judge_identity` differs are refused, and the differing fields are named (inline Sonnet against offline Llama; `bf16` against `fp8`);
   - two offline arms with equal identity from separate jobs compare;
