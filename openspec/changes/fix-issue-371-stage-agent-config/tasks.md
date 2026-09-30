@@ -128,7 +128,7 @@ ends red. Run `black` and `isort` on every file you touch **before** `git add`.
 
 ## 5. Docs and validate
 
-- [ ] 5.1 Edit `docs/docs/configuration.md`, the `evaluations.agent_config_path` bullet
+- [x] 5.1 Edit `docs/docs/configuration.md`, the `evaluations.agent_config_path` bullet
       (about lines 407-421). Replace the in-container description and the "place the
       redacted file in the deployment's own `configs/` directory" workaround with: the value
       is an absolute host path or a path relative to this deployment YAML (the same rule as
