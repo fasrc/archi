@@ -16,6 +16,9 @@ that tells the diff story visually:
   added or removed; an unchanged arrow carries no label. Mermaid gives an
   edge no fill of its own, so the label is the only room for the state.
 
+The diagram runs left to right (``direction LR``): classes that share no
+arrow then stack into a column rather than spread into one wide row.
+
 Noise filters: unchanged dunder members are hidden (``__init__`` stays),
 and stdlib classes never appear because pyreverse omits them by default.
 
@@ -179,7 +182,12 @@ def _class_block(name: str, style: str, members: list[str]) -> list[str]:
 
 
 def _mermaid_block(diff: Diff, include_context: bool) -> str:
-    lines = ["classDiagram"]
+    # Classes with no arrow between them all share one rank, and Mermaid
+    # spreads same-rank nodes across the rank axis. The default top-to-bottom
+    # direction draws a diff of unrelated classes as one wide row that GitHub
+    # shrinks to fit the comment. Left-to-right stacks those classes into a
+    # column that stays readable; inheritance arrows run sideways instead.
+    lines = ["classDiagram", "  direction LR"]
     for name, members in diff.added.items():
         lines.extend(_class_block(name, "added", members))
     for name, change in diff.modified.items():

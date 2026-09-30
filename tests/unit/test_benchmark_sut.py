@@ -7,6 +7,8 @@ vLLM at .../v1), the agent defaulted to the Ollama client and 404'd. These helpe
 resolve the right mode and inject the provider block the agent actually reads.
 """
 
+import pytest
+
 from src.bin.benchmark_sut import (
     apply_sut_local_provider,
     inject_sut_provider,
@@ -128,3 +130,36 @@ def test_apply_is_noop_for_non_local_provider():
 def test_apply_tolerates_missing_static_and_cfg():
     assert apply_sut_local_provider({"provider": "local"}, None) is None
     assert apply_sut_local_provider(None, _FakeStatic({})) is None
+
+
+def test_resolve_local_mode_explicit_mixed_case_returns_canonical():
+    assert (
+        resolve_local_mode("http://host:8001/v1", explicit="OpenAI_Compat")
+        == "openai_compat"
+    )
+
+
+def test_resolve_local_mode_explicit_unrecognized_raises():
+    with pytest.raises(ValueError):
+        resolve_local_mode("http://host:11434", explicit="vllm")
+
+
+def test_resolve_local_mode_empty_explicit_autodetects_from_url():
+    assert resolve_local_mode("http://host:8001/v1", explicit="") == "openai_compat"
+
+
+def test_resolve_local_mode_explicit_false_raises():
+    """``provider_mode: false`` is a set value, not an omitted one.
+
+    YAML decodes it to ``False``, which is falsy, so the truthiness guard used to
+    route it to URL auto-detection — the same outcome as saying nothing. The
+    whitelist refuses every other unusable spelling; a boolean is no different.
+    """
+    with pytest.raises(ValueError):
+        resolve_local_mode("http://host:8001/v1", explicit=False)
+
+
+def test_resolve_local_mode_explicit_zero_raises():
+    """``provider_mode: 0`` reaches the runner as ``int`` and is not a mode."""
+    with pytest.raises(ValueError):
+        resolve_local_mode("http://host:11434", explicit=0)

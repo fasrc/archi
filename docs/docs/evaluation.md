@@ -80,7 +80,13 @@ advance. Before running:
 #### Dataset format
 
 The dataset is strict, non-empty, UTF-8 encoded, and must declare
-`qa-dataset-v2`. Unknown fields are rejected.
+`qa-dataset-v2`. A row may carry fields outside the known set: they are
+validated as JSON values, preserved verbatim into every dataset the console
+writes, and contribute to the content hash, but never influence preparation,
+running or scoring. Two kinds of unknown key are still rejected — a key within
+edit distance 1 of a known field (a probable typo such as `expectd_atoms`),
+and the RAGAS alias names `user_input`/`reference`, which the benchmark
+harness would resolve in preference to `question`/`answer`.
 
 - `.json` contains a `qa-dataset-v2` envelope.
 - `.jsonl` starts with `{"schema_version":"qa-dataset-v2"}` and then contains
@@ -649,6 +655,35 @@ review, background execution, retries, and run-history visualization.
 
 - Datasets use the same strict `.json` or `.jsonl` Dataset V2 contract
   described in [Dataset format](#dataset-format).
+- A `.json` **RAGAS question bank** (the golden-set dialect the benchmark
+  harness consumes, e.g. `fasrc_ragas_queries.json`) imports as-is — see
+  [RAGAS question-bank imports](#ragas-question-bank-imports).
+
+#### RAGAS question-bank imports
+
+A `.json` upload whose rows carry `user_input` — the one field the RAGAS
+harness treats as mandatory and no native dataset row uses — is recognized as
+a RAGAS 0.3.5 question bank and normalized at the import boundary:
+
+- `user_input` becomes the question and `reference` becomes the canonical
+  answer; a row carrying **both** a RAGAS alias and its native key (e.g.
+  `user_input` and `question`) is refused, because the console and the
+  benchmark harness would otherwise score different content from one file.
+- Rows are static unless they declare `time_sensitive`, and a row without an
+  `id` gets a stable content-derived one, so re-importing the same bank
+  yields the same ids and dedupes to the same dataset.
+- Every other field (`sources`, `notes`, `status`, `anchor_type`,
+  `source_match_field`, ...) is **carried, not interpreted**: it survives
+  into every dataset the console writes — including reviewed children — and
+  contributes to the content hash, but has no effect on preparation, running
+  or scoring. A key within edit distance 1 of a known field (a probable typo
+  such as `expectd_atoms`) is refused rather than carried.
+- The import result reports `import_dialect: ragas` and the `carried_fields`,
+  and the Console shows both after an upload. Native datasets get no dialect
+  mapping and no report; the carry rules for unknown row fields (see
+  [Dataset format](#dataset-format)) apply to native V1/V2 datasets too.
+- The dialect applies to `.json` arrays only; a `.jsonl` bank is not adapted
+  and fails validation loudly rather than importing misread.
 - Imported evaluator profiles must use `.yaml` or `.yml` and follow
   [Evaluator profile format](#evaluator-profile-format). The built-in profile
   requires no upload.
@@ -657,6 +692,51 @@ review, background execution, retries, and run-history visualization.
   controlled by the deployment rather than uploaded through the browser.
 - Dataset V2 live items require the registry described in
   [Evaluator MCP registry](#evaluator-mcp-registry).
+
+The same adapter is reachable from the command line, for a bank you want to run
+through `archi eval qa` rather than upload:
+`python scripts/benchmarking/ragas_bank_to_qa_dataset.py <bank.json> --out <dataset.json>`
+converts a bank — plus the anchor questions the RAGAS harness stages beside it on
+every run, deduped on exact `user_input` with the bank row winning — into a
+`qa-dataset-v2` file that `archi eval qa --dataset <dataset.json>` accepts. It
+calls this same normalizer and reads the bank with the same strict parser, so for
+a modern-dialect bank the mapping, the carried fields and the ids are identical
+whichever door it comes through. A **legacy** bank is the one difference: the
+converter first runs `normalize_bank`, exactly as the RAGAS harness does when it
+loads a bank, so `question`/`answer`/`contexts` become
+`user_input`/`reference`/`retrieved_contexts` — the browser import applies no
+such mapping and would carry `contexts` under its legacy name.
+
+Three things to keep in mind when the point is to compare a QA run against a
+RAGAS run over the same bank:
+
+- **Anchors must match the run.** The converter does not read the deployment
+  configuration, so pass `--no-anchors` when the benchmark run sets
+  `services.benchmarking.anchors.enabled: false`, and pass `--anchors <path>`
+  when it overrides `anchors.path`. Otherwise the two runs ask different
+  question sets.
+- **The id join needs newline normalization.** A row without its own `id` gets
+  the content-derived one, computed from the question and reference with CRLF
+  and bare CR folded to LF; a RAGAS artifact stores those fields verbatim. So
+  recompute the id from newline-normalized text, or rows authored with CRLF will
+  not match.
+- **An authored `id` is kept.** Such an item has no derived id to recompute and
+  must be matched by question text instead; the run report counts those rows
+  (`explicit_ids`) so the exception is visible rather than assumed.
+- **Identical text needs run order, not text.** Two items whose question *and*
+  reference are the same cannot be distinguished by text: a derived id refuses
+  that pair, but an authored `id` deliberately lets it coexist, and the artifact
+  carries no dataset id. Item order is preserved end to end — bank rows in file
+  order, then the anchors that were added — and that is the order the harness
+  asks its questions, so the Nth item is the artifact's `question_N`, provided
+  `--status` dropped nothing and the anchors match the run. The report counts
+  these as `text_duplicate_items`; when it is 0, a text or derived-id join is
+  unambiguous for every item.
+
+`--no-anchors` converts the bank alone, `--status draft|locked` filters by
+confirmation state, and a bank that cannot be converted honestly (a row carrying
+both dialect spellings, duplicate rows, a row with no `reference`, or a file that
+is already a QA dataset container) is refused by name rather than mapped.
 
 #### Chat-app evaluation configuration
 
@@ -1164,6 +1244,31 @@ a new workspace.
 The workspace changed after a phase completed or is incomplete. Restore the
 original artifact from a trusted copy, or rerun the appropriate phase with
 `--overwrite`. Do not edit the manifest to bypass integrity checks.
+
+### The console is not there at all
+
+On an authenticated deployment, check the signed-in user's roles first. The
+header link is hidden from any session without the `evaluations:view`
+permission, so a missing link there is ordinary access control and not a fault —
+the routes are registered and another user sees them. A console that is switched
+off, by contrast, is missing for everyone and its URL answers 404.
+
+For a console missing for everyone, the storage root is the usual cause. The
+chat app disables the console rather than crash when it cannot use its own
+storage, so an enabled deployment with no `/evaluations` at all points at
+`services.chat_app.evaluations.root`. At start-up the chat app creates the
+catalog tree under that root and then writes one short-lived probe file into each
+of `datasets`, `profiles`, `drafts`, `runs`, and `jobs` to prove they accept
+writes — a tree that is read-only, owned by another user, or already present on a
+read-only volume fails that check. The root itself is only a container and is
+never written to, so a read-only root holding writable catalog directories is
+fine. Chat keeps serving; only the console turns itself off.
+
+Read the chat-app start-up log and look for the error line naming the root. Fix
+the mount or the ownership, or correct the setting, then redeploy. The same
+sentence covers the two config refusals: an enabled console with no
+`evaluations.agent_config_path`, or one naming the live deployment config, is
+also disabled with one error line each.
 
 ### The console says another job is active
 

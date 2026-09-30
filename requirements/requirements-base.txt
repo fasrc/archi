@@ -51,7 +51,11 @@ python-dotenv==1.2.2
 python-redmine==2.4.0
 regex==2023.12.25
 sentencepiece==0.2.0
-sympy==1.13.1
+# Coupled to the torch pin in BOTH header files, not chosen independently. torch
+# 2.6.0 required `sympy==1.13.1` exactly, which is where this pin came from; torch
+# 2.7.0 requires `sympy>=1.13.3`, so the 2.7.0 bump on 2026-09-15 (#472) forced this
+# one. Bump it with torch or the base-image build fails ResolutionImpossible.
+sympy==1.13.3
 tiktoken==0.7.0
 uvloop==0.19.0
 watchfiles==0.21.0
@@ -78,7 +82,14 @@ pulsar-client==3.5.0
 psycopg2-binary==2.9.10
 requests==2.32.5
 pyyaml==6.0.2
-protobuf==4.25.8
+# add-opentelemetry-tracing moved this pin from 4.25.8. The OTLP exporter needs
+# protobuf 5 or newer from OpenTelemetry 1.28 onward, and the last suite that
+# accepts protobuf 4 cannot be installed at all today (see the OpenTelemetry block
+# at the end of this file). The only package here that constrains protobuf is
+# onnxruntime, which flashrank pulls in and which asks for `protobuf>=4.25.8` with
+# no upper bound. pulsar-client bounds protobuf only under extras this project does
+# not install.
+protobuf==7.36.1
 jira==3.8.0
 spacy==3.8.7
 typer==0.15.4
@@ -102,6 +113,23 @@ anyio==4.8.0
 catalogue==2.0.9
 aiohttp==3.9.5
 nltk==3.9.1
+# Pinned 2026-09-15 (#472) because it was previously UNPINNED and floating, which made
+# the GPU image's importability depend on whatever PyPI published most recently.
+#
+# The ceiling is vllm's, and it is NOT declared anywhere: vllm 0.9.0 asks only for
+# `transformers>=4.51.1`, but transformers 4.54.0 added a native `aimv2` config while
+# vllm 0.9.0 registers its own shim under that name, so `import vllm` dies with
+# "ValueError: 'aimv2' is already used by a Transformers config". The requirement set
+# RESOLVES either way — this is only visible from a real image build. Measured by
+# importing vllm inside the built image: 4.52.4 and 4.53.3 work, 4.54.1 / 4.55.4 /
+# 4.56.2 all collide. 4.53.3 is the newest 4.53.x, so it is the highest working pin.
+#
+# Every other consumer accepts it: sentence-transformers 5.1.2 asks for
+# `transformers<5.0.0,>=4.41.0`, langchain-huggingface 1.0.0 for `<5.0.0,>=4.39.0`,
+# and peft/unstructured/qwen-vl-utils declare no upper bound.
+#
+# Raise this only together with vllm, and prove it by importing vllm in a built image.
+transformers==4.53.3
 sentence-transformers==5.1.2
 rank_bm25==0.2.2
 markitdown[pdf,pptx]==0.1.5
@@ -113,3 +141,29 @@ markitdown[pdf,pptx]==0.1.5
 # compatible with the existing `nltk==3.9.1` pin above without a forced bump.
 llama-index-core==0.14.19
 flashrank==0.2.10
+# add-opentelemetry-tracing: default-off OpenTelemetry tracing. See
+# docs/docs/proposals/opentelemetry-readiness.md and
+# openspec/changes/add-opentelemetry-tracing/. Core packages are pinned at 1.44.0 and
+# instrumentation packages at 0.65b0. The two numbering schemes move together, so
+# bump all nine in lockstep.
+#
+# This suite is the reason the protobuf pin above moved to 7.x. The last suite that
+# accepts protobuf 4 is 1.27.0 / 0.48b0, and it is not installable today: its
+# `opentelemetry-instrumentation` imports `pkg_resources` at module scope, which
+# setuptools 82 removed, and it declares only `setuptools>=16.0`. A fresh image build
+# therefore installs the newest setuptools and every instrumentor import fails.
+# Measured on 2026-09-09 in a clean virtual environment.
+#
+# openinference-instrumentation-langchain is NOT part of the suite. It carries its own
+# version line and it gives Phoenix the span kinds (LLM, TOOL, RETRIEVER, CHAIN) that
+# plain OpenTelemetry spans lack.
+opentelemetry-sdk==1.44.0
+opentelemetry-exporter-otlp-proto-http==1.44.0
+opentelemetry-instrumentation-flask==0.65b0
+opentelemetry-instrumentation-requests==0.65b0
+opentelemetry-instrumentation-httpx==0.65b0
+opentelemetry-instrumentation-urllib==0.65b0
+opentelemetry-instrumentation-psycopg2==0.65b0
+opentelemetry-instrumentation-sqlite3==0.65b0
+opentelemetry-instrumentation-logging==0.65b0
+openinference-instrumentation-langchain==0.1.74

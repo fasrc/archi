@@ -1894,6 +1894,75 @@ def test_force_create_with_unobtainable_base_image_keeps_existing_deployment(
     assert (existing / "marker.txt").exists(), "existing deployment was destroyed"
 
 
+def test_force_create_with_an_uncoverable_service_template_keeps_existing_deployment(
+    archi_home, env_file, monkeypatch, tmp_path
+):
+    """The ordering contract, applied to the uncoverable-template refusal (fasrc/archi#381).
+
+    The refusal is unit-tested in `test_base_image_preflight.py`. This is the end-to-end half:
+    the CLI reaches it, and reaches it above the teardown.
+
+    The trigger is deliberately a template this create does not need. `Dockerfile-chat` still
+    supplies the one base reference a chatbot deployment requires, so every other check in the
+    preflight resolves cleanly and sees nothing wrong -- which is exactly why the refusal had
+    to move onto this path rather than stay in a helper the CLI never calls.
+    """
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+    from src.cli.managers import base_image_preflight
+
+    templates = tmp_path / "dockerfiles"
+    templates.mkdir()
+    (templates / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base"
+        "@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"
+    )
+    (templates / "Dockerfile-probe").write_text("FROM docker.io/library/python:3.11\n")
+    # Patch the *resolver*, not TEMPLATE_DIR. TEMPLATE_DIR is only the installed
+    # location; the directory the preflight actually reads is
+    # build_template_dir(), which prefers the checkout the build ships from
+    # (fasrc/archi#436 review). Patching the constant alone is silently ignored
+    # wherever `_repository_info` exists -- i.e. in CI and in any real install,
+    # but not in a bare worktree -- which made this test pass locally and both
+    # vacuous and red in CI.
+    monkeypatch.setattr(base_image_preflight, "build_template_dir", lambda: templates)
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    record = _patch_probe(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-e",
+            str(env_file),
+            "-c",
+            str(EXAMPLE_CONFIG),
+            "--services",
+            "chatbot",
+        ],
+    )
+
+    assert result.exit_code != 0, f"expected refusal. output:\n{result.output}"
+    assert "Dockerfile-probe" in result.output, (
+        "the refusal must name the uncoverable template, or the operator cannot act on it. "
+        f"output:\n{result.output}"
+    )
+    assert teardowns == [], f"deployment was torn down before the refusal: {teardowns}"
+    assert (existing / "marker.txt").exists(), "existing deployment was destroyed"
+    assert record["pulled"] == [], (
+        "the refusal must precede any image work, which is what puts it above the teardown; "
+        f"pulled {record['pulled']}"
+    )
+
+
 def test_refusal_names_the_classic_pat_requirement(archi_home, env_file, monkeypatch):
     """An operator told only "log in" retries with a fine-grained token and fails identically."""
     if not EXAMPLE_CONFIG.exists():
@@ -2064,3 +2133,171 @@ def test_fully_verified_dry_run_still_reports_readiness(
 
     assert result.exit_code == 0, result.output
     assert "NOT VERIFIED" not in result.output, result.output
+
+
+def test_force_create_with_enabled_evaluations_and_no_agent_config_path_keeps_existing_deployment(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """The refusal precedes the forced teardown.
+
+    When `evaluations.enabled: true` is set but `agent_config_path` is absent,
+    validate_evaluations_config() raises inside validate_configs() at
+    src/cli/cli_main.py:224, which is above remove_existing_deployment() at :295.
+    This is the regression guard against a later move of the check into template
+    staging (after the teardown).
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    data.setdefault("services", {}).setdefault("chat_app", {})["evaluations"] = {
+        "enabled": True,
+    }
+    bad_config = tmp_path / "config-eval-no-path.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before evaluations config validation ran. "
+        f"output:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed for an invalid evaluations config. "
+        f"output:\n{result.output}\n"
+    )
+    assert result.exit_code != 0, (
+        f"evaluations.enabled:true with no agent_config_path should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        "services.chat_app.evaluations.agent_config_path" in result.output
+    ), f"the error should name the missing key. output:\n{result.output}\n"
+
+
+# --- issue #394: the evaluate path runs the base-image preflight above the teardown ---
+
+
+def test_force_evaluate_with_unobtainable_base_image_keeps_existing_deployment(
+    archi_home, env_file, benchmark_config, monkeypatch
+):
+    """The ordering contract, applied to the base image, for evaluate (fasrc/archi#394).
+
+    Mirrors test_force_create_with_unobtainable_base_image_keeps_existing_deployment at
+    :1855, but through evaluate() rather than create(): a benchmarking run that cannot
+    obtain a base image was always going to fail, so it must not cost the operator a
+    running deployment first.
+    """
+    from src.cli import cli_main
+    from src.cli.managers import base_image_preflight
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+    _patch_probe(monkeypatch, fetch_error=base_image_preflight.Cause.UNAUTHORIZED)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, f"expected refusal. output:\n{result.output}"
+    assert teardowns == [], f"runtime was torn down before the refusal: {teardowns}"
+    assert (existing / "marker.txt").exists(), "existing runtime was destroyed"
+
+
+def test_force_evaluate_with_an_uncoverable_service_template_keeps_existing_deployment(
+    archi_home, env_file, benchmark_config, monkeypatch, tmp_path
+):
+    """The ordering contract, applied to the uncoverable-template refusal, for evaluate.
+
+    Mirrors test_force_create_with_an_uncoverable_service_template_keeps_existing_deployment
+    at :1897, but through evaluate() rather than create().
+    """
+    from src.cli import cli_main
+    from src.cli.managers import base_image_preflight
+
+    templates = tmp_path / "dockerfiles"
+    templates.mkdir()
+    (templates / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base"
+        "@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"
+    )
+    (templates / "Dockerfile-probe").write_text("FROM docker.io/library/python:3.11\n")
+    # Patch the *resolver*, not TEMPLATE_DIR. TEMPLATE_DIR is only the installed
+    # location; the directory the preflight actually reads is
+    # build_template_dir(), which prefers the checkout the build ships from
+    # (fasrc/archi#436 review). Patching the constant alone is silently ignored
+    # wherever `_repository_info` exists -- i.e. in CI and in any real install,
+    # but not in a bare worktree -- which made this test pass locally and both
+    # vacuous and red in CI.
+    monkeypatch.setattr(base_image_preflight, "build_template_dir", lambda: templates)
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+    record = _patch_probe(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, f"expected refusal. output:\n{result.output}"
+    assert "Dockerfile-probe" in result.output, (
+        "the refusal must name the uncoverable template, or the operator cannot act on it. "
+        f"output:\n{result.output}"
+    )
+    assert teardowns == [], f"runtime was torn down before the refusal: {teardowns}"
+    assert (existing / "marker.txt").exists(), "existing runtime was destroyed"
+    assert record["pulled"] == [], (
+        "the refusal must precede any image work, which is what puts it above the teardown; "
+        f"pulled {record['pulled']}"
+    )

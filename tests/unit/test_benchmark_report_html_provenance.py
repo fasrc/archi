@@ -16,6 +16,7 @@ label for another; the provenance is shown alongside instead.
 
 from src.utils.generate_benchmark_report import (
     format_html_output,
+    format_version_html,
     parse_benchmark_results,
 )
 
@@ -182,3 +183,200 @@ def test_html_still_renders_without_provenance():
     html = format_html_output(config_data, name, ts, questions, totals)
 
     assert "<html>" in html
+
+
+def test_provenance_shows_time_to_ingest():
+    """The HTML mirrors the markdown: seconds, plus a human-readable span."""
+    html = _html(ingest_wall_seconds=7351.2)
+
+    assert "Time to ingest" in html
+    assert "7351 s" in html
+    assert "2h 2m 31s" in html
+    assert "every arm" in html
+    assert "corpus_fingerprint" in html
+    assert "approximation" in html
+
+
+def test_provenance_says_not_measured_for_a_reused_corpus():
+    html = _html(ingest_wall_seconds=None)
+
+    assert "reused an existing corpus" in html
+    assert "not measured" in html
+    assert "0 s" not in html
+
+
+def test_provenance_says_not_recorded_for_an_older_artifact():
+    """`_results()` writes no such key, exactly as a pre-#417 artifact does.
+
+    Asserted on wording unique to this branch: the version-stamp block has its
+    own "not recorded" string, and would satisfy a looser check on its own.
+    """
+    html = _html()
+
+    assert "Time to ingest" in html
+    assert "predates the field" in html
+    assert "reused an existing corpus" not in html
+
+
+def test_parse_carries_ingest_wall_seconds_through_to_provenance():
+    results, metadata = _results(ingest_wall_seconds=7351.2)
+
+    _, _, _, _, _, provenance = parse_benchmark_results(results, metadata)
+
+    assert provenance["ingest_wall_seconds"] == 7351.2
+
+
+def test_provenance_shows_the_host():
+    """A recorded host names the hostname and carries the deploy caveat."""
+    captured_at = (
+        "deploy (`archi create`), on the machine this stack runs on"
+        " — a container cannot move hosts, so a --rerun ran here too"
+    )
+    provenance = {
+        "code_version": {"digest": "code-digest-1"},
+        "config_version": {},
+        "host": {"hostname": "myhost.rc.fas.harvard.edu", "cpu_model": "Intel Xeon E5"},
+        "host_captured_at": captured_at,
+    }
+    html = format_version_html(provenance)
+
+    assert "myhost.rc.fas.harvard.edu" in html
+    assert "Intel Xeon E5" in html
+    assert "container cannot move hosts" in html
+
+    # All three host states render pairwise distinct output.
+    html_null = format_version_html(
+        {
+            "code_version": {"digest": "code-digest-1"},
+            "config_version": {},
+            "host": None,
+        }
+    )
+    html_not_recorded = format_version_html(
+        {"code_version": {"digest": "code-digest-1"}, "config_version": {}}
+    )
+    assert html != html_null
+    assert html != html_not_recorded
+    assert html_null != html_not_recorded
+
+
+def test_html_provenance_says_the_host_is_not_recorded_for_an_older_artifact():
+    """Key absent = the artifact predates host stamping, distinct from a null host."""
+    provenance_no_host = {
+        "code_version": {"digest": "code-digest-1"},
+        "config_version": {},
+    }
+    html = format_version_html(provenance_no_host)
+
+    assert "predates host stamping" in html
+
+    html_null = format_version_html(
+        {
+            "code_version": {"digest": "code-digest-1"},
+            "config_version": {},
+            "host": None,
+        }
+    )
+    assert "predates host stamping" not in html_null
+
+
+def test_an_html_host_without_a_processor_model_renders_no_none():
+    """cpu_model is None renders the hostname only, with no literal 'None'."""
+    provenance = {
+        "code_version": {"digest": "code-digest-1"},
+        "config_version": {},
+        "host": {"hostname": "myhost.rc.fas.harvard.edu", "cpu_model": None},
+    }
+    html = format_version_html(provenance)
+
+    assert "myhost.rc.fas.harvard.edu" in html
+    assert "None" not in html
+
+
+def test_a_host_renders_without_any_version_digest():
+    """A host in provenance renders even when code_version and config_version are absent."""
+    provenance = {
+        "host": {"hostname": "myhost.rc.fas.harvard.edu", "cpu_model": "Intel Xeon E5"}
+    }
+    html = format_version_html(provenance)
+
+    assert "myhost.rc.fas.harvard.edu" in html
+
+
+def test_no_version_and_no_host_renders_empty_html():
+    """No code_version, no config_version, and no host key renders the empty string."""
+    provenance = {"running_configuration": None}
+    html = format_version_html(provenance)
+
+    assert html == ""
+
+
+def test_an_html_null_host_names_both_causes_rather_than_asserting_a_lookup_failed():
+    """HTML mirror: ``null`` is an older deploy or a failed capture, not only the latter."""
+    html_null = format_version_html(
+        {
+            "code_version": {"digest": "code-digest-1"},
+            "config_version": {},
+            "host": None,
+        }
+    )
+
+    assert "predates the field" in html_null
+    assert "capture failed" in html_null
+    assert "predates host stamping" not in html_null
+
+
+def test_an_html_null_host_also_names_the_unreadable_metadata_cause():
+    """HTML mirror: `null` also covers an unreadable `git_info.yaml`."""
+    html_null = format_version_html(
+        {
+            "code_version": {"digest": "code-digest-1"},
+            "config_version": {},
+            "host": None,
+        }
+    )
+
+    assert "predates the field" in html_null
+    assert "capture failed" in html_null
+    assert "metadata could not be read" in html_null
+    assert "predates host stamping" not in html_null
+
+
+def test_an_html_null_host_does_not_claim_the_deploy_recorded_no_host():
+    """HTML mirror: the lead clause must not contradict the unreadable-metadata cause."""
+    html_null = format_version_html(
+        {
+            "code_version": {"digest": "code-digest-1"},
+            "config_version": {},
+            "host": None,
+        }
+    )
+
+    assert "recorded no host" not in html_null
+    assert "no host reached this artifact" in html_null
+    assert "predates the field" in html_null
+    assert "capture failed" in html_null
+    assert "metadata could not be read" in html_null
+
+
+def test_an_html_null_host_names_the_remote_engine_refusal_cause():
+    """HTML mirror: null host must name the fourth cause — remote engine refusal.
+
+    When capture is refused because the container endpoint is not provably local,
+    ``host`` is ``None``. The HTML null text must say so alongside the three
+    existing causes; an operator with a remote engine must not be told to look for
+    a failed capture or a missing mount.
+    """
+    html_null = format_version_html(
+        {
+            "code_version": {"digest": "code-digest-1"},
+            "config_version": {},
+            "host": None,
+        }
+    )
+
+    assert "container engine" in html_null
+    # All three previous causes remain.
+    assert "capture failed" in html_null
+    assert "metadata could not be read" in html_null
+    assert "predates the field" in html_null

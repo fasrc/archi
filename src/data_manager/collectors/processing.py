@@ -29,10 +29,11 @@ from typing import (
     runtime_checkable,
 )
 
-from bs4 import BeautifulSoup
-from markdownify import markdownify
+from bs4 import BeautifulSoup, Comment, Doctype, NavigableString, Tag
+from markdownify import STRIP, STRIP_ONE, MarkdownConverter, strip1_pre, strip_pre
 
 from src.data_manager.collectors.resource_base import BaseResource
+from src.utils.local_mode import LOCAL_PROVIDER_KEY, apply_local_mode
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -281,6 +282,383 @@ class HtmlToMarkdownProcessor:
         return resource
 
 
+# Source whitespace beside a ``<br>`` inside a promoted code block (issue #399 review).
+# Formatted HTML — WordPress ``wpautop`` emits ``<br />\n`` — carries a newline text node
+# next to every break. Inline rendering collapses it, but inside the promoted ``<pre>``
+# it would survive as a blank line between every code line (106 of 107 breaks in a
+# 60-page KB sample, 2026-09-02). Horizontal whitespace after the newline is kept so an
+# indented code line stays indented.
+_BR_TRAILING_WS = re.compile(r"(?:[ \t]*\r?\n[ \t]*)+$")
+_BR_LEADING_WS = re.compile(r"^(?:[ \t]*\r?\n)+")
+
+# Marker set on every ``<pre>`` that ``_promote_block_code`` creates (issue #399 review).
+# ``markdownify`` calls ``code_language_callback`` for every ``<pre>``, so without the
+# marker a native ``<pre class="bash">`` would gain a ``bash`` infostring and stop
+# converting byte-identically to the output before #399. Only promoted blocks are ours
+# to label.
+_PROMOTED_ATTR = "data-archi-promoted"
+
+
+def _edge_text(br, *, forward: bool, stop_at) -> NavigableString | None:
+    """Return the text node that logically neighbours ``br`` on one side (issue #408).
+
+    Climbs through inline parent tags when the direct sibling is absent, stopping
+    before ``stop_at`` (the containing ``<code>`` element).  If the first reachable
+    sibling is a ``Tag``, walks down its edge child chain (first child going forward,
+    last child going backward), looking through comments, to the one leaf that touches
+    the break.  A childless tag at the edge (``<img>``) ends the walk with None: the
+    text behind it does not touch the break, so its whitespace is code payload and
+    stays.
+    """
+    node = br
+    while True:
+        sibling = node.next_sibling if forward else node.previous_sibling
+        if sibling is not None:
+            break
+        parent = node.parent
+        if parent is None or parent is stop_at:
+            return None
+        node = parent
+    node = sibling
+    while isinstance(node, Tag):
+        edge = [
+            child
+            for child in node.contents
+            if isinstance(child, Tag) or type(child) is NavigableString
+        ]
+        if not edge:
+            return None
+        node = edge[0] if forward else edge[-1]
+    return node if type(node) is NavigableString else None
+
+
+def _strip_break_whitespace(br, *, stop_at) -> None:
+    """Drop the source newlines beside a ``<br>`` about to become ``"\\n"``.
+
+    The neighbour is resolved through inline nodes (issue #408): when the
+    direct sibling is absent the search climbs through inline parent tags,
+    stopping at ``stop_at`` (the containing ``<code>``).
+    """
+    for forward, pattern in ((False, _BR_TRAILING_WS), (True, _BR_LEADING_WS)):
+        node = _edge_text(br, forward=forward, stop_at=stop_at)
+        if node is None:
+            continue
+        stripped = pattern.sub("", str(node))
+        if stripped == str(node):
+            continue
+        if stripped:
+            node.replace_with(stripped)
+        else:
+            node.extract()
+
+
+_INLINE_MARKUP_TAGS: frozenset = frozenset(
+    {"a", "b", "strong", "em", "i", "del", "s", "kbd", "samp", "sub", "sup"}
+)
+
+
+def _has_content(tag) -> bool:
+    """True when *tag* has at least one Tag child or one non-whitespace text child."""
+    for node in tag.children:
+        if isinstance(node, Tag):
+            return True
+        if type(node) is NavigableString and str(node).strip():
+            return True
+    return False
+
+
+def _cut_edge_text(half, *, trailing: bool):
+    """Return the exact ``NavigableString`` that touches the cut edge of *half*, or None.
+
+    Walk down from *half* along its edge child (the last child of the head half, the
+    first child of the tail half), stepping inward past comments, which render nothing.
+    A tag with no children at the edge (``<img>``) ends the walk with None: whatever
+    text sits behind it does not touch the cut and must keep its whitespace.
+
+    Only the edge is read. The head half is re-trimmed once per split when several
+    blocks share one ancestor, so scanning its whole child list here would cost O(n)
+    per split and O(n^2) for the hoist (Codex review on PR #414).
+    """
+    node = half
+    while isinstance(node, Tag):
+        contents = node.contents
+        if not contents:
+            return None
+        edge = contents[-1] if trailing else contents[0]
+        while edge is not None and not (
+            isinstance(edge, Tag) or type(edge) is NavigableString
+        ):
+            edge = edge.previous_sibling if trailing else edge.next_sibling
+        if edge is None:
+            return None
+        node = edge
+    return node
+
+
+def _trim_cut_whitespace(half, *, trailing: bool) -> None:
+    """Strip leading or trailing whitespace from the text at the cut edge of *half*.
+
+    A blank text node at the edge is removed and the walk repeats, so text that sits
+    behind it — past a comment, say (``" <!-- c -->    done"``) — is trimmed too. The
+    loop ends at the first non-blank text, at a childless tag, or when nothing is left.
+    """
+    while True:
+        node = _cut_edge_text(half, trailing=trailing)
+        if node is None:
+            return
+        text = str(node)
+        stripped = text.rstrip() if trailing else text.lstrip()
+        if stripped:
+            if stripped != text:
+                node.replace_with(stripped)
+            return
+        node.extract()
+
+
+def _hoist_out_of_inline(pre, soup) -> None:
+    """Lift *pre* out of any inline-markup ancestors (issue #406).
+
+    A promoted ``<pre>`` nested inside ``<em>``, ``<strong>``, ``<a>``, etc. would render
+    wrapped in the inline markers.  Walk up the parent chain while the parent is one of
+    the eleven inline tags; at each level split the parent around *pre*: re-append the
+    siblings that follow *pre* into a clone of the parent and insert that clone (and *pre*
+    itself) after the original parent, discarding the clone when it is empty.
+    """
+    while isinstance(pre.parent, Tag) and pre.parent.name in _INLINE_MARKUP_TAGS:
+        parent = pre.parent
+        tail = soup.new_tag(parent.name, attrs=dict(parent.attrs))
+        for node in list(pre.next_siblings):
+            tail.append(node)
+        parent.insert_after(pre)
+        _trim_cut_whitespace(parent, trailing=True)
+        _trim_cut_whitespace(tail, trailing=False)
+        if _has_content(tail):
+            pre.insert_after(tail)
+        if not _has_content(parent):
+            parent.decompose()
+
+
+def _promote_block_code(html: str) -> str:
+    """Promote bare multi-line ``<code>`` elements to ``<pre><code>`` blocks (issue #399).
+
+    A ``<code>`` tag that is not already under a ``<pre>`` and that contains at least
+    one ``<br>`` is treated as a block-level code listing rather than inline code.
+    The source newlines beside each ``<br>`` are dropped first (they are formatting,
+    not content — see ``_strip_break_whitespace``), then each ``<br>`` is replaced with
+    a newline, and the element is wrapped in a new ``<pre>`` that inherits the
+    ``class`` attribute of the ``<code>`` (if present) so that downstream language
+    detection by ``_fence_language`` can fire on the ``<pre>``. The new ``<pre>`` is
+    marked with ``_PROMOTED_ATTR`` so ``_promoted_fence_language`` labels only it.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    promoted = []
+    for code in soup.find_all("code"):
+        if code.find_parent("pre") is not None:
+            continue
+        brs = code.find_all("br")
+        if not brs:
+            continue
+        # Two passes: strip the source whitespace beside every break while the
+        # neighbours are still the original text nodes, then insert the newlines.
+        # Interleaving would let the "\n" inserted for one break be read as source
+        # whitespace of the next and stripped, collapsing an intended blank line.
+        for br in brs:
+            _strip_break_whitespace(br, stop_at=code)
+        for br in brs:
+            br.replace_with("\n")
+        pre = soup.new_tag("pre")
+        pre[_PROMOTED_ATTR] = ""
+        if code.get("class"):
+            pre["class"] = code["class"]
+        code.wrap(pre)
+        promoted.append(pre)
+    # Hoist last-to-first. Each split moves the siblings after the block into the tail
+    # half; with the later blocks already out of the ancestor, that tail holds only the
+    # nodes up to the next block, so every sibling moves once. First-to-last moved the
+    # whole remaining tail once per block: quadratic in the block count (Codex review on
+    # PR #414). The final tree is the same either way, because the split at each block
+    # partitions the ancestor's children the same way regardless of order.
+    for pre in reversed(promoted):
+        _hoist_out_of_inline(pre, soup)
+    return str(soup)
+
+
+_FENCE_LANGUAGES: frozenset = frozenset(
+    {
+        "bash",
+        "sh",
+        "spec",
+        "lua",
+        "python",
+        "c",
+        "cpp",
+        "fortran",
+        "r",
+        "perl",
+        "json",
+        "yaml",
+        "text",
+    }
+)
+
+
+def _fence_language(pre) -> str:
+    """Return the fenced-code language label for a ``<pre>`` element (issue #399).
+
+    Iterates the element's ``class`` list, lowercases each token, and returns the
+    first that is a member of ``_FENCE_LANGUAGES``.  Returns ``""`` when no match
+    is found or when the element carries no ``class`` attribute.
+    """
+    for token in pre.get("class") or []:
+        token_lower = token.lower()
+        if token_lower in _FENCE_LANGUAGES:
+            return token_lower
+    return ""
+
+
+def _promoted_fence_language(pre) -> str:
+    """``code_language_callback`` that labels only promoted blocks (issue #399 review).
+
+    Returns ``_fence_language(pre)`` when ``pre`` carries ``_PROMOTED_ATTR`` and ``""``
+    otherwise, so a native ``<pre>`` keeps the bare fence it had before #399.
+    """
+    if not pre.has_attr(_PROMOTED_ATTR):
+        return ""
+    return _fence_language(pre)
+
+
+_SELF_SEPARATING_FOLLOWERS: frozenset = frozenset(
+    {
+        "article",
+        "blockquote",
+        "br",
+        "div",
+        "dl",
+        "dt",
+        "figcaption",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "hr",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "ul",
+    }
+)
+"""Block-level elements whose markdownify converter emits a leading newline (issue #410).
+
+Measured on markdownify 1.2.2: each element in this set already starts on a new line when
+it follows a nested list inside a list item, so no extra newline is needed.  ``ul`` and
+``ol`` both produce ``'\\n' + text.rstrip()`` for nested lists.  The failure direction is
+safe: an element missing from the set yields one extra blank line (harmless Markdown),
+while an element wrongly included would leave a glue join in place.
+"""
+
+
+def _next_content_sibling(el):
+    """Return the first meaningful sibling after *el* (issue #410).
+
+    Walks ``el.next_sibling`` and returns:
+    * the first ``Tag`` found, or
+    * the first ``NavigableString`` that is not a ``Comment`` or ``Doctype`` and has
+      at least one non-blank character.
+
+    Returns ``None`` when all remaining siblings are whitespace-only text nodes,
+    ``Comment`` nodes, or ``Doctype`` nodes.
+    """
+    sib = el.next_sibling
+    while sib is not None:
+        if isinstance(sib, Tag):
+            return sib
+        if isinstance(sib, NavigableString) and not isinstance(sib, (Comment, Doctype)):
+            if str(sib).strip():
+                return sib
+        sib = sib.next_sibling
+    return None
+
+
+def _nested_list_needs_break(el, text: str) -> bool:
+    """Return ``True`` when a trailing ``\\n`` must be appended to *el*'s output (issue #410).
+
+    The predicate is ``False`` when:
+    * ``text.strip()`` is empty — an empty nested list contributes nothing (design D4);
+    * there is no meaningful sibling after *el*; or
+    * the next content sibling is a ``Tag`` whose name is in ``_SELF_SEPARATING_FOLLOWERS``
+      — such elements already start on a new line in markdownify output.
+
+    Returns ``True`` for text nodes and inline elements (``a``, ``code``, ``span``, …)
+    and for tags with no markdownify converter (``figure``, ``nav``, …) because their
+    output is glued onto the nested list's last line without the extra newline.
+    """
+    if not text.strip():
+        return False
+    nxt = _next_content_sibling(el)
+    if nxt is None:
+        return False
+    return not (isinstance(nxt, Tag) and nxt.name in _SELF_SEPARATING_FOLLOWERS)
+
+
+_BACKTICK_RUNS = re.compile(r"`+")
+
+
+class _ArchiMarkdownConverter(MarkdownConverter):
+    """The project's ``MarkdownConverter`` overrides (issues #407 and #410).
+
+    This is the one place project-specific ``MarkdownConverter`` overrides live.
+    ``convert_pre`` sizes the fence delimiter past any backtick run inside the
+    block (issue #407); ``convert_list`` keeps a newline after a nested list
+    (issue #410).
+
+    markdownify binds ``convert_ul`` and ``convert_ol`` to the base
+    ``convert_list`` at class-definition time, so overriding ``convert_list``
+    alone would never be called for list elements.  The two class-level
+    rebindings below re-point those attributes at this override (design D2).
+    """
+
+    def convert_pre(self, el, text, parent_tags):
+        if not text:
+            return ""
+        code_language = self.options["code_language"]
+
+        if self.options["code_language_callback"]:
+            code_language = self.options["code_language_callback"](el) or code_language
+
+        mode = self.options["strip_pre"]
+        if mode == STRIP:
+            text = strip_pre(text)  # remove all leading/trailing newlines
+        elif mode == STRIP_ONE:
+            text = strip1_pre(text)  # remove one leading/trailing newline
+        elif mode is None:
+            pass  # leave leading and trailing newlines as-is
+        else:
+            raise ValueError("Invalid value for strip_pre: %s" % mode)
+
+        longest_run = max((len(m) for m in _BACKTICK_RUNS.findall(text)), default=0)
+        fence = "`" * max(3, longest_run + 1)
+        return "\n\n%s%s\n%s\n%s\n\n" % (fence, code_language, text, fence)
+
+    def convert_list(self, el, text, parent_tags):
+        """Append a trailing newline when inline content follows a nested list."""
+        out = super().convert_list(el, text, parent_tags)
+        if "li" in parent_tags and _nested_list_needs_break(el, text):
+            return out + "\n"
+        return out
+
+    convert_ul = convert_list
+    convert_ol = convert_list
+
+
+def _markdownify(html: str, **options) -> str:
+    """Mirror the library's ``markdownify()`` using the project converter."""
+    return _ArchiMarkdownConverter(**options).convert(html)
+
+
 def _markdownify_deep_safe(content: str) -> str:
     """Convert HTML to Markdown with headroom for deeply-nested input.
 
@@ -295,7 +673,11 @@ def _markdownify_deep_safe(content: str) -> str:
 
     def _worker() -> None:
         try:
-            result["value"] = markdownify(content, heading_style="ATX")
+            result["value"] = _markdownify(
+                _promote_block_code(content),
+                heading_style="ATX",
+                code_language_callback=_promoted_fence_language,
+            )
         except BaseException as exc:  # noqa: BLE001 - re-raised to caller below
             result["error"] = exc
 
@@ -629,8 +1011,15 @@ def _resolve_provider_config(
 
     extra = dict(cfg.get("extra_kwargs", {}) or {})
     mode = cfg.get("mode")
-    if mode and "local_mode" not in extra:
-        extra["local_mode"] = mode
+    # Only the local provider's ``mode`` names a local_mode. The three sibling
+    # seams all gate the canonicalizer on ``ProviderType.LOCAL``; without the same
+    # gate, another provider's own ``mode`` value is measured against the local
+    # whitelist and an unrecognized one aborts the ingest pipeline, while the very
+    # same config keeps working in chat. Compared as a string because this module
+    # keeps ``src.archi.providers`` (and its ``langchain_core`` import) out of the
+    # conversion-only ingest path — see ``_default_model_factory``.
+    if provider_key == LOCAL_PROVIDER_KEY:
+        apply_local_mode(extra, mode, overwrite=False)
 
     return {
         "base_url": cfg.get("base_url"),

@@ -4,6 +4,203 @@ Archi deployments are configured via YAML files passed to the CLI with `--config
 
 > **Tip:** Start from one of the example configs in `examples/deployments/` and customize from there.
 
+## Explicit `false`, `0`, and `null`
+
+A value you write reaches the deployed configuration. `enabled: false` renders as `false`,
+and is not read as "unset and therefore ignorable".
+
+`null` renders as that key's documented default on the flags this change converted and on
+every key whose template default is applied with `default(…, true)`, which is most of them.
+It is **not** a whole-file guarantee.
+
+**CAUTION: on these six keys, writing `null` stops the deploy.** Each is iterated directly
+by the template through a bare `default([…])`, which replaces only an *undefined* value, so
+an explicit `null` reaches the loop and raises `TypeError: 'NoneType' object is not
+iterable`. `archi create` cannot render the config at all.
+
+- `global.ACCEPTED_FILES`
+- `services.benchmarking.modes`
+- `services.benchmarking.ragas_settings.enabled_metrics`
+- `data_manager.utils.anonymizer.excluded_words`
+- `data_manager.utils.anonymizer.greeting_patterns`
+- `data_manager.utils.anonymizer.signoff_patterns`
+
+Omit the key to get its default; do not write `null` on it. (Four other list-valued keys —
+`categorization.categories`, `jira.projects`, `redmine.projects` and
+`chat_app.alerts.managers` — are written the same way but sit inside a block that does not
+render when the key is absent, so `null` is harmless there.)
+
+`0` is the narrowest of the three. **This change converted four numeric bounds**, listed in
+the table below. Three other numeric keys already preserved a configured `0` before it —
+`data_manager.scrape_workers`, `data_manager.scrape_per_host_workers` and
+`data_manager.sources.links.sitemap.min_pages`, the last of which this page tells you to set
+to `0` further down. Everywhere else a `0` still runs through the old filter and is replaced
+by that key's default: `data_manager.sources.jira.max_tickets: 0` renders as
+`10000000000.0`, and `services.chat_app.num_responses_until_feedback: 0` renders as `3`.
+
+So there is no single rule for `0`. Check the key before writing one and expecting it to
+arrive.
+
+This was not always true. Before the fix in issue #448, a set of boolean flags went through
+a Jinja filter that could not tell `false` from a missing key, so an explicit `false` was
+discarded and the default rendered in its place.
+
+**Rendered is not the same as honored.** This change fixes the rendering. Whether a given
+consumer then acts on the value is a separate question, and for several keys the answer is
+still no — they are listed at the end of this section. Check that list before you rely on a
+flag.
+
+### 21 flags where an explicit `false` was discarded
+
+`false` now reaches the deployed configuration for:
+
+- `services.data_manager.enabled` and `data_manager.reset_collection`
+- `data_manager.embedding_class_map.HuggingFaceEmbeddings.kwargs.encode_kwargs.normalize_embeddings`
+- `data_manager.processing.html_to_markdown.enabled`
+- `enabled` and `visible` on the `local_files`, `links`, `git`, `sso` and `jira` sources,
+  `visible` on `indico`, and `enabled` on `redmine`
+- `data_manager.sources.links.html_scraper.reset_data`
+- `data_manager.sources.redmine.anonymize_data` and `data_manager.sources.elog.verify_ssl`
+- the two `headless` flags, on the CERN SSO scraper and on `indico.sso_kwargs`
+
+`redmine.visible` and `elog.visible` are **not** in this list. Their template expressions
+default to `false`, so an explicit `false` already rendered as `false` before this change
+and their semantics did not move.
+
+### The SSO source becomes a source
+
+This change fixes a second, unrelated defect in the same template, and it is the one most
+likely to change what your next deploy does.
+
+A whitespace-control marker on the line above `sso:` was pulling that key up one level, so
+the rendered config nested it inside `git:` — and the SSO block's own rows landed as
+**duplicate keys inside `git:`**, where YAML's last-wins rule silently replaced Git's:
+
+```yaml
+    git:
+      enabled: True
+      visible: True
+      schedule: ''
+      sso:            # a null key, not a source
+      enabled: True   # SSO's rows, overwriting Git's
+      visible: True
+      schedule: ''
+```
+
+Two consequences, both measured against the template before and after:
+
+| Configuration | Before | After |
+|---|---|---|
+| `sources.git.enabled: false` | rendered `true` — **discarded** | `false` |
+| `sources.git.schedule: "0 3 * * *"` | rendered `''` — **discarded** | `0 3 * * *` |
+| `sources.sso.enabled: false` | `sources.sso` absent entirely | `false` |
+| nothing set | no `sources.sso` key at all | `sso` with `enabled: false` (see below) |
+
+**CAUTION: check your Git source settings before the first deploy after this change.**
+If you had `git.enabled: false` or a `git.schedule`, they were being ignored and now take
+effect — measured through the CLI's own normalised config, not just the bare template.
+
+**SSO does not switch itself on.** The last row above says `false` rather than the
+template's `true` default because `archi create` and `archi evaluate` both call
+`ConfigurationManager.set_sources_enabled()` before rendering
+(`src/cli/cli_main.py:248` and `:879`), and that writes `enabled: false` into every managed
+source the config does not select. A `schedule` alone does not select a source, so an
+omitted `sso.enabled` reaches the template as an explicit `false`. To turn SSO on, set
+`sources.sso.enabled: true`.
+
+**CAUTION: `archi restart --config` does not do that normalisation.** It renders the
+configuration without calling `set_sources_enabled()`, so every source whose `enabled` you
+omitted takes the template default of `true` — and its required credentials are not
+validated, because the source is absent from the enabled-source list the preflight checks.
+That applies to all six managed sources (`local_files`, `links`, `git`, `sso`, `jira`,
+`redmine`), not just SSO, and it means `archi create` and `archi restart --config` can
+produce different deployed configurations from the same input. Tracked as
+[issue #461](https://github.com/fasrc/archi/issues/461). Until it is fixed, write `enabled`
+explicitly on every source you care about rather than relying on the default, and prefer
+`archi create` when changing which sources are on.
+
+Of these, `enabled: false` is acted on by the `git`, `sso`, `indico`, `jira`, `redmine` and
+`elog` collectors, and by the Selenium scraper — with one exception for `git` and `sso`,
+described in the next paragraph.
+
+**CAUTION: a `git-` or `sso-` entry in `input_lists` overrides `enabled: false` for that
+source.** `ScraperManager.collect_all_from_config()` sets `git_enabled = True` when the
+input lists yield any `git-` URL, and `sso_enabled = True` for any `sso-` URL, without
+consulting the flag. ELOG URLs are passed through as `extra_urls` and collected regardless
+of `elog.enabled`. So an ingest can fetch a source you configured as disabled — possibly
+after CLI validation skipped that source's required secrets. To disable one of these,
+remove its entries from `input_lists` as well as setting `enabled: false`. Tracked as
+[issue #460](https://github.com/fasrc/archi/issues/460).
+
+**`anonymize_data: false` is the row to check first.** It was silently ignored before and is
+honored now, and it widens what a reader can see. `visible: false` is the opposite
+direction — but see the list at the end of this section: for most sources it still does not
+reach chat citations, so the upgrade does not remove content there.
+
+### 7 flags where an explicit `null` rendered as the string `'None'`
+
+`null` now renders that flag's documented default as a real boolean:
+
+- `services.benchmarking.anchors.enabled`
+- `services.chat_app.flask_debug_mode` and `services.grader_app.flask_debug_mode`
+- `services.data_manager.auth.enabled`
+- `data_manager.retrievers.hierarchical_rerank.enabled`
+- `data_manager.sources.indico.use_sso` and
+  `data_manager.sources.indico.slide_conversion.enabled`
+
+### 4 numeric bounds where `0` is a request, not an empty value
+
+**The four this change converted.** They are not the only keys where a `0` survives —
+`data_manager.scrape_workers`, `data_manager.scrape_per_host_workers` and
+`data_manager.sources.links.sitemap.min_pages` already did, and still do. Those three are
+supported settings; a `0` on any of them reaches the deployment.
+
+Most other numeric keys still run through the old filter, so a `0` written there is replaced
+by the default — `data_manager.sources.jira.max_tickets: 0` renders as `10000000000.0`, and
+`services.chat_app.num_responses_until_feedback: 0` renders as `3`.
+
+| Key | `0` means | Unset means |
+|---|---|---|
+| `data_manager.sources.links.base_source_depth` | crawl no page at all for this seed | `1` — the seed page alone |
+| `data_manager.sources.links.max_pages` | fetch no pages | no cap |
+| `data_manager.sources.links.sitemap.max_pages` | fail the ingest if the sitemap emits any page | `20000` |
+| `data_manager.sources.elog.max_entries` | fetch no entries | no cap |
+
+Depth counts levels of pages, so `base_source_depth: 1` is the base page on its own and `0`
+is nothing. To index the base page only, write `1`.
+
+**CAUTION: `sitemap.max_pages` is a validation ceiling, not a crawl budget.** It is checked
+after expansion, and a sitemap that emits more pages than the ceiling fails the ingest
+rather than stopping at the limit. `sitemap.min_pages` is the matching floor and defaults to
+`1`. So `sitemap.max_pages: 0` on its own fails every expansion — a non-empty sitemap
+breaches the ceiling, and an empty one falls below the floor. If you mean "assert this
+sitemap is empty", set `min_pages: 0` alongside it. If you mean "crawl fewer pages", this is
+not the key: use `data_manager.sources.links.max_pages`, which is a real budget.
+
+### Flags that render but are not yet acted on
+
+The value reaches the deployed configuration and no consumer acts on it. Do not rely on
+these to turn anything off or to hide anything:
+
+| Key | What ignores it |
+|---|---|
+| `services.data_manager.enabled` | the data-manager service is registered `auto_enable=True`, and the service registry adds every auto-enable service unconditionally, so the container is deployed either way |
+| `data_manager.sources.links.enabled` | `ScraperManager` assigns `links_enabled = True` without reading the config, so link input lists are still crawled |
+| `data_manager.sources.links.html_scraper.reset_data` | no consumer reads it — `ScraperManager` extracts the `html_scraper` block but reads only `verify_urls` and `enable_warnings` when it builds link scrapers |
+| `visible` on `links`, `indico`, `jira`, `redmine` and `elog` | citations are filtered by the `source_type` stored on each document, and these sources persist `source_type` values that are not their config keys — `web` for links, Indico and ELOG, `ticket` for Jira and Redmine. The lookup misses, so the document defaults to visible (and the service logs `Source type … not found in config`). Tracked as [issue #459](https://github.com/fasrc/archi/issues/459) |
+
+`visible: false` **does** work for `git`, `sso` and `local_files`, whose stored
+`source_type` matches the config key.
+
+To keep a link source out of an ingest today, remove it from `input_lists` rather than
+setting `enabled: false`.
+
+`data_manager.sources.local_files.enabled` is **not** in this list: it does have a
+consumer. `stage_local_files_to_volume()` reads it and returns without staging when it is
+`false`, logging `local_files disabled; skipping staging.` The limitation is narrower —
+staging is what it controls, so a volume already populated by an earlier deploy keeps its
+files, and the data manager still ingests whatever is in that volume.
+
 ---
 
 ## Top-Level Fields
@@ -168,7 +365,7 @@ services:
     evaluations:
       enabled: true
       root: /root/archi/evaluations
-      agent_config_path: /root/archi/configs/config.yaml
+      agent_config_path: /root/archi/configs/config.eval.yaml
       mcp_config_path: ../configs/qa_evaluation_mcp.yaml
 ```
 
@@ -179,10 +376,49 @@ services:
   leaves the console disabled.
 - `evaluations.root` is the in-container catalog root for datasets, profiles,
   atom-review drafts, jobs, and run artifacts. Defaults to
-  `/root/archi/evaluations`.
+  `/root/archi/evaluations`. The chat app creates this tree at start-up,
+  parent directories included.
+
+  **Constraint:** `root` must be `/root/archi/evaluations` or a path beneath
+  it (for example `/root/archi/evaluations/trial-a`). The compose bind mount is
+  fixed at `/root/archi/evaluations` — the host volume is attached there and
+  nowhere else. A root set outside that subtree is technically valid YAML, but
+  the path falls in ephemeral container storage: artifacts accumulate during the
+  session and are silently discarded on the next `archi create --force`.
+  `archi create` refuses configs that set `root` outside the mount, so a
+  mistyped root is reported at deploy time instead of quietly writing artifacts
+  to storage that the next redeploy drops.
+
+  !!! warning "The mount is not a backup"
+
+      Keeping `root` inside the mount protects the catalog when a container is
+      recreated or restarted. It does **not** protect it from
+      `archi create --force`: that path calls `remove_existing_deployment()`,
+      which deletes the whole deployment directory — and the host side of this
+      mount, `data/evaluations`, sits inside it. Copy the catalog out of
+      `${ARCHI_DIR:-$HOME/.archi}/archi-<name>/data/evaluations` before a force
+      redeploy if you need to keep it. `ARCHI_DIR` is usually unset, and the CLI
+      then defaults it to `~/.archi`.
+
+  If the root cannot be used at runtime — a read-only mount, or a permission
+  mismatch on the host directory — the console disables itself and chat keeps
+  serving. Look for the start-up error line naming the root, then correct this
+  setting and redeploy to re-enable the console.
 - `evaluations.agent_config_path` is the in-container path to the Archi
-  deployment YAML that defines the agent under test. Defaults to
-  `/root/archi/configs/config.yaml`.
+  deployment YAML that defines the agent under test. This key is **required**
+  when `enabled` is `true`; it has **no default**. `archi create` refuses a
+  config that omits it or that names the live deployment config
+  (`/root/archi/configs/config.yaml`), because every evaluation run copies the
+  named file into the host-mounted run workspace the console serves — credential
+  values included. Use a redacted copy such as
+  `/root/archi/configs/config.eval.yaml` instead. Archi does not generate that
+  copy: place the redacted file in the deployment's own `configs/` directory on
+  the host (`~/.archi/archi-<name>/configs/`, or `$ARCHI_DIR/archi-<name>/configs/`),
+  which Compose mounts at `/root/archi/configs`. A run whose `agent_config_path`
+  names a file that is absent from the container starts and then fails the file
+  check, so confirm the file is in place before the first run. A relative value
+  is read inside the container and so resolves against `/root/archi`, not against
+  the directory `archi create` ran in.
 - `evaluations.mcp_config_path` is needed only for Dataset V2 live oracle
   items. It is an absolute host path or a path relative to this deployment YAML.
   Archi validates and stages the referenced evaluator MCP registry.
@@ -209,6 +445,8 @@ services:
       gemini:
         enabled: true
 ```
+
+The `mode` value is matched without regard to case or surrounding whitespace. Any value other than `ollama` or `openai_compat` is rejected at startup with an error that names the valid values.
 
 ### `services.postgres`
 
@@ -324,17 +562,19 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 
 ### Chunking
 
-Controls how documents are split at ingestion. The default `character` strategy
-uses the flat `chunk_size`/`chunk_overlap` settings above. Setting `strategy` to
-`sentence` or `markdown` enables **hierarchical** parent-child chunking: small
-embedded child nodes linked to larger parent context nodes (the parent text is
-what a hierarchical-rerank retriever returns).
+Controls how the data manager splits documents at ingestion. `sentence` is the
+default: the CLI template renders it when the key is unset, and the data manager also
+falls back to it when a hand-authored config omits the key. `sentence` and the opt-in
+`markdown` strategy both build **hierarchical** parent-child chunks: small embedded
+child nodes linked to larger parent context nodes (the parent text is what a
+hierarchical-rerank retriever returns). The legacy `character` strategy uses the flat
+`chunk_size`/`chunk_overlap` settings above.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `chunking.strategy` | string | `character` | `character` (flat), `sentence`, or `markdown` (both hierarchical) |
-| `chunking.parent_chunk_size` | int | `2048` | Target size of parent context nodes (hierarchical strategies only) |
-| `chunking.child_chunk_size` | int | `512` | Target size of embedded child leaf nodes (hierarchical strategies only) |
+| `chunking.strategy` | string | `sentence` | `sentence` (hierarchical, sentence-aware), `markdown` (hierarchical, header-aware for Markdown files — see below), or `character` (legacy flat chunks) |
+| `chunking.parent_chunk_size` | int | `2048` | Target size in tokens of parent context nodes (hierarchical strategies only) |
+| `chunking.child_chunk_size` | int | `512` | Target size in tokens of embedded child leaf nodes (hierarchical strategies only) |
 
 ```yaml
 data_manager:
@@ -349,6 +589,50 @@ data_manager:
 > deployment's chunking is unchanged. They exist so a benchmark can sweep chunk
 > sizes and recommend defaults from data — see
 > [Benchmarking → Hierarchical-rerank A/B](benchmarking.md#hierarchical-rerank-ab).
+
+#### The `markdown` strategy
+
+`strategy: markdown` is header-aware chunking for Markdown sources. HTML pages that
+`html_to_markdown` converted count as Markdown. The strategy is off by default and
+adds no config keys.
+
+- **Sections become parents.** Each header-delimited section is one parent node. A
+  section longer than `parent_chunk_size` splits into several parents with no overlap,
+  and each parent stays within the budget, separators included. Fenced code blocks
+  stay whole: a fence larger than the budget becomes one oversized parent rather than
+  a bisected one.
+- **Header hierarchy in metadata.** Every parent and child carries
+  `metadata.header_path`, the section's ancestor headers (for example
+  `/Guide/Install/`; `/` for text before the first header and for top-level sections).
+  The key is always present under this strategy.
+- **Per-file dispatch.** Only files whose suffix is `md` or `markdown` (any case, with
+  or without the dot) take the Markdown parser. Every other file chunks with the
+  `sentence` strategy, so a mixed corpus needs no per-source setting.
+- **Child overlap.** Child nodes overlap by 20 tokens, clamped to `child_chunk_size`,
+  on both hierarchical strategies. A `child_chunk_size` below 200 no longer fails
+  ingestion.
+
+> **A strategy change re-chunks nothing already ingested.** The vectorstore diffs by
+> resource hash, and `redeploy.sh` preserves the data volumes, so old and new chunks
+> coexist until you force a re-ingest. Either recreate the data volumes, or delete this
+> collection's rows from `document_chunks` and `document_parent_nodes` and re-run the
+> data manager. Match rows the way the data manager does: `metadata->>'collection'`
+> equal to the collection name **or `IS NULL`**. Rows embedded before collection
+> metadata existed carry `NULL`, and the data manager counts them as this collection's.
+> If they stay, it still sees their hashes as embedded and skips them. Keep the
+> `documents` table: it is the source catalog the data manager reads to decide what to
+> embed, and it has no collection column. If you delete its rows, the corpus becomes
+> empty instead of refreshed.
+
+The collection name is `<collection_name>_with_<embedding_name>`, as logged at startup
+(`VectorStoreManager initialized: collection=...`):
+
+```sql
+DELETE FROM document_parent_nodes
+ WHERE metadata->>'collection' = '<collection>' OR metadata->>'collection' IS NULL;
+DELETE FROM document_chunks
+ WHERE metadata->>'collection' = '<collection>' OR metadata->>'collection' IS NULL;
+```
 
 ### Sources
 
@@ -411,7 +695,7 @@ data_manager:
 | Key | Default | Effect |
 | --- | --- | --- |
 | `html_to_markdown.enabled` | `true` | Convert string HTML content (suffix `html`/`htm`) to ATX Markdown via `markdownify`, flip the suffix and path fields to `.md`, and record `metadata.converted_from = "html"`. The `.md` file then loads through `TextLoader` instead of `BSHTMLLoader`, so headings, lists, tables, and links survive into chunks. For FASRC KB (Echo-KB) pages, the converted Markdown is additionally sliced to the article body between the page's `Table of Contents` and `Bookmarkable Links` (or, when absent, `Last Updated`) landmarks, dropping the surrounding category-filter nav and footer; pages without those landmarks (non-KB sources) keep the full-page conversion. |
-| `categorization.enabled` | `false` | Assign one label from `categories` to each document via an LLM and store it under `metadata.llm_category`. |
+| `categorization.enabled` | `false` | Assign one label from `categories` to each document via an LLM and store it under `metadata.llm_category`. Costs one LLM call per document; **measured at about +19 min per 1091-document ingest with no resolvable retrieval effect** — see "Measured cost" below. |
 | `categorization.provider` / `model` | — | Which chat model to use. `provider` is a key under `services.chat_app.providers`; that block (base_url / mode / models / extra_kwargs) supplies the model's `provider_config`, so a custom local/vLLM endpoint is honored. |
 | `categorization.max_chars` | `4000` | Document content is truncated to this length before the model call (bounds cost/latency). |
 | `categorization.max_concurrency` | `1` | Upper bound on documents in an LLM call at once. Categorization runs inside `persist_resource`, which the scrape phase calls from a pool sized by `scrape_workers` — this knob keeps the request rate to the model provider decided by the model's limits rather than by a fetch-politeness setting. Anything that is not a positive integer coerces to `1`; a bad value never means "unbounded". |
@@ -422,6 +706,26 @@ data_manager:
 - **No-op when disabled.** A **missing** `processing` block means conversion on,
   categorization off (the shipped default). An explicitly all-disabled block makes
   the persistence service behave byte-for-byte identically to the unwrapped service.
+- **Measured cost, and why the default is off.** The 2026-09 feature-matrix campaign
+  ran categorization as its own arm against the baseline, on a 1091-document corpus.
+  Ingest took 3802 s with the feature off against 4956 s with it on — **about 19
+  minutes**, one LLM call per document at `max_concurrency: 1`. Enabling the feature
+  adds about 30 % to ingest; disabling it saves about 23 %. Read the figure as
+  approximate: the two arms did not ingest identical corpora (6926 chunks against
+  6896, 0.43 % apart), and the campaign therefore calls the comparison "not a clean
+  isolation". No quality delta came out of the noise — `context_precision` moved
+  −0.004 / −0.002 against a minimum detectable effect of 0.025 / 0.027, and source
+  accuracy was 0.868 / 0.840 against a baseline of 0.868 (McNemar p = 1 / 0.38).
+  Measurement table: [Categories action plan](proposals/categories-action-plan.md).
+- **The label is reachable, but nothing on the default path reads it.**
+  `metadata.llm_category` has one writer, `CategorizationProcessor`. No retriever,
+  prompt or embedding path consumes it. It is not unreachable, though:
+  `_build_extra_text` writes `llm_category:<value>` into the `extra_text` column, and
+  `CatalogPostgres.search_metadata` matches any key outside `_METADATA_COLUMN_MAP` by
+  substring over that column, so an agent calling `search_metadata_index` can filter on
+  it. Nothing tells the model the vocabulary, so the campaign result means the label did
+  not help **as wired and as prompted** — not that no reader exists. Enable the feature
+  once something reads the label on purpose.
 - **Never blocks ingest.** A conversion that raises, or that yields blank/whitespace
   Markdown (e.g. a script-only page), keeps the original resource. A categorization
   error never raises and defaults to `uncategorized`.
@@ -436,6 +740,36 @@ data_manager:
   set (e.g. the Indico event category) and is silent on pages without a breadcrumb.
   Like the body slice, it takes effect only on **newly** ingested documents or when an
   already-persisted document is force-overwritten — see *Applying to an existing
+  corpus* below.
+- **Multi-line code becomes a fenced block.** A `<code>` element with no `<pre>`
+  ancestor that contains a `<br>` is a code listing, not an inline span. The conversion
+  wraps it in a `<pre>` before `markdownify` runs, so it becomes a fenced code block and
+  no comment line inside it parses as a heading (issue #399). The fence gets an
+  infostring only when a class on the element is one of `bash`, `sh`, `spec`, `lua`,
+  `python`, `c`, `cpp`, `fortran`, `r`, `perl`, `json`, `yaml`, `text`; any other class
+  gives a bare fence. A source newline next to a `<br>` (WordPress emits `<br />\n`) is
+  dropped, so the fence has no blank line between code lines. Native `<pre>` blocks and
+  single-line inline `<code>` convert as before. Like the body slice, the change reaches
+  disk only for new or force-overwritten documents — see *Applying to an existing
+  corpus* below.
+- **A promoted block leaves its inline ancestors.** When that multi-line `<code>` sits
+  inside `<a>`, `<b>`, `<strong>`, `<em>`, `<i>`, `<del>`, `<s>`, `<kbd>`, `<samp>`,
+  `<sub>` or `<sup>`, the conversion splits the ancestor around the block instead of
+  leaving the fence inside its markers (issue #406): the text before the block keeps its
+  markup, the fence stands on its own, and the text after the block continues in a fresh
+  copy of the same tag with the same attributes. A link therefore renders as two links
+  with the same `href` around the fence, a bold or italic run resumes after it, and an
+  ancestor left with no content is dropped. Whitespace that touches the cut is removed,
+  so no line beside the fence begins or ends with a stray space. The shape is rare in the
+  FASRC KB (0 of 25 sampled multi-line code elements) and, like every item in this list,
+  it reaches disk only for new or force-overwritten documents.
+- **Content after a nested list starts on its own line.** `markdownify` drops the newline
+  after a list nested inside a list item, so the text, inline element, or sibling item
+  that followed it was glued onto the nested list's last line — onto a closing code fence
+  when the last nested item ends in a code block (issue #410); the conversion puts that
+  newline back when the follower does not start a new line by itself, and a following
+  paragraph, code block, heading, or list is unchanged; like the body slice, the change
+  reaches disk only for new or force-overwritten documents — see *Applying to an existing
   corpus* below.
 - **Cost.** Categorization issues one LLM call per document — expensive on large
   crawls, hence off by default.

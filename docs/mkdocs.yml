@@ -19,6 +19,7 @@ nav:
   - Advanced Setup: advanced_setup_deploy.md
   - Adding Providers: adding_providers.md
   - Developer Guide: developer_guide.md
+  - Observability: observability.md
   - Troubleshooting: troubleshooting.md
 theme: readthedocs
 markdown_extensions:

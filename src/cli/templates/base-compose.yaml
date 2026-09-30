@@ -41,6 +41,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-data-manager
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -139,6 +143,10 @@ services:
       db-migrate:
         condition: service_completed_successfully
     environment:
+      # No OTEL_SERVICE_NAME here on purpose. This block runs
+      # `python -m src.cli.tools.config_seed`, and that module never calls
+      # setup_logging() or init_telemetry(), so nothing in it would start a tracer.
+      # A name here would advertise a traced service that emits nothing.
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -146,6 +154,17 @@ services:
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
       CONFIG_PATH: /rendered-config/config.yaml
+      # Config provenance, exported by ensure_config (deploy/scripts/lib.sh) and
+      # passed through from the deploy environment so config_seed can persist
+      # which config actually deployed. CONFIG_REF is otherwise a shell variable
+      # that never enters a container. Empty when `archi create` is run by hand
+      # rather than through the deploy scripts; the record then stores NULLs and
+      # the status board reports provenance as unavailable.
+      ARCHI_CONFIG_REF: ${ARCHI_CONFIG_REF:-}
+      ARCHI_CONFIG_SHA: ${ARCHI_CONFIG_SHA:-}
+      ARCHI_CONFIG_HEAD: ${ARCHI_CONFIG_HEAD:-}
+      ARCHI_CONFIG_PIN_MATCHED: ${ARCHI_CONFIG_PIN_MATCHED:-}
+      ARCHI_CONFIG_DIRTY_PATHS: ${ARCHI_CONFIG_DIRTY_PATHS:-}
     env_file:
       - .env
     volumes:
@@ -212,6 +231,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-chat
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -340,7 +363,18 @@ services:
       PGUSER: archi
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
+    # CAUTION: this is the grader's SECOND `environment:` key. YAML keeps the last
+    # one, so the block above -- PGHOST, PGPORT, PGDATABASE, PGUSER, PG_PASSWORD --
+    # is discarded when the compose file is parsed. That is a pre-existing defect,
+    # tracked as fasrc/archi#452,
+    # and it is not fixed here, because restoring those variables changes how the
+    # grader reaches Postgres and needs its own change and its own deploy check.
+    # OTEL_SERVICE_NAME sits in this block because this is the block that survives.
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-grader
       {{ dev_env() }}
       {% for secret in required_secrets | default([]) -%}
       {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
@@ -423,6 +457,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-piazza
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -475,6 +513,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-mattermost
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -551,6 +593,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-redmine
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -616,6 +662,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-mailbox
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db
@@ -682,6 +732,10 @@ services:
         condition: service_completed_successfully
     {% endif -%}
     environment:
+      # One service name per process: the services share one .env file, so the
+      # name cannot live there. src/utils/telemetry.py falls back to the
+      # entrypoint script name for a process compose did not start.
+      OTEL_SERVICE_NAME: archi-benchmark
       PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
       PGPORT: {{ postgres_port }}
       PGDATABASE: archi-db

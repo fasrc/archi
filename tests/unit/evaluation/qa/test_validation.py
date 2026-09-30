@@ -76,15 +76,6 @@ class TestDatasetValidation:
                     "question": "Q",
                     "answer": "A",
                     "time_sensitive": False,
-                    "expected_answer": "legacy",
-                },
-                r"unknown field\(s\): expected_answer",
-            ),
-            (
-                {
-                    "question": "Q",
-                    "answer": "A",
-                    "time_sensitive": False,
                     "expected_atoms": [],
                 },
                 "at least one atom",
@@ -133,8 +124,7 @@ class TestDatasetValidation:
             "id": "second",
             "question": "Q2",
             "answer": "A2",
-            "time_sensitive": False,
-            "unknown": "field",
+            "time_sensitive": "notabool",
         }
         if suffix == ".json":
             path.write_text(json.dumps([valid, invalid]), encoding="utf-8")
@@ -147,7 +137,7 @@ class TestDatasetValidation:
         items = iter_dataset_items(path)
 
         assert next(items).id == "first"
-        with pytest.raises(ValueError, match="unknown field.*unknown"):
+        with pytest.raises(ValueError, match="time_sensitive must be a boolean"):
             next(items)
 
     @pytest.mark.parametrize("suffix", [".json", ".jsonl"])
@@ -259,8 +249,7 @@ class TestDatasetValidation:
                     "id": "second",
                     "question": "Q2",
                     "answer": "A2",
-                    "time_sensitive": False,
-                    "unknown": "field",
+                    "time_sensitive": "notabool",
                 }
             )
             + "\n",
@@ -303,7 +292,7 @@ class TestDatasetValidation:
 
         assert next(items).id == "first"
         assert consumed_lines == rows[:1]
-        with pytest.raises(ValueError, match="unknown field.*unknown"):
+        with pytest.raises(ValueError, match="time_sensitive must be a boolean"):
             next(items)
         assert consumed_lines == rows
 

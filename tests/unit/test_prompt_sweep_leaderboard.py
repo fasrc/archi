@@ -30,8 +30,15 @@ def _make_record(
     queries_path="config/benchmarking/queries.json",
     n_questions=3,
     include_name=True,
+    ragas_effective_settings=None,
+    judge_block=None,
 ):
-    """Build a ResultHandler.results record shaped like handle_results writes."""
+    """Build a ResultHandler.results record shaped like handle_results writes.
+
+    ``judge_block`` is merged into the configuration's ``ragas_settings`` -- what
+    the file asked for. ``ragas_effective_settings`` is what the judge ran with,
+    or None when no judge ran; handle_results always writes the key.
+    """
     total_results = {}
     for key, value in (
         ("aggregate_answer_relevancy", answer_relevancy),
@@ -54,6 +61,8 @@ def _make_record(
         benchmarking["mode_settings"]["ragas_settings"][
             "enabled_metrics"
         ] = enabled_metrics
+    if judge_block:
+        benchmarking["mode_settings"]["ragas_settings"].update(judge_block)
     if include_name:
         benchmarking["name"] = name
 
@@ -62,6 +71,7 @@ def _make_record(
         "total_results": total_results,
         "configuration_file": f"/tmp/{name}.yaml",
         "configuration": {"services": {"benchmarking": benchmarking}},
+        "ragas_effective_settings": ragas_effective_settings,
     }
 
 
@@ -280,6 +290,186 @@ def test_shared_context_flags_model_drift():
     assert any("model" in w for w in ctx["warnings"])
     # rows still emitted despite drift
     assert len(lb["rows"]) == 2
+
+
+# -- 4.7 judge pressure comes from the record, never from the block -----------
+
+
+def test_shared_context_omits_judge_pressure_when_no_judge_ran():
+    """A SOURCES-only sweep records ``ragas_effective_settings: null`` on every
+    arm. The leaderboard beside those records must not claim a worker count and
+    a timeout for a judge that never ran. The block is always rendered, so its
+    presence says nothing about whether a judge ran."""
+    ResultHandler.results = [
+        _make_record(
+            "a",
+            "p/a.md",
+            judge_block={"max_workers": 4, "timeout": 600},
+            ragas_effective_settings=None,
+        ),
+        _make_record(
+            "b",
+            "p/b.md",
+            judge_block={"max_workers": 4, "timeout": 600},
+            ragas_effective_settings=None,
+        ),
+    ]
+    ctx = ResultHandler.build_leaderboard()["shared_context"]
+    assert ctx["judge_max_workers"] is None
+    assert ctx["judge_timeout"] is None
+    assert ctx["warnings"] == []
+
+
+def test_incomparability_reason_names_the_predicate_that_failed():
+    """The operator is told what to investigate, not a guess.
+
+    The A/B warning hardcoded corpus provenance, so an operator whose arms were
+    withheld purely over judge pressure was sent to inspect the corpus. One
+    source of truth: ``arms_comparable`` is this function returning None.
+    """
+    same_corpus = {"corpus_fingerprint": "c1", "corpus_unchanged_at_endpoints": True}
+    judged_16 = {
+        **same_corpus,
+        "ragas_effective_settings": {"max_workers": 16, "timeout": 600},
+    }
+    judged_4 = {
+        **same_corpus,
+        "ragas_effective_settings": {"max_workers": 4, "timeout": 600},
+    }
+
+    assert ResultHandler.arms_incomparability_reason([judged_16, judged_16]) is None
+
+    judge_reason = ResultHandler.arms_incomparability_reason([judged_16, judged_4])
+    assert judge_reason and "judge" in judge_reason
+    assert "corpus" not in judge_reason
+
+    corpus_reason = ResultHandler.arms_incomparability_reason(
+        [judged_16, {**judged_16, "corpus_fingerprint": "c2"}]
+    )
+    assert corpus_reason and "corpus" in corpus_reason
+
+    # arms_comparable stays the boolean view of the same predicate.
+    assert ResultHandler.arms_comparable([judged_16, judged_4]) is False
+    assert ResultHandler.arms_comparable([judged_16, judged_16]) is True
+
+
+def test_rank_label_renders_a_withheld_rank_without_percent_d():
+    """A withheld rank must survive the console table.
+
+    The rows are logged with a ``%-4d`` positional. ``'%d' % None`` raises, and
+    ``logging`` swallows that in ``handleError`` rather than aborting, so the
+    symptom is not a crash but every leaderboard row VANISHING from the console
+    -- in exactly the incomparable case the guard exists to report. Same failure
+    mode ``ab_summary_line`` already documents for withheld winners.
+    """
+    assert ResultHandler.leaderboard_rank_label(1) == "1"
+    assert ResultHandler.leaderboard_rank_label(12) == "12"
+
+    label = ResultHandler.leaderboard_rank_label(None)
+    assert label and not label.isdigit()
+    # It has to survive the formatter that broke on None.
+    assert "%-4s" % label
+
+
+def test_ranks_are_withheld_when_judge_concurrency_differs():
+    """Differing judge pressure is a reason to withhold, not merely to warn.
+
+    ``max_workers`` decides how hard the judge is driven, and a throttled judge
+    loses rows to timeouts, so two arms judged at different concurrency have
+    different score coverage for reasons that have nothing to do with the arms.
+    Recording the drift in ``shared_context`` is not enough: ``rank`` is what a
+    consumer reads, and a warning it never sees cannot stop it.
+    """
+    ResultHandler.results = [
+        _make_record(
+            "a", "p/a.md", ragas_effective_settings={"timeout": 600, "max_workers": 16}
+        ),
+        _make_record(
+            "b", "p/b.md", ragas_effective_settings={"timeout": 600, "max_workers": 4}
+        ),
+    ]
+    lb = ResultHandler.build_leaderboard()
+
+    assert all(row["rank"] is None for row in lb["rows"])
+    assert any("judge" in w for w in lb["shared_context"]["warnings"])
+
+
+def test_ranks_survive_when_judge_concurrency_matches():
+    """The guard must not withhold a legitimately controlled comparison."""
+    ResultHandler.results = [
+        _make_record(
+            "a", "p/a.md", ragas_effective_settings={"timeout": 600, "max_workers": 4}
+        ),
+        _make_record(
+            "b", "p/b.md", ragas_effective_settings={"timeout": 600, "max_workers": 4}
+        ),
+    ]
+    lb = ResultHandler.build_leaderboard()
+
+    assert all(row["rank"] is not None for row in lb["rows"])
+
+
+def test_mixed_judge_participation_warns_and_withholds():
+    """One arm judged and one not is the starkest pressure difference there is.
+
+    Adding pressure only for the judged record let the reduction see a single
+    value and call it shared, so the sweep reported a worker count as common to
+    arms one of which never built a RunConfig.
+    """
+    ResultHandler.results = [
+        _make_record(
+            "a", "p/a.md", ragas_effective_settings={"timeout": 600, "max_workers": 4}
+        ),
+        _make_record("b", "p/b.md", ragas_effective_settings=None),
+    ]
+    lb = ResultHandler.build_leaderboard()
+
+    assert any("judge" in w for w in lb["shared_context"]["warnings"])
+    assert all(row["rank"] is None for row in lb["rows"])
+
+
+def test_shared_context_reads_judge_pressure_from_the_record():
+    """The record holds what the judge ran with; the block holds what the file
+    asked for. When the two differ, the leaderboard reports the record."""
+    ResultHandler.results = [
+        _make_record(
+            "a",
+            "p/a.md",
+            judge_block={"max_workers": 4},
+            ragas_effective_settings={"timeout": 300, "max_workers": 8},
+        ),
+        _make_record(
+            "b",
+            "p/b.md",
+            judge_block={"max_workers": 4},
+            ragas_effective_settings={"timeout": 300, "max_workers": 8},
+        ),
+    ]
+    ctx = ResultHandler.build_leaderboard()["shared_context"]
+    assert ctx["judge_max_workers"] == 8
+    assert ctx["judge_timeout"] == 300
+    assert ctx["warnings"] == []
+
+
+def test_shared_context_flags_judge_pressure_drift_between_records():
+    """Two arms judged under different effective concurrency are flagged even
+    when their configuration blocks read alike."""
+    ResultHandler.results = [
+        _make_record(
+            "a",
+            "p/a.md",
+            ragas_effective_settings={"timeout": 180, "max_workers": 4},
+        ),
+        _make_record(
+            "b",
+            "p/b.md",
+            ragas_effective_settings={"timeout": 180, "max_workers": 16},
+        ),
+    ]
+    ctx = ResultHandler.build_leaderboard()["shared_context"]
+    assert ctx["judge_max_workers"] == ["16", "4"]
+    assert ctx["judge_timeout"] == 180
+    assert any("judge_max_workers" in w for w in ctx["warnings"])
 
 
 # -- answer_correctness on the leaderboard ------------------------------------

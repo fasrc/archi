@@ -4,7 +4,7 @@
 A dev redeploy SHALL guarantee that, after configuration is rendered, the config is re-seeded into Postgres `static_config` AND the chat service process is recreated so it re-reads the new config — regardless of the ambient `ARCHI_COMPOSE_UP_FLAGS` value and regardless of whether the operator also issued a bare container restart. The re-seed-then-restart SHALL be sequenced (seed completes before the chat process starts) via the existing `config-seed → chatbot` dependency. Postgres and ingested-corpus data volumes SHALL be preserved and their containers SHALL NOT be force-recreated by this step.
 
 #### Scenario: Redeploy after a provider config change
-- **WHEN** an operator changes `services.chat_app.providers.local.extra_kwargs` in `config.yaml` and runs `deploy/fasrc-dev/scripts/redeploy.sh`
+- **WHEN** an operator changes `services.chat_app.providers.local.extra_kwargs` in `config.yaml` and runs `deploy/scripts/redeploy.sh`
 - **THEN** the `config-seed` one-shot container SHALL re-run and UPSERT the new value into Postgres `static_config`
 - **AND** the `chatbot` container SHALL be recreated (new `StartedAt`) and read the re-seeded config at boot
 - **AND** the `postgres` and `data-manager` containers SHALL NOT be recreated and their data volumes SHALL remain intact

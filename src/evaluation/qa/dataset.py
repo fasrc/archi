@@ -36,6 +36,15 @@ COMMON_ITEM_FIELDS = {
 V1_ITEM_FIELDS = COMMON_ITEM_FIELDS
 V2_ITEM_FIELDS = COMMON_ITEM_FIELDS | {"oracle"}
 
+# The RAGAS authoring dialect's names for question and answer. The import
+# adapter (catalog._normalize_import_dialect) consumes them when it maps a
+# bank; anywhere else the row parser REFUSES them rather than carrying them,
+# because the benchmark harness resolves these names in preference to the
+# native ones — a carried alias would let one saved dataset score as
+# different content in the console and in RAGAS. This is a blocklist, not an
+# alias table: the parser still knows exactly one name per concept.
+RAGAS_ALIAS_FIELDS = {"user_input": "question", "reference": "answer"}
+
 
 class DatasetSchemaVersion(str, Enum):
     V1 = "qa-dataset-v1"
@@ -77,6 +86,10 @@ class DatasetItem:
     oracle: Optional[OracleRecipe] = None
     schema_version: DatasetSchemaVersion = DatasetSchemaVersion.V1
     state: Optional[DatasetItemState] = None
+    # Row fields outside the known set, carried through untouched on behalf of
+    # other consumers of the file (the RAGAS golden-set bank). Never read by
+    # preparation, running or scoring.
+    extra: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         if self.state is None:
@@ -485,10 +498,55 @@ class DatasetVersionResolver:
         raise ValueError("dataset container has no supported schema version")
 
 
-def _strict_row_keys(raw: Dict[str, Any], allowed: set, context: str) -> None:
-    unknown = sorted(set(raw) - allowed)
-    if unknown:
-        raise ValueError(f"{context} has unknown field(s): {', '.join(unknown)}")
+def _within_edit_distance_one(candidate: str, target: str) -> bool:
+    length_delta = len(candidate) - len(target)
+    if abs(length_delta) > 1:
+        return False
+    if length_delta == 0:
+        return sum(a != b for a, b in zip(candidate, target)) <= 1
+    shorter, longer = sorted((candidate, target), key=len)
+    prefix = 0
+    while prefix < len(shorter) and shorter[prefix] == longer[prefix]:
+        prefix += 1
+    return shorter[prefix:] == longer[prefix + 1 :]
+
+
+def _carry_row_extras(
+    raw: Dict[str, Any], allowed: set, context: str
+) -> Optional[Dict[str, Any]]:
+    """Split unknown row keys into a carried extras mapping.
+
+    A key within edit distance 1 of a known field is a probable typo, and for
+    `expected_atoms` a silently absent field hands atom authorship to the
+    extractor model — so near-misses are refused rather than carried.
+    """
+    extras: Dict[str, Any] = {}
+    for key in raw:
+        if key in allowed:
+            continue
+        alias_native = RAGAS_ALIAS_FIELDS.get(key)
+        if alias_native is not None:
+            raise ValueError(
+                f"{context} carries '{key}', the RAGAS-dialect name for "
+                f"'{alias_native}'; rename the field or import the file as a "
+                "RAGAS bank"
+            )
+        near_misses = sorted(
+            field for field in allowed if _within_edit_distance_one(key, field)
+        )
+        if near_misses:
+            raise ValueError(
+                f"{context} has unknown field '{key}' "
+                f"(did you mean '{near_misses[0]}'?)"
+            )
+        extras[key] = raw[key]
+    if not extras:
+        return None
+    # Same JSON-value validation the known structured fields get: a lone
+    # surrogate or NUL that parses today would fail only later, at
+    # child-save or canonical-serialization time.
+    validate_json_value(extras, context)
+    return extras
 
 
 def _common_fields(raw: Dict[str, Any], context: str) -> Dict[str, Any]:
@@ -518,7 +576,7 @@ class V1DatasetReader:
         context = f"dataset row {index}"
         if not isinstance(raw, dict):
             raise ValueError(f"{context} must be an object")
-        _strict_row_keys(raw, V1_ITEM_FIELDS, context)
+        extra = _carry_row_extras(raw, V1_ITEM_FIELDS, context)
         common = _common_fields(raw, context)
         answer = validate_nonempty_string(
             raw.get("answer"), f"{context}.answer", normalize_newlines=True
@@ -539,6 +597,7 @@ class V1DatasetReader:
             answer=answer,
             expected_atoms=atoms,
             schema_version=DatasetSchemaVersion.V1,
+            extra=extra,
             **common,
         )
 
@@ -551,7 +610,7 @@ class V2DatasetReader:
         context = f"dataset row {index}"
         if not isinstance(raw, dict):
             raise ValueError(f"{context} must be an object")
-        _strict_row_keys(raw, V2_ITEM_FIELDS, context)
+        extra = _carry_row_extras(raw, V2_ITEM_FIELDS, context)
         common = _common_fields(raw, context)
         item_id = validate_nonempty_string(raw.get("id"), f"{context}.id")
         time_sensitive = common["time_sensitive"]
@@ -573,6 +632,7 @@ class V2DatasetReader:
                 answer=answer,
                 expected_atoms=atoms,
                 schema_version=DatasetSchemaVersion.V2,
+                extra=extra,
                 **common,
             )
         if "oracle" not in raw:
@@ -587,6 +647,7 @@ class V2DatasetReader:
                 expected_atoms=None,
                 oracle=recipe,
                 schema_version=DatasetSchemaVersion.V2,
+                extra=extra,
                 **common,
             )
         if has_atoms and not has_answer:
@@ -614,6 +675,7 @@ class V2DatasetReader:
             ),
             oracle=recipe,
             schema_version=DatasetSchemaVersion.V2,
+            extra=extra,
             **common,
         )
 
@@ -754,6 +816,9 @@ def dataset_item_to_dict(item: DatasetItem) -> Dict[str, Any]:
         value["expected_atoms"] = [atom.to_dict() for atom in item.expected_atoms]
     if item.oracle is not None:
         value["oracle"] = item.oracle.to_dict()
+    if item.extra:
+        for name, extra_value in item.extra.items():
+            value[name] = deepcopy(extra_value)
     return value
 
 

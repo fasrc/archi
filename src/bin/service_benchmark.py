@@ -8,10 +8,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
-from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -21,12 +20,20 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
+from src.archi.providers.local_provider import normalize_base_url
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
 from src.utils.benchmark_provenance import (
     asserted_config_divergence,
+    canonical_source_url,
+    category_map_text,
     collect_code_version,
+    collection_readiness,
     config_version,
-    corpus_fingerprint,
+    live_category_map,
+    live_corpus_fingerprint,
+    prompt_text_sha256,
+    retrieval_identity,
+    retrieval_record,
 )
 from src.utils.benchmark_resilience import (
     OK,
@@ -40,14 +47,18 @@ from src.utils.benchmark_resilience import (
 )
 from src.utils.benchmark_schema import (
     DEFAULT_ENABLED_METRICS,
+    json_safe,
     normalize_bank,
+    ragas_effective_settings,
+    ragas_run_config_kwargs,
     required_fields_for_modes,
     score_metrics_per_eligibility,
+    with_effective_ragas_settings,
 )
 from src.utils.config_access import get_static_config
 from src.utils.env import read_secret
 from src.utils.generate_benchmark_report import (
-    format_html_output,
+    format_markdown_output,
     parse_benchmark_results,
 )
 from src.utils.logging import get_logger, setup_logging
@@ -72,56 +83,10 @@ EXTRA_METADATA_PATH = "/root/archi/git_info.yaml"
 PACKAGE_DIR = str(Path(__file__).resolve().parent.parent)
 OUTPUT_DIR = Path(OUTPUT_PATH)
 
-# The corpus's retrievable state, as opaque (key, value) pairs for
-# `corpus_fingerprint`. Every row is keyed by `documents.resource_hash`, never by
-# a SERIAL row id: two ingests of an identical corpus -- a rebuilt deployment, a
-# re-seeded database -- get different serials, so keying by `document_id` made the
-# cross-run comparison this field exists for impossible, rejecting runs that were
-# in fact comparable.
-#
-# Three kinds of row, because retrieval reads all three:
-#
-#   doc     the live document list and byte sizes.
-#   chunk   per-chunk content digests. `resource_hash` is `md5(url)`, an identity
-#           hash deliberately stable across content updates, so the document list
-#           alone would miss an edit that preserved the byte count. Hashing per
-#           chunk index also catches re-chunking.
-#   parent  `document_parent_nodes.parent_text`, plus the ordered list of child
-#           chunk indexes grouped under it. Under `hierarchical_rerank` -- enabled
-#           for every chunk in the FASRC deployment -- what reaches the agent is
-#           the parent text, not the leaf chunks, and parents are neither embedded
-#           nor indexed so no other part of this query sees them. Hashing leaves
-#           alone would certify two arms as having seen the same corpus while the
-#           context they were given differed. The child list is folded in because
-#           re-grouping children changes that context even when every individual
-#           text is untouched.
-#
-# Deleted documents are excluded from all three: soft-deleted rows stay in the
-# tables but are not part of the corpus.
-CORPUS_STATE_QUERY = """
-SELECT 'doc:' || d.resource_hash, d.size_bytes::text
-FROM documents d
-WHERE d.is_deleted = FALSE
-UNION ALL
-SELECT 'chunk:' || d.resource_hash || ':' || c.chunk_index::text,
-       md5(c.chunk_text)
-FROM document_chunks c
-JOIN documents d ON d.id = c.document_id
-WHERE d.is_deleted = FALSE
-UNION ALL
-SELECT 'parent:' || d.resource_hash || ':' || p.parent_index::text,
-       md5(
-           p.parent_text || '|' ||
-           COALESCE(
-               string_agg(c.chunk_index::text, ',' ORDER BY c.chunk_index), ''
-           )
-       )
-FROM document_parent_nodes p
-JOIN documents d ON d.id = p.document_id
-LEFT JOIN document_chunks c ON c.metadata->>'parent_id' = p.id::text
-WHERE d.is_deleted = FALSE
-GROUP BY d.resource_hash, p.parent_index, p.parent_text
-"""
+# The corpus fingerprint and the category map are read through the shared
+# routines in src.utils.benchmark_provenance (fingerprint v2, #570): scoped to
+# the collection the arm's running config searches, and identical to what the
+# QA workflow, the feature-matrix sweep, and the census compute.
 
 #: Distinguishes a provenance field that was never recorded (a result file
 #: written before provenance existed) from one recorded as undetermined.
@@ -172,8 +137,22 @@ class ABResult:
     llm_judge_pairwise: Dict[str, Any] = field(default_factory=dict)
 
 
+def _factory_pool():
+    """The pool `_init_runtime` installed on the factory, or a clear error."""
+    factory = PostgresServiceFactory.get_instance()
+    if factory is None:
+        raise RuntimeError(
+            "PostgresServiceFactory is not initialized; _init_runtime() "
+            "installs it when this module is run as a script"
+        )
+    return factory.connection_pool
+
+
 class ResultHandler:
     results = []  # store the results for each config
+    # Parallel to `results`: each arm's end-reading category-map records, or None
+    # when that reading failed. Kept out of the JSON; dump_artifacts writes them.
+    category_map_records_by_arm: List[Optional[List[str]]] = []
     metadata = {}  # store the metadata about the benchmark run
     ab_comparison: Dict[str, Any] = (
         {}
@@ -212,8 +191,16 @@ class ResultHandler:
         )
 
     @staticmethod
-    def arms_comparable(records: List[Dict[str, Any]]) -> bool:
-        """Can these arms' scores be set against each other?
+    def arms_incomparability_reason(
+        records: List[Dict[str, Any]],
+    ) -> Optional[str]:
+        """Why these arms' scores cannot be set against each other, or None.
+
+        Returns the reason rather than a bare boolean so the operator-facing
+        warnings can name the predicate that actually failed: the A/B message
+        used to blame corpus provenance unconditionally, sending an operator
+        whose arms were withheld purely over judge pressure to inspect the
+        corpus.
 
         Only when, for every arm, the corpus provenance is established, they all
         observed the same corpus, and the arm actually ran the settings it was
@@ -236,16 +223,71 @@ class ResultHandler:
         comparable: historical sweeps are not retroactively invalidated.
         """
         fingerprints = set()
+        # How hard the judge was driven is a condition of the measurement, not a
+        # detail of it: `max_workers` decides how often the judge throttles into
+        # backoff, the backoff eats the per-row timeout budget, and the row is
+        # dropped unscored. Two arms judged at different concurrency therefore
+        # differ in score COVERAGE for reasons that have nothing to do with the
+        # arms. Recording the drift in the leaderboard's shared context is not a
+        # guard -- `rank` is what a consumer reads, and a warning it never sees
+        # cannot stop it -- so the pressure has to reach this predicate.
+        #
+        # `None` is a value here, not an absence: it says no judge ran, which is
+        # the starkest pressure difference there is against an arm that was
+        # judged. Only a wholly ABSENT key is skipped, and only because it
+        # predates the field.
+        judge_pressures = set()
         for record in records:
             stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is not _NOT_RECORDED and stability is not True:
-                return False
+                return "the corpus was not stable across an arm's own questions"
             if record.get("configuration_divergence"):
-                return False
+                return "an arm did not run the settings it was selected to run"
             fingerprint = record.get("corpus_fingerprint")
             if fingerprint is not None:
                 fingerprints.add(fingerprint)
-        return len(fingerprints) <= 1
+            pressure = record.get("ragas_effective_settings", _NOT_RECORDED)
+            if pressure is _NOT_RECORDED:
+                continue
+            judge_pressures.add(
+                None
+                if pressure is None
+                else (pressure.get("max_workers"), pressure.get("timeout"))
+            )
+        if len(judge_pressures) > 1:
+            return (
+                "the arms were scored under different judge pressure "
+                "(concurrency, per-row budget, or one arm was not judged), "
+                "so their scored denominators are not comparable"
+            )
+        if len(fingerprints) > 1:
+            return (
+                "corpus provenance does not establish that both arms were "
+                "scored against the same documents"
+            )
+        return None
+
+    @staticmethod
+    def arms_comparable(records: List[Dict[str, Any]]) -> bool:
+        """The boolean view of ``arms_incomparability_reason``.
+
+        One predicate, two shapes: callers that only gate use this, callers
+        that also report use the reason. They cannot drift apart.
+        """
+        return ResultHandler.arms_incomparability_reason(records) is None
+
+    @staticmethod
+    def leaderboard_rank_label(rank: Optional[int]) -> str:
+        """A rank rendered for the console table, withheld ranks included.
+
+        The table's positional was ``%-4d``. ``'%d' % None`` raises, and
+        ``logging`` catches that in ``handleError`` rather than aborting the
+        run, so a withheld rank did not crash -- it made every leaderboard row
+        DISAPPEAR from the console, in exactly the incomparable case the
+        withholding exists to report. ``ab_summary_line`` documents the same
+        failure mode for withheld winners; this is its leaderboard sibling.
+        """
+        return "-" if rank is None else str(rank)
 
     @staticmethod
     def ab_summary_line(
@@ -274,41 +316,31 @@ class ResultHandler:
         )
 
     @staticmethod
-    def get_corpus_fingerprint() -> str:
-        """Digest of the live corpus, or a marker explaining why it is missing.
+    def get_corpus_fingerprint(config: Optional[Dict[str, Any]]) -> str:
+        """Digest of the searched corpus, or a marker explaining why it is missing.
 
         Unlike the per-invocation nonce above, equal digests mean equal corpora,
         so "these arms were scored against the same documents" becomes a
         checkable claim.
 
-        Covers the retrievable state, not just the document list -- see
-        ``CORPUS_STATE_QUERY`` for what is hashed and why. Re-embedding the same
-        text with a different model is NOT covered; that appears as a divergence
-        on ``data_manager.embedding_name`` in the recorded configuration.
+        *config* is the running config; it names the collection. The digest is
+        ``live_corpus_fingerprint``'s v2 digest -- see ``CORPUS_STATE_V2_QUERY``
+        for what is hashed and why. Re-embedding the same text with a different
+        model is NOT covered, on purpose: ``retrieval_identity.embedding_model``
+        records the model, checked against the chunks' tags.
 
         Reads through the pool the run actually opened -- the one `_init_runtime`
         installed on PostgresServiceFactory -- and NOT `ConnectionPool.get_instance`.
-        The two are unrelated singletons: the factory builds its pools directly
-        (`from_config`, and the lazy `connection_pool` property), so nothing ever
-        populates `ConnectionPool._instance`, and asking it for the pool raised
-        `ValueError` on every real run. Because provenance failure is swallowed
-        below, that filed an unavailable-marker instead of crashing, so the field
-        was inert wherever it was consumed while the unit tests stayed green --
-        they monkeypatched the very call that could not work (#273).
+        The two are unrelated singletons: nothing ever populates
+        `ConnectionPool._instance`, and asking it for the pool raised `ValueError`
+        on every real run while the unit tests stayed green (#273).
 
         Never raises: a finished benchmark must not lose its scores because
-        provenance could not be collected. It does now warn, because an artifact
-        key nobody thinks to check is how the inert version survived review.
+        provenance could not be collected. It warns, because an artifact key
+        nobody thinks to check is how the inert version survived review.
         """
         try:
-            factory = PostgresServiceFactory.get_instance()
-            if factory is None:
-                raise RuntimeError(
-                    "PostgresServiceFactory is not initialized; _init_runtime() "
-                    "installs it when this module is run as a script"
-                )
-            rows = factory.connection_pool.execute(CORPUS_STATE_QUERY)
-            return corpus_fingerprint(rows)
+            return live_corpus_fingerprint(_factory_pool(), config)
         except Exception as exc:  # noqa: BLE001 - provenance is never fatal
             logger.warning(
                 "Corpus provenance unavailable: %s. This run cannot be shown to "
@@ -317,6 +349,48 @@ class ResultHandler:
                 exc,
             )
             return f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
+
+    @staticmethod
+    def check_collection(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """The start guard: the arm's ``retrieval_identity``, or a fatal error.
+
+        Runs before the arm's first question. Raises ``CollectionNotReadyError``
+        when the searched collection is empty, has no vector, or holds chunks
+        another model embedded. Unlike the corpus readings this raises: no
+        question has run, so there are no scores to lose, and an arm scored
+        against the wrong vectors is worse than no arm.
+        """
+        identity = retrieval_identity(config)
+        readiness = collection_readiness(_factory_pool(), identity)
+        logger.info(
+            "Searching collection %s (embedding_model=%s, source=%s, %d chunks)",
+            identity.collection,
+            identity.embedding_model,
+            readiness["embedding_model_source"],
+            readiness["chunk_count"],
+        )
+        return retrieval_record(identity, readiness)
+
+    @staticmethod
+    def get_category_map(
+        config: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[List[str]], str]:
+        """The searched collection's URL -> category map as records and digest.
+
+        Reads through the same factory pool as ``get_corpus_fingerprint`` and,
+        like it, never raises: a failure returns ``(None, "<unavailable: …>")``,
+        which the endpoint comparison treats as "not observed" (#538 rule 2).
+        """
+        try:
+            _, records, digest = live_category_map(_factory_pool(), config)
+            return records, digest
+        except Exception as exc:  # noqa: BLE001 - provenance is never fatal
+            logger.warning(
+                "Category-map provenance unavailable: %s. This arm gets no "
+                "per-category slice.",
+                exc,
+            )
+            return None, f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
 
     @staticmethod
     def map_prompts(config: Dict[str, Any]):
@@ -344,11 +418,32 @@ class ResultHandler:
         *,
         running_config: Optional[Dict[str, Any]],
         corpus_before: Optional[str] = None,
+        category_map_before: Optional[str] = None,
+        agent_md_sha256: Optional[str] = None,
+        ingest_wall_seconds: Optional[float] = None,
+        modes_executed: Optional[Set[str]] = None,
+        retrieval_identity: Optional[Dict[str, Any]] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
 
         ResultHandler.map_prompts(config)
+
+        # What RAN, which in a sweep is not what this arm's file says. `run()`
+        # reads `modes_being_run` once from the FIRST config and reuses it for
+        # every arm, so a later SOURCES-only file is judged anyway. Deriving the
+        # judge provenance from the arm's own file then records "no judge ran"
+        # for a run that was judged, and the reverse ordering claims judge
+        # settings for an arm that was not. The caller passes what executed;
+        # the file is only the fallback for callers that do not know.
+        ragas_ran = "RAGAS" in (
+            modes_executed
+            if modes_executed is not None
+            else set(
+                ((config.get("services") or {}).get("benchmarking") or {}).get("modes")
+                or []
+            )
+        )
 
         # The file above is what the operator SELECTED. The agent reads its
         # configuration from Postgres, and load_new_configuration writes the
@@ -382,7 +477,7 @@ class ResultHandler:
                 ", ".join(divergence),
             )
 
-        corpus_after = ResultHandler.get_corpus_fingerprint()
+        corpus_after = ResultHandler.get_corpus_fingerprint(running_config)
         # None, not False, when either reading is missing or failed. A failure is
         # not an observation: get_corpus_fingerprint reports one as
         # "<unavailable: ...>", and two identical failures compare equal, so
@@ -402,6 +497,24 @@ class ResultHandler:
                 corpus_after,
             )
 
+        # The same three states for the URL -> category map (#538 rules 1-2).
+        category_map_end_records, category_map_after = ResultHandler.get_category_map(
+            running_config
+        )
+        if ResultHandler.corpus_reading_failed(
+            category_map_before
+        ) or ResultHandler.corpus_reading_failed(category_map_after):
+            category_map_unchanged = None
+        else:
+            category_map_unchanged = category_map_before == category_map_after
+        if category_map_unchanged is False:
+            logger.warning(
+                "The category map changed while this arm was running (%s -> %s); "
+                "it gets no per-category slice",
+                category_map_before,
+                category_map_after,
+            )
+
         current_results = {
             "single_question_results": results,
             "total_results": total_results,
@@ -414,9 +527,26 @@ class ResultHandler:
             # re-ingest and score different questions against different
             # corpora; a single reading taken afterwards would report the final
             # state as though it had covered the whole arm.
+            # What the arm searched, checked by the start guard (#570).
+            "retrieval_identity": retrieval_identity,
             "corpus_fingerprint_before": corpus_before,
             "corpus_fingerprint": corpus_after,
             "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
+            # The map a per-category slice may read, bound to this arm: the end
+            # records are written by dump_artifacts as `category_map_file`, whose
+            # sha256 equals `category_map_sha256_end` by construction.
+            "category_map_sha256_start": category_map_before,
+            "category_map_sha256_end": category_map_after,
+            "category_map_unchanged_at_endpoints": category_map_unchanged,
+            # The prompt this arm ran, as load_agent_spec parsed it.
+            "agent_md_sha256": agent_md_sha256,
+            # What the corpus above COST to build, in harness-observed seconds.
+            # Three readings, kept distinct on purpose: key absent = artifact
+            # predates the field; null = no ingest was observed (the run reused
+            # an existing corpus); a float = seconds. Never 0.0 for "not
+            # measured". Recorded per arm and nowhere else -- a sweep runs
+            # several arms, so a run-level copy would label them all with one.
+            "ingest_wall_seconds": ingest_wall_seconds,
             # Per arm, not per file. One invocation runs every config in the
             # sweep directory (the `while self.all_config_files` loop), so a
             # single version on the metadata block would label every arm with
@@ -426,14 +556,58 @@ class ResultHandler:
             # hand. This digest answers the other question -- "was this the same
             # configuration as that other run?" -- from the finished artifact
             # alone, long after Postgres has moved on.
+            # What the judge ACTUALLY ran with, recorded BESIDE the configuration
+            # as written rather than folded into it. The validators substitute a
+            # default for an invalid setting, and that substitution reached
+            # RunConfig and nothing else -- so an artifact recorded `timeout: -1`
+            # for a run that used 180. Normalizing `configuration` in place would
+            # fix that by falsifying the other half of the record;
+            # asserted_config_divergence exists to keep "what was selected" and
+            # "what happened" separable, so both are kept. Recomputed from the
+            # file just read: the helper is pure, so nothing has to be plumbed
+            # through from the Benchmarker.
+            # None when no judge ran. A rendered configuration always carries a
+            # `ragas_settings` block, so the block's presence cannot stand in for
+            # "RAGAS was a mode": a SOURCES-only run would otherwise publish a
+            # timeout and a worker count as settings it used, when it never
+            # built a RunConfig at all. Null says "no judge ran" and is not the
+            # same claim as an absent key.
+            "ragas_effective_settings": (
+                ragas_effective_settings(
+                    (
+                        ((config.get("services") or {}).get("benchmarking") or {}).get(
+                            "mode_settings"
+                        )
+                        or {}
+                    ).get("ragas_settings")
+                )
+                if ragas_ran
+                else None
+            ),
+            # The digest is the identity of the settings the run EFFECTIVELY had,
+            # so the judge knobs are normalized in the BASIS while `configuration`
+            # above keeps the file verbatim. Recording the effective values in a
+            # sibling field is not enough on its own: the digest is what a later
+            # reader compares, and hashing the unnormalized file gave two runs
+            # that both fell back to the same defaults from different typos two
+            # different digests.
+            #
+            # Passed as `effective_selected`, NOT as `selected`. The latter also
+            # feeds `selected_file_digest` and the divergence list, which
+            # describe the file as written -- two files that differ must
+            # fingerprint differently even when they drive identical runs.
             "config_version": config_version(
                 running=running_config,
                 selected=config,
+                effective_selected=with_effective_ragas_settings(
+                    config, modes_executed=modes_executed
+                ),
                 selected_file=str(config_path),
             ),
         }
 
         ResultHandler.results.append(current_results)
+        ResultHandler.category_map_records_by_arm.append(category_map_end_records)
 
     @staticmethod
     def add_metadata():
@@ -444,6 +618,12 @@ class ResultHandler:
             logger.warning("Could not read %s: %s", EXTRA_METADATA_PATH, exc)
             additional_info = None
 
+        host = (
+            additional_info.pop("host", None)
+            if isinstance(additional_info, dict)
+            else None
+        )
+
         meta_data = {
             "time": str(datetime.now(timezone.utc)),
             "git_info": additional_info,
@@ -453,6 +633,31 @@ class ResultHandler:
             # -- every arm of a campaign reports the same commit even when the arms
             # ran different code. Say so in the artifact rather than in a comment.
             "git_info_captured_at": "deploy (`archi create`), not the running image",
+            "host": host,
+            # host is recorded at deploy time from the machine running `archi create`.
+            # A container cannot move to another host, so a --rerun necessarily ran
+            # on the same machine. Say so in the artifact rather than in a comment.
+            #
+            # Conditional, because the sentence is an assertion about a machine and
+            # there is no machine to assert when `host` is null -- either the deploy
+            # predates the field, or `archi create` refused to capture because the
+            # container engine was not provably local. Leaving the same-machine text
+            # beside `host: null` keeps exactly the false claim this change exists to
+            # remove: the reports guard their host line on `host`, so it never shows
+            # there, and it survives in the raw artifact that consumers parse.
+            "host_captured_at": (
+                "deploy (`archi create`), on the machine this stack runs on"
+                " — a container cannot move hosts, so a --rerun ran here too"
+                if host
+                # Every cause, because this function cannot tell them apart: it
+                # reads a git_info.yaml that does not record which one applied.
+                # Naming a subset would be a fresh exhaustive claim that is false on
+                # the paths it omits — the same overclaim the conditional removed.
+                else "no host recorded — the deployment predates the field, or its"
+                " hostname was unreadable or blank, or git_info.yaml could not be"
+                " read, or `archi create` refused to capture because the container"
+                " engine was not provably local"
+            ),
             # What the frozen commit above cannot provide: an identity for the
             # code this run actually executed. Digested from the `src` package
             # files in the image, so it is per invocation (one image runs every
@@ -465,37 +670,91 @@ class ResultHandler:
                 for record in ResultHandler.results
             ],
             "corpus_snapshot_id": ResultHandler.get_corpus_snapshot_id(),
-            "corpus_fingerprint": ResultHandler.get_corpus_fingerprint(),
+            # The collection the last arm searched: v2 is per collection.
+            "corpus_fingerprint": ResultHandler.get_corpus_fingerprint(
+                (ResultHandler.results[-1] if ResultHandler.results else {}).get(
+                    "running_configuration"
+                )
+            ),
         }
 
         ResultHandler.metadata.update(meta_data)
 
     @staticmethod
-    def dump_html(benchmark_name: Path):
+    def dump_artifacts(benchmark_name: Path):
+        """Write the run's JSON artifact and its markdown report.
 
-        config_data, config_name, timestamp, questions, total_results, provenance = (
+        The timestamp is captured ONCE so the report is always the JSON's
+        `_report.md` sibling — the invariant the backfill script's bulk
+        re-render path locates reports by. The JSON is written first (it is
+        the source of truth); a report failure is logged and swallowed, and
+        `--regenerate-md` on the backfill script rebuilds the report later.
+        """
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        ResultHandler.dump_category_maps(benchmark_name, timestamp)
+        json_path = ResultHandler.dump(benchmark_name, timestamp)
+        try:
+            ResultHandler.dump_report(benchmark_name, timestamp)
+        except Exception:
+            # The hint names the exact artifact: the backfill script's default
+            # glob is the repo's bench_out/, which is NOT where OUTPUT_DIR
+            # points inside the benchmark container.
+            logger.exception(
+                f"Markdown report generation failed — the JSON artifact was "
+                f"still dumped to {json_path}; rebuild the report with "
+                f"scripts/benchmarking/backfill_report_provenance.py "
+                f"--regenerate-md {json_path}"
+            )
+
+    @staticmethod
+    def dump_category_maps(benchmark_name: Path, timestamp: str):
+        """Write each arm's end-reading map as ``<stem>_category_map_<N>.tsv``.
+
+        ``<N>`` is the arm's 1-based position, as ``compare_runs`` labels it.
+        The file is exactly the text that was hashed, so its sha256 equals the
+        arm's ``category_map_sha256_end``. An arm whose end reading failed gets
+        ``category_map_file: null``; a result recorded without the category keys
+        (none the current harness writes) is left untouched.
+        """
+        stem = f"{benchmark_name}-{timestamp}"
+        by_arm = ResultHandler.category_map_records_by_arm
+        for index, entry in enumerate(ResultHandler.results, 1):
+            if "category_map_sha256_end" not in entry:
+                continue
+            records = by_arm[index - 1] if index <= len(by_arm) else None
+            if records is None:
+                entry["category_map_file"] = None
+                continue
+            name = f"{stem}_category_map_{index}.tsv"
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            (OUTPUT_DIR / name).write_bytes(category_map_text(records).encode("utf-8"))
+            entry["category_map_file"] = name
+
+    @staticmethod
+    def dump_report(benchmark_name: Path, timestamp: str):
+
+        config_data, config_name, run_time, questions, total_results, provenance = (
             parse_benchmark_results(ResultHandler.results, ResultHandler.metadata)
         )
 
         logger.info(config_data)
 
-        html_content = format_html_output(
-            config_data, config_name, timestamp, questions, total_results, provenance
+        markdown_content = format_markdown_output(
+            config_data, config_name, run_time, questions, total_results, provenance
         )
 
-        filename = f"{benchmark_name}-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_report.html"
-        file_path = OUTPUT_DIR / filename
+        file_path = OUTPUT_DIR / f"{benchmark_name}-{timestamp}_report.md"
 
         logger.info(f"Dumping results to {file_path}")
 
         with open(file_path, "w") as f:
-            f.write(html_content)
+            f.write(markdown_content)
 
-        logger.info(f"✅ HTML report generated: {file_path}")
+        logger.info(f"✅ Markdown report generated: {file_path}")
 
     @staticmethod
-    def dump(benchmark_name: Path):
-        filename = f"{benchmark_name}-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+    def dump(benchmark_name: Path, timestamp: str):
+        filename = f"{benchmark_name}-{timestamp}.json"
         file_path = OUTPUT_DIR / filename
         logger.info(f"Dumping results to {file_path}")
         logger.debug(f"Full results: {ResultHandler.results}")
@@ -511,7 +770,16 @@ class ResultHandler:
         if ResultHandler.leaderboard:
             output["leaderboard"] = ResultHandler.leaderboard
         with open(file_path, "w") as f:
-            json.dump(output, f, indent=4)
+            # An artifact that a standard JSON reader refuses to open is not
+            # usable as evidence, which is the whole point of the provenance
+            # work it carries. `json_safe` copies every non-finite float to
+            # `null`; `allow_nan=False` then makes a bare `NaN` impossible
+            # rather than merely unlikely — if anything ever slips past the
+            # copy, the harness raises here instead of writing invalid JSON.
+            # The copy is why `ResultHandler.results` is still NaN-bearing for
+            # `pair_ab_results` and `build_leaderboard` afterwards.
+            json.dump(json_safe(output), f, indent=4, allow_nan=False)
+        return file_path
 
     @staticmethod
     def pair_ab_results(idx_a: int = 0, idx_b: int = 1) -> List[ABResult]:
@@ -642,9 +910,10 @@ class ResultHandler:
         # the two arms were measured under the same conditions. Guarding only
         # the leaderboard would still let a reader draw the unsupported
         # conclusion from this artifact.
-        comparable = ResultHandler.arms_comparable(
+        reason = ResultHandler.arms_incomparability_reason(
             [ResultHandler.results[idx_a], ResultHandler.results[idx_b]]
         )
+        comparable = reason is None
 
         wins_a: Optional[int] = 0
         wins_b: Optional[int] = 0
@@ -667,11 +936,10 @@ class ResultHandler:
                 row["winner_by_metric"] = {}
             wins_a = wins_b = ties = None
             logger.warning(
-                "A/B winners withheld for '%s' vs '%s': corpus provenance does "
-                "not establish that both arms were scored against the same "
-                "documents",
+                "A/B winners withheld for '%s' vs '%s': %s",
                 config_a_meta["name"],
                 config_b_meta["name"],
+                reason,
             )
 
         mean_scores_a: Dict[str, float] = {}
@@ -771,6 +1039,20 @@ class ResultHandler:
             "model": set(),
             "provider": set(),
             "evaluator_model": set(),
+            # How hard the judge was pushed, and how long each row was given.
+            # Not cosmetic: concurrency drives the judge's throttling, throttling
+            # spends the one timeout budget that covers every retry, and a row
+            # that runs out of budget comes back unscored -- leaving the scored
+            # denominator. Arms judged under different pressure therefore carry
+            # aggregates over different question sets. Both knobs, not just the
+            # new one: singling out max_workers would leave the same hole open
+            # one field along.
+            "judge_max_workers": set(),
+            "judge_timeout": set(),
+            # Whether a judge ran at all, as a non-None token so the reduction
+            # cannot drop it: `None` is filtered before comparison, which is how
+            # a mixed sweep passed as "shared".
+            "judge_participation": set(),
             "queries_path": set(),
             "corpus_fingerprint": set(),
         }
@@ -890,6 +1172,26 @@ class ResultHandler:
             ctx_fields["model"].add(bench.get("model"))
             ctx_fields["provider"].add(bench.get("provider"))
             ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
+            # From the RECORD, never recomputed from the block. The block is
+            # always rendered, so recomputing claimed judge pressure for a
+            # SOURCES-only sweep whose every record said no judge ran. The
+            # record already holds the effective values, defaults substituted,
+            # or None when no judge ran -- and None adds nothing, so an absent
+            # judge stays absent instead of turning into a default.
+            judge_pressure = record.get("ragas_effective_settings")
+            if judge_pressure is not None:
+                ctx_fields["judge_max_workers"].add(judge_pressure["max_workers"])
+                ctx_fields["judge_timeout"].add(judge_pressure["timeout"])
+            # Whether a judge ran at all is its own swept field. The reduction
+            # below drops None before comparing, so adding pressure only for the
+            # judged record let a mixed sweep -- a RAGAS arm beside a
+            # SOURCES-only one -- see a single worker count and report it as
+            # shared, when one arm never built a RunConfig. A non-None token on
+            # every record keeps that difference visible, and stays a single
+            # value (so silent) when every arm agrees.
+            ctx_fields["judge_participation"].add(
+                "none" if judge_pressure is None else "judged"
+            )
             ctx_fields["queries_path"].add(bench.get("queries_path"))
             # The corpus is a swept-context field like any other: ranking arms
             # scored against different documents asserts controlled conditions
@@ -989,6 +1291,110 @@ class ResultHandler:
         return ResultHandler.leaderboard
 
 
+class _IngestWaitBudgets(NamedTuple):
+    """The three knobs that bound the benchmark's wait for the data-manager.
+
+    ``stall_seconds`` is time since the *last successful* status poll, not total
+    runtime -- an ingest that keeps answering can take as long as it needs.
+    ``max_wait_seconds`` is the absolute backstop for an ingest that is alive
+    but stuck; ``0`` disables it.
+    """
+
+    stall_seconds: int
+    max_wait_seconds: int
+    poll_interval_seconds: int
+
+
+#: States that can count as evidence the ingest is working. Deliberately
+#: narrow: `ingestion_status.py:29-33` starts the endpoint at "pending" and
+#: only the ingestion thread moves it on, so an endpoint answering "pending"
+#: (or anything unrecognized) forever means the ingest never got going.
+_INGEST_PROGRESS_STATES = frozenset({"running"})
+
+#: The step published *before* `ingestion_lock` is acquired
+#: (`ingestion_status.py:46-48`). Every later step comes from inside the lock
+#: (`data_manager.py:90-109`), so this is the one step that proves work has NOT
+#: started.
+_INGEST_PRELOCK_STEP = "initializing"
+
+
+def _ingest_is_progressing(state: str, step: Any) -> bool:
+    """Is this status payload evidence the ingest is actually doing work?
+
+    Only payloads this accepts restart the stall budget. Two shapes are
+    excluded on purpose, because both are indistinguishable from a healthy
+    long run if you look only at "did the endpoint answer":
+
+    - any state but "running" -- notably the initial "pending", which persists
+      forever if the ingestion thread never starts;
+    - "running" at step "initializing" -- published before `ingestion_lock` is
+      taken, so it is also exactly what a benchmark sees while its own ingest
+      is queued behind a scheduled task or an upload-triggered vectorstore
+      update, neither of which touches this status dict
+      (`service_data_manager.py:70-83`).
+    """
+    if state not in _INGEST_PROGRESS_STATES:
+        return False
+    return str(step).strip().lower() != _INGEST_PRELOCK_STEP
+
+
+def _ingest_wait_budgets() -> _IngestWaitBudgets:
+    return _IngestWaitBudgets(
+        stall_seconds=int(os.environ.get("BENCH_INGEST_WAIT_TIMEOUT", "7200")),
+        max_wait_seconds=int(os.environ.get("BENCH_INGEST_MAX_WAIT", "21600")),
+        poll_interval_seconds=int(os.environ.get("BENCH_INGEST_POLL_INTERVAL", "5")),
+    )
+
+
+def _fetch_ingestion_status(url: str) -> Dict[str, Any]:
+    """Read one ingestion-status payload. The injection seam for the wait loop."""
+    with url_request.urlopen(url, timeout=5) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _ingest_wait_timeout_message(
+    reason: str,
+    *,
+    candidate_urls: List[str],
+    last_ok_url: Optional[str],
+    last_state: Optional[str],
+    last_step: Any,
+    errors_by_url: Dict[str, BaseException],
+) -> str:
+    """Explain an ingest timeout in terms of what the harness actually observed.
+
+    Errors are kept per URL and reported against the URL they belong to, which
+    is what issue #378's defect 2 needed in both its forms. The first form was
+    a single `last_error` surviving a later candidate's success, so a timeout
+    quoted a connection failure from a URL that was working around it. The
+    second is subtler: when the URL that *had* been serving status goes down,
+    the loop falls through the remaining candidates too, and one shared
+    `last_error` ends up holding whatever the final fallback raised -- often an
+    unrelated DNS failure for `host.containers.internal`. The operator needs
+    the failure of the endpoint that was working, so that is what this reports.
+    """
+    if last_ok_url is None:
+        # Nothing ever answered, so every candidate's error is current and each
+        # one is a distinct fact about a distinct host. Label them.
+        tried = "; ".join(
+            f"{url}: {errors_by_url[url]}"
+            for url in dict.fromkeys(candidate_urls)
+            if url in errors_by_url
+        )
+        observed = f"none of the candidate status URLs ever answered ({tried})"
+        return f"Timed out waiting for data-manager ingestion: {reason}. {observed}."
+
+    observed = (
+        f"last successful poll was {last_ok_url} -> "
+        f"state={last_state} step={last_step}"
+    )
+    message = f"Timed out waiting for data-manager ingestion: {reason}. {observed}."
+    serving_error = errors_by_url.get(last_ok_url)
+    if serving_error is not None:
+        message = f"{message} That URL now fails with: {serving_error}"
+    return message
+
+
 class Benchmarker:
 
     def __init__(self, configs: Path, q_to_a: dict[str, str]):
@@ -1073,6 +1479,9 @@ class Benchmarker:
         apply_sut_local_provider(benchmark_cfg, get_static_config())
 
         agent_spec = None
+        # Hashed at load time, from the text load_agent_spec parses, so the arm
+        # record names the prompt this chain was built with.
+        self.agent_md_sha256 = prompt_text_sha256(agent_md_file)
         try:
             agent_spec = load_agent_spec(Path(str(agent_md_file)))
         except AgentSpecError as exc:
@@ -1235,14 +1644,38 @@ class Benchmarker:
                 # ChatOllama (which 404s against /v1). An explicit provider_mode
                 # (judge-specific or inherited from the SUT) overrides the
                 # /v1 auto-detection.
-                explicit_mode = ragas_configs.get(
-                    "evaluator_provider_mode"
-                ) or benchmark_cfg.get("provider_mode")
+                #
+                # Selected by presence, not by truthiness: YAML decodes
+                # `evaluator_provider_mode: false` to False and `: 0` to 0, and an
+                # `or` here discarded both in favour of the SUT's mode — so the
+                # judge scored in a dialect nobody configured and
+                # `resolve_local_mode`'s refusal of a non-string never fired on
+                # this path. The empty string stays the one "not configured"
+                # spelling that still inherits.
+                evaluator_mode = ragas_configs.get("evaluator_provider_mode")
+                explicit_mode = (
+                    evaluator_mode
+                    if evaluator_mode not in (None, "")
+                    else benchmark_cfg.get("provider_mode")
+                )
                 if resolve_local_mode(ollama_url, explicit_mode) == "openai_compat":
+                    # base_url twice: see the huggingface arm below — in openai_compat
+                    # mode LocalProvider now honors the configured base_url instead of
+                    # OLLAMA_HOST, so the keyword agrees with the config copy instead
+                    # of outranking it. Only when there is one, though: the keyword
+                    # lands last, so a None would erase the provider's own local
+                    # default and send the judge to the public OpenAI endpoint. An
+                    # override with nothing to override with is not an override.
+                    override = (
+                        {"base_url": normalize_base_url(ollama_url)}
+                        if ollama_url
+                        else {}
+                    )
                     return get_model(
                         "local",
                         model_name,
                         {"base_url": ollama_url, "mode": "openai_compat"},
+                        **override,
                     )
                 from langchain_ollama import ChatOllama
 
@@ -1254,8 +1687,15 @@ class Benchmarker:
                 )
             case "huggingface":
                 base_url = ollama_url or "http://localhost:8000/v1"
+                # base_url twice, on purpose. load_new_configuration exports the SUT
+                # url as OLLAMA_HOST, but in openai_compat mode LocalProvider now
+                # honors the configured base_url instead of OLLAMA_HOST, so the
+                # keyword agrees with the config copy instead of outranking it.
                 return get_model(
-                    "local", model_name, base_url=base_url, local_mode="openai_compat"
+                    "local",
+                    model_name,
+                    {"base_url": base_url, "mode": "openai_compat"},
+                    base_url=normalize_base_url(base_url),
                 )
             case "anthropic":
                 from langchain_anthropic import ChatAnthropic
@@ -1381,14 +1821,11 @@ class Benchmarker:
         legitimately ends in ``/`` (e.g. ``...?redirect=/kb/foo/``) is preserved.
         A value with no scheme (e.g. a ``file_name`` match field) parses as a bare
         path, so the same one-trailing-slash rule applies without special-casing.
+
+        The rule lives in ``benchmark_provenance`` so the category-map records and
+        the category slice join canonicalize exactly as matching does.
         """
-        text = str(value).strip()
-        parts = urlsplit(text)
-        path = parts.path
-        if len(path) > 1 and path.endswith("/"):
-            path = path[:-1]
-            return urlunsplit(parts._replace(path=path))
-        return text
+        return canonical_source_url(value)
 
     def prepare_messages(self, raw_messages):
         """Format the langchain Messages into something we can store and view later."""
@@ -1538,11 +1975,13 @@ class Benchmarker:
         ]
         # The archi config-render pipeline can strip global.verbosity; tolerate
         # missing key (verbosity 4 enables tenacity retry logging in ragas).
-        log_tenacity = self.config.get("global", {}).get("verbosity", 0) >= 4
+        verbosity = self.config.get("global", {}).get("verbosity", 0)
         batch_size = ragas_settings["batch_size"] or None
-        runconfig = RunConfig(
-            timeout=ragas_settings["timeout"], log_tenacity=log_tenacity
-        )
+        # Kwargs built by a tested helper rather than inline: `max_workers` was
+        # never passed here, so ragas' default of 16 concurrent judge calls
+        # applied unannounced. See ragas_run_config_kwargs for why raising
+        # `max_retries` is NOT the lever for judge timeouts.
+        runconfig = RunConfig(**ragas_run_config_kwargs(ragas_settings, verbosity))
         llm = LangchainLLMWrapper(self.get_ragas_llm_evaluator())
         embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
 
@@ -1767,6 +2206,8 @@ class Benchmarker:
                 if isinstance(question_item, dict)
                 else ""
             )
+            if isinstance(question_item, dict) and "difficulty" in question_item:
+                q_results["difficulty"] = question_item["difficulty"]
 
             dataset_result = None
             if "RAGAS" in modes_being_run and scorable:
@@ -1796,13 +2237,14 @@ class Benchmarker:
                     question=question,
                     reference_answer=reference_answer,
                     error=exc,
+                    question_item=question_item,
                 ),
                 "dataset_result": None,
                 "matches": None,
             }
 
     def run(self):
-        self.wait_for_ingestion_completion()
+        ingest_wall_seconds = self.wait_for_ingestion_completion()
 
         modes_being_run = set(self.benchmarking_configs["modes"])
 
@@ -1825,17 +2267,34 @@ class Benchmarker:
         while self.all_config_files:
             # Read the corpus BEFORE the arm's questions, so the report can show
             # whether they were all scored against the same documents.
-            corpus_before = ResultHandler.get_corpus_fingerprint()
+            arm_config = getattr(self.chain, "config", None)
+            arm_identity = ResultHandler.check_collection(arm_config)
+            corpus_before = ResultHandler.get_corpus_fingerprint(arm_config)
+            _, category_map_before = ResultHandler.get_category_map(arm_config)
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
                 Path(self.current_config),
                 question_wise_results,
                 total_results,
                 corpus_before=corpus_before,
+                category_map_before=category_map_before,
+                agent_md_sha256=getattr(self, "agent_md_sha256", None),
                 # The chain's own snapshot, taken by archi.__init__ before these
                 # questions ran -- not a fresh query, which would report the
                 # config as it stands now rather than as the arm used it.
                 running_config=getattr(self.chain, "config", None),
+                # What this invocation actually ran, not what this arm's file
+                # declares: one `modes_being_run` is applied to every arm.
+                modes_executed=modes_being_run,
+                # Measured once, before the sweep, and stamped on every arm --
+                # there is one ingest wait per invocation, not one per arm.
+                # Ingestion can continue in the background, so a later arm may
+                # score a corpus this number did not build. The signal for that
+                # is `corpus_fingerprint` differing ACROSS arms, not
+                # `corpus_unchanged_at_endpoints`: a re-ingest landing wholly
+                # between two arms leaves that boolean True on both sides.
+                ingest_wall_seconds=ingest_wall_seconds,
+                retrieval_identity=arm_identity,
             )
             self.load_new_configuration()
 
@@ -1904,8 +2363,8 @@ class Benchmarker:
 
                 flag = "  (incomplete)" if row["incomplete"] else ""
                 logger.info(
-                    "  %-4d %-28s %-12s %-12s %-12s %-12s %-12s %-10d %s%s",
-                    row["rank"],
+                    "  %-4s %-28s %-12s %-12s %-12s %-12s %-12s %-10d %s%s",
+                    ResultHandler.leaderboard_rank_label(row["rank"]),
                     row["name"][:28],
                     _fmt("answer_relevancy"),
                     _fmt("faithfulness"),
@@ -2009,8 +2468,7 @@ class Benchmarker:
                     "Argilla push failed — results were still dumped to disk."
                 )
 
-        ResultHandler.dump(self.benchmark_name)
-        ResultHandler.dump_html(self.benchmark_name)
+        ResultHandler.dump_artifacts(self.benchmark_name)
         return
 
     def _merge_anchor_questions(self) -> None:
@@ -2089,9 +2547,58 @@ class Benchmarker:
             len(merged),
         )
 
-    def wait_for_ingestion_completion(self):
-        timeout_seconds = int(os.environ.get("BENCH_INGEST_WAIT_TIMEOUT", "7200"))
-        poll_interval_seconds = int(os.environ.get("BENCH_INGEST_POLL_INTERVAL", "5"))
+    def wait_for_ingestion_completion(
+        self,
+        *,
+        fetch: Optional[Callable[[str], Dict[str, Any]]] = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> Optional[float]:
+        """Block until the data-manager reports ingestion complete.
+
+        Returns the wall-clock seconds this ingest was observed working, or
+        `None` when it was never observed working at all -- the run found the
+        corpus already built. Never `0.0`: that would put a fabricated
+        measurement where "not measured" belongs (issue #417).
+
+        The span runs from the first poll `_ingest_is_progressing` accepts to
+        the one reporting `completed`, so queue time behind another holder of
+        `ingestion_lock` is excluded but everything after work starts is
+        included. It approximates the ingest rather than measuring it, and errs
+        in both directions: ingestion that ran before this container started
+        polling cannot be seen at all, and non-ingest time after polling began
+        is counted. An exact figure needs `started_at`/`finished_at` in the
+        status payload, which is a data-manager change (#428).
+
+        `fetch`, `clock` and `sleep` are injection seams for the tests only;
+        production calls this with no arguments.
+
+        Neither bound on this wait is a total-runtime deadline on a *healthy*
+        ingest. `BENCH_INGEST_WAIT_TIMEOUT` is a **stall** budget: it restarts
+        on every poll reporting `state=running`, so an ingest that keeps
+        reporting progress is never killed merely for being slow. That was
+        issue #378 -- a 106-minute embedding phase aborted at exactly 7200s
+        while all 1433 of its status polls were succeeding, two minutes short
+        of finishing. `BENCH_INGEST_MAX_WAIT` is the absolute backstop for the
+        other failure: an ingest that reports progress forever without ever
+        completing.
+
+        Two judgement calls, both deliberate:
+
+        - Restart on any *running* poll, not on a **changing `step`**.
+          `data_manager.py:108-109` emits "Updating vectorstore" once for the
+          whole embedding phase, so the step string is constant for hours on a
+          healthy run; a step-change rule would kill exactly the runs this
+          exists to protect.
+        - Restart on *progress* only, not on any **answered** poll --
+          `_ingest_is_progressing` decides. An endpoint stuck at `pending`, or
+          at `running`/`initializing` because this ingest is queued behind
+          another holder of `ingestion_lock`, is answering happily while
+          nothing of ours is happening; the stall budget must end those,
+          exactly as the old absolute deadline did.
+        """
+        budgets = _ingest_wait_budgets()
+        fetch = fetch or _fetch_ingestion_status
         dm_cfg = self.config.get("services", {}).get("data_manager", {})
         # external_port is the HOST-side mapping (e.g. 7881 for benchmarks);
         # internal_port is what the data-manager listens on INSIDE the compose
@@ -2109,59 +2616,119 @@ class Benchmarker:
             f"http://localhost:{dm_external_port}/api/ingestion/status",
             f"http://host.containers.internal:{dm_external_port}/api/ingestion/status",
         ]
-        start_time = time.monotonic()
+        start_time = clock()
+        last_ok_at = start_time
+        last_ok_url: Optional[str] = None
+        last_state: Optional[str] = None
+        last_step: Any = None
+        # Per URL, not one shared "last error": an error belongs to the host
+        # that raised it, and only the serving URL's failure explains a timeout.
+        errors_by_url: Dict[str, BaseException] = {}
+        # When this ingest was first seen actually working -- NOT when the
+        # waiting started. A run queued behind another holder of
+        # `ingestion_lock` sits at `running`/`initializing` while nothing of its
+        # own happens, and charging that queue time to the corpus would make the
+        # campaign's cost table depend on what else the data-manager was doing.
+        # Still None at the completed poll = no ingest was observed at all (#417).
+        ingest_started_at: Optional[float] = None
         attempt = 0
 
         logger.info(
             "Waiting for data-manager ingestion to complete before benchmarking..."
         )
+        if not budgets.max_wait_seconds:
+            # The status payload carries no progress counter (only state/step,
+            # `ingestion_status.py:29-33`), so an ingest wedged *inside*
+            # `update_vectorstore()` still answers "running" forever and only
+            # the ceiling can end it. Disabling the ceiling is a legitimate
+            # choice for a corpus larger than the default 6h -- but an
+            # unattended run that hangs silently burns its allocation, so it
+            # must not be a quiet one.
+            logger.warning(
+                "BENCH_INGEST_MAX_WAIT=0: no absolute ceiling on this wait. An "
+                "ingest that wedges while still reporting state=running will "
+                "block the benchmark indefinitely."
+            )
         while True:
             attempt += 1
-            last_error = None
             for status_url in status_urls:
                 try:
-                    with url_request.urlopen(status_url, timeout=5) as response:
-                        payload = json.loads(response.read().decode("utf-8"))
-                    state = str(payload.get("state", "")).lower()
-                    step = payload.get("step")
-                    err = payload.get("error")
-                    logger.info(
-                        "Ingestion status check #%s via %s -> state=%s step=%s",
-                        attempt,
-                        status_url,
-                        state,
-                        step,
-                    )
-                    if state == "completed":
-                        logger.info(
-                            "Data-manager ingestion completed; starting benchmark."
-                        )
-                        return
-                    if state == "error":
-                        raise RuntimeError(
-                            f"Data-manager ingestion failed at step '{step}': {err}"
-                        )
-                    break
+                    payload = fetch(status_url)
                 except (
                     url_error.URLError,
                     TimeoutError,
                     ValueError,
                     json.JSONDecodeError,
                 ) as exc:
-                    last_error = exc
+                    errors_by_url[status_url] = exc
                     continue
 
-            elapsed = time.monotonic() - start_time
-            if elapsed >= timeout_seconds:
-                if last_error:
-                    raise TimeoutError(
-                        f"Timed out after {timeout_seconds}s waiting for ingestion status endpoint. Last error: {last_error}"
+                state = str(payload.get("state", "")).lower()
+                step = payload.get("step")
+                logger.info(
+                    "Ingestion status check #%s via %s -> state=%s step=%s",
+                    attempt,
+                    status_url,
+                    state,
+                    step,
+                )
+                # THIS URL answered, so only ITS own recorded failure is stale.
+                # Another candidate's error is still that candidate's business
+                # and stays on the books against it (defect 2). Reachability
+                # facts update on any answer; the stall budget restarts only on
+                # evidence of actual progress.
+                errors_by_url.pop(status_url, None)
+                last_ok_url = status_url
+                last_state = state
+                last_step = step
+                if _ingest_is_progressing(state, step):
+                    last_ok_at = clock()
+                    if ingest_started_at is None:
+                        ingest_started_at = last_ok_at
+
+                if state == "completed":
+                    logger.info("Data-manager ingestion completed; starting benchmark.")
+                    if ingest_started_at is None:
+                        return None
+                    return clock() - ingest_started_at
+                if state == "error":
+                    raise RuntimeError(
+                        f"Data-manager ingestion failed at step '{step}': "
+                        f"{payload.get('error')}"
                     )
+                break
+
+            now = clock()
+            stalled_for = now - last_ok_at
+            elapsed = now - start_time
+            if stalled_for >= budgets.stall_seconds:
                 raise TimeoutError(
-                    f"Timed out after {timeout_seconds}s waiting for ingestion completion."
+                    _ingest_wait_timeout_message(
+                        f"no progress reported for {stalled_for:.0f}s "
+                        f"(BENCH_INGEST_WAIT_TIMEOUT={budgets.stall_seconds}s; "
+                        "the budget restarts whenever the ingest reports "
+                        "progress, never on total runtime)",
+                        candidate_urls=status_urls,
+                        last_ok_url=last_ok_url,
+                        last_state=last_state,
+                        last_step=last_step,
+                        errors_by_url=errors_by_url,
+                    )
+                )
+            if budgets.max_wait_seconds and elapsed >= budgets.max_wait_seconds:
+                raise TimeoutError(
+                    _ingest_wait_timeout_message(
+                        f"still not complete after {elapsed:.0f}s "
+                        f"(BENCH_INGEST_MAX_WAIT={budgets.max_wait_seconds}s)",
+                        candidate_urls=status_urls,
+                        last_ok_url=last_ok_url,
+                        last_state=last_state,
+                        last_step=last_step,
+                        errors_by_url=errors_by_url,
+                    )
                 )
 
-            time.sleep(poll_interval_seconds)
+            sleep(budgets.poll_interval_seconds)
 
 
 if __name__ == "__main__":

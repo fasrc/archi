@@ -16,7 +16,7 @@ from functools import wraps
 from typing import Any
 
 import psycopg2
-from flask import Blueprint, Response, g, jsonify, request
+from flask import Blueprint, Response, g, jsonify, request, stream_with_context
 
 from src.archi.utils.citation_formatter import format_citations
 from src.utils.logging import get_logger
@@ -370,8 +370,16 @@ def _streaming_response(request_id, model, stream_kwargs):
             yield _sse_chunk(request_id, model, finish_reason="stop")
             yield "data: [DONE]\n\n"
 
+    # stream_with_context, not a bare generator: Flask tears down the request when
+    # this function returns, and the WSGI server pulls the generator after that. The
+    # Flask instrumentor's active span context goes with the teardown, so every span
+    # _chat_wrapper.stream() opens -- LangGraph, the model call, Postgres -- would
+    # start a second trace with no parent, and the agent loop's log lines would carry
+    # that orphan trace id instead of the request's. The server span still exports,
+    # so the symptom is a short span plus orphan roots rather than a missing span.
+    # app.py does the same for /api/get_chat_response_stream.
     return Response(
-        generate(),
+        stream_with_context(generate()),
         content_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

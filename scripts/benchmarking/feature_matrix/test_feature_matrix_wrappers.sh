@@ -1,0 +1,721 @@
+#!/usr/bin/env bash
+# Self-test for the feature-matrix runbook wrappers: stubbed docker and archi, a fake
+# stack under a temp ARCHI_DIR, fixture artifacts — no network, no containers, nothing
+# written outside the sandbox. Contract under test:
+#    1. an arm label that is not NN or NNa is refused before anything runs
+#    2. run_arm.sh <arm> <yaml> calls `archi evaluate --name fm-<arm> ... --hostmode`
+#    3. run_arm.sh refuses without the judge env file
+#    4. run_arm.sh --rerun refuses when no corpus pin exists yet
+#    5. archive_run.sh refuses an artifact whose run diverged from the selected config
+#       and writes neither ledger entry nor pin
+#    6. archive_run.sh records the run, recomputes scored counts from finite values,
+#       tolerates bare NaN, and writes the corpus pin on run 1
+#    7. run_arm.sh --rerun on a pinned corpus recreates ONLY the benchmark service
+#    8. run_arm.sh --rerun refuses when the live fingerprint differs from the pin
+#    9. reseed_arm.sh refuses an arm that changes an ingest-side key (chunking.strategy)
+#   10. reseed_arm.sh copies the retrieval key into the rendered config, backs the
+#       original up OUTSIDE configs/, and recreates config-seed
+#   11. qa_arm.sh overwrites chat_app's SUT fields from services.benchmarking, drops the
+#       evaluations block, and calls `archi eval qa` with one attempt and one run worker
+#   12. qa_arm.sh refuses when the converted QA dataset is missing
+#   13. archive_run.sh refuses a later run whose fingerprint differs from the pin; --new-corpus
+#       is refused after a re-run and re-pins only after a fresh arm-00 deploy, recording the old pin
+#   14. qa_arm.sh refuses when the stack's rendered config is not on the requested arm
+#   15. qa_arm.sh records the rendered config's sha256 and the corpus fingerprint
+#   16. archive_run.sh refuses an artifact that is already in the ledger
+#   17. archive_run.sh refuses an artifact older than the stack's latest ragas-start
+#   18. an arm label that does not match the YAML's own `name` is refused
+#   19. archive_run.sh refuses an artifact whose recorded running configuration is not the arm's
+#   20. archive_run.sh records the arm config, the selected file, and the fingerprint source
+#   21. qa_arm.sh refuses a corpus that drifted from the stack's pin
+#   22. an arm YAML that lacks a factor key is refused (fail closed)
+#   23. archive_run.sh refuses an artifact without running_configuration
+#   24. nothing runs before lock_campaign.sh has written the campaign lock
+#   25. lock_campaign.sh records the pinned inputs once and refuses a silent re-lock
+#   26. a same-label arm YAML that names a different bank is refused by the lock
+#   27. qa_arm.sh refuses a dataset whose content differs from the lock
+#   28. --new-corpus is refused for a non-baseline arm (13 covers the re-run case)
+#   29. archive_run.sh refuses an artifact whose corpus changed between its endpoints
+#   30. the agent class is a locked fixed factor
+#   31-32. a checkout that moved past the locked code, or carries tracked source changes, is refused
+#   33. reseed_arm.sh --no-run restores a configuration without starting a run
+#   34. archive_run.sh refuses a duplicate (arm, stack, run) identity
+#   35. qa_arm.sh refuses a non-numeric run number before anything runs
+#   36. archive_run.sh accepts only run 1 while a stack has no pin
+#   37. the judge timeout is a locked fixed factor
+#   38. qa_arm.sh defaults --run to the next unused number for the stack and arm
+#   39. after a --relock, a stack deployed under the previous lock is refused by archive and re-run
+#   40. archive_run.sh refuses an artifact with no ragas-start row for its stack
+#   41. archive_run.sh refuses when the live document/chunk counts cannot be read
+#   42. qa_arm.sh refuses (no ledger row) when the corpus changed during the QA run
+#   43. a same-label YAML with a different treatment value is refused by the arm manifest
+#   44. a non-factor data_manager change is refused by the lock
+#   45. run_arm.sh prints the next unused run number in its archive hint
+#   46. among ragas-start rows that share one UTC second, the LAST one is the run that started
+#   54. the fingerprint and category-map snippets call the shared v2 routines, never the harness
+#       source, and an image that predates the routine names it and says to rebuild
+#   55. archive_run.sh records the pin from an artifact whose two readings are equal sha256/v2: digests
+#   56. archive_run.sh refuses a sha256: pin against a sha256/v2: artifact with a version reason
+#   57. archive_run.sh copies collection and embedding_model from the artifact's retrieval_identity
+#       into the ledger row, and writes nulls when the artifact recorded none
+#   58. qa_arm.sh copies collection and embedding_model from the QA run manifest into the ledger
+#   59. the closing baseline with --new-corpus moves a v1 pin to v2 and records the old pin
+#       row, and writes nulls when the manifest recorded none
+# Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PASS=0; FAIL=0
+ok()    { printf 'ok - %s\n' "$1"; PASS=$((PASS + 1)); }
+notok() { printf 'not ok - %s\n' "$1"; FAIL=$((FAIL + 1)); }
+
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+export HOME="$T/home"; mkdir -p "$HOME"
+export ARCHI_DIR="$T/archi" FM_OUT="$T/out"
+export FM_DOCKER="$T/bin/docker" FM_ARCHI="$T/bin/archi" FM_PYTHON="${FM_PYTHON:-python3}"
+export FM_POLL_SECONDS=0
+unset RAGAS_ENV_FILE HUIT_API_KEY_FILE OPENAI_API_KEY FM_AGENT_SPEC
+mkdir -p "$T/bin" "$T/state" "$FM_OUT"
+printf 'sha256:abc\n' > "$T/fp"
+printf 'sha256:map1\n' > "$T/mapfp"   # the live category-map digest the data-manager reports
+
+# --- stubs -----------------------------------------------------------------------------
+cat > "$T/bin/docker" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$T/docker.calls"
+case "\$1" in
+  inspect) [ -f "$T/state/\$2" ] && { cat "$T/state/\$2"; exit 0; } || exit 1 ;;
+  exec)    sql="\$*"
+           case "\$sql" in
+             *container_category_map_digest*) cat "$T/mapfp" ;;
+             *benchmark_provenance*) cat "$T/fp" ;;
+             *document_chunks*)  [ -f "$T/nocounts" ] || echo 6096 ;;
+             *documents*)        [ -f "$T/nocounts" ] || echo 1132 ;;
+           esac ;;
+  *) exit 0 ;;
+esac
+EOF
+cat > "$T/bin/archi" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$T/archi.calls"
+# like the real CLI, \`eval qa\` creates its --output-dir
+prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && mkdir -p "\$a"; prev="\$a"; done
+# the run manifest records the retrieval identity when the test provides one
+prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$a/manifest.json"; prev="\$a"; done
+# a corpus that drifts WHILE the QA run is in flight
+[ "\$1 \$2" = "eval qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
+exit 0
+EOF
+cat > "$T/bin/git" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+  rev-parse) cat "$T/codesha" ;;
+  status)    cat "$T/dirty" 2>/dev/null || true ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$T/bin/docker" "$T/bin/archi" "$T/bin/git"
+export FM_GIT="$T/bin/git"; printf 'c0ffee00\n' > "$T/codesha"; : > "$T/dirty"
+
+# --- fake stack fm-00 --------------------------------------------------------------------
+S="$ARCHI_DIR/archi-fm-00"; mkdir -p "$S/configs" "$S/secrets"
+: > "$S/compose.yaml"; printf 'pw\n' > "$S/secrets/pg_password.txt"; printf 'k\n' > "$S/secrets/huit_api_key.txt"
+cat > "$S/configs/config.yaml" <<'EOF'
+name: fm-00
+services:
+  chat_app:
+    agent_class: CMSCompOpsAgent
+    default_provider: local
+    default_model: llama3.2
+    evaluations:
+      enabled: false
+    providers:
+      openai:
+        api_key: EMPTY
+        base_url: http://archi.rc.fas.harvard.edu:8001/v1
+  benchmarking:
+    agent_class: FASRCDocsAgent
+    provider: openai
+    model: palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4
+  postgres:
+    host: localhost
+    port: 5434
+data_manager:
+  chunking:
+    strategy: sentence
+  processing:
+    html_to_markdown:
+      enabled: true
+    categorization:
+      enabled: true
+  stemming:
+    enabled: false
+  retrievers:
+    hierarchical_rerank:
+      enabled: true
+      candidate_pool_size: 20
+      num_documents_to_retrieve: 5
+EOF
+printf 'running\n' > "$T/state/postgres-fm-00"; printf 'running\n' > "$T/state/data-manager-fm-00"
+printf 'exited\n' > "$T/state/benchmarking-fm-00"
+
+# --- arm fixtures ------------------------------------------------------------------------
+# Every arm YAML carries the same pinned inputs (bank, anchors, prompt, sources, SUT, judge)
+# and differs only in the factor keys, exactly like the real files in archi-config.
+mkdir -p "$T/arms" "$T/variants" "$T/cfg/qa" "$FM_OUT/qa"
+printf '[{"user_input": "q1", "reference": "a1"}]\n' > "$T/cfg/bank.json"
+printf '[{"user_input": "anchor", "reference": "r", "anchor_type": "should_refuse"}]\n' > "$T/cfg/anchors.json"
+printf 'https://docs.example/kb/\n' > "$T/cfg/sources.list"
+printf -- '---\nname: x\ntools: []\n---\n' > "$T/cfg/spec.md"
+printf 'version: 1\n' > "$T/cfg/qa/profile.yaml"
+printf '{"format":"qa-dataset-v2","items":[]}\n' > "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
+mk_arm() { # path name strategy html categorization stemming rerank k [bank]
+  cat > "$1" <<EOF
+name: $2
+data_manager:
+  sources: {links: {input_lists: [$T/cfg/sources.list]}}
+  embedding_name: HuggingFaceEmbeddings
+  chunking: {strategy: $3}
+  processing: {html_to_markdown: {enabled: $4}, categorization: {enabled: $5}}
+  stemming: {enabled: $6}
+  retrievers: {hierarchical_rerank: {enabled: $7, candidate_pool_size: 20, num_documents_to_retrieve: $8}}
+services:
+  benchmarking:
+    agent_class: FASRCDocsAgent
+    provider: openai
+    model: palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4
+    queries_path: ${9:-$T/cfg/bank.json}
+    agent_md_file: $T/cfg/spec.md
+    anchors: {enabled: true, path: $T/cfg/anchors.json}
+    modes: [RAGAS, SOURCES]
+    mode_settings: {ragas_settings: {embedding_model: HuggingFace, evaluator_provider: huit_bedrock, evaluator_model: sonnet-4-5, enabled_metrics: [answer_relevancy, faithfulness], timeout: 300}}
+  chat_app:
+    providers: {openai: {base_url: http://sut:8001/v1, extra_kwargs: {temperature: 0.3}}}
+EOF
+}
+mk_arm "$T/arms/00-baseline.yaml"           fm-00  sentence  true true false true  5
+mk_arm "$T/arms/05a-k3.yaml"                fm-05a sentence  true true false true  3
+mk_arm "$T/arms/01-rerank-off.yaml"         fm-01  sentence  true true false false 5
+mk_arm "$T/arms/02-chunking-character.yaml" fm-02  character true true false false 5
+mk_arm "$T/arms/03-categorization-off.yaml" fm-03  sentence  true false false true 5
+printf 'HUIT_API_KEY=x\n' > "$T/judge.env"
+
+artifact() { # $1 = path, $2 = divergence JSON, $3 = fingerprint, $4 = k in the recorded running configuration (default 5), $5 = fingerprint BEFORE the run (default = $3)
+  # FP_PREFIX (default sha256:) is the digest version prefix; IDENTITY (default null) is the recorded retrieval_identity
+  cat > "$1" <<EOF
+{"metadata": {"corpus_snapshot_id": "snap-1", "code_version": {"digest": "sha256:code"}},
+ "benchmarking_results": [{
+   "configuration_file": "configs/config.yaml",
+   "running_configuration": {"data_manager": {"chunking": {"strategy": "sentence"},
+     "processing": {"html_to_markdown": {"enabled": true}, "categorization": {"enabled": true}},
+     "stemming": {"enabled": false},
+     "retrievers": {"hierarchical_rerank": {"enabled": true, "candidate_pool_size": 20, "num_documents_to_retrieve": ${4:-5}}}}},
+   "config_version": {"digest": "sha256:cfg", "divergence_from_selected_file": $2},
+   "retrieval_identity": ${IDENTITY:-null},
+   "corpus_fingerprint": "${FP_PREFIX:-sha256:}$3", "corpus_fingerprint_before": "${FP_PREFIX:-sha256:}${5:-$3}", "corpus_unchanged_at_endpoints": $( [ "${5:-$3}" = "$3" ] && echo true || echo false ), "ingest_wall_seconds": 4321.0,
+   "total_results": {"aggregate_context_precision": 0.5, "context_precision_scored": "3 of 3", "aggregate_faithfulness": 0.6},
+   "single_question_results": {
+     "question_1": {"question": "q1", "status": "ok", "context_precision": 0.4, "faithfulness": 0.6, "time_elapsed": 10},
+     "question_2": {"question": "q2", "status": "ok", "context_precision": NaN, "faithfulness": 0.7, "time_elapsed": 12},
+     "question_3": {"question": "q3", "status": "degraded", "context_precision": 0.9, "faithfulness": 0.5, "time_elapsed": 90}}}]}
+EOF
+}
+
+run() { set +e; "$@" >"$T/stdout" 2>"$T/stderr"; RC=$?; set -e; }
+
+# 24: nothing runs before the campaign is locked
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && grep -q "no campaign lock" "$T/stderr" && ok "run_arm refuses before the campaign is locked" || notok "lock precondition (rc=$RC: $(cat "$T/stderr"))"
+
+# 25: lock_campaign writes the lock once; a second lock needs --relock
+run bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --arms-dir "$T/arms" --qa-dataset "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml"
+R1=$RC
+run bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --arms-dir "$T/arms" --qa-dataset "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml"
+if [ "$R1" = 0 ] && [ "$RC" = 2 ] && grep -q "already locked" "$T/stderr" && "$FM_PYTHON" -c "import json,sys; l=json.load(open('$FM_OUT/campaign.lock')); sys.exit(0 if set(l['files'])=={'bank','anchors','prompt','sources[0]'} and l['values']['judge.model']=='sonnet-4-5' and l['values']['judge.timeout']==300 and l['code_tree'].startswith('src=c0ffee00') and 'pyproject.toml=c0ffee00' in l['code_tree'] and set(l['arms'])=={'00','01','02','03','05a'} and l['arms']['05a']['factors']['retrievers.hierarchical_rerank.num_documents_to_retrieve']==3 and 'data_manager_rest' in l and l['qa']['dataset_sha256'] else 1)"; then ok "lock_campaign records the pinned inputs and refuses a silent re-lock"; else notok "lock_campaign (rc1=$R1 rc2=$RC: $(cat "$T/stderr"))"; fi
+rm -f "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"    # checks 12/14 expect it absent until they create it
+
+# 1
+run bash "$HERE/run_arm.sh" "0x" "$T/arms/01-rerank-off.yaml"
+[ "$RC" = 2 ] && grep -q "bad arm label" "$T/stderr" && ok "bad arm label refused" || notok "bad arm label refused (rc=$RC)"
+
+# 2
+: > "$T/archi.calls"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 0 ] && grep -qx "evaluate --name fm-00 --config $T/arms/00-baseline.yaml --env-file $T/judge.env --hostmode" "$T/archi.calls"; then ok "run_arm calls archi evaluate --hostmode"; else notok "run_arm calls archi evaluate --hostmode (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+
+# 3
+run bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && grep -q "RAGAS_ENV_FILE" "$T/stderr" && ok "run_arm refuses without the judge env file" || notok "run_arm refuses without the judge env file (rc=$RC)"
+
+# 4
+run bash "$HERE/run_arm.sh" 00 --rerun
+[ "$RC" = 2 ] && grep -q "no corpus pin" "$T/stderr" && ok "rerun refuses without a pin" || notok "rerun refuses without a pin (rc=$RC: $(cat "$T/stderr"))"
+
+# 5  (the ledger already holds the ragas-start rows from checks 2 and 4; a refusal must add nothing)
+ledger_rows() { "$FM_PYTHON" -c "import json,sys; print(len(json.load(open(sys.argv[1]))) if __import__('os').path.exists(sys.argv[1]) else 0)" "$FM_OUT/ledger.json"; }
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000001.json" '["data_manager.retrievers.hierarchical_rerank.enabled"]' abc
+BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 2 ] && grep -q "divergence_from_selected_file" "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ] && [ ! -f "$FM_OUT/corpus-pin-fm-00" ]; then ok "archive refuses a diverged run, writes nothing"; else notok "archive refuses a diverged run (rc=$RC: $(cat "$T/stderr"))"; fi
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+
+# 6
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000002.json" '[]' abc
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-00")" = sha256:abc ] && "$FM_PYTHON" - "$FM_OUT/ledger.json" <<'EOF'
+import json, sys
+rows = json.load(open(sys.argv[1])); e = rows[-1]
+assert e["kind"] == "ragas" and e["run"] == 1 and e["arm"] == "00", e
+assert e["corpus_fingerprint"] == "sha256:abc" and e["documents"] == 1132 and e["chunks"] == 6096, e
+assert e["scored"]["context_precision"] == "1 of 3", e["scored"]      # q2 NaN, q3 degraded
+assert e["scored"]["faithfulness"] == "2 of 3", e["scored"]
+assert e["degraded"] == 1 and e["ingest_wall_seconds"] == 4321.0 and e["code_digest"] == "sha256:code", e
+EOF
+then ok "archive records the run, recomputes scored counts, writes the pin"; else notok "archive records the run (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 7
+: > "$T/docker.calls"
+run bash "$HERE/run_arm.sh" 00 --rerun
+if [ "$RC" = 0 ] && grep -q "compose -f $S/compose.yaml up --no-deps -d benchmark" "$T/docker.calls" && ! grep -q -E "up.*(postgres|data-manager)" "$T/docker.calls"; then ok "rerun recreates only the benchmark service"; else notok "rerun recreates only the benchmark service (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 8
+printf 'sha256:zzz\n' > "$T/fp"
+run bash "$HERE/run_arm.sh" 00 --rerun
+[ "$RC" = 2 ] && grep -q "fingerprint sha256:zzz != pin sha256:abc" "$T/stderr" && ok "rerun refuses a drifted corpus" || notok "rerun refuses a drifted corpus (rc=$RC: $(cat "$T/stderr"))"
+printf 'sha256:abc\n' > "$T/fp"
+
+# 9
+cp "$S/configs/config.yaml" "$T/rendered.before"
+run bash "$HERE/reseed_arm.sh" 02 "$T/arms/02-chunking-character.yaml" --stack fm-00
+if [ "$RC" = 2 ] && grep -q "ingest-side" "$T/stderr" && cmp -s "$S/configs/config.yaml" "$T/rendered.before"; then ok "reseed refuses an ingest-side arm"; else notok "reseed refuses an ingest-side arm (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 14 (before the re-seed: the stack is still on the baseline, so arm 01 must be refused)
+mkdir -p "$FM_OUT/qa"; printf '{"format":"qa-dataset-v2","items":[]}\n' > "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
+: > "$T/archi.calls"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml"
+if [ "$RC" = 2 ] && grep -q "factor retrievers.hierarchical_rerank.enabled: arm=False stack=True" "$T/stderr" && [ ! -s "$T/archi.calls" ]; then ok "qa_arm refuses a stack that is not on the requested arm"; else notok "qa_arm refuses a stack not on the arm (rc=$RC: $(cat "$T/stderr"))"; fi
+rm -f "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
+
+# 10
+: > "$T/docker.calls"
+run bash "$HERE/reseed_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00
+if [ "$RC" = 0 ] && grep -q "up --force-recreate config-seed" "$T/docker.calls" && [ -f "$S/fm-backup/config.yaml" ] && [ "$(ls "$S/configs" | wc -l)" = 1 ] \
+   && "$FM_PYTHON" -c "import yaml,sys; c=yaml.safe_load(open('$S/configs/config.yaml')); hr=c['data_manager']['retrievers']['hierarchical_rerank']; sys.exit(0 if hr['enabled'] is False and hr['num_documents_to_retrieve']==5 and c['data_manager']['chunking']['strategy']=='sentence' else 1)"; then
+  ok "reseed writes the retrieval key, backs up outside configs/, recreates config-seed"; else notok "reseed writes the retrieval key (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 12 (before 11: the dataset does not exist yet)
+run bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml"
+[ "$RC" = 2 ] && grep -q "QA dataset not found" "$T/stderr" && ok "qa_arm refuses without the converted dataset" || notok "qa_arm refuses without the converted dataset (rc=$RC: $(cat "$T/stderr"))"
+
+# 11 + 15
+mkdir -p "$FM_OUT/qa"; printf '{"format":"qa-dataset-v2","items":[]}\n' > "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
+: > "$T/archi.calls"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml"
+if [ "$RC" = 0 ] && grep -q -- "eval qa --dataset $FM_OUT/qa/fasrc_ragas_queries.qa-v2.json --agent-config $FM_OUT/qa/01.agent-config.yaml --agent-spec $T/cfg/spec.md --evaluator-profile $T/cfg/qa/profile.yaml --output-dir $FM_OUT/qa/fm-00-arm01-r1 --attempts 1 --run-workers 1 --score-workers 4" "$T/archi.calls" \
+   && "$FM_PYTHON" -c "import yaml,sys; c=yaml.safe_load(open('$FM_OUT/qa/01.agent-config.yaml'))['services']['chat_app']; sys.exit(0 if (c['agent_class'],c['default_provider'],c['default_model'])==('FASRCDocsAgent','openai','palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4') and 'evaluations' not in c and c['providers']['openai']['api_key']=='EMPTY' else 1)" \
+   && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['kind']=='qa' and e['arm']=='01' and e['stack']=='fm-00' else 1)"; then
+  ok "qa_arm overwrites the SUT fields, drops evaluations, calls archi eval qa serially"; else notok "qa_arm agent config + call (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+EXPECT_SHA="$(sha256sum "$S/configs/config.yaml" | cut -d' ' -f1)"
+if "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e.get('rendered_config_sha256')=='$EXPECT_SHA' and e.get('corpus_fingerprint')=='sha256:abc' and e.get('arm_config')=='$T/arms/01-rerank-off.yaml' else 1)"; then ok "qa_arm records the rendered config sha256, the arm config, and the corpus fingerprint"; else notok "qa_arm ledger identity fields"; fi
+
+# 47: qa_arm reads the category map around the QA run and writes the readings compare_runs joins on
+if "$FM_PYTHON" -c "import json,sys; r=json.load(open('$FM_OUT/qa/fm-00-arm01-r1/category_map_readings.json')); e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if r=={'start':'sha256:map1','end':'sha256:map1'} and e.get('category_map_sha256_start')=='sha256:map1' and e.get('category_map_sha256_end')=='sha256:map1' else 1)" 2>/dev/null; then ok "qa_arm writes category_map_readings.json and records both map digests"; else notok "qa_arm map readings"; fi
+
+# 13: a drifted fingerprint is refused; --new-corpus is refused after a re-run, honoured only after a fresh deploy of arm 00
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000003.json" '[]' def
+run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml"
+R1=$RC
+run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --new-corpus
+R2=$RC; grep -q "needs a fresh deploy" "$T/stderr" && R2M=1 || R2M=0
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"   # a fresh deploy start for fm-00
+touch "$FM_OUT/benchmarking-fm-00-20260903_000003.json"                                          # the artifact that deploy wrote
+run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --new-corpus
+if [ "$R1" = 2 ] && [ "$R2" = 2 ] && [ "$R2M" = 1 ] && [ "$RC" = 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-00")" = sha256:def ] \
+   && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['repinned_from']=='sha256:abc' and e['corpus_fingerprint']=='sha256:def' else 1)"; then
+  ok "archive refuses a drifted fingerprint; --new-corpus re-pins only after a fresh arm-00 deploy and records the old pin"; else notok "archive fingerprint gate (rc1=$R1 rc2=$R2 m=$R2M rc3=$RC: $(cat "$T/stderr"))"; fi
+
+# 16: the same artifact again → refused, ledger unchanged
+BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" 00 3 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 2 ] && grep -q "already archived as arm 00 run 2" "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ]; then ok "archive refuses an artifact already in the ledger"; else notok "archive duplicate guard (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 17: a re-run that produced nothing leaves run 2's file as the newest; the file predates
+# the new ragas-start, so archiving "run 3" must refuse
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000004.json" '[]' def
+touch -d '2020-01-01T00:00:00Z' "$FM_OUT/benchmarking-fm-00-20260903_000004.json"
+run bash "$HERE/run_arm.sh" 00 --rerun          # appends a fresh ragas-start for fm-00
+run bash "$HERE/archive_run.sh" 00 3 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 2 ] && grep -q "before the latest ragas-start" "$T/stderr"; then ok "archive refuses an artifact older than the latest ragas-start"; else notok "archive stale-artifact guard (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 18: the operator's label must match the YAML's own name
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 01 "$T/arms/05a-k3.yaml"
+[ "$RC" = 2 ] && grep -q "arm label 01 does not match" "$T/stderr" && ok "run_arm refuses a label that does not match the YAML's name" || notok "label/YAML mismatch guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 19: the artifact proves which arm ran — a baseline artifact archived as arm 05a is refused
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000005.json" '[]' def 5
+run bash "$HERE/archive_run.sh" 05a 1 "$T/arms/05a-k3.yaml" --stack fm-00
+[ "$RC" = 2 ] && grep -q "artifact ran factor retrievers.hierarchical_rerank.num_documents_to_retrieve=5, arm 05a wants 3" "$T/stderr" && ok "archive refuses an artifact whose running configuration is not the arm's" || notok "archive running-configuration guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 20: the same artifact recorded with k=3 archives as 05a and carries the arm config + fingerprint source
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000006.json" '[]' def 3
+run bash "$HERE/archive_run.sh" 05a 1 "$T/arms/05a-k3.yaml" --stack fm-00
+if [ "$RC" = 0 ] && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['arm']=='05a' and e['arm_config']=='$T/arms/05a-k3.yaml' and e['configuration_file']=='configs/config.yaml' and e['fingerprint_source']=='artifact' else 1)"; then ok "archive records the arm config, the selected file, and the fingerprint source"; else notok "archive identity fields (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 21: qa_arm refuses a corpus that drifted from the pin (pin is now def, live is abc)
+printf 'sha256:abc\n' > "$T/fp"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml" --run 2
+[ "$RC" = 2 ] && grep -q "fingerprint sha256:abc != pin sha256:def" "$T/stderr" && [ ! -e "$FM_OUT/qa/fm-00-arm01-r2" ] && ok "qa_arm refuses a corpus that drifted from the pin" || notok "qa_arm pin guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 22: a sparse arm YAML (no stemming key) is refused everywhere the YAML is accepted
+cat > "$T/variants/sparse.yaml" <<'EOF'
+name: fm-00
+data_manager:
+  chunking: {strategy: sentence}
+  processing: {html_to_markdown: {enabled: true}, categorization: {enabled: true}}
+  retrievers: {hierarchical_rerank: {enabled: true, candidate_pool_size: 20, num_documents_to_retrieve: 5}}
+EOF
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/variants/sparse.yaml"
+[ "$RC" = 2 ] && grep -q "lacks factor key(s): stemming.enabled" "$T/stderr" && ok "a sparse arm YAML is refused (fail closed)" || notok "sparse YAML guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 23: an artifact without running_configuration (pre-#269) cannot prove an arm and is refused
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+cat > "$FM_OUT/benchmarking-fm-00-20260903_000007.json" <<'EOF'
+{"metadata": {"corpus_snapshot_id": "snap-1", "code_version": {"digest": "sha256:code"}},
+ "benchmarking_results": [{"configuration_file": "configs/config.yaml", "configuration": {"data_manager": {"chunking": {"strategy": "sentence"}}},
+   "config_version": {"digest": "sha256:cfg", "divergence_from_selected_file": null}, "corpus_fingerprint": "sha256:def", "corpus_fingerprint_before": "sha256:def", "corpus_unchanged_at_endpoints": true,
+   "total_results": {}, "single_question_results": {"question_1": {"question": "q1", "status": "ok", "faithfulness": 0.5, "time_elapsed": 1}}}]}
+EOF
+run bash "$HERE/archive_run.sh" 00 4 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && grep -q "no running_configuration" "$T/stderr" && ok "archive refuses an artifact without running_configuration" || notok "archive legacy-artifact guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 26: a same-label YAML that names a different bank is refused by the lock
+printf '[{"user_input": "q1 changed", "reference": "a1"}]\n' > "$T/cfg/bank2.json"
+mk_arm "$T/variants/00-altbank.yaml" fm-00 sentence true true false true 5 "$T/cfg/bank2.json"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/variants/00-altbank.yaml"
+[ "$RC" = 2 ] && grep -q "fixed factor bank: locked sha256" "$T/stderr" && ok "a same-label YAML with a different bank is refused by the lock" || notok "lock bank guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 27: qa_arm refuses a dataset whose content differs from the lock, even though the file exists
+printf 'sha256:abc\n' > "$T/fp"; printf 'sha256:abc\n' > "$FM_OUT/corpus-pin-fm-00"
+printf '{"format":"qa-dataset-v2","items":[{"id":"x"}]}\n' > "$T/cfg/other-dataset.json"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml" --dataset "$T/cfg/other-dataset.json" --run 3
+[ "$RC" = 2 ] && grep -q "does not match the campaign lock" "$T/stderr" && [ ! -e "$FM_OUT/qa/fm-00-arm01-r3" ] && ok "qa_arm refuses a dataset that differs from the lock" || notok "lock dataset guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 28: --new-corpus is never valid for a non-baseline arm
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000008.json" '[]' ghi 3
+run bash "$HERE/archive_run.sh" 05a 2 "$T/arms/05a-k3.yaml" --stack fm-00 --new-corpus
+[ "$RC" = 2 ] && grep -q "only valid for arm 00" "$T/stderr" && ok "--new-corpus is refused for a non-baseline arm" || notok "new-corpus arm guard (rc=$RC: $(cat "$T/stderr"))"
+
+# 29: a run whose corpus changed between its endpoints is void, pin or no pin
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000009.json" '[]' def 5 abc
+run bash "$HERE/archive_run.sh" 00 5 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && grep -q "corpus changed during the run" "$T/stderr" && ok "archive refuses an artifact whose corpus changed between its endpoints" || notok "endpoint fingerprint gate (rc=$RC: $(cat "$T/stderr"))"
+
+# 30: the agent class is a locked fixed factor
+sed 's/agent_class: FASRCDocsAgent/agent_class: CMSCompOpsAgent/' "$T/arms/00-baseline.yaml" > "$T/variants/00-otheragent.yaml"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/variants/00-otheragent.yaml"
+[ "$RC" = 2 ] && grep -q "fixed factor sut.agent_class: locked 'FASRCDocsAgent'" "$T/stderr" && ok "a different agent class is refused by the lock" || notok "agent class lock (rc=$RC: $(cat "$T/stderr"))"
+
+# 31/32: the locked code revision is enforced for fresh deploys and QA runs
+printf 'deadbeef\n' > "$T/codesha"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+R1=$RC; grep -q "are not the locked campaign code" "$T/stderr" && M1=1 || M1=0
+printf 'c0ffee00\n' > "$T/codesha"; printf ' M src/x.py\n' > "$T/dirty"
+: > "$T/archi.calls"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml" --run 4
+R2=$RC; grep -q "uncommitted source changes" "$T/stderr" && M2=1 || M2=0
+: > "$T/dirty"
+if [ "$R1" = 2 ] && [ "$M1" = 1 ] && [ "$R2" = 2 ] && [ "$M2" = 1 ] && [ ! -s "$T/archi.calls" ]; then ok "a checkout that moved or is dirty is refused by the code lock"; else notok "code lock (rc1=$R1 m1=$M1 rc2=$R2 m2=$M2: $(cat "$T/stderr"))"; fi
+
+# 33: restoring the baseline with --no-run re-seeds without launching a benchmark
+: > "$T/docker.calls"
+run bash "$HERE/reseed_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-00 --no-run
+if [ "$RC" = 0 ] && grep -q "up --force-recreate config-seed" "$T/docker.calls" && ! grep -q "up --no-deps -d benchmark" "$T/docker.calls" \
+   && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['kind']=='reseed' and e['arm']=='00' else 1)"; then ok "reseed --no-run restores the config without starting a run"; else notok "reseed --no-run (rc=$RC: $(cat "$T/docker.calls" "$T/stderr"))"; fi
+
+# 34: the same (arm, stack, run) identity cannot be archived twice
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000010.json" '[]' def 3
+run bash "$HERE/archive_run.sh" 05a 1 "$T/arms/05a-k3.yaml" --stack fm-00
+[ "$RC" = 2 ] && grep -q "arm 05a run 1 on fm-00 is already archived" "$T/stderr" && ok "archive refuses a duplicate (arm, stack, run) identity" || notok "duplicate identity gate (rc=$RC: $(cat "$T/stderr"))"
+
+# 35: a non-numeric QA run number is refused before anything runs
+: > "$T/archi.calls"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml" --run two
+[ "$RC" = 2 ] && grep -q "run number must be a positive integer" "$T/stderr" && [ ! -s "$T/archi.calls" ] && ok "qa_arm refuses a non-numeric run number up front" || notok "run number validation (rc=$RC: $(cat "$T/stderr"))"
+
+# 36: a stack with no pin accepts only run 1 first
+artifact "$FM_OUT/benchmarking-fm-03-20260903_000011.json" '[]' ggg 5
+mkdir -p "$ARCHI_DIR/archi-fm-03"; sha256sum "$FM_OUT/campaign.lock" | cut -d' ' -f1 > "$ARCHI_DIR/archi-fm-03/fm-lock.sha256"   # deployed under the active lock
+run bash "$HERE/archive_run.sh" 03 2 "$T/arms/03-categorization-off.yaml"
+[ "$RC" = 2 ] && grep -q "archive run 1 first" "$T/stderr" && [ ! -f "$FM_OUT/corpus-pin-fm-03" ] && ok "archive refuses run 2 before run 1 has pinned the stack" || notok "pin-by-run-1 gate (rc=$RC: $(cat "$T/stderr"))"
+
+# 37: a same-label YAML with a different judge timeout is refused by the lock
+sed 's/timeout: 300/timeout: 180/' "$T/arms/00-baseline.yaml" > "$T/variants/00-timeout.yaml"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/variants/00-timeout.yaml"
+[ "$RC" = 2 ] && grep -q "fixed factor judge.timeout: locked 300, arm has 180" "$T/stderr" && ok "a different judge timeout is refused by the lock" || notok "judge timeout lock (rc=$RC: $(cat "$T/stderr"))"
+
+# 38: qa_arm picks the next unused run number when --run is omitted (the stack is back on arm 00 since check 33)
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+R1=$RC; : > "$T/archi.calls"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+if [ "$R1" = 0 ] && [ "$RC" = 0 ] && grep -q -- "--output-dir $FM_OUT/qa/fm-00-arm00-r2 " "$T/archi.calls"; then ok "qa_arm defaults to the next unused run number"; else notok "qa run auto-number (rc1=$R1 rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+
+# 39: an artifact whose run started under an earlier lock is refused after a --relock
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"      # start under the current lock
+printf '{"format":"qa-dataset-v2","items":[]}\n' > "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
+sed -i 's/timeout: 300/timeout: 240/' "$T/arms/00-baseline.yaml"                                  # the campaign inputs change ...
+run bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --arms-dir "$T/arms" --qa-dataset "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml" --relock
+R1=$RC
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000012.json" '[]' def 5                            # ... and the old run's artifact lands
+run bash "$HERE/archive_run.sh" 00 6 "$T/arms/00-baseline.yaml"
+R2=$RC; grep -q "was deployed under lock" "$T/stderr" && M2=1 || M2=0
+run bash "$HERE/run_arm.sh" 00 --rerun
+if [ "$R1" = 0 ] && [ "$R2" = 2 ] && [ "$M2" = 1 ] && [ "$RC" = 2 ] && grep -q "was deployed under lock" "$T/stderr"; then ok "after a --relock, archive and re-run refuse a stack deployed under the previous lock"; else notok "stack lock stamp gate (rc1=$R1 rc2=$R2 m2=$M2 rc3=$RC: $(cat "$T/stderr"))"; fi
+# restore the canonical baseline and lock so the remaining checks run under one consistent lock
+sed -i 's/timeout: 240/timeout: 300/' "$T/arms/00-baseline.yaml"
+run bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --arms-dir "$T/arms" --qa-dataset "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml" --relock
+[ "$RC" = 0 ] || notok "could not restore the canonical lock after check 39 ($(cat "$T/stderr"))"
+
+# 40: an artifact with no ragas-start row for its stack cannot be archived (nothing ties it to a lock or a time)
+mkdir -p "$ARCHI_DIR/archi-fm-01"; sha256sum "$FM_OUT/campaign.lock" | cut -d' ' -f1 > "$ARCHI_DIR/archi-fm-01/fm-lock.sha256"
+artifact "$FM_OUT/benchmarking-fm-01-20260903_000013.json" '[]' hhh 5
+sed -i 's/"enabled": true, "candidate_pool_size"/"enabled": false, "candidate_pool_size"/' "$FM_OUT/benchmarking-fm-01-20260903_000013.json"
+run bash "$HERE/archive_run.sh" 01 1 "$T/arms/01-rerank-off.yaml"
+[ "$RC" = 2 ] && grep -q "no ragas-start row for fm-01" "$T/stderr" && ok "archive refuses an artifact with no start row for its stack" || notok "start-row gate (rc=$RC: $(cat "$T/stderr"))"
+
+# 41: unreadable live counts refuse the archive (the stack is deleted right after, so now or never)
+# (the relock in 39 left fm-00 stamped with the OLD lock; re-stamp it to the active lock for the remaining checks)
+sha256sum "$FM_OUT/campaign.lock" | cut -d' ' -f1 > "$S/fm-lock.sha256"; printf 'sha256:def\n' > "$T/fp"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json; artifact "$FM_OUT/benchmarking-fm-00-20260903_000014.json" '[]' def 5
+touch "$T/nocounts"
+run bash "$HERE/archive_run.sh" 00 7 "$T/arms/00-baseline.yaml"
+R1=$RC; grep -q "could not read the live document/chunk counts" "$T/stderr" && M1=1 || M1=0
+rm -f "$T/nocounts"
+[ "$R1" = 2 ] && [ "$M1" = 1 ] && ok "archive refuses when the live counts cannot be read" || notok "count gate (rc=$R1 m=$M1: $(cat "$T/stderr"))"
+
+# 42: a corpus that drifts DURING the QA run voids it: no ledger row, output kept
+printf 'sha256:def\n' > "$T/fp"; printf 'sha256:def\n' > "$FM_OUT/corpus-pin-fm-00"; touch "$T/drift-after-qa"
+BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/drift-after-qa"; printf 'sha256:def\n' > "$T/fp"
+[ "$RC" = 2 ] && grep -q "corpus changed during the QA run" "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ] && ok "qa_arm refuses when the corpus changed during the run" || notok "qa post-run corpus check (rc=$RC: $(cat "$T/stderr"))"
+
+# 43: an arm YAML that is not the locked file for its label is refused (05a with k=4 is not the pre-registered k=3)
+mk_arm "$T/variants/05a-k4.yaml" fm-05a sentence true true false true 4
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 05a "$T/variants/05a-k4.yaml"
+[ "$RC" = 2 ] && grep -q "is not the locked arm 05a config" "$T/stderr" && ok "a same-label YAML with a different treatment value is refused by the arm manifest" || notok "arm manifest gate (rc=$RC: $(cat "$T/stderr"))"
+
+# 44: a non-factor data_manager setting (a chunk size) is a fixed factor too
+mk_arm "$T/variants/00-chunksize.yaml" fm-00 sentence true true false true 5
+sed -i 's/  chunking: {strategy: sentence}/  chunking: {strategy: sentence, parent_chunk_size: 1024}/' "$T/variants/00-chunksize.yaml"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/variants/00-chunksize.yaml"
+[ "$RC" = 2 ] && grep -q "data_manager.chunking.parent_chunk_size: locked None, arm has 1024 (not an arm factor)" "$T/stderr" && ok "a non-factor data_manager change is refused by the lock" || notok "data_manager rest gate (rc=$RC: $(cat "$T/stderr"))"
+
+# 45: the printed archive hint names the NEXT run number for a reused (arm, stack)
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+NEXT="$("$FM_PYTHON" -c "import json; r=[int(e['run']) for e in json.load(open('$FM_OUT/ledger.json')) if e.get('kind')=='ragas' and e.get('arm')=='00' and e.get('stack')=='fm-00']; print(max(r)+1)")"
+[ "$RC" = 0 ] && grep -q "archive_run.sh 00 $NEXT " "$T/stdout" && [ "$NEXT" -gt 1 ] && ok "run_arm prints the next unused run number in its archive hint" || notok "archive hint run number (rc=$RC next=$NEXT: $(cat "$T/stdout"))"
+
+# 46: two ragas-start rows for one stack can share a UTC second — fm_now has second
+# resolution. The run that started is the LAST of them, the way the --new-corpus check
+# already reads it (starts[-1]). Picking by timestamp alone returns the first row seen,
+# so a stale row from before a --relock would decide the lock check and refuse a run that
+# started under the active lock. This is how check 41 failed in CI on 2026-09-04 while
+# passing on a host whose checks 39 and 41 straddled a second boundary.
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+"$FM_PYTHON" - "$FM_OUT/ledger.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+rows = json.load(open(path))
+i = max(n for n, r in enumerate(rows) if r.get("kind") == "ragas-start" and r.get("stack") == "fm-00")
+stale = dict(rows[i]); stale["lock_sha256"] = "0" * 64   # a lock from before a --relock
+rows.insert(i, stale)                                    # same second, earlier position
+json.dump(rows, open(path, "w"))
+PY
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+artifact "$FM_OUT/benchmarking-fm-00-20260903_000015.json" '[]' def 5
+run bash "$HERE/archive_run.sh" 00 9 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 0 ] && ! grep -q "started under lock" "$T/stderr"; then ok "a stale ragas-start row sharing the newest second does not decide the lock check"; else notok "same-second start row (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# --- sweep mode (checks 48-53) -------------------------------------------------------------
+# One stack, three arms generated from one manifest; every path absolute so the wrappers'
+# working directory does not matter.
+SW="$T/sweep"; mkdir -p "$SW/prompts" "$SW/qa"
+KB=https://docs.rc.fas.harvard.edu/kb
+printf '[{"user_input": "How do I submit a job?", "sources": ["%s/jobs"]}]\n' "$KB" > "$SW/bank.json"
+printf '[]\n' > "$SW/anchors.json"
+printf 'control\n' > "$SW/prompts/fasrc-docs.md"
+printf 'control\n## Category routing\n\n- A\n' > "$SW/prompts/fasrc-docs-r0a-category.md"
+printf 'control\n## Worked examples\n\nQuestion: How do I request FASSE access?\n\nAnswer: [x](%s/fasse)\n' "$KB" > "$SW/prompts/fasrc-docs-r0b-icl.md"
+cat > "$SW/base.yaml" <<EOF
+name: r0
+services:
+  benchmarking: {queries_path: $SW/bank.json, anchors: {path: $SW/anchors.json}, agent_md_file: $SW/prompts/fasrc-docs.md,
+                 agent_class: FASRCDocsAgent, provider: openai, model: m}
+EOF
+cat > "$SW/manifest.yaml" <<EOF
+base_config: $SW/base.yaml
+out_dir: $SW/configs
+prompts: [$SW/prompts/fasrc-docs.md, $SW/prompts/fasrc-docs-r0a-category.md, $SW/prompts/fasrc-docs-r0b-icl.md]
+EOF
+(cd "$HERE/../../.." && "$FM_PYTHON" scripts/benchmarking/generate_prompt_sweep.py --manifest "$SW/manifest.yaml" >/dev/null)
+printf '{"format":"qa-dataset-v2","items":[]}\n' > "$SW/qa/dataset.json"; printf 'judge: x\n' > "$SW/qa/profile.yaml"
+R0="$ARCHI_DIR/archi-r0"; mkdir -p "$R0/configs" "$R0/secrets"; : > "$R0/compose.yaml"
+cp "$S/configs/config.yaml" "$R0/configs/config.yaml"; printf 'pw\n' > "$R0/secrets/pg_password.txt"
+printf 'running\n' > "$T/state/postgres-r0"; printf 'running\n' > "$T/state/data-manager-r0"; printf 'exited\n' > "$T/state/benchmarking-r0"
+
+# 48: qa_prepare prepares the gold atoms once, before the lock
+: > "$T/archi.calls"
+run bash "$HERE/qa_prepare.sh" --sweep r0 --qa-dataset "$SW/qa/dataset.json" --qa-profile "$SW/qa/profile.yaml"
+if [ "$RC" = 0 ] && grep -qx "eval qa prepare $SW/qa/dataset.json --evaluator-profile $SW/qa/profile.yaml --output-dir $FM_OUT/qa/r0-prepared" "$T/archi.calls"; then ok "qa_prepare --sweep prepares the gold atoms into the stack's prepared workspace"; else notok "qa_prepare (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+printf '{"item_id": "x"}\n' > "$FM_OUT/qa/r0-prepared/preparation.jsonl"
+
+# 49: lock_campaign --sweep writes the sweep lock once; prepare is refused after it
+run bash "$HERE/lock_campaign.sh" --sweep "$SW/configs" --manifest "$SW/manifest.yaml" --stack r0 --qa-dataset "$SW/qa/dataset.json" --qa-profile "$SW/qa/profile.yaml"
+R1=$RC
+run bash "$HERE/lock_campaign.sh" --sweep "$SW/configs" --manifest "$SW/manifest.yaml" --stack r0 --qa-dataset "$SW/qa/dataset.json" --qa-profile "$SW/qa/profile.yaml"
+R2=$RC; grep -q "already locked" "$T/stderr" && R2M=1 || R2M=0
+run bash "$HERE/qa_prepare.sh" --sweep r0 --qa-dataset "$SW/qa/dataset.json" --qa-profile "$SW/qa/profile.yaml"
+if [ "$R1" = 0 ] && [ "$R2" = 2 ] && [ "$R2M" = 1 ] && [ "$RC" = 2 ] && grep -q "already locked" "$T/stderr" \
+   && "$FM_PYTHON" -c "import json,sys; l=json.load(open('$FM_OUT/sweep-r0.lock')); sys.exit(0 if len(l['arms'])==3 and l['arms']['fasrc-docs-r0b-icl']['disjointness']['passed'] and l['qa']['preparation_sha256'] else 1)"; then
+  ok "lock_campaign --sweep pins every arm once and blocks a later prepare"; else notok "sweep lock (rc1=$R1 rc2=$R2 rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 50: run_arm --sweep deploys every arm in one --config-dir run and stamps the stack
+: > "$T/archi.calls"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" --sweep "$SW/configs" --stack r0
+if [ "$RC" = 0 ] && grep -qx "evaluate --config-dir $SW/configs --name r0 --env-file $T/judge.env --hostmode" "$T/archi.calls" \
+   && [ "$(cat "$R0/fm-lock.sha256")" = "$(sha256sum "$FM_OUT/sweep-r0.lock" | cut -d' ' -f1)" ] \
+   && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['kind']=='ragas-start' and e['stack']=='r0' and e.get('sweep') is True else 1)"; then
+  ok "run_arm --sweep deploys the sweep in one run and stamps the stack with the sweep lock"; else notok "run_arm --sweep (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+
+# 51: the rerun needs both pins; a moved category map is refused before any container is touched
+cp "$T/fp" "$FM_OUT/corpus-pin-r0"; printf 'sha256:other\n' > "$FM_OUT/category-map-pin-r0"   # the corpus pin is the live value
+: > "$T/docker.calls"
+run bash "$HERE/run_arm.sh" --sweep "$SW/configs" --stack r0 --rerun
+R1=$RC; grep -q "map pin" "$T/stderr" && R1M=1 || R1M=0; grep -q " up " "$T/docker.calls" && R1U=1 || R1U=0
+printf 'sha256:map1\n' > "$FM_OUT/category-map-pin-r0"
+run bash "$HERE/run_arm.sh" --sweep "$SW/configs" --stack r0 --rerun
+if [ "$R1" = 2 ] && [ "$R1M" = 1 ] && [ "$R1U" = 0 ] && [ "$RC" = 0 ] && grep -q "compose -f $R0/compose.yaml up --no-deps -d benchmark" "$T/docker.calls"; then
+  ok "run_arm --sweep --rerun checks both pins and recreates only the benchmark container"; else notok "sweep rerun (r1=$R1/$R1M/$R1U rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 52: qa_arm --sweep runs one arm's prompt on a copy of the prepared workspace
+: > "$T/archi.calls"
+run bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl
+QA="$FM_OUT/qa/r0-fasrc-docs-r0b-icl-r1"
+if [ "$RC" = 0 ] && grep -q "eval qa run $QA --agent-config .* --agent-spec $SW/prompts/fasrc-docs-r0b-icl.md --attempts 1 --run-workers 1" "$T/archi.calls" \
+   && grep -q "eval qa score $QA --evaluator-profile $SW/qa/profile.yaml" "$T/archi.calls" \
+   && [ -f "$QA/preparation.jsonl" ] \
+   && "$FM_PYTHON" -c "import json,sys; r=json.load(open('$QA/category_map_readings.json')); sys.exit(0 if r=={'start':'sha256:map1','end':'sha256:map1'} else 1)"; then
+  ok "qa_arm --sweep runs and scores one arm on the prepared atoms and writes its map readings"; else notok "qa_arm --sweep (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+
+# 53: archive_run --sweep records every arm of run 1 with the census, in one ledger write
+rm -f "$FM_OUT/corpus-pin-r0" "$FM_OUT/category-map-pin-r0"
+"$FM_PYTHON" - "$FM_OUT" "$SW" <<'PY'
+import hashlib, json, pathlib, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[2]).resolve()))
+out, sw = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+lock = json.loads((out / "sweep-r0.lock").read_text())
+records = ["https://docs.rc.fas.harvard.edu/kb/jobs\tCluster Usage"]
+text = "\n".join(records)
+digest = "sha256:" + hashlib.sha256(text.encode()).hexdigest()
+stem = "benchmarking-r0-20991231_000000"
+entries = []
+for i, (name, arm) in enumerate(sorted(lock["arms"].items()), 1):
+    (out / f"{stem}_category_map_{i}.tsv").write_text(text)
+    entries.append({"configuration": {"services": {"benchmarking": {"name": name}}},
+                    "corpus_fingerprint_before": "sha256:abc", "corpus_fingerprint": "sha256:abc",
+                    "corpus_unchanged_at_endpoints": True,
+                    "category_map_sha256_start": digest, "category_map_sha256_end": digest,
+                    "category_map_unchanged_at_endpoints": True,
+                    "category_map_file": f"{stem}_category_map_{i}.tsv",
+                    "agent_md_sha256": arm["prompt_text_sha256"]})
+(out / f"{stem}.json").write_text(json.dumps({"benchmarking_results": entries, "metadata": {}}))
+routing = lock["arms"][lock["routing_arm"]]["prompt_sha256"]
+exemplar = lock["arms"][lock["exemplar_arm"]]["prompt_sha256"]
+(out / "census.json").write_text(json.dumps({"passed": True, "corpus_fingerprint": "sha256:abc",
+    "category_map_digest": digest, "inputs": {"bank_sha256": lock["bank"]["sha256"],
+    "anchors_sha256": lock["anchors"]["sha256"], "routing_prompt_sha256": routing,
+    "exemplar_prompt_sha256": exemplar, "similarity_threshold": lock["similarity_threshold"]}}))
+PY
+BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" --sweep "$SW/configs" --stack r0 --run 1 --census "$FM_OUT/census.json"
+if [ "$RC" = 0 ] && [ "$(ledger_rows)" = $((BEFORE + 3)) ] && [ "$(cat "$FM_OUT/corpus-pin-r0")" = "sha256:abc" ] && [ -s "$FM_OUT/category-map-pin-r0" ]; then
+  ok "archive_run --sweep records one row per arm and writes both pins on run 1"; else notok "archive_run --sweep (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 54: the container snippets call the shared routines; an old image says to rebuild
+OLD="$T/old-image"; mkdir -p "$OLD/src/utils"; : > "$OLD/src/__init__.py"; : > "$OLD/src/utils/__init__.py"
+printf 'def corpus_fingerprint(rows):\n    return "sha256:old"\n' > "$OLD/src/utils/benchmark_provenance.py"
+SNIPPETS="$(bash -c '. "$1/lib.sh"; printf "%s\n@@\n%s" "$FM_FINGERPRINT_PY" "$FM_CATEGORY_MAP_PY"' _ "$HERE")"
+FP_PY="${SNIPPETS%%@@*}"; MAP_PY="${SNIPPETS#*@@}"
+OLD_OUT="$(cd "$OLD" && "$FM_PYTHON" -c "$FP_PY" 2>&1)" && OLD_RC=0 || OLD_RC=$?
+MAP_OUT="$(cd "$OLD" && "$FM_PYTHON" -c "$MAP_PY" 2>&1)"
+if [ "$OLD_RC" != 0 ] && printf '%s' "$OLD_OUT" | grep -q "no container_corpus_fingerprint" \
+   && printf '%s' "$OLD_OUT" | grep -q "rebuild the stack from the campaign SHA" \
+   && printf '%s' "$MAP_OUT" | grep -q "^<unavailable: " \
+   && grep -q "container_corpus_fingerprint" "$T/docker.calls" \
+   && grep -q "container_category_map_digest" "$T/docker.calls" \
+   && ! grep -q "service_benchmark.py\|CORPUS_STATE_QUERY\|CATEGORY_MAP_QUERY" "$HERE/lib.sh"; then
+  ok "container snippets call the shared v2 routines and an old image says to rebuild"
+else notok "container snippets (rc=$OLD_RC: $OLD_OUT | $MAP_OUT)"; fi
+
+# 55 + 57: a fresh stack pins from an artifact whose two readings are equal v2 digests; the row carries the identity
+mkdir -p "$ARCHI_DIR/archi-fm-v2"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-v2
+FP_PREFIX=sha256/v2: IDENTITY='{"collection": "fasrc_with_HuggingFaceEmbeddings", "embedding_name": "HuggingFaceEmbeddings", "embedding_model": "all-MiniLM-L6-v2"}' \
+  artifact "$FM_OUT/benchmarking-fm-v2-20260903_000016.json" '[]' vvv 5
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-v2
+if [ "$RC" = 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-v2" 2>/dev/null)" = sha256/v2:vvv ] \
+   && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['corpus_fingerprint']=='sha256/v2:vvv' else 1)"; then
+  ok "archive records the pin from equal sha256/v2: readings"; else notok "archive v2 artifact (rc=$RC: $(cat "$T/stderr"))"; fi
+if "$FM_PYTHON" - "$FM_OUT/ledger.json" "$FM_OUT/benchmarking-fm-00-20260903_000002.json" <<'PY2'
+import json, sys
+rows = json.load(open(sys.argv[1]))
+e = rows[-1]
+assert e["kind"] == "ragas" and e["stack"] == "fm-v2", e
+assert e["collection"] == "fasrc_with_HuggingFaceEmbeddings" and e["embedding_model"] == "all-MiniLM-L6-v2", e
+old = [r for r in rows if r.get("artifact") == sys.argv[2]][0]   # check 6: the artifact recorded no identity
+assert "collection" in old and old["collection"] is None and "embedding_model" in old and old["embedding_model"] is None, old
+PY2
+then ok "archive copies collection and embedding_model into the ledger row, null when unrecorded"; else notok "archive ledger identity fields"; fi
+
+# 56: a v1 pin against a v2 artifact is refused with the version reason, not a corpus reason
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml"
+rm -f "$FM_OUT"/benchmarking-fm-00-*.json
+FP_PREFIX=sha256/v2: artifact "$FM_OUT/benchmarking-fm-00-20260903_000017.json" '[]' def 5
+BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" 00 10 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 2 ] && grep -q "fingerprint versions differ" "$T/stderr" && [ "$(cat "$FM_OUT/corpus-pin-fm-00")" = sha256:def ] && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "archive refuses a sha256: pin against a sha256/v2: artifact with a version reason"; else notok "archive version mix (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 59: the closing baseline (arm 00, fresh deploy, --new-corpus) moves a v1 pin to v2 and keeps the old pin
+touch "$FM_OUT/benchmarking-fm-00-20260903_000017.json"   # the artifact the check-56 fresh deploy wrote
+run bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml" --new-corpus
+if [ "$RC" = 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-00")" = sha256/v2:def ] \
+   && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['repinned_from']=='sha256:def' and e['corpus_fingerprint']=='sha256/v2:def' else 1)"; then
+  ok "the closing baseline re-pins a v1 stack under v2 and records the old pin"; else notok "cross-version re-pin (rc=$RC: $(cat "$T/stderr"))"; fi
+printf 'sha256:def\n' > "$FM_OUT/corpus-pin-fm-00"   # the later checks run on the v1 fixture pin
+
+# 58: qa_arm copies the identity from the run manifest; a run with no manifest identity records nulls
+printf '{"retrieval_identity": {"collection": "fasrc_with_HuggingFaceEmbeddings", "embedding_name": "HuggingFaceEmbeddings", "embedding_model": "all-MiniLM-L6-v2"}}\n' > "$T/qa-identity"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/qa-identity"
+if [ "$RC" = 0 ] && "$FM_PYTHON" - "$FM_OUT/ledger.json" "$FM_OUT/qa/fm-00-arm00-r1" <<'PY2'
+import json, sys
+rows = json.load(open(sys.argv[1]))
+e = rows[-1]
+assert e["kind"] == "qa" and e["collection"] == "fasrc_with_HuggingFaceEmbeddings" and e["embedding_model"] == "all-MiniLM-L6-v2", e
+old = [r for r in rows if r.get("output_dir") == sys.argv[2]][0]   # check 38: no manifest identity
+assert "collection" in old and old["collection"] is None and "embedding_model" in old and old["embedding_model"] is None, old
+PY2
+then ok "qa_arm copies collection and embedding_model from the run manifest, null when unrecorded"; else notok "qa_arm ledger identity fields (rc=$RC: $(cat "$T/stderr"))"; fi
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" = 0 ]

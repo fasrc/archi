@@ -38,12 +38,12 @@
 
 ## 4. Config list migration (spans two repos — `config/` is external + pinned)
 
-`config/` is a gitignored checkout of the separate, pinned `fasrc/archi-config` repo (`.gitignore:41`, provisioned by `ensure_config`); deploys converge it to `CONFIG_REF`/`CONFIG_SHA` in `deploy/fasrc-dev/scripts/lib.sh:22-36`. Editing `config/lists/sources.list` in THIS repo is a no-op for a pinned deploy — the list edit lands in `fasrc/archi-config`, and this PR bumps the pin.
+`config/` is a gitignored checkout of the separate, pinned `fasrc/archi-config` repo (`.gitignore:41`, provisioned by `ensure_config`); deploys converge it to `CONFIG_REF`/`CONFIG_SHA` in `deploy/scripts/lib.sh:128-143`. Editing `config/lists/sources.list` in THIS repo is a no-op for a pinned deploy — the list edit lands in `fasrc/archi-config`, and this PR bumps the pin.
 
 - [ ] 4.1 In the `fasrc/archi-config` repo: edit `config/lists/sources.list` — REMOVE all 219 `https://docs.rc.fas.harvard.edu/kb/...` lines and ADD the single line `sitemap-https://docs.rc.fas.harvard.edu/kb/epkb_post_type_1-sitemap.xml` (with a one-line `#` comment naming what it expands to). Leave every non-KB line untouched (Wikipedia, the slurm.schedmd.com block, the `git-` lines).
 - [ ] 4.2 Sanity-diff the archi-config edit: `grep -c 'docs.rc.fas.harvard.edu/kb/' config/lists/sources.list` returns 1 (the sitemap line only); the removed set is exactly the 219 `/kb/` article URLs (no collateral deletions); final list ≈ 152 lines.
-- [ ] 4.3 Cut a NEW annotated tag in `fasrc/archi-config` for that commit (never move an existing tag — `git fetch --tags` refuses a clobbered tag; see the pin-bump procedure at `lib.sh:22-33`).
-- [ ] 4.4 In THIS archi PR: bump `CONFIG_REF` (new tag) and `CONFIG_SHA` (the tag's resolved commit) in `deploy/fasrc-dev/scripts/lib.sh:34-35`. The hand lines and the sitemap line therefore never coexist on the pinned ref (design D5, issue #118). Deploy with a clean `config/` tree (or `CONFIG_FORCE=1`) so the checkout actually converges.
+- [ ] 4.3 Cut a NEW annotated tag in `fasrc/archi-config` for that commit (never move an existing tag — `git fetch --tags` refuses a clobbered tag; see the pin-bump procedure at `lib.sh:133-136`).
+- [ ] 4.4 In THIS archi PR: bump `CONFIG_REF` (new tag) and `CONFIG_SHA` (the tag's resolved commit) in `deploy/scripts/lib.sh:141-142`. The hand lines and the sitemap line therefore never coexist on the pinned ref (design D5, issue #118). Deploy with a clean `config/` tree (or `CONFIG_FORCE=1`) so the checkout actually converges.
 
 ## 5. Verification
 
@@ -53,7 +53,7 @@
 
 ## 6. Dev deploy validation
 
-- [ ] 6.1 Redeploy dev via `deploy/fasrc-dev/scripts/redeploy.sh` (required: the staged weblist and the baked site-packages code both only update on `archi create --force`, not on container restart) and trigger the full re-ingest.
+- [ ] 6.1 Redeploy dev via `deploy/scripts/redeploy.sh` (required: the staged weblist and the baked site-packages code both only update on `archi create --force`, not on container restart) and trigger the full re-ingest.
 - [ ] 6.2 Verify in the data-manager logs: exactly one fetch of `epkb_post_type_1-sitemap.xml`, an expansion report of ~212 URLs, and no fail-open warnings from the sitemap path. (Count reconciled 2026-07-22: the live sitemap is a flat `<urlset>` of **212** `<loc>`s — the `/sitemap.xml` index's other children, `sitemap-misc.xml` and `epkb_post_type_2`, are empty. The plan-time "~282 / ~63 missing" figure in proposal/design/spec was a stale over-estimate.)
 - [ ] 6.3 Post-deploy check (backstop to the in-code D9 floor, ingestion-verifier audit): `docs.rc.fas.harvard.edu/kb/` web-document count is within a sane band of ~212 (`min_pages: 150` floor); at least one article absent from the old hand list (e.g. `/kb/ai-agents`) is present and retrievable via chat; zero `/kb/...` vs `/kb/.../` slash-variant duplicate pairs. (Reconciled vs the 219 hand list: 9 hand-list-only URLs are stale slugs that 301-redirect to renamed canonical pages already in the sitemap — no content lost; 2 sitemap-only pages gained.)
 - [ ] 6.4 Confirm the D9 floor is live end-to-end: point a throwaway config at a deliberately unreachable sitemap and confirm the ingest FAILS with the source-level below-floor ERROR rather than completing with an empty KB; and that an index with one bad child only WARNs and still succeeds when the net stays above floor.

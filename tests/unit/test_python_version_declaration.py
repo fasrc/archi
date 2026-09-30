@@ -15,6 +15,8 @@ from pathlib import Path
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
+from src.cli.managers.base_image_preflight import service_templates
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 DOCKERFILE_TEMPLATE_DIR = REPO_ROOT / "src" / "cli" / "templates" / "dockerfiles"
@@ -282,7 +284,7 @@ def test_running_interpreter_satisfies_declared_specifier():
 
 # --- Service base-image references (fasrc/archi#266) -----------------------------------
 #
-# The 15 service templates build on an `a2rchi-*-base` image. Upstream owns
+# The `service_templates()` set builds on an `a2rchi-*-base` image. Upstream owns
 # `docker.io/a2rchi/*` and its `latest` tag floats, so a fork deployment picked up whatever
 # upstream last published -- which is how a Python 3.10 base met a `requires-python >=3.11`
 # project and broke `pip install .` on every clean host.
@@ -428,6 +430,33 @@ def test_service_templates_pin_one_explicit_base_tag():
         f"{ {build: sorted(paths) for build, paths in builds.items()} } -- a split pin means "
         f"some services build on a different interpreter than others"
     )
+
+    # Every member of the declared service-template set must contribute at least one pin.
+    pinned_absolute = {(REPO_ROOT / path).resolve() for path, _, _ in pins}
+    no_pin = [p for p in service_templates() if p.resolve() not in pinned_absolute]
+    assert not no_pin, (
+        f"service template(s) contribute no base pin: {no_pin} -- "
+        f"a service template with no a2rchi-*-base reference cannot be covered by the deploy "
+        f"preflight"
+    )
+
+
+def test_service_template_without_pin_is_detected(tmp_path):
+    """The per-template pin check catches a service template that has no base pin."""
+    digest = "sha256:" + "ab" * 32
+    (tmp_path / "Dockerfile-with-pin").write_text(
+        f"# base-image-pin: dev-abc123 (managed by update_service_base_images.py)\n"
+        f"FROM ghcr.io/fasrc/a2rchi-python-base@{digest}\n"
+    )
+    (tmp_path / "Dockerfile-without-pin").write_text(
+        "FROM docker.io/library/python:3.11\n"
+    )
+
+    templates = service_templates(tmp_path)
+    pinned_absolute = {t.resolve() for t in templates if _base_pins(t.read_text())}
+    no_pin = [p for p in templates if p.resolve() not in pinned_absolute]
+
+    assert no_pin == [tmp_path / "Dockerfile-without-pin"]
 
 
 # --- The same guard, once the templates carry digests (fasrc/archi#334, #335) ----------

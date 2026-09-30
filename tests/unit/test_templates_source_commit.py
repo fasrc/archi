@@ -137,3 +137,69 @@ def test_stage_source_copy_skips_when_build_disabled(monkeypatch, tmp_path):
 def test_context_build_defaults_true_and_reads_option(tmp_path):
     assert _context(tmp_path).build is True
     assert _context(tmp_path, build=False).build is False
+
+
+def test_the_source_copy_falls_back_to_the_package_root_not_to_this_file(
+    monkeypatch, tmp_path
+):
+    """Without a recorded checkout the copy must still land on a real tree.
+
+    ``_repository_info`` is written by ``setup.py`` at install time, so it is absent
+    whenever archi runs from a source tree that was never installed. The fallback set
+    ``repo_root = Path(__file__).resolve()`` -- the module *file*, not a directory -- so
+    ``repo_root / "src"`` was ``.../templates_manager.py/src``, which cannot exist, and
+    ``copy_source_code`` raised ``FileNotFoundError`` (``templates_manager.py:1198``).
+
+    That is not a harmless error, because of where it happens. ``_stage_source_copy``
+    runs from ``prepare_deployment_files`` (``cli_main.py:923``), *below*
+    ``remove_existing_deployment()`` (``cli_main.py:906``). So ``create --force`` and
+    ``evaluate --force`` destroyed the operator's running deployment and only then died
+    staging the source -- deterministically, every time, on the one install shape the
+    base-image preflight is allowed to pass without a recorded checkout
+    (fasrc/archi#436 review).
+
+    The fallback now derives the same package root the preflight's ``TEMPLATE_DIR``
+    does, so the two agree about which tree is being deployed.
+    """
+    copied = []
+    # `None` in sys.modules makes `import src.cli.utils._repository_info` raise, in both
+    # environments: absent in a bare worktree, present after any `pip install`.
+    monkeypatch.setitem(sys.modules, "src.cli.utils._repository_info", None)
+    monkeypatch.setattr(
+        templates_manager.shutil, "copytree", lambda s, d: copied.append(Path(s))
+    )
+    monkeypatch.setattr(
+        templates_manager.shutil, "copyfile", lambda s, d: copied.append(Path(s))
+    )
+    monkeypatch.setattr(templates_manager, "write_source_commit", MagicMock())
+
+    base_dir = tmp_path / "deploy"
+    base_dir.mkdir()
+
+    _manager().copy_source_code(base_dir)
+
+    package_root = Path(templates_manager.__file__).resolve().parents[3]
+    assert copied == [
+        package_root / "src",
+        package_root / "pyproject.toml",
+        package_root / "LICENSE",
+    ], "the fallback must resolve a directory, not the module file"
+
+
+def test_the_source_copy_fallback_agrees_with_the_preflight_template_dir(monkeypatch):
+    """One package root, or the preflight probes a tree the build never copies.
+
+    ``base_image_preflight.TEMPLATE_DIR`` and this fallback are two independent
+    ``__file__`` derivations of the same thing. If they drift apart the preflight
+    establishes a base image for a tree the source copy does not ship, which is the
+    fail-open the preflight exists to remove -- so pin them together rather than trust
+    two parent-hop counts to stay in step.
+    """
+    from src.cli.managers import base_image_preflight
+
+    assert (
+        templates_manager._package_repo_root()
+        .joinpath("src", "cli", "templates", "dockerfiles")
+        .resolve()
+        == base_image_preflight.TEMPLATE_DIR.resolve()
+    )

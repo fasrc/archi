@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -11,7 +12,10 @@ import psycopg2.extras
 from langchain_text_splitters.character import CharacterTextSplitter
 
 from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogService
+from src.utils.benchmark_provenance import retrieval_identity
 from src.utils.env import read_secret
+from src.utils.ingest_provenance import build_ingest_config_snapshot
+from src.utils.ingest_run import collect_ingest_counts, record_ingest_run
 from src.utils.logging import get_logger
 
 from .loader_utils import select_loader
@@ -23,6 +27,7 @@ from .node_parsing import (
     SENTENCE_STRATEGY,
     build_hierarchical_nodes,
     embed_child_nodes,
+    resolve_effective_strategy,
 )
 from .postgres_vectorstore import PostgresVectorStore
 from .schema import ensure_hierarchical_schema
@@ -43,6 +48,18 @@ def _resolve_chunk_sizes(chunking_cfg):
     parent = chunking_cfg.get("parent_chunk_size", DEFAULT_PARENT_CHUNK_SIZE)
     child = chunking_cfg.get("child_chunk_size", DEFAULT_CHILD_CHUNK_SIZE)
     return parent, child
+
+
+def _resolve_chunking_strategy(chunking_cfg):
+    """Resolve ``data_manager.chunking.strategy``, defaulting to the shipped strategy.
+
+    The CLI template renders ``sentence`` when the key is unset, and the
+    markdown-structural-chunking spec requires an unset strategy to chunk with
+    ``sentence``. A hand-authored runtime config that omits the key lands on the
+    same path, not on legacy flat ``character`` chunks that the default-on
+    hierarchical reranker cannot expand to parent context.
+    """
+    return chunking_cfg.get("strategy", SENTENCE_STRATEGY)
 
 
 class VectorStoreManager:
@@ -122,12 +139,13 @@ class VectorStoreManager:
         )
 
         # Structure-aware chunking strategy (data_manager.chunking.strategy).
-        # 'character' (default) keeps the CharacterTextSplitter path above;
-        # 'sentence'/'markdown' enable hierarchical parent-child node parsing,
-        # persisting parents to document_parent_nodes and embedded children to
-        # document_chunks (linked via metadata.parent_id).
+        # 'sentence' (the default, also when the key is absent) and 'markdown'
+        # enable hierarchical parent-child node parsing, persisting parents to
+        # document_parent_nodes and embedded children to document_chunks (linked
+        # via metadata.parent_id); 'character' keeps the CharacterTextSplitter
+        # path above.
         chunking_cfg = self._data_manager_config.get("chunking", {}) or {}
-        self.chunking_strategy = chunking_cfg.get("strategy", "character")
+        self.chunking_strategy = _resolve_chunking_strategy(chunking_cfg)
         self.hierarchical_chunking = self.chunking_strategy in (
             SENTENCE_STRATEGY,
             MARKDOWN_STRATEGY,
@@ -162,6 +180,19 @@ class VectorStoreManager:
         logger.info(
             f"VectorStoreManager initialized: collection={self.collection_name}"
         )
+
+    def _tag_embedding_model(self, metadata: Dict[str, Any]) -> None:
+        """Record which model embedded this chunk, beside its collection tag.
+
+        The collection tag names the embedding class, not the model, so two
+        models of one class share a tag. The eval start guard compares this tag
+        with the model a run queries with (#570).
+        """
+        model = retrieval_identity(
+            {"data_manager": self._data_manager_config}
+        ).embedding_model
+        if model is not None:
+            metadata["embedding_model"] = model
 
     def delete_existing_collection_if_reset(self) -> None:
         """Delete the collection if reset_collection is enabled.
@@ -233,13 +264,32 @@ class VectorStoreManager:
             embedding_function=self.embedding_model,
             collection_name=self.collection_name,
             distance_metric=pg_distance,
+            embedding_model=retrieval_identity(
+                {"data_manager": self._data_manager_config}
+            ).embedding_model,
         )
         count = store.count()
         logger.info(f"N in PostgreSQL collection: {count}")
         return store
 
     def update_vectorstore(self) -> None:
-        """Synchronise filesystem documents with the vectorstore."""
+        """Synchronise filesystem documents with the vectorstore.
+
+        Wraps the sync so every outcome is recorded. A run that raises must not
+        leave the status board presenting the PREVIOUS completed run as the
+        current state of the corpus — the board would then attribute a corpus
+        to a run that never finished.
+        """
+        started_at = datetime.now(timezone.utc)
+        try:
+            run_status = self._sync_vectorstore()
+        except Exception:
+            self._record_ingest_run(started_at, "failed")
+            raise
+        self._record_ingest_run(started_at, run_status)
+
+    def _sync_vectorstore(self) -> str:
+        """Do the synchronisation; return the terminal run status."""
         store = self.fetch_collection()
 
         sources = PostgresCatalogService.load_sources_catalog(
@@ -269,7 +319,9 @@ class VectorStoreManager:
 
         if hashes_in_data == hashes_in_vstore and not stale_hashes:
             logger.info("Vectorstore is up to date")
+            run_status = "up_to_date"
         else:
+            run_status = "updated"
             logger.info("Vectorstore needs to be updated")
 
             hashes_to_remove = list(hashes_in_vstore - hashes_in_data)
@@ -297,9 +349,41 @@ class VectorStoreManager:
                     self._add_to_postgres(files_to_add)
                 except Exception as e:
                     logger.error(f"Files could not be added", exc_info=e)
+                    # The ingest carries on (unchanged behaviour), but the run
+                    # did not do what it set out to do. Recording it as
+                    # "updated" would present a partial corpus as a good one.
+                    run_status = "failed"
             logger.info("Vectorstore update has been completed")
 
         logger.info(f"N Collection: {store.count()}")
+        # Returned for BOTH branches: a run that found the store already up to
+        # date still happened, and the status board must not report a stale
+        # "last ingest" after it.
+        return run_status
+
+    def _record_ingest_run(self, started_at, status: str) -> None:
+        """Record this run's provenance, with the config that governed it.
+
+        Never raises. The corpus is the product; the record is commentary, so a
+        provenance failure must not fail an ingest that already succeeded.
+        """
+        try:
+            conn = psycopg2.connect(**self._pg_config)
+        except Exception as exc:
+            logger.warning("Could not connect to record the ingest run: %s", exc)
+            return
+        try:
+            record_ingest_run(
+                conn,
+                started_at=started_at,
+                status=status,
+                config_snapshot=build_ingest_config_snapshot(
+                    getattr(self, "_data_manager_config", {})
+                ),
+                counts=collect_ingest_counts(conn),
+            )
+        finally:
+            conn.close()
 
     def _collect_postgres_hashes(self) -> set:
         """Get all resource hashes currently in the PostgreSQL vectorstore."""
@@ -563,6 +647,7 @@ class VectorStoreManager:
                 entry_metadata["filename"] = filename
                 entry_metadata["resource_hash"] = filehash
                 entry_metadata["collection"] = self.collection_name
+                self._tag_embedding_model(entry_metadata)
                 metadatas.append(entry_metadata)
 
             if not chunks:
@@ -809,12 +894,20 @@ class VectorStoreManager:
             tokenize = nltk.tokenize.word_tokenize
             stem = self.stemmer.stem
 
+        # Per-file dispatch: the markdown strategy applies only to Markdown
+        # files; every other file falls back to the sentence strategy.
+        effective_strategy = resolve_effective_strategy(
+            self.chunking_strategy,
+            filename=filename,
+            suffix=(file_level_metadata or {}).get("suffix"),
+        )
+
         parents: List[Dict[str, Any]] = []
         parent_index = 0
         for doc in docs:
             for node in build_hierarchical_nodes(
                 doc,
-                strategy=self.chunking_strategy,
+                strategy=effective_strategy,
                 parent_chunk_size=self.parent_chunk_size,
                 child_chunk_size=self.child_chunk_size,
             ):
@@ -836,6 +929,7 @@ class VectorStoreManager:
                 base_metadata["filename"] = filename
                 base_metadata["resource_hash"] = filehash
                 base_metadata["collection"] = self.collection_name
+                self._tag_embedding_model(base_metadata)
 
                 parent_metadata = dict(base_metadata)
                 parent_metadata["parent_index"] = parent_index

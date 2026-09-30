@@ -227,6 +227,10 @@ def test_composite_and_staged_workflows_are_equivalent_at_four_attempts(
         "agent_config_sha256",
         "agent_spec_sha256",
         "evaluator_profile_sha256",
+        "retrieval_identity",
+        "corpus_fingerprint_before",
+        "corpus_fingerprint",
+        "corpus_unchanged_at_endpoints",
     }
     manifest = read_json(staged / "manifest.json")
     assert manifest["versions"] == {
@@ -285,6 +289,23 @@ def test_run_and_score_workers_overlap_with_isolated_runtimes_and_ordered_artifa
         workflow_module,
         "LazyVectorstore",
         lambda config: vectorstore_initializations.append(config) or shared_vectorstore,
+    )
+    # This test is about worker overlap; the corpus readings have their own tests.
+    monkeypatch.setattr(
+        workflow_module.corpus_provenance,
+        "start_readings",
+        lambda config, spec: {
+            "retrieval_identity": None,
+            "corpus_fingerprint_before": None,
+        },
+    )
+    monkeypatch.setattr(
+        workflow_module.corpus_provenance,
+        "end_readings",
+        lambda config, spec, before: {
+            "corpus_fingerprint": None,
+            "corpus_unchanged_at_endpoints": None,
+        },
     )
     monkeypatch.setattr(
         workflow_module,
@@ -986,8 +1007,7 @@ def test_prepare_validates_all_rows_before_evaluator_calls(monkeypatch, tmp_path
                 {
                     "question": "invalid",
                     "answer": "invalid",
-                    "time_sensitive": False,
-                    "unexpected": "not allowed",
+                    "time_sensitive": "notabool",
                 },
             ]
         )
@@ -1002,7 +1022,7 @@ def test_prepare_validates_all_rows_before_evaluator_calls(monkeypatch, tmp_path
         workflow_module, "LangChainEvaluatorRuntime", unexpected_evaluator
     )
 
-    with pytest.raises(ValueError, match="unknown field.*unexpected"):
+    with pytest.raises(ValueError, match="time_sensitive must be a boolean"):
         QAWorkflow().prepare(dataset, tmp_path / "run")
 
     assert not (tmp_path / "run").exists()
@@ -1103,8 +1123,7 @@ def test_prepare_validates_complete_source_before_evaluator_calls(
             "id": "invalid",
             "question": "invalid",
             "answer": "invalid",
-            "time_sensitive": False,
-            "unexpected": "not allowed",
+            "time_sensitive": "notabool",
         },
     ]
     dataset.write_text(
@@ -1125,7 +1144,7 @@ def test_prepare_validates_complete_source_before_evaluator_calls(
         workflow_module, "LangChainEvaluatorRuntime", unexpected_evaluator
     )
 
-    with pytest.raises(ValueError, match="unknown field.*unexpected"):
+    with pytest.raises(ValueError, match="time_sensitive must be a boolean"):
         QAWorkflow().prepare(dataset, tmp_path / "run")
 
     assert not (tmp_path / "run").exists()
@@ -1192,7 +1211,7 @@ def test_prepare_invalid_source_preserves_overwritten_workspace(
     report = run_dir / "report.md"
     report.write_text("previous report", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="unknown field.*invalid"):
+    with pytest.raises(ValueError, match="question must be a non-empty string"):
         QAWorkflow().prepare(dataset, run_dir, overwrite=True)
 
     assert report.read_text(encoding="utf-8") == "previous report"
@@ -1687,3 +1706,148 @@ def test_composite_validates_selected_agent_inputs_before_gold_provider_call(
 
     assert evaluator.calls == Counter()
     assert not (tmp_path / "run").exists()
+
+
+# --- corpus provenance (#570) ---------------------------------------------------
+
+READY = {
+    "chunk_count": 3,
+    "usable_chunk_count": 3,
+    "untagged_chunk_count": 0,
+    "embedding_model_source": "chunks",
+}
+
+
+@pytest.fixture
+def corpus(monkeypatch, agent_inputs):
+    """A search-tool spec over a fake corpus whose readings the test scripts."""
+    import src.evaluation.qa.provenance as provenance
+
+    agent_inputs["data_manager"] = {
+        "collection_name": "fasrc",
+        "embedding_name": "HuggingFaceEmbeddings",
+        "embedding_class_map": {
+            "HuggingFaceEmbeddings": {"kwargs": {"model_name": "Qwen/Q"}}
+        },
+    }
+    spec = SimpleNamespace(tools=["search_vectorstore_hybrid"])
+    monkeypatch.setattr(
+        workflow_module,
+        "load_agent_inputs",
+        lambda config_path, spec_path: (agent_inputs, spec, "---\n---\n", object),
+    )
+    monkeypatch.setattr(
+        workflow_module, "LazyVectorstore", lambda config: SimpleNamespace()
+    )
+    state = {"readings": [], "guard": 0, "pools": 0, "next": ["sha256/v2:a"]}
+
+    def pool(config):
+        state["pools"] += 1
+        return object()
+
+    def readiness(pool, identity):
+        state["guard"] += 1
+        return READY
+
+    def fingerprint(pool, config):
+        value = state["next"].pop(0) if len(state["next"]) > 1 else state["next"][0]
+        state["readings"].append(value)
+        return value
+
+    monkeypatch.setattr(provenance, "direct_pool", pool)
+    monkeypatch.setattr(provenance, "collection_readiness", readiness)
+    monkeypatch.setattr(provenance, "live_corpus_fingerprint", fingerprint)
+    return state
+
+
+def test_a_search_run_records_the_identity_and_both_readings(corpus, tmp_path):
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    run_dir = tmp_path / "run"
+    corpus["next"] = ["sha256/v2:a", "sha256/v2:b"]
+    workflow = QAWorkflow()
+    workflow.prepare(dataset, run_dir)
+
+    workflow.run(run_dir, tmp_path / "agent.yaml", tmp_path / "agent.md")
+
+    manifest = read_json(run_dir / "manifest.json")
+    assert corpus["guard"] == 1
+    assert manifest["retrieval_identity"]["collection"] == (
+        "fasrc_with_HuggingFaceEmbeddings"
+    )
+    assert manifest["retrieval_identity"]["embedding_model"] == "Qwen/Q"
+    assert manifest["corpus_fingerprint_before"] == "sha256/v2:a"
+    assert manifest["corpus_fingerprint"] == "sha256/v2:b"
+    assert manifest["corpus_unchanged_at_endpoints"] is False
+
+
+def test_a_run_without_the_search_tool_opens_no_connection(
+    agent_inputs, monkeypatch, tmp_path
+):
+    import src.evaluation.qa.provenance as provenance
+
+    opened = []
+    monkeypatch.setattr(provenance, "direct_pool", lambda config: opened.append(1))
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    run_dir = tmp_path / "run"
+    workflow = QAWorkflow()
+    workflow.prepare(dataset, run_dir)
+
+    workflow.run(run_dir, tmp_path / "agent.yaml", tmp_path / "agent.md")
+
+    manifest = read_json(run_dir / "manifest.json")
+    assert opened == []
+    assert manifest["retrieval_identity"] is None
+    assert manifest["corpus_fingerprint_before"] is None
+    assert manifest["corpus_fingerprint"] is None
+    assert manifest["corpus_unchanged_at_endpoints"] is None
+
+
+def test_scoring_copies_the_readings_and_takes_none(corpus, tmp_path):
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    run_dir = tmp_path / "run"
+    workflow = QAWorkflow()
+    workflow.prepare(dataset, run_dir)
+    workflow.run(run_dir, tmp_path / "agent.yaml", tmp_path / "agent.md")
+    readings = len(corpus["readings"])
+
+    workflow.score(run_dir)
+
+    assert len(corpus["readings"]) == readings
+    provenance = read_json(run_dir / "summary.json")["provenance"]
+    assert provenance["corpus_fingerprint_before"] == "sha256/v2:a"
+    assert provenance["corpus_fingerprint"] == "sha256/v2:a"
+    assert provenance["corpus_unchanged_at_endpoints"] is True
+    assert provenance["retrieval_identity"]["embedding_model"] == "Qwen/Q"
+
+
+def test_a_retry_with_fresh_attempts_takes_its_own_readings(
+    corpus, monkeypatch, tmp_path
+):
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    parent = tmp_path / "parent"
+    monkeypatch.setattr(
+        workflow_module,
+        "ArchiAgentRuntime",
+        _AgentFactory(failures={("supplied question", 1)}),
+    )
+    QAWorkflow().composite(
+        dataset, tmp_path / "agent.yaml", tmp_path / "agent.md", parent
+    )
+    guards = corpus["guard"]
+    corpus["next"] = ["sha256/v2:c", "sha256/v2:d"]
+    monkeypatch.setattr(workflow_module, "ArchiAgentRuntime", _AgentFactory())
+
+    QAWorkflow().retry(parent, tmp_path / "successor")
+
+    manifest = read_json(tmp_path / "successor" / "manifest.json")
+    assert corpus["guard"] == guards + 1
+    assert manifest["corpus_fingerprint_before"] == "sha256/v2:c"
+    assert manifest["corpus_fingerprint"] == "sha256/v2:d"
+    assert manifest["corpus_unchanged_at_endpoints"] is False
+    assert manifest["retrieval_identity"]["embedding_model"] == "Qwen/Q"
+    provenance = read_json(tmp_path / "successor" / "summary.json")["provenance"]
+    assert provenance["corpus_fingerprint"] == "sha256/v2:d"

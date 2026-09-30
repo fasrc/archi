@@ -103,7 +103,7 @@ record for whoever runs #340.
       environment. Set
       `services.chat_app.providers.local.extra_kwargs.extra_body.chat_template_kwargs.enable_thinking`
       to `true` in the deployment's `config.yaml`, then redeploy with
-      `deploy/fasrc-dev/scripts/redeploy.sh`. A restart is NOT enough: the running
+      `deploy/scripts/redeploy.sh`. A restart is NOT enough: the running
       config is seeded into Postgres at deploy, and the container runs baked
       site-packages code, so both the config and the code need the redeploy.
       Restore the key to `false` afterwards **and redeploy a second time**. The
