@@ -295,6 +295,71 @@ class ResultHandler:
         """
         return "-" if rank is None else str(rank)
 
+    # Console header per leaderboard metric; ``noise`` carries a down arrow
+    # because lower is better.
+    LEADERBOARD_COLUMN_LABELS: Dict[str, str] = {
+        "answer_relevancy": "ans_rel",
+        "faithfulness": "faith",
+        "context_precision": "ctx_prec",
+        "context_recall": "ctx_rec",
+        "answer_correctness": "ans_corr",
+        "factual_correctness_recall": "fc_rec",
+        "factual_correctness_precision": "fc_prec",
+        "noise_sensitivity": "noise(↓)",
+        "answer_accuracy": "ans_acc",
+        "response_groundedness": "grounded",
+    }
+
+    @staticmethod
+    def leaderboard_columns(leaderboard: Dict[str, Any]) -> List[str]:
+        """The metrics the console table shows, in registry order.
+
+        A metric is shown when any row scored it, and the primary metric is
+        always shown: a rank printed without the score it was ranked by gives
+        the operator nothing to check it against.
+        """
+        primary = leaderboard["primary_metric"]
+        rows = leaderboard["rows"]
+        return [
+            name
+            for name in RAGAS_METRIC_NAMES
+            if name == primary or any(r["metrics"].get(name) is not None for r in rows)
+        ]
+
+    @staticmethod
+    def leaderboard_table_lines(leaderboard: Dict[str, Any]) -> List[str]:
+        """The console leaderboard: a header, then one line per row.
+
+        A mean over fewer than the answered questions (judge timeouts) carries
+        ``@<n>``, so an under-sampled score cannot pass as fully backed.
+        """
+        columns = ResultHandler.leaderboard_columns(leaderboard)
+        labels = [ResultHandler.LEADERBOARD_COLUMN_LABELS[c] for c in columns]
+        lines = [
+            "  %-4s %-28s " % ("rank", "name")
+            + "".join(f"{label:<12} " for label in labels)
+            + "%-10s %s" % ("n_q", "prompt")
+        ]
+        for row in leaderboard["rows"]:
+            answered = row["query_count"]
+            scored = row.get("scored_counts", {})
+            cells = []
+            for column in columns:
+                value = row["metrics"].get(column)
+                if not isinstance(value, float):
+                    cells.append("    n/a")
+                    continue
+                n = scored.get(column, answered)
+                cells.append(f"{value:.4f}@{n}" if n < answered else f"{value:.4f}")
+            flag = "  (incomplete)" if row["incomplete"] else ""
+            lines.append(
+                "  %-4s %-28s "
+                % (ResultHandler.leaderboard_rank_label(row["rank"]), row["name"][:28])
+                + "".join(f"{cell:<12} " for cell in cells)
+                + "%-10d %s%s" % (answered, row["agent_md_file"], flag)
+            )
+        return lines
+
     @staticmethod
     def ab_summary_line(
         name_a: str,
@@ -2317,47 +2382,8 @@ class Benchmarker:
                 "Prompt-sweep leaderboard (ranked by %s):",
                 leaderboard["primary_metric"],
             )
-            logger.info(
-                "  %-4s %-28s %-10s %-10s %-10s %-10s %-10s %-10s %s",
-                "rank",
-                "name",
-                "ans_rel",
-                "faith",
-                "ctx_prec",
-                "ctx_rec",
-                "ans_corr",
-                "n_q",
-                "prompt",
-            )
-            for row in leaderboard["rows"]:
-                m = row["metrics"]
-                answered = row["query_count"]
-                scored = row.get("scored_counts", {})
-
-                # Annotate a metric with @<n> when its mean is over fewer than
-                # the answered questions (judge timeouts), so an under-sampled
-                # score can't masquerade as fully-backed.
-                def _fmt(metric_name: str) -> str:
-                    v = m[metric_name]
-                    if not isinstance(v, float):
-                        return "    n/a"
-                    n = scored.get(metric_name, answered)
-                    return f"{v:.4f}@{n}" if n < answered else f"{v:.4f}"
-
-                flag = "  (incomplete)" if row["incomplete"] else ""
-                logger.info(
-                    "  %-4s %-28s %-12s %-12s %-12s %-12s %-12s %-10d %s%s",
-                    ResultHandler.leaderboard_rank_label(row["rank"]),
-                    row["name"][:28],
-                    _fmt("answer_relevancy"),
-                    _fmt("faithfulness"),
-                    _fmt("context_precision"),
-                    _fmt("context_recall"),
-                    _fmt("answer_correctness"),
-                    answered,
-                    row["agent_md_file"],
-                    flag,
-                )
+            for line in ResultHandler.leaderboard_table_lines(leaderboard):
+                logger.info("%s", line)
 
         # Push to Argilla when ARCHI_ARGILLA=1 in the benchmarks container env.
         # The CLI flag --argilla on `archi evaluate` sets this (see Task 2.5).

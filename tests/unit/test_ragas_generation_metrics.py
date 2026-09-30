@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -419,6 +420,141 @@ def test_markdown_report_badges_low_noise_green():
     assert "| Noise Sensitivity (lower is better) | 0.100 🟢 |" in md
     assert "| Noise Sensitivity | 0.100 🟢 |" in md
     assert "🔴" not in md
+
+
+def _every_metric_scored(offset=0.0):
+    return {
+        name: round(0.05 * (i + 1) + offset, 3)
+        for i, name in enumerate(RAGAS_METRIC_NAMES)
+    }
+
+
+def _push_capturing(push, data):
+    """Run one Argilla push against a mock client; return (records, declared)."""
+    rg_mock = MagicMock()
+    rg_mock.Record = MagicMock(side_effect=lambda **kw: SimpleNamespace(**kw))
+    with (
+        patch.dict("sys.modules", {"argilla": rg_mock}),
+        patch("src.utils.benchmark_argilla._get_client"),
+        patch("src.utils.benchmark_argilla._get_workspace", return_value="admin"),
+    ):
+        push(data, "test-dataset")
+    records = rg_mock.Dataset.return_value.records.log.call_args[0][0]
+    declared = {c.kwargs["name"] for c in rg_mock.FloatMetadataProperty.call_args_list}
+    return records, declared
+
+
+def test_argilla_single_export_carries_every_metric():
+    row: dict = {"question": "Q", "reference_answer": "R", "answer": "A"}
+    row.update(_every_metric_scored())
+    data = {"benchmarking_results": [{"single_question_results": {"q0": row}}]}
+    (record,), declared = _push_capturing(
+        benchmark_argilla.push_single_results_to_argilla, data
+    )
+    for metric in RAGAS_METRIC_NAMES:
+        key = benchmark_argilla.ARGILLA_METRIC_METADATA[metric][0]
+        assert record.metadata[key] == row[metric]
+        assert key in declared
+    assert set(record.metadata) - {"time_elapsed"} <= declared
+
+
+def test_argilla_ab_export_carries_every_metric_for_both_arms():
+    scores_a, scores_b = _every_metric_scored(), _every_metric_scored(0.01)
+    item = {
+        "question": "Q",
+        "reference_answer": "R",
+        "answer_a": "A",
+        "answer_b": "B",
+        "ragas_a": scores_a,
+        "ragas_b": scores_b,
+    }
+    (record,), declared = _push_capturing(
+        benchmark_argilla.push_ab_results_to_argilla,
+        {"ab_comparison": {"per_question": [item]}},
+    )
+    for metric in RAGAS_METRIC_NAMES:
+        key = benchmark_argilla.ARGILLA_METRIC_METADATA[metric][0]
+        assert record.metadata[f"{key}_a"] == scores_a[metric]
+        assert record.metadata[f"{key}_b"] == scores_b[metric]
+        assert {f"{key}_a", f"{key}_b"} <= declared
+
+
+def test_argilla_keeps_the_legacy_metadata_names():
+    """Existing datasets and graders read these names; they must not move."""
+    names = {m: v[0] for m, v in benchmark_argilla.ARGILLA_METRIC_METADATA.items()}
+    assert names["answer_relevancy"] == "ragas_relevancy"
+    assert names["faithfulness"] == "ragas_faithfulness"
+    assert names["context_precision"] == "ragas_precision"
+    assert names["context_recall"] == "ragas_recall"
+    assert names["answer_correctness"] == "ragas_correctness"
+
+
+def test_argilla_skips_nan_new_metric():
+    row: dict = {"question": "Q", "reference_answer": "R", "answer": "A"}
+    row["noise_sensitivity"] = float("nan")
+    data = {"benchmarking_results": [{"single_question_results": {"q0": row}}]}
+    (record,), _ = _push_capturing(
+        benchmark_argilla.push_single_results_to_argilla, data
+    )
+    assert "ragas_noise_sensitivity" not in record.metadata
+
+
+def test_leaderboard_table_labels_every_metric():
+    assert list(ResultHandler.LEADERBOARD_COLUMN_LABELS) == list(RAGAS_METRIC_NAMES)
+
+
+def test_argilla_metadata_covers_every_metric():
+    assert list(benchmark_argilla.ARGILLA_METRIC_METADATA) == list(RAGAS_METRIC_NAMES)
+
+
+def test_leaderboard_table_shows_a_new_primary_metric(_reset_results):
+    ResultHandler.results = [
+        _leaderboard_record("noisy", 0.4),
+        _leaderboard_record("clean", 0.1),
+    ]
+    lb = ResultHandler.build_leaderboard(primary_metric="noise_sensitivity")
+    header, *rows = ResultHandler.leaderboard_table_lines(lb)
+    assert "noise" in header
+    assert "0.1000" in rows[0] and "clean" in rows[0]
+    assert "0.4000" in rows[1] and "noisy" in rows[1]
+
+
+def test_leaderboard_table_columns_follow_what_was_scored(_reset_results):
+    ResultHandler.results = [
+        _two_metric_record("a", 0.2, 0.9),
+        _two_metric_record("b", 0.3, 0.8),
+    ]
+    lb = ResultHandler.build_leaderboard(primary_metric="faithfulness")
+    assert ResultHandler.leaderboard_columns(lb) == [
+        "faithfulness",
+        "noise_sensitivity",
+    ]
+
+
+def test_leaderboard_table_always_shows_the_primary_metric(_reset_results):
+    ResultHandler.results = [
+        _two_metric_record("a", 0.2, None),
+        _two_metric_record("b", 0.3, None),
+    ]
+    lb = ResultHandler.build_leaderboard(primary_metric="faithfulness")
+    assert ResultHandler.leaderboard_columns(lb) == [
+        "faithfulness",
+        "noise_sensitivity",
+    ]
+    _, *rows = ResultHandler.leaderboard_table_lines(lb)
+    assert all("n/a" in row for row in rows)
+
+
+def test_leaderboard_table_marks_an_undersampled_mean(_reset_results):
+    record = _leaderboard_record("thin", 0.2)
+    record["single_question_results"]["question_2"] = {
+        "noise_sensitivity": float("nan")
+    }
+    ResultHandler.results = [record, _leaderboard_record("full", 0.1)]
+    lb = ResultHandler.build_leaderboard(primary_metric="noise_sensitivity")
+    _, *rows = ResultHandler.leaderboard_table_lines(lb)
+    thin = next(row for row in rows if "thin" in row)
+    assert "0.2000@1" in thin
 
 
 def test_html_report_paints_low_noise_green():
