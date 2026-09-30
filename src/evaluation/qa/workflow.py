@@ -48,6 +48,7 @@ from .preparation import (
     prepare_dataset_item,
 )
 from . import provenance as corpus_provenance
+from .redaction import redact_agent_config
 from .runtime import (
     ArchiAgentRuntime,
     LangChainEvaluatorRuntime,
@@ -350,6 +351,9 @@ class QAWorkflow:
             if _resolved_agent_inputs is not None
             else load_agent_inputs(agent_config, agent_spec)
         )
+        # D1: run, continue, and retry all execute from the redacted config; write
+        # the snapshot before any agent call so every phase sees identical content.
+        config = redact_agent_config(config)
         if overwrite:
             owned = RUN_FILES | SCORE_FILES
             if authorize_staged_invalid:
