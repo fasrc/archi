@@ -44,7 +44,7 @@
 
 ## 1. The seam: inject the three predicates and answer anonymous callers like the main app
 
-- [ ] 1.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 1.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Add a helper `_flask_app_with_login()` next to `_flask_app()` that returns
       `_flask_app()` with a stub route registered at `/login` under endpoint name `login`
@@ -96,7 +96,7 @@
 
 ## 2. Wire the call site, fix the module docstring, document the permissions
 
-- [ ] 2.1 One commit.
+- [x] 2.1 One commit.
       In `src/interfaces/chat_app/app.py`, change ONLY the `build_authorize_request(self.auth_enabled)`
       call inside `register_evaluations(...)` to the form in design D6. `get_registry` and
       `is_api_request` are already imported — `grep -n "get_registry,\|is_api_request," src/interfaces/chat_app/app.py`
@@ -118,7 +118,7 @@
 
 ## 3. Publish
 
-- [ ] 3.1 Push the branch and open the PR. Push with
+- [x] 3.1 Push the branch and open the PR. Push with
       `git push -u origin fix/issue-561-eval-console-sso-auth`. Confirm the push landed on
       **fasrc/archi**, not a fork:
       `git ls-remote --heads origin fix/issue-561-eval-console-sso-auth` must print the same
