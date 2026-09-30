@@ -6,7 +6,7 @@
 
 A live check that fails after the run quarantines the whole item: no attempt of it is
 judged, and every attempt slot is written as `live_validation_failed`
-(`src/evaluation/qa/workflow.py:704-740`). The run phase records an agent exception as an
+(`src/evaluation/qa/workflow.py:707-750`). The run phase records an agent exception as an
 answer with status `execution_failed` (`src/evaluation/qa/phases.py:47-61`), so an item
 that both drifted and had a flaky attempt produces exactly this pairing. The verifier that
 guards retry rejected it, which made a clean `scored` run unretryable forever through both
@@ -30,10 +30,10 @@ rather than pass unexamined.
 
 #### Scenario: A retry of a retry opens
 
-- **WHEN** the successor of that run still finds the item drifted, so it re-stamps `live_validation_failed` over the same slots
+- **WHEN** the successor of that run finds the item's fresh pre-run check matching, re-runs the attempt, the attempt crashes again, and the post-run check finds the item drifted, so it re-stamps `live_validation_failed` over an `execution_failed` answer
 - **THEN** `open_retry_parent` accepts the successor workspace too
 
-The successor writer (`src/evaluation/qa/workflow.py:1140-1164`) stamps the same way the
+The successor writer (`src/evaluation/qa/workflow.py:1178-1196`) stamps the same way the
 first run does. A fix that admitted only the first generation would move the dead end one
 retry further out.
 
@@ -56,7 +56,7 @@ retry further out.
 
 The scored output of a run SHALL count a `live_validation_failed` attempt outside the quality denominator, whatever answer the run phase recorded for that attempt.
 
-`build_summary` (`src/evaluation/qa/scoring.py:107-121`) increments `quality_k` for an
+`build_summary` (`src/evaluation/qa/scoring.py:107-126`) increments `quality_k` for an
 `execution_failed` result and not for a `live_validation_failed` one. An item whose oracle
 answer moved cannot be judged in either direction, so counting one of its attempts as a
 quality failure would charge the agent for the item's drift.
@@ -70,7 +70,7 @@ both conditions — the kind of drift a benchmark cannot afford.
 
 - **WHEN** a run scores the drifted item whose attempt crashed
 - **AND** an otherwise identical run scores the same drifted item whose attempt succeeded
-- **THEN** both runs report the same `quality_k` for that item and the same
+- **THEN** both runs report the same `k` (quality denominator) for that item and the same
   `live_validation_failed` attempt count
 - **AND** neither run reports an `execution_failed` attempt for it
 
@@ -83,5 +83,5 @@ both conditions — the kind of drift a benchmark cannot afford.
 The retry kind comes from the result status
 (`src/evaluation/qa/workspace.py:338-343`). Keeping the crashed attempt under
 `live_validation` is what holds it behind the fresh check
-(`src/evaluation/qa/workflow.py:952-966`); an attempt seeded as a plain execution retry
+(`src/evaluation/qa/workflow.py:965-976`); an attempt seeded as a plain execution retry
 would re-run the agent on an item whose baseline is still unverified.

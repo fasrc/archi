@@ -9,13 +9,13 @@ check or `None`.
 
 That decision drives two writers in `score`:
 
-- `_iter_scoring_pairs` (`src/evaluation/qa/workflow.py:652-688`) yields an
+- `_iter_scoring_pairs` (`src/evaluation/qa/workflow.py:662-705`) yields an
   (item, answer) pair to the evaluator only when `validation is None`.
-- `_iter_terminal_plan` (`src/evaluation/qa/workflow.py:696-739`) yields, per attempt slot,
+- `_iter_terminal_plan` (`src/evaluation/qa/workflow.py:707-750`) yields, per attempt slot,
   either `None` ("a scored result goes here") or a terminal result stamped
   `live_validation_failed`.
 
-`score` (`src/evaluation/qa/workflow.py:822-838`) interleaves them into
+`score` (`src/evaluation/qa/workflow.py:816-840`) interleaves them into
 `evaluation_results.jsonl`. The whole item is quarantined: a live failure means the oracle
 answer we would judge against is not trustworthy, so no attempt of that item is judged.
 
@@ -55,7 +55,7 @@ The alternative — have `_iter_terminal_plan` stamp `live_validation_failed` on
 — was rejected on three counts:
 
 1. **It moves a benchmark number.** `build_summary`
-   (`src/evaluation/qa/scoring.py:107-121`) increments `quality_k` for an
+   (`src/evaluation/qa/scoring.py:107-126`) increments `quality_k` for an
    `execution_failed` result and does not for a `live_validation_failed` one. Letting the
    crashed attempt keep its own status therefore adds it to the quality denominator of an
    item whose ground truth is known to be unverifiable for this run. Acceptance criterion 3
@@ -63,14 +63,14 @@ The alternative — have `_iter_terminal_plan` stamp `live_validation_failed` on
    integrity ahead of the features it measures.
 2. **It weakens retry seeding.** `index_retry_attempt`
    (`src/evaluation/qa/workspace.py:338-343`) derives the retry kind from the result
-   status, and `_retry_with_open_parent` (`src/evaluation/qa/workflow.py:952-966`) does a
+   status, and `_retry_with_open_parent` (`src/evaluation/qa/workflow.py:965-976`) does a
    fresh pre-run live check for every item that has a `live_validation` retry, promoting it
    to an execution retry only once the item is stable
    (`promote_live_retry_to_execution`, `src/evaluation/qa/workspace.py:360-365`). An
    attempt kept as `execution` would be seeded to re-run the agent on an item whose
    baseline has not been re-established.
 3. **It is two producers, not one.** The successor writer
-   (`src/evaluation/qa/workflow.py:1140-1164`) stamps the same way, so the same edit would
+   (`src/evaluation/qa/workflow.py:1178-1196`) stamps the same way, so the same edit would
    have to be made twice and kept in step.
 
 Fixing the verifier is one branch of one function, changes no artifact the pipeline writes,

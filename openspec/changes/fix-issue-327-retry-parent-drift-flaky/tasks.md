@@ -4,7 +4,7 @@ Every checkbox below is one loop turn and ends **green and committed**. Write th
 test, watch it fail, write the smallest fix, run the gate, commit. Never end a task with the
 suite red, and never use `--no-verify`.
 
-Four standing notes for every task:
+Five standing notes for every task:
 
 - **Scope.** The only source file this change may edit is `src/evaluation/qa/workspace.py`,
   and inside it only the post-run branch of `RetryParentStore._load`
@@ -16,6 +16,16 @@ Four standing notes for every task:
   `tests/unit/evaluation/qa/test_live_workflow.py` (`SequenceInvoker`, `EvaluatorFactory`,
   `AgentFactory`, `_dataset`, `_run`). Never hand-write `evaluation_results.jsonl`. A
   corruption case is made by mutating a pipeline-built workspace and re-hashing it.
+- **Oracle call order.** `composite` reads the oracle once per live item in each of
+  prepare (the baseline), the pre-run check, and the post-run check; a retry reads it again
+  for its fresh pre-run check and its post-run check. A `SequenceInvoker` list is consumed in
+  that order. Two values (`[baseline, changed]`) build a PRE-run failure with no answer row,
+  which the current verifier already accepts, as
+  `test_pre_run_change_creates_slots_without_agent_answers` shows. A post-run drift needs
+  `[baseline, baseline, changed]`, as `test_post_run_change_preserves_answer_but_excludes_score`
+  uses. Before any `open_retry_parent` assertion, assert the shape you built: the live
+  result's `live_validation.phase` is `post_run` and its `answers.jsonl` row has status
+  `execution_failed`. A wrong fixture then fails loudly instead of passing by accident.
 - **Commands.** The gate is the project gate command from `CLAUDE.md`, run with
   `PATH=/home/austin/miniforge3/envs/archi/bin:$PATH`. The fast loop is
   `/home/austin/miniforge3/envs/archi/bin/python -m pytest tests/unit/evaluation/qa/test_live_workflow.py tests/unit/evaluation/qa/test_workspace.py tests/unit/evaluation/qa/test_workflow.py -q`.
@@ -30,9 +40,11 @@ Four standing notes for every task:
       `RuntimeError("agent exploded")` for a named question and returns `"agent answer"`
       otherwise. Add a helper that runs `QAWorkflow().composite` over
       `_dataset(..., include_static=True)` with that agent monkeypatched over
-      `workflow_module.ArchiAgentRuntime`, and a `SequenceInvoker` whose pre-run value is
-      `{"value": 7, "revision": "r1"}` and post-run value is `{"value": 8, "revision": "r2"}`
-      — a post-run drift on the live item, whose only attempt crashed. RED test: assert
+      `workflow_module.ArchiAgentRuntime`, and a `SequenceInvoker` with THREE values in call order: `{"value": 7, "revision": "r1"}`
+      (prepare baseline), `{"value": 7, "revision": "r1"}` (pre-run, matches), and
+      `{"value": 8, "revision": "r2"}` (post-run, drifts) — a post-run drift on the live item,
+      whose only attempt crashed. Assert the shape first (post_run phase, `execution_failed`
+      answer; see "Oracle call order"). RED test: assert
       `read_json(run_dir / "manifest.json")["status"] == "scored"`, then assert
       `EvaluationWorkspace.open_retry_parent(run_dir)` returns a store. Watch it fail with
       `parent run answer and live-validation phase disagree`. Then fix the post-run branch of
@@ -47,12 +59,18 @@ Four standing notes for every task:
       `execution_attempt_count` is `0` for it. **This passes once 1.1 lands — that is the
       point of it. Do not contrive a failure first.** It pins the retry kind, which is what
       holds the attempt behind a fresh pre-run check
-      (`src/evaluation/qa/workflow.py:952-966`). Gate green; commit.
+      (`src/evaluation/qa/workflow.py:965-976`). Gate green; commit.
 - [ ] 1.3 `model: opus` — Grandchild case. Drive `QAWorkflow().retry(parent, successor)` on
-      the 1.1 workspace with the oracle still drifted (extend the `SequenceInvoker` values so
-      the retry's fresh pre-run check also mismatches the prepared baseline), then assert
+      the 1.1 workspace with the failing agent still in place, and extend the
+      `SequenceInvoker` to FIVE values: `[7/r1, 7/r1, 8/r2, 7/r1, 8/r2]` — the parent's three,
+      then the retry's fresh pre-run check (MATCHES the baseline, so the attempt is promoted
+      to an execution retry and the agent runs and crashes again) and the retry's post-run
+      check (drifts). Do NOT make the fresh pre-run check mismatch: that stores a pre_run
+      validation with no answer row, which the unfixed verifier already accepts, so the test
+      would prove nothing. Assert the successor's live result has `live_validation.phase ==
+      "post_run"` and its `answers.jsonl` row has status `execution_failed`, then assert
       `EvaluationWorkspace.open_retry_parent(successor)` accepts the successor. This covers
-      the second producer (`src/evaluation/qa/workflow.py:1140-1164`), which re-stamps
+      the second producer (`src/evaluation/qa/workflow.py:1178-1196`), which re-stamps
       `live_validation_failed` over the same slots. If the retry needs the successor to reach
       `scored` before `open_retry_parent` will look at it, score it through the same workflow
       object rather than editing the manifest. Gate green; commit.
@@ -80,7 +98,8 @@ Four standing notes for every task:
 - [ ] 3.1 `model: opus` — Scoring-unchanged test. Run the 1.1 shape twice: once with the
       crashing agent, once with the plain `AgentFactory`, both with the same drifted oracle
       sequence and the same dataset. Read `summary.json` from each and assert the live item's
-      row is equal across the two runs in `requested`, `quality_k`, `scored_attempts`,
+      row in `summary.json["items"]` is equal across the two runs in `requested_attempts`,
+      `k` (the per-item quality denominator), `scored_attempts`,
       `execution_failed_attempts`, and `live_validation_failed_attempts`, and that
       `execution_failed_attempts` is `0` in both. This is the executable form of acceptance
       criterion 3 and of the second spec requirement: it fails the moment anyone fixes this

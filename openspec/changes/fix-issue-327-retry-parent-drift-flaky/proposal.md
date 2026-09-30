@@ -5,10 +5,10 @@
 `EvaluationWorkspace.open_retry_parent` rejects a workspace that the scoring pipeline
 itself produced. The two sides disagree about one attempt shape:
 
-- **Producer.** `_iter_terminal_plan` (`src/evaluation/qa/workflow.py:704-740`) stamps
+- **Producer.** `_iter_terminal_plan` (`src/evaluation/qa/workflow.py:707-750`) stamps
   `"status": "live_validation_failed"` on *every* ordinal `1..attempts` of an item whose
   live check failed. It never looks at the answer row, because the item is quarantined as
-  a whole: `_iter_scoring_pairs` (`src/evaluation/qa/workflow.py:657-688`) yields a pair
+  a whole: `_iter_scoring_pairs` (`src/evaluation/qa/workflow.py:662-705`) yields a pair
   only when `validation is None`, so no attempt of that item ever reaches the evaluator.
 - **Verifier.** `RetryParentStore._load` (`src/evaluation/qa/workspace.py:245-259`)
   requires every *post-run* `live_validation_failed` result to pair with an
@@ -24,7 +24,7 @@ returns 400 with an integrity error, and the CLI `retry` fails the same way. Dri
 flaky attempt are the two conditions retry exists for.
 
 The same disagreement sits on the retry path: the successor writer
-(`src/evaluation/qa/workflow.py:1140-1164`) re-stamps `live_validation_failed` over every
+(`src/evaluation/qa/workflow.py:1178-1196`) re-stamps `live_validation_failed` over every
 attempt of an item whose fresh check still fails, so a retry of a retry hits it too.
 
 `src/evaluation/qa/workspace.py` is `port-verbatim` upstream code (pin `bebfbe56`,
@@ -42,9 +42,9 @@ This blocks #320 (safe console activation): retry is a console feature.
   outside that two-member set.
 - No producer changes. `_iter_terminal_plan` and the successor writer keep stamping the
   whole item, which is what keeps a drifted item out of the quality denominator
-  (`src/evaluation/qa/scoring.py:107-121`: `execution_failed` increments `quality_k`,
+  (`src/evaluation/qa/scoring.py:107-126`: `execution_failed` increments `quality_k`,
   `live_validation_failed` does not) and what keeps retry seeding gated on a fresh
-  pre-run check (`src/evaluation/qa/workflow.py:952-966`).
+  pre-run check (`src/evaluation/qa/workflow.py:965-976`).
 - Tests build the shape through the real pipeline, so the fixture is a workspace the
   scoring pipeline actually writes rather than one hand-assembled to match the fix.
 
