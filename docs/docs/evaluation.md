@@ -1143,9 +1143,10 @@ The current workspace schema is `qa-v2`.
 
 The workspace is the reproducibility record. Keep it intact when comparing
 runs, and archive it with any external version identifiers you need. The
-current artifacts record tested-agent and tool-call latency but do not record
-source-control commits, release gates, token usage, model prompts, evaluator
-prompts, or reasoning traces. Tool queries and responses are complete.
+current artifacts record tested-agent and tool-call latency and LLM token
+usage (see [Price a run from recorded tokens](#price-a-run-from-recorded-tokens)),
+but do not record source-control commits, release gates, model prompts,
+evaluator prompts, or reasoning traces. Tool queries and responses are complete.
 
 ### Rerunning and integrity protection
 
@@ -1215,7 +1216,9 @@ Token records are written wherever an LLM call is made during evaluation.
 
 **Where `usage` appears:**
 
-- `preparation.jsonl` — rows with `atom_source: "inferred"` carry a `usage` key.
+- `preparation.jsonl` — rows where the extractor was called (`atom_source: "inferred"`,
+  or `preparation_failed` after the extractor call) carry a `usage` key (`null` if the
+  call failed before it reported usage). Supplied-atom rows have no `usage` key.
 - `answers.jsonl` — every `answer_ready` and `execution_failed` row carries `"usage"`
   (`null` if the runtime reported no counts).
 - `evaluation_results.jsonl` — every `scored` and `evaluation_failed` row carries `"usage"`.
@@ -1244,6 +1247,9 @@ Token records are written wherever an LLM call is made during evaluation.
   ]
 }
 ```
+
+`calls` counts LLM requests. A request that returns several candidates (`n > 1`)
+counts as one call with its request-level tokens, not once for each candidate.
 
 **Calculating cost:**
 
