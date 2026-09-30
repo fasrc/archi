@@ -43,7 +43,7 @@
 
 ## 1. The helper: key rule, value redaction, idempotence, drift guard
 
-- [ ] 1.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 1.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Create `tests/unit/evaluation/qa/test_redaction.py`. It imports
       `from src.evaluation.qa.redaction import REDACTED, is_secret_key, redact_agent_config`
