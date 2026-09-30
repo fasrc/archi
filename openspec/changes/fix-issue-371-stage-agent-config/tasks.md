@@ -103,7 +103,7 @@ ends red. Run `black` and `isort` on every file you touch **before** `git add`.
 
 ## 4. Refuse a source inside the deployment directory
 
-- [ ] 4.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 4.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Append to `tests/unit/test_evaluations_config_validation.py` tests for
       `refuse_agent_config_inside_deployment(configs, base_dir)`: a source under `base_dir`
