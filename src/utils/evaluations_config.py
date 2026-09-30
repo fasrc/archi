@@ -1,7 +1,10 @@
+import os
 import posixpath
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 LIVE_AGENT_CONFIG_PATH = "/root/archi/configs/config.yaml"
+AGENT_CONFIG_STAGED_FILENAME = "qa_agent_config.yaml"
 
 # ``WORKDIR`` of the chatbot image
 # (``src/cli/templates/dockerfiles/Dockerfile-chat:4``). ``agent_config_path`` is
@@ -19,15 +22,18 @@ def validate_evaluations_config(chat_app_config: Optional[Dict[str, Any]]) -> No
     or ``"true"`` does not arm it — mirroring the seam at
     ``evaluation_console.py:90``.
 
+    Since #371, ``agent_config_path`` is a host path (absolute or relative to the
+    deployment YAML). The container-workdir join is retained as a conservative
+    refusal: a value that would name the live config inside the container is
+    refused on the host too, even though host resolution is what ultimately
+    matters.
+
     Two values are refused:
     - A missing, non-string, or blank ``agent_config_path``.
-    - A path that normalizes to ``LIVE_AGENT_CONFIG_PATH``. A relative value is
-      first joined to ``CHAT_CONTAINER_WORKDIR``, because the container — not the
-      host CLI — is what resolves it; without that join ``configs/config.yaml``
-      resolves against the operator's working directory, passes preflight, and is
-      then refused by ``build_evaluation_service`` after deployment. Path
-      normalization only — no ``os.path.samefile`` — because on the host the live
-      config does not exist and ``samefile`` would raise (design.md D3).
+    - A path that normalizes to ``LIVE_AGENT_CONFIG_PATH`` when joined to
+      ``CHAT_CONTAINER_WORKDIR`` (the chatbot image's WORKDIR). Path normalization
+      only — no ``os.path.samefile`` — because on the host the live config does
+      not exist and ``samefile`` would raise.
 
     Both messages contain ``services.chat_app.evaluations.agent_config_path``.
     The live-config message also states that the live deployment config is refused
@@ -51,6 +57,48 @@ def validate_evaluations_config(chat_app_config: Optional[Dict[str, Any]]) -> No
             "Name a redacted copy instead."
         )
     return None
+
+
+def resolve_agent_config_source(config: Dict[str, Any]) -> Optional[Path]:
+    """Return the resolved host source path for an enabled console, else None."""
+    chat_app = (config.get("services") or {}).get("chat_app") or {}
+    evaluations = chat_app.get("evaluations") if isinstance(chat_app, dict) else {}
+    if not isinstance(evaluations, dict) or evaluations.get("enabled") is not True:
+        return None
+
+    validate_evaluations_config(chat_app)
+
+    raw: str = evaluations["agent_config_path"]
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        config_path_str = config.get("_config_path")
+        if config_path_str is None:
+            raise ValueError(
+                f"{_DOTTED_KEY} is a relative path but the config has no _config_path key"
+            )
+        p = (Path(config_path_str).parent / p).resolve()
+    else:
+        p = p.resolve()
+
+    if not p.exists():
+        raise ValueError(f"{_DOTTED_KEY} not found: {p}")
+    if not p.is_file():
+        raise ValueError(f"{_DOTTED_KEY} must be a file: {p}")
+    if not os.access(p, os.R_OK):
+        raise ValueError(f"{_DOTTED_KEY} is not readable: {p}")
+
+    config_path_str = config.get("_config_path")
+    if config_path_str is not None:
+        try:
+            if os.path.samefile(p, config_path_str):
+                raise ValueError(
+                    f"{_DOTTED_KEY} names the live deployment config, which is refused. "
+                    "Name a redacted copy instead."
+                )
+        except OSError:
+            pass
+
+    return p
 
 
 def _container_path(raw: str) -> str:
