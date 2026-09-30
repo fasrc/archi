@@ -15,11 +15,11 @@ Rules for every task:
 
 ## 2. PR 2: deferred mode, bundle writer, publish step
 
-- [ ] 2.1 Add tests for `judge_mode` parsing: absent or `inline` gives inline, `deferred` gives deferred, and any other value is refused.
+- [ ] 2.1 Add tests for `judge_mode` parsing: absent or `inline` gives inline, `deferred` gives deferred, and any other value is refused. A sweep whose configs have different modes refuses to start before any question, and names the configs (design D8a).
 - [ ] 2.2 Render `judge_mode` and `judge_bundle_dir` in `src/cli/templates/base-config.yaml`, with a render test.
 - [ ] 2.2a Add a test: the run fixes its result basename once, before the first arm, and `dump_artifacts` writes the JSON and the `_report.md` with that basename. Then pass the basename from the run start to `dump_artifacts` and to the bundle writer.
 - [ ] 2.2b Add a test: a deferred run writes `<basename>.RESULT_COMPLETE` only after `dump_artifacts` returns, and a deferred run whose `code_version.digest` is unavailable refuses to start.
-- [ ] 2.3 Add a test: the bundle writer makes `rows.jsonl` equal to the inline ragas records for each key, a `manifest.json` that has every field in the spec (including the arm count of the result) and the correct SHA-256, and `BUNDLE_COMPLETE` after every other file. Then write the writer (`src/utils/judge_bundle.py`).
+- [ ] 2.3 Add a test: the bundle writer makes `rows.jsonl` equal to the inline ragas records for each key, a `manifest.json` that has every field in the spec (including the arm count of the result, and the resolved `ragas_run_config_kwargs` output and `batch_size`) and the correct SHA-256, and `BUNDLE_COMPLETE` after every other file. Then write the writer (`src/utils/judge_bundle.py`).
 - [ ] 2.4 Add a test: a deferred arm makes no judge-factory call, records `judge_status: pending` and the bundle digest, and has no RAGAS aggregates. Then add the call site in `_process_config`.
 - [ ] 2.5 Add a test: a result JSON with no `judge_status` loads as `inline`.
 - [ ] 2.5a Add tests for the `link` primitive (design D3) in one shared helper: exactly one of two writers of the same name wins; the loser never replaces the winner's bytes; a writer whose `link` returns `EEXIST` while its temporary file has link count 2 reports success; the name never exists without its full content.
@@ -63,6 +63,8 @@ Rules for every task:
   - two jobs with the same settings give equal identities and different execution records;
   - a precision change (`bf16` against `fp8`) changes the identity;
   - an embedding change (OpenAI against HuggingFace, or a different model name reported by the built object) changes the identity;
+  - a change of the effective `timeout`, `max_workers`, `batch_size` or chunk size changes the identity, and an explicit default equals an unset value;
+  - the offline scorer passes the manifest's `batch_size` and run-config values to ragas, not its own defaults;
   - the inline path records the same identity shape.
 - [ ] 3.7 Add tests for the merge, then write `scripts/benchmarking/judge/merge.py`. The tests check that:
   - the merge groups bundles by result file, and writes nothing while any arm is not `SCORED` (it names the pending arms and exits 0); after the last arm is `SCORED`, one judged file holds all arms;
@@ -82,7 +84,7 @@ Rules for every task:
 - [ ] 4.1 Add tests for `scripts/benchmarking/slurm/judge_submit.sh`, with `squeue` and `sbatch` replaced by stubs on `PATH`. It submits nothing if a job exists or no bundle is available, nothing if the only READY bundles do not match the configured judge or scorer (3.0), and exactly one job if a matching bundle is READY and no job exists. Every `sbatch` of `archi-judge` has `--dependency=singleton`. For a result whose arms are all `SCORED` with no `MERGED` and no merge job, it submits one `archi-judge-merge` job. `--status` lists READY bundles older than 24 hours, bundles that do not match with the reason, `SCORER_STALE` and `INCOMPATIBLE` records, and stale claims.
 - [ ] 4.2 Write `scripts/benchmarking/slurm/archi_judge.sbatch`. It has `#SBATCH -J archi-judge --requeue --open-mode=append`, and the partition, GPU count and `-t` are settings at the top of the script. It checks the live scorer identity against the sidecar and counts its available bundles first, and exits without starting vLLM when the sidecar is stale or no bundle is available. It starts vLLM in Apptainer on a Unix socket (`--uds`) in a `0700` folder under the job's private temporary folder, with no TCP listener, and with a random key in `VLLM_API_KEY` (never on the command line). It waits for `/v1/models` through the socket, runs the scorer, and stops vLLM through a `trap`. It then submits the merge job with `--dependency=afterok:$SLURM_JOB_ID`. It must have a `--dry-run` that prints the resolved commands, with a test for it.
 - [ ] 4.3 Write `scripts/benchmarking/slurm/judge_merge.sbatch` (CPU only), with a `--dry-run` test.
-- [ ] 4.4 Add tests for G8 as one shared check, used by `scripts/benchmarking/compare_runs.py` and `scripts/benchmarking/feature_matrix/archive_run.sh`: a pending arm exits non-zero and is named; the archiver appends nothing to the ledger for a pending artifact and names the judged file to wait for; it archives a `judge_status: scored` judged file. Then write the gate.
+- [ ] 4.4 Add tests for G8 as one shared check, used by `scripts/benchmarking/compare_runs.py` and `scripts/benchmarking/feature_matrix/archive_run.sh`: a pending arm exits non-zero and is named; the archiver appends nothing to the ledger for a pending artifact and names the judged file to wait for; it archives a `judge_status: scored` judged file, with each arm's `judge_identity` in the ledger row; it refuses a scored artifact whose identity differs from the campaign's earlier RAGAS rows, and names the fields. Then write the gate.
 - [ ] 4.5 Add tests for G9, then write the gate. The tests check that:
   - arms whose `judge_identity` differs are refused, and the differing fields are named (inline Sonnet against offline Llama; `bf16` against `fp8`);
   - two offline arms with equal identity from separate jobs compare;

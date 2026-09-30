@@ -53,7 +53,8 @@ The extraction is a separate, mechanical PR with no change in behavior. `service
 
 ```
 <queue>/<result basename>-arm<N>/
-  manifest.json        judge settings, judge model id + revision, embedding setting,
+  manifest.json        judge settings, the resolved ragas call settings (D10),
+                       judge model id + revision, embedding setting,
                        code digest (`code_version.digest`), package digest of the
                        run's environment (D10),
                        result basename, arm index, arm count of the result,
@@ -188,6 +189,10 @@ The merge is safe when two merges run at the same time (the afterok job and a ma
 
 The publish timer copies each judged file back into the output folder (D3). A person copies judged files into `bench_out/` and commits them.
 
+### D8a. One judge mode for each run
+
+Each sweep config loads its own benchmarking settings (`load_new_configuration`, `src/bin/service_benchmark.py:1422-1434`), so one run can have an inline arm and a deferred arm. The merge unit is the whole result (D8), and an inline arm has no bundle, so such a result would never be merged. The run therefore reads `judge_mode` from every config before it answers any question, and it refuses to start if the configs do not all have the same mode. A person who wants an inline spot check next to a deferred run makes two runs.
+
 ### D10. Judge identity, scorer identity, and execution record
 
 The design keeps three records separate:
@@ -197,6 +202,7 @@ The design keeps three records separate:
   - the weight precision (`bf16`, `fp8`, and so on);
   - the vLLM image digest, and the server settings that change output (`--max-model-len`, `--dtype`, the quantization, the chat template);
   - the decoding settings that the scorer sends (temperature, top_p, max tokens);
+  - the **resolved ragas call settings**: every value that the shared scoring function passes to `RunConfig` or to `ragas.evaluate`, after defaults. That is the output of `ragas_run_config_kwargs` (so `timeout` and `max_workers`, as `ragas_effective_settings` reports them, `src/utils/benchmark_schema.py:695-709`), the `batch_size` that goes to `evaluate` (`src/bin/service_benchmark.py:1979`, `:2000`), and the scorer's chunk size (D7). The existing runtime already treats judge pressure as a comparability field (`src/bin/service_benchmark.py:1181-1184`), because it changes the missing-score rate and so the denominator of every aggregate. The run records these values in the manifest, and the scorer uses the manifest's values, not its own defaults;
   - the **embedding** that ragas uses (`get_ragas_results` passes it into the evaluation, `src/bin/service_benchmark.py:1986`, `:1998`): the provider class, the model name that the built object reports (not the config string), and the model revision where the provider gives one. The object is the source because `get_ragas_embedding_model` (`:1713`) gives an unknown config value the OpenAI default, and both providers use their library's default model;
   - the **scorer identity** below.
 
@@ -226,7 +232,9 @@ The inline path records the same `judge_identity` shape: provider `huit_bedrock`
 
 There is no override flag, because the result of a mixed comparison has no meaning.
 
-**The campaign archiver obeys G8 too.** `scripts/benchmarking/feature_matrix/archive_run.sh` takes the newest `benchmarking-<stack>-*.json` (`:91`), never runs `compare_runs.py`, and writes the arm's aggregates into the campaign ledger (`:212-239`). A pending artifact would therefore enter the ledger with no RAGAS metrics. The archiver refuses an artifact with `judge_status: pending`, and names the judged file to wait for. It accepts the judged file (`judge_status: scored`) when the publish timer has copied it into the output folder. The G8 check is one shared function that `compare_runs.py` and the archiver both call.
+**The campaign archiver obeys G8 and G9 too.** `scripts/benchmarking/feature_matrix/archive_run.sh` takes the newest `benchmarking-<stack>-*.json` (`:91`), never runs `compare_runs.py`, and writes the arm's aggregates into the campaign ledger (`:212-239`). A pending artifact would therefore enter the ledger with no RAGAS metrics. The archiver refuses an artifact with `judge_status: pending`, and names the judged file to wait for. It accepts the judged file (`judge_status: scored`) when the publish timer has copied it into the output folder. The G8 check is one shared function that `compare_runs.py` and the archiver both call.
+
+The archiver also applies G9 across runs, because separately archived runs are compared through the ledger, not through `compare_runs.py`. It writes each arm's `judge_identity` into its ledger row (the row has none today, `archive_run.sh:221-235`). It refuses an archive whose `judge_identity` differs from the identity of the campaign's earlier RAGAS rows, and it names the fields that differ. An earlier row with no identity never equals a recorded one (the D9 rule), so the first judged run of a campaign that has only older rows is refused, and the operator starts a new campaign for the new judge.
 
 ## Risks / Trade-offs
 
@@ -234,7 +242,7 @@ There is no override flag, because the result of a mixed comparison has no meani
 - [vLLM output at temperature 0 changes a little with the other requests in the same batch] → Record the job id and the list of claimed bundles in each `judge_execution` (not in `judge_identity`, so it does not block comparison). The effect is expected to be far below run-to-run noise, and the record makes it possible to check later.
 - [Queue wait on `gpu_h200` is long] → Claim-at-start makes a long wait add more bundles to the job. The operator can switch the sbatch partition to `gpu_requeue` (D7 makes that safe) or to 1 × H200 with FP8. Precision is part of `judge_identity`.
 - [A lost scrontab entry or a crashed submitter leaves bundles READY with no job] → The submitter logs each tick. A READY bundle older than 24 hours is reported by `judge_submit.sh --status`.
-- [Many parallel ragas requests over a small chunk give less throughput] → `max_workers` and the chunk size are manifest settings. Measure rows per minute in the first job and adjust.
+- [Many parallel ragas requests over a small chunk give less throughput] → `max_workers`, `batch_size` and the chunk size are manifest settings, and they are part of `judge_identity`. Measure rows per minute in the first job and choose them once. A later change starts a new baseline, and G9 shows it.
 - [The scorer's Python environment differs from the benchmark image, so the ragas or langchain versions drift] → Run the scorer in an Apptainer image built from the benchmark image. The scorer identity (D10) pins the code, the image digest and the package digest, and any mismatch fails closed, with no override.
 - [A job ends without a requeue and leaves its claim] → Stale-claim recovery (D5a).
 - [A time-limited job scores some arms of a result and leaves the others] → The merge waits for all arms of the result (D8), and the next job claims the rest.

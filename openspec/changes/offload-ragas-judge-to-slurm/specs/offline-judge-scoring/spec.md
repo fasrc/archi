@@ -1,7 +1,15 @@
 ## ADDED Requirements
 
 ### Requirement: A deferred run writes a judge bundle instead of calling the judge
-When `ragas_settings.judge_mode` is `deferred`, the benchmark SHALL answer every question and write a judge bundle for each arm, and it SHALL NOT make any RAGAS judge call. The bundle has two files. `rows.jsonl` has one line per scorable row, with the row's key and the full `user_input`, `retrieved_contexts`, `response` and `reference` that the inline path gives to ragas. `manifest.json` records the enabled metrics, `timeout`, `max_workers`, the embedding model, the judge model id and revision, the run's `code_version`, the SHA-256 of the run environment's sorted `pip freeze`, the result basename, the arm index, the arm count of the result, and the SHA-256 of `rows.jsonl`. The run SHALL fix the result basename once, before its first arm, and SHALL use it for both the bundles and the result JSON. The bundle writer writes a `BUNDLE_COMPLETE` marker after every other bundle file.
+When `ragas_settings.judge_mode` is `deferred`, the benchmark SHALL answer every question and write a judge bundle for each arm, and it SHALL NOT make any RAGAS judge call. The bundle has two files. `rows.jsonl` has one line per scorable row, with the row's key and the full `user_input`, `retrieved_contexts`, `response` and `reference` that the inline path gives to ragas. `manifest.json` records the enabled metrics, the resolved ragas call settings (the output of `ragas_run_config_kwargs`, including `timeout` and `max_workers`, and the `batch_size` that the inline path passes to `evaluate`), the embedding model, the judge model id and revision, the run's `code_version`, the SHA-256 of the run environment's sorted `pip freeze`, the result basename, the arm index, the arm count of the result, and the SHA-256 of `rows.jsonl`. The run SHALL fix the result basename once, before its first arm, and SHALL use it for both the bundles and the result JSON. The bundle writer writes a `BUNDLE_COMPLETE` marker after every other bundle file.
+
+#### Scenario: Mixed judge modes in one sweep
+- **WHEN** one config of a sweep has `judge_mode: deferred` and another config has no `judge_mode`
+- **THEN** the run refuses to start before it answers any question, and names both configs
+
+#### Scenario: Scorer uses the run's batch size
+- **WHEN** a deferred run's config sets `batch_size: 4`
+- **THEN** the manifest records `batch_size: 4`, and the offline scorer passes 4 to `evaluate`
 
 #### Scenario: Bundle names the result before the result exists
 - **WHEN** a deferred run with two arms writes the bundle of arm 0
@@ -199,11 +207,15 @@ The offline scorer and the inline benchmark path SHALL call one shared scoring f
 - **THEN** both paths give equal aggregates and scored counts
 
 ### Requirement: The judge identity excludes per-job values
-Each judged arm SHALL record a `judge_identity` with the model id and revision, the weight precision, the vLLM image digest, the output-relevant server settings, the decoding settings, the embedding (provider class, the model name that the built embedding object reports, and its revision where the provider gives one), and the scorer identity (the code digest of the scorer's `src`, scorer image digest, package digest, ragas version, metric settings). It SHALL record the job id, node, times, claimed bundles and requeue count in a separate `judge_execution` record.
+Each judged arm SHALL record a `judge_identity` with the model id and revision, the weight precision, the vLLM image digest, the output-relevant server settings, the decoding settings, the resolved ragas call settings (`timeout`, `max_workers`, `batch_size`, and the scorer's chunk size), the embedding (provider class, the model name that the built embedding object reports, and its revision where the provider gives one), and the scorer identity (the code digest of the scorer's `src`, scorer image digest, package digest, ragas version, metric settings). It SHALL record the job id, node, times, claimed bundles and requeue count in a separate `judge_execution` record.
 
 #### Scenario: Embedding differs
 - **WHEN** two arms have the same judge model and settings, but one was scored with the OpenAI embedding and the other with the HuggingFace embedding
 - **THEN** their `judge_identity` records differ in the embedding fields
+
+#### Scenario: Judge pressure differs
+- **WHEN** two arms have the same judge model and settings, but one ran with `max_workers: 6` and the other with the default
+- **THEN** their `judge_identity` records differ in `max_workers`
 
 #### Scenario: Same settings, different jobs
 - **WHEN** two arms were scored by two different jobs with identical model, precision, image, server, decoding and scorer settings
@@ -259,7 +271,11 @@ The merge step SHALL write one new judged result JSON beside the pending one in 
 - **THEN** the merge exits non-zero and writes no judged file
 
 ### Requirement: Comparison refuses pending runs and mixed judges
-`compare_runs.py` and the campaign archiver (`scripts/benchmarking/feature_matrix/archive_run.sh`) SHALL refuse a run whose judge status is `pending`, through one shared check. `compare_runs.py` SHALL also refuse to compare RAGAS metrics across arms whose `judge_identity` differs in any field, naming the fields that differ. An artifact with no `judge_identity` SHALL get `(evaluator_provider, evaluator_model)` from its recorded settings, and a missing field SHALL never equal a recorded one.
+`compare_runs.py` and the campaign archiver (`scripts/benchmarking/feature_matrix/archive_run.sh`) SHALL refuse a run whose judge status is `pending`, through one shared check. The campaign archiver SHALL write each arm's `judge_identity` into its ledger row, and SHALL refuse an archive whose `judge_identity` differs from that of the campaign's earlier RAGAS rows. `compare_runs.py` SHALL also refuse to compare RAGAS metrics across arms whose `judge_identity` differs in any field, naming the fields that differ. An artifact with no `judge_identity` SHALL get `(evaluator_provider, evaluator_model)` from its recorded settings, and a missing field SHALL never equal a recorded one.
+
+#### Scenario: Campaign archiver and a different judge
+- **WHEN** the campaign ledger has RAGAS rows with a `bf16` judge identity, and `archive_run.sh` selects a scored artifact with an `fp8` identity
+- **THEN** it exits non-zero, names the precision field, and appends nothing to the ledger
 
 #### Scenario: Campaign archiver and a pending run
 - **WHEN** `archive_run.sh` selects an artifact with `judge_status: pending`
