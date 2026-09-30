@@ -70,7 +70,7 @@ ends red. Run `black` and `isort` on every file you touch **before** `git add`.
 
 ## 3. Stage, rewrite, and mount
 
-- [ ] 3.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 3.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Append to `tests/unit/test_evaluation_config_staging.py` a class
       `TestEvaluationAgentConfigStaging`, reusing `_template_manager`, `_context` and
