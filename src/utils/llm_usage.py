@@ -55,22 +55,25 @@ class UsageRecorder(BaseCallbackHandler):
 
         with self._lock:
             self._called = True
+            # One inner list is one call. Its candidates (n > 1) share the
+            # request-level usage, so count the first candidate that reports.
             for gen_list in response.generations:
+                model = self._default_model
+                counts: Optional[Tuple[int, int]] = None
                 for gen in gen_list:
                     if not isinstance(gen, ChatGeneration):
-                        self._bump(self._provider, self._default_model, None)
                         continue
-                    msg = gen.message
-                    model = self._default_model
-                    if isinstance(msg, AIMessage):
-                        resp_meta = getattr(msg, "response_metadata", {}) or {}
-                        model = (
-                            resp_meta.get("model_name")
-                            or resp_meta.get("model")
-                            or self._default_model
-                        )
-                    counts = message_usage(msg)
-                    self._bump(self._provider, model, counts)
+                    counts = message_usage(gen.message)
+                    if counts is not None:
+                        model = self._message_model(gen.message)
+                        break
+                self._bump(self._provider, model, counts)
+
+    def _message_model(self, msg: Any) -> str:
+        resp_meta = getattr(msg, "response_metadata", {}) or {}
+        return (
+            resp_meta.get("model_name") or resp_meta.get("model") or self._default_model
+        )
 
     def _bump(
         self,

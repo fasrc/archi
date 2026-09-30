@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 from langchain_core.messages import AIMessage
-from langchain_core.outputs import ChatGeneration, LLMResult
+from langchain_core.outputs import ChatGeneration, Generation, LLMResult
 
 from src.utils.llm_usage import UsageRecorder, phase_usage_totals, sum_usage
 
@@ -139,12 +139,81 @@ def test_provider_always_from_constructor():
 # --- (c) multi-generation / multi-call accumulation -------------------------
 
 
-def test_two_generations_in_one_llm_result():
+def test_candidates_of_one_call_count_once():
+    # langchain_openai copies the request-level usage onto every candidate
+    # when n > 1, so summing candidates multiplies the call's tokens.
     rec = UsageRecorder(provider="p", model="m")
-    msg1 = _ai(input_tokens=10, output_tokens=5)
-    msg2 = _ai(input_tokens=20, output_tokens=8)
     result = LLMResult(
-        generations=[[ChatGeneration(message=msg1), ChatGeneration(message=msg2)]]
+        generations=[
+            [
+                ChatGeneration(message=_ai(input_tokens=10, output_tokens=5)),
+                ChatGeneration(message=_ai(input_tokens=10, output_tokens=5)),
+                ChatGeneration(message=_ai(input_tokens=10, output_tokens=5)),
+            ]
+        ]
+    )
+    rec.on_llm_end(result)
+
+    snap = rec.snapshot()
+    assert snap is not None
+    assert snap["calls"] == 1
+    assert snap["unreported_calls"] == 0
+    assert snap["input_tokens"] == 10
+    assert snap["output_tokens"] == 5
+
+
+def test_candidates_use_first_reporting_candidate():
+    rec = UsageRecorder(provider="p", model="m")
+    result = LLMResult(
+        generations=[
+            [
+                ChatGeneration(message=_ai()),
+                ChatGeneration(message=_ai(input_tokens=7, output_tokens=3)),
+            ]
+        ]
+    )
+    rec.on_llm_end(result)
+
+    snap = rec.snapshot()
+    assert snap is not None
+    assert snap["calls"] == 1
+    assert snap["unreported_calls"] == 0
+    assert snap["input_tokens"] == 7
+    assert snap["output_tokens"] == 3
+
+
+def test_candidates_without_usage_are_one_unreported_call():
+    rec = UsageRecorder(provider="p", model="m")
+    result = LLMResult(
+        generations=[[ChatGeneration(message=_ai()), ChatGeneration(message=_ai())]]
+    )
+    rec.on_llm_end(result)
+
+    snap = rec.snapshot()
+    assert snap is not None
+    assert snap["calls"] == 1
+    assert snap["unreported_calls"] == 1
+    assert snap["input_tokens"] == 0
+
+
+def test_non_chat_generation_is_one_unreported_call():
+    rec = UsageRecorder(provider="p", model="m")
+    rec.on_llm_end(LLMResult(generations=[[Generation(text="hi")]]))
+
+    snap = rec.snapshot()
+    assert snap is not None
+    assert snap["calls"] == 1
+    assert snap["unreported_calls"] == 1
+    assert snap["by_model"][0]["model"] == "m"
+
+
+def test_two_prompts_in_one_llm_result_are_two_calls():
+    rec = UsageRecorder(provider="p", model="m")
+    result = LLMResult(
+        generations=[
+            [ChatGeneration(message=_ai(input_tokens=10, output_tokens=5))],
+            [ChatGeneration(message=_ai(input_tokens=20, output_tokens=8))],
+        ]
     )
     rec.on_llm_end(result)
 
