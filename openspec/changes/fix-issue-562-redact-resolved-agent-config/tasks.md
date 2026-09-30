@@ -85,7 +85,7 @@
 
 ## 2. Wire it into the run: sentinel, runtime, retry, continue
 
-- [ ] 2.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 2.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** In `tests/unit/evaluation/qa/test_workflow.py`, in the marked section
       (see Rules), add:
