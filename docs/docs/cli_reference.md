@@ -413,7 +413,7 @@ more detailed analysis or automation, the same workspace contains:
 | `preparation.jsonl` | Exactly one terminal record per input item: normalized prepared questions with canonical or resolved answers and fixed gold atoms, intentional live omissions, or oracle/atom-extraction failures. |
 | `live_checks.jsonl` | Ordered pre-run and post-run Dataset V2 oracle observations, answer hashes, metadata, call evidence, and item-scoped live failures. Static runs contain an empty file. |
 | `input.snapshot.json` or `input.snapshot.jsonl` | An exact snapshot of the input dataset used for the evaluation. |
-| `agent_config.resolved.yaml` and `agent_spec.resolved.md` | The resolved Archi configuration and exact agent spec used to generate the answers. |
+| `agent_config.resolved.yaml` and `agent_spec.resolved.md` | The resolved Archi configuration with secret values redacted, and the exact agent spec used to generate the answers. |
 | `evaluator_profile.resolved.yaml` | The resolved atoms-extractor and scoring-evaluator configuration. |
 | `manifest.json` | The run ID, phase states, attempt count, artifact names, versions, and SHA-256 hashes used to detect changes to completed-phase inputs. |
 
