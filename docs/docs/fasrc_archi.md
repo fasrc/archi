@@ -232,6 +232,27 @@ with no `<think>` trace.
 > `local:` does nothing for the `openai:` slot serving 3.8. To run 3.8 without
 > thinking as well, repeat the same `extra_kwargs` block under `openai:`.
 
+### What turning thinking back on does to streaming
+
+This same key also controls whether the chat app suppresses streamed reasoning
+(issue #122). With `enable_thinking: true`, the chat template pre-fills the
+`<think>` opener, so the model starts inside its reasoning block and closes it
+with a `</think>` that has no opener. Before that tag arrives the reasoning is
+byte-identical to a plain answer, so the app used to display it as the answer.
+
+The app now holds visible text until that closing tag arrives, per reasoning
+phase. Three consequences are worth knowing before you turn the key on:
+
+- The answer still streams incrementally, but only after the model closes its
+  reasoning block. The reasoning itself appears in the thinking-step panel.
+- If the model never emits a `</think>`, the whole answer arrives in one piece at
+  the end of the stream instead of growing word by word. Nothing is lost.
+- The gate is read per provider slot, not per model. A slot that lists a
+  reasoning model and a plain model gates both, so the plain model's answers also
+  arrive in one piece. Declare the two models as two slots to avoid that.
+
+With `enable_thinking: false` or the key absent, streaming is unchanged.
+
 **Critical: the launch must NOT pass `--reasoning-parser qwen3`.** This image's
 custom qwen3 parser fixes `prompt_has_open_think=True` at startup, so when a
 no-think reply contains no `</think>` it routes the entire answer into the
@@ -462,19 +483,34 @@ Two settings look mandatory here; only the first actually is.
    here as well buys nothing and persists an authentication-shaped value verbatim
    into Postgres `static_config`.
 
-> **The 3.8 slot runs without a context bound.** vLLM is launched
-> `--max-model-len 32768`, but a request-local override installs no matching
-> protection. A model named in the deployment's `models:` list becomes a
-> `ModelInfo` whose `context_window` defaults to a fabricated **128000**, so
+> **Declare the 3.8 slot's context window per model.** vLLM is launched
+> `--max-model-len 32768`, and nothing discovers that number for you. A model
+> named in the deployment's `models:` list becomes a `ModelInfo` whose
+> `context_window` defaults to a fabricated **128000**, so
 > `resolve_configured_model_window()` deliberately returns `None` rather than
-> trust it — its docstring cites this exact case, a 32768-launched server
-> reporting 128000 (`context_budget.py:375-406`). A request-local view separately
-> withdraws the deployment-wide `context_editing.context_window` precedence, and
-> when no window resolves **nothing is installed**
-> (`context_middleware.py:391-399`). So a long overridden conversation can submit
-> an oversized prompt that vLLM then rejects. Tracked as
-> [#262](https://github.com/fasrc/archi/issues/262); until that lands, keep 3.8
-> conversations short or drive the endpoint directly.
+> trust it — a 32768-launched server reporting 128000 is the exact case its
+> docstring cites. The deployment-wide `context_editing.context_window` does not
+> fill the gap either: a request-local view onto a different model withdraws it
+> by design, because it describes the model the deployment serves.
+>
+> Declare the window against the model id instead, which is the one statement
+> that survives a model override:
+>
+> ```yaml
+> services:
+>   chat_app:
+>     context_editing:
+>       context_windows:
+>         palmfuture/Qwen3.8-27B-GPTQ-Int4: 32768
+> ```
+>
+> Without that entry a long overridden conversation can still submit an
+> oversized prompt that vLLM rejects, and the absence is logged on every agent
+> build naming the key to set. The entry is matched on the model id alone, so it
+> applies under every provider slot — fine here, where each id is served by one
+> slot, and tracked as
+> [#344](https://github.com/fasrc/archi/issues/344) for the day that stops being
+> true.
 
 > **Never put a real OpenAI key in this env file** while this slot points at a
 > local endpoint: whatever `OPENAI_API_KEY` holds is exactly what
@@ -538,7 +574,11 @@ dockerfile: .../Dockerfile-chat{{ '-gpu' if gpu_ids else '' }}
 ```
 
 The rendered compose already names `Dockerfile-chat-gpu` for the chatbot, but the
-running chatbot image is a **stale CPU build**:
+running chatbot image is a **stale CPU build**. Observed on fasrc-dev before
+2026-09-15; the torch versions below are what those two images held at the time,
+not the current pins. The base images moved to torch 2.7.0 on 2026-09-15 (#472), so
+a freshly built pair reports 2.7.0 rather than 2.6.0. The asymmetry is the point
+here, not the version:
 
 | | chatbot | data-manager |
 |---|---|---|
@@ -633,9 +673,11 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 [File reference](#file-reference).
 
 > **This is not the `deploy/fasrc-dev/` deployment.** That one is
-> `DEPLOYMENT="dev"` (`deploy/fasrc-dev/scripts/lib.sh:14-16`) → containers
-> `chatbot-dev` / `postgres-dev`, and it runs on a host with **no GPUs**, pointing
-> at a remote vLLM endpoint (`lib.sh:21-29`). Everything on this page is the
+> `DEPLOYMENT="dev"` (`deploy/scripts/lib.sh:96-97`) → containers
+> `chatbot-dev` / `postgres-dev`. Since issue #363 the name `dev` is reserved for
+> the GPU host; the no-GPU workstation deploys as `claw` via its own `host.env`.
+> Both point at a remote vLLM endpoint, and both leave `GPU_IDS` off
+> (`lib.sh:113-126`). Everything on this page is the
 > `archi-openai-compat` deployment on `archi.rc.fas.harvard.edu`. The container
 > names are not interchangeable between the two.
 
@@ -667,7 +709,7 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 >
 > **Provisioning is not automatic here.** `ensure_config`, which checks the
 > checkout out at a pinned, SHA-verified ref, has exactly one caller —
-> `deploy/fasrc-dev/scripts/lib.sh:208` — on the *other* deployment. This page's
+> `deploy/scripts/lib.sh:373` — on the *other* deployment. This page's
 > active path is the repo-root `g.sh` calling `archi create` directly, which never
 > runs it. So on this host `config/` is simply whatever is on disk, at whatever
 > revision someone last left it, with nothing verifying it.
@@ -689,9 +731,11 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 >
 > 1. Add the launchers, both units, the compat shim and `vllm_patches/` to
 >    `fasrc/archi-config`.
-> 2. Give *this* deployment a provisioning step that pins them. Bumping
->    `CONFIG_REF`/`CONFIG_SHA` in `deploy/fasrc-dev/scripts/lib.sh` governs the
->    `dev` deployment only and does nothing here. Either wrap `g.sh` so it sources
+> 2. Give *this* deployment a provisioning step that pins them. The pin table in
+>    `deploy/scripts/lib.sh` has one `CONFIG_REF`/`CONFIG_SHA` row for each
+>    script-managed deployment — `dev` on the GPU host and `claw` on the
+>    workstation — so a bump of one row converges only that deployment on its next
+>    create/redeploy. It still does nothing here. Either wrap `g.sh` so it sources
 >    `ensure_config` before `archi create`, or record an explicit checkout step in
 >    this deployment's procedure that **verifies the commit, not just the tag
 >    name**: `git -C config/ fetch --tags`, then
@@ -699,7 +743,7 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 >    against the recorded SHA and abort on mismatch, and only then
 >    `git -C config/ checkout "$resolved"`. A bare `checkout <tag>` accepts
 >    whatever commit the remote tag currently names — that is not the SHA-verified
->    pin `ensure_config` implements (`lib.sh:121-139`), which rejects a re-pointed
+>    pin `ensure_config` implements (`lib.sh:248-284`), which rejects a re-pointed
 >    remote tag outright. (When creating the tag: make a *new* annotated tag —
 >    never move an existing one, as `git fetch --tags` refuses to clobber a moved
 >    tag.)

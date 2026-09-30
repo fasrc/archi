@@ -200,6 +200,8 @@ archi evaluate --name <name> --env-file <secrets.env> --config <config.yaml> [OP
 
 Supports the same flags as `create` (`--podman`, `--gpu-ids`, `--tag`, `--hostmode`, `--verbosity`, `--force`). Configuration files should define the `services.benchmarking` section.
 
+Like `create`, `evaluate` checks its base images before it changes anything. Under `--force` the check runs before the existing benchmarking runtime is removed, so a run that cannot obtain its base images leaves that runtime alone.
+
 **Example:**
 
 ```bash
@@ -560,7 +562,7 @@ the manifest format.
 | Variable | Description |
 |----------|-------------|
 | `ARCHI_DIR` | Override the deployment directory (default: `~/.archi`) |
-| `OLLAMA_HOST` | Ollama server address (default: `http://localhost:11434`) |
+| `OLLAMA_HOST` | Ollama server address (default: `http://localhost:11434`). Overrides the `local` provider's configured `base_url` in `ollama` mode only — an `openai_compat` provider ignores it. See [Local provider endpoint precedence](models_providers.md#local-provider-endpoint-precedence). |
 
 ---
 

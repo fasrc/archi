@@ -7,6 +7,34 @@ list. An empty list below means nothing is currently blocked.
 
 <!-- The loop appends entries below this line. -->
 
+## Task 5.1 (fix-issue-463) — PR creation blocked by PAT scope
+
+**Status: BLOCKED — fine-grained PAT cannot create PRs in `fasrc/archi`.**
+
+The branch `fix/issue-463-local-mode-canonicalization` has been pushed to the fork at
+`https://github.com/swinney/archi/tree/fix/issue-463-local-mode-canonicalization`.
+The gate is green (4392 passed, 100% diff coverage on 39 lines, re-confirmed 2026-09-12).
+
+`gh pr create --repo fasrc/archi --base dev` fails with HTTP 403:
+"Resource not accessible by personal access token". The active PAT
+(`github_pat_11AADEDXI0Sxfs6F2YCK5t_...`) is a fine-grained token scoped to
+`swinney/archi` only — it cannot write to `fasrc/archi`. Cross-fork `gh pr create
+--head swinney:fix/...` also fails with the same 403.
+
+**Action needed from a human operator:** run these two commands with a PAT that has
+`repo` write access to `fasrc/archi`, or open the PR via the GitHub web UI:
+
+```
+git push -u origin fix/issue-463-local-mode-canonicalization
+gh pr create \
+  --repo fasrc/archi \
+  --base dev \
+  --title "fix(#463): canonicalize and validate the local provider's mode at the config seams" \
+  --body-file docs/pr-body-463.md
+```
+
+The complete PR body is in `docs/pr-body-463.md` (committed on this branch).
+
 ## Task 5.2 — "Run before/after benchmark; record recall/precision deltas"
 
 **Status: BLOCKED — requires live infrastructure not available to the loop.**

@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import math
 
+from scripts.benchmarking import compare_runs as cr
 from src.utils.benchmark_resilience import (
+    BANK_SLICE_FIELDS,
     DEGRADED,
     FAILED,
     OK,
@@ -109,6 +111,27 @@ class _StubBenchmarker(Benchmarker):
 
 _QITEM = {"user_input": "how do I do X?", "reference": "ref", "sources": []}
 _MODES = {"RAGAS", "SOURCES"}
+
+
+def _slice_arm(label, rows):
+    """A real `compare_runs.Arm` over `rows`, for slice-level assertions.
+
+    Deliberately the production dataclass rather than a stub: the behaviour under
+    test lives in `Arm.has_metric` and `Arm.is_scorable`, so a hand-written stand-in
+    could agree with the assertion while disagreeing with the real comparison.
+    """
+    return cr.Arm(
+        label=label,
+        source=f"{label}.json",
+        rows=rows,
+        order=list(rows),
+        total_results={},
+        config_version={},
+        corpus_fingerprint="f1",
+        corpus_snapshot_id="s1",
+        code_version_digest="sha256:a",
+        configuration_file=f"configs/{label}.yaml",
+    )
 
 
 def _result(answer="an answer", metadata=None):
@@ -649,3 +672,152 @@ def test_pair_ab_results_still_ties_on_nan_both_sides(monkeypatch):
     paired = ResultHandler.pair_ab_results(0, 1)
 
     assert paired[0].winner_by_metric == {"faithfulness": "tie"}
+
+
+# --- _answer_and_score_question: bank `difficulty` propagation (#431) -------
+
+
+def test_answer_and_score_propagates_bank_difficulty():
+    item = {
+        "user_input": "how do I do X?",
+        "reference": "ref",
+        "sources": [],
+        "difficulty": "hard",
+    }
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(item, 1, _MODES)
+    assert bundle["q_results"]["difficulty"] == "hard"
+
+
+def test_answer_and_score_omits_difficulty_when_bank_row_lacks_it():
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(_QITEM, 1, _MODES)
+    assert "difficulty" not in bundle["q_results"]
+
+
+def test_difficulty_key_agrees_with_compare_runs_slice_fields():
+    item = {
+        "user_input": "how do I do X?",
+        "reference": "ref",
+        "sources": [],
+        "difficulty": "hard",
+    }
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(item, 1, _MODES)
+
+    assert "difficulty" in cr.SLICE_FIELDS
+    assert "difficulty" in bundle["q_results"]
+
+
+# --- failed entries keep the bank's slice fields (#431 round 1, Codex P2) ---
+#
+# A question that raised jumps to the isolation handler before the success path
+# copies the bank row's `difficulty`, so its stored row carried no such key. That
+# is not merely missing metadata: `compare_runs.slice_block` reads a value from
+# the baseline arm and counts every arm that disagrees as `excluded_mismatched`,
+# whose documented meaning is "a bank edit re-labelled this question between the
+# runs". `Arm.has_metric` is True when ANY row carries the field, so one failed
+# question in the treatment arm yields `None != "hard"` and is reported as a bank
+# relabelling. A harness failure must never be published as bank drift.
+
+
+def test_build_failure_entry_carries_the_banks_slice_fields():
+    entry = build_failure_entry(
+        question="q",
+        reference_answer="ref",
+        error=RuntimeError("boom"),
+        question_item={
+            "user_input": "q",
+            "difficulty": "hard",
+            "anchor_type": "reasoning",
+        },
+    )
+
+    assert entry["status"] == FAILED
+    assert entry["difficulty"] == "hard"
+    assert entry["anchor_type"] == "reasoning"
+
+
+def test_build_failure_entry_omits_slice_fields_the_bank_row_lacks():
+    entry = build_failure_entry(
+        question="q", reference_answer="ref", error=RuntimeError("boom")
+    )
+
+    # Absent, not defaulted: `slice_block` skips a falsy baseline value, so an
+    # empty-string sentinel would be equivalent here -- but inventing a value the
+    # bank never stated is what would make a real relabelling unreportable.
+    assert "difficulty" not in entry
+    assert "anchor_type" not in entry
+
+
+def test_build_failure_entry_tolerates_a_non_dict_bank_row():
+    entry = build_failure_entry(
+        question="q",
+        reference_answer="ref",
+        error=RuntimeError("boom"),
+        question_item="a bare question string",
+    )
+
+    assert entry["status"] == FAILED
+    assert "difficulty" not in entry
+
+
+def test_failure_slice_fields_agree_with_compare_runs():
+    # The tuple is duplicated across the src/ and scripts/ boundary on purpose --
+    # src must not import from scripts. This is the drift guard for that copy.
+    assert set(BANK_SLICE_FIELDS) == set(cr.SLICE_FIELDS)
+
+
+def test_answer_and_score_keeps_difficulty_when_the_question_raises():
+    def _boom(**kw):
+        raise RuntimeError("context length is only 32768")
+
+    item = {
+        "user_input": "how do I do X?",
+        "reference": "ref",
+        "sources": [],
+        "difficulty": "hard",
+        "anchor_type": "reasoning",
+    }
+    agent = _StubBenchmarker(chain=_boom)
+
+    bundle = agent._answer_and_score_question(item, 1, _MODES)
+
+    assert bundle["q_results"]["status"] == FAILED
+    assert bundle["q_results"]["difficulty"] == "hard"
+    assert bundle["q_results"]["anchor_type"] == "reasoning"
+
+
+def test_a_failed_treatment_question_is_not_reported_as_a_bank_relabelling():
+    """End-to-end on the consequence: `excluded_mismatched` must stay 0.
+
+    Builds the two arms `slice_block` sees when one question fails in the
+    treatment arm only, using the row the fixed `build_failure_entry` writes.
+    """
+    baseline_rows = {
+        f"q{i}": {"difficulty": "hard", "faithfulness": 0.5, "status": OK}
+        for i in range(3)
+    }
+    treatment_rows = {
+        f"q{i}": {"difficulty": "hard", "faithfulness": 0.6, "status": OK}
+        for i in range(2)
+    }
+    treatment_rows["q2"] = build_failure_entry(
+        question="q2",
+        reference_answer="ref",
+        error=RuntimeError("boom"),
+        question_item={"user_input": "q2", "difficulty": "hard"},
+    )
+
+    baseline = _slice_arm("baseline", baseline_rows)
+    treatment = _slice_arm("treatment", treatment_rows)
+    arms = [baseline, treatment]
+
+    block = cr.slice_block(baseline, arms, [f"q{i}" for i in range(3)], {})
+    difficulty_entries = [e for e in block if e["field"] == "difficulty"]
+
+    assert difficulty_entries, "the difficulty slice must still be reported"
+    assert all(e["excluded_mismatched"] == 0 for e in difficulty_entries), (
+        "a question that failed in one arm is a harness failure, not a bank "
+        f"relabelling: {[e['excluded_mismatched'] for e in difficulty_entries]}"
+    )

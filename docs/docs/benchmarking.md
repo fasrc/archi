@@ -64,6 +64,7 @@ read (`question`→`user_input`, `answer`→`reference`, `contexts`→`retrieved
 | `sources` | SOURCES mode | List of source identifiers (URLs, ticket IDs, etc.) |
 | `reference` | No¹ | Ground-truth answer (ragas `reference`, used for RAGAS evaluation) |
 | `source_match_field` | No | Metadata fields to match sources against (defaults to config value) |
+| `difficulty` | No | Optional bank label; copied verbatim into `single_question_results` when present, so `compare_runs.py` can slice by it. |
 
 ¹ Only `user_input` is required at load (plus `sources` for SOURCES mode). An
 empty `reference` is a valid draft row: it is skipped by every metric that needs
@@ -108,6 +109,7 @@ services:
 | `out_dir` | — | Output directory for results (must exist) |
 | `modes` | — | List of evaluation modes (`RAGAS`, `SOURCES`) |
 | `mode_settings.ragas_settings.timeout` | `180` | Max seconds per QA pair for RAGAS evaluation |
+| `mode_settings.ragas_settings.max_workers` | `16` | Concurrent RAGAS judge calls. Lower it when the judge throttles: ragas wraps each row in one `timeout` budget with its retries inside, so throttling spends the budget and loses the score. Must be a positive integer; anything else falls back to the default with a warning |
 | `mode_settings.ragas_settings.batch_size` | Ragas default | Number of QA pairs to evaluate at once |
 
 `archi evaluate` now requires benchmark runtime fields under `services.benchmarking`.
@@ -142,14 +144,94 @@ Make sure the `out_dir` exists before running.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | Seconds the benchmark container waits for the data-manager's ingestion to complete before giving up. CPU-only ingest of the full FASRC corpus takes ~64 min (3840s); the default allows headroom for larger corpora. |
+| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the ingest last reported progress. It restarts on every poll reporting work in progress (`state=running` at any step past `initializing`), so an ingest that is working is never cut off for taking a long time — only one that goes silent, or never starts, is. |
+| `BENCH_INGEST_MAX_WAIT` | `21600` | Absolute ceiling on the whole wait, in seconds — the backstop for an ingest that reports `running` forever without finishing. `0` disables it and logs a warning; prefer a large finite value for unattended runs. |
 | `BENCH_INGEST_POLL_INTERVAL` | `5` | Seconds between ingestion-status polls. |
+
+The two budgets answer three different failures, which is why neither one is a
+plain "give up after N seconds":
+
+- **The endpoint went away.** No status URL answers any more.
+  `BENCH_INGEST_WAIT_TIMEOUT` ends the run after that much silence. Errors are
+  kept per candidate URL, so the message names the URL that *had* been serving
+  status and quotes **that URL's own** failure — never one from a candidate the
+  harness merely fell through on its way there, and never the last fallback's
+  unrelated DNS error. If nothing ever answered, each candidate is listed with
+  its own error instead, since then they are all separate facts.
+- **The ingest never started.** The endpoint answers, but with `state=pending`,
+  with a state the harness does not recognize, or with `state=running
+  step=initializing` — the last of which means this ingest is queued behind
+  something else holding the data-manager's ingestion lock (a scheduled source
+  refresh, or a vectorstore update triggered by an upload). None of those is
+  progress, so none restarts the stall budget, and `BENCH_INGEST_WAIT_TIMEOUT`
+  ends the wait on the same schedule as a dead endpoint — naming the state and
+  step, so the queued case is obvious from the error alone.
+- **The ingest is alive but stuck.** Polls keep reporting `running` and the
+  state never reaches `completed`. `BENCH_INGEST_MAX_WAIT` ends that, and the
+  error reports the last observed `state` and `step` rather than a connection
+  problem. Only the ceiling can catch this one: the status payload carries just
+  `state`, `step` and `error`, with no counter or timestamp, so a wedged ingest
+  is byte-for-byte indistinguishable from a working one. Tightening it needs a
+  progress signal from the data-manager itself (issue #428).
+
+What this wait does **not** cover: a corpus change that starts *after* the
+initial ingest reports `completed` — a scheduled source refresh, or a
+vectorstore update triggered by an upload. Those hold the same lock but never
+touch this status endpoint, so the harness cannot block on them. It detects
+them after the fact instead, by fingerprinting the corpus on both sides of each
+arm and recording `corpus_unchanged_at_endpoints` in the results.
+
+A long-but-healthy ingest hits none of them. CPU-only ingest of the full FASRC
+corpus takes ~64 min; with `processing.categorization.enabled: true` it runs one
+extra LLM call per document before embedding, and has been measured at over two
+hours on a loaded host. The 2026-09 feature-matrix campaign put that tax at about
++19 min on a 1091-document corpus — 4956 s against 3802 s, roughly +30 % to enable
+— which is why the FASRC configs now ship the feature off. The two arms did not
+ingest identical corpora, so treat the figure as approximate. Under the old absolute deadline that run was killed at
+exactly 7200s while every one of its 1433 status polls was succeeding, two
+minutes short of finishing (issue #378).
+
+However long the wait turns out to be, it is recorded: every arm of the run
+carries `ingest_wall_seconds`, and both report formats show it in the **Run
+provenance** block as "Time to ingest". A run that finds the corpus already
+built records `null` there rather than `0` — see
+[Interpreting benchmark results](interpreting_benchmark_results.md).
 
 ---
 
 ## Results
 
 Results are saved in a timestamped subdirectory of `out_dir` (e.g., `bench_out/2042-10-01_12-00-00/`).
+
+### Report formats
+
+Each run writes two artifacts with one shared timestamp: the JSON results
+(`<name>-<timestamp>.json`, the source of truth) and a human-readable
+**markdown** report (`<name>-<timestamp>_report.md`), rendered from the JSON.
+Markdown is the default report format: it renders on GitHub, diffs cleanly,
+and pastes into issues and PRs.
+
+The report CLI re-renders a report from any saved JSON:
+
+```bash
+# Markdown (default): writes <stem>_report.md next to the JSON
+python src/utils/generate_benchmark_report.py bench_out/<run>.json
+
+# Name the markdown path, or opt into the HTML report instead
+python src/utils/generate_benchmark_report.py bench_out/<run>.json --markdown_output report.md
+python src/utils/generate_benchmark_report.py bench_out/<run>.json --html_output report.html
+```
+
+To bulk re-render markdown reports after a renderer fix — or to recreate a
+report whose write failed after the JSON landed — use the backfill script:
+
+```bash
+python scripts/benchmarking/backfill_report_provenance.py --regenerate-md
+```
+
+`--regenerate-md` re-renders an existing `_report.md` sibling and creates a
+missing one for a valid artifact; `--regenerate-html` still re-renders only
+HTML reports that already exist.
 
 To analyze results, see `scripts/benchmarking/` which contains:
 
@@ -240,9 +322,51 @@ The dump JSON gains a `leaderboard` key:
     primary metric, every row has one. Unranked rows do not consume rank numbers,
     so the scored variants still read 1..n.
 - `shared_context` — the model, provider, judge `evaluator_model`,
-  `queries_path`, and `corpus_snapshot_id` shared by all variants. If any of
+  `queries_path`, `corpus_snapshot_id`, and the judge-pressure pair
+  `judge_max_workers` / `judge_timeout`, shared by all variants. If any of
   these differ across the swept configs, the discrepancy is recorded in
   `shared_context.warnings` (the sweep is no longer apples-to-apples).
+
+    The two judge-pressure fields hold the **effective** values — the defaults
+    substituted, so an arm that omits the key and an arm that sets the default
+    explicitly agree. They come from each variant's own `ragas_effective_settings`
+    record, never from its configuration block, and they are `null` when no
+    judge ran: a SOURCES-only sweep renders the block like any other run, and
+    the leaderboard must not report a judge that never started. They are
+    recorded because concurrency and the per-row budget decide how often the
+    judge times out, and a timed-out row leaves the scored denominator that
+    every aggregate is divided by. A difference here **withholds ranks**: every
+    scored row's `rank` becomes `null`, the pairwise A/B winners are withheld
+    too, and the reason is recorded in `shared_context.warnings`. An arm that
+    was judged and one that was not (`ragas_effective_settings: null`) count as
+    differing, that being the starkest pressure difference there is.
+
+    This is deliberately stricter than the evidence alone demands. Pressure is
+    a proxy for lost scores rather than proof of them, so two arms driven at
+    different concurrency that both scored every question are in fact
+    comparable and are withheld anyway. Warning only was the previous
+    behaviour and it does not work: `rank` is what a consumer reads, and a
+    warning in `shared_context` that it never looks at cannot stop it.
+    Refusing to rank is recoverable — the metrics are still published, and the
+    per-metric `<metric>_scored` counts show whether anything was actually
+    lost — whereas publishing a ranking that asserts a controlled comparison
+    which did not happen is not.
+
+    `judge_participation` sits beside the pair and records whether a judge ran
+    at all: `"judged"`, `"none"`, or a sorted list when the arms disagree. It
+    exists because the two pressure fields are `null` when no judge ran, and
+    the drift reduction ignores `null` — so without it, one judged arm beside
+    an unjudged one reported that arm's worker count as shared by both.
+- `ragas_effective_settings` — on each run record, the judge `timeout` and
+  `max_workers` the run actually used, or `null` when `RAGAS` was not among the
+  run's `modes` and no judge ran. A rendered configuration always carries a
+  `ragas_settings` block, so its presence does not mean the judge was used.
+  The configuration is also recorded verbatim as `configuration`; when an
+  invalid setting was replaced by its default the two deliberately disagree,
+  and this field is the one that describes the run. `config_version.digest`
+  covers the normalized values for the same reason, while
+  `config_version.selected_file_digest` fingerprints the file as written, so
+  two different files stay distinguishable even when they drive identical runs.
 
 The pairwise `ab_comparisons` are still produced alongside the leaderboard; the
 leaderboard is computed independently from each config's aggregates.
@@ -373,6 +497,35 @@ services:
 ```
 
 The `huit_bedrock` provider is Harvard's Anthropic-compatible Bedrock proxy. Pinning Sonnet 4.5 (rather than the rolling-alias 4.6) makes scores reproducible across rounds. Requires `HUIT_API_KEY` in `~/.archi/.env.benchmark`.
+
+The `huggingface` provider names an **unauthenticated** OpenAI-compatible judge endpoint — the convention vLLM and Text Generation Inference (TGI) serve. The endpoint URL is read from `evaluator_ollama_url`; if that key is absent, the provider falls back to the system-under-test `ollama_url`, and then to `http://localhost:8000/v1`. Because the provider always builds an OpenAI-compatible client, it must not be pointed at a native Ollama port (which speaks a different protocol).
+
+There is no way to give this provider a credential: the client is built through the local provider seam, which sends the placeholder token `not-needed`. An endpoint behind bearer authentication rejects every score request. Use `huit_bedrock` for an authenticated judge.
+
+`huggingface` is an evaluator-only provider name. Setting `services.benchmarking.provider: huggingface` for the system under test fails at startup, because the agent providers do not include it.
+
+#### Tool calling and structured output on `huit_bedrock`
+
+The provider supports **bound tools for a single request-and-response round**, which is
+what `with_structured_output` needs. That is why the same judge pinned above can also be
+named in a QA evaluation console evaluator profile: the console's scorer classifies each
+gold atom through `with_structured_output`, so before tool support existed it could not use
+this provider at all. RAGAS never hit that limit because it parses judge output itself.
+
+Two limits are deliberate and worth knowing:
+
+- **Multi-turn tool loops do not work yet.** An assistant turn is serialized back to the
+  proxy as plain text, so an `AIMessage` carrying `tool_calls` loses its `tool_use` blocks
+  and the following `tool_result` references an id the proxy cannot match. Single-shot
+  structured output is unaffected; an agent tool loop is not.
+- **`supports_tools` stays `false` in the model catalog** for exactly that reason. The flag
+  is what the chat app's model picker shows an operator choosing a model *for the agent*,
+  and the agent is the caller whose tool use still breaks. It flips when history
+  serialization is fixed, not before.
+
+A profile's `timeout` is honored, fractional values included: `get_chat_model` accepts it as an alias for the
+transport's `request_timeout`, so a judge profile asking for 300 seconds gets 300 rather
+than silently keeping the 120-second default. An explicit `request_timeout` still wins.
 
 ### Argilla configuration
 

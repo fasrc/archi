@@ -309,28 +309,50 @@ class ScraperManager:
             try:
                 self._refresh_sitemap_lastmod_map(sitemap_urls, existing_keys)
             except SitemapExpansionError as exc:
-                # Degrading past this error is only safe with a map already in hand.
-                # service_data_manager keeps running after its asynchronous initial
-                # ingest reports an error, so this pass can arrive with no map at all
-                # while the catalog still holds rows from an earlier process. Crawling
-                # then stamps nothing, and the upsert's unconditional
-                # `last_modified = EXCLUDED.last_modified` writes NULL over every one
-                # of those rows. Skipping one scheduled refresh is recoverable; losing
-                # the timestamps is not.
+                # Degrade, never skip. The catalog upsert preserves an already-stored
+                # timestamp through `last_modified = COALESCE(EXCLUDED.last_modified,
+                # documents.last_modified)` in
+                # src/data_manager/collectors/utils/catalog_postgres.py (#233, PR
+                # #242), so crawling with an empty or stale map cannot NULL out rows
+                # an earlier pass stamped. The whole cost is a page first seen during
+                # this pass: it carries no last_modified until a later pass with a
+                # working map supplies one.
                 #
-                # Keyed on whether a refresh ever SUCCEEDED, not on whether the map
-                # has entries. A sitemap whose pages all omit the optional <lastmod>
-                # publishes {} from a completely successful expansion, and treating
-                # that as "no map yet" would skip the whole crawl over nothing.
-                if not getattr(self, "_sitemap_map_valid", False):
-                    logger.error(
-                        "sitemap expansion failed with no previous lastmod map (%s); "
-                        "skipping this scheduled crawl rather than overwriting stored "
-                        "last_modified values with NULL",
-                        exc,
-                    )
-                    return
-                logger.warning(str(exc))
+                # An earlier revision returned here whenever no map had ever been
+                # built, back when the upsert wrote EXCLUDED.last_modified
+                # unconditionally and a mapless crawl really did destroy timestamps.
+                # Once the persistence layer stopped destroying them, that skip only
+                # bought a stale catalog for a full refresh cycle — and
+                # service_data_manager still recorded the suppressed pass as a clean
+                # success, so nothing surfaced it (#277).
+                #
+                # `_sitemap_map_valid` no longer decides anything here; it only
+                # labels the log. Whether the retained entries came from a complete
+                # expansion or from a truncated one changes how much an operator
+                # should trust the timestamps this pass writes, and that provenance
+                # is invisible from the entry count alone. The flag still gates the
+                # retention branch in _refresh_sitemap_lastmod_map.
+                #
+                # Reading the logs: a below-floor or over-cap expansion has already
+                # logged its own ERROR ("failing ingest") inside
+                # expand_sitemap_source before raising, so an operator sees that
+                # error followed by this warning. The error is accurate for the
+                # SOURCE — that sitemap was rejected — and this warning is accurate
+                # for the PASS, which continues. expand_sitemap_source is shared
+                # with the full ingest, where the same condition genuinely does
+                # fail the run, so its level is deliberately left alone here.
+                logger.warning(
+                    "sitemap expansion failed (%s); continuing the scheduled crawl "
+                    "with %d cached lastmod entries (%s) — pages absent from that "
+                    "map carry no last_modified this pass",
+                    exc,
+                    len(getattr(self, "_sitemap_lastmod_map", {})),
+                    (
+                        "from the last complete expansion"
+                        if getattr(self, "_sitemap_map_valid", False)
+                        else "never validated by a complete expansion"
+                    ),
+                )
         elif getattr(self, "_input_lists_complete", True):
             # Every sitemap source has been removed or reclassified. Wholesale
             # replacement is the semantics used when an individual page disappears,

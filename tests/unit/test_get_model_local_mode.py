@@ -112,3 +112,42 @@ def test_local_explicit_local_mode_in_extra_kwargs_not_overwritten():
     }
     ek = _extra_kwargs_from_get_model("local", cfg)
     assert ek["local_mode"] == "ollama"
+
+
+def test_local_mixed_case_mode_is_canonicalized():
+    cfg = {
+        "base_url": "http://localhost:8001/v1",
+        "mode": "OpenAI_Compat",
+        "extra_kwargs": {},
+    }
+    ek = _extra_kwargs_from_get_model("local", cfg)
+    assert ek["local_mode"] == "openai_compat"
+
+
+def test_local_invalid_mode_raises_at_get_model():
+    cfg = {
+        "base_url": "http://localhost:8001/v1",
+        "mode": "vllm",
+        "extra_kwargs": {},
+    }
+    with pytest.raises(ValueError):
+        _extra_kwargs_from_get_model("local", cfg)
+
+
+def test_local_empty_string_mode_raises_at_get_model():
+    cfg = {
+        "base_url": "http://localhost:8001/v1",
+        "mode": "",
+        "extra_kwargs": {},
+    }
+    with pytest.raises(ValueError):
+        _extra_kwargs_from_get_model("local", cfg)
+
+
+def test_local_no_mode_key_writes_no_local_mode():
+    cfg = {
+        "base_url": "http://localhost:8001/v1",
+        "extra_kwargs": {},
+    }
+    ek = _extra_kwargs_from_get_model("local", cfg)
+    assert "local_mode" not in ek

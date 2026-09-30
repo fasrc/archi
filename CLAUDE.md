@@ -50,7 +50,7 @@ for the full steps. This project's values:
   a full-deps env — a bare login shell (no black/pytest/runtime deps) cannot execute it.
 - **Uses OpenSpec?** yes — Loop 1 via `/opsx:propose` → `/opsx:apply` → `/opsx:archive`
   (changes under `openspec/changes/`, specs under `openspec/specs/`).
-- **Release steps:** dev deploy via `deploy/fasrc-dev/scripts/redeploy.sh` (= `archi create
+- **Release steps:** dev deploy via `deploy/scripts/redeploy.sh` (= `archi create
   --force`: re-renders config → re-seeds Postgres → recreates containers; data volumes
   preserved). Verify with the `archi-dev-deploy-verify` skill (HTTP 200 + the feature toggle).
 - **Commit attribution:** none — no `Co-Authored-By` / session trailers on this repo's commits.
@@ -64,3 +64,7 @@ for the full steps. This project's values:
   - `src/interfaces/chat_app/app.py` is **not imported by unit tests**, so new lines there
     fail diff-cover — route new logic through a small tested helper module and keep `app.py`
     to thin call sites (see `config_fingerprint.py`).
+  - **`bench_out/` is a separate repository** (`fasrc/archi-bench-out`, checked out in place on
+    the dev host) and is git-ignored here; archi tracks nothing under it. Moving this checkout
+    across the commit that untracked it deletes the formerly tracked files from the working
+    tree: run `git -C bench_out checkout -- .` afterwards to restore them from their own repo.

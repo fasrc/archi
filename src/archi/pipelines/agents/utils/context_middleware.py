@@ -57,7 +57,7 @@ overage rather than reporting success, and the pre-existing reactive overflow
 handler remains the last-resort net.
 """
 
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence
 
 from langchain.agents.middleware.context_editing import ClearToolUsesEdit
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest
@@ -340,6 +340,29 @@ class ContextBudgetMiddleware(AgentMiddleware):
         return await handler(self._reduce(request))
 
 
+def _declared_for_model(
+    windows: Mapping[str, int], model_id: Optional[str]
+) -> Optional[int]:
+    """The declared window for one run's model, matched on the exact model id.
+
+    **Known limitation, tracked as #344.** A model id is not a full identity:
+    two providers can each serve ``llama3.2`` at different real windows, and
+    both can be unable to report one, so an entry the operator wrote for one of
+    them also answers for the other. Scoping an entry to a provider needs a key
+    representation that cannot be confused with a model id — model ids may
+    themselves contain ``/`` — which is a config-surface decision, not an
+    implementation detail. Until it is made, a declaration applies to its model
+    id under every provider.
+
+    This is no worse than the behaviour it replaces (an override on a
+    metadata-less provider got no bound at all), and it is exactly right for the
+    deployments in use, where each model id has one provider.
+    """
+    if not model_id:
+        return None
+    return windows.get(model_id)
+
+
 def build_context_middleware(
     *,
     model: Any,
@@ -349,6 +372,7 @@ def build_context_middleware(
     tool_budgets: Optional[Dict[str, int]] = None,
     retrieval_tool_name: str = DEFAULT_RETRIEVAL_TOOL,
     model_label: Optional[str] = None,
+    model_id: Optional[str] = None,
     declared_window_applies: bool = True,
 ) -> List[AgentMiddleware]:
     """Build the in-loop middleware list for an agent, or an empty list.
@@ -398,6 +422,28 @@ def build_context_middleware(
     cannot be resolved nothing is installed — borrowing a number that describes
     a different model is what this parameter exists to prevent.
 
+    ``context_windows`` (issue #262) is how an operator supplies that missing
+    number. It maps a model id to a window, so an entry names the model it
+    describes and cannot be applied to any other. That is why
+    ``declared_window_applies=False`` withdraws only the **single** window and
+    never a map hit: the flag exists to demand testimony about the override's
+    own model, and a map entry keyed by the override's id is exactly that
+    testimony. Suppressing it would reintroduce the fail-open the flag was
+    added to expose.
+
+    A map entry also outranks the single ``context_window`` for its own model
+    when the run is not request-local at all. Both are operator testimony and
+    differ only in specificity; the more specific statement is the one they
+    meant. The alternative would leave an operator unable to correct the window
+    for one model without deleting it for all of them.
+
+    ``model_id`` is the run's effective model, passed explicitly. It is **not**
+    recovered from ``model_label``: a model id may itself contain ``/`` (the
+    measured case is ``palmfuture/Qwen3.8-27B-GPTQ-Int4``), so splitting the
+    label yields the wrong id on precisely the deployments this map exists for.
+    That same fact is why an entry cannot yet be scoped to one provider — see
+    ``_declared_for_model`` and #344.
+
     ``model_label`` names the provider and model in the log line emitted when no
     window can be found. Without it that outcome is invisible, and a deployment
     protecting nothing looks exactly like a healthy one.
@@ -407,7 +453,9 @@ def build_context_middleware(
     silently removing the protection the other settings configure.
     """
     settings = read_settings(config, pipeline_config)
-    declared = settings.context_window if declared_window_applies else None
+    declared = _declared_for_model(settings.context_windows, model_id)
+    if declared is None and declared_window_applies:
+        declared = settings.context_window
     window = context_window if declared is None else declared
     budget = resolve_budget(
         context_window=window,
@@ -427,14 +475,24 @@ def build_context_middleware(
         # that hid this whole change being inert until the resolver was run
         # against a real deployment config.
         if settings.enabled and positive_int(window) is None:
+            # Name a remedy the reader can actually use. On a request-local
+            # override the single ``context_window`` is withdrawn by design, so
+            # naming it here would send the operator to the one setting that
+            # cannot work — in precisely the case this warning fires for.
+            remedy = "services.chat_app.context_editing.context_window"
+            if model_id and not declared_window_applies:
+                remedy = (
+                    "services.chat_app.context_editing.context_windows"
+                    f"['{model_id}']"
+                )
             logger.warning(
                 "No in-loop context limit installed for %s: the provider reports "
                 "no context window for this model, and none is configured. The "
                 "window is matched by exact model name against a list compiled "
                 "into the provider, so self-hosted and newly-released models "
-                "will not be found. Set "
-                "services.chat_app.context_editing.context_window to install it.",
+                "will not be found. Set %s to install it.",
                 model_label or "the configured model",
+                remedy,
             )
         return []
     return [

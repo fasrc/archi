@@ -79,6 +79,9 @@ invariant" below). Such issues are neither gating nor parked; do not park them.
   Selected drivers: benchmark integrity, retrieval quality, agent robustness (folded
   into production readiness after classification), production hardening.
   Explicitly **not** drivers: headless `/v1` external frontends, incremental re-ingest.
+  One amendment (2026-08-28): the WordPress chat window
+  ([#384](https://github.com/fasrc/archi/issues/384)) enters `v2026.10.0` by operator
+  decision — the single exception to the frontends line.
 - **Gate bar — broken-without-it:** an issue is in a milestone only if the release's
   feature is broken/wrong/dishonest without it, evidenced by a file:line, a measured
   number, or a repro from the issue itself.
@@ -105,6 +108,8 @@ which ride per the UX-first rule.
 | [#245](https://github.com/fasrc/archi/issues/245) `/v1` double source list (UX) | `openai_compat.py:420` appends a second, contradictory source list; the native-UI half was already fixed by PR #240, shrinking this to S | S |
 | [#262](https://github.com/fasrc/archi/issues/262) model switch drops context bound (UX) | On fasrc-dev, a dropdown model switch installs no in-loop bound at all — the overflow apology #235 just fixed comes back | S |
 | [#277](https://github.com/fasrc/archi/issues/277) sitemap failure halts scheduled crawl (UX) | Goes live the moment PR #230 merges: one failed sitemap silently stops the whole scheduled crawl, so answers rot on a stale corpus | M |
+| [#339](https://github.com/fasrc/archi/issues/339) release workflow's base-image retarget is a no-op | `test-and-build-tag.yml:154` passes no `--orig-tag`, so the script's `latest` default skips every template — the 15 service templates have carried `:dev-4314ac4` since `5e168b00`. Measured with the workflow's exact argv: the release argv rewrites **0 of 15**, the PR-preview argv (`--orig-tag all`) rewrites 15 of 15. So the release smoke test builds `FROM` the in-tree dev pin rather than the versioned bases `build-images` just pushed, and "Commit Dockerfile base image updates" finds an empty diff and exits 0 — the step this plan and `CLAUDE.md` both describe as pushing that update. The release act is dishonest about what it validated and what it tagged | S |
+| [#340](https://github.com/fasrc/archi/issues/340) runtime-validate the #122 thinking-gate on fasrc-dev (UX) | Carries task group 5 of the merged #122 plan verbatim. The #122 unit tests drive a fake agent; only a real OpenAI-compatible endpoint with a Qwen-style template emits the inline `reasoning ... </think>` stream the fix targets, and the PR-preview stack's Ollama reports through `reasoning_content` and never reaches the fixed branch. "Chat stops leaking" is unvalidated on the release's own terms until this runs. Operator-driven (`needs-deploy`): two fasrc-dev redeploys, the second restoring `enable_thinking: false` | S |
 
 ## v2026.09.0 — Benchmark integrity (feature: numbers you can cite)
 
@@ -117,15 +122,22 @@ any "answers improved" claim.
 | [#279](https://github.com/fasrc/archi/issues/279) valid JSON artifacts, honest denominators | 10 of 18 committed artifacts are rejected by a strict JSON parser (bare `NaN`); a "109 of 109 scored" report had only 108 finite values | M |
 | [#213](https://github.com/fasrc/archi/issues/213) drift tripwire actually checks rows | Nightly drift reports "0 checked / 105 skipped" — 0 of 105 goldenset rows carry `source_hashes`, so the bank's gold answers are unverified | L |
 | [#119](https://github.com/fasrc/archi/issues/119) warm NLTK before the thread pool (UX too) | 8 files randomly fail per re-ingest (thread race) — a nondeterministic corpus corrupts arm comparisons **and** silently makes topics unanswerable | S |
+| [#347](https://github.com/fasrc/archi/issues/347) literal `</think>` in an answer truncates it (UX) | Enters by the UX override, not this track. `base_react.py:287-296` keys the orphan-tag rule on literal characters, so an answer that quotes the tag is truncated to what follows it — on every provider, thinking on or off, before and after the #122 gate; pinned by `test_a_literal_closing_tag_in_an_answer_truncates_as_it_did_before`. Not `v2026.08.0`: the fix needs the provider's `reasoning_content` or a first-tag-only rule, an open design question, so this is the earliest **feasible** release | M |
+| [#378](https://github.com/fasrc/archi/issues/378) benchmark aborts a healthy ingest at an absolute deadline | `wait_for_ingestion_completion` (`service_benchmark.py:2116`) holds one absolute `BENCH_INGEST_WAIT_TIMEOUT` (default 7200s) that never resets on healthy progress, then reports the failure as a connection error against a URL it never used. A rig that kills advancing ingests on the clock, and misattributes why, yields neither numbers nor a diagnosis | M |
+| [#394](https://github.com/fasrc/archi/issues/394) run the base-image preflight before `archi evaluate --force` tears the runtime down | `base_image_preflight.py` exists for one ordering guarantee — refuse before the destructive step — and that guarantee holds on the `create` path only. `archi evaluate --force` calls `remove_existing_deployment()` first, so a benchmarking run destroys an existing runtime and only then fails on a base image the preflight would have refused | M |
 
 ## v2026.10.0 — Retrieval quality (feature: measurably better answers)
 
-Target: end of October. Depends on the v2026.09.0 rig.
+Target: end of October. Depends on the v2026.09.0 rig. Amended 2026-08-28: the release
+also delivers those answers where users already are — a WordPress chat window backed by
+`/v1` ([#384](https://github.com/fasrc/archi/issues/384)).
 
 | Gate | Why it gates | Size |
 |---|---|---|
 | [#216](https://github.com/fasrc/archi/issues/216) embedding A/B (MiniLM vs gte/nomic) | The feature itself. Measured defect: 68% of chunks (4,684/6,854) exceed MiniLM's 256-token window and are silently truncated today | L |
 | [#215](https://github.com/fasrc/archi/issues/215) GPU TEI embedding | Named enabler in #216: 40 min → ~1 min re-embeds make the A/B (and adopting a winner) feasible | M |
+| [#384](https://github.com/fasrc/archi/issues/384) WordPress chat window on the FASRC site via `/v1` | Enters by operator amendment (2026-08-28), not the broken-without-it bar. The fork's `/v1` already ships bearer-auth chat completions, and inline `[title](url)` citations arrive in the answer text itself via the committed citation-guidance default (`agent_spec.py`), so a markdown-rendering widget shows them (#245 removes `/v1`'s redundant appended source block). AI Engine's free tier ships the widget with a custom OpenAI-compatible connector, so the remaining work is evaluation, config, and ops. The rtCamp `universal-openai-connector` was scouted and is a provider adapter for the WordPress AI Client, not a chat window. **Constraint:** until #81 closes, the widget stays a page-limited pilot — bearer auth on, anonymous `/v1` access off, firewall scoped to the WordPress host; public default-on exposure rides `v2026.11.0` | M |
+| [#396](https://github.com/fasrc/archi/issues/396) feature-matrix benchmark campaign | "Measurably better answers" is this release's feature, and #216 measures one axis of it. Every other retrieval and ingest toggle ships on an inherited default with no measurement behind it: `hierarchical_rerank` is default-on carrying ADR 0003's "+19% RAGAS" from the pre-sentence-chunking #32 A/B, and `categorization` is code-default `false` (`processing.py:689`) but `true` in the shipped example config ([`config.example.yaml:150` at `376b5867`](https://github.com/fasrc/archi/blob/376b586707dd3a641d21496204bd378af7313c8c/deploy/fasrc-dev/config.example.yaml#L150), the last commit before it changed) at one LLM call per document — the campaign went on to measure that arm, and [#496](https://github.com/fasrc/archi/issues/496) turned the example off on 2026-09-22 in [#532](https://github.com/fasrc/archi/pull/532), which is why this row is pinned to the commit and records the state at adoption. Claiming measured improvement while most of the retrieval config is set by unmeasured default is dishonest. Adds the Time-to-Ingest metric the rig discards today (`service_benchmark.py:2178`) | L |
 
 Parked from this track: #130 (rerank already default-on with +19% RAGAS shipped;
 residual is below judge noise and awaits a human data-egress decision), #241 (the
@@ -146,6 +158,15 @@ classification, only one live robustness gate was left, too thin for its own rel
 | [#293](https://github.com/fasrc/archi/issues/293) validate port configuration before `archi create --force` tears the deployment down | `_check_ports_available()` runs inside `prepare_deployment_files()`, after the teardown #287 moved, so a nonnumeric, out-of-range or duplicated port destroys a working deployment and then fails on config that was knowable in advance. `--dry --force` returns before the check and reports success on a config the real run refuses | M |
 | [#319](https://github.com/fasrc/archi/issues/319) close the host-mode falsy `external_port` preflight hole neither #310 nor #311 closes alone | #293's shipped validation is wrong without it: host mode with `external_port: 0` passes preflight and renders `port: 0` — measured on `origin/dev` `2c404822` and on both merged fix heads (PR #316 `2776f1de`, PR #317 `b1f85d98`); the remaining work is the merge-resolution of the two halves plus a regression test | S |
 | [#294](https://github.com/fasrc/archi/issues/294) render the replacement deployment before destroying the existing one | #293 closes the port route; `mkdir`, `write_secrets_to_files`, `create_required_volumes`, the nine stages of `prepare_deployment_files` and `start_deployment` all still run after the teardown, and most can raise on deterministic config input. Three review rounds on #292 found four such routes by inspection with no argument the list was complete — the per-route fix does not close the class | L |
+| [#320](https://github.com/fasrc/archi/issues/320) activate the QA evaluation console safely | Milestoned 2026-08-23 out of the #304 adopt decision, never rowed here. #81's fourth non-negotiable is an automated eval gate and the console is its operator surface, so activating it needs SSO/RBAC on the routes, a redacted `agent_config.resolved.yaml` snapshot, and VIEW-role responses carrying no oracle truth or gold atoms. PR #352 delivered only the fail-closed storage guard (#328) | L |
+| [#335](https://github.com/fasrc/archi/issues/335) pin the 15 service Dockerfile templates to ghcr digests | Milestoned 2026-08-24 out of #333, never rowed here. The templates carry mutable tags (`ghcr.io/fasrc/a2rchi-python-base:dev-4314ac4`, verified on `origin/dev` `5a26b5a3`), so a rebuilt-and-repushed tag silently changes what a release builds `FROM`. Calling a build reproducible on a mutable tag is dishonest | M |
+| [#326](https://github.com/fasrc/archi/issues/326) crash-safe QA-eval continue/overwrite | Gates #320: the console always continues with `overwrite=True` (`worker.py:113`). `workflow.py:352-380` and `:796-803` write a pruned `manifest.json` under a still-terminal status that `RunManifest.from_dict` refuses, and `:414` unlinks the paused run's only staged `live_checks.jsonl`. The invalid window spans the whole scoring phase, so a redeploy or an OOM leaves the workspace and its paid-for LLM artifacts unrecoverable without hand-editing JSON | M |
+| [#327](https://github.com/fasrc/archi/issues/327) retry verifier accepts what scoring produces | Gates #320: retry is a console feature. `_iter_terminal_plan` (`workflow.py:704-740`) stamps `live_validation_failed` over `execution_failed` attempts too, while `RetryParentStore._load` (`workspace.py:253-258`) demands each pair with `answer_ready` — so a cleanly `scored` run returns 400 forever from console and CLI alike, on an uncorrupted workspace, in the two cases retry exists for | S |
+| [#330](https://github.com/fasrc/archi/issues/330) evaluations `agent_config_path` default the seam accepts | Gates #320's enable-on-dev step by that issue's own terms. `base-config.yaml:124` renders exactly `LIVE_AGENT_CONFIG_PATH` (`evaluation_console.py:33`) — the one value `build_evaluation_service` refuses by file identity — so no rendered default ever works, and `configuration.md:171,183-185` presents the refused path as the working example. The console silently never appears | S |
+| [#360](https://github.com/fasrc/archi/issues/360) cut the release tag from the tree the smoke deployment validated | `test-and-build-tag.yml` resolves the dispatched **branch name** independently in `build-images` (`:35-38`), `smoke-test` (`:103-106`) and `release` (`:221-224`) — three `actions/checkout` calls, no shared SHA. A push landing between them tags code no job in the run ever exercised. A release that cannot name the tree it validated is dishonest about its own tag | M |
+| [#372](https://github.com/fasrc/archi/issues/372) preserve the evaluation catalog across `archi create --force` | The chatbot mounts `./data/evaluations` (`base-compose.yaml:255`) and the redeploy path destroys it, taking datasets, human atom approvals, job records and run history with it. Verified P1 from the #368 review; #368 corrected the documentation and left the destructive path live. Losing paid-for human review on a routine redeploy is the opposite of production-ready | M |
+| [#371](https://github.com/fasrc/archi/issues/371) guarantee the evaluations `agent_config_path` exists in the container at create time | Gates #320 alongside #326/#327/#330. An accepted `agent_config_path` is validated on the host and never proven present inside the chatbot container, so an enabled console registers and then fails every run on a missing file. #81's fourth non-negotiable is an automated eval gate, and this is its operator surface | M |
+| [#389](https://github.com/fasrc/archi/issues/389) refuse a deployment whose service templates pin the same base at different references | `base_reference` (`base_image_preflight.py:123-135`) returns the **first** matching reference and stops, so two templates naming one `a2rchi-*-base` at different refs let the preflight probe whichever sorts first and report the deployment ready — before `archi create --force` tears anything down. PR #391 is open, not merged: the guard is not on `dev` | M |
 
 ---
 
@@ -156,8 +177,10 @@ classification, only one live robustness gate was left, too thin for its own rel
 | [#244](https://github.com/fasrc/archi/issues/244), [#239](https://github.com/fasrc/archi/issues/239) | Fixed by merged PR #240 (commit `80765cb4`): `postgres_vectorstore.py:411` normalizes `score = 1.0 - distance` for every metric, with in-code monotonicity proof |
 | [#148](https://github.com/fasrc/archi/issues/148) | `goldenset-report.timer` active on the fasrc-dev host, firing 06:15 daily (verified via `systemctl --user list-timers`) |
 | [#63](https://github.com/fasrc/archi/issues/63) | Core deliverable shipped as `archi sources build` (PR #37, `cli_main.py:909`); the issue self-describes as superseded |
+| [#369](https://github.com/fasrc/archi/issues/369) | Fixed the day it was filed by the merged form of PR #368 (`aa00155f`): `evaluations_root.py:20-25` normalizes a falsy `evaluations` block to `{}` and raises the field-naming `ValueError` on a truthy non-mapping, pinned by `test_falsy_evaluations_block_is_treated_as_disabled` and `test_truthy_non_mapping_evaluations_block_raises_naming_field_path`. The issue reproduced against a pre-merge tip of that PR. Closed 2026-09-01 during review of this reconciliation |
 
-## Parked — 41 issues, labeled `parked`
+## Parked — 51 issues, labeled `parked`
+## Parked — 60 issues, labeled `parked`
 
 Query: `gh issue list --repo fasrc/archi --label parked`. An issue leaves the parking
 lot by gating a future feature release, not by aging.
@@ -165,6 +188,15 @@ lot by gating a future feature release, not by aging.
 | Issue | One-line reason |
 |---|---|
 | #280 | Headless `/v1` strip-down scoping — track is not a release driver; go/no-go unmade |
+| #373 | Re-pin released Dockerfiles to digests rather than the CalVer tag; #370 shipped the narrower remedy, so this is the better alternative to a closed gap, not an open one |
+| #374 | The named line is already fixed: PR #367 (`93fbf45c`) rewrote `agent_config_path` to serialize with `tojson`, and the issue's own reproduction now prints its input unchanged. What remains is step 4 — auditing the other 17 raw double-quoted scalars in `base-config.yaml` — all latent behind operator-written escape sequences |
+| #375 | Three base-image pin-guard gaps, including an exact-digest assertion covering 2 templates of 15, plus a spec contradiction. The guards hold for what the repo ships today |
+| #382 | Preflight over-promises coverage for a base outside its placeable set, or one left behind by a final stage — the issue body states it is not a live defect |
+| #383 | `service_templates` misses nested Dockerfiles; the issue body states it is a gap in the guarantee, not a current fault, and the two nested files today are correctly excluded |
+| #390 | The release rewriter's `verify_base_tags`/`update_base_tags` are not recursive; an enabler for removing the nested-template guard, which is still in place |
+| #392 | Six Dockerfile-parser divergences from Docker, all failing open — latent on syntax (heredocs opened on a continuation) that no template in the repo uses |
+| #393 | One instance of #392's class: a continuation dropped across an empty physical line. Same latency, and the class is the right unit to fix |
+| #395 | The divergent-pin guard compares the first `FROM` rather than the shipping stage — cites `_base_reference_sources`, which exists only on the unmerged PR #391 |
 | #156, #157 | Incremental re-ingest PR-2/PR-3 — track not a driver; both blocked on an unmerged PR-1 enabler |
 | #276 | lastmod hand-list vs sitemap ownership — metadata-only, both outcomes small and opposite |
 | #166 | CRUD for source list — exploration; deliverable is a note, must not change behavior |
@@ -195,7 +227,17 @@ lot by gating a future feature release, not by aging.
 | #312 | Pre-teardown port availability probe — robustness beyond #293's recorded decision D3; the shipped probe still refuses the create, one teardown later than ideal |
 | #313 | `.gitignore` `*secrets*` masks `secrets_manager.py` from CI's black walk — gate hygiene; the drifted instance was fixed by #308, the structural hole gates no feature |
 | #314 | Dead model-name loop in `_get_model_based_secrets` — `get_models_configs()` returns a constant `[]`; latent trap, no wrong runtime behavior today |
-| #322 | `read:packages` for the gh CLI tokens — agent-tooling credential, interactive OAuth grant; gates no release |
+| #338 | Pin GitHub Actions references to commit SHAs — supply-chain hygiene across workflows; parked 2026-08-24, never rowed here |
+| #332 | pr-preview base-image detection diffs against `main` — CI-only: wasted preview minutes and a smoke that validates a throwaway `pr-<n>` tag; the release-workflow twin is #339, scheduled |
+| #344 | Provider-scoped `context_windows` keys — config-surface decision with won't-fix on the table; no deployment has two providers sharing a model id, and it is not a regression against pre-#262 |
+| #345 | A scheduled crawl un-deletes an operator's delete — the primary reading is undecided (transient-by-design vs defect); the narrow mid-crawl race is real under both but unmeasured |
+| #348 | Held reasoning reaches no surface on an early stream error — latent: needs `enable_thinking: true`, which no deployment sets; what the panel claims about unclassifiable content is undecided |
+| #350 | `stream()`/`astream()` duplicate the reasoning-phase invariant — explicitly not a defect; maintainability on code inert at `enable_thinking: false` |
+| #351 | Nightly loop runs the wrong task list — loop-harness control plane, no product surface (cf. #275, #309) |
+| #353 | Nightly loop cannot push or open a PR (the ambient PAT beats the OAuth token) — loop-harness credential plumbing, no product surface (cf. #322) |
+| #355 | No way to clear an inherited `context_windows` entry — declined as YAGNI on PR #343; clearing installs *no* bound, a worse posture than the override workaround |
+| #356 | Storage validation runs after the stale-job sweep — the sweep's write is accurate, not corrupting, and probing before construction cannot work as-is |
+| #357 | No recovery for a run whose worker outlived the chat app — recovery is a feature with its own contract; rerun is the supported answer and the console is inactive |
 
 ---
 
@@ -234,6 +276,103 @@ running code (`src/bin/service_benchmark.py:345-430,460`). Rows for #253, #254, 
 and #291 — parked issues closed between 2026-08-19 and this entry — were pruned from
 the parked table, and a missing row was added for #309 (parked 2026-08-20, never
 rowed), so the table matches its own query.
+
+**Tracker state (2026-08-25):** 19 milestone-assigned + 52 parked = 71 open issues. ✓
+Milestone open counts 2 / 4 / 2 / 11. Seventeen drifted issues were reconciled — the
+largest drift yet, and all seventeen were review follow-ups and nightly-run findings
+filed between 2026-08-24 and 2026-08-25.
+
+**Six scheduled.** #339 and #340 into `v2026.08.0`, whose five original gates are all
+closed — these two are the only open items between `dev` and the first cut. #339 because
+the release workflow's retarget call rewrites 0 of 15 service templates, measured with
+that workflow's exact argv, so the release smoke-tests a base it does not ship and the
+Dockerfile-update push both this plan and `CLAUDE.md` describe has been silent since
+`5e168b00`; the release act is dishonest about what it validated and what it tagged.
+#340 because it carries task group 5 of the merged #122 plan verbatim and the leak fix
+has never run against a real reasoning endpoint — the unit tests drive a fake agent, and
+the PR-preview stack's Ollama never reaches the fixed branch. #347 into `v2026.09.0` by
+the UX override rather than the benchmark track: a literal `</think>` inside a genuine
+answer truncates it on every provider, live today, but the fix needs `reasoning_content`
+or a first-tag-only rule — an open design question — so August is not feasible and
+September is the earliest that is. #326, #327 and #330 into `v2026.11.0`, each gating
+#320's safe console activation on its own file:line evidence: a manifest no validator
+accepts, a retry path that refuses healthy workspaces, and a rendered default the runtime
+seam always refuses.
+
+**Eleven parked** (reasons in the table above): #331, #332, #344, #345, #348, #350, #351,
+#353, #355, #356, #357. Three recurring grounds, none of them severity: latent behind a
+knob or a config no deployment sets (#331, #344, #348, #355 — and #348 in particular is
+the twin of scheduled #347, separated only by needing `enable_thinking: true`); loop-harness
+and CI paths with no product surface (#332, #351, #353 — #332 is likewise the twin of
+scheduled #339, separated by acting on a preview tag rather than on the release tag); and
+issues whose own bodies record the answer as a decision rather than a defect (#350, #356,
+#357). Several are high-severity — #331 is silent data loss and #351 can open a PR whose
+diff belongs to a different change — but a high-severity defect on a path the release does
+not take is parked.
+
+**#319 closed as delivered.** `_resolve_ports_from_config`
+(`templates_manager.py:243-256`) now derives the host-mode port with `external is not
+None`, matching the render side at `:1128-1130`, so `external_port: 0` reaches
+`_normalize_port` and is refused at `:192-195` before the teardown. Delivered by PR #316
+(`b79a5a8a`) and PR #317 (`6aafd9f0`) and pinned by
+`test_validate_port_config_host_mode_falsy_external_port_raises`
+(`tests/unit/test_templates_port_checks.py:599`), verified green on `origin/dev`
+`5a26b5a3`.
+
+**Table repairs**, so each table matches its own query: rows added for #320 and #335
+(milestoned 2026-08-23 and 2026-08-24, never rowed) and for #338 (parked 2026-08-24,
+never rowed); #322's parked row pruned after that issue closed.
+
+The eight other scheduled issues were re-read against `origin/dev` `5a26b5a3` and every
+one stays. `service_chat.py` still runs Flask with `debug=True` (#81). `base_react.py:2036`
+still tells the user the conversation history has grown too large — the exact message
+#139's acceptance criteria forbid. The sitemap fetcher's own docstring still defers
+DNS-resolve and connection pinning to v2/H1, which is #143's whole scope. 10 of 18
+committed artifacts are still rejected by a strict JSON parser (#279). The teardown at
+`cli_main.py:294` is still followed by `write_secrets_to_files`,
+`create_required_volumes`, `prepare_deployment_files` and `start_deployment` (#294). No
+TEI service exists and the embedding default is still MiniLM (#215, #216). PR #352
+delivered only the fail-closed storage guard, not #320's RBAC and redaction work. The
+file-overlap screen flagged all eight as candidates; reading the code cleared them, which
+is the screen working as designed — it narrows, it does not decide. **A defect being real
+is not the bar; the bar is whether that release's stated feature is broken, wrong, or
+dishonest without it.**
+
+**Tracker state (2026-09-01):** 24 milestone-assigned + 61 parked = 85 open
+issues. ✓ Milestone open counts 1 / 6 / 4 / 13; October's fourth open item is
+#384, rowed by the open amendment PR #385 rather than here. Sixteen issues had drifted into
+neither state, second only to the seventeen reconciled on 2026-08-25 — and every one but #360
+and #378 was a review follow-up filed by the automated rounds on PRs #367, #368,
+#370, #380, #387 and #391. Six were scheduled: #378 and #394 into `v2026.09.0`,
+#360, #371, #372 and #389 into `v2026.11.0`. Ten were parked at the sweep; review
+of this reconciliation found one of them, #369, already fixed by merged PR #368
+and closed it (closed-during-planning table above), so nine remain in the parked
+table, which now holds 60. #396 was filed the same day and entered `v2026.10.0`.
+
+Eight of the nine parks are the base-image preflight cluster, on the same ground
+each time: the issue's own body states the defect is latent, or names the merged
+PR that already took the narrower remedy. The ninth, #374, is an evaluations-config
+refusal whose named line PR #367 already fixed; only its 17-scalar audit remains.
+#392, #393 and #395 describe a single
+class — a line-oriented Dockerfile parser that fails open — on syntax no
+template in the repo uses; they park together and should be fixed as a class if
+any one of them is ever scheduled. #395 additionally cites a symbol that exists
+only on the unmerged PR #391, so it could not be checked against `dev` at all.
+**Severity moved none of them:** #375 and #389 are both P2 base-image guard
+defects, and only #389 is scheduled — because only #389 lets a deployment be
+reported ready and then torn down.
+
+#396 is the one gate here that is not a defect. It enters `v2026.10.0` because
+that release's feature is measured improvement, and #216 measures one axis while
+every other ingest and retrieval toggle rides an unmeasured default. Its own
+first task is a power calculation: the August 2026 goldenset work established
+that RAGAS mean deltas sit inside the run-to-run spread and need roughly 40 runs
+per arm to carry a claim, while count-type metrics were decisive far cheaper
+(overflow apology rows 11 → 0, p = 8.1e-5). An under-powered arm reports no
+measurable difference rather than a direction. It is blocked by #279 and #213,
+both `v2026.09.0`: invalid JSON artifacts with inflated scored counts, and an
+unlocked bank drifting under a multi-day campaign, each turn a cross-arm
+comparison into a confident wrong answer.
 
 **The invariant:** every open issue carries exactly one of {a milestone, the `parked`
 label, the `evidence-trial` label}, so

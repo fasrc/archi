@@ -11,10 +11,13 @@ patched so every assertion is deterministic:
   ``collect_indico`` are silenced so only map-building behavior is observed
 """
 
+import logging
+
 import pytest
 
 from src.data_manager.collectors.scrapers import scraper_manager as sm_module
 from src.data_manager.collectors.scrapers import sitemap_source as sitemap_source_module
+from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
 from src.data_manager.collectors.scrapers.sitemap_source import (
     SitemapExpansionError,
@@ -809,16 +812,26 @@ class TestPartialExpansionRetainsPreviousMap:
         }, f"a complete expansion replaces wholesale; got {manager._sitemap_lastmod_map!r}"
 
 
-class TestNoDegradeWithoutAPriorMap:
-    """Swallowing the expansion error is only safe when a map already exists.
+class TestMaplessPassStillCrawls:
+    """A failed sitemap expansion must not suppress the scheduled crawl (#277).
 
-    ``service_data_manager`` keeps running after an asynchronous initial ingest
-    reports an error, so the scheduled pass can arrive with no map at all while the
-    catalog still holds rows from an earlier process. Continuing then crawls with an
-    empty map and conflict-upserts NULL into every affected ``last_modified``.
+    The guard replaced here skipped the entire pass whenever no lastmod map had
+    ever been built. It defended a real hazard: a mapless crawl stamped nothing,
+    and the catalog upsert then conflict-wrote NULL over every stored
+    ``last_modified``. Issue #233 (PR #242) closed that hazard at the persistence
+    layer — the upsert now reads
+    ``last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified)``
+    in ``src/data_manager/collectors/utils/catalog_postgres.py``, so a mapless pass
+    preserves every stored timestamp.
+
+    With the hazard gone, the skip is pure loss: the catalog goes stale for a whole
+    cycle, and ``service_data_manager.run_locked`` records the suppressed pass as a
+    clean success. The accepted cost of crawling anyway is narrow — a page first
+    seen during a mapless pass carries no ``last_modified`` until a later pass with
+    a working map supplies one.
     """
 
-    def test_expansion_error_without_a_map_skips_the_crawl(
+    def test_expansion_error_without_a_map_still_crawls(
         self, refresh_harness, monkeypatch
     ):
         manager = refresh_harness["manager"]
@@ -838,9 +851,181 @@ class TestNoDegradeWithoutAPriorMap:
 
         manager.schedule_collect_links(persistence)
 
-        assert crawled == [], (
-            "with no usable map, the crawl must be skipped rather than stamping "
-            f"every page NULL; collect_links got {crawled!r}"
+        assert len(crawled) == 1, (
+            "a failed expansion with no prior map must still crawl; the pass may "
+            f"not be skipped. collect_links calls: {crawled!r}"
+        )
+        assert crawled[0] == [
+            "https://x.example.edu/a",
+            "https://x.example.edu/b",
+        ], (
+            "the mapless crawl must cover the full catalog list, not a subset; "
+            f"got {crawled[0]!r}"
+        )
+
+    def test_mapless_pass_warns_and_the_handler_logs_no_error(
+        self, refresh_harness, monkeypatch, caplog
+    ):
+        """A degraded pass stays visible, but as a warning — the pass completed.
+
+        Scoped deliberately to the records this handler emits. A real below-floor
+        or over-cap expansion also logs its own ERROR ("failing ingest") inside
+        ``expand_sitemap_source`` (``sitemap_source.py``) before it raises, and
+        that call is out of scope here: the same function backs the full ingest,
+        where a below-floor expansion really does fail the run. Asserting "no
+        ERROR anywhere" would therefore be true only because this test stubs
+        ``_expand_sitemaps`` — a claim the production path does not honour.
+
+        The narrow claim is the real one: ``schedule_collect_links`` itself no
+        longer reports an error for a pass that goes on to complete.
+        """
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        def _boom(_sitemap_urls):
+            raise SitemapExpansionError("sitemap below min_pages", reason="below_floor")
+
+        monkeypatch.setattr(manager, "_expand_sitemaps", _boom)
+        monkeypatch.setattr(manager, "collect_links", lambda *a, **k: 0)
+
+        with caplog.at_level(
+            logging.WARNING,
+            logger="src.data_manager.collectors.scrapers.scraper_manager",
+        ):
+            manager.schedule_collect_links(persistence)
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        own_errors = [
+            r
+            for r in caplog.records
+            if r.levelno >= logging.ERROR and r.funcName == "schedule_collect_links"
+        ]
+
+        assert len(warnings) == 1, (
+            "exactly one warning must record the degraded pass; "
+            f"got {[r.getMessage() for r in warnings]!r}"
+        )
+        assert warnings[0].funcName == "schedule_collect_links", (
+            "the warning must come from the handler itself — this also proves the "
+            "funcName filter below is not vacuous, since the removed logger.error "
+            f"was emitted from the same function; got {warnings[0].funcName!r}"
+        )
+        assert own_errors == [], (
+            "a degraded-but-completed pass is not an error from this handler; "
+            f"got {[r.getMessage() for r in own_errors]!r}"
+        )
+        assert "never validated by a complete expansion" in warnings[0].getMessage(), (
+            "with no prior map the warning must say the cached entries were never "
+            f"validated; got {warnings[0].getMessage()!r}"
+        )
+
+    def test_degraded_warning_names_the_cache_provenance(
+        self, refresh_harness, monkeypatch, caplog
+    ):
+        """A stale map and an empty map are different risks, so the log says which.
+
+        The entry count alone cannot distinguish "0 entries, nothing ever expanded"
+        from "12 entries from a truncated expansion". Both write different amounts
+        of trust into the catalog, so an operator reading the log needs the
+        provenance, not just the size.
+        """
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        # A complete expansion first, so the retained map is a validated one.
+        manager.collect_all_from_config(persistence)
+        assert getattr(manager, "_sitemap_map_valid", False) is True
+
+        def _boom(_sitemap_urls):
+            raise SitemapExpansionError(
+                "sitemap temporarily unreachable", reason="below_floor"
+            )
+
+        monkeypatch.setattr(manager, "_expand_sitemaps", _boom)
+        monkeypatch.setattr(manager, "collect_links", lambda *a, **k: 0)
+
+        with caplog.at_level(
+            logging.WARNING,
+            logger="src.data_manager.collectors.scrapers.scraper_manager",
+        ):
+            manager.schedule_collect_links(persistence)
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+
+        assert len(warnings) == 1, (
+            "one warning covers the degraded pass in both map states; "
+            f"got {[r.getMessage() for r in warnings]!r}"
+        )
+        message = warnings[0].getMessage()
+        assert "from the last complete expansion" in message, (
+            "a retained validated map must be labelled as such, so the operator "
+            f"knows the timestamps it writes are trustworthy; got {message!r}"
+        )
+        assert (
+            "2 cached lastmod entries" in message
+        ), f"the warning must report the retained entry count; got {message!r}"
+
+    def test_mapless_scrape_sends_no_last_modified_to_persistence(
+        self, refresh_harness, tmp_path
+    ):
+        """The scraper half of the preservation chain that makes the crawl safe.
+
+        With an empty lastmod map, ``_handle_standard_url`` must hand
+        ``persist_resource`` a resource carrying no ``last_modified`` key at all.
+        The persistence half then binds NULL and
+        ``last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified)``
+        keeps whatever the catalog already holds — pinned by
+        ``test_upsert_resource_without_last_modified_uses_coalesce_and_passes_none``
+        in ``tests/unit/test_catalog_postgres_upsert_last_modified.py``.
+
+        Both directions are asserted here. A negative-only test would stay green if
+        the stamping gate were deleted outright, which would break every pass that
+        does have a map.
+        """
+        manager = refresh_harness["manager"]
+
+        def _run(lastmod_map):
+            manager._sitemap_lastmod_map = lastmod_map
+            resource = ScrapedResource(
+                url="https://x.example.edu/a",
+                content="<html></html>",
+                suffix=".html",
+                source_type="web",
+                metadata={"source_type": "web"},
+            )
+
+            class _Scraper:
+                def crawl_iter(self, _url, **_kwargs):
+                    yield resource
+
+            persisted = []
+
+            class _Persistence:
+                def persist_resource(self, res, _output_dir):
+                    persisted.append(res)
+
+            count = manager._handle_standard_url(
+                "https://x.example.edu/a",
+                _Persistence(),
+                tmp_path,
+                1,
+                scraper=_Scraper(),
+            )
+            return count, persisted
+
+        count, persisted = _run({})
+        assert count == 1, "a mapless scrape must still persist the page"
+        assert "last_modified" not in persisted[0].metadata, (
+            "a mapless pass must send no last_modified at all, so the upsert's "
+            "COALESCE preserves the stored value instead of writing NULL; got "
+            f"{persisted[0].metadata!r}"
+        )
+
+        count, persisted = _run({"https://x.example.edu/a": "2024-01-01"})
+        assert count == 1, "a mapped scrape must persist the page"
+        assert persisted[0].metadata.get("last_modified") == "2024-01-01", (
+            "with a map in hand the page must still be stamped; this half proves "
+            f"the assertion above is not vacuous. got {persisted[0].metadata!r}"
         )
 
     def test_expansion_error_with_a_good_map_still_degrades_gracefully(
@@ -1044,20 +1229,20 @@ class TestIncompleteExpansionIsNotAValidMap:
 
     Round 2 established that ``_sitemap_lastmod_map`` truthiness is the wrong
     question — a fully successful expansion publishes ``{}`` when every page omits
-    the optional ``<lastmod>`` — and fixed the *skip-crawl* decision to consult
-    ``_sitemap_map_valid`` instead. The *retention* decision still tests contents
-    (``if incomplete and previous:``), so the same conflation survives one branch
-    over, and it additionally latches ``_sitemap_map_valid`` on an expansion the
-    code already knows was truncated.
+    the optional ``<lastmod>`` — so the latch records PROVENANCE instead. The
+    *retention* decision still tests contents (``if incomplete and previous:``),
+    so the same conflation survives one branch over, and it additionally risks
+    latching ``_sitemap_map_valid`` on an expansion the code already knows was
+    truncated.
 
-    That latch is the damaging half. ``TestNoDegradeWithoutAPriorMap`` exists to
-    stop a scheduled expansion error from crawling with no usable map; a truncated
-    initial expansion that sets the latch anyway defeats exactly that guard, and
-    the catalog crawl then conflict-upserts NULL over every row belonging to the
-    child sitemap that failed.
+    The latch no longer gates whether the crawl runs — #277 removed that skip once
+    the catalog upsert stopped destroying stored timestamps. It still gates
+    ``_refresh_sitemap_lastmod_map``'s retention branch, so a truncated expansion
+    that sets it anyway would let a later incomplete read overwrite a map that no
+    complete expansion ever published.
     """
 
-    def test_truncated_initial_expansion_does_not_authorize_a_later_degrade(
+    def test_truncated_initial_expansion_still_crawls_on_a_later_failure(
         self, refresh_harness, monkeypatch
     ):
         manager = refresh_harness["manager"]
@@ -1086,11 +1271,14 @@ class TestIncompleteExpansionIsNotAValidMap:
 
         manager.schedule_collect_links(persistence)
 
-        assert crawled == [], (
-            "no COMPLETE expansion ever succeeded, so there is no usable map to "
-            "degrade with; the crawl must be skipped rather than stamping the "
-            f"failed child's pages NULL; collect_links got {crawled!r}"
+        assert crawled == [["https://x.example.edu/a", "https://x.example.edu/b"]], (
+            "a truncated initial expansion followed by a lost sitemap must still "
+            "crawl the whole catalog; /b simply goes unstamped and COALESCE keeps "
+            f"its stored value. collect_links got {crawled!r}"
         )
+        assert (
+            getattr(manager, "_sitemap_map_valid", False) is False
+        ), "crawling anyway must not bless a truncated expansion as a valid refresh"
 
     def test_truncated_expansion_does_not_set_the_validity_latch(
         self, refresh_harness, monkeypatch

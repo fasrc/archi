@@ -171,6 +171,46 @@ def test_upsert_resource_without_last_modified_uses_coalesce_and_passes_none():
     assert _param_for_column(sql, params, "last_modified") is None
 
 
+def test_upsert_conflict_never_uses_the_unconditional_last_modified_form():
+    """Regression guard for the removed mapless-crawl skip (#277).
+
+    ``ScraperManager.schedule_collect_links`` now crawls even when sitemap
+    expansion fails and no lastmod map exists. That is safe only while this
+    conflict clause defers to the stored value. Restoring the unconditional
+    ``last_modified = EXCLUDED.last_modified`` would make every mapless pass NULL
+    out stored timestamps again — and no test in the scraper would fail, because
+    the scraper's own behavior (omit the key) would still be correct.
+
+    The sibling assertion lives in ``tests/unit/test_scraper_sitemap_refresh.py``:
+    ``test_mapless_scrape_sends_no_last_modified_to_persistence``. The two together
+    are the whole preservation chain.
+    """
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (9,)
+    service = _make_service(cursor)
+
+    service.upsert_resource(
+        resource_hash="hash9",
+        path="/data/page.html",
+        metadata={"source_type": "web"},
+    )
+
+    sql, _params = cursor.execute.call_args[0]
+    assert "ON CONFLICT" in sql, "the upsert must still be a conflict-update"
+    conflict = sql.split("ON CONFLICT", 1)[1]
+
+    assert (
+        "last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified)"
+        in conflict
+    ), f"the conflict clause must preserve the stored value; got {conflict!r}"
+    assert not re.search(
+        r"(?<!file_)last_modified\s*=\s*EXCLUDED\.last_modified", conflict
+    ), (
+        "the unconditional form destroys a stored timestamp on every crawl that "
+        f"cannot stamp the page (#277); got {conflict!r}"
+    )
+
+
 def test_upsert_resource_older_last_modified_still_overwrites():
     """A supplied last_modified replaces the stored one even when it is older.
 

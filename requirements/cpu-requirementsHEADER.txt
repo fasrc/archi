@@ -1,4 +1,9 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 --extra-index-url https://pypi.org/simple
 
-torch==2.6.0 
+# Kept equal to the torch pin in gpu-requirementsHEADER.txt. Bumped 2.6.0 -> 2.7.0 on
+# 2026-09-15 with the vllm bump that fixed #472: the conflict was in the GPU set only,
+# but this image serves embedding and reranking, so letting the two images run
+# different torch versions would make a torch-shaped bug depend on which image
+# answered. tests/unit/test_base_image_dependency_compatibility.py enforces the match.
+torch==2.7.0

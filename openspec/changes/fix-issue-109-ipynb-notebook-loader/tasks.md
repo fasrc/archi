@@ -45,6 +45,6 @@
 These are recorded for the human reviewer; do not attempt them in the loop.
 
 - `docker exec data-manager-dev python -c "from langchain_community.document_loaders import NotebookLoader; import pandas; print('ok')"` prints `ok`
-- `deploy/fasrc-dev/scripts/redeploy.sh`, then
+- `deploy/scripts/redeploy.sh`, then
   `SELECT ingestion_status, count(*) FROM documents WHERE source_type='git' AND suffix='ipynb' GROUP BY 1;`
   shows `embedded: 12`, `failed: 0`

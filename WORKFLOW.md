@@ -26,8 +26,9 @@ conventions you must know first, then the two spec-driven development loops.
    spacy, torch-cpu, pytest, diff-cover), so the gate runs locally. Gate requires
    ≥80% diff coverage on changed lines.
 
-5. **Gitignored dev-only files** — do not touch in PRs:
-   `deploy/fasrc-dev/config.yaml`, `deploy/fasrc-dev/agents/*.md`. Secrets live in
+5. **Gitignored host-only files** — do not touch in PRs:
+   `deploy/fasrc-dev/config.yaml`, `deploy/fasrc-dev/agents/*.md`,
+   `deploy/scripts/host.env`, and anything under the `config/` checkout. Secrets live in
    `/home/austin/.secrets/archi-secrets.env`.
 
 6. **Deployment reality.** The container runs a **non-editable** install

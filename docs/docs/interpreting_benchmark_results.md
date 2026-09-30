@@ -225,6 +225,47 @@ ServiceNow-ticket bank, and now the 73-question `ragas-jeopardy-master` bank.
 Numbers from different banks are **different measurements of different things**
 and must never be compared.
 
+**When the tool says a row was re-labelled.** `compare_runs.py` slices each
+metric by the bank fields the arms carry — `anchor_type` and `difficulty` —
+and files every question under the value the **baseline** arm recorded. A
+question the arms label differently belongs to no single value, so the tool
+drops it from every slice of that field and counts it in that field's
+`excluded_mismatched`. The report turns a non-zero count into a sentence that
+names a bank edit as the cause. That counter has a precise contract, and it is
+worth reading before you go and diff the bank:
+
+- The tool compares only an arm that **ran the question to completion**. It
+  skips a row whose `status` is anything other than `ok` — a failure or a
+  degraded row — and does not count it. A row that did not run is not evidence
+  of a bank edit either way: its own `status` says why it disagrees. Older
+  artifacts make this vivid, because a failure row written before the change
+  closing #431 carries no bank field at all, so an absent label used to read as
+  a changed label.
+- The skip is per **arm**, never per question. A sweep expands into three or
+  more arms, and the tool pairs each arm with the baseline on its own. One
+  **non-baseline** arm that fails a question therefore neither hides a
+  re-labelling another arm genuinely carries, nor removes that question from the
+  other arms' slices. The baseline is the exception, and the next bullet states
+  it: the baseline supplies the group key for every pair, so a baseline row that
+  did not run takes the question out of all of them.
+- The tool drops a question whose **baseline** row did not run to completion
+  from every slice of that field. The baseline's value is the group key, and a
+  key taken from a row that did not run establishes nothing. It is dropped from
+  the slices, not from the count: the count compares the arms that *did* run the
+  question against each other, so it still reports a re-labelling those arms
+  carry. That is deliberate — any arm can be the baseline, and a count that
+  moved when you passed a different `--baseline` would not be a fact about the
+  bank.
+- Two limits on that, both being tracked in issue #447. If the baseline arm
+  records **no value at all** for the field on a question, the tool skips that
+  question, so a disagreement between two other arms goes uncounted. And if
+  *every* question is re-labelled, no slice survives to carry the number, and the
+  report says no slice field is present instead. A zero is therefore weaker
+  evidence than a non-zero: read a count as a reason to diff the bank, never read
+  its absence as proof the bank held still.
+- So a non-zero `excluded_mismatched` means the label really moved between two
+  arms that both ran the question to completion. Diff the bank.
+
 ### 3.3 The corpus changed
 
 If documents were re-ingested between two runs, retrieval had a different haystack
@@ -269,8 +310,10 @@ ranking it would assert a controlled comparison that did not happen.
 
 The harness protects a run from a single bad question: if a question crashes or
 overflows the model's context window, it is marked `degraded` and excluded rather
-than aborting the run. Separately, the judge sometimes fails to score one cell,
-emitting `NaN` ("not a number"), which the aggregate skips.
+than aborting the run. Separately, the judge sometimes fails to score one cell.
+In the artifact that cell reads `null` (a bare `NaN` in older files) — "asked for,
+not scored" — as distinct from `0.0`, which means the judge did score it and the
+score was zero.
 
 Both behaviours are correct. Both are **silent**, and both change *which questions
 were averaged*.
@@ -278,6 +321,18 @@ were averaged*.
 So two runs reporting `faithfulness` may be averaging over different question
 sets. Comparing those two averages compares two different exams. Newer runs
 report a per-metric denominator (`<metric>_scored`, e.g. `"71 of 73"`) — check it.
+It counts the values that actually **reached the aggregate**, so an unscored cell
+lowers it. Older harness code counted the rows *handed to the judge* instead,
+which over-reported coverage whenever a cell came back unscored: one run published
+`context_precision_scored: "109 of 109"` over 108 real scores (archi#279).
+
+Do not decide which behaviour an artifact has by its date. A run executes whatever
+code is baked into the deployed image, so a stale image writes the old numbers
+today (the same trap §5.E describes for `git_info.last_commit`). **Check the
+artifact instead:** count the per-question cells that are real numbers and compare
+that to the string. If they disagree, the denominator is the old inflated one and
+your count is the right one. `metadata.code_version` is what identifies the
+producing code when you need to say *which* runs share a behaviour.
 
 ### A worked example: the +0.017 that meant nothing
 
@@ -474,8 +529,118 @@ pre-reg that the corpora differ by design. Worked example:
 
 ### Procedure C: compare two arms
 
-Until `compare_runs.py` exists ([Gap 1](#gap-1-no-comparison-tool)), paste this
-into a notebook. It implements G5 and G6.
+`scripts/benchmarking/compare_runs.py` does this. It implements G3–G10 in one
+tested place, so a comparison cannot skip a gate by accident:
+
+```bash
+python scripts/benchmarking/compare_runs.py \
+  bench_out/<baseline>.json bench_out/<treatment>.json \
+  --noise-floor answer_relevancy=0.025,faithfulness=0.027,context_precision=0.016,context_recall=0.021
+```
+
+A single `-cd` sweep file is already a comparison: pass it alone and every arm in
+it is compared against the first. `path@2` picks one arm out of a sweep, and
+`--baseline LABEL` chooses which arm is the reference.
+
+| Flag | What it is for |
+|---|---|
+| `--noise-floor METRIC=SIGMA,...` | the noise floor from [Procedure A](#procedure-a-measure-the-noise-floor). Without one, nothing is ever called SIGNIFICANT (G2) |
+| `--noise-runs FILE ...` | measure sigma here instead: every arm of every file is one replicate, and sigma is the standard deviation of the **recomputed** means (needs two or more). Replicates face the same bank, corpus, code/config identity and divergence checks as the arms, and sigma is measured over the *same* questions the paired table uses — sigma *is* the G7 threshold, so a stale or foreign replicate would move the bar rather than describe it |
+| `--corpus-differs-by-design` | the only way past the G3 corpus gate; prints both fingerprints and the Procedure B warning |
+| `--config-differs-by-design DOTTED.PATH` | the only way past the G10 answer-path gate for one named setting; accepts only `services.chat_app.context_editing` and `services.chat_app.recursion_limit`; repeatable; prints both values and marks the row OVERRIDDEN; never hides the difference |
+| `--ignore-config-divergence` | the only way past a non-empty `divergence_from_selected_file` |
+| `--anchors PATH` | the anchors file (default `examples/benchmarking/anchor_questions.json`). Required: the default is tracked, so a missing file means a broken checkout rather than a run without anchors. For a deliberately anchor-free comparison, point it at a file holding `[]` |
+| `--include-anchors-in-bank` | average the five anchors into the bank aggregates. Off by default — see [Gap 3](#gap-3-anchors-are-averaged-into-the-bank-aggregates) |
+| `--qa-run LABEL=RUN_DIR` | join an `archi eval qa` run to an arm, by derived item id (repeatable). This is the one flag that needs the project's evaluation dependencies installed — the id is derived by the QA stack's own `derive_item_id`, so the two sides cannot drift apart |
+| `--json PATH` | write the same report as JSON |
+
+Exit codes: `0` ok, `1` usage or I/O, `2` a gate refused, `3` a config-divergence
+stop. A question-set mismatch (G4) has **no** override flag, on purpose.
+
+It reads finished artifacts and nothing else: no deployment, no database, and —
+apart from `--qa-run` — no project dependencies, so it runs wherever the JSON
+files are.
+
+**What it refuses.**
+
+- **The question sets differ, or the same questions were graded against a
+  different `reference_answer` or a different set of declared sources** — two
+  different banks measure two different things, and a bank is more than its
+  question texts: the reference is the ground truth the context metrics and
+  `answer_correctness` are scored against, and the declared sources are the
+  ground truth for source accuracy. A bank edit would otherwise read as a
+  system delta (G4). No flag overrides this.
+- **The corpus fingerprints differ, were never recorded, or an arm recorded
+  `corpus_unchanged_at_endpoints: false`** — retrieval metrics move for free
+  across corpora (G3), and an arm that straddled a re-ingest scored its
+  questions against two of them even when it started and finished on the same
+  one. `--corpus-differs-by-design` continues and prints the Procedure B
+  warning; it does not make the arms comparable.
+- **The arms recorded different answer-path settings, or an arm recorded no
+  `configuration` at all** — the bound (`services.chat_app.context_editing`)
+  and the limit (`services.chat_app.recursion_limit`) decide which questions the
+  agent can finish, so a delta between arms set up differently does not measure
+  what it claims to measure (G10). In the 2026-09-19 case, 6 of 109 questions
+  were lost because the treatment arm had a lower recursion limit. To waive one
+  setting, use `--config-differs-by-design DOTTED.PATH`; both values are still
+  printed. `services.benchmarking.agent_md_file` is reported rather than
+  refused — prompt arms vary it on purpose.
+- **`divergence_from_selected_file` is non-empty** — the run did not use the
+  settings you selected (Procedure E), so its scores belong to neither arm.
+
+**What it prints.** Run provenance including the three question counts (asked /
+anchors / bank rows, so the denominator is visible); the gate results; the paired
+per-metric table with n, delta, SE, sigma and the verdict; scored counts
+**recomputed** from the finite values and flagged `OVER-REPORTED` wherever
+`<metric>_scored` disagrees (§3.4); source accuracy as reported and as
+recomputed; the anchor block; slices by any field both arms carry (small slices
+marked directional, and never called SIGNIFICANT); and per-question timing —
+mean, nearest-rank p90, and warm variants that drop the first question in run
+order.
+
+G8 is reported as a gate row rather than an exit code: an anchor failing means
+*do not ship the change*, not *this comparison is invalid*, and the report is the
+evidence for that call. When none of the anchor questions appear in the arms —
+a run from before the anchors existed — the row says `not evaluated` and points
+at re-baselining, because silence there would read as a pass.
+
+The row judges the **candidate** arms. A baseline that fails its own
+`should_refuse` anchor is reported beside the verdict but not counted against
+it, so a run that *repairs* a broken baseline is not told "do not ship" for the
+defect it fixed. An anchor the candidate could not score — a degraded row, or
+one whose every metric cell is non-finite — is reported as `unscored` rather
+than counted as held: a tripwire that raised no alarm because there was nothing
+to compare has not passed.
+
+Giving both `--noise-floor` and `--noise-runs` a sigma for the same metric is
+refused (exit 1) rather than resolved by precedence: sigma is the threshold, and
+a declared value silently replacing a measured one would move the bar with
+nothing in the report to show it. Naming one metric twice inside `--noise-floor`
+is refused for the same reason. Declaring a metric the replicates could not
+measure is fine.
+
+A **measured sigma of exactly zero is refused** (exit 2). Replicates whose
+recomputed means come out identical have measured no noise floor at all rather
+than a floor of zero, and a zero threshold makes the `2 x sigma` half of G7
+vacuous. Each metric's sigma is measured over the rows every arm *and* every
+replicate could score for that metric, so the threshold and the delta it judges
+describe the same population.
+
+!!! note "The `difficulty` slice needs a bank that carries the field"
+    The harness propagates `difficulty` from the bank row into
+    `single_question_results` (`service_benchmark.py`,
+    `_answer_and_score_question`) when the row carries it. A bank without the
+    field still produces no `difficulty` key, so the slice is skipped rather
+    than shown empty, exactly as before. The FASRC bank
+    (`fasrc_ragas_queries.json`) has no `difficulty` today; `ragas-jeopardy-master.json`
+    does.
+
+Two things the tool will not do for you. It never prints SIGNIFICANT without a
+noise floor, and it identifies the anchors by **question text** rather than by
+`anchor_type` — the FASRC bank sets `anchor_type` on all 109 rows, so that field
+selects the whole bank, not the five tripwires.
+
+The arithmetic underneath is the paired loop, which is worth reading once:
 
 ```python
 import json, math, statistics
@@ -493,8 +658,11 @@ def load(path, arm=0):
         if row.get("status", "ok") == "ok"          # drop degraded/failed rows
     }
 
-def real(x):                                        # a usable score, not NaN
-    return isinstance(x, (int, float)) and not math.isnan(x)
+def real(x):                        # a usable score: not null, not NaN
+    # An unscored cell reads `null` in newer artifacts and a bare `NaN` in older
+    # ones; this accepts neither. The isinstance check has to come FIRST —
+    # math.isnan raises on None. 0.0 passes both: it is a score, and a bad one.
+    return isinstance(x, (int, float)) and math.isfinite(x)
 
 baseline  = load("bench_out/<baseline>.json")
 treatment = load("bench_out/<treatment>.json")
@@ -529,19 +697,35 @@ required, and they fail in different ways.
 
 ### Procedure D: reading the results file
 
+Two artifact formats are in circulation, and the file tells you which one you have
+— its date does not, because a run executes whatever code the deployed image
+carries. Newer harness code writes strict JSON: an unscored cell is `null`, so any
+reader opens the file, `JSON.parse` in a browser included. Older artifacts contain
+the bare token `NaN`, which is **not** JSON (archi#279). `grep -c NaN <file>`
+settles it: a non-zero count means a strict reader will refuse the file. Python's
+`json.load` accepts both, so the snippets below work either way.
+
 ```
 bench_out/benchmarking-<name>-<timestamp>.json
 ├── metadata
 │   ├── corpus_snapshot_id     # shared => ran together (see §3.3)
 │   ├── git_info.last_commit   # the DEPLOY's commit, NOT this run's code (§5.E)
 │   ├── code_version           # which code produced this (§5.E)
+│   ├── host                   # machine that ran the deploy (§5.E)
 │   └── config_versions[]      # one config digest per arm, in run order
 └── benchmarking_results[]     # one entry per config in a -cd sweep
     ├── configuration_file
     ├── config_version         # this arm's config identity (§5.E)
+    ├── ingest_wall_seconds    # cost of building this corpus (§5.E)
+    │                          #   float = seconds, harness-observed
+    │                          #   null  = no ingest seen (corpus reused)
+    │                          #   absent = artifact predates the field
     ├── total_results
-    │   ├── aggregate_<metric>
-    │   ├── <metric>_scored    # "71 of 73" — CHECK THIS (§3.4)
+    │   ├── aggregate_<metric>  # null when nothing was scored; 0.0 is a real score
+    │   ├── <metric>_scored    # "71 of 73" — CHECK THIS (§3.4). Counts the values
+    │   │                      # that reached the aggregate, not the rows judged;
+    │   │                      # older harness code over-reported it (archi#279),
+    │   │                      # so re-derive it from the cells, don't date it
     │   ├── source_accuracy
     │   ├── relative_source_accuracy
     │   └── source_scored_count # denominator of the two above; NOT the question count
@@ -551,6 +735,7 @@ bench_out/benchmarking-<name>-<timestamp>.json
             ├── status         # "ok" | "degraded" | ...
             ├── anchor_type    # anchors only: easy_retrieve|reasoning|should_refuse
             ├── difficulty     # bank rows only: easy|medium|hard
+            │                  #   the harness started writing this in the change closing #431
             └── answer_relevancy, faithfulness, context_precision,
                 context_recall, answer_correctness  # last one: opt-in
 ```
@@ -571,6 +756,9 @@ fields.
 and 2026-08-17 reports the same commit (`0a157cdce0`) with an empty diff, because
 they shared one deployment — even though they ran different code. The field names
 the deploy, not the image. It is kept, and labelled, for exactly that reason.
+`metadata.host` does not share this freeze trap: a container cannot move to another
+machine, so the host recorded at deploy is the host every run in that deployment
+used. The host is written only when the container endpoint is provably local; `archi create` records `null` rather than a guess when it is not.
 
 Use the digests instead. Each is a content hash: **equal digest means equal
 input**, and the property is readable from the finished file forever, with no need
@@ -579,10 +767,12 @@ for Postgres or the config file to still exist.
 | Field | Scope | Answers |
 |---|---|---|
 | `metadata.code_version.digest` | per invocation | Did these runs execute the same code? |
+| `metadata.host` | per invocation | Did these runs execute on the same machine? |
 | `<arm>.config_version.digest` | per arm | Did these arms use the same settings? |
 | `<arm>.config_version.key_settings` | per arm | Which settings define this arm? |
 | `<arm>.config_version.divergence_from_selected_file` | per arm | Did the run use the config you selected? |
 | `<arm>.corpus_fingerprint` | per arm | Did they see the same documents? (§3.3) |
+| `<arm>.ingest_wall_seconds` | per arm | What did building those documents cost? |
 
 Read them like this:
 
@@ -597,6 +787,30 @@ Read them like this:
   recorded configuration says `context_window: 32768`, because the agent reads
   Postgres while the harness wrote a YAML file. Its scores (relevancy 0.681,
   faithfulness 0.562) cannot be attributed to either setting.
+- **`ingest_wall_seconds`** → what the corpus above cost to build, in seconds.
+  Some settings — document categorization, chunking strategy — are paid for
+  almost entirely at ingest, and this is the only place that price is recorded.
+  Read the three states apart: a **float** is a measurement; **`null`** means no
+  ingest was observed while the run waited, which normally means it found the
+  corpus already built; an **absent key** means the artifact predates the field.
+  It is *harness-observed* — the span from the first status poll reporting
+  progress to the one reporting `completed` — and it is an **approximation, not
+  a measurement**, with error in both directions. Ingestion that ran before the
+  benchmark container started polling is missing from it, because the harness
+  cannot see backwards; non-ingest time after polling began is included in it,
+  because a phase boundary is all the status payload reports. Time queued
+  behind another data-manager task is excluded. Use it to compare arms of the
+  same shape, not as the ingest's true duration; an exact figure needs
+  `started_at`/`finished_at` from the data-manager (#428).
+
+  There is **one ingest wait per invocation**, not one per arm, so every arm of
+  a `-cd` sweep carries the same number. The check that tells you whether it
+  applies to a given arm is comparing `corpus_fingerprint` **across arms** — if
+  they differ, a background re-ingest landed mid-sweep and this figure
+  describes only the first arm's corpus. Do **not** use
+  `corpus_unchanged_at_endpoints` for this: a re-ingest that lands wholly
+  between two arms leaves that boolean `true` on both sides, because each arm
+  samples the corpus only at its own two endpoints.
 
 Two caveats worth knowing:
 
@@ -636,13 +850,29 @@ necessarily what ran; the field says so.
 ## 6. Known gaps — NOT YET IMPLEMENTED
 
 Everything above works today. Everything below does **not** exist yet. Do not
-follow a step that silently does nothing.
+follow a step that silently does nothing. A gap marked **closed** is the
+exception: it stays here, saying what it did and did not change, so an older note
+pointing at it still lands somewhere truthful.
 
-### Gap 1: no comparison tool
+### Gap 1: no comparison tool — **closed** (2026-09, #419)
 
-Procedure C is a copy-paste snippet. It should be `scripts/benchmarking/compare_runs.py`,
-refusing to run when the corpus snapshots or bank hashes disagree, and printing the
-paired table, the difficulty slices, and the anchor pass/fail block.
+`scripts/benchmarking/compare_runs.py` exists. It refuses to run when the
+question sets differ (G4, with no override), when the corpus fingerprints differ
+or were never recorded (G3), or when `divergence_from_selected_file` is non-empty
+(Procedure E), or when the arms recorded different answer-path settings (G10);
+and it prints the paired table, the slices, and the anchor
+pass/fail block. See [Procedure C](#procedure-c-compare-two-arms).
+
+Two limits are worth stating rather than discovering:
+
+- **The bank hash is still not checkable** ([Gap 2](#gap-2-the-question-bank-is-not-version-controlled)).
+  The tool compares the question *sets* the artifacts carry, which is as close to
+  G4 as the files allow — two runs of the same 109 texts against different
+  *reference answers* would still pass it.
+- **`corpus_fingerprint` is absent from every artifact written before it was
+  added**, so comparing the historical `bench_out/` runs needs
+  `--corpus-differs-by-design`. That flag prints a warning; it is not a verdict
+  that the corpora matched.
 
 ### Gap 2: the question bank is not version-controlled
 

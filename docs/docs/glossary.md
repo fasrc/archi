@@ -209,6 +209,14 @@ bank under otherwise identical conditions (same corpus, same judge), so any scor
 can be pinned on the one thing that varies — for example, the current code as a *baseline*
 arm against a proposed fix as a *treatment* arm.
 
+### control / treatment
+The **control** is the arm left exactly as it is today, the baseline that everything else is
+measured against. A **treatment** is the control with *one* deliberate change. In the rung-0
+prompt sweep ([#540](https://github.com/fasrc/archi/issues/540)), the control was the live FASRC
+Docs agent prompt, and each treatment was that same prompt word for word plus one appended
+section (category routing, or worked examples). Because only one thing differs, a difference in
+results can be credited to that one change.
+
 ### anchor / anchor questions
 A small set of fixed benchmark questions, never edited and never tuned against, run every round
 to catch regressions. If an anchor's score moves, something changed.
@@ -217,9 +225,52 @@ to catch regressions. If an anchor's score moves, something changed.
 The file of benchmark questions, each with a reference answer and its gold source(s). The
 evaluation runs the assistant over the bank and scores the results.
 
+### noise
+The difference between two runs of the *same* arm on the same questions. It is never zero:
+the model and the judge both have some randomness, so an unchanged prompt can score 0.48 on a
+question in one run and 0.35 in the next. That gap is noise, because nothing changed.
+
 ### noise floor
-How much a score wobbles when you re-run the identical benchmark and change nothing. A
-difference smaller than the noise floor isn't real — it's just run-to-run jitter.
+The *typical size* of the noise, measured by re-running an unchanged arm and comparing the runs
+(written σ, "sigma"). It is a yardstick, not a single observation: noise is one wiggle, the noise
+floor is how big wiggles usually are. A difference smaller than the noise floor can't be told apart
+from noise, and the benchmarking guide only calls a difference real at twice the noise floor (2σ,
+[Interpreting Results §7](interpreting_benchmark_results.md#7-glossary)).
+
+### replicate
+One complete, repeated run of the same experiment: the same question bank, arms, corpus and
+settings, run again. The rung-0 sweep ran two replicates ("run 1" and "run 2"). Comparing the
+control arm across replicates is also how its noise floor is measured.
+
+### replicates (an effect)
+An effect *replicates* when the same treatment-vs-control difference shows up again in a second
+replicate, pointing the same way and clearly larger than the noise. It is the difference that has
+to repeat, not the raw scores: two runs never produce identical numbers. A result seen in only one
+replicate may be a lucky run, which is why archi's pre-registered rules require an effect in
+**both** replicates before calling it.
+
+### paired test
+A comparison made question by question, with the same question answered by both arms, instead of
+comparing two overall averages. It cancels out how hard each question is. For yes/no outcomes
+(for example "cited the right page"), archi uses the exact **McNemar** test, which counts only the
+questions where the two arms disagreed. Its **p-value** is the chance of a split at least that
+uneven if the change really did nothing; below 0.05 is the usual bar for "real".
+
+### source accuracy
+The share of questions where the assistant cited at least one of the question's
+[gold sources](#gold-source), counting only questions that finished normally.
+
+### faithfulness
+A RAGAS score from 0 to 1 for how closely an answer sticks to the text it retrieved: high means
+every claim can be traced to a retrieved passage, low means the answer added things the sources
+don't say. It is scored per question by the [judge](#judge), and it varies noticeably from run
+to run.
+
+### verdict (helps / hurts / no measurable difference)
+The pre-registered outcome for a treatment arm. **helps**: its deciding metric beats the control
+by more than noise, in both replicates, with no significant harm elsewhere. **hurts**: it is
+significantly worse, in both replicates. **no measurable difference**: neither, which is a real
+finding (the change didn't do anything this benchmark can detect), not a failed experiment.
 
 ### pre-registration
 Writing down the hypothesis, the metric that decides it, and the pass/fail rule *before*
@@ -278,7 +329,7 @@ own.
 
 ### dev deploy
 The local `dev` deployment of archi, backed by the FASRC model server, managed by the scripts
-in `deploy/fasrc-dev/scripts/`. Where changes are tried before anything goes further.
+in `deploy/scripts/`. Where changes are tried before anything goes further.
 
 ### redeploy
 Rebuilding and restarting a deployment so code or config edits take effect. archi's deployment
@@ -299,9 +350,15 @@ The high-performance server that hosts the actual chat language model on FASRC's
 separately from archi. archi talks to it over an OpenAI-compatible interface.
 
 ### deploy/fasrc-dev
-The folder holding the FASRC `dev` deployment's config, secrets, and scripts. The real config
-and secrets are deliberately kept out of version control (git-ignored), but the management
-scripts and a sanitized example config *are* tracked and reviewed like any other code.
+The folder holding the FASRC `dev` deployment's own config and agent prompts. `dev` is the
+GPU host. The real config and secrets are deliberately kept out of version control
+(git-ignored); a sanitized example config *is* tracked and reviewed like any other code.
+
+### deploy/scripts
+The management scripts that stand a deployment up, restart it, check it, and tear it down.
+They are host-neutral: every host runs the same scripts, and each host says which deployment
+it is through a small `host.env` file (git-ignored) that the scripts read. The scripts are
+tracked and reviewed like any other code.
 
 ### archi-config
 A separate, private repository holding the operational configuration a deployment needs —
@@ -313,4 +370,5 @@ fetch it automatically (see [config pin](#config-pin)).
 The exact, named version of the [archi-config](#archi-config) repository that deployments
 install — like ordering a specific edition of a book rather than "whatever's newest". Every
 deploy checks the version it got against a recorded fingerprint and refuses to proceed if
-someone has quietly swapped what the name points to.
+someone has quietly swapped what the name points to. Each deployment has its own pin, so
+moving one host to a newer version does not move the others.

@@ -485,5 +485,60 @@ def test_real_agent_exemption_matches_its_own_call_budget(monkeypatch):
     assert _installed_budget(agent).exempt_count == 2
 
 
+# --- 6.7: the per-model map reaches pipeline-map-configured agents (#343 review)
+
+
+def test_a_pipeline_map_agent_gets_its_declared_per_model_window():
+    """A pipeline built from `models` still resolves its own model id.
+
+    `_init_llms()` supports two initialisation paths. The constructor path sets
+    `default_provider`/`default_model`; the `archi.pipeline_map.<agent>.models`
+    path leaves both at `None` and builds the model from a `provider/model`
+    reference instead. A call site reading only `default_model` therefore hands
+    the middleware `model_id=None`, every `context_windows` lookup misses, and
+    the agents that need a declaration most — self-hosted models a provider
+    cannot resolve by name — install no bound at all. `_streamed_provider()`
+    already had to learn this same lesson for issue #122.
+    """
+    agent = _agent_with_window(
+        None,
+        config={
+            "services": {
+                "chat_app": {
+                    "context_editing": {
+                        "context_windows": {"a-self-hosted-model": 32768}
+                    }
+                }
+            }
+        },
+        pipeline_config={
+            "models": {"required": {"chat_model": "local/a-self-hosted-model"}}
+        },
+    )
+
+    assert _installed_budget(agent).context_window == 32768
+
+
+def test_a_pipeline_map_agent_reports_its_model_in_the_absence_warning(caplog):
+    """The log line that exposes an unprotected deployment must name the model.
+
+    `model_label` is built from the same two attributes, so on this path the
+    warning read `None/None` — the one message an operator gets when nothing is
+    installed, naming nothing they can act on.
+    """
+    agent = _agent_with_window(
+        None,
+        pipeline_config={
+            "models": {"required": {"chat_model": "local/a-self-hosted-model"}}
+        },
+    )
+
+    with caplog.at_level("WARNING"):
+        assert agent._build_static_middleware() == []
+
+    assert "local/a-self-hosted-model" in caplog.text
+    assert "None/None" not in caplog.text
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

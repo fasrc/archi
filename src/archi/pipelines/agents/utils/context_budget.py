@@ -95,8 +95,8 @@ source clamps in ``tools/result_limits.py`` are unconditional, so it is not a
 full rollback of issue #235's changes.
 """
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Set
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set
 
 from src.utils.logging import get_logger
 
@@ -168,6 +168,7 @@ MIN_PER_RESULT_TOKENS = 16
 DEFAULT_EXEMPTION_FRACTION = 1.0 / 3.0
 
 _CONFIG_KEY = "context_editing"
+_WINDOWS_KEY = "context_windows"
 
 
 @dataclass(frozen=True)
@@ -184,6 +185,12 @@ class ContextEditingSettings:
     # reports. ``None`` means "use the provider's". Defaulted so the other
     # construction sites keep working unchanged.
     context_window: Optional[int] = None
+    # Operator-declared windows keyed by model id (issue #262). Unlike the
+    # single window above, an entry here names the model it describes, so it is
+    # the only declaration that can survive a request-local model override.
+    # ``Mapping`` rather than ``Dict`` states read-only intent: the parser
+    # builds a fresh dict per call and hands out no other reference.
+    context_windows: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -253,8 +260,22 @@ def read_settings(
     An invalid value is logged and replaced by its own default. It never disables
     the bound, because a typo in one knob should not silently remove the
     protection the other knobs configure.
+
+    ``context_windows`` is the one setting that merges **per entry** rather than
+    per value: a pipeline overrides the entries it names and leaves the rest of
+    the service layer's map standing. Replacing the whole map would let one bad
+    pipeline entry delete a different model's valid bound, which is the same
+    silent protection-removal the paragraph above forbids.
     """
     merged: Dict[str, Any] = {}
+    # Per-model windows merge **per entry**, not per map. Every other setting
+    # here is a scalar, where "the pipeline overrides the service layer" and
+    # "the pipeline replaces it" are the same thing; for a map they are not.
+    # Replacing would delete declarations the higher layer never mentioned, so
+    # one typo in a pipeline map would cost a different model its bound — the
+    # silent protection-removal this module's validation posture forbids.
+    windows: Dict[str, int] = {}
+    layers: List[Dict[str, Any]] = []
     if isinstance(config, dict):
         services = config.get("services")
         if isinstance(services, dict):
@@ -262,11 +283,15 @@ def read_settings(
             if isinstance(chat, dict):
                 block = chat.get(_CONFIG_KEY)
                 if isinstance(block, dict):
-                    merged.update(block)
+                    layers.append(block)
     if isinstance(pipeline_config, dict):
         block = pipeline_config.get(_CONFIG_KEY)
         if isinstance(block, dict):
-            merged.update(block)
+            layers.append(block)
+    for block in layers:
+        merged.update(block)
+        if _WINDOWS_KEY in block:
+            windows.update(_read_declared_windows(block[_WINDOWS_KEY]))
 
     enabled = _read_enabled(merged.get("enabled", True))
     return ContextEditingSettings(
@@ -298,6 +323,7 @@ def read_settings(
             "exemption_fraction",
         ),
         context_window=_read_declared_window(merged.get("context_window")),
+        context_windows=windows,
     )
 
 
@@ -344,6 +370,62 @@ def _read_declared_window(value: Any) -> Optional[int]:
             value,
         )
     return window
+
+
+def _read_declared_windows(value: Any) -> Dict[str, int]:
+    """Validate operator-declared windows keyed by model id (issue #262).
+
+    The single ``context_window`` describes the model *this deployment serves*,
+    so a request-local view onto a different model withdraws it. An entry here
+    names its own model, which is what makes it safe to keep across that
+    override — and on a provider whose metadata reports nothing, it is the only
+    window such a run can get.
+
+    Validation is **per entry**: one typo in a five-model map must not cost the
+    operator the other four bounds. A bad entry is logged and dropped, never
+    replaced by a guess, and it never disables what the other settings
+    configure. ``positive_int`` rejects ``True`` along with the other
+    non-integers — a one-token window would clear every message on every call.
+
+    ``None`` is not a malformed mapping and is not reported as one. It is how
+    YAML spells a key whose value is unset — including a key left holding only a
+    commented-out example — so it declares no entry, exactly as an omitted key
+    does, and ``_read_declared_window`` treats the singular setting the same way.
+    Nothing is discarded either: the merge in ``read_settings`` adds no entry and
+    leaves a lower layer's declarations standing. Warning here would fire on a
+    config where nothing is wrong, and the absence that does matter is already
+    reported per agent build, naming the model id to declare.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        logger.warning(
+            "Invalid context_editing.context_windows=%r; expected a mapping of "
+            "model id to context window, so no per-model window is declared",
+            value,
+        )
+        return {}
+
+    windows: Dict[str, int] = {}
+    for model, declared in value.items():
+        if not isinstance(model, str):
+            logger.warning(
+                "Ignoring context_editing.context_windows entry with "
+                "non-string model id %r",
+                model,
+            )
+            continue
+        window = positive_int(declared)
+        if window is None:
+            logger.warning(
+                "Ignoring context_editing.context_windows[%r]=%r; expected a "
+                "positive integer number of tokens",
+                model,
+                declared,
+            )
+            continue
+        windows[model] = window
+    return windows
 
 
 def resolve_model_window(provider: Any, model: Any) -> Optional[int]:

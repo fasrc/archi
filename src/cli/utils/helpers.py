@@ -3,7 +3,7 @@ import shutil
 import subprocess
 from importlib import resources
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import click
 import yaml
@@ -359,8 +359,15 @@ def print_dry_run_summary(
     compose_config,
     other_flags: Dict[str, Any],
     base_dir: Path,
+    base_image_notes: Optional[Sequence[str]] = None,
 ) -> None:
-    """Print comprehensive dry run summary"""
+    """Print comprehensive dry run summary.
+
+    ``base_image_notes`` carries whatever the base-image preflight could not verify. When it
+    is non-empty the summary must NOT end with its readiness line: a dry run that says both
+    "NOT VERIFIED" and "run without --dry to deploy" contradicts itself, and an operator who
+    reads the last line proceeds on a host that was never checked (fasrc/archi#266).
+    """
     logger.info(f"[DRY RUN] Deployment summary:\n")
     click.echo(f"\tName: {name}")
     click.echo(f"\tRequested services: {', '.join(services)}")
@@ -381,6 +388,18 @@ def print_dry_run_summary(
         click.echo(f"\tGPU configuration: {other_flags['gpu_ids']}")
 
     click.echo(f"\tDeployment directory: {base_dir}\n")
+
+    if base_image_notes:
+        click.echo("\tBase images: NOT VERIFIED")
+        for note in base_image_notes:
+            click.echo(f"\t  {note}")
+        click.echo("")
+        logger.info(
+            f"[DRY RUN] Configuration and secrets are valid, but the base images above "
+            f"were NOT verified. Resolve that before deploying.\n"
+        )
+        return
+
     logger.info(
         f"[DRY RUN] Configuration and secrets are valid. Run without --dry to deploy.\n"
     )

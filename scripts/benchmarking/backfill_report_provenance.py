@@ -33,6 +33,12 @@ This is a backfill, so it is strictly additive and it refuses to invent:
 Existing keys are never overwritten, and a file already stamped is skipped, so
 the script is safe to re-run.
 
+``retrieval_identity`` is a separate, per-arm pass that ignores that file-level
+skip. An arm that recorded ``running_configuration`` (every report since #272)
+proves which collection it searched and which embedding model the config named,
+so it gains that identity, labelled as reconstructed. An arm without it (before
+#272) gains nothing.
+
 ``--regenerate-html`` is independent of that skip: the HTML is a view of the JSON
 and goes stale when the *renderer* changes, not only when the data does. So a
 report-format fix re-renders every artifact, stamped or not.
@@ -42,6 +48,7 @@ Usage
     python scripts/benchmarking/backfill_report_provenance.py --dry-run
     python scripts/benchmarking/backfill_report_provenance.py
     python scripts/benchmarking/backfill_report_provenance.py --regenerate-html
+    python scripts/benchmarking/backfill_report_provenance.py --regenerate-md
 
     # a subset
     python scripts/benchmarking/backfill_report_provenance.py bench_out/bench-8192-*.json
@@ -58,18 +65,42 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.utils.benchmark_provenance import (  # noqa: E402
     reconstruct_version_stamp,
+    retrieval_identity,
 )
 from src.utils.generate_benchmark_report import (  # noqa: E402
     format_html_output,
+    format_markdown_output,
     parse_benchmark_results,
 )
 
 DEFAULT_GLOB = "bench_out/*.json"
 STAMP_KEYS = ("code_version", "config_version", "config_versions")
 NOT_AN_ARTIFACT = "skipped (not a benchmark artifact)"
+IDENTITY_SOURCE = "reconstructed from running_configuration"
 
 
-def stamp_file(path, dry_run=False):
+def stamp_retrieval_identity(results):
+    """Stamp ``retrieval_identity`` on each arm that can prove it.
+
+    Returns ``(stamped, skipped)``. An arm that already has the key is neither:
+    it is left as it is. An arm is skipped when its ``running_configuration`` is
+    missing or does not name a collection.
+    """
+    stamped = skipped = 0
+    for record in results:
+        if not isinstance(record, dict) or "retrieval_identity" in record:
+            continue
+        running = record.get("running_configuration")
+        identity = retrieval_identity(running) if isinstance(running, dict) else None
+        if identity is None or identity.collection is None:
+            skipped += 1
+            continue
+        record["retrieval_identity"] = {**identity.as_dict(), "source": IDENTITY_SOURCE}
+        stamped += 1
+    return stamped, skipped
+
+
+def stamp_file(path, dry_run=False, counts=None):
     """Add the version blocks to one artifact. Returns a short status string.
 
     The config version goes on each result record, because one invocation runs
@@ -81,14 +112,34 @@ def stamp_file(path, dry_run=False):
     with open(path, "r") as handle:
         document = json.load(handle)
 
-    if not isinstance(document, dict) or "metadata" not in document:
+    # A benchmark artifact carries a metadata DICT and a results LIST. A mere
+    # `metadata` key is not enough: a foreign JSON matching that shape used to
+    # be stamped — rewritten with provenance fields — and `metadata: null`
+    # raised an uncaught TypeError that aborted the whole bulk run.
+    if (
+        not isinstance(document, dict)
+        or not isinstance(document.get("metadata"), dict)
+        or not isinstance(document.get("benchmarking_results"), list)
+    ):
         return NOT_AN_ARTIFACT
 
     metadata = document["metadata"]
-    if any(key in metadata for key in STAMP_KEYS):
-        return "skipped (already stamped)"
-
     results = document.get("benchmarking_results") or []
+
+    stamped, skipped = stamp_retrieval_identity(results)
+    if counts is not None:
+        counts["identity_stamped"] = counts.get("identity_stamped", 0) + stamped
+        counts["identity_skipped"] = counts.get("identity_skipped", 0) + skipped
+    identity_detail = f"identity: {stamped} stamped, {skipped} skipped"
+
+    if any(key in metadata for key in STAMP_KEYS):
+        if not stamped:
+            return f"skipped (already stamped; {identity_detail})"
+        if dry_run:
+            return f"would stamp ({identity_detail})"
+        with open(path, "w") as handle:
+            json.dump(document, handle, indent=4)
+        return f"stamped ({identity_detail})"
 
     digests = []
     arms = []
@@ -116,6 +167,7 @@ def stamp_file(path, dry_run=False):
     detail = f"{len(digests)} arm(s): {shown}"
     if arms:
         detail += f" context_editing={'; '.join(arms)}"
+    detail += f"; {identity_detail}"
 
     if dry_run:
         return f"would stamp ({detail})"
@@ -162,6 +214,71 @@ def regenerate_html(json_path, dry_run=False):
     return f"re-rendered {html_path.name}"
 
 
+def regenerate_md(json_path, dry_run=False):
+    """Render the markdown sibling; create it when missing.
+
+    Markdown is the run's default report, so a valid artifact without its
+    ``_report.md`` is a recoverable gap — a report write that failed after the
+    JSON landed — and this path creates it. That is why it validates harder
+    than ``NOT_AN_ARTIFACT`` does: without the existing-sibling guard the HTML
+    path has, a metadata-bearing foreign JSON would otherwise gain a bogus
+    report. Anything that does not parse as a benchmark artifact is skipped
+    cleanly: no file, no error.
+    """
+    with open(json_path, "r") as handle:
+        document = json.load(handle)
+
+    if not isinstance(document, dict):
+        return None
+    results = document.get("benchmarking_results")
+    metadata = document.get("metadata")
+    if not isinstance(results, list) or not results or metadata is None:
+        return None
+
+    # parse_benchmark_results defaults every missing field, so it would turn a
+    # shapeless record into a plausible-looking (empty) report. The renderer's
+    # inputs must actually be present before a missing report is CREATED.
+    first = results[0]
+    if not isinstance(first, dict):
+        return None
+    if "single_question_results" not in first or "total_results" not in first:
+        return None
+    if "configuration" not in first and "configuration_file" not in first:
+        return None
+
+    # The render runs inside the same guard as the parse: a record can pass
+    # the key checks above and still blow up the formatter (for example
+    # `configuration: []`), and an escaped exception here would abort the
+    # whole bulk run instead of skipping the one bad file.
+    try:
+        config_data, config_name, timestamp, questions, total_results, provenance = (
+            parse_benchmark_results(results, metadata)
+        )
+        markdown = format_markdown_output(
+            config_data,
+            config_name,
+            timestamp,
+            questions,
+            total_results,
+            provenance=provenance,
+        )
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+        return None
+
+    md_path = json_path.with_name(json_path.stem + "_report.md")
+    verb = "re-rendered" if md_path.exists() else "created"
+    if dry_run:
+        return (
+            f"would re-render {md_path.name}"
+            if md_path.exists()
+            else f"would create {md_path.name}"
+        )
+
+    with open(md_path, "w") as handle:
+        handle.write(markdown)
+    return f"{verb} {md_path.name}"
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Stamp existing benchmark artifacts with a code version "
@@ -182,6 +299,11 @@ def main():
         action="store_true",
         help="also re-render each artifact's existing _report.html",
     )
+    parser.add_argument(
+        "--regenerate-md",
+        action="store_true",
+        help="also render each artifact's _report.md (created when missing)",
+    )
     args = parser.parse_args()
 
     if args.paths:
@@ -194,10 +316,12 @@ def main():
         return 1
 
     changed = 0
+    counts = {}
     rendered = 0
+    md_rendered = 0
     for path in paths:
         try:
-            status = stamp_file(path, dry_run=args.dry_run)
+            status = stamp_file(path, dry_run=args.dry_run, counts=counts)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             print(f"{path.name}: ERROR {exc}", file=sys.stderr)
             continue
@@ -221,11 +345,29 @@ def main():
                 rendered += 1
                 print(f"{path.name}: {note}")
 
+        if args.regenerate_md and status != NOT_AN_ARTIFACT:
+            try:
+                note = regenerate_md(path, dry_run=args.dry_run)
+            except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                print(f"{path.name}: ERROR rendering markdown {exc}", file=sys.stderr)
+                continue
+            if note:
+                md_rendered += 1
+                print(f"{path.name}: {note}")
+
     verb = "would change" if args.dry_run else "changed"
     print(f"\n{changed} of {len(paths)} artifact(s) {verb}.")
+    print(
+        f"retrieval_identity: {counts.get('identity_stamped', 0)} arm(s) "
+        f"{'would be ' if args.dry_run else ''}stamped, "
+        f"{counts.get('identity_skipped', 0)} skipped (no running_configuration)."
+    )
     if args.regenerate_html:
         noun = "would re-render" if args.dry_run else "re-rendered"
         print(f"{noun} {rendered} report(s).")
+    if args.regenerate_md:
+        noun = "would render" if args.dry_run else "rendered"
+        print(f"{noun} {md_rendered} markdown report(s).")
     return 0
 
 

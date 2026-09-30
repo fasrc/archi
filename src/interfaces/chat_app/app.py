@@ -106,6 +106,7 @@ from src.utils.config_access import (
 )
 from src.utils.config_service import ConfigService
 from src.utils.env import read_secret
+from src.utils.local_mode import apply_local_mode
 from src.utils.logging import get_logger
 
 # RBAC imports for role-based access control
@@ -178,8 +179,8 @@ def _build_provider_config_from_payload(
     # enable_thinking) — dropping them here silently strips the thinking toggle
     # from a request-time LLM override. Mirror base_react._build_provider_config.
     extra = dict(cfg.get("extra_kwargs", {}) or {})
-    if provider_type == ProviderType.LOCAL and cfg.get("mode"):
-        extra["local_mode"] = cfg.get("mode")
+    if provider_type == ProviderType.LOCAL:
+        apply_local_mode(extra, cfg.get("mode"))
 
     return ProviderConfig(
         provider_type=provider_type,

@@ -35,6 +35,59 @@
     }
     .ssb-section-title:first-child { margin-top: 0; }
 
+
+    /* ── Provenance panels ────────────────────────────────────────── */
+    .prov-card {
+      background: var(--bg-secondary, #161b22);
+      border: 1px solid var(--border-color, #30363d);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 8px;
+    }
+    .prov-row {
+      display: flex;
+      gap: 12px;
+      padding: 4px 0;
+      font-size: 13px;
+      align-items: baseline;
+    }
+    .prov-label {
+      flex: 0 0 160px;
+      color: var(--text-muted, #6e7681);
+    }
+    .prov-value {
+      color: var(--text-primary, #e6edf3);
+      font-family: 'JetBrains Mono', monospace;
+      word-break: break-word;
+    }
+    .prov-sub {
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border-color, #30363d);
+    }
+    .prov-sub-title {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted, #6e7681);
+      margin-bottom: 6px;
+    }
+    .prov-ok { color: #3fb950; }
+    .prov-warn {
+      color: #d29922;
+      border-left: 2px solid #d29922;
+      padding-left: 10px;
+      margin-top: 10px;
+      font-size: 12.5px;
+    }
+    .prov-warn-title { font-weight: 600; margin-bottom: 3px; }
+    .prov-mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+    .prov-unavailable {
+      color: var(--text-muted, #6e7681);
+      font-size: 13px;
+      font-style: italic;
+    }
     /* ── Alert card ───────────────────────────────────────────────── */
     .alert-card {
       display: flex;
@@ -219,6 +272,103 @@
   <!-- Content -->
   <div class="ssb-content">
     <div class="ssb-inner">
+
+      <!-- Deployment provenance -->
+      {% set dep = provenance.deployment if provenance else None %}
+      {% set kb = provenance.knowledge_base if provenance else None %}
+      <div class="ssb-section-title">Deployment</div>
+      <div class="prov-card">
+        {% if dep and dep.available %}
+          <div class="prov-row">
+            <span class="prov-label">Config pin</span>
+            <span class="prov-value">
+              {{ dep.config_ref or '—' }}{% if dep.config_sha_short %} · {{ dep.config_sha_short }}{% endif %}
+              {% if dep.pin_state == 'matched' %}<span class="prov-ok">✓ matches pin</span>
+              {% elif dep.pin_state == 'unknown' %}<span class="prov-label">pin verdict not recorded</span>{% endif %}
+            </span>
+          </div>
+          {% if dep.live_edited %}
+          <div class="prov-row">
+            <span class="prov-label">Deployed HEAD</span>
+            <span class="prov-value">{{ dep.config_head_short or 'unknown' }}</span>
+          </div>
+          {% endif %}
+          <div class="prov-row">
+            <span class="prov-label">App version</span>
+            <span class="prov-value">{{ dep.app_version or '—' }}</span>
+          </div>
+          <div class="prov-row">
+            <span class="prov-label">Deployed</span>
+            <span class="prov-value">{{ dep.deployed_at.strftime('%Y-%m-%d %H:%M UTC') if dep.deployed_at else '—' }}</span>
+          </div>
+          {% if dep.live_edited %}
+          <div class="prov-warn">
+            <div class="prov-warn-title">⚠ live-edited config</div>
+            <div>
+              {% if not dep.pin_matched %}The deployed config is not the pinned commit.{% endif %}
+              {% if dep.dirty_path_count %}{{ dep.dirty_path_count }} tracked file{{ 's' if dep.dirty_path_count != 1 else '' }} edited on top of the pin — what is running is not the pinned config.{% endif %}
+            </div>
+            {% for path in dep.dirty_paths_preview %}
+            <div class="prov-mono">{{ path }}</div>
+            {% endfor %}
+            {% if dep.dirty_path_count > dep.dirty_paths_preview | length %}
+            <div class="prov-mono">… {{ dep.dirty_path_count - (dep.dirty_paths_preview | length) }} more</div>
+            {% endif %}
+          </div>
+          {% endif %}
+        {% else %}
+          <div class="prov-unavailable">Deployment provenance unavailable — recorded from the next deploy onward.</div>
+        {% endif %}
+      </div>
+
+      <!-- Knowledge base provenance -->
+      <div class="ssb-section-title">Knowledge Base</div>
+      <div class="prov-card">
+        {% if kb and kb.available %}
+          <div class="prov-row">
+            <span class="prov-label">Last ingest</span>
+            <span class="prov-value">
+              {{ kb.started_at.strftime('%Y-%m-%d %H:%M') if kb.started_at else '—' }}
+              → {{ kb.completed_at.strftime('%H:%M UTC') if kb.completed_at else '—' }}
+              {% if kb.duration %}<span class="prov-label">{{ kb.duration }}</span>{% endif %}
+            </span>
+          </div>
+          <div class="prov-row">
+            <span class="prov-label">Documents</span>
+            <span class="prov-value">
+              {% if kb.documents_embedded is none %}not recorded{% else %}{{ kb.documents_embedded }} embedded · {{ kb.documents_failed }} failed · {{ kb.documents_pending }} pending{% endif %}
+            </span>
+          </div>
+          <div class="prov-row">
+            <span class="prov-label">Chunks</span>
+            <span class="prov-value">{{ kb.chunk_count if kb.chunk_count is not none else 'not recorded' }}</span>
+          </div>
+
+          {% if kb.config %}
+          <div class="prov-sub">
+            <div class="prov-sub-title">Ingest configuration (as used at ingest)</div>
+            {% for key, value in kb.config | dictsort %}
+            <div class="prov-row">
+              <span class="prov-label">{{ key.replace('_', ' ') }}</span>
+              <span class="prov-value">{{ value }}</span>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+
+          {% if kb.drift %}
+          <div class="prov-warn">
+            <div class="prov-warn-title">⚠ configuration changed after this ingest</div>
+            <div>The corpus above was not built with the configuration running now.</div>
+            {% for item in kb.drift %}
+            <div class="prov-mono">{{ item.key.replace('_', ' ') }}: {{ item.current }} now · {{ item.at_ingest }} at ingest</div>
+            {% endfor %}
+          </div>
+          {% endif %}
+        {% else %}
+          <div class="prov-unavailable">No completed ingest run recorded — recorded from the next ingest onward.</div>
+        {% endif %}
+      </div>
 
       <!-- Active alerts -->
       <div class="ssb-section-title">Active Alerts</div>

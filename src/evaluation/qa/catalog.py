@@ -2,18 +2,24 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import sqlite3
 import tempfile
 import threading
 import uuid
+from copy import deepcopy
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from itertools import zip_longest
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 
 import yaml
+from ijson import JSONError
+from ijson.backends import python as ijson_backend
+from ijson.common import ObjectBuilder
 
 from .artifacts import (
     AtomicJsonlWriter,
@@ -27,11 +33,14 @@ from .artifacts import (
 )
 from .dataset import (
     DATASET_V2_SCHEMA_VERSION,
+    RAGAS_ALIAS_FIELDS,
+    V1_ITEM_FIELDS,
     DatasetItemState,
     dataset_item_to_dict,
+    derive_item_id,
     iter_dataset_items,
 )
-from .oracle import OracleResolver
+from .oracle import OracleResolver, validate_json_value
 from .preparation import (
     GoldExtractor,
     PreparationRecord,
@@ -122,6 +131,233 @@ def _sha256(blob: bytes) -> str:
     return hashlib.sha256(blob).hexdigest()
 
 
+# RAGAS 0.3.5 authoring dialect -> native row schema. The mirror image of the
+# benchmark harness's LEGACY_TO_MODERN shim (src/utils/benchmark_schema.py):
+# each side normalizes on read, so the golden-set bank keeps exactly one
+# on-disk dialect and the row parser keeps exactly one name per concept. The
+# alias map itself lives in dataset.RAGAS_ALIAS_FIELDS — the same names the
+# row parser refuses as carried extras.
+RAGAS_IMPORT_DIALECT = "ragas"
+_RAGAS_TO_NATIVE = RAGAS_ALIAS_FIELDS
+
+
+def _normalize_newlines(value: str) -> str:
+    return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _exact_json_numbers(value: Any, context: str) -> Any:
+    """Convert exact Decimals to floats, refusing any that would round.
+
+    The carry contract promises original values; a number the binary float
+    cannot represent would be silently rewritten in the stored source and
+    every derived child. The author can quote such a value as a string to
+    carry it verbatim.
+    """
+    if isinstance(value, Decimal):
+        try:
+            as_float: Optional[float] = float(value)
+            if Decimal(repr(as_float)) != value:
+                as_float = None
+        except (OverflowError, InvalidOperation):
+            as_float = None
+        if as_float is None:
+            raise ValueError(
+                f"{context} numeric value {value} cannot be carried exactly; "
+                "quote it as a string to preserve it verbatim"
+            )
+        return as_float
+    if isinstance(value, list):
+        return [
+            _exact_json_numbers(item, f"{context}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    if isinstance(value, dict):
+        return {
+            key: _exact_json_numbers(item, f"{context}.{key}")
+            for key, item in value.items()
+        }
+    return value
+
+
+def _canonical_row_bytes(row: Any) -> bytes:
+    """One row in the canonical serialization; the normalized blob is the
+    ``[`` + ``,``-joined rows + ``]`` — byte-identical to serializing the
+    whole list, without ever holding the whole list."""
+    return json.dumps(
+        row, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def _iter_json_array_rows(blob: bytes) -> Iterator[Any]:
+    """Yield the top-level array rows of ``blob`` one at a time.
+
+    The bounded counterpart of ``json.loads`` for detected dialect uploads:
+    peak memory is one row, not the whole document. Duplicate object keys and
+    malformed JSON raise ``ValueError`` with the same wording the strict
+    import pipeline uses for the same defects.
+    """
+    builder: Optional[ObjectBuilder] = None
+    depth = 0
+    object_keys: List[Set[str]] = []
+    try:
+        # use_float=False: numbers arrive as exact Decimals so precision loss
+        # is detectable (see _exact_json_numbers) instead of silent.
+        for prefix, event, value in ijson_backend.parse(io.BytesIO(blob)):
+            if builder is None:
+                if prefix != "item":
+                    continue
+                if event not in {"start_map", "start_array"}:
+                    yield value
+                    continue
+                builder = ObjectBuilder()
+                depth = 1
+            elif event in {"start_map", "start_array"}:
+                depth += 1
+            if event == "start_map":
+                object_keys.append(set())
+            elif event == "map_key":
+                if value in object_keys[-1]:
+                    raise ValueError(f"dataset JSON contains duplicate key '{value}'")
+                object_keys[-1].add(value)
+            builder.event(event, value)
+            if event == "end_map":
+                object_keys.pop()
+            if event in {"end_map", "end_array"}:
+                depth -= 1
+                if depth == 0:
+                    yield builder.value
+                    builder = None
+    except JSONError as exc:
+        raise ValueError(f"invalid JSON dataset: {exc}") from exc
+
+
+def _json_array_carries_user_input(blob: bytes) -> bool:
+    """Stream-scan for the RAGAS dialect marker without materializing.
+
+    True only for a top-level JSON array with a row whose own key is
+    ``user_input``. Bails at the first token of any non-array document and
+    stops at the first match, so an ordinary native upload keeps the bounded
+    streaming behavior of the import pipeline.
+    """
+    try:
+        for prefix, event, value in ijson_backend.parse(
+            io.BytesIO(blob), use_float=True
+        ):
+            if prefix == "" and event != "start_array":
+                return False
+            if event == "map_key" and prefix == "item" and value == "user_input":
+                return True
+    except JSONError:
+        return False
+    return False
+
+
+def _normalize_import_dialect(
+    blob: bytes, source_format: str, destination: Path
+) -> Optional[Dict[str, Any]]:
+    """Write ``blob`` to ``destination``, rewriting a RAGAS-dialect bank.
+
+    Detection keys on ``user_input`` — the one field the benchmark harness
+    treats as mandatory and no native dataset row carries. Everything the map
+    does not consume stays on the row verbatim, to be carried as extras by the
+    row parser. Rows are treated as static unless declared otherwise, and rows
+    lacking an ``id`` get a stable content-derived one, so re-importing the
+    same bank yields the same ids (and, via the canonical re-serialization,
+    the same dedupe hash). A non-dialect upload is written unchanged for the
+    strict import pipeline to judge.
+
+    Memory stays bounded for a hostile upload: rows stream in one at a time,
+    the normalized output streams to ``destination``, and duplicate-id
+    tracking spools to a scratch sqlite file rather than a per-row dict.
+    """
+    if source_format != "json" or not _json_array_carries_user_input(blob):
+        write_bytes(destination, blob)
+        return None
+    carried: set = set()
+    with tempfile.TemporaryDirectory(prefix=".dialect-ids-") as scratch:
+        connection = sqlite3.connect(str(Path(scratch) / "ids.sqlite3"))
+        try:
+            connection.execute(
+                "CREATE TABLE ids (id TEXT PRIMARY KEY, row INTEGER NOT NULL)"
+            )
+            with destination.open("wb") as handle:
+                handle.write(b"[")
+                for index, row in enumerate(_iter_json_array_rows(blob), 1):
+                    if index > 1:
+                        handle.write(b",")
+                    handle.write(
+                        _normalize_dialect_row(row, index, connection, carried)
+                    )
+                handle.write(b"]")
+        finally:
+            connection.close()
+    return {
+        "import_dialect": RAGAS_IMPORT_DIALECT,
+        "carried_fields": sorted(carried),
+    }
+
+
+def _normalize_dialect_row(
+    row: Any, index: int, id_index: sqlite3.Connection, carried: set
+) -> bytes:
+    context = f"dataset row {index}"
+    row = _exact_json_numbers(row, context)
+    if not isinstance(row, dict):
+        # Not mappable, but still validated (a bare string could carry a
+        # surrogate the encode would crash on); row validation then rejects
+        # it loudly.
+        validate_json_value(row, context)
+        return _canonical_row_bytes(row)
+    mapped = dict(row)
+    for dialect_key, native_key in _RAGAS_TO_NATIVE.items():
+        if dialect_key not in mapped:
+            continue
+        if native_key in mapped:
+            # Both spellings of one concept: the console would evaluate the
+            # native key while the harness prefers the RAGAS one, so the two
+            # stacks would score different content from the same file.
+            # Refuse rather than guess.
+            raise ValueError(
+                f"{context} carries both '{dialect_key}' and "
+                f"'{native_key}'; keep exactly one"
+            )
+        mapped[native_key] = mapped.pop(dialect_key)
+    mapped.setdefault("time_sensitive", False)
+    # The row parser cannot validate what never survives serialization: a
+    # lone surrogate accepted at parse would crash the UTF-8 encode with a
+    # codec error that names no field.
+    validate_json_value(mapped, context)
+    question = mapped.get("question")
+    answer = mapped.get("answer")
+    if "id" not in mapped and isinstance(question, str) and isinstance(answer, str):
+        # Derive from newline-normalized text, exactly as V1DatasetReader
+        # does: CRLF/LF variance must neither split one logical item into two
+        # ids nor let it bypass the duplicate refusal below.
+        derived = derive_item_id(
+            _normalize_newlines(question), _normalize_newlines(answer)
+        )
+        try:
+            id_index.execute("INSERT INTO ids VALUES (?, ?)", (derived, index))
+        except sqlite3.IntegrityError:
+            first_index = id_index.execute(
+                "SELECT row FROM ids WHERE id = ?", (derived,)
+            ).fetchone()[0]
+            # Same user_input and reference: the content-derived id collides.
+            # Deliberately refused rather than disambiguated — salting the id
+            # with carried metadata would change item identity on every
+            # sources edit, and an order-based suffix would change it on
+            # every reorder. Explicit ids are the escape hatch for rows that
+            # must coexist.
+            raise ValueError(
+                f"dataset rows {first_index} and {index} are duplicates "
+                "(same user_input and reference); merge them or give "
+                "each an explicit id"
+            ) from None
+        mapped["id"] = derived
+    carried.update(set(mapped) - V1_ITEM_FIELDS)
+    return _canonical_row_bytes(mapped)
+
+
 def _dataset_row(
     item: DatasetItem, atoms: Optional[Sequence[Dict[str, Any]]]
 ) -> Dict[str, Any]:
@@ -139,6 +375,9 @@ def _dataset_row(
         row["expected_atoms"] = list(atoms)
     if item.oracle is not None:
         row["oracle"] = item.oracle.to_dict()
+    if item.extra:
+        for name, extra_value in item.extra.items():
+            row[name] = deepcopy(extra_value)
     return row
 
 
@@ -464,13 +703,13 @@ class EvaluationCatalog:
         if suffix not in {".json", ".jsonl"}:
             raise ValueError("dataset must use .json or .jsonl")
         source_format = suffix[1:]
-        digest = _sha256(blob)
         with tempfile.TemporaryDirectory(
             prefix=".dataset-", dir=str(self.datasets_dir)
         ) as temporary:
             temporary_path = Path(temporary)
             source_path = temporary_path / f"source.{source_format}"
-            write_bytes(source_path, blob)
+            dialect_report = _normalize_import_dialect(blob, source_format, source_path)
+            digest = sha256_file(source_path)
 
             # Complete preflight validation is a separate bounded pass. Metadata
             # is then accumulated from a fresh read without retaining the rows.
@@ -497,10 +736,24 @@ class EvaluationCatalog:
                 approval_actor=approval_actor,
                 approval_time=utc_now() if approval_actor is not None else None,
             )
+            if dialect_report is not None:
+                metadata.update(dialect_report)
             with self._lock:
                 if parent_dataset_id is None:
                     existing = self._find_dataset_by_hash(digest)
                     if existing is not None:
+                        # The dialect report describes THIS import, not the
+                        # stored artifact: the response carries the current
+                        # operation's report and never a stale persisted one
+                        # (a native upload must not be toasted as a RAGAS
+                        # import). Persisted metadata stays untouched.
+                        existing = {
+                            key: value
+                            for key, value in existing.items()
+                            if key not in ("import_dialect", "carried_fields")
+                        }
+                        if dialect_report is not None:
+                            existing.update(dialect_report)
                         return existing, False
                 elif parent_dataset_id is not None:
                     _catalog_id(parent_dataset_id)
