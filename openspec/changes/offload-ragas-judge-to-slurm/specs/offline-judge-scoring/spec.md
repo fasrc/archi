@@ -33,7 +33,11 @@ A deferred run's result JSON SHALL record `judge_status: pending` for each defer
 - **THEN** its judge status is `inline`
 
 ### Requirement: Publishing a bundle writes the READY marker last
-The publish step SHALL copy each bundle that has `BUNDLE_COMPLETE` into a folder in the shared queue directory, check each file against the manifest's SHA-256, and create the `READY` marker only after every file is in place. A scheduled timer on the dev host SHALL run the publish step, so that publishing does not depend on the process that started the run. The publish step SHALL skip a queue folder that is already READY with the same digest, and it SHALL exit non-zero, and change nothing, for a queue folder with a different digest.
+The publish step SHALL copy the pending result JSON to the queue only after its `RESULT_COMPLETE` marker exists and the file loads with an arm for each bundle and matching digests. The publish step SHALL copy each bundle that has `BUNDLE_COMPLETE` into a folder in the shared queue directory, check each file against the manifest's SHA-256, and create the `READY` marker only after every file is in place. A scheduled timer on the dev host SHALL run the publish step, so that publishing does not depend on the process that started the run. The publish step SHALL skip a queue folder that is already READY with the same digest, and it SHALL exit non-zero, and change nothing, for a queue folder with a different digest.
+
+#### Scenario: Pending result still being written
+- **WHEN** the pending result JSON exists but has no `RESULT_COMPLETE` marker, or does not load as JSON
+- **THEN** the publish step does not copy it to the queue, and it copies it on a later run after the marker exists and the file loads
 
 #### Scenario: Detached run is published
 - **WHEN** a deferred run was started with `--no-follow`, and its bundle gets `BUNDLE_COMPLETE` after the wrapper script exited
@@ -66,7 +70,7 @@ The submitter SHALL submit an `archi-judge` job only when at least one bundle is
 - **WHEN** every arm of a result is `SCORED`, no `MERGED` exists, and no merge job exists
 - **THEN** the next submitter run submits one merge job
 
-A bundle SHALL match a job only when the manifest's judge model id and revision equal the job's judge configuration, and the manifest's `code_version` and package digest equal the job's scorer identity. The submitter and the judge job SHALL use one shared function for this rule.
+A bundle SHALL match a job only when the manifest's judge model id and revision equal the job's judge configuration, and the manifest's code digest (`code_version.digest`) and package digest equal the job's scorer identity. The submitter and the judge job SHALL use one shared function for this rule.
 
 #### Scenario: Only bundles for another judge
 - **WHEN** the queue holds only READY bundles whose manifest names a judge model or revision that the configured job does not load
@@ -125,11 +129,12 @@ The judge job and the submitter SHALL treat a bundle's current claim (the `claim
 - **THEN** exactly one `link` of the next claim file succeeds, and the other job skips the bundle
 
 #### Scenario: Requeued job keeps its claim
-- **WHEN** Slurm requeues a preempted job with the same job id
-- **THEN** the job still owns its claims, and it resumes them
+- **WHEN** Slurm requeues a preempted job with the same job id, and no other bundle is available
+- **THEN** the job still owns its claims, counts them as its work at start, loads the model, and resumes them
+- **AND** the submitter does not count those bundles as available
 
 ### Requirement: The scorer never scores a bundle from different code or packages
-The scorer SHALL NOT score a bundle when the manifest's `code_version` differs from the scorer's code version, or the manifest's package digest differs from the SHA-256 of the scorer environment's sorted `pip freeze`. No setting SHALL override this refusal. The refusal SHALL NOT write a terminal marker: the bundle stays READY for a scorer that matches, and `judge_submit.sh --status` reports both values.
+The scorer SHALL NOT score a bundle when the manifest's code digest (`code_version.digest`) differs from the content digest of the scorer's installed `src`, computed by the same function, or the manifest's package digest differs from the SHA-256 of the scorer environment's sorted `pip freeze`. No setting SHALL override this refusal. The refusal SHALL NOT write a terminal marker: the bundle stays READY for a scorer that matches, and `judge_submit.sh --status` reports both values.
 
 #### Scenario: Package drift
 - **WHEN** the manifest records a package digest and the scorer environment has a different ragas version
@@ -140,8 +145,12 @@ The scorer SHALL NOT score a bundle when the manifest's `code_version` differs f
 - **THEN** the job creates `SCORER_STALE.<sidecar digest>`, claims nothing, loads no model, and exits non-zero
 - **AND** the submitter submits no job for that sidecar until the sidecar changes
 
+#### Scenario: Deferred run with no code digest
+- **WHEN** `judge_mode` is `deferred`, and the run's `code_version.digest` is unavailable
+- **THEN** the run refuses to start and writes no bundle
+
 #### Scenario: Matching scorer installed later
-- **WHEN** a bundle waited for a scorer at its manifest's commit, and a scorer image built at that commit is then configured
+- **WHEN** a bundle waited for a scorer with its manifest's code digest, and a scorer image whose `src` has that digest is then configured
 - **THEN** the submitter counts the bundle as available, and the next job claims and scores it
 
 #### Scenario: Matching environment
@@ -165,7 +174,11 @@ The judge job SHALL append each scored `(key, metric)` result, as one newline-te
 - **AND** the final scores have exactly one value for each `(key, metric)`
 
 ### Requirement: The judge job stops claiming when its time budget is low
-Before it claims another bundle, the judge job SHALL compare the time left in its allocation with its measured time per row multiplied by the bundle's row count. If the time left is less, it SHALL leave the bundle READY for a later job.
+Before it claims another bundle, the judge job SHALL compare the time left in its allocation with its time per row multiplied by the bundle's row count. Before it has scored a row, it SHALL use the configured bootstrap rate; after that, its measured rate. If the time left is less, it SHALL leave the bundle READY for a later job.
+
+#### Scenario: First job with no measured rate
+- **WHEN** a new job starts with three READY bundles of 109 rows, 60 minutes left, and a bootstrap rate of 2 rows per minute
+- **THEN** it claims only the first bundle at start, and it decides on the others after that bundle, with its measured rate
 
 #### Scenario: Not enough time left
 - **WHEN** 10 minutes remain, and the next bundle needs about 30 minutes at the measured rate
@@ -186,11 +199,11 @@ The offline scorer and the inline benchmark path SHALL call one shared scoring f
 - **THEN** both paths give equal aggregates and scored counts
 
 ### Requirement: The judge identity excludes per-job values
-Each judged arm SHALL record a `judge_identity` with the model id and revision, the weight precision, the vLLM image digest, the output-relevant server settings, the decoding settings, the embedding (provider class, the model name that the built embedding object reports, and its revision where the provider gives one), and the scorer identity (scorer commit, scorer image digest, package digest, ragas version, metric settings).
+Each judged arm SHALL record a `judge_identity` with the model id and revision, the weight precision, the vLLM image digest, the output-relevant server settings, the decoding settings, the embedding (provider class, the model name that the built embedding object reports, and its revision where the provider gives one), and the scorer identity (the code digest of the scorer's `src`, scorer image digest, package digest, ragas version, metric settings). It SHALL record the job id, node, times, claimed bundles and requeue count in a separate `judge_execution` record.
 
 #### Scenario: Embedding differs
 - **WHEN** two arms have the same judge model and settings, but one was scored with the OpenAI embedding and the other with the HuggingFace embedding
-- **THEN** their `judge_identity` records differ in the embedding fields It SHALL record the job id, node, times, claimed bundles and requeue count in a separate `judge_execution` record.
+- **THEN** their `judge_identity` records differ in the embedding fields
 
 #### Scenario: Same settings, different jobs
 - **WHEN** two arms were scored by two different jobs with identical model, precision, image, server, decoding and scorer settings

@@ -54,7 +54,8 @@ The extraction is a separate, mechanical PR with no change in behavior. `service
 ```
 <queue>/<result basename>-arm<N>/
   manifest.json        judge settings, judge model id + revision, embedding setting,
-                       code_version, package digest of the run's environment (D10),
+                       code digest (`code_version.digest`), package digest of the
+                       run's environment (D10),
                        result basename, arm index, arm count of the result,
                        rows sha256
   rows.jsonl           {key, user_input, retrieved_contexts, response, reference}
@@ -85,7 +86,7 @@ The extraction is a separate, mechanical PR with no change in behavior. `service
 - The benchmark container writes the bundle under the run's `out_dir`, which is already bind-mounted, and it writes a local `BUNDLE_COMPLETE` marker last. The compose templates therefore get no new mount.
 - **Publishing does not depend on the process that started the run.** `run_goldenset_eval.sh` returns at once with `--no-follow`, and Ctrl+C stops it while the container continues (`scripts/benchmarking/run_goldenset_eval.sh:72-76`). The wrapper therefore does not publish. A systemd user timer on the dev host, `archi-judge-publish.timer` (every 5 minutes, with its units in `fasrc/archi-config` beside the other host timers), runs `scripts/benchmarking/judge/publish.py` over the benchmark output folder. Each run of the publish step does three things, and each one is idempotent:
 1. For each bundle with `BUNDLE_COMPLETE`, it copies the bundle to `<queue>`, checks the digests, and then creates `READY` with `link`. A queue folder that already has `READY` and the same digest is skipped. A folder with a different digest makes it exit non-zero and report the conflict.
-2. When the pending result JSON of a published bundle exists in the output folder, it copies that JSON to `<queue>/results/` with `link`. The merge reads it only from there (D8).
+2. When the pending result JSON of a published bundle is **complete**, it copies that JSON to `<queue>/results/` with `link`. The merge reads it only from there (D8). The existence of the file is not enough: `ResultHandler.dump` opens the final path and writes into it (`src/bin/service_benchmark.py:772-781`), so a timer tick can see a half-written file, and the no-replace `link` would then keep the truncated copy for good. Two signals are required. First, a deferred run writes `<basename>.RESULT_COMPLETE` in the output folder after `dump_artifacts` returns. Second, the publish step loads the JSON, and checks that it has an arm for each bundle of the result, with the same bundle digests. Without both, it copies nothing and tries again on the next tick.
 3. When a judged file exists in `<queue>/results/` and the bundles of its result have `MERGED`, it copies the judged file back into the output folder, beside the pending file. The campaign tools then find it where they find other results.
 
 ### D4. Submitter: one job, via scrontab
@@ -108,7 +109,7 @@ The merge is also submitted from the judge job (`--dependency=afterok`) as the f
 
 A bundle **matches** a judge job when both of these are true:
 - the manifest's judge model id and revision equal the model and revision in the job's judge configuration (`judge.env`, which the sbatch script also reads);
-- the manifest's `code_version` and package digest equal the scorer identity (D10) of the scorer image that the job will run. The scorer image build writes that identity to `scorer-identity.json` beside the image.
+- the manifest's code digest and package digest equal the scorer identity (D10) of the scorer image that the job will run. The scorer image build writes that identity to `scorer-identity.json` beside the image.
 
 The match rule also excludes a bundle while one of these records names the digest of the configured `scorer-identity.json`: `<queue>/SCORER_STALE.<digest>` or the bundle's `INCOMPATIBLE.<digest>` (D10). A new sidecar has a new digest, so a rebuilt scorer makes the bundle available again with no manual cleanup.
 
@@ -116,10 +117,10 @@ The submitter and the judge job call one function for this rule (`scripts/benchm
 
 ### D5. Claim at start, one judge per job, time budget
 
-- At start, the job first checks its live scorer identity against its sidecar (D10), and then counts its available bundles (D4a, D5a). With a stale sidecar or no available bundle, it exits before it loads a model (D4).
+- At start, the job first checks its live scorer identity against its sidecar (D10), and then counts its work: the available bundles (D4a, D5a), **and** the bundles whose current claim holds its own `$SLURM_JOB_ID` and that have no terminal marker. The second group is the work of a requeued job (D5a), and the job resumes it first. With a stale sidecar and no work, it exits before it loads a model (D4). The submitter does not count the second group, because a claim of a job that is in `squeue` is not available to a new job.
 - It then loads the model that its sbatch script names. That is one model and one revision for each job.
 - It lists the READY folders in `<queue>`, oldest first. It claims each bundle that matches the job (D4a), with no claim or a stale claim, by a `link` of `claim.<gen>` (D3). It checks the match before the claim, so it never claims a bundle that it cannot score.
-- Before each claim, it checks the budget: time left (from `squeue -h -j $SLURM_JOB_ID -o %L`) against the rows-per-minute rate it has measured so far. The first bundle is always claimed.
+- Before each claim, it checks the budget: time left (from `squeue -h -j $SLURM_JOB_ID -o %L`) against the bundle's row count divided by the rate. The rate is the rows-per-minute rate that the job has measured so far. Before it has scored a row, it uses `JUDGE_BOOTSTRAP_ROWS_PER_MINUTE` from `judge.env`, a low value that the operator sets from the first measured job (task 5.2). The first bundle is always claimed. The job claims at start only while the bootstrap rate says a bundle fits. Later bundles stay READY, and the job looks again after each bundle, with its measured rate.
 - Bundles that are not claimed stay READY for the next job. The submitter's next tick submits that job.
 - All arms of a campaign that one job scores therefore share the same weights, precision and server settings.
 
@@ -140,11 +141,15 @@ A new job takes over a stale `claim.<gen>` with one `link` of `claim.<gen+1>`. T
 
 The original job is known to be finished, so the takeover cannot race with it. Scoring resumes from the checkpoint of the new job's own `judge_identity` (D7). The work of a dead job with the same identity is kept. The work of a dead job with a different identity is not used. `judge_submit.sh --status` lists stale claims.
 
-### D6. Judge server on the node's loopback interface, with a per-job API key
+### D6. Judge server on a private Unix socket, with a per-job API key
 
-The job starts vLLM from an Apptainer image of the upstream `vllm/vllm-openai` image at a pinned tag (not the V100 build `vllm_volta.sif`). The server listens on `127.0.0.1` at a free port, with `--api-key` set to a random token for the job. Other users on a shared node can reach `127.0.0.1` too, so the key is necessary.
+The job starts vLLM from an Apptainer image of the upstream `vllm/vllm-openai` image at a pinned tag (not the V100 build `vllm_volta.sif`).
 
-The scorer builds the judge with `evaluator_provider: huggingface`, `evaluator_ollama_url: http://127.0.0.1:<port>/v1` and the token. A unit test confirms that the token reaches the request. The job waits until `GET /v1/models` returns HTTP 200 before it claims anything, and it stops the server on exit, through a `trap`.
+**The server has no TCP listener.** Other users on a shared node can reach `127.0.0.1`, and the vLLM API key does not protect every endpoint: it covers only the `/v1`, `/v2`, `/inference` and `/cohere` prefixes, and `/invocations` runs inference with no key (vLLM docs, "API Key Authentication Limitations"). A key on a loopback port therefore does not keep a co-tenant off the judge. The server listens on a Unix socket (`vllm serve --uds <path>`) in a folder under the job's private temporary folder, with mode `0700`. Only processes of our user can connect to it.
+
+The job also sets a random per-job key, through the `VLLM_API_KEY` environment variable and never as a command-line argument, because other users can read a process's arguments through `ps` or `/proc/<pid>/cmdline`. The key is a second guard, not the main one.
+
+The scorer builds the judge through the judge factory (D2), with an OpenAI-compatible client whose HTTP transport connects to the Unix socket, and with the key from the environment. A unit test confirms that the client sends its requests through the socket, and that the key reaches the request. The job waits until `GET /v1/models` returns HTTP 200 before it claims anything, and it stops the server on exit, through a `trap`.
 
 ### D7. Save each row's score and resume
 
@@ -197,7 +202,7 @@ The design keeps three records separate:
 
   It excludes every per-job value, so arms that separate jobs scored with the same settings stay comparable.
 - **Scorer identity**:
-  - the repository commit of the scorer code;
+  - the **code digest** of the scorer's installed `src` package, computed by the same function that makes the benchmark's `code_version.digest` (`src/utils/benchmark_provenance.py:673-699`). A repository commit cannot be used: nothing stamps a commit into the image, and the benchmark's `deploy_git_commit` is frozen at deploy and does not name the code that ran (`docs/docs/interpreting_benchmark_results.md:963-973`). Both sides therefore compare the same content digest;
   - the scorer Apptainer image digest;
   - a SHA-256 of the sorted `pip freeze` output of the scorer's environment (this pins ragas, langchain and every other dependency);
   - the ragas version as a readable copy of the same fact;
@@ -206,7 +211,7 @@ The design keeps three records separate:
   ragas holds its prompt templates inside the pinned package, so the package digest covers them.
 - **`judge_execution`** is the record of the job, and nothing compares it: the job id, node name, start and end times, the list of claimed bundles, and the requeue count.
 
-**The scorer fails closed.** It never scores a bundle whose manifest `code_version` or package digest differs from its own scorer identity. There is no override. The refusal is not a terminal state: through the match rule (D4a), the job does not claim such a bundle, and the bundle stays READY with no marker. To score it, build a scorer image at the manifest's commit. The next job that runs that image matches the bundle and claims it. `scorer-identity.json` can be out of date, and then the submitter and the job both match a bundle that the live scorer must refuse. Without a record, each tick would submit a new GPU job that claims the bundle, refuses it and exits, with no end. Two checks stop this:
+**The scorer fails closed.** It never scores a bundle whose manifest code digest or package digest differs from its own scorer identity. A deferred run whose `code_version.digest` is unavailable (the `<unavailable>` case in `code_version`) refuses to start, because no scorer could ever match its bundles. There is no override. The refusal is not a terminal state: through the match rule (D4a), the job does not claim such a bundle, and the bundle stays READY with no marker. To score it, build a scorer image whose `src` has the manifest's code digest: build it from the benchmark image that made the run, or from a checkout whose `src` gives the same digest. The manifest's `deploy_git_commit` is only a hint for where to look. The next job that runs that image matches the bundle and claims it. `scorer-identity.json` can be out of date, and then the submitter and the job both match a bundle that the live scorer must refuse. Without a record, each tick would submit a new GPU job that claims the bundle, refuses it and exits, with no end. Two checks stop this:
 - **At job start, before vLLM and before any claim,** the job computes its live scorer identity and compares it with the sidecar. On a difference, it creates `<queue>/SCORER_STALE.<sidecar digest>` with both values, claims nothing, and exits non-zero. The match rule then excludes every bundle for that sidecar (D4a), so the submitter stops.
 - **After a claim,** the job compares its live identity with the manifest again. On a difference, it creates the bundle's `INCOMPATIBLE.<sidecar digest>` with both values, writes no score, and continues with its other bundles. The match rule excludes that bundle for that sidecar.
 
@@ -233,7 +238,7 @@ There is no override flag, because the result of a mixed comparison has no meani
 - [The scorer's Python environment differs from the benchmark image, so the ragas or langchain versions drift] → Run the scorer in an Apptainer image built from the benchmark image. The scorer identity (D10) pins the code, the image digest and the package digest, and any mismatch fails closed, with no override.
 - [A job ends without a requeue and leaves its claim] → Stale-claim recovery (D5a).
 - [A time-limited job scores some arms of a result and leaves the others] → The merge waits for all arms of the result (D8), and the next job claims the rest.
-- [Each new archi commit needs a matching scorer image before its bundles can be scored] → This is the cost of the fail-closed rule. `--status` lists bundles that wait for a scorer, with the commit they need.
+- [Each change to archi's `src` needs a matching scorer image before its bundles can be scored] → This is the cost of the fail-closed rule. `--status` lists bundles that wait for a scorer, with the code digest and the `deploy_git_commit` hint they need.
 - [The dev-host publish timer stops] → Bundles stay under `out_dir` with `BUNDLE_COMPLETE` and no queue copy. `publish.py --status` lists them, and a manual run publishes them.
 - [`service_benchmark.py` is large and black-sensitive] → D2 extraction goes first, as its own mechanical PR, and new logic lives in the new module.
 
