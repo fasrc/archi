@@ -62,6 +62,10 @@ exists to keep the measurement honest.
 | Grade every run against the *same* atoms | `archi eval qa prepare` extracts atoms once into a run directory; each run copies that snapshot (the pattern `qa_prepare.sh --sweep` and `qa_arm.sh --sweep` use) | `scripts/benchmarking/feature_matrix/qa_prepare.sh`, `qa_arm.sh:80` |
 | Stack, corpus and code guards | `fm_require_stack_name`, `fm_require_pinned_corpus`, `fm_code_tree`, `fm_fingerprint`, `fm_ledger_append` | `scripts/benchmarking/feature_matrix/lib.sh` |
 | Hash-and-verify inputs | `sweep_tools.py lock / verify` hashes every input of a **fixed** arm set | `scripts/benchmarking/feature_matrix/sweep_tools.py` |
+| Paired significance test | `paired_tests.paired_binary`: exact McNemar over two pass/fail maps keyed by question. `compare_runs.py` is **not** reused for the verdict: it needs benchmark artifacts as positional arms (this loop makes none), and its `completion` test pairs `status == "ok"`, not QA pass outcomes | `scripts/benchmarking/paired_tests.py:47` |
+| Per-question QA pass outcome | `summary.json` → `items[].item_pass_rate` (1.0 or 0.0 at one attempt) | `archi eval qa` run directory |
+| Repeat each question | `archi eval qa --attempts N` | `src/cli/qa_eval.py` |
+| Answer-side RAGAS metrics | `factual_correctness_recall`, `factual_correctness_precision`, `noise_sensitivity`, `answer_accuracy`, `response_groundedness` (added alongside this proposal) | `src/utils/benchmark_schema.py` |
 
 **Not reusable as is: `qa_arm.sh --sweep`.** It hard-codes `--attempts 1`
 (`qa_arm.sh:87`), and it runs only a prompt already in the sweep lock
@@ -70,10 +74,6 @@ is stamped with the sha256 of the lock file itself (`lib.sh:376`). A prompt writ
 mid-campaign is not in the lock, editing a locked prompt fails `verify`, and adding an
 arm changes the lock's hash and breaks the stamp, which costs a redeploy. The loop
 therefore has its own runner (§3.4, §4) built from the same `lib.sh` guards.
-| Paired significance test | `paired_tests.paired_binary`: exact McNemar over two pass/fail maps keyed by question. `compare_runs.py` is **not** reused for the verdict: it needs benchmark artifacts as positional arms (this loop makes none), and its `completion` test pairs `status == "ok"`, not QA pass outcomes | `scripts/benchmarking/paired_tests.py:47` |
-| Per-question QA pass outcome | `summary.json` → `items[].item_pass_rate` (1.0 or 0.0 at one attempt) | `archi eval qa` run directory |
-| Repeat each question | `archi eval qa --attempts N` | `src/cli/qa_eval.py` |
-| Answer-side RAGAS metrics | `factual_correctness_recall`, `factual_correctness_precision`, `noise_sensitivity`, `answer_accuracy`, `response_groundedness` (added alongside this proposal) | `src/utils/benchmark_schema.py` |
 
 One `archi evaluate` stack is ingested once (about 50–67 minutes); after that, every
 prompt arm is just an `archi eval qa` run against that stack's database. Cost per arm

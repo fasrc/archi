@@ -30,8 +30,9 @@ metrics are on by default and a fifth is opt-in:
 - **Context precision**: How relevant the retrieved documents are
 - **Context recall**: Whether retrieval found everything the reference answer needed
 - **Answer correctness** (opt-in): Whether the answer is *correct* against the
-  reference answer. The other four grade relevance and grounding, so none of them
-  can tell a right answer from a wrong one. Enable it by adding
+  reference answer, as one blended score. The other four above grade relevance
+  and grounding, so none of them can tell a right answer from a wrong one. Enable
+  it by adding
   `answer_correctness` to
   `services.benchmarking.mode_settings.ragas_settings.enabled_metrics`.
 - **Generation-side metrics** (opt-in, same list): `factual_correctness_recall`
@@ -74,8 +75,10 @@ read (`question`→`user_input`, `answer`→`reference`, `contexts`→`retrieved
 
 ¹ Only `user_input` is required at load (plus `sources` for SOURCES mode). An
 empty `reference` is a valid draft row: it is skipped by every metric that needs
-the ground truth (`context_precision`, `context_recall` and `answer_correctness`)
-but still scored by `answer_relevancy` and `faithfulness`.
+the ground truth (`context_precision`, `context_recall`, `answer_correctness`,
+`factual_correctness_recall`, `factual_correctness_precision`,
+`noise_sensitivity` and `answer_accuracy`) but still scored by
+`answer_relevancy`, `faithfulness` and `response_groundedness`.
 
 See `examples/benchmarking/queries.json` for a complete example.
 

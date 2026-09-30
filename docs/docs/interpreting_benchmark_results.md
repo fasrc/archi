@@ -133,12 +133,16 @@ detect.
 - **`answer_relevancy` never looks at the retrieved chunks.** An answer can be
   perfectly relevant and entirely made up.
 
-- **`answer_correctness` is the only metric that compares the answer to the
-  reference answer.** The other four grade *relevance* and *grounding*; none of
-  them can tell a right answer from a wrong one. A fluent answer, grounded in
-  correctly retrieved chunks, that still contradicts the reference scores well on
-  all four and poorly only here. It blends factual overlap with the reference
-  (weight 0.75) and embedding similarity (0.25).
+- **`answer_correctness` is the only one of the original five that compares the
+  answer to the reference answer.** The other four grade *relevance* and
+  *grounding*; none of them can tell a right answer from a wrong one. A fluent
+  answer, grounded in correctly retrieved chunks, that still contradicts the
+  reference scores well on all four and poorly only here. It is one **blended**
+  score: factual overlap with the reference (weight 0.75) plus embedding
+  similarity (0.25). Four of the generation-side metrics below also compare the
+  answer to the reference, each on one narrower question:
+  `factual_correctness_recall`, `factual_correctness_precision`,
+  `noise_sensitivity` and `answer_accuracy`. `response_groundedness` does not.
 
     This metric is **opt-in**: add it to
     `services.benchmarking.mode_settings.ragas_settings.enabled_metrics`. A run
@@ -200,11 +204,13 @@ else changed too.
 | chunking, reranking, retrieval weights | `context_precision`, `context_recall`, both source metrics | `answer_relevancy` |
 | the system prompt, or the SUT model | `faithfulness`, `answer_relevancy`, `answer_correctness`, and the five generation-side metrics | the `context_*` metrics — but the agent writes its own search queries, so a prompt edit *can* move them; if it does, the prompt changed retrieval too |
 
-`answer_correctness` is the one metric that can move when nothing else does. If a
+The reference-based answer metrics (`answer_correctness`, and when enabled
+`factual_correctness_recall`, `factual_correctness_precision`,
+`noise_sensitivity` and `answer_accuracy`) can move when nothing else does. If a
 change makes the bot *right* more often without changing what it retrieved or how
-grounded it sounds, only this metric registers it. In the other direction, a
-retrieval change moves it only when retrieval was the thing standing between the
-bot and a correct answer.
+grounded it sounds, only these metrics register it; of the original five, only
+`answer_correctness` does. In the other direction, a retrieval change moves them
+only when retrieval was the thing standing between the bot and a correct answer.
 
 !!! danger "The coupling that breaks this table"
     Archi's agent decides *its own search queries* as it reasons. So changing the
