@@ -101,6 +101,23 @@ def resolve_agent_config_source(config: Dict[str, Any]) -> Optional[Path]:
     return p
 
 
+def refuse_agent_config_inside_deployment(configs, base_dir: Path) -> None:
+    """Raise if any enabled config's agent_config_path resolves inside base_dir.
+
+    archi create --force deletes base_dir before staging, so a source inside it
+    would be destroyed before it can be copied.
+    """
+    resolved_base = base_dir.expanduser().resolve()
+    for config in configs:
+        source = resolve_agent_config_source(config)
+        if source is not None and source.is_relative_to(resolved_base):
+            raise ValueError(
+                f"{_DOTTED_KEY} names {source}, which is inside the deployment "
+                f"directory {resolved_base}. archi create --force deletes that "
+                "directory — move the file outside it."
+            )
+
+
 def _container_path(raw: str) -> str:
     """Normalize ``raw`` the way the chatbot container will read it.
 

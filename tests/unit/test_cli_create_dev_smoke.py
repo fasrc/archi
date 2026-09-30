@@ -2366,3 +2366,70 @@ def test_force_create_with_missing_agent_config_file_keeps_existing_deployment(
     assert (
         "not found" in result.output
     ), f"the error should say 'not found'. output:\n{result.output}\n"
+
+
+def test_force_create_with_agent_config_inside_deployment_keeps_existing_deployment(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """A source file inside the deployment dir must not cost the operator a running deployment.
+
+    refuse_agent_config_inside_deployment() runs above remove_existing_deployment(),
+    so a config that names a file under the deployment directory is refused before any
+    teardown occurs.
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    existing = _existing_deployment(archi_home)
+
+    inside_file = existing / "configs" / "config.eval.yaml"
+    inside_file.parent.mkdir(parents=True, exist_ok=True)
+    inside_file.write_text("agent config inside deployment")
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    data.setdefault("services", {}).setdefault("chat_app", {})["evaluations"] = {
+        "enabled": True,
+        "agent_config_path": str(inside_file),
+    }
+    bad_config = tmp_path / "config-eval-inside-deployment.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before inside-deployment check ran. "
+        f"output:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed for an inside-deployment config. "
+        f"output:\n{result.output}\n"
+    )
+    assert result.exit_code != 0, (
+        f"agent_config_path inside the deployment dir should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        "services.chat_app.evaluations.agent_config_path" in result.output
+    ), f"the error should name the key. output:\n{result.output}\n"
