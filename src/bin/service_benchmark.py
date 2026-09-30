@@ -1206,14 +1206,16 @@ class ResultHandler:
                     f"to run; these differ: {', '.join(divergence)}"
                 )
 
-        # Complete rows first, then best primary score first (descending, or
-        # ascending for a lower-is-better metric); incomplete last.
+        # Complete rows first, then rows that scored the primary metric, then
+        # best primary score first (descending, or ascending for a
+        # lower-is-better metric). A missing score sorts on its own key: any
+        # stand-in value is the best noise score, or ties a scored 0.0.
         best_first = 1.0 if primary_metric in LOWER_IS_BETTER_METRICS else -1.0
         rows.sort(
             key=lambda r: (
                 1 if r["incomplete"] else 0,
-                best_first
-                * (r["primary_score"] if r["primary_score"] is not None else 0.0),
+                1 if r["primary_score"] is None else 0,
+                best_first * (r["primary_score"] or 0.0),
             )
         )
 

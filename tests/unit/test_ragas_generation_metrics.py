@@ -30,6 +30,7 @@ from scripts.benchmarking import compare_runs as cr
 from scripts.benchmarking import generate_prompt_sweep as gps
 from src.bin.service_benchmark import ResultHandler
 from src.utils import benchmark_argilla
+from src.utils import generate_benchmark_report as report
 from src.utils.benchmark_resilience import build_ragas_aggregates
 from src.utils.benchmark_schema import (
     LOWER_IS_BETTER_METRICS,
@@ -336,3 +337,91 @@ def test_markdown_report_labels_the_new_per_question_metrics():
     )
     assert "| Factual Correctness (recall) | " in md
     assert "| Noise Sensitivity (lower is better) | " in md
+
+
+def _two_metric_record(name, noise, faithfulness):
+    """A record that enables noise and faithfulness; ``None`` leaves one out."""
+    totals, row = {}, {}
+    if noise is not None:
+        totals["aggregate_noise_sensitivity"] = noise
+        row["noise_sensitivity"] = noise
+    if faithfulness is not None:
+        totals["aggregate_faithfulness"] = faithfulness
+        row["faithfulness"] = faithfulness
+    record = _leaderboard_record(name, noise)
+    benchmarking = record["configuration"]["services"]["benchmarking"]
+    benchmarking["mode_settings"]["ragas_settings"]["enabled_metrics"] = [
+        "noise_sensitivity",
+        "faithfulness",
+    ]
+    record["total_results"] = totals
+    record["single_question_results"] = {"question_1": row}
+    return record
+
+
+def test_unscored_lower_is_better_row_sorts_after_a_scored_one(_reset_results):
+    """A missing score is not the best possible noise score: an incomplete row
+    that scored noise sorts ahead of one that never scored it."""
+    ResultHandler.results = [
+        _two_metric_record("unscored", None, 0.9),
+        _two_metric_record("scored", 0.2, None),
+    ]
+    lb = ResultHandler.build_leaderboard(primary_metric="noise_sensitivity")
+    assert all(row["incomplete"] for row in lb["rows"])
+    assert [row["name"] for row in lb["rows"]] == ["scored", "unscored"]
+
+
+def test_unscored_higher_is_better_row_sorts_after_a_scored_zero(_reset_results):
+    ResultHandler.results = [
+        _two_metric_record("unscored", 0.3, None),
+        _two_metric_record("scored", None, 0.0),
+    ]
+    lb = ResultHandler.build_leaderboard(primary_metric="faithfulness")
+    assert all(row["incomplete"] for row in lb["rows"])
+    assert [row["name"] for row in lb["rows"]] == ["scored", "unscored"]
+
+
+def test_report_direction_copy_matches_the_registry():
+    """The report CLI imports nothing from src, so it keeps its own copy."""
+    assert report.LOWER_IS_BETTER_METRICS == LOWER_IS_BETTER_METRICS
+
+
+@pytest.mark.parametrize(
+    "metric, value, badge, css",
+    [
+        ("noise_sensitivity", 0.1, "🟢", "score-high"),
+        ("noise_sensitivity", 0.4, "🟡", "score-medium"),
+        ("noise_sensitivity", 0.9, "🔴", "score-low"),
+        ("faithfulness", 0.1, "🔴", "score-low"),
+        ("faithfulness", 0.9, "🟢", "score-high"),
+        (None, 0.9, "🟢", "score-high"),
+    ],
+)
+def test_score_colors_honor_the_metric_direction(metric, value, badge, css):
+    assert report._score_cell(value, metric) == f"{value:.3f} {badge}"
+    assert report._html_score_parts(value, metric) == (css, f"{value:.3f}")
+
+
+def _noise_only_inputs(noise):
+    row = {"question": "q", "status": "ok", "answer": "a", "noise_sensitivity": noise}
+    return (
+        {"services": {"benchmarking": {"modes": ["RAGAS"]}}},
+        "ragas-bench",
+        "2026-09-25",
+        {"question_1": row},
+        {"aggregate_noise_sensitivity": noise},
+        None,
+    )
+
+
+def test_markdown_report_badges_low_noise_green():
+    md = format_markdown_output(*_noise_only_inputs(0.1))
+    assert "| Noise Sensitivity (lower is better) | 0.100 🟢 |" in md
+    assert "| Noise Sensitivity | 0.100 🟢 |" in md
+    assert "🔴" not in md
+
+
+def test_html_report_paints_low_noise_green():
+    page = report.format_html_output(*_noise_only_inputs(0.1))
+    assert 'metric-value score-low"' not in page
+    assert page.count('metric-value score-high">0.100') == 2
