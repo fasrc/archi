@@ -365,7 +365,7 @@ services:
     evaluations:
       enabled: true
       root: /root/archi/evaluations
-      agent_config_path: /root/archi/configs/config.eval.yaml
+      agent_config_path: ../configs/config.eval.yaml
       mcp_config_path: ../configs/qa_evaluation_mcp.yaml
 ```
 
