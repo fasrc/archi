@@ -10,6 +10,7 @@ import src.evaluation.qa.workflow as workflow_module
 from src.evaluation.qa.artifacts import read_json, read_jsonl
 from src.evaluation.qa.oracle import OracleCallEvidence
 from src.evaluation.qa.workflow import QAWorkflow
+from src.evaluation.qa.workspace import EvaluationWorkspace
 
 
 class SequenceInvoker:
@@ -68,6 +69,25 @@ class AgentFactory:
 
             def run(self, question):
                 owner.calls[question] += 1
+                return "agent answer"
+
+        return Agent()
+
+
+class FailingAgentFactory:
+    def __init__(self):
+        self.calls = Counter()
+
+    def __call__(self, *_args, **_kwargs):
+        owner = self
+
+        class Agent:
+            tool_calls = []
+
+            def run(self, question):
+                owner.calls[question] += 1
+                if question == "Current value?":
+                    raise RuntimeError("agent exploded")
                 return "agent answer"
 
         return Agent()
@@ -181,6 +201,32 @@ def _paused_at_live_gate(monkeypatch, tmp_path):
     )
     assert gated["status"] == "attention_required"
     return workflow, run_dir
+
+
+def _crashing_post_drift_run(monkeypatch, tmp_path):
+    dataset = tmp_path / "dataset.json"
+    run_dir = tmp_path / "run"
+    _dataset(dataset, include_static=True)
+    invoker = SequenceInvoker(
+        [
+            {"value": 7, "revision": "r1"},
+            {"value": 7, "revision": "r1"},
+            {"value": 8, "revision": "r2"},
+        ]
+    )
+    monkeypatch.setattr(
+        workflow_module.EvaluatorMCPRegistry,
+        "load",
+        classmethod(lambda cls, path=None: invoker),
+    )
+    monkeypatch.setattr(workflow_module, "ArchiAgentRuntime", FailingAgentFactory())
+    QAWorkflow().composite(
+        dataset,
+        tmp_path / "agent.yaml",
+        tmp_path / "agent.md",
+        run_dir,
+    )
+    return run_dir
 
 
 class TestLiveWorkflow:
@@ -594,6 +640,81 @@ class TestLiveWorkflow:
         assert summary["attempt_lifecycle_counts"]["live_validation_failed"] == 1
         assert evaluator.calls == Counter({"extract": 1})
         assert agent.calls == Counter({"Current value?": 1})
+
+    def test_post_run_drift_with_crashed_attempt_is_accepted_as_retry_parent(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        run_dir = _crashing_post_drift_run(monkeypatch, tmp_path)
+
+        results = read_jsonl(run_dir / "evaluation_results.jsonl")
+        live_result = next(r for r in results if r["item_id"] == "live")
+        assert live_result["live_validation"]["phase"] == "post_run"
+        answers = read_jsonl(run_dir / "answers.jsonl")
+        live_answer = next(a for a in answers if a["item_id"] == "live")
+        assert live_answer["status"] == "execution_failed"
+
+        assert read_json(run_dir / "manifest.json")["status"] == "scored"
+        store = EvaluationWorkspace.open_retry_parent(run_dir)
+        store.close()
+
+    def test_crashing_post_drift_retry_plan_classifies_as_live_validation(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        run_dir = _crashing_post_drift_run(monkeypatch, tmp_path)
+
+        plan = QAWorkflow().retry_plan(run_dir)
+
+        assert plan["live_validation_attempt_count"] >= 1
+        assert plan["execution_attempt_count"] == 0
+
+    def test_grandchild_crashing_post_drift_is_accepted_as_retry_parent(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        dataset = tmp_path / "dataset.json"
+        parent = tmp_path / "parent"
+        successor = tmp_path / "successor"
+        _dataset(dataset, include_static=True)
+        invoker = SequenceInvoker(
+            [
+                {"value": 7, "revision": "r1"},
+                {"value": 7, "revision": "r1"},
+                {"value": 8, "revision": "r2"},
+                {"value": 7, "revision": "r1"},
+                {"value": 8, "revision": "r2"},
+            ]
+        )
+        monkeypatch.setattr(
+            workflow_module.EvaluatorMCPRegistry,
+            "load",
+            classmethod(lambda cls, path=None: invoker),
+        )
+        monkeypatch.setattr(workflow_module, "ArchiAgentRuntime", FailingAgentFactory())
+        workflow = QAWorkflow()
+        workflow.composite(
+            dataset,
+            tmp_path / "agent.yaml",
+            tmp_path / "agent.md",
+            parent,
+        )
+
+        parent_results = read_jsonl(parent / "evaluation_results.jsonl")
+        parent_live = next(r for r in parent_results if r["item_id"] == "live")
+        assert parent_live["live_validation"]["phase"] == "post_run"
+        parent_answers = read_jsonl(parent / "answers.jsonl")
+        parent_live_answer = next(a for a in parent_answers if a["item_id"] == "live")
+        assert parent_live_answer["status"] == "execution_failed"
+
+        workflow.retry(parent, successor)
+
+        succ_results = read_jsonl(successor / "evaluation_results.jsonl")
+        succ_live = next(r for r in succ_results if r["item_id"] == "live")
+        assert succ_live["live_validation"]["phase"] == "post_run"
+        succ_answers = read_jsonl(successor / "answers.jsonl")
+        succ_live_answer = next(a for a in succ_answers if a["item_id"] == "live")
+        assert succ_live_answer["status"] == "execution_failed"
+
+        store = EvaluationWorkspace.open_retry_parent(successor)
+        store.close()
 
     def test_skip_live_omits_calls_and_scoring_membership(
         self, monkeypatch, tmp_path, runtimes
