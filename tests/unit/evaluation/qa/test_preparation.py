@@ -309,6 +309,14 @@ class _FailingExtractorWithLastUsage:
         raise RuntimeError("extraction failed")
 
 
+class _FailingExtractorWithoutUsage:
+    # A recorder-backed extractor whose call failed before on_llm_end.
+    last_usage = None
+
+    def extract_gold(self, question, answer):
+        raise RuntimeError("auth failed")
+
+
 def _prepared_row(item_id="item"):
     return {
         "item_id": item_id,
@@ -351,6 +359,40 @@ class TestPreparationUsage:
         assert record.usage == _SAMPLE_USAGE
         row = record.to_dict()
         assert row["usage"] == _SAMPLE_USAGE
+
+    def test_failed_call_without_usage_writes_null_usage(self):
+        record = prepare_dataset_item(_item("u11"), _FailingExtractorWithoutUsage())
+
+        assert record.status == "preparation_failed"
+        assert record.usage is None
+        row = record.to_dict()
+        assert "usage" in row
+        assert row["usage"] is None
+
+    def test_failed_row_round_trips_null_usage(self):
+        row = _failed_row("u12")
+        row["usage"] = None
+
+        loaded = preparation_record_from_dict(row)
+
+        assert "usage" in loaded.to_dict()
+        assert loaded.to_dict()["usage"] is None
+
+    def test_failed_row_without_usage_key_stays_without(self):
+        loaded = preparation_record_from_dict(_failed_row("u13"))
+
+        assert "usage" not in loaded.to_dict()
+
+    def test_skipped_with_usage_key_raises_in_post_init(self):
+        with pytest.raises(ValueError, match="cannot contain output"):
+            PreparationRecord(
+                item_id="u14",
+                status="skipped_live",
+                category="category",
+                answer_mode="direct_answer",
+                answer_source="source",
+                usage_recorded=True,
+            )
 
     def test_supplied_atoms_row_has_no_usage_key(self):
         supplied_atom = Atom(id="S1", text="supplied", required=True)

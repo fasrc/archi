@@ -22,6 +22,14 @@ The rows are `preparation.jsonl` rows whose gold atoms the extractor inferred (p
 - **WHEN** the extractor or comparator returns output that fails validation
 - **THEN** the `preparation_failed` or `evaluation_failed` row carries the `usage` that the call reported
 
+#### Scenario: A call with several candidates counts once
+- **WHEN** one LLM call returns 3 candidates and each candidate message carries the same request-level `usage_metadata` of 10 input and 5 output tokens
+- **THEN** the recorded usage has `calls` 1, `input_tokens` 10 and `output_tokens` 5
+
+#### Scenario: An extractor call that fails before it reports usage records null
+- **WHEN** the extractor records usage but its call raises before any usage is reported, for example an authentication failure
+- **THEN** the `preparation_failed` row carries `"usage": null`
+
 #### Scenario: Supplied atoms make no call and add no key
 - **WHEN** a dataset item supplies its own gold atoms
 - **THEN** its `preparation.jsonl` row has no `usage` key and is otherwise unchanged
