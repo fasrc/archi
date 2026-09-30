@@ -423,6 +423,26 @@ services:
   items. It is an absolute host path or a path relative to this deployment YAML.
   Archi validates and stages the referenced evaluator MCP registry.
 
+When auth is on, the evaluation console enforces three permissions. GET routes
+require `evaluations:view`. Starting a run, cancelling or continuing a job, and
+retrying failed rows require `evaluations:run`. Every other write and all
+atom-draft routes require `evaluations:manage`. A role with `*` has all three.
+An anonymous browser request is redirected to the login page; an anonymous API
+request (any path under `/api/evaluations/`) gets a JSON 401.
+
+```yaml
+services:
+  chat_app:
+    auth:
+      auth_roles:
+        roles:
+          eval-team:
+            permissions:
+              - evaluations:view
+              - evaluations:run
+              - evaluations:manage
+```
+
 Top-level `mcp_servers` configures tools available to the tested agent; it is
 not reused as the evaluator registry. See
 [Chat-app evaluation configuration](evaluation.md#chat-app-evaluation-configuration)
