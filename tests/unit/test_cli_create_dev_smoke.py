@@ -2301,3 +2301,68 @@ def test_force_evaluate_with_an_uncoverable_service_template_keeps_existing_depl
         "the refusal must precede any image work, which is what puts it above the teardown; "
         f"pulled {record['pulled']}"
     )
+
+
+def test_force_create_with_missing_agent_config_file_keeps_existing_deployment(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """A missing agent_config_path file must not cost the operator a running deployment.
+
+    validate_configs() calls resolve_agent_config_source() through
+    _validate_chat_app_config(), which is above remove_existing_deployment().
+    This guards against moving the check into template staging (after the teardown).
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    data.setdefault("services", {}).setdefault("chat_app", {})["evaluations"] = {
+        "enabled": True,
+        "agent_config_path": str(tmp_path / "absent.yaml"),
+    }
+    bad_config = tmp_path / "config-eval-missing-file.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before evaluations file check ran. "
+        f"output:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed for a missing evaluations file. "
+        f"output:\n{result.output}\n"
+    )
+    assert result.exit_code != 0, (
+        f"evaluations.enabled:true with absent agent_config_path should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        "services.chat_app.evaluations.agent_config_path" in result.output
+    ), f"the error should name the key. output:\n{result.output}\n"
+    assert (
+        "not found" in result.output
+    ), f"the error should say 'not found'. output:\n{result.output}\n"

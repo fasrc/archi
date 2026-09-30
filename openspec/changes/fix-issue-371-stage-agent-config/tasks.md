@@ -5,7 +5,7 @@ ends red. Run `black` and `isort` on every file you touch **before** `git add`.
 
 ## 1. The host resolver: red, green, gate, commit
 
-- [ ] 1.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 1.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Append to `tests/unit/test_evaluations_config_validation.py` (after the
       last existing test; check that the last test keeps all of its assertions) tests for
@@ -43,7 +43,7 @@ ends red. Run `black` and `isort` on every file you touch **before** `git add`.
 
 ## 2. Refuse at validation time, above the teardown
 
-- [ ] 2.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 2.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Append a test to `tests/unit/test_cli_create_dev_smoke.py`, modelled on
       `test_force_create_with_enabled_evaluations_and_no_agent_config_path_keeps_existing_deployment`
