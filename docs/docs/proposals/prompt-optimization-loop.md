@@ -15,7 +15,7 @@ change the prompt, re-measure, keep or revert, repeat. It stops when it finds a 
 that improves accuracy **by a statistically significant margin**.
 
 The loop itself is easy, and almost all of it already exists (`qa_arm.sh --sweep`,
-`qa_prepare.sh`, `sweep_tools.py`, `compare_runs.py`). Three findings shape the
+`qa_prepare.sh`, `sweep_tools.py`, the exact McNemar test in `paired_tests.py`). Three findings shape the
 design more than the loop does:
 
 1. **Ten questions cannot prove a significant improvement on their own.** Each question
@@ -60,7 +60,8 @@ exists to keep the measurement honest.
 | Grade every run against the *same* atoms | `qa_prepare.sh --sweep` extracts atoms once; each arm copies the snapshot | `scripts/benchmarking/feature_matrix/qa_prepare.sh` |
 | Run one prompt arm on a locked stack | `qa_arm.sh --sweep <dir> --stack <name> --arm <stem>` | `scripts/benchmarking/feature_matrix/qa_arm.sh` |
 | Refuse if any input drifted | `sweep_tools.py lock / verify / archive` hashes every input | `scripts/benchmarking/feature_matrix/sweep_tools.py` |
-| Paired significance test | `compare_runs.py --qa-run DIR --primary ARM=completion`: exact McNemar with Holm correction; `--noise-runs` / `--noise-floor` for continuous metrics | `scripts/benchmarking/compare_runs.py`, `paired_tests.py` |
+| Paired significance test | `paired_tests.paired_binary`: exact McNemar over two pass/fail maps keyed by question. `compare_runs.py` is **not** reused for the verdict: it needs benchmark artifacts as positional arms (this loop makes none), and its `completion` test pairs `status == "ok"`, not QA pass outcomes | `scripts/benchmarking/paired_tests.py:47` |
+| Per-question QA pass outcome | `summary.json` → `items[].item_pass_rate` (1.0 or 0.0 at one attempt) | `archi eval qa` run directory |
 | Repeat each question | `archi eval qa --attempts N` | `src/cli/qa_eval.py` |
 | Answer-side RAGAS metrics | `factual_correctness_recall`, `factual_correctness_precision`, `noise_sensitivity`, `answer_accuracy`, `response_groundedness` (added alongside this proposal) | `src/utils/benchmark_schema.py` |
 
@@ -79,12 +80,14 @@ is dominated by answer time: about 48 s per question (`categories-action-plan.md
 | **Tuning** | 10 | the optimizer: questions, missed atoms, judge notes, retrieved text, answers | every iteration's keep/revert decision |
 | **Holdout** | the other 99 | nobody during iteration; the driver only reports its pass count after a confirmation | the significance verdict |
 
-**Why the holdout is the other 99 and not 30.** With an exact McNemar test on paired
-pass/fail, a 30-question holdout needs about +7 net flips (+23 percentage points) to
-reach p < 0.05. That is a larger gain than a prompt edit plausibly delivers. On 99
-questions, about +9 net flips (+9 points) is enough, for example 12 questions fixed and
-3 broken (two-sided p ≈ 0.035). The test counts both directions, so churn costs power:
-14 fixed and 5 broken is also +9 but gives p ≈ 0.064. A confirmation run costs about
+**Why the holdout is the other 99 and not 30.** Each confirmation tests at
+α = 0.05 / 3 ≈ 0.0167 (§3.5). With an exact McNemar test on paired pass/fail, a
+30-question holdout needs at least +7 net flips (+23 percentage points) with no
+question broken. That is a larger gain than a prompt edit plausibly delivers. On 99
+questions, about +10 net flips (+10 points) is enough, for example 12 questions fixed
+and 2 broken (two-sided p ≈ 0.013). The test counts both directions, so churn costs
+power: 12 fixed and 3 broken is +9 and gives p ≈ 0.035, which passes at 0.05 but not
+at 0.0167. A confirmation run costs about
 80 minutes at one attempt; it runs only when a candidate has already cleared the tuning
 bar.
 
@@ -144,15 +147,27 @@ When a kept prompt beats the baseline on the tuning set by more than 2σ, and at
 three iterations have passed since the last confirmation:
 
 1. Run it on the holdout (1 attempt, pinned atoms).
-2. `compare_runs.py --qa-run <baseline> --qa-run <candidate> --primary <arm>=completion`.
-   Exact McNemar, Holm-corrected across every confirmation spent in this campaign.
-3. **Significant (Holm p < 0.05) and positive:** stop and report.
+2. `holdout_test.py <baseline-run-dir> <candidate-run-dir> --look <k>` (§4). It pairs
+   the two runs' `items[].item_pass_rate` by `item_id`, so a completed but wrong
+   answer counts as a failure. Then it runs `paired_tests.paired_binary` (exact
+   McNemar) and appends `{look, b, c, p}` to the campaign ledger. It refuses runs with
+   more than one attempt, differing item sets, or a `k` that is not the next look in
+   the ledger.
+3. **Significant (p < 0.05 / 3) and positive:** stop and report.
    **Otherwise:** continue iterating. The holdout pass count is reported to the
    operator but not fed back to the optimizer.
 
-**Hard stops:** at most **3 confirmations** per campaign (every extra look at the
-holdout spends its statistical power, and Holm makes each look cost more), at most
-**12 iterations**, or **4 consecutive reverts**.
+**Multiplicity.** The alpha of 0.05 is split before the campaign starts: each of the
+at most three looks tests at 0.05 / 3 (Bonferroni). The chance of any false positive
+across the campaign is then at most 0.05, for any number of looks up to three and any
+correlation between them, and a campaign that stops early spends no more. Holm is not
+used across looks: it ranks p-values that all exist at the same time, and a campaign
+that stops at a significant look never produces the later ones. The Holm correction
+inside `compare_runs.py` covers only the secondary tests of one call.
+
+**Hard stops:** at most **3 confirmations** per campaign (the per-look alpha is
+fixed at 0.05 / 3, so a fourth look has no alpha left), at most **12 iterations**, or
+**4 consecutive reverts**.
 
 **After a significant result**, one more step guards against the winner's curse (the
 best of several tries tends to overstate its own gain): a fresh replicate of both
@@ -198,6 +213,7 @@ Small and test-first. Everything in §2 is reused as is.
 |---|---|
 | `scripts/benchmarking/prompt_opt/select_tuning_set.py` | §3.2: classify failures as retrieval vs generation using the atom judge on retrieved text; emit the 10-item QA dataset and the 99-item holdout |
 | `scripts/benchmarking/prompt_opt/leak_check.py` | §3.6: refuse a prompt that shares 6-grams, URLs, paths or numbers with any reference |
+| `scripts/benchmarking/prompt_opt/holdout_test.py` | §3.5: paired exact McNemar over two holdout QA runs' per-item pass outcomes, at the per-look alpha 0.05 / 3; each look appended to the ledger |
 | `scripts/benchmarking/prompt_opt/decide.py` | §3.4/§3.5: the keep/revert rule, the confirmation trigger and the stop rules, reading `summary.json` and the ledger |
 | `scripts/benchmarking/prompt_opt/dossier.py` | §3.4 step 1: one failure dossier per tuning question from `evaluation_results.jsonl` |
 | `scripts/benchmarking/prompt_opt/run_campaign.sh` | Driver: preconditions → step 0 → iterate → confirm, calling `qa_arm.sh --sweep` |
@@ -237,7 +253,7 @@ final RAGAS confirmation, not in the loop.
 |---|---|
 | Overfitting to ten questions | Holdout verdict; leak check; one hypothesis per change |
 | Judge noise read as signal | Step-0 noise floor; pinned atoms; 5 attempts per tuning question |
-| Too many looks at the holdout | Maximum 3 confirmations, Holm-corrected; holdout scores never reach the optimizer |
+| Too many looks at the holdout | Maximum 3 confirmations, each at the preallocated alpha 0.05 / 3; holdout scores never reach the optimizer |
 | Prompt quietly changes retrieval | Report `context_*` movement in the final RAGAS run |
 | Gains that don't survive a replicate (winner's curse) | Fresh replicate of both prompts before adoption |
 | Stack or SUT drift mid-campaign | `sweep_tools.py verify` around every run; corpus pin check in `qa_arm.sh` |
@@ -251,7 +267,7 @@ This is operator-driven evidence work: the output is a measured prompt change, n
 feature. Following the precedent set by the in-context-learning proposal, the tracking
 issue is labelled `evidence-trial`, so it is milestone-exempt and nightly automation
 never schedules or drains it. A winning prompt is adopted through the normal path: a PR
-that changes the deployed agent spec, citing the campaign ledger and the `compare_runs`
+that changes the deployed agent spec, citing the campaign ledger and the `holdout_test.py`
 verdict as evidence.
 
 ## 8. Decisions taken as defaults (operator may override)
