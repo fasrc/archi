@@ -646,9 +646,9 @@ Two layers:
 >
 > **This does not make `--force` safe in general.** Config, secrets, the compose
 > plan, the agent files, and port configuration (bad or duplicated values) are
-> checked before anything is destroyed. Closing this class of errors more
-> completely means rendering the replacement before destroying the old deployment
-> rather than adding checks one at a time
+> checked before anything is destroyed. The whole replacement is now rendered into a temporary directory and discarded
+> before anything is destroyed, for both `archi create --force` and
+> `archi evaluate --force`; a `--dry` run performs the same render check
 > ([#294](https://github.com/fasrc/archi/issues/294)). Beyond that, a failure
 > while *starting* the deployment — an image that will not pull, a port already
 > taken by something else, a compose error — still leaves you without a running
