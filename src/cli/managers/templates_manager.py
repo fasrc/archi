@@ -744,7 +744,11 @@ class TemplateManager:
             context.base_dir / EVALUATION_CONFIG_DIR / AGENT_CONFIG_STAGED_FILENAME
         )
 
-        source = resolve_agent_config_source(config)
+        # The console runs in the chatbot container; without it an inactive
+        # evaluations block must not be resolved (see _validate_chat_app_config).
+        source = None
+        if "chatbot" in context.plan.get_enabled_services():
+            source = resolve_agent_config_source(config)
         if source is None:
             context.evaluation_agent_config_staged = False
             if staged_path.exists() or staged_path.is_symlink():

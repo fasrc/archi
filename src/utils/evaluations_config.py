@@ -1,7 +1,7 @@
 import os
 import posixpath
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
 LIVE_AGENT_CONFIG_PATH = "/root/archi/configs/config.yaml"
 AGENT_CONFIG_STAGED_FILENAME = "qa_agent_config.yaml"
@@ -101,12 +101,20 @@ def resolve_agent_config_source(config: Dict[str, Any]) -> Optional[Path]:
     return p
 
 
-def refuse_agent_config_inside_deployment(configs, base_dir: Path) -> None:
+def refuse_agent_config_inside_deployment(
+    configs, base_dir: Path, enabled_services: Iterable[str]
+) -> None:
     """Raise if any enabled config's agent_config_path resolves inside base_dir.
 
     archi create --force deletes base_dir before staging, so a source inside it
     would be destroyed before it can be copied.
+
+    Skipped when ``chatbot`` is not in ``enabled_services``: the console runs in
+    the chatbot container, and ``_validate_chat_app_config`` skips chat settings
+    on the same rule, so an inactive console block cannot block the deployment.
     """
+    if "chatbot" not in enabled_services:
+        return
     resolved_base = base_dir.expanduser().resolve()
     for config in configs:
         source = resolve_agent_config_source(config)

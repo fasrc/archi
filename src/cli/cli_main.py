@@ -292,7 +292,9 @@ def create(
         #
         # It cannot move below the --dry return either, or a dry run would stop
         # reporting the removal it would have performed.
-        refuse_agent_config_inside_deployment(config_manager.get_configs(), base_dir)
+        refuse_agent_config_inside_deployment(
+            config_manager.get_configs(), base_dir, enabled_services
+        )
         remove_existing_deployment(
             base_dir, name, force, dry, other_flags.get("podman", False)
         )
@@ -905,7 +907,9 @@ def evaluate(
             dry=False,
         )
 
-        refuse_agent_config_inside_deployment(config_manager.get_configs(), base_dir)
+        refuse_agent_config_inside_deployment(
+            config_manager.get_configs(), base_dir, enabled_services
+        )
         remove_existing_deployment(
             base_dir, name, force, False, other_flags.get("podman", False)
         )

@@ -362,7 +362,7 @@ def test_refuse_agent_config_inside_deployment_raises_for_source_inside(tmp_path
     inside_file.write_text("agent config")
     config = _make_enabled_config(tmp_path, str(inside_file))
     with pytest.raises(ValueError) as exc_info:
-        refuse_agent_config_inside_deployment([config], base_dir)
+        refuse_agent_config_inside_deployment([config], base_dir, ["chatbot"])
     msg = str(exc_info.value)
     assert _DOTTED_KEY in msg
     assert str(inside_file.resolve()) in msg
@@ -375,7 +375,7 @@ def test_refuse_agent_config_inside_deployment_no_raise_for_source_outside(tmp_p
     outside_file = tmp_path / "agent.yaml"
     outside_file.write_text("agent config")
     config = _make_enabled_config(tmp_path, str(outside_file))
-    refuse_agent_config_inside_deployment([config], base_dir)
+    refuse_agent_config_inside_deployment([config], base_dir, ["chatbot"])
 
 
 def test_refuse_agent_config_inside_deployment_no_raise_when_disabled(tmp_path):
@@ -396,7 +396,7 @@ def test_refuse_agent_config_inside_deployment_no_raise_when_disabled(tmp_path):
             }
         },
     }
-    refuse_agent_config_inside_deployment([config], base_dir)
+    refuse_agent_config_inside_deployment([config], base_dir, ["chatbot"])
 
 
 def test_refuse_agent_config_inside_deployment_raises_for_second_config_inside(
@@ -430,4 +430,25 @@ def test_refuse_agent_config_inside_deployment_raises_for_second_config_inside(
         },
     }
     with pytest.raises(ValueError, match="outside"):
-        refuse_agent_config_inside_deployment([config1, config2], base_dir)
+        refuse_agent_config_inside_deployment([config1, config2], base_dir, ["chatbot"])
+
+
+def test_refuse_agent_config_inside_deployment_skips_when_chatbot_not_selected(
+    tmp_path,
+):
+    base_dir = tmp_path / "deployment"
+    base_dir.mkdir()
+    config = _make_enabled_config(tmp_path, str(tmp_path / "missing.yaml"))
+    refuse_agent_config_inside_deployment(
+        [config], base_dir, ["postgres", "benchmarking"]
+    )
+
+
+def test_refuse_agent_config_inside_deployment_checks_when_chatbot_selected(
+    tmp_path,
+):
+    base_dir = tmp_path / "deployment"
+    base_dir.mkdir()
+    config = _make_enabled_config(tmp_path, str(tmp_path / "missing.yaml"))
+    with pytest.raises(ValueError, match="not found"):
+        refuse_agent_config_inside_deployment([config], base_dir, ["chatbot"])

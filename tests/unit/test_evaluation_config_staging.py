@@ -33,11 +33,16 @@ def _template_manager():
     return TemplateManager(environment, verbosity=0)
 
 
-def _context(tmp_path, config):
+def _context(tmp_path, config, enabled_services=("chatbot",)):
     return SimpleNamespace(
         base_dir=tmp_path / "deployment",
         config_manager=_FakeConfigManager(config),
-        plan=SimpleNamespace(host_mode=False, verbosity=0, name="demo"),
+        plan=SimpleNamespace(
+            host_mode=False,
+            verbosity=0,
+            name="demo",
+            get_enabled_services=lambda: list(enabled_services),
+        ),
         benchmarking=False,
     )
 
@@ -316,3 +321,23 @@ class TestEvaluationAgentConfigStaging:
         eval_config_idx = stage_names.index("_stage_evaluation_config")
         agent_config_idx = stage_names.index("_stage_agent_config")
         assert agent_config_idx == eval_config_idx + 1
+
+    def test_chatbot_not_selected_skips_missing_source_and_removes_stale_file(
+        self, tmp_path
+    ):
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        context = _context(
+            tmp_path,
+            _agent_config(source_dir / "archi.yaml", "missing.yaml"),
+            enabled_services=("postgres", "grader"),
+        )
+        staged_dir = context.base_dir / "evaluation_config"
+        staged_dir.mkdir(parents=True)
+        staged_path = staged_dir / "qa_agent_config.yaml"
+        staged_path.write_text("stale\n", encoding="utf-8")
+
+        _template_manager()._stage_agent_config(context)
+
+        assert not staged_path.exists()
+        assert context.evaluation_agent_config_staged is False
