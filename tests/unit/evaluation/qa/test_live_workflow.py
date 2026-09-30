@@ -667,6 +667,55 @@ class TestLiveWorkflow:
         assert plan["live_validation_attempt_count"] >= 1
         assert plan["execution_attempt_count"] == 0
 
+    def test_grandchild_crashing_post_drift_is_accepted_as_retry_parent(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        dataset = tmp_path / "dataset.json"
+        parent = tmp_path / "parent"
+        successor = tmp_path / "successor"
+        _dataset(dataset, include_static=True)
+        invoker = SequenceInvoker(
+            [
+                {"value": 7, "revision": "r1"},
+                {"value": 7, "revision": "r1"},
+                {"value": 8, "revision": "r2"},
+                {"value": 7, "revision": "r1"},
+                {"value": 8, "revision": "r2"},
+            ]
+        )
+        monkeypatch.setattr(
+            workflow_module.EvaluatorMCPRegistry,
+            "load",
+            classmethod(lambda cls, path=None: invoker),
+        )
+        monkeypatch.setattr(workflow_module, "ArchiAgentRuntime", FailingAgentFactory())
+        workflow = QAWorkflow()
+        workflow.composite(
+            dataset,
+            tmp_path / "agent.yaml",
+            tmp_path / "agent.md",
+            parent,
+        )
+
+        parent_results = read_jsonl(parent / "evaluation_results.jsonl")
+        parent_live = next(r for r in parent_results if r["item_id"] == "live")
+        assert parent_live["live_validation"]["phase"] == "post_run"
+        parent_answers = read_jsonl(parent / "answers.jsonl")
+        parent_live_answer = next(a for a in parent_answers if a["item_id"] == "live")
+        assert parent_live_answer["status"] == "execution_failed"
+
+        workflow.retry(parent, successor)
+
+        succ_results = read_jsonl(successor / "evaluation_results.jsonl")
+        succ_live = next(r for r in succ_results if r["item_id"] == "live")
+        assert succ_live["live_validation"]["phase"] == "post_run"
+        succ_answers = read_jsonl(successor / "answers.jsonl")
+        succ_live_answer = next(a for a in succ_answers if a["item_id"] == "live")
+        assert succ_live_answer["status"] == "execution_failed"
+
+        store = EvaluationWorkspace.open_retry_parent(successor)
+        store.close()
+
     def test_skip_live_omits_calls_and_scoring_membership(
         self, monkeypatch, tmp_path, runtimes
     ):

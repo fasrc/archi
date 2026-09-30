@@ -34,7 +34,7 @@ Five standing notes for every task:
 
 ## 1. Admit the drift-plus-flaky workspace
 
-- [ ] 1.1 `model: opus` — In `tests/unit/evaluation/qa/test_live_workflow.py`, add a
+- [x] 1.1 `model: opus` — In `tests/unit/evaluation/qa/test_live_workflow.py`, add a
       `FailingAgentFactory` beside `AgentFactory`
       (`tests/unit/evaluation/qa/test_live_workflow.py:58-73`) whose `run` raises
       `RuntimeError("agent exploded")` for a named question and returns `"agent answer"`
@@ -53,14 +53,14 @@ Five standing notes for every task:
       AnswerStatus.EXECUTION_FAILED.value}` and reject a missing row or any other status;
       leave the `pre_run` branch exactly as it is. Close the store in the test. Gate green;
       commit.
-- [ ] 1.2 `model: sonnet` — Regression guard, no source change expected: on that same
+- [x] 1.2 `model: sonnet` — Regression guard, no source change expected: on that same
       workspace assert `QAWorkflow().retry_plan(run_dir)` returns a plan whose
       `live_validation_attempt_count` covers the crashed attempt and whose
       `execution_attempt_count` is `0` for it. **This passes once 1.1 lands — that is the
       point of it. Do not contrive a failure first.** It pins the retry kind, which is what
       holds the attempt behind a fresh pre-run check
       (`src/evaluation/qa/workflow.py:965-976`). Gate green; commit.
-- [ ] 1.3 `model: opus` — Grandchild case. Drive `QAWorkflow().retry(parent, successor)` on
+- [x] 1.3 `model: opus` — Grandchild case. Drive `QAWorkflow().retry(parent, successor)` on
       the 1.1 workspace with the failing agent still in place, and extend the
       `SequenceInvoker` to FIVE values: `[7/r1, 7/r1, 8/r2, 7/r1, 8/r2]` — the parent's three,
       then the retry's fresh pre-run check (MATCHES the baseline, so the attempt is promoted
