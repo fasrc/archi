@@ -63,7 +63,9 @@ def sum_usage(usages: Iterable[Optional[Dict[str, Any]]]) -> Optional[Dict[str, 
 ```
 
 - `on_llm_end` walks **every** generation in `response.generations` (all lists, not only
-  `[0][0]`). Each `ChatGeneration` whose `.message` is an `AIMessage` is one call.
+  `[0][0]`). Each inner list is **one call**: its candidates (`n > 1`) share the
+  request-level usage, so only the first `ChatGeneration` in the list that reports
+  usage is counted. A list where no candidate reports counts as one unreported call.
 - Model attribution per message: `response_metadata.get("model_name")`, else
   `response_metadata.get("model")`, else the constructor's `model`. Provider is always the
   constructor's `provider` (the call site knows it; messages do not carry it).

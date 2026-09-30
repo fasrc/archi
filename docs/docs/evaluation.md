@@ -1212,7 +1212,10 @@ logs, and reports according to the sensitivity of the evaluation set.
 
 #### Price a run from recorded tokens
 
-Token records are written wherever an LLM call is made during evaluation.
+Token records cover the QA workflow's own LLM calls (atom extraction, the tested
+agent, the comparator) and the RAGAS judge in benchmark runs. The benchmark's
+tested model (the SUT) is **not** recorded: `judge_usage` counts only the judge, so
+pricing a benchmark run from these records leaves out the SUT's tokens.
 
 **Where `usage` appears:**
 
@@ -1267,6 +1270,9 @@ where `rate_in` and `rate_out` are the per-token input and output prices for tha
 - `unreported_calls > 0` means that many LLM calls finished without sending token counts;
   those tokens were consumed but are not measurable here.
 - A call that raised before it finished left no usage event and is not counted in any field.
+- `input_tokens` is one total. When a provider bills cached-read or cache-creation
+  input tokens at a different rate, that split is not kept here, so the formula
+  gives an estimate that can be higher or lower than the bill.
 - A retry run directory copies rows from its parent; those rows carry the parent run's usage,
   so the retry totals include them.
 
