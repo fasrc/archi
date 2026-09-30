@@ -135,7 +135,7 @@
 
 ## 3. Docs, then prove the whole thing
 
-- [ ] 3.1 Edit, gate, commit — all in this one task.
+- [x] 3.1 Edit, gate, commit — all in this one task.
       - `docs/docs/evaluation.md` near line 451 (`Archi snapshots the resolved file as
         agent_config.resolved.yaml`): add one to three sentences. Values under secret-named
         keys (API keys, tokens, passwords, `Authorization` headers, and the password part of
