@@ -150,7 +150,7 @@
 
 ## 4. Publish
 
-- [ ] 4.1 Check, then push and open the PR (no code change in this task). First run the full
+- [x] 4.1 Check, then push and open the PR (no code change in this task). First run the full
       `bash scripts/gate.sh` on the tip. Confirm that `git diff origin/dev --stat` shows only
       the files named in this change (plus this change's `openspec/` directory). Confirm that
       `git diff origin/dev -- tests/ | grep -c '^-.*def test_'` prints `0`, and that
