@@ -98,9 +98,12 @@ grading** in Argilla. See [`benchmarking.md`](benchmarking.md#human-grading-via-
 
 ## 2. The metrics, in plain words
 
-Archi reports two families of scores. All are between 0 and 1, higher is better.
+Archi reports two families of scores. All are between 0 and 1. Higher is better for
+every score except `noise_sensitivity`, where **lower is better** (it is the share of
+wrong claims). The leaderboard ranks it ascending, and the reports color it on that
+reversed scale.
 
-### 2.1 The five RAGAS metrics
+### 2.1 The RAGAS metrics
 
 RAGAS is the open-source library (version 0.3.5) that computes these. Each metric
 answers a different question, and — critically — **each one looks at a different

@@ -14,8 +14,10 @@ Let Claude improve the agent's system prompt on its own: read why answers failed
 change the prompt, re-measure, keep or revert, repeat. It stops when it finds a change
 that improves accuracy **by a statistically significant margin**.
 
-The loop itself is easy, and almost all of it already exists (`qa_arm.sh --sweep`,
-`qa_prepare.sh`, `sweep_tools.py`, the exact McNemar test in `paired_tests.py`). Three findings shape the
+The loop itself is easy, and most of it already exists (`archi eval qa`,
+`qa_prepare.sh`, the `lib.sh` stack and corpus guards, the exact McNemar test in
+`paired_tests.py`). The one piece that does not fit is the sweep runner: it runs a fixed,
+pre-locked set of prompts at one attempt, so the loop gets its own runner (§3.4). Three findings shape the
 design more than the loop does:
 
 1. **Ten questions cannot prove a significant improvement on their own.** Each question
@@ -57,9 +59,17 @@ exists to keep the measurement honest.
 |---|---|---|
 | Score one prompt against a question set, fact by fact | `archi eval qa` (prepare → run → score): the judge marks each reference fact ("atom") entailed / missing / contradicted; an answer passes only if every required atom is entailed | `src/cli/qa_eval.py`, `src/evaluation/qa/`, `docs/docs/evaluation.md` |
 | Test a prompt with no redeploy | `--agent-spec <file.md>` reads the prompt file directly | `src/cli/qa_eval.py` |
-| Grade every run against the *same* atoms | `qa_prepare.sh --sweep` extracts atoms once; each arm copies the snapshot | `scripts/benchmarking/feature_matrix/qa_prepare.sh` |
-| Run one prompt arm on a locked stack | `qa_arm.sh --sweep <dir> --stack <name> --arm <stem>` | `scripts/benchmarking/feature_matrix/qa_arm.sh` |
-| Refuse if any input drifted | `sweep_tools.py lock / verify / archive` hashes every input | `scripts/benchmarking/feature_matrix/sweep_tools.py` |
+| Grade every run against the *same* atoms | `archi eval qa prepare` extracts atoms once into a run directory; each run copies that snapshot (the pattern `qa_prepare.sh --sweep` and `qa_arm.sh --sweep` use) | `scripts/benchmarking/feature_matrix/qa_prepare.sh`, `qa_arm.sh:80` |
+| Stack, corpus and code guards | `fm_require_stack_name`, `fm_require_pinned_corpus`, `fm_code_tree`, `fm_fingerprint`, `fm_ledger_append` | `scripts/benchmarking/feature_matrix/lib.sh` |
+| Hash-and-verify inputs | `sweep_tools.py lock / verify` hashes every input of a **fixed** arm set | `scripts/benchmarking/feature_matrix/sweep_tools.py` |
+
+**Not reusable as is: `qa_arm.sh --sweep`.** It hard-codes `--attempts 1`
+(`qa_arm.sh:87`), and it runs only a prompt already in the sweep lock
+(`qa_arm.sh:62`). The lock hashes every arm's prompt (`sweep_tools.py:224`), and the stack
+is stamped with the sha256 of the lock file itself (`lib.sh:376`). A prompt written
+mid-campaign is not in the lock, editing a locked prompt fails `verify`, and adding an
+arm changes the lock's hash and breaks the stamp, which costs a redeploy. The loop
+therefore has its own runner (§3.4, §4) built from the same `lib.sh` guards.
 | Paired significance test | `paired_tests.paired_binary`: exact McNemar over two pass/fail maps keyed by question. `compare_runs.py` is **not** reused for the verdict: it needs benchmark artifacts as positional arms (this loop makes none), and its `completion` test pairs `status == "ok"`, not QA pass outcomes | `scripts/benchmarking/paired_tests.py:47` |
 | Per-question QA pass outcome | `summary.json` → `items[].item_pass_rate` (1.0 or 0.0 at one attempt) | `archi eval qa` run directory |
 | Repeat each question | `archi eval qa --attempts N` | `src/cli/qa_eval.py` |
@@ -110,8 +120,9 @@ spend its night on changes that cannot help.
 
 ### 3.3 Step 0: measure the noise
 
-Run the **unchanged** production prompt three times on the tuning set (5 attempts per
-question, pinned atoms), then once on the holdout. Record:
+Run the **unchanged** production prompt three times on the tuning set
+(`run_arm.sh --set tuning --attempts 5`, pinned atoms), then once on the holdout
+(`--set holdout --attempts 1`). Record:
 
 - per-question pass-rate spread across the three tuning runs (how often a question
   flips with nothing changed);
@@ -130,7 +141,8 @@ plus about 80 minutes for the holdout: roughly 3 h 20 min in all.
 2. Propose ONE hypothesis and ONE prompt change that tests it, logged to the ledger:
            {iteration, hypothesis, targeted atoms/questions, diff}
 3. Check   the spec loads (load_agent_spec) and passes the leak check (§3.6)
-4. Run     qa_arm.sh --sweep <dir> --stack <name> --arm <stem>   (10 q × 5 attempts)
+4. Run     prompt_opt/run_arm.sh --campaign <dir> --prompt arms/<stem>.md
+                                 --set tuning --attempts 5          (10 q × 5 attempts)
 5. Decide  keep if  Δ mean atom score (tuning) > 2σ_noise
                 and no canary lost more than 1 of its 5 attempts' passes
            else revert; log the result either way
@@ -146,7 +158,7 @@ reverted hypothesis stays in the ledger so it is not retried under a new name.
 When a kept prompt beats the baseline on the tuning set by more than 2σ, and at least
 three iterations have passed since the last confirmation:
 
-1. Run it on the holdout (1 attempt, pinned atoms).
+1. Run it on the holdout: `run_arm.sh --set holdout --attempts 1` (pinned atoms).
 2. `holdout_test.py <baseline-run-dir> <candidate-run-dir> --look <k>` (§4). It pairs
    the two runs' `items[].item_pass_rate` by `item_id`, so a completed but wrong
    answer counts as a failure. Then it runs `paired_tests.paired_binary` (exact
@@ -191,16 +203,28 @@ metrics move, the prompt changed retrieval too, and the report must say so.
 - **Never see the holdout.** The driver gives the optimizer tuning-set dossiers only.
 - **Prompt edits only.** No config, retrieval or code changes; those belong to the
   feature-matrix process.
-- **Every arm locked.** `sweep_tools.py verify` must pass before and after each run.
+- **Every arm locked, append-only.** The campaign lock (§4) is written once, before
+  step 0. It pins the code tree, the stack, the corpus, the judge profile, the baseline
+  prompt, and the two prepared atom snapshots (tuning and holdout). It pins no
+  candidate prompt, so it never changes and the stack stamp stays valid. Each
+  candidate prompt is a new file `arms/<stem>.md`. The runner appends its sha256 to the
+  ledger before the run and refuses a stem already in the ledger. After the run, it
+  checks the file again and voids the run if the hash changed. A prompt file is never
+  edited in place: the next change is the next stem.
 
 ### 3.7 Preconditions (checked by the driver before step 0)
 
-- The stack's corpus fingerprint matches its pin (`qa_arm.sh` already refuses otherwise).
+- The stack's corpus fingerprint matches its pin (`fm_require_pinned_corpus`, the check
+  `qa_arm.sh` already uses).
 - The SUT vLLM endpoint named by the stack's config is up and **reserved for the
   campaign**. A shared endpoint changes latency, and a model swap changes everything.
 - Host eval environment pinned: `transformers==4.57.6`, `sentence-transformers==5.1.2`.
   Without them every attempt silently fails with exit code 0.
-- Judge key present (`HUIT_API_KEY_FILE`) and atoms prepared once (`qa_prepare.sh --sweep`).
+- Judge key present (`HUIT_API_KEY_FILE`). Atoms prepared once per set: one
+  `archi eval qa prepare` on the 10-item tuning dataset and one on the 99-item holdout
+  dataset. The sets do not overlap, so each question's atoms are extracted exactly once.
+  `archi eval qa run` has no item filter, and a prepared directory carries its item
+  count in its manifest, so a full-bank snapshot cannot be cut down to a subset.
 - No RAGAS run and no other QA run on the same stack for the duration.
 
 ---
@@ -216,7 +240,9 @@ Small and test-first. Everything in §2 is reused as is.
 | `scripts/benchmarking/prompt_opt/holdout_test.py` | §3.5: paired exact McNemar over two holdout QA runs' per-item pass outcomes, at the per-look alpha 0.05 / 3; each look appended to the ledger |
 | `scripts/benchmarking/prompt_opt/decide.py` | §3.4/§3.5: the keep/revert rule, the confirmation trigger and the stop rules, reading `summary.json` and the ledger |
 | `scripts/benchmarking/prompt_opt/dossier.py` | §3.4 step 1: one failure dossier per tuning question from `evaluation_results.jsonl` |
-| `scripts/benchmarking/prompt_opt/run_campaign.sh` | Driver: preconditions → step 0 → iterate → confirm, calling `qa_arm.sh --sweep` |
+| `scripts/benchmarking/prompt_opt/lock_campaign.py` | §3.6: write the campaign lock once (code tree, stack, corpus pin, judge profile, baseline prompt, both prepared snapshots); `verify` re-hashes all of it |
+| `scripts/benchmarking/prompt_opt/run_arm.sh` | §3.4: one QA run of one prompt file: `--campaign <dir> --prompt <file> --set tuning\|holdout --attempts N`. It uses the `lib.sh` guards as `qa_arm.sh --sweep` does, verifies the campaign lock, copies the chosen prepared snapshot, and passes `--attempts N` to `archi eval qa run`. It also applies the append-only prompt rule of §3.6 |
+| `scripts/benchmarking/prompt_opt/run_campaign.sh` | Driver: preconditions → step 0 → iterate → confirm, calling `run_arm.sh` |
 | Optimizer brief (skill `archi-prompt-optimize`) | The instructions the Claude session follows each iteration: read the dossier, write one hypothesis, edit the prompt, log it, never read the holdout |
 
 The optimizer runs as a Claude Code session driven one iteration at a time (a `/loop`
@@ -256,7 +282,8 @@ final RAGAS confirmation, not in the loop.
 | Too many looks at the holdout | Maximum 3 confirmations, each at the preallocated alpha 0.05 / 3; holdout scores never reach the optimizer |
 | Prompt quietly changes retrieval | Report `context_*` movement in the final RAGAS run |
 | Gains that don't survive a replicate (winner's curse) | Fresh replicate of both prompts before adoption |
-| Stack or SUT drift mid-campaign | `sweep_tools.py verify` around every run; corpus pin check in `qa_arm.sh` |
+| Stack or SUT drift mid-campaign | Campaign-lock `verify` around every run; corpus pin check before and after each run in `run_arm.sh` |
+| A prompt changes after its run | Append-only prompt files; hash in the ledger before the run, checked again after it |
 | The optimizer tunes the prompt for the judge rather than for users | Atoms are fixed facts, not style; a human reads the final diff before adoption |
 
 ---
