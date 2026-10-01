@@ -46,6 +46,8 @@ SECRET_SEGMENTS = {
 SECRET_SUFFIXES = (
     "password",
     "passwd",
+    "passphrase",
+    "passphrases",
     "secret",
     "token",
     "key",
@@ -62,7 +64,7 @@ SECRET_SUFFIXES = (
     "bearertokens",
 )
 
-_SECRET_PREFIXES = ("password", "passwd", "secret")
+_SECRET_PREFIXES = ("password", "passwd", "passphrase", "secret")
 
 # Split plural forms (access_tokens, apiTokens): "tokens" is secret only after a
 # credential qualifier, so count keys such as max_tokens stay plain.

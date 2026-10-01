@@ -71,6 +71,11 @@ _MUST_BE_SECRET = [
     "apiTokens",
     "auth_tokens",
     "bearer_tokens",
+    "passphrases",
+    "db_passphrases",
+    "dbPassphrases",
+    "dbpassphrase",
+    "dbpassphrases",
 ]
 
 # ---------------------------------------------------------------------------

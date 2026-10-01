@@ -45,10 +45,10 @@ the Anthropic provider reads (`src/archi/providers/anthropic_provider.py:92`), a
    - is in `SECRET_SEGMENTS = {"password", "passwd", "passphrase", "secret", "secrets",
      "token", "key", "keys", "apikey", "apikeys", "authorization", "authtoken", "bearer",
      "cookie", "cookies", "credential", "credentials", "session", "csrf", "xsrf", "dsn"}`, or
-   - ends with one of `SECRET_SUFFIXES = ("password", "passwd", "secret", "token", "key",
+   - ends with one of `SECRET_SUFFIXES = ("password", "passwd", "passphrase", "passphrases", "secret", "token", "key",
      "keys", "apikey", "authorization", "credential", "credentials", "cookie", "authtokens",
      "accesstokens", "refreshtokens", "apitokens", "bearertokens")`, or
-   - starts with one of `("password", "passwd", "secret")`.
+   - starts with one of `("password", "passwd", "passphrase", "secret")`.
 
 Note: the suffix `key` matches glued names (`privatekey`, `accesskey`, `encryptionkey`). The
 chat app's substring rule masks those names too, so this rule must match them. Note: `tokens` (plural) is **not** a secret segment, and it is not a
