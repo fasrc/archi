@@ -545,6 +545,7 @@ _NON_BOOL_DEFAULT_BASELINE = [
     "services.benchmarking.model=''",
     "services.benchmarking.ollama_url=''",
     "services.benchmarking.out_dir='.'",
+    "services.benchmarking.primary_metric='faithfulness'",
     "services.benchmarking.provider=''",
     "services.benchmarking.queries_path='queries'",
     "services.chat_app.agent_class='CMSCompOpsAgent'",
@@ -918,6 +919,7 @@ def test_a_configured_git_value_is_not_overwritten_by_the_sso_block():
     [
         "global.ACCEPTED_FILES",
         "services.benchmarking.modes",
+        "services.benchmarking.mode_settings.ragas_settings.enabled_metrics",
         "services.benchmarking.ragas_settings.enabled_metrics",
         "data_manager.utils.anonymizer.excluded_words",
         "data_manager.utils.anonymizer.greeting_patterns",

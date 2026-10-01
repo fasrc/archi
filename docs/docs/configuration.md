@@ -20,7 +20,8 @@ iterable`. `archi create` cannot render the config at all.
 
 - `global.ACCEPTED_FILES`
 - `services.benchmarking.modes`
-- `services.benchmarking.ragas_settings.enabled_metrics`
+- `services.benchmarking.mode_settings.ragas_settings.enabled_metrics` (and its older
+  spelling `services.benchmarking.ragas_settings.enabled_metrics`, still read)
 - `data_manager.utils.anonymizer.excluded_words`
 - `data_manager.utils.anonymizer.greeting_patterns`
 - `data_manager.utils.anonymizer.signoff_patterns`

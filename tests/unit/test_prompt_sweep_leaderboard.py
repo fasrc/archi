@@ -12,6 +12,7 @@ from typing import Optional
 import pytest
 
 from src.bin.service_benchmark import ResultHandler
+from src.utils.benchmark_schema import RAGAS_METRIC_NAMES
 
 
 def _make_record(
@@ -108,13 +109,7 @@ def test_one_row_per_config():
     assert set(by_name) == {"v1-strict", "v2-lean", "v3-cited"}
     row = by_name["v2-lean"]
     assert row["agent_md_file"] == "config/agents/fasrc-cannon-v2-lean.md"
-    assert set(row["metrics"]) == {
-        "answer_relevancy",
-        "faithfulness",
-        "context_precision",
-        "context_recall",
-        "answer_correctness",
-    }
+    assert set(row["metrics"]) == set(RAGAS_METRIC_NAMES)
     assert row["metrics"]["faithfulness"] == pytest.approx(0.9)
 
 
@@ -143,13 +138,7 @@ def test_configured_primary_metric_reranks():
     assert lb["primary_metric"] == "answer_relevancy"
     assert lb["rows"][0]["name"] == "b"
     # every metric value still present regardless of primary
-    assert set(lb["rows"][0]["metrics"]) == {
-        "answer_relevancy",
-        "faithfulness",
-        "context_precision",
-        "context_recall",
-        "answer_correctness",
-    }
+    assert set(lb["rows"][0]["metrics"]) == set(RAGAS_METRIC_NAMES)
 
 
 def test_unknown_primary_metric_falls_back_to_faithfulness():
