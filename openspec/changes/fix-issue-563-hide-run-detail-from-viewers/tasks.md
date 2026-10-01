@@ -5,7 +5,7 @@ and a commit — no task ends red.
 
 ## 1. The redaction seam: red, green, gate, commit
 
-- [ ] 1.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 1.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Create `tests/unit/evaluation/qa/test_run_visibility.py` with the
       module tests of design D4 (the full-payload test, the edge-case test, the literal
