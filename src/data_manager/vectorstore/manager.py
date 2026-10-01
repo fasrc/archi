@@ -20,6 +20,7 @@ from src.utils.logging import get_logger
 
 from .loader_utils import select_loader
 from .node_parsing import (
+    CHILD_CHUNK_OVERLAP,
     CHILD_EMBEDDING_DIM,
     DEFAULT_CHILD_CHUNK_SIZE,
     DEFAULT_PARENT_CHUNK_SIZE,
@@ -60,6 +61,24 @@ def _resolve_chunking_strategy(chunking_cfg):
     hierarchical reranker cannot expand to parent context.
     """
     return chunking_cfg.get("strategy", SENTENCE_STRATEGY)
+
+
+def _resolve_chunk_overlap(chunking_cfg):
+    """Resolve ``data_manager.chunking.chunk_overlap``, defaulting to ``CHILD_CHUNK_OVERLAP``.
+
+    ``None`` (key present but empty in YAML) resolves to the default, matching the
+    absent-key behavior. Booleans, non-integers, and negative values raise
+    ``ValueError`` at construction time so the operator sees one clear error rather
+    than a per-document LlamaIndex crash during ingest.
+    """
+    value = chunking_cfg.get("chunk_overlap", CHILD_CHUNK_OVERLAP)
+    if value is None:
+        return CHILD_CHUNK_OVERLAP
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(
+            f"data_manager.chunking.chunk_overlap must be a non-negative int, got {value!r}"
+        )
+    return value
 
 
 class VectorStoreManager:
@@ -155,6 +174,7 @@ class VectorStoreManager:
         self.parent_chunk_size, self.child_chunk_size = _resolve_chunk_sizes(
             chunking_cfg
         )
+        self.child_chunk_overlap = _resolve_chunk_overlap(chunking_cfg)
 
         self.stemmer = None
         stemming_cfg = self._data_manager_config.get("stemming", {})
@@ -910,6 +930,7 @@ class VectorStoreManager:
                 strategy=effective_strategy,
                 parent_chunk_size=self.parent_chunk_size,
                 child_chunk_size=self.child_chunk_size,
+                child_chunk_overlap=self.child_chunk_overlap,
             ):
                 child_texts: List[str] = []
                 for child in node.child_texts:
