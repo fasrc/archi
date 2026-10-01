@@ -101,7 +101,7 @@ Standing notes for every task:
 
 ## 6. Verify, push, and open the PR
 
-- [ ] 6.1 Run the gate once more on the finished change and confirm it exits 0 with patch
+- [x] 6.1 Run the gate once more on the finished change and confirm it exits 0 with patch
       coverage at or above 80 %. Confirm `git status` is empty. Push with
       `git push -u origin fix/issue-403-child-chunk-overlap` — the branch tracks
       `origin/dev`, so `-u` is required. Open the PR with
