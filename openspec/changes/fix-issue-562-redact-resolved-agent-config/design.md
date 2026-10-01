@@ -67,7 +67,10 @@ Must be secret: `api_key`, `apiKey`, `APIKey`, `API_KEY`, `x-api-key`, `X-Api-Ke
 `Authorization`, `proxy-authorization`, `cookie`, `Set-Cookie`, `session`, `credentials`,
 `encryption_key`, `private_key`, `csrf_token`, `dsn`, `bearer`, `privatekey`, `PRIVATEKEY`,
 `accesskey`, `sessionkey`, `signingkey`, `encryptionkey`, `masterkey`, `authtokens`,
-`accesstokens`, `refreshtokens`, `monkey` (an accepted over-match).
+`accesstokens`, `refreshtokens`, `monkey` (an accepted over-match), and the split plural
+forms `access_tokens`, `accessTokens`, `refresh_tokens`, `apiTokens`, `auth_tokens`,
+`bearer_tokens`: a `tokens` segment is secret when the segment before it is `access`,
+`refresh`, `api`, `auth`, or `bearer`.
 
 Must not be secret: `max_tokens`, `preferred_max_tokens`, `prompt_tokens`, `input_tokens`,
 `output_tokens`, `total_tokens`, `per_result_tokens`, `additional_special_tokens`,
@@ -86,29 +89,38 @@ from the snapshot.
 stays the same (`write_yaml` dumps with `sort_keys=False`).
 
 - A mapping entry whose key is secret (D2):
-  - scalar `str` (non-empty), `int`, or `float` (not `bool`) → `REDACTED`;
   - `None`, `""`, and `bool` → unchanged. These hold no secret, and `None` must stay `None`
     so that "absent" keeps its meaning;
-  - a mapping or a list → recurse in **secret mode**. In secret mode, every non-empty
-    `str`, `int`, or `float` leaf becomes `REDACTED`, whatever its key. Keys stay.
+  - a mapping or a list → recurse in **secret mode**. In secret mode every leaf except
+    `None`, `""`, and `bool` becomes `REDACTED`, whatever its key. Keys stay;
+  - every other scalar (`str`, `int`, `float`, and any other type, such as a YAML date or
+    `!!binary` bytes) → `REDACTED`. An unknown type must not pass the boundary.
 - A mapping that has a `name` or `key` entry whose string value is secret per D2 (the header
   list form `{name: Authorization, value: "Bearer x"}`) → its `value` entry is redacted as if
-  its own key were secret.
-- Every string leaf outside secret mode: find **every** URL in the string with the unanchored
-  pattern `[A-Za-z][A-Za-z0-9+.-]*://[^\s]+`, and parse each match with
-  `urllib.parse.urlsplit`. When `.password` is not `None`, rebuild that match with the
-  password replaced by `URL_REDACTED = "redacted"` (no brackets: `urlsplit` reads `[...]` in a
-  netloc as an IPv6 literal and raises `ValueError`, so `[redacted]` would break the second,
-  idempotent pass). When `urlsplit` raises `ValueError` on a match, replace the **whole** match
-  with `REDACTED` (fail closed), and keep the scheme, user, host, port, path, query, and
-  fragment unchanged. `urlsplit` splits the netloc at its **last** `@`, which is how clients
-  read it, so a password that contains `@` is redacted whole. Test rows (each one exact):
+  its own key were secret, containers included.
+- Every string leaf outside secret mode: find **every** `scheme://userinfo@` occurrence with
+  `([A-Za-z][A-Za-z0-9+.-]*://)([^\s/?#]*)@`. The userinfo runs to the **last** `@` of the
+  authority (the authority ends at the first `/`, `?`, `#`, or whitespace), which is how
+  clients read it, so a password that contains `@` is redacted whole. When the userinfo has a
+  `:`, the text after the first `:` becomes `URL_REDACTED = "redacted"` (no brackets, so the
+  URL stays parseable). Nothing is parsed or rebuilt: the host, port, path, query, and
+  fragment stay byte for byte, so an IPv6 host or an out-of-range port cannot be reformatted
+  or raise. Each occurrence is its own match, so a URL nested in another URL's query is
+  redacted too. This replaced a first version that parsed each greedy `://[^\s]+` match with
+  `urllib.parse.urlsplit` and rebuilt it from `hostname`/`port`: that dropped IPv6 brackets,
+  raised on an out-of-range port, and left a nested URL's password in place (PR #592 review).
+  The pattern reads the same boundaries `urlsplit` does (netloc ends at the first `/`, `?`, or
+  `#`; split at its last `@`). Test rows (each one exact):
   - `postgresql://u:s7@db:5432/x` → `postgresql://u:redacted@db:5432/x`;
   - `dsn=postgresql://u:pw@h/x` → `dsn=postgresql://u:redacted@h/x` (an embedded URL);
   - `https://u:p1@h one https://v:p2@h` → `https://u:redacted@h one https://v:redacted@h`;
   - `postgresql://u:p@ss@db/x` → `postgresql://u:redacted@db/x`;
   - `https://user@h/x` and `https://h/x` → unchanged (no password);
-  - `https://u:pw@[::1` → `[redacted]` (unparseable, fail closed).
+  - `https://u:pw@[::1` → `https://u:redacted@[::1` (the host text is kept);
+  - `http://u:p@[::1]:8080/x` → `http://u:redacted@[::1]:8080/x`;
+  - `http://u:p@h:99999/` → `http://u:redacted@h:99999/`;
+  - `https://u:p@h/?next=https://v:q@other/` → `https://u:redacted@h/?next=https://v:redacted@other/`;
+  - `https://host:8080/p?email=a@b.com` → unchanged (the `@` is in the query).
   Each row's output is unchanged by a second pass.
 - Mapping keys that are not strings are matched as `str(key)` and stay unchanged in the output.
 

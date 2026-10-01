@@ -1,6 +1,7 @@
 """Tests for src.evaluation.qa.redaction — key rule, value redaction, idempotence."""
 
 import copy
+import datetime
 
 import pytest
 import yaml
@@ -64,6 +65,12 @@ _MUST_BE_SECRET = [
     "accesstokens",
     "refreshtokens",
     "monkey",
+    "access_tokens",
+    "accessTokens",
+    "refresh_tokens",
+    "apiTokens",
+    "auth_tokens",
+    "bearer_tokens",
 ]
 
 # ---------------------------------------------------------------------------
@@ -198,7 +205,16 @@ _URL_ROWS = [
     ("postgresql://u:p@ss@db/x", "postgresql://u:redacted@db/x"),
     ("https://user@h/x", "https://user@h/x"),
     ("https://h/x", "https://h/x"),
-    ("https://u:pw@[::1", REDACTED),
+    # Only the password changes; the host text is kept byte for byte, so an
+    # unparseable host no longer turns the whole string into REDACTED.
+    ("https://u:pw@[::1", "https://u:redacted@[::1"),
+    ("http://u:p@[::1]:8080/x", "http://u:redacted@[::1]:8080/x"),
+    ("http://u:p@h:99999/", "http://u:redacted@h:99999/"),
+    (
+        "https://u:p@h/?next=https://v:q@other/",
+        "https://u:redacted@h/?next=https://v:redacted@other/",
+    ),
+    ("https://host:8080/p?email=a@b.com", "https://host:8080/p?email=a@b.com"),
 ]
 
 
@@ -206,6 +222,37 @@ _URL_ROWS = [
 def test_url_password_is_redacted(url_in, url_out):
     out = redact_agent_config({"endpoint": url_in})
     assert out["endpoint"] == url_out
+
+
+@pytest.mark.parametrize("url_in,url_out", _URL_ROWS)
+def test_url_redaction_is_idempotent(url_in, url_out):
+    once = redact_agent_config({"endpoint": url_in})
+    assert redact_agent_config(once) == once
+
+
+@pytest.mark.parametrize(
+    "value",
+    [["Bearer SECRET"], {"token": "Bearer SECRET"}, [{"v": "Bearer SECRET"}]],
+)
+def test_header_list_container_value_is_redacted(value):
+    out = redact_agent_config({"headers": [{"name": "Authorization", "value": value}]})
+    assert "SECRET" not in repr(out)
+
+
+@pytest.mark.parametrize(
+    "value", [datetime.date(2026, 9, 30), b"xx", datetime.datetime(2026, 9, 30)]
+)
+def test_other_scalar_types_under_a_secret_key_are_redacted(value):
+    out = redact_agent_config(
+        {
+            "password": value,
+            "secrets": {"inner": value},
+            "headers": [{"name": "X-Api-Key", "value": value}],
+        }
+    )
+    assert out["password"] == REDACTED
+    assert out["secrets"]["inner"] == REDACTED
+    assert out["headers"][0]["value"] == REDACTED
 
 
 # ---------------------------------------------------------------------------
