@@ -88,7 +88,7 @@ Standing notes for every task:
 
 ## 5. Docs
 
-- [ ] 5.1 In `docs/docs/configuration.md`, add a row for `chunking.chunk_overlap` (int,
+- [x] 5.1 In `docs/docs/configuration.md`, add a row for `chunking.chunk_overlap` (int,
       default `20`) to the chunking table near line 577: the child-splitter overlap in
       tokens for the hierarchical strategies, clamped to half the child size (to half the
       smaller of the two sizes on the `sentence` path), `0` disables it, and a change takes

@@ -513,7 +513,7 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 | `collection_name` | string | `default_collection` | Vector store collection name |
 | `embedding_name` | string | `OpenAIEmbeddings` | Embedding backend |
 | `chunk_size` | int | `1000` | Max characters per text chunk |
-| `chunk_overlap` | int | `0` | Overlapping characters between chunks |
+| `chunk_overlap` | int | `0` | Overlapping characters between chunks (`character` strategy only; the hierarchical strategies use `chunking.chunk_overlap`) |
 | `parallel_workers` | int | `32` | Parallel **embedding**-phase ingestion workers |
 | `scrape_workers` | int | `8` | Parallel **scrape**-phase workers: how many seed URLs are crawled concurrently |
 | `scrape_per_host_workers` | int | `4` | Cap on concurrent in-flight requests to any single host |
@@ -575,6 +575,7 @@ hierarchical-rerank retriever returns). The legacy `character` strategy uses the
 | `chunking.strategy` | string | `sentence` | `sentence` (hierarchical, sentence-aware), `markdown` (hierarchical, header-aware for Markdown files — see below), or `character` (legacy flat chunks) |
 | `chunking.parent_chunk_size` | int | `2048` | Target size in tokens of parent context nodes (hierarchical strategies only) |
 | `chunking.child_chunk_size` | int | `512` | Target size in tokens of embedded child leaf nodes (hierarchical strategies only) |
+| `chunking.chunk_overlap` | int | `20` | Overlap in tokens between child chunks (hierarchical strategies only). Clamped to half the child size; on the `sentence` path, to half the smaller of the two sizes. `0` turns overlap off. A change takes effect only on re-ingest. |
 
 ```yaml
 data_manager:
@@ -582,12 +583,15 @@ data_manager:
     strategy: sentence
     parent_chunk_size: 2048
     child_chunk_size: 512
+    chunk_overlap: 20
 ```
 
 > **Backward compatibility:** `parent_chunk_size`/`child_chunk_size` are optional.
 > Omitting them reproduces the built-in defaults (2048/512), so an existing
-> deployment's chunking is unchanged. They exist so a benchmark can sweep chunk
-> sizes and recommend defaults from data — see
+> deployment's chunking is unchanged. Omitting `chunk_overlap` keeps the overlap at
+> 20 tokens. A child size below 40 now gets an overlap of half its size (for example,
+> 10 for a size of 20), so re-ingest such a collection to apply the change. The keys
+> exist so a benchmark can sweep chunk sizes and recommend defaults from data — see
 > [Benchmarking → Hierarchical-rerank A/B](benchmarking.md#hierarchical-rerank-ab).
 
 #### The `markdown` strategy
@@ -608,9 +612,9 @@ adds no config keys.
 - **Per-file dispatch.** Only files whose suffix is `md` or `markdown` (any case, with
   or without the dot) take the Markdown parser. Every other file chunks with the
   `sentence` strategy, so a mixed corpus needs no per-source setting.
-- **Child overlap.** Child nodes overlap by 20 tokens, clamped to `child_chunk_size`,
-  on both hierarchical strategies. A `child_chunk_size` below 200 no longer fails
-  ingestion.
+- **Child overlap.** Child nodes overlap by `chunking.chunk_overlap` tokens (default
+  20), clamped to half of `child_chunk_size`, on both hierarchical strategies. A
+  `child_chunk_size` below 200 no longer fails ingestion.
 
 > **A strategy change re-chunks nothing already ingested.** The vectorstore diffs by
 > resource hash, and `redeploy.sh` preserves the data volumes, so old and new chunks
