@@ -65,7 +65,7 @@ Standing notes for every task:
 
 ## 3. Template: render the key only when set
 
-- [ ] 3.1 In `tests/unit/test_base_config_chunking_render.py`, write failing tests with the
+- [x] 3.1 In `tests/unit/test_base_config_chunking_render.py`, write failing tests with the
       file's `_render` helper: `chunking.chunk_overlap: 0` renders as `0` (not absent, not
       20); `64` renders as `64`; an unset key is absent from the rendered `chunking` block;
       `None` is absent. Watch them fail. Add the D5 block to
