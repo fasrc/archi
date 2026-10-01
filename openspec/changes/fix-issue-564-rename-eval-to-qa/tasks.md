@@ -36,7 +36,7 @@
 
 ## 1. Rename the group, keep a hidden deprecated alias
 
-- [ ] 1.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 1.1 Write the red, make it green, gate, commit — all in this one task.
       **Red** — in `tests/unit/evaluation/qa/test_cli.py`, add these tests. Use
       `CliRunner(mix_stderr=False)` for each (click is pinned at 8.1.7, where that argument
       exists), and import `DEPRECATION_NOTICE` and `qa_cli` from `src.cli.qa_eval`:

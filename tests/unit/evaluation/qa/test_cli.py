@@ -1,10 +1,12 @@
+import sys
 from types import SimpleNamespace
 
+import pytest
 from click.testing import CliRunner
 
 import src.cli.qa_eval as qa_cli_module
 import src.evaluation.qa.workflow as workflow_module
-from src.cli.qa_eval import eval_cli
+from src.cli.qa_eval import DEPRECATION_NOTICE, eval_cli, qa_cli
 from src.evaluation.qa.artifacts import read_json
 
 
@@ -22,9 +24,8 @@ def test_composite_cli_uses_prd_option_shape(monkeypatch, tmp_path):
     monkeypatch.setattr(qa_cli_module, "QAWorkflow", lambda: _Workflow(calls))
 
     result = CliRunner().invoke(
-        eval_cli,
+        qa_cli,
         [
-            "qa",
             "--dataset",
             str(tmp_path / "data.json"),
             "--agent-config",
@@ -51,7 +52,7 @@ def test_composite_cli_uses_prd_option_shape(monkeypatch, tmp_path):
 
 
 def test_composite_cli_rejects_worker_counts_above_the_supported_limit():
-    result = CliRunner().invoke(eval_cli, ["qa", "--run-workers", "17"])
+    result = CliRunner().invoke(qa_cli, ["--run-workers", "17"])
 
     assert result.exit_code == 2
     assert "17 is not in the range 1<=x<=16" in result.output
@@ -71,9 +72,8 @@ def test_staged_cli_passes_each_worker_count_only_to_its_phase(monkeypatch, tmp_
 
     monkeypatch.setattr(qa_cli_module, "QAWorkflow", Workflow)
     run_result = CliRunner().invoke(
-        eval_cli,
+        qa_cli,
         [
-            "qa",
             "run",
             str(tmp_path / "run"),
             "--agent-config",
@@ -85,9 +85,8 @@ def test_staged_cli_passes_each_worker_count_only_to_its_phase(monkeypatch, tmp_
         ],
     )
     score_result = CliRunner().invoke(
-        eval_cli,
+        qa_cli,
         [
-            "qa",
             "score",
             str(tmp_path / "run"),
             "--score-workers",
@@ -102,7 +101,7 @@ def test_staged_cli_passes_each_worker_count_only_to_its_phase(monkeypatch, tmp_
 
 
 def test_composite_cli_reports_missing_required_flags():
-    result = CliRunner().invoke(eval_cli, ["qa"])
+    result = CliRunner().invoke(qa_cli, [])
 
     assert result.exit_code == 2
     assert (
@@ -165,9 +164,8 @@ def test_composite_cli_runs_local_dataset_to_report_with_four_attempts(
     run_dir = tmp_path / "run"
 
     result = CliRunner().invoke(
-        eval_cli,
+        qa_cli,
         [
-            "qa",
             "--dataset",
             str(dataset),
             "--agent-config",
@@ -186,3 +184,60 @@ def test_composite_cli_runs_local_dataset_to_report_with_four_attempts(
     summary = read_json(run_dir / "summary.json")
     assert summary["quality_accounted_attempts"] == 4
     assert summary["overall_attempt_pass_rate"] == 1.0
+
+
+def test_qa_group_is_named_qa():
+    assert qa_cli.name == "qa"
+
+
+def test_qa_subcommands_answer_help():
+    runner = CliRunner(mix_stderr=False)
+    for args in (["run", "--help"], ["score", "--help"]):
+        result = runner.invoke(qa_cli, args)
+        assert result.exit_code == 0, result.output
+        assert result.stderr == ""
+
+
+def test_eval_alias_runs_qa_and_prints_the_notice_once(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(qa_cli_module, "QAWorkflow", lambda: _Workflow(calls))
+    options = [
+        "--dataset",
+        str(tmp_path / "data.json"),
+        "--agent-config",
+        str(tmp_path / "agent.yaml"),
+        "--agent-spec",
+        str(tmp_path / "agent.md"),
+        "--output-dir",
+        str(tmp_path / "run"),
+    ]
+    runner = CliRunner(mix_stderr=False)
+    alias = runner.invoke(eval_cli, ["qa"] + options)
+    direct = runner.invoke(qa_cli, options)
+
+    assert alias.exit_code == 0, alias.output
+    assert direct.exit_code == 0, direct.output
+    assert alias.stdout == direct.stdout
+    assert alias.stderr.count(DEPRECATION_NOTICE) == 1
+    assert direct.stderr == ""
+
+
+def test_eval_alias_prints_the_notice_on_subcommand_help():
+    result = CliRunner(mix_stderr=False).invoke(eval_cli, ["qa", "run", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert DEPRECATION_NOTICE in result.stderr
+
+
+def test_top_level_help_lists_qa_and_hides_eval(monkeypatch, capsys):
+    import src.cli.cli_main as cli_main
+
+    monkeypatch.setattr(sys, "argv", ["archi", "--help"])
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main()
+
+    assert exc_info.value.code == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert any(line.startswith("  qa ") for line in lines)
+    assert any(line.startswith("  evaluate ") for line in lines)
+    assert not any(line.startswith("  eval ") for line in lines)
