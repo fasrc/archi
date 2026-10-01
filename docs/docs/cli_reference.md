@@ -460,9 +460,12 @@ Editing an artifact from a completed phase makes the next phase fail closed.
 `run` uses the selected Archi pipeline through its normal production interface.
 The evaluation runner observes the pipeline's tool callbacks and stores complete
 ordered query, response, error, status, and available duration evidence in
-`answers.jsonl`. It does not add tool-schema preflight, secret redaction,
-automatic retries, or evaluation-specific changes to agent behavior. Treat the
-workspace as sensitive because tool evidence is not truncated or redacted.
+`answers.jsonl`. Before the first phase, `run` replaces secret values in the
+resolved Archi config with `[redacted]`, and every phase runs from that redacted
+config, so credentials must come from the environment. It does not add
+tool-schema preflight, automatic retries, or other evaluation-specific changes to
+agent behavior. Treat the workspace as sensitive because tool evidence is not
+truncated or redacted.
 When the selected agent spec enables `mcp` but normal pipeline construction
 loads no MCP tools, that attempt is recorded as `execution_failed` before the
 model is invoked.
