@@ -85,3 +85,27 @@ def test_default_retrieval_config_is_coherent():
     dm = cfg["data_manager"]
     assert dm["chunking"]["strategy"] == "sentence"
     assert dm["retrievers"]["hierarchical_rerank"]["enabled"] is True
+
+
+def test_chunk_overlap_zero_renders_as_zero():
+    # 0 is a valid configured value (disables overlap); it must not be treated as
+    # falsy and swapped for a default.
+    cfg = _render({"chunking": {"chunk_overlap": 0}})
+    assert cfg["data_manager"]["chunking"]["chunk_overlap"] == 0
+
+
+def test_chunk_overlap_nonzero_renders():
+    cfg = _render({"chunking": {"chunk_overlap": 64}})
+    assert cfg["data_manager"]["chunking"]["chunk_overlap"] == 64
+
+
+def test_chunk_overlap_absent_when_unset():
+    # Unset → manager uses CHILD_CHUNK_OVERLAP; key must not appear in config.
+    cfg = _render({"chunking": {"strategy": "sentence"}})
+    assert "chunk_overlap" not in cfg["data_manager"]["chunking"]
+
+
+def test_chunk_overlap_absent_when_none():
+    # None (key present but empty in YAML) → same as absent; manager uses default.
+    cfg = _render({"chunking": {"chunk_overlap": None}})
+    assert "chunk_overlap" not in cfg["data_manager"]["chunking"]
