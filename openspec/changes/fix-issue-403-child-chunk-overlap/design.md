@@ -71,9 +71,12 @@ explicitly; `true` would otherwise become overlap 1.
 
 ```jinja
 {%- if data_manager.chunking.chunk_overlap is defined and data_manager.chunking.chunk_overlap is not none %}
-    chunk_overlap: {{ data_manager.chunking.chunk_overlap }}
+    chunk_overlap: {{ data_manager.chunking.chunk_overlap | tojson }}
 {%- endif %}
 ```
+
+`| tojson`, never a bare interpolation: YAML reloads a bare `"20"` as `20` and `"null"`
+as `None`, so an invalid string would pass `_resolve_chunk_overlap` instead of failing.
 
 Never `| default(20, true)`: the truthy default turns a configured `0` into `20`, and the
 `0` arm is the one the sweep needs.
