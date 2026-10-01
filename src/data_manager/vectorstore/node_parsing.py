@@ -51,10 +51,9 @@ from llama_index.core.utils import get_tokenizer
 DEFAULT_PARENT_CHUNK_SIZE = 2048
 DEFAULT_CHILD_CHUNK_SIZE = 512
 
-# Explicit child-splitter overlap (tokens), matching HierarchicalNodeParser's
-# default on the sentence path. SentenceSplitter's own default is 200 and it
-# raises when overlap >= chunk_size, so a small configured child_chunk_size
-# would otherwise fail every document at ingest.
+# Default child-splitter overlap (tokens).  The effective overlap is clamped to
+# at most half the child chunk size, so a configured child_chunk_size below 40
+# automatically gets less than 20 (design D2).
 CHILD_CHUNK_OVERLAP = 20
 
 SENTENCE_STRATEGY = "sentence"
@@ -99,6 +98,7 @@ def build_hierarchical_nodes(
     strategy: str = SENTENCE_STRATEGY,
     parent_chunk_size: int = DEFAULT_PARENT_CHUNK_SIZE,
     child_chunk_size: int = DEFAULT_CHILD_CHUNK_SIZE,
+    child_chunk_overlap: int = CHILD_CHUNK_OVERLAP,
 ) -> List[HierarchicalNode]:
     """Parse a LangChain ``Document`` into hierarchical parent/child nodes.
 
@@ -108,6 +108,9 @@ def build_hierarchical_nodes(
         strategy: ``"sentence"`` (default) or ``"markdown"``.
         parent_chunk_size: Target size of parent context nodes.
         child_chunk_size: Target size of embedded child leaf nodes.
+        child_chunk_overlap: Desired child-splitter overlap; clamped to at most
+            half the child chunk size (or the smaller of parent/child on the
+            sentence path).
 
     Returns:
         A list of :class:`HierarchicalNode`. Each parent has at least one child;
@@ -121,9 +124,13 @@ def build_hierarchical_nodes(
     li_document = LlamaDocument(text=text, metadata=metadata)
 
     if strategy == MARKDOWN_STRATEGY:
-        parents = _parse_markdown(li_document, parent_chunk_size, child_chunk_size)
+        parents = _parse_markdown(
+            li_document, parent_chunk_size, child_chunk_size, child_chunk_overlap
+        )
     elif strategy == SENTENCE_STRATEGY:
-        parents = _parse_sentence(li_document, parent_chunk_size, child_chunk_size)
+        parents = _parse_sentence(
+            li_document, parent_chunk_size, child_chunk_size, child_chunk_overlap
+        )
     else:
         raise ValueError(
             f"Unsupported hierarchical chunking strategy: {strategy!r}. "
@@ -231,22 +238,20 @@ def embed_child_nodes(
     return embeddings
 
 
-def _clamped_overlap(chunk_size: int) -> int:
-    """Return :data:`CHILD_CHUNK_OVERLAP`, clamped to at most ``chunk_size``.
+def _clamped_overlap(chunk_size: int, overlap: int = CHILD_CHUNK_OVERLAP) -> int:
+    """Return ``overlap`` clamped to at most half ``chunk_size``.
 
-    LlamaIndex splitters raise ``ValueError`` only when ``chunk_overlap``
-    exceeds ``chunk_size`` (strictly greater), so the clamp preserves every
-    legal value exactly — a ``chunk_size`` of 20 keeps the 20-token overlap it
-    always had — and only shrinks the overlap for smaller configured sizes
-    instead of failing every document at ingest.
+    Returns ``max(0, min(overlap, chunk_size // 2))``.  Sizes below 40 get less
+    than the default 20-token overlap, removing near-duplicate child chunks.
     """
-    return min(CHILD_CHUNK_OVERLAP, max(chunk_size, 0))
+    return max(0, min(overlap, chunk_size // 2))
 
 
 def _parse_sentence(
     li_document: LlamaDocument,
     parent_chunk_size: int,
     child_chunk_size: int,
+    child_chunk_overlap: int,
 ) -> List["tuple[str, List[str], Dict]"]:
     """Sentence-aware two-level parse via :class:`HierarchicalNodeParser`.
 
@@ -256,7 +261,9 @@ def _parse_sentence(
     """
     parser = HierarchicalNodeParser.from_defaults(
         chunk_sizes=[parent_chunk_size, child_chunk_size],
-        chunk_overlap=_clamped_overlap(min(parent_chunk_size, child_chunk_size)),
+        chunk_overlap=_clamped_overlap(
+            min(parent_chunk_size, child_chunk_size), child_chunk_overlap
+        ),
     )
     nodes = parser.get_nodes_from_documents([li_document])
     nodes_by_id = {node.node_id: node for node in nodes}
@@ -500,6 +507,7 @@ def _parse_markdown(
     li_document: LlamaDocument,
     parent_chunk_size: int,
     child_chunk_size: int,
+    child_chunk_overlap: int,
 ) -> List["tuple[str, List[str], Dict]"]:
     """Header-aware parse: sections are parents, sentence-split into children.
 
@@ -514,7 +522,7 @@ def _parse_markdown(
     parent_splitter = SentenceSplitter(chunk_size=parent_chunk_size, chunk_overlap=0)
     child_splitter = SentenceSplitter(
         chunk_size=child_chunk_size,
-        chunk_overlap=_clamped_overlap(child_chunk_size),
+        chunk_overlap=_clamped_overlap(child_chunk_size, child_chunk_overlap),
     )
     section_nodes = section_parser.get_nodes_from_documents([li_document])
 
