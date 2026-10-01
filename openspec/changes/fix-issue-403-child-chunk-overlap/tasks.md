@@ -23,7 +23,7 @@ Standing notes for every task:
 
 ## 1. Parser: configurable overlap with the new clamp
 
-- [ ] 1.1 In `tests/unit/test_node_parsing.py`, write failing tests: (a) `_clamped_overlap`
+- [x] 1.1 In `tests/unit/test_node_parsing.py`, write failing tests: (a) `_clamped_overlap`
       with an explicit overlap — `_clamped_overlap(512, 500) == 256`,
       `_clamped_overlap(512, 0) == 0`, `_clamped_overlap(16, 20) == 8`,
       `_clamped_overlap(512) == 20`; (b) `build_hierarchical_nodes(...,
@@ -43,7 +43,7 @@ Standing notes for every task:
 
 ## 2. Manager: resolve, validate, and pass the value
 
-- [ ] 2.1 In `tests/unit/test_vectorstore_manager_hierarchical.py`, write failing tests for
+- [x] 2.1 In `tests/unit/test_vectorstore_manager_hierarchical.py`, write failing tests for
       a new `_resolve_chunk_overlap(chunking_cfg)`: absent key → `CHILD_CHUNK_OVERLAP`;
       `None` → `CHILD_CHUNK_OVERLAP`; `0` → `0`; `64` → `64`; and `-1`, `True`, `"20"`,
       `2.5` each raise `ValueError` whose message contains
