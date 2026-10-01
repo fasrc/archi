@@ -75,7 +75,7 @@ Standing notes for every task:
 
 ## 4. Measurement script parity
 
-- [ ] 4.1 In `tests/unit/test_measure_chunk_overlap.py`, write a failing parity test:
+- [x] 4.1 In `tests/unit/test_measure_chunk_overlap.py`, write a failing parity test:
       for every `chunk_size` in `(8, 16, 39, 40, 41, 48, 512)`, `parent_chunk_size` in
       `(16, 128, 2048)`, and `overlap` in `(0, 1, 20, 64, 500)`, assert
       `clamp_overlap(overlap, chunk_size, parent_chunk_size) ==
