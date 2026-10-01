@@ -20,7 +20,7 @@ document runs through the same two-level ``HierarchicalNodeParser`` the
 ingest's ``sentence`` strategy builds (``src/data_manager/vectorstore/
 node_parsing.py``, ``_parse_sentence``): parents of ``--parent-chunk-size``
 tokens, children of ``--chunk-size`` tokens, one overlap budget applied at both
-levels, clamped to the smaller size exactly like ``_clamped_overlap``. The
+levels, clamped to half the smaller size exactly like ``_clamped_overlap``. The
 document's metadata is replayed too, because the splitter subtracts the
 metadata string's tokens from every level's budget — with the loader's metadata
 (``source``, plus the PDF keys for a PDF page) the re-chunk reproduces the
@@ -310,8 +310,12 @@ def attach_source_text(
 
 
 def clamp_overlap(overlap: int, chunk_size: int, parent_chunk_size: int) -> int:
-    """The budget the splitters really get: production clamps like this too."""
-    return max(0, min(overlap, chunk_size, parent_chunk_size))
+    """The budget the splitters really get: half the smaller size, at most.
+
+    Mirrors ``_clamped_overlap(min(parent, child), overlap)`` in
+    ``_parse_sentence``, so a reported budget is the one the ingest uses.
+    """
+    return max(0, min(overlap, min(chunk_size, parent_chunk_size) // 2))
 
 
 def sweep_budgets(
@@ -509,7 +513,7 @@ def split_documents(
     node_parsing.py: the document's metadata travels into the LlamaIndex
     ``Document`` (the splitter shrinks every budget by its token length), and a
     two-level ``HierarchicalNodeParser`` applies one overlap budget at both
-    levels, clamped to the smaller chunk size. Returns the leaf (child) chunks
+    levels, clamped to half the smaller chunk size. Returns the leaf (child) chunks
     in emission order, each placed in its document by :func:`place_chunks`.
     """
     from llama_index.core import Document

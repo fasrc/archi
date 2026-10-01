@@ -25,6 +25,7 @@ INGEST_CONFIG_KEYS = (
     "html_to_markdown",
     "categorization",
     "chunking_strategy",
+    "child_chunk_overlap",
     "embedding_model",
     "embedding_dimensions",
     "chunk_size",
@@ -36,6 +37,7 @@ INGEST_CONFIG_KEYS = (
 # Defaults, each mirroring the ingest path's own fallback:
 #   html_to_markdown / categorization -> build_persistence_service
 #   chunking_strategy                 -> _resolve_chunking_strategy
+#   child_chunk_overlap               -> _resolve_chunk_overlap
 #   sitemap_min_pages                 -> scraper_manager's _as_int(..., 1)
 #   the rest                          -> the config-seed fallbacks
 _DEFAULT_EMBEDDING_MODEL = "HuggingFaceEmbeddings"
@@ -44,6 +46,7 @@ _DEFAULT_CHUNK_SIZE = 1000
 _DEFAULT_CHUNK_OVERLAP = 150
 _DEFAULT_DISTANCE_METRIC = "cosine"
 _DEFAULT_CHUNKING_STRATEGY = "sentence"
+_DEFAULT_CHILD_CHUNK_OVERLAP = 20
 _DEFAULT_SITEMAP_MIN_PAGES = 1
 
 
@@ -80,6 +83,12 @@ def build_ingest_config_snapshot(data_manager_config: Any) -> Dict[str, Any]:
         "html_to_markdown": bool(html_cfg.get("enabled", True)),
         "categorization": bool(cat_cfg.get("enabled", False)),
         "chunking_strategy": chunking.get("strategy", _DEFAULT_CHUNKING_STRATEGY),
+        # None (an empty YAML value) resolves to the default, as in the manager.
+        "child_chunk_overlap": (
+            _DEFAULT_CHILD_CHUNK_OVERLAP
+            if chunking.get("chunk_overlap") is None
+            else chunking["chunk_overlap"]
+        ),
         "embedding_model": embedding_model,
         "embedding_dimensions": embedding_entry.get(
             "dimensions", _DEFAULT_EMBEDDING_DIMENSIONS
@@ -101,14 +110,17 @@ def compare_ingest_config(
     a bare "something changed".
 
     An empty or missing ``at_ingest`` yields no drift: a run recorded before the
-    snapshot existed must not read as though every flag had changed.
+    snapshot existed must not read as though every flag had changed. For the
+    same reason a declared key absent from ``at_ingest`` is skipped: the builder
+    always emits every declared key, so its absence means the snapshot predates
+    the key, not that the flag changed.
     """
     recorded = _mapping(at_ingest)
     if not recorded:
         return []
 
     live = _mapping(current)
-    keys = [key for key in INGEST_CONFIG_KEYS if key in live or key in recorded]
+    keys = [key for key in INGEST_CONFIG_KEYS if key in recorded]
     keys += sorted((set(live) | set(recorded)) - set(INGEST_CONFIG_KEYS))
 
     drift: List[Dict[str, Any]] = []

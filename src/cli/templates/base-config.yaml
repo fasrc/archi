@@ -298,6 +298,11 @@ data_manager:
 {%- if data_manager.chunking.child_chunk_size is defined %}
     child_chunk_size: {{ data_manager.chunking.child_chunk_size }}
 {%- endif %}
+{%- if data_manager.chunking.chunk_overlap is defined and data_manager.chunking.chunk_overlap is not none %}
+    # tojson keeps the configured type: a bare "20" or "null" would reload as an
+    # int or None and slip past the manager's type check.
+    chunk_overlap: {{ data_manager.chunking.chunk_overlap | tojson }}
+{%- endif %}
   parallel_workers: {{ data_manager.parallel_workers | default(32, true) }}
   # Scrape-phase concurrency (issue #136), independent of the embedding-phase
   # `parallel_workers` above. `scrape_workers` bounds how many seed URLs are crawled
