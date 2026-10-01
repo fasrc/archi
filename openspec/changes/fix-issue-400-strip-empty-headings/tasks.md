@@ -40,7 +40,7 @@
 
 ## 1. Drop empty headings (red and green together)
 
-- [ ] 1.1 Add the tests, watch them fail, then implement, then commit — all in this one task.
+- [x] 1.1 Add the tests, watch them fail, then implement, then commit — all in this one task.
       Tests (in the new `#400` section, each calls `html_to_markdown` and checks that no
       output line starts with `#` unless stated):
       - `test_400_empty_heading_dropped`: `"<h3></h3><p>x</p>"` → no `#` line, `x` present.
