@@ -3295,7 +3295,12 @@ class FlaskAppWrapper(object):
             logger.info("Adding QA evaluation console endpoints")
             register_evaluations(
                 self.app,
-                authorize_request=build_authorize_request(self.auth_enabled),
+                authorize_request=build_authorize_request(
+                    self.auth_enabled,
+                    sso_enabled=lambda: self.sso_enabled,
+                    allow_anonymous=lambda: get_registry().allow_anonymous,
+                    is_api_request=is_api_request,
+                ),
                 service=self.evaluation_service,
             )
 
