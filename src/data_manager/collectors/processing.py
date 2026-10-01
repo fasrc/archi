@@ -438,6 +438,13 @@ def _hoist_out_of_inline(pre, soup) -> None:
             parent.decompose()
 
 
+def _drop_empty_headings(soup: BeautifulSoup) -> None:
+    """Remove ``h1``-``h6`` tags with no text and no ``img``/``code`` descendant (issue #400)."""
+    for heading in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+        if heading.get_text(strip=True) == "" and heading.find(["img", "code"]) is None:
+            heading.decompose()
+
+
 def _promote_block_code(html: str) -> str:
     """Promote bare multi-line ``<code>`` elements to ``<pre><code>`` blocks (issue #399).
 
@@ -449,8 +456,10 @@ def _promote_block_code(html: str) -> str:
     ``class`` attribute of the ``<code>`` (if present) so that downstream language
     detection by ``_fence_language`` can fire on the ``<pre>``. The new ``<pre>`` is
     marked with ``_PROMOTED_ATTR`` so ``_promoted_fence_language`` labels only it.
+    Also calls ``_drop_empty_headings`` on the freshly parsed soup (issue #400).
     """
     soup = BeautifulSoup(html, "html.parser")
+    _drop_empty_headings(soup)
     promoted = []
     for code in soup.find_all("code"):
         if code.find_parent("pre") is not None:

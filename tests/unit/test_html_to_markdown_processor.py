@@ -1324,6 +1324,51 @@ def test_410_nested_list_needs_break_empty_text():
     assert _nested_list_needs_break(ul, "   ") is False
 
 
+# --- issue #400: empty headings are dropped ---------------------------------
+
+
+def test_400_empty_heading_dropped():
+    result = html_to_markdown("<h3></h3><p>x</p>")
+    assert "x" in result
+    assert not any(line.startswith("#") for line in result.splitlines())
+
+
+def test_400_whitespace_and_nbsp_heading_dropped():
+    for html in ["<h2>   </h2><p>x</p>", "<h2>&nbsp;</h2><p>x</p>"]:
+        result = html_to_markdown(html)
+        assert "x" in result
+        assert not any(line.startswith("#") for line in result.splitlines())
+
+
+def test_400_empty_span_and_br_heading_dropped():
+    for html in ["<h1><span></span></h1><p>x</p>", "<h4><br></h4><p>x</p>"]:
+        result = html_to_markdown(html)
+        assert "x" in result
+        assert not any(line.startswith("#") for line in result.splitlines())
+
+
+def test_400_heading_with_content_kept():
+    assert html_to_markdown("<h3>Title</h3>") == "### Title"
+    assert html_to_markdown("<h3><code>foo</code></h3>") == "### `foo`"
+    assert html_to_markdown('<h3><img src="a.png" alt="A"></h3>') == "### A"
+
+
+def test_400_all_heading_levels():
+    for level in range(1, 7):
+        empty = html_to_markdown(f"<h{level}></h{level}>")
+        assert not any(line.startswith("#") for line in empty.splitlines())
+        kept = html_to_markdown(f"<h{level}>T</h{level}>")
+        assert kept == ("#" * level) + " T"
+
+
+def test_400_processor_drops_empty_heading():
+    html = "<h3></h3><p>x</p>"
+    out = HtmlToMarkdownProcessor().process(_html_resource(content=html))
+    content = out.get_content()
+    assert content == html_to_markdown(html)
+    assert not any(line.startswith("#") for line in content.splitlines())
+
+
 # --- issue #410: _ArchiMarkdownConverter and markdownify wrapper (task 1.2) ---
 
 
