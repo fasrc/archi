@@ -3151,6 +3151,61 @@ def test_json_true_and_one_are_different_labels_not_the_same_one(_artifact):
     ), f"only q2 is groupable, got {[(r['value'], r['n']) for r in rows]}"
 
 
+# --- #582: usage keys are additive ---
+
+
+def test_load_qa_run_equals_with_and_without_usage_rows(tmp_path):
+    """usage dict in answers/evaluation rows is additive — load_qa_run is unaffected."""
+    item_id = "item-001"
+    _usage = {
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "calls": 1,
+        "unreported_calls": 0,
+        "by_model": [
+            {
+                "provider": "anthropic",
+                "model": "claude-3-5-haiku-20241022",
+                "input_tokens": 120,
+                "output_tokens": 30,
+            }
+        ],
+    }
+
+    plain_dir = tmp_path / "plain"
+    _qa_run(
+        plain_dir, item_id, item_pass_rate=0.8, atom_score=0.7, durations=(1000, 2000)
+    )
+
+    with_dir = tmp_path / "with_usage"
+    _qa_run(
+        with_dir, item_id, item_pass_rate=0.8, atom_score=0.7, durations=(1000, 2000)
+    )
+    for fname in ("answers.jsonl", "evaluation_results.jsonl"):
+        fpath = with_dir / fname
+        rows = [json.loads(line) for line in fpath.read_text().splitlines() if line]
+        for row in rows:
+            row["usage"] = _usage
+        fpath.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    plain = cr.load_qa_run(str(plain_dir))
+    with_usage = cr.load_qa_run(str(with_dir))
+
+    assert with_usage["items"] == plain["items"]
+    assert with_usage["durations"] == plain["durations"]
+    assert with_usage["overall_attempt_pass_rate"] == plain["overall_attempt_pass_rate"]
+    assert with_usage["macro_mean_item_pass_rate"] == plain["macro_mean_item_pass_rate"]
+    assert (
+        with_usage["macro_mean_scored_attempt_atom_score"]
+        == plain["macro_mean_scored_attempt_atom_score"]
+    )
+    assert set(with_usage["evaluations"]) == set(plain["evaluations"])
+    for iid in plain["evaluations"]:
+        plain_scores = [r["atom_score"] for r in plain["evaluations"][iid]]
+        with_scores = [r["atom_score"] for r in with_usage["evaluations"][iid]]
+        assert with_scores == plain_scores
+
+
 # --- host provenance ---------------------------------------------------------
 
 

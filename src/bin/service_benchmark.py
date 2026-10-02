@@ -67,6 +67,7 @@ from src.utils.generate_benchmark_report import (
     format_markdown_output,
     parse_benchmark_results,
 )
+from src.utils.llm_usage import UsageRecorder
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
 
@@ -152,6 +153,22 @@ def _factory_pool():
             "installs it when this module is run as a script"
         )
     return factory.connection_pool
+
+
+def ragas_judge_identity(config: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+    """Return (provider_lower, model) for the ragas judge from config (D7).
+
+    Mirrors the fallback rules in ``get_ragas_llm_evaluator``: explicit
+    ``evaluator_provider``/``evaluator_model`` in ``ragas_settings`` win; the
+    top-level benchmarking ``provider``/``model`` are the fallback.
+    """
+    benchmark_cfg = (config.get("services") or {}).get("benchmarking") or {}
+    ragas_settings = (benchmark_cfg.get("mode_settings") or {}).get(
+        "ragas_settings"
+    ) or {}
+    provider = ragas_settings.get("evaluator_provider") or benchmark_cfg.get("provider")
+    model = ragas_settings.get("evaluator_model") or benchmark_cfg.get("model")
+    return str(provider).lower(), model
 
 
 class ResultHandler:
@@ -494,6 +511,7 @@ class ResultHandler:
         ingest_wall_seconds: Optional[float] = None,
         modes_executed: Optional[Set[str]] = None,
         retrieval_identity: Optional[Dict[str, Any]] = None,
+        judge_usage: Optional[Dict[str, Any]] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -655,6 +673,10 @@ class ResultHandler:
                 if ragas_ran
                 else None
             ),
+            # Per-arm token usage from the ragas judge LLM calls (D7). Null when
+            # no judge ran; always present on new artifacts so old/new are
+            # distinguishable by key presence only.
+            "judge_usage": judge_usage if ragas_ran else None,
             # The digest is the identity of the settings the run EFFECTIVELY had,
             # so the judge knobs are normalized in the BASIS while `configuration`
             # above keeps the file verbatim. Recording the effective values in a
@@ -1675,15 +1697,12 @@ class Benchmarker:
         # Judge/SUT config split: when ragas_settings.evaluator_* is set, the RAGAS judge
         # uses an independent model from the system under test. Falls back to the SUT
         # provider/model when the evaluator_* keys are absent.
-        provider = ragas_configs.get("evaluator_provider") or benchmark_cfg.get(
-            "provider"
-        )
-        model_name = ragas_configs.get("evaluator_model") or benchmark_cfg.get("model")
+        provider_key, model_name = ragas_judge_identity(self.config)
         ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get(
             "ollama_url"
         )
 
-        match str(provider).lower():
+        match provider_key:
             case "openai":
                 return ChatOpenAI(model=model_name)
             case "ollama":
@@ -2031,6 +2050,8 @@ class Benchmarker:
         runconfig = RunConfig(**ragas_run_config_kwargs(ragas_settings, verbosity))
         llm = LangchainLLMWrapper(self.get_ragas_llm_evaluator())
         embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
+        judge_provider, judge_model = ragas_judge_identity(self.config)
+        recorder = UsageRecorder(judge_provider, judge_model or "")
 
         def score_fn(metric, eligible_rows):
             # One metric at a time over its own eligible subset: keeps a single
@@ -2045,13 +2066,17 @@ class Benchmarker:
                 embeddings=embeddings,
                 run_config=runconfig,
                 batch_size=batch_size,
+                callbacks=[recorder],
             )
             column = ragas_result_column(all_metrics[metric])
             return evaluation.to_pandas()[column].tolist()
 
-        return score_metrics_per_eligibility(
-            rows, keys, metrics, results_by_key, score_fn
-        )
+        try:
+            return score_metrics_per_eligibility(
+                rows, keys, metrics, results_by_key, score_fn
+            )
+        finally:
+            self._judge_usage = recorder.snapshot()
 
     def _source_scorable_count(self) -> int:
         """The source-accuracy denominator: questions that declare expected sources.
@@ -2319,6 +2344,7 @@ class Benchmarker:
             arm_identity = ResultHandler.check_collection(arm_config)
             corpus_before = ResultHandler.get_corpus_fingerprint(arm_config)
             _, category_map_before = ResultHandler.get_category_map(arm_config)
+            self._judge_usage = None
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
                 Path(self.current_config),
@@ -2343,6 +2369,7 @@ class Benchmarker:
                 # between two arms leaves that boolean True on both sides.
                 ingest_wall_seconds=ingest_wall_seconds,
                 retrieval_identity=arm_identity,
+                judge_usage=getattr(self, "_judge_usage", None),
             )
             self.load_new_configuration()
 
