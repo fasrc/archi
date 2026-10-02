@@ -29,7 +29,7 @@
 
 ## 1. Fail closed on a QA run that scored nothing
 
-- [ ] 1.1 Extend the stub `archi` in `test_feature_matrix_wrappers.sh` to write
+- [x] 1.1 Extend the stub `archi` in `test_feature_matrix_wrappers.sh` to write
       `summary.json` exactly as design D3 says (default `scored: 3`; `$T/qa-no-summary` and
       `$T/qa-summary` control files; written on the single-arm `--output-dir` call and on
       `eval qa score <dir>`, never on `eval qa run` or `eval qa prepare`). Run the

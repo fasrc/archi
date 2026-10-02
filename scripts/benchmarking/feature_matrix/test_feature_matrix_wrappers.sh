@@ -99,11 +99,30 @@ cat > "$T/bin/archi" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$T/archi.calls"
 # like the real CLI, \`eval qa\` creates its --output-dir
-prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && mkdir -p "\$a"; prev="\$a"; done
+OUTDIR=""
+prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && { mkdir -p "\$a"; OUTDIR="\$a"; }; prev="\$a"; done
 # the run manifest records the retrieval identity when the test provides one
-prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$a/manifest.json"; prev="\$a"; done
+[ -n "\$OUTDIR" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$OUTDIR/manifest.json"
 # a corpus that drifts WHILE the QA run is in flight
 [ "\$1 \$2" = "eval qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
+# summary.json is written only by the scoring phase: the single-arm combined call
+# (eval qa --output-dir <dir>, no subcommand) and the sweep score call (eval qa score
+# <dir>) — never eval qa run or eval qa prepare.
+write_summary() {
+  [ -f "$T/qa-no-summary" ] && return 0
+  if [ -f "$T/qa-summary" ]; then
+    cp "$T/qa-summary" "\$1/summary.json"
+  else
+    printf '{"attempt_lifecycle_counts": {"scored": 3, "execution_failed": 0, "evaluation_failed": 0}}' > "\$1/summary.json"
+  fi
+}
+if [ "\$1 \$2" = "eval qa" ]; then
+  case "\${3:-}" in
+    run|prepare) : ;;
+    score) write_summary "\$4" ;;
+    *) [ -n "\$OUTDIR" ] && write_summary "\$OUTDIR" ;;
+  esac
+fi
 exit 0
 EOF
 cat > "$T/bin/git" <<EOF
