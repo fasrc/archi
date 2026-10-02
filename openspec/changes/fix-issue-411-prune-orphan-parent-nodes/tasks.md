@@ -110,7 +110,7 @@ Standing notes for every task:
 
 ## 6. Docs
 
-- [ ] 6.1 Add the section of design D7 to `docs/docs/troubleshooting.md` before
+- [x] 6.1 Add the section of design D7 to `docs/docs/troubleshooting.md` before
       `## Getting Help`: the count query, the CAUTION (text from D7), the cleanup
       statement, and the paragraph about the git and Jira removal gap. If `mkdocs` is
       available, run `mkdocs build --strict -f docs/mkdocs.yml` and confirm no new warning
