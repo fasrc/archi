@@ -616,7 +616,9 @@ def test_answer_gives_up_quietly_when_delivery_fails_twice():
     bot.answer(_channel_mention(), "T1")  # must not raise
     texts = [c.kwargs["text"] for c in bot.web.chat_update.call_args_list]
     assert texts == ["*ok*", "*ok*"]
-    assert ERROR_TEXT not in [c.kwargs["text"] for c in bot.web.method_calls if c.kwargs]
+    assert ERROR_TEXT not in [
+        c.kwargs["text"] for c in bot.web.method_calls if c.kwargs
+    ]
 
 
 def test_answer_swallows_failure_of_the_error_report():
