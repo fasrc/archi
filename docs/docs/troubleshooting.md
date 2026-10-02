@@ -194,8 +194,22 @@ until the next deployment.
 ## Orphaned parent nodes after re-ingest
 
 If hierarchical chunking was enabled before **archi v2026.10.0**, the
-`document_parent_nodes` table may contain rows that no chunk references. Check
-the counts with:
+`document_parent_nodes` table may contain rows that no chunk references.
+
+First, make sure that the parent-id index exists. Volumes created before this
+index was added do not have it, and an ingest creates it only when a document
+changes. Without it, the queries below scan all of `document_chunks` once for
+each parent row. The statement does nothing if the index exists:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_chunks_parent_id
+  ON document_chunks ((metadata->>'parent_id'));
+```
+
+The index build blocks writes to `document_chunks` until it completes. Run it
+when no ingest is active.
+
+Then check the counts with:
 
 ```sql
 SELECT
