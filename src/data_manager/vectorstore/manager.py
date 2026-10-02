@@ -18,6 +18,7 @@ from src.utils.ingest_provenance import build_ingest_config_snapshot
 from src.utils.ingest_run import collect_ingest_counts, record_ingest_run
 from src.utils.logging import get_logger
 
+from . import parent_nodes
 from .loader_utils import select_loader
 from .node_parsing import (
     CHILD_CHUNK_OVERLAP,
@@ -721,6 +722,7 @@ class VectorStoreManager:
 
                 total_files = len(files_to_add_items)
                 files_since_commit = 0
+                deleted_parent_count = 0
                 for file_idx, (filehash, file_path) in enumerate(files_to_add_items):
                     processed = processed_results.get(filehash)
                     if not processed:
@@ -746,6 +748,15 @@ class VectorStoreManager:
                             inserted = self._insert_hierarchical_file(
                                 cursor, document_id, parents
                             )
+                            if document_id is not None:
+                                deleted = parent_nodes.delete_unreferenced_parents(
+                                    cursor, document_id
+                                )
+                            else:
+                                deleted = parent_nodes.delete_unreferenced_parents_for_resource(
+                                    cursor, filehash
+                                )
+                            deleted_parent_count += deleted
                             cursor.execute(
                                 """UPDATE documents
                                    SET ingested_at = NOW(), ingestion_status = 'embedded',
@@ -882,6 +893,12 @@ class VectorStoreManager:
                             files_since_commit,
                         )
                         files_since_commit = 0
+
+                if self.hierarchical_chunking:
+                    logger.info(
+                        "Deleted %d unreferenced parent nodes after re-ingest",
+                        deleted_parent_count,
+                    )
 
                 if files_since_commit > 0:
                     conn.commit()

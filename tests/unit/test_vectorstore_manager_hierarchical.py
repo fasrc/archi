@@ -151,6 +151,7 @@ class _FakeCursor:
         self.executed = []
         self._parent_seq = 0
         self._next_id = None
+        self.rowcount = 0
 
     def execute(self, sql, params=None):
         self.executed.append((sql, params))
@@ -803,3 +804,292 @@ def test_build_hierarchical_payload_passes_child_chunk_overlap(monkeypatch):
     )
 
     assert captured_kwargs.get("child_chunk_overlap") == 64
+
+
+def test_add_to_postgres_hierarchical_deletes_unreferenced_parents_for_document(
+    monkeypatch,
+):
+    """DELETE_UNREFERENCED_PARENTS_FOR_DOCUMENT runs after chunk insert, before RELEASE SAVEPOINT."""
+    from src.data_manager.vectorstore import parent_nodes
+
+    manager = _make_manager()
+    catalog = MagicMock()
+    catalog.get_document_id.return_value = 42
+    catalog.get_metadata_for_hash.return_value = {}
+    manager._catalog = catalog
+
+    doc = SimpleNamespace(page_content="some text", metadata={})
+    manager.loader = lambda _path: SimpleNamespace(load=lambda: [doc])
+
+    monkeypatch.setattr(
+        manager_module,
+        "build_hierarchical_nodes",
+        lambda document, strategy="sentence", **_kwargs: [
+            HierarchicalNode(
+                parent_index=0,
+                parent_text="Parent.",
+                child_texts=["child."],
+                metadata={},
+            )
+        ],
+    )
+
+    fake_cursor = _FakeCursor()
+
+    def _capture_execute_values(cursor, sql, data, template=None):
+        cursor.executed.append(("EXECUTE_VALUES document_chunks", None))
+
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_conn.cursor.return_value.__exit__.return_value = False
+
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", _capture_execute_values
+    )
+    monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
+    monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
+
+    manager._add_to_postgres({"hash-1": "/tmp/doc.html"})
+
+    sqls = [sql for sql, _ in fake_cursor.executed]
+    all_params = [params for _, params in fake_cursor.executed]
+
+    chunk_marker_idx = sqls.index("EXECUTE_VALUES document_chunks")
+    delete_idx = next(
+        (
+            i
+            for i, s in enumerate(sqls)
+            if s is parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_DOCUMENT
+        ),
+        None,
+    )
+    release_idx = next(
+        (
+            i
+            for i, s in enumerate(sqls)
+            if isinstance(s, str) and "RELEASE SAVEPOINT" in s
+        ),
+        None,
+    )
+
+    assert (
+        delete_idx is not None
+    ), "DELETE_UNREFERENCED_PARENTS_FOR_DOCUMENT not found in executed"
+    assert release_idx is not None, "RELEASE SAVEPOINT not found in executed"
+    assert chunk_marker_idx < delete_idx < release_idx
+    assert all_params[delete_idx] == (42,)
+
+
+def test_add_to_postgres_hierarchical_deletes_parents_by_resource_when_no_document_id(
+    monkeypatch,
+):
+    """When document_id is None, DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE runs with the file hash."""
+    from src.data_manager.vectorstore import parent_nodes
+
+    manager = _make_manager()
+    catalog = MagicMock()
+    catalog.get_document_id.return_value = None
+    catalog.get_metadata_for_hash.return_value = {}
+    manager._catalog = catalog
+
+    doc = SimpleNamespace(page_content="some text", metadata={})
+    manager.loader = lambda _path: SimpleNamespace(load=lambda: [doc])
+
+    monkeypatch.setattr(
+        manager_module,
+        "build_hierarchical_nodes",
+        lambda document, strategy="sentence", **_kwargs: [
+            HierarchicalNode(
+                parent_index=0,
+                parent_text="Parent.",
+                child_texts=["child."],
+                metadata={},
+            )
+        ],
+    )
+
+    fake_cursor = _FakeCursor()
+
+    def _capture_execute_values(cursor, sql, data, template=None):
+        cursor.executed.append(("EXECUTE_VALUES document_chunks", None))
+
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_conn.cursor.return_value.__exit__.return_value = False
+
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", _capture_execute_values
+    )
+    monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
+    monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
+
+    manager._add_to_postgres({"hash-1": "/tmp/doc.html"})
+
+    resource_deletes = [
+        params
+        for sql, params in fake_cursor.executed
+        if sql is parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE
+    ]
+    assert resource_deletes == [("hash-1", "hash-1")]
+    assert not any(
+        sql is parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_DOCUMENT
+        for sql, _ in fake_cursor.executed
+    )
+
+
+def test_add_to_postgres_hierarchical_marks_failed_when_parent_delete_raises(
+    monkeypatch,
+):
+    """If the parent delete raises, the file rolls back to its savepoint and is marked failed."""
+    from src.data_manager.vectorstore import parent_nodes
+
+    manager = _make_manager()
+    catalog = MagicMock()
+    catalog.get_document_id.return_value = 42
+    catalog.get_metadata_for_hash.return_value = {}
+    manager._catalog = catalog
+
+    doc = SimpleNamespace(page_content="some text", metadata={})
+    manager.loader = lambda _path: SimpleNamespace(load=lambda: [doc])
+
+    monkeypatch.setattr(
+        manager_module,
+        "build_hierarchical_nodes",
+        lambda document, strategy="sentence", **_kwargs: [
+            HierarchicalNode(
+                parent_index=0,
+                parent_text="Parent.",
+                child_texts=["child."],
+                metadata={},
+            )
+        ],
+    )
+
+    class _RaisingCursor(_FakeCursor):
+        def execute(self, sql, params=None):
+            if sql is parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_DOCUMENT:
+                raise RuntimeError("simulated delete failure")
+            super().execute(sql, params)
+
+    fake_cursor = _RaisingCursor()
+
+    def _capture_execute_values(cursor, sql, data, template=None):
+        cursor.executed.append(("EXECUTE_VALUES document_chunks", None))
+
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_conn.cursor.return_value.__exit__.return_value = False
+
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", _capture_execute_values
+    )
+    monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
+    monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
+
+    manager._add_to_postgres({"hash-1": "/tmp/doc.html"})
+
+    sqls = [sql for sql, _ in fake_cursor.executed]
+    assert any(
+        isinstance(s, str) and "ROLLBACK TO SAVEPOINT" in s for s in sqls
+    ), "expected rollback after delete failure"
+    assert any(
+        isinstance(sql, str) and "ingestion_status = 'failed'" in sql
+        for sql, _ in fake_cursor.executed
+    ), "document should be marked failed"
+
+
+def test_add_to_postgres_hierarchical_logs_deleted_parent_count(monkeypatch, caplog):
+    """An INFO record reports the summed count of deleted parent rows."""
+    import logging
+
+    manager = _make_manager()
+    catalog = MagicMock()
+    catalog.get_document_id.return_value = 42
+    catalog.get_metadata_for_hash.return_value = {}
+    manager._catalog = catalog
+
+    doc = SimpleNamespace(page_content="some text", metadata={})
+    manager.loader = lambda _path: SimpleNamespace(load=lambda: [doc])
+
+    monkeypatch.setattr(
+        manager_module,
+        "build_hierarchical_nodes",
+        lambda document, strategy="sentence", **_kwargs: [
+            HierarchicalNode(
+                parent_index=0,
+                parent_text="Parent.",
+                child_texts=["child."],
+                metadata={},
+            )
+        ],
+    )
+
+    fake_cursor = _FakeCursor()
+    fake_cursor.rowcount = 3
+
+    def _capture_execute_values(cursor, sql, data, template=None):
+        cursor.executed.append(("EXECUTE_VALUES document_chunks", None))
+
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_conn.cursor.return_value.__exit__.return_value = False
+
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", _capture_execute_values
+    )
+    monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
+    monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
+
+    with caplog.at_level(logging.INFO):
+        manager._add_to_postgres({"hash-1": "/tmp/doc.html"})
+
+    assert any(
+        "Deleted" in r.message
+        and "unreferenced parent nodes after re-ingest" in r.message
+        for r in caplog.records
+        if r.levelno == logging.INFO
+    ), f"expected deletion log; got: {[r.message for r in caplog.records if r.levelno == logging.INFO]}"
+
+
+def test_add_to_postgres_non_hierarchical_runs_no_parent_delete(monkeypatch):
+    """The flat (non-hierarchical) path must not execute any parent-node delete."""
+    from src.data_manager.vectorstore import parent_nodes
+
+    manager = _make_manager()
+    manager.chunking_strategy = "character"
+    manager.hierarchical_chunking = False
+
+    catalog = MagicMock()
+    catalog.get_document_id.return_value = 42
+    catalog.get_metadata_for_hash.return_value = {}
+    manager._catalog = catalog
+
+    doc = SimpleNamespace(page_content="some text", metadata={})
+    manager.loader = lambda _path: SimpleNamespace(load=lambda: [doc])
+    manager.text_splitter = SimpleNamespace(split_documents=lambda docs: docs)
+
+    fake_cursor = _FakeCursor()
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_conn.cursor.return_value.__exit__.return_value = False
+
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras,
+        "execute_values",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
+    monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
+
+    manager._add_to_postgres({"hash-1": "/tmp/doc.html"})
+
+    assert not any(
+        sql is parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_DOCUMENT
+        or sql is parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE
+        for sql, _ in fake_cursor.executed
+    ), "non-hierarchical path must not execute any parent delete"
