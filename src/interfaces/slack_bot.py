@@ -8,7 +8,7 @@ question, with the earlier turns of its Slack thread, to ``POST /v1/chat/complet
 import re
 import threading
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -37,6 +37,8 @@ DEFAULT_MAX_WORKERS = 4
 DEFAULT_HISTORY_LIMIT = 20
 # conversations.replies returns the oldest messages first; 1000 is its maximum page.
 REPLIES_PAGE_LIMIT = 1000
+# A thread of more than 10,000 messages is cut, with a warning in the log.
+MAX_REPLY_PAGES = 10
 CONNECT_TIMEOUT_SECONDS = 10
 
 _MENTION_RE = re.compile(r"<@[A-Z0-9]+>")
@@ -96,8 +98,10 @@ def to_mrkdwn(markdown):
     return text
 
 
-def _is_bot_message(message, bot_user_id):
-    return bool(message.get("bot_id")) or message.get("user") == bot_user_id
+def _is_own_message(message, bot_user_id):
+    # Only this bot's answers are archi turns. A post by another bot or integration
+    # is context from the thread, so it stays a user turn.
+    return message.get("user") == bot_user_id
 
 
 def build_messages(replies, bot_user_id, question, before_ts, limit):
@@ -110,7 +114,7 @@ def build_messages(replies, bot_user_id, question, before_ts, limit):
         content = strip_mention(message.get("text"))
         if not content:
             continue
-        role = "assistant" if _is_bot_message(message, bot_user_id) else "user"
+        role = "assistant" if _is_own_message(message, bot_user_id) else "user"
         turns.append({"role": role, "content": content})
     kept = turns[-limit:] if limit > 0 else []
     return kept + [{"role": "user", "content": question}]
@@ -122,15 +126,18 @@ class EventDeduper:
     def __init__(self, maxlen=1024):
         self._maxlen = maxlen
         self._seen = OrderedDict()
+        # Socket Mode runs listeners on a thread pool: check and insert in one step.
+        self._lock = threading.Lock()
 
     def first_time(self, channel, ts):
         key = (channel, ts)
-        if key in self._seen:
-            return False
-        self._seen[key] = None
-        if len(self._seen) > self._maxlen:
-            self._seen.popitem(last=False)
-        return True
+        with self._lock:
+            if key in self._seen:
+                return False
+            self._seen[key] = None
+            if len(self._seen) > self._maxlen:
+                self._seen.popitem(last=False)
+            return True
 
 
 class ArchiApiError(RuntimeError):
@@ -242,6 +249,10 @@ class SlackBot:
         self.startup_delay = startup_delay
         self.model = None
         self._deduper = EventDeduper()
+        # One FIFO queue per Slack thread with work pending; a thread is drained by
+        # one worker at a time, so a follow-up sees the earlier answer (design D3).
+        self._thread_queues = {}
+        self._queues_lock = threading.Lock()
 
     @classmethod
     def from_config(
@@ -314,9 +325,55 @@ class SlackBot:
                 return
             if not self._deduper.first_time(event.get("channel"), event.get("ts")):
                 return
-            self.executor.submit(self.answer, event, payload.get("team_id"))
+            team_id = payload.get("team_id")
+            key = thread_key(
+                team_id, event.get("channel"), event.get("thread_ts") or event.get("ts")
+            )
+            self._enqueue(key, event, team_id)
         except Exception:
             logger.exception("slack bot: failed to dispatch a Slack event")
+
+    def _enqueue(self, key, event, team_id):
+        with self._queues_lock:
+            pending = self._thread_queues.get(key)
+            if pending is not None:
+                pending.append((event, team_id))
+                return
+            self._thread_queues[key] = deque([(event, team_id)])
+        self.executor.submit(self._drain_thread, key)
+
+    def _drain_thread(self, key):
+        """Answer one thread's questions in arrival order, then forget the thread."""
+        while True:
+            with self._queues_lock:
+                pending = self._thread_queues[key]
+                if not pending:
+                    del self._thread_queues[key]
+                    return
+                event, team_id = pending.popleft()
+            try:
+                self.answer(event, team_id)
+            except Exception:
+                logger.exception(f"slack bot: answer raised in thread {key}")
+
+    def _thread_replies(self, channel, thread_ts):
+        """Return every message of a thread, following pagination up to a cap."""
+        messages = []
+        cursor = None
+        for _ in range(MAX_REPLY_PAGES):
+            kwargs = {"channel": channel, "ts": thread_ts, "limit": REPLIES_PAGE_LIMIT}
+            if cursor:
+                kwargs["cursor"] = cursor
+            page = self.web.conversations_replies(**kwargs)
+            messages.extend(page.get("messages") or [])
+            cursor = (page.get("response_metadata") or {}).get("next_cursor")
+            if not cursor:
+                return messages
+        logger.warning(
+            f"slack bot: thread {channel} {thread_ts} has more than "
+            f"{MAX_REPLY_PAGES} pages; later messages are left out"
+        )
+        return messages
 
     def answer(self, event, team_id):
         """Answer one Slack message in its thread; never raises."""
@@ -331,9 +388,7 @@ class SlackBot:
             placeholder_ts = placeholder["ts"]
             replies = []
             if event.get("thread_ts"):
-                replies = self.web.conversations_replies(
-                    channel=channel, ts=thread_ts, limit=REPLIES_PAGE_LIMIT
-                )["messages"]
+                replies = self._thread_replies(channel, thread_ts)
             messages = build_messages(
                 replies,
                 self.bot_user_id,

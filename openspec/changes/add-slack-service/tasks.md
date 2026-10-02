@@ -29,12 +29,12 @@
 - [x] 5.1 Add `src/bin/service_slack.py`: `setup_logging()`, `SlackBot.from_config().run()`, no start-up sleep
 - [ ] 5.2 `bash scripts/gate.sh` passes (black, isort, unit tests, diff-cover at least 80%)
 - [x] 5.3 `openspec validate add-slack-service --strict` passes
-- [ ] 5.4 Adversarial review of the branch; verify and address each finding
+- [x] 5.4 Adversarial review of the branch; verify and address each finding (4 findings, all confirmed and fixed: dedupe lock, per-thread FIFO, reply pagination, own-message-only assistant role)
 - [ ] 5.5 Open PR 1 to `fasrc/archi:dev`, body starts with `Part 1 of #510`
 
 ## 6. Service wiring (PR 2)
 
-- [ ] 6.1 Register `slack` in `src/cli/service_registry.py` (`category="integration"`, `depends_on=["chatbot"]`, `required_secrets=["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"]`, `consumes_agent_specs=False`)
+- [ ] 6.1 Register `slack` in `src/cli/service_registry.py` (`category="integration"`, `depends_on=["postgres", "chatbot"]` (the entry point reads its config from Postgres, like `service_chat.py`; the Compose block also waits for `config-seed`), `required_secrets=["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"]`, `consumes_agent_specs=False`)
 - [ ] 6.2 Add `"slack": ServiceState()` to `src/cli/utils/service_builder.py`
 - [ ] 6.3 Add the `services.slack` block to `src/cli/templates/base-config.yaml`
 - [ ] 6.4 Add the `slack` service to `src/cli/templates/base-compose.yaml` with `OTEL_SERVICE_NAME: archi-slack` and `depends_on: chatbot`

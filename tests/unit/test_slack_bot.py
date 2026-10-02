@@ -6,6 +6,8 @@ network access: Slack clients and the HTTP session are mocks.
 
 import re
 import threading
+import time
+from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -212,10 +214,15 @@ def test_build_messages_excludes_current_and_newer_messages():
     ]
 
 
-def test_build_messages_treats_bot_id_messages_as_assistant():
-    replies = [_reply("1.0", "hello", user=None, bot_id="B1")]
+def test_build_messages_treats_only_own_messages_as_assistant():
+    # Only this bot's answers are archi turns; another bot's post is not (review #4).
+    replies = [
+        _reply("1.0", "own answer", user=BOT, bot_id="B1"),
+        _reply("1.5", "other bot", user="UOTHER", bot_id="B2"),
+        _reply("1.7", "integration", user=None, bot_id="B3"),
+    ]
     out = build_messages(replies, BOT, "q", before_ts="2.0", limit=20)
-    assert out[0] == {"role": "assistant", "content": "hello"}
+    assert [m["role"] for m in out] == ["assistant", "user", "user", "user"]
 
 
 def test_build_messages_drops_empty_texts():
@@ -255,6 +262,29 @@ def test_deduper_accepts_first_and_rejects_repeat():
     assert dedupe.first_time("C1", "1.0") is True
     assert dedupe.first_time("C1", "1.0") is False
     assert dedupe.first_time("C2", "1.0") is True
+
+
+def test_deduper_is_atomic_under_concurrent_deliveries():
+    # Socket Mode runs listeners on a thread pool, so the check and the insert must
+    # be one step (review #1). A slow membership check makes the race repeatable.
+    class _SlowDict(OrderedDict):
+        def __contains__(self, key):
+            found = super().__contains__(key)
+            time.sleep(0.05)
+            return found
+
+    dedupe = EventDeduper()
+    dedupe._seen = _SlowDict()
+    results = []
+    threads = [
+        threading.Thread(target=lambda: results.append(dedupe.first_time("C", "1")))
+        for _ in range(4)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert results.count(True) == 1
 
 
 def test_deduper_forgets_the_oldest_beyond_maxlen():
@@ -378,6 +408,21 @@ def test_wait_for_model_treats_empty_list_as_failure():
 class _InlineExecutor:
     def submit(self, fn, *args, **kwargs):
         fn(*args, **kwargs)
+
+
+class _DeferredExecutor:
+    """Hold submitted work until the test runs it."""
+
+    def __init__(self):
+        self.tasks = []
+
+    def submit(self, fn, *args, **kwargs):
+        self.tasks.append((fn, args, kwargs))
+
+    def run_all(self):
+        while self.tasks:
+            fn, args, kwargs = self.tasks.pop(0)
+            fn(*args, **kwargs)
 
 
 def _bot(**overrides):
@@ -539,6 +584,99 @@ def test_answer_passes_api_token_and_timeout():
     kwargs = bot.session.post.call_args.kwargs
     assert kwargs["headers"]["Authorization"] == "Bearer archi_x"
     assert kwargs["timeout"] == (10, 42)
+
+
+def test_same_thread_questions_run_in_arrival_order_on_one_worker():
+    # A follow-up must see the earlier answer and must not overtake it (review #2).
+    executor = _DeferredExecutor()
+    bot = _bot(executor=executor)
+    bot.session.post.side_effect = [
+        _response(payload=_completion("one")),
+        _response(payload=_completion("two")),
+    ]
+    bot.web.chat_postMessage.side_effect = [{"ts": "10.5"}, {"ts": "11.5"}]
+    bot.web.conversations_replies.return_value = {
+        "messages": [
+            {"ts": "10.0", "user": "U1", "text": "<@UBOT> q1"},
+            {"ts": "10.5", "user": BOT, "text": "one"},
+            {"ts": "11.0", "user": "U1", "text": "<@UBOT> q2"},
+        ]
+    }
+    bot.handle_request(mock.Mock(), _req(_channel_mention(ts="10.0", text="q1")))
+    follow_up = _channel_mention(ts="11.0", thread_ts="10.0", text="<@UBOT> q2")
+    bot.handle_request(mock.Mock(), _req(follow_up, envelope="E2"))
+    assert len(executor.tasks) == 1
+
+    executor.run_all()
+
+    names = [c[0] for c in bot.web.mock_calls]
+    assert names.index("chat_update") < names.index("conversations_replies")
+    assert [c.kwargs["text"] for c in bot.web.chat_update.call_args_list] == [
+        "one",
+        "two",
+    ]
+    second = bot.session.post.call_args_list[1].kwargs["json"]["messages"]
+    assert [m["role"] for m in second] == ["user", "assistant", "user"]
+    assert bot._thread_queues == {}
+
+
+def test_different_threads_get_separate_workers():
+    executor = _DeferredExecutor()
+    bot = _bot(executor=executor)
+    bot.handle_request(mock.Mock(), _req(_channel_mention(ts="1.0")))
+    bot.handle_request(mock.Mock(), _req(_channel_mention(ts="2.0"), envelope="E2"))
+    assert len(executor.tasks) == 2
+    executor.run_all()
+    assert bot._thread_queues == {}
+
+
+def test_thread_worker_survives_a_raising_answer():
+    executor = _DeferredExecutor()
+    bot = _bot(executor=executor)
+    bot.answer = mock.Mock(side_effect=[RuntimeError("bug"), None])
+    bot.handle_request(mock.Mock(), _req(_channel_mention(ts="1.0")))
+    follow_up = _channel_mention(ts="2.0", thread_ts="1.0")
+    bot.handle_request(mock.Mock(), _req(follow_up, envelope="E2"))
+    executor.run_all()
+    assert bot.answer.call_count == 2
+    assert bot._thread_queues == {}
+
+
+def test_answer_follows_reply_pagination():
+    # A thread longer than one page must not lose its newest turns (review #3).
+    bot = _bot()
+    bot.web.conversations_replies.side_effect = [
+        {
+            "messages": [{"ts": "1.0", "user": "U1", "text": "first"}],
+            "response_metadata": {"next_cursor": "c2"},
+        },
+        {
+            "messages": [{"ts": "2.0", "user": BOT, "text": "answer"}],
+            "response_metadata": {"next_cursor": ""},
+        },
+    ]
+    bot.answer(_channel_mention(ts="3.0", thread_ts="1.0"), "T1")
+    calls = bot.web.conversations_replies.call_args_list
+    assert calls[0].kwargs == {"channel": "C1", "ts": "1.0", "limit": 1000}
+    assert calls[1].kwargs == {
+        "channel": "C1",
+        "ts": "1.0",
+        "limit": 1000,
+        "cursor": "c2",
+    }
+    messages = bot.session.post.call_args.kwargs["json"]["messages"]
+    assert [m["role"] for m in messages] == ["user", "assistant", "user"]
+
+
+def test_answer_stops_reply_pagination_at_the_page_cap():
+    bot = _bot()
+    bot.web.conversations_replies.return_value = {
+        "messages": [],
+        "response_metadata": {"next_cursor": "again"},
+    }
+    bot.answer(_channel_mention(ts="3.0", thread_ts="1.0"), "T1")
+    assert bot.web.conversations_replies.call_count == slack_bot.MAX_REPLY_PAGES
+    assert bot.session.post.call_count == 1
 
 
 def test_default_executor_is_bounded():

@@ -34,12 +34,28 @@ The Slack bot SHALL send the header `X-OpenWebUI-Chat-Id: slack:{team_id}:{chann
 - **WHEN** a user asks two questions in the same thread
 - **THEN** both `/v1` requests carry the same `X-OpenWebUI-Chat-Id` value
 
+### Requirement: Questions in one thread are answered in arrival order
+The Slack bot SHALL answer the questions of one Slack thread one at a time, in the order the bot received them, so that a follow-up's history includes the earlier answer; questions in different threads MAY run in parallel.
+
+#### Scenario: Rapid follow-up waits for the first answer
+- **WHEN** a follow-up arrives in a thread while the first question of that thread is still being answered
+- **THEN** the bot reads the thread for the follow-up only after it posted the first answer
+- **AND** the first answer appears before the second
+
+#### Scenario: Thread longer than one page
+- **WHEN** `conversations.replies` returns a `next_cursor`
+- **THEN** the bot fetches the next page before it builds the history
+
 ### Requirement: Earlier thread turns are sent as history
 The Slack bot SHALL send the thread messages older than the current question, in time order, as `messages` before the question, mapping the bot's own messages to `assistant` and all others to `user`, with mentions removed, empty texts dropped, and at most `history_limit` turns kept (the newest).
 
 #### Scenario: Follow-up carries the earlier answer
 - **WHEN** a thread holds a user question, then a bot answer, and the user asks a follow-up
 - **THEN** the `/v1` request `messages` are `user`, `assistant`, `user` in that order
+
+#### Scenario: Another bot's post is a user turn
+- **WHEN** the thread holds a message with a `bot_id` whose `user` is not the bot's own user ID
+- **THEN** that message is sent with role `user`
 
 #### Scenario: Newer messages are excluded
 - **WHEN** the thread holds a message newer than the question, such as the bot's placeholder
@@ -63,6 +79,10 @@ The Slack bot SHALL answer each `(channel, ts)` pair at most once, also when Sla
 #### Scenario: Retried delivery is not answered twice
 - **WHEN** the same event arrives twice with different `envelope_id` values
 - **THEN** the bot sends exactly one request to `/v1`
+
+#### Scenario: Concurrent duplicate deliveries
+- **WHEN** four listener threads deliver the same `(channel, ts)` at the same time
+- **THEN** exactly one of them is accepted
 
 ### Requirement: Answers are converted to Slack mrkdwn
 The Slack bot SHALL convert the answer from Markdown to Slack mrkdwn outside code fences (`**x**` to `*x*`, `[t](u)` to `<u|t>`, a `#` heading line to a bold line), SHALL leave code fences unchanged, and SHALL cut the text to at most 39,000 characters with a visible marker.

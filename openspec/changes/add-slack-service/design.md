@@ -56,16 +56,23 @@ dev host is behind a firewall). The built-in client has no required dependencies
 ### D3. Acknowledge first, then answer in a bounded worker pool
 Slack wants an acknowledgement within 3 seconds, and an answer can take up to 600 seconds.
 The listener sends the acknowledgement, filters and de-duplicates the event, and then
-submits the work to a `ThreadPoolExecutor` (`services.slack.max_workers`, default 4). An
-exception in a worker never reaches the socket listener.
+puts the event on a FIFO queue for its Slack thread. The first event of a thread submits one
+drain task to a `ThreadPoolExecutor` (`services.slack.max_workers`, default 4); that task
+answers the thread's events in arrival order and deletes the queue when it is empty. As a
+result, a follow-up reads the thread only after the earlier answer is in it, and answers
+in one thread cannot overtake each other. Different threads run in parallel. An exception
+in a worker never reaches the socket listener. **Alternative:** a per-thread lock. Rejected:
+a lock does not keep arrival order between two waiting workers.
 
 ### D4. One conversation per thread; the thread is the history
 - Conversation key: `slack:{team_id}:{channel}:{thread_ts}`. A top-level message uses its own
   `ts` as `thread_ts`. This value is sent as `X-OpenWebUI-Chat-Id`.
 - For a reply in an existing thread, the bot reads the thread with `conversations.replies`.
-  It keeps only messages older than the current event, maps the bot's own messages to
-  `assistant` and the others to `user`, removes `<@U…>` mentions, and drops empty text. It
-  keeps the newest `services.slack.history_limit` turns (default 20).
+  It follows the pagination cursor for up to 10 pages of 1000 messages, and logs a warning
+  if the thread is longer. It keeps only messages older than the current event, maps the
+  bot's own messages (`user` equal to the bot's user ID) to `assistant` and all others,
+  other bots included, to `user`, removes `<@U…>` mentions, and drops empty text. It keeps
+  the newest `services.slack.history_limit` turns (default 20).
 - **Alternative:** send only the question and let the server load history by chat ID.
   Rejected: when `/v1` gets messages it uses them and ignores the stored history, and the
   Slack thread can also hold turns that other people wrote without a mention.
@@ -80,7 +87,8 @@ needs one more scope (`reactions:write`).
 ### D6. De-duplicate by `(channel, ts)`
 Slack can deliver one event again, and a mention in a direct message can arrive as both
 `message` and `app_mention`. The bot keeps the last 1024 `(channel, ts)` pairs and answers a
-pair only once.
+pair only once. The check and the insert run under one lock, because Socket Mode calls the
+listener from several threads.
 
 ### D7. Learn the model ID from `GET /v1/models` with a bounded retry
 At startup the bot calls `/v1/models` until it succeeds (default 30 attempts, 10 seconds
