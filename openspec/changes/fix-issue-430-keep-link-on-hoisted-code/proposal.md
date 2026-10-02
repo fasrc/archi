@@ -31,9 +31,9 @@ The operator chose option B on 2026-09-26 (issue #430 body): keep the link.
 
 - Other inline parents (`em`, `strong`, `span`): they carry no `href`, so a drop loses
   nothing.
-- How `markdownify` renders a link whose text equals a relative `href` (it emits
-  `</docs>`, which is not a CommonMark autolink). This is the library's behaviour for every
-  such anchor today; see design D3.
+- How `markdownify` renders other self-links with a relative `href` on a page (it emits
+  `</docs>`, which is not a CommonMark autolink). Only the kept link is changed; see
+  design D3 and issue #604.
 - Archiving the #406 change.
 
 ## Impact

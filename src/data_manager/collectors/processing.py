@@ -297,6 +297,10 @@ _BR_LEADING_WS = re.compile(r"^(?:[ \t]*\r?\n)+")
 # converting byte-identically to the output before #399. Only promoted blocks are ours
 # to label.
 _PROMOTED_ATTR = "data-archi-promoted"
+# Marks the link that ``_hoist_out_of_inline`` keeps for an emptied anchor (issue
+# #430), so ``_ArchiMarkdownConverter.convert_a`` can give it explicit link syntax.
+_KEPT_LINK_ATTR = "data-archi-kept-link"
+_URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def _edge_text(br, *, forward: bool, stop_at) -> NavigableString | None:
@@ -449,7 +453,7 @@ def _hoist_out_of_inline(pre, soup) -> None:
             and not _renders_link_text(parent)
             and not _renders_link_text(tail)
         ):
-            link = soup.new_tag("a", href=parent["href"])
+            link = soup.new_tag("a", href=parent["href"], attrs={_KEPT_LINK_ATTR: ""})
             link.string = (parent.get("title") or "").strip() or parent["href"]
             parent.replace_with(link)
             continue
@@ -634,7 +638,8 @@ class _ArchiMarkdownConverter(MarkdownConverter):
     This is the one place project-specific ``MarkdownConverter`` overrides live.
     ``convert_pre`` sizes the fence delimiter past any backtick run inside the
     block (issue #407); ``convert_list`` keeps a newline after a nested list
-    (issue #410).
+    (issue #410); ``convert_a`` gives a kept link with a relative target explicit
+    link syntax (issue #430).
 
     markdownify binds ``convert_ul`` and ``convert_ol`` to the base
     ``convert_list`` at class-definition time, so overriding ``convert_list``
@@ -663,6 +668,21 @@ class _ArchiMarkdownConverter(MarkdownConverter):
         longest_run = max((len(m) for m in _BACKTICK_RUNS.findall(text)), default=0)
         fence = "`" * max(3, longest_run + 1)
         return "\n\n%s%s\n%s\n%s\n\n" % (fence, code_language, text, fence)
+
+    def convert_a(self, el, text, parent_tags):
+        """Give a kept link with a relative or fragment target explicit link syntax.
+
+        markdownify writes ``<href>`` when the text equals the ``href``, but a
+        CommonMark autolink needs a URI scheme: ``</docs>`` reads as an HTML end
+        tag. Only the link that ``_hoist_out_of_inline`` keeps is changed here;
+        other self-links convert as markdownify writes them (issue #604).
+        """
+        out = super().convert_a(el, text, parent_tags)
+        href = el.get("href") or ""
+        if el.has_attr(_KEPT_LINK_ATTR) and out == f"<{href}>":
+            if not _URI_SCHEME.match(href):
+                return f"[{href}]({href})"
+        return out
 
     def convert_list(self, el, text, parent_tags):
         """Append a trailing newline when inline content follows a nested list."""

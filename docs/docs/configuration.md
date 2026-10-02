@@ -788,7 +788,8 @@ data_manager:
   image on either side of the fence (issue #430): it is replaced by one link before the
   fence, whose text is the link's `title` or, if there is none, its `href` — so
   `<a href="https://x/y">` around a lone block becomes `<https://x/y>` above the fence and
-  the target stays in the knowledge base. Whitespace that touches the cut is removed,
+  the target stays in the knowledge base. A relative or fragment target, such as `/docs`,
+  becomes `[/docs](/docs)`. Whitespace that touches the cut is removed,
   so no line beside the fence begins or ends with a stray space. The shape is rare in the
   FASRC KB (0 of 25 sampled multi-line code elements) and, like every item in this list,
   it reaches disk only for new or force-overwritten documents.

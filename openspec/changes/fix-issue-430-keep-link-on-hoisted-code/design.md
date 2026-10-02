@@ -59,11 +59,17 @@ which CommonMark parses as the same link. The intent ("a Markdown link with text
 `href`. The new tag carries only `href`: copying `title` would render
 `[Docs](https://x/y "Docs")`, which repeats the title.
 
-### D3. A relative href renders as `markdownify` renders it today
+### D3. A kept link with a relative href uses explicit link syntax
 
-`<a href="/docs"><code>a<br>b</code></a>` converts to `` </docs>\n\n```\na\nb\n``` ``.
-`</docs>` is not a CommonMark autolink, but `markdownify` gives the same string for every
-`<a href="/docs">/docs</a>` on a page today. Out of scope; the tests do not pin it.
+`markdownify` writes `<href>` when the link text equals the `href`. A CommonMark autolink
+needs a URI scheme, so `<a href="/docs"><code>a<br>b</code></a>` would give `</docs>`,
+which reads as an HTML end tag, not a link. `_hoist_out_of_inline` marks the link it keeps
+with `data-archi-kept-link`. `_ArchiMarkdownConverter.convert_a` gives a marked link whose
+`href` has no scheme the form `[href](href)`. Absolute targets stay `<https://x/y>`.
+
+Other self-links on a page (`<a href="/docs">/docs</a>`) have the same defect on `dev`.
+They are not changed here, because that change reaches every relative self-link in the
+corpus. Issue #604 tracks it.
 
 ### D4. Tests pin exact strings and the tree
 

@@ -934,6 +934,16 @@ def test_hoist_anchor_with_image_before_code_keeps_linked_image():
     )
 
 
+@pytest.mark.parametrize("href", ["/docs", "docs/page.html", "#section"])
+def test_hoist_anchor_with_relative_href_keeps_a_markdown_link(href):
+    """A relative or fragment target is not a CommonMark autolink, so the kept
+    link uses explicit link syntax instead of ``<href>``."""
+    assert (
+        html_to_markdown(f'<p><a href="{href}"><code>a<br>b</code></a></p>')
+        == f"[{href}]({href})\n\n```\na\nb\n```"
+    )
+
+
 def test_hoist_outer_strong_wraps_kept_link():
     assert (
         html_to_markdown(

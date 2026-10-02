@@ -41,6 +41,12 @@ convert exactly as it did before this change.
 - **AND** the same holds with the empty `<span>` after the code, and with a `<br>` before it
 - **AND** `html_to_markdown('<p><a href="https://x/y"><img src="i.png" alt="pic"><code>a<br>b</code></a></p>')` is exactly `` [![pic](i.png)](https://x/y)\n\n```\na\nb\n``` ``
 
+#### Scenario: A relative or fragment target keeps a Markdown link
+
+- **WHEN** `html_to_markdown('<p><a href="/docs"><code>a<br>b</code></a></p>')` is called
+- **THEN** the output is exactly `` [/docs](/docs)\n\n```\na\nb\n``` ``
+- **AND** the same holds for the `href` values `docs/page.html` and `#section`
+
 #### Scenario: Two blocks in one anchor give one link
 
 - **WHEN** `html_to_markdown('<p><a href="http://x"><code>a<br>b</code><code>c<br>d</code></a></p>')` is called
