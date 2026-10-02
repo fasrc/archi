@@ -118,7 +118,7 @@ Standing notes for every task:
 
 ## 7. Verify, push, and open the PR
 
-- [ ] 7.1 Confirm `grep -rn "DELETE FROM document_parent_nodes" src/` lists only
+- [x] 7.1 Confirm `grep -rn "DELETE FROM document_parent_nodes" src/` lists only
       `src/data_manager/vectorstore/parent_nodes.py`. Confirm `git diff origin/dev --stat`
       does not touch `benchmark_provenance.py`, `service_benchmark.py`, or `app.py`. Run the
       gate once more and confirm it exits 0 with patch coverage at or above 80 %. Confirm
