@@ -79,8 +79,11 @@ a lock does not keep arrival order between two waiting workers.
 
 ### D5. A placeholder message, then an in-place update
 The bot posts `_Searching the archi knowledge base…_` in the thread at once, and then
-replaces it with `chat.update` when the answer arrives. On failure, it replaces it with one
-short error line. This needs only `chat:write`. The placeholder is newer than the event, so
+replaces it with `chat.update` when the answer arrives. If the answer cannot be made, it
+replaces the placeholder with one short error line. If the answer exists but its
+`chat.update` fails, the bot sends the same text once more and never writes the error
+line: Slack can apply an update and still time out to the client, and the error line would
+then replace a real answer. This needs only `chat:write`. The placeholder is newer than the event, so
 D4's filter keeps it out of the history. **Alternative:** an emoji reaction. Rejected: it
 needs one more scope (`reactions:write`).
 

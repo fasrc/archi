@@ -73,6 +73,11 @@ The Slack bot SHALL send the Socket Mode acknowledgement for a request before it
 - **THEN** the bot replaces its placeholder in the thread with one short error line
 - **AND** the listener returns without raising
 
+#### Scenario: A failed delivery never replaces an answer with the error line
+- **WHEN** `/v1` returned an answer and the `chat.update` that delivers it raises
+- **THEN** the bot sends the same answer text once more
+- **AND** the bot does not write the error line to the placeholder
+
 ### Requirement: Each Slack message is answered at most once
 The Slack bot SHALL answer each `(channel, ts)` pair at most once, also when Slack delivers the same message again or as both `message` and `app_mention`.
 

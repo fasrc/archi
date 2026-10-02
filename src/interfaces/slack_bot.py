@@ -417,13 +417,32 @@ class SlackBot:
                 token=self.api_token,
                 timeout=self.timeout_seconds,
             )
-            self._post_final(channel, thread_ts, placeholder_ts, to_mrkdwn(answer))
+            final_text = to_mrkdwn(answer)
         except Exception:
             logger.exception(f"slack bot: failed to answer {channel} {ts}")
             try:
                 self._post_final(channel, thread_ts, placeholder_ts, ERROR_TEXT)
             except Exception:
                 logger.exception(f"slack bot: failed to report the error in {channel}")
+            return
+        self._deliver_answer(channel, placeholder_ts, final_text)
+
+    def _deliver_answer(self, channel, placeholder_ts, text):
+        """Put the answer in the placeholder; retry the same text once on failure.
+
+        Slack can apply an update and still time out to the client, so a failed
+        delivery never falls back to the error line: that could replace a real answer.
+        Updating the placeholder with the same text twice is safe.
+        """
+        for attempt in (1, 2):
+            try:
+                self.web.chat_update(channel=channel, ts=placeholder_ts, text=text)
+                return
+            except Exception:
+                logger.exception(
+                    f"slack bot: failed to deliver the answer in {channel} "
+                    f"(attempt {attempt}/2)"
+                )
 
     def _post_final(self, channel, thread_ts, placeholder_ts, text):
         if placeholder_ts:

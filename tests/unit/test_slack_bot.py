@@ -600,6 +600,25 @@ def test_answer_posts_error_when_placeholder_failed():
     bot.session.post.assert_not_called()
 
 
+def test_answer_retries_delivery_and_never_overwrites_an_answer_with_an_error():
+    # Slack can apply an update and still time out to the client; the error line
+    # must not replace a real answer (local review, round 2).
+    bot = _bot()
+    bot.web.chat_update.side_effect = [TimeoutError("read timed out"), None]
+    bot.answer(_channel_mention(), "T1")
+    texts = [c.kwargs["text"] for c in bot.web.chat_update.call_args_list]
+    assert texts == ["*ok*", "*ok*"]
+
+
+def test_answer_gives_up_quietly_when_delivery_fails_twice():
+    bot = _bot()
+    bot.web.chat_update.side_effect = TimeoutError("read timed out")
+    bot.answer(_channel_mention(), "T1")  # must not raise
+    texts = [c.kwargs["text"] for c in bot.web.chat_update.call_args_list]
+    assert texts == ["*ok*", "*ok*"]
+    assert ERROR_TEXT not in [c.kwargs["text"] for c in bot.web.method_calls if c.kwargs]
+
+
 def test_answer_swallows_failure_of_the_error_report():
     bot = _bot()
     bot.session.post.side_effect = ConnectionError("down")
