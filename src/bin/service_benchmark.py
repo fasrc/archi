@@ -1,3 +1,4 @@
+import importlib
 import json
 import math
 import os
@@ -47,9 +48,14 @@ from src.utils.benchmark_resilience import (
 )
 from src.utils.benchmark_schema import (
     DEFAULT_ENABLED_METRICS,
+    LOWER_IS_BETTER_METRICS,
+    RAGAS_METRIC_NAMES,
+    build_ragas_metric_objects,
     json_safe,
+    metric_winner,
     normalize_bank,
     ragas_effective_settings,
+    ragas_result_column,
     ragas_run_config_kwargs,
     required_fields_for_modes,
     score_metrics_per_eligibility,
@@ -61,6 +67,7 @@ from src.utils.generate_benchmark_report import (
     format_markdown_output,
     parse_benchmark_results,
 )
+from src.utils.llm_usage import UsageRecorder
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
 
@@ -146,6 +153,22 @@ def _factory_pool():
             "installs it when this module is run as a script"
         )
     return factory.connection_pool
+
+
+def ragas_judge_identity(config: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+    """Return (provider_lower, model) for the ragas judge from config (D7).
+
+    Mirrors the fallback rules in ``get_ragas_llm_evaluator``: explicit
+    ``evaluator_provider``/``evaluator_model`` in ``ragas_settings`` win; the
+    top-level benchmarking ``provider``/``model`` are the fallback.
+    """
+    benchmark_cfg = (config.get("services") or {}).get("benchmarking") or {}
+    ragas_settings = (benchmark_cfg.get("mode_settings") or {}).get(
+        "ragas_settings"
+    ) or {}
+    provider = ragas_settings.get("evaluator_provider") or benchmark_cfg.get("provider")
+    model = ragas_settings.get("evaluator_model") or benchmark_cfg.get("model")
+    return str(provider).lower(), model
 
 
 class ResultHandler:
@@ -289,6 +312,71 @@ class ResultHandler:
         """
         return "-" if rank is None else str(rank)
 
+    # Console header per leaderboard metric; ``noise`` carries a down arrow
+    # because lower is better.
+    LEADERBOARD_COLUMN_LABELS: Dict[str, str] = {
+        "answer_relevancy": "ans_rel",
+        "faithfulness": "faith",
+        "context_precision": "ctx_prec",
+        "context_recall": "ctx_rec",
+        "answer_correctness": "ans_corr",
+        "factual_correctness_recall": "fc_rec",
+        "factual_correctness_precision": "fc_prec",
+        "noise_sensitivity": "noise(↓)",
+        "answer_accuracy": "ans_acc",
+        "response_groundedness": "grounded",
+    }
+
+    @staticmethod
+    def leaderboard_columns(leaderboard: Dict[str, Any]) -> List[str]:
+        """The metrics the console table shows, in registry order.
+
+        A metric is shown when any row scored it, and the primary metric is
+        always shown: a rank printed without the score it was ranked by gives
+        the operator nothing to check it against.
+        """
+        primary = leaderboard["primary_metric"]
+        rows = leaderboard["rows"]
+        return [
+            name
+            for name in RAGAS_METRIC_NAMES
+            if name == primary or any(r["metrics"].get(name) is not None for r in rows)
+        ]
+
+    @staticmethod
+    def leaderboard_table_lines(leaderboard: Dict[str, Any]) -> List[str]:
+        """The console leaderboard: a header, then one line per row.
+
+        A mean over fewer than the answered questions (judge timeouts) carries
+        ``@<n>``, so an under-sampled score cannot pass as fully backed.
+        """
+        columns = ResultHandler.leaderboard_columns(leaderboard)
+        labels = [ResultHandler.LEADERBOARD_COLUMN_LABELS[c] for c in columns]
+        lines = [
+            "  %-4s %-28s " % ("rank", "name")
+            + "".join(f"{label:<12} " for label in labels)
+            + "%-10s %s" % ("n_q", "prompt")
+        ]
+        for row in leaderboard["rows"]:
+            answered = row["query_count"]
+            scored = row.get("scored_counts", {})
+            cells = []
+            for column in columns:
+                value = row["metrics"].get(column)
+                if not isinstance(value, float):
+                    cells.append("    n/a")
+                    continue
+                n = scored.get(column, answered)
+                cells.append(f"{value:.4f}@{n}" if n < answered else f"{value:.4f}")
+            flag = "  (incomplete)" if row["incomplete"] else ""
+            lines.append(
+                "  %-4s %-28s "
+                % (ResultHandler.leaderboard_rank_label(row["rank"]), row["name"][:28])
+                + "".join(f"{cell:<12} " for cell in cells)
+                + "%-10d %s%s" % (answered, row["agent_md_file"], flag)
+            )
+        return lines
+
     @staticmethod
     def ab_summary_line(
         name_a: str,
@@ -423,6 +511,7 @@ class ResultHandler:
         ingest_wall_seconds: Optional[float] = None,
         modes_executed: Optional[Set[str]] = None,
         retrieval_identity: Optional[Dict[str, Any]] = None,
+        judge_usage: Optional[Dict[str, Any]] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -584,6 +673,10 @@ class ResultHandler:
                 if ragas_ran
                 else None
             ),
+            # Per-arm token usage from the ragas judge LLM calls (D7). Null when
+            # no judge ran; always present on new artifacts so old/new are
+            # distinguishable by key presence only.
+            "judge_usage": judge_usage if ragas_ran else None,
             # The digest is the identity of the settings the run EFFECTIVELY had,
             # so the judge knobs are normalized in the BASIS while `configuration`
             # above keeps the file verbatim. Recording the effective values in a
@@ -792,13 +885,7 @@ class ResultHandler:
         results_a = ResultHandler.results[idx_a]["single_question_results"]
         results_b = ResultHandler.results[idx_b]["single_question_results"]
 
-        ragas_metrics = [
-            "answer_relevancy",
-            "faithfulness",
-            "context_precision",
-            "context_recall",
-            "answer_correctness",
-        ]
+        ragas_metrics = list(RAGAS_METRIC_NAMES)
 
         paired: List[ABResult] = []
         all_keys = list(results_a.keys()) + [k for k in results_b if k not in results_a]
@@ -835,17 +922,9 @@ class ResultHandler:
             ragas_a = {m: qa.get(m, float("nan")) for m in shared_metrics}
             ragas_b = {m: qb.get(m, float("nan")) for m in shared_metrics}
 
-            winner_by_metric: Dict[str, str] = {}
-            for m in ragas_a:
-                sa, sb = ragas_a.get(m, float("nan")), ragas_b.get(m, float("nan"))
-                if math.isnan(sa) or math.isnan(sb):
-                    winner_by_metric[m] = "tie"
-                elif abs(sa - sb) < 1e-9:
-                    winner_by_metric[m] = "tie"
-                elif sa > sb:
-                    winner_by_metric[m] = "a"
-                else:
-                    winner_by_metric[m] = "b"
+            winner_by_metric: Dict[str, str] = {
+                m: metric_winner(m, ragas_a[m], ragas_b[m]) for m in ragas_a
+            }
 
             paired.append(
                 ABResult(
@@ -987,11 +1066,7 @@ class ResultHandler:
     # Leaderboard metric name -> the aggregate key the run loop writes onto
     # total_results (service_benchmark.py RAGAS block). Order is display order.
     LEADERBOARD_METRICS: List[Tuple[str, str]] = [
-        ("answer_relevancy", "aggregate_answer_relevancy"),
-        ("faithfulness", "aggregate_faithfulness"),
-        ("context_precision", "aggregate_context_precision"),
-        ("context_recall", "aggregate_context_recall"),
-        ("answer_correctness", "aggregate_answer_correctness"),
+        (name, f"aggregate_{name}") for name in RAGAS_METRIC_NAMES
     ]
 
     @staticmethod
@@ -1218,11 +1293,16 @@ class ResultHandler:
                     f"to run; these differ: {', '.join(divergence)}"
                 )
 
-        # Complete rows first, then by descending primary score; incomplete last.
+        # Complete rows first, then rows that scored the primary metric, then
+        # best primary score first (descending, or ascending for a
+        # lower-is-better metric). A missing score sorts on its own key: any
+        # stand-in value is the best noise score, or ties a scored 0.0.
+        best_first = 1.0 if primary_metric in LOWER_IS_BETTER_METRICS else -1.0
         rows.sort(
             key=lambda r: (
                 1 if r["incomplete"] else 0,
-                -(r["primary_score"] if r["primary_score"] is not None else 0.0),
+                1 if r["primary_score"] is None else 0,
+                best_first * (r["primary_score"] or 0.0),
             )
         )
 
@@ -1617,15 +1697,12 @@ class Benchmarker:
         # Judge/SUT config split: when ragas_settings.evaluator_* is set, the RAGAS judge
         # uses an independent model from the system under test. Falls back to the SUT
         # provider/model when the evaluator_* keys are absent.
-        provider = ragas_configs.get("evaluator_provider") or benchmark_cfg.get(
-            "provider"
-        )
-        model_name = ragas_configs.get("evaluator_model") or benchmark_cfg.get("model")
+        provider_key, model_name = ragas_judge_identity(self.config)
         ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get(
             "ollama_url"
         )
 
-        match str(provider).lower():
+        match provider_key:
             case "openai":
                 return ChatOpenAI(model=model_name)
             case "ollama":
@@ -1944,31 +2021,20 @@ class Benchmarker:
         # Lazy import: ragas (and its transitive `datasets` dep) is benchmark-only
         # and absent from the unit-test environment. See the module-header note.
         from ragas import EvaluationDataset, RunConfig, evaluate
+
+        # import_module, not ``from ragas import metrics``: it reads the
+        # submodule straight from sys.modules, which the unit-test stub relies on.
+        ragas_metrics = importlib.import_module("ragas.metrics")
         from ragas.embeddings import LangchainEmbeddingsWrapper
         from ragas.llms import LangchainLLMWrapper
-        from ragas.metrics import (
-            answer_correctness,
-            answer_relevancy,
-            context_precision,
-            context_recall,
-            faithfulness,
-        )
 
-        # Use the PRE-INSTANTIATED ``answer_correctness`` rather than building a
-        # FactualCorrectness: scores are read back as ``to_pandas()[metric]``, and
-        # only the pre-instantiated object's result column is named exactly after
-        # the metric (FactualCorrectness's can carry a mode suffix).
-        all_metrics = {
-            "answer_relevancy": answer_relevancy,
-            "faithfulness": faithfulness,
-            "context_precision": context_precision,
-            "context_recall": context_recall,
-            "answer_correctness": answer_correctness,
-        }
         enabled_metrics = self.benchmarking_configs["mode_settings"]["ragas_settings"][
             "enabled_metrics"
         ]
-        metrics = [name for name in all_metrics if name in enabled_metrics]
+        metrics = [name for name in RAGAS_METRIC_NAMES if name in enabled_metrics]
+        # Built per name with a pinned ``name``; a mode metric's scores come back
+        # under ``name(mode=...)``, which ragas_result_column resolves.
+        all_metrics = build_ragas_metric_objects(ragas_metrics, metrics)
 
         ragas_settings = self.config["services"]["benchmarking"]["mode_settings"][
             "ragas_settings"
@@ -1984,6 +2050,8 @@ class Benchmarker:
         runconfig = RunConfig(**ragas_run_config_kwargs(ragas_settings, verbosity))
         llm = LangchainLLMWrapper(self.get_ragas_llm_evaluator())
         embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
+        judge_provider, judge_model = ragas_judge_identity(self.config)
+        recorder = UsageRecorder(judge_provider, judge_model or "")
 
         def score_fn(metric, eligible_rows):
             # One metric at a time over its own eligible subset: keeps a single
@@ -1998,12 +2066,17 @@ class Benchmarker:
                 embeddings=embeddings,
                 run_config=runconfig,
                 batch_size=batch_size,
+                callbacks=[recorder],
             )
-            return evaluation.to_pandas()[metric].tolist()
+            column = ragas_result_column(all_metrics[metric])
+            return evaluation.to_pandas()[column].tolist()
 
-        return score_metrics_per_eligibility(
-            rows, keys, metrics, results_by_key, score_fn
-        )
+        try:
+            return score_metrics_per_eligibility(
+                rows, keys, metrics, results_by_key, score_fn
+            )
+        finally:
+            self._judge_usage = recorder.snapshot()
 
     def _source_scorable_count(self) -> int:
         """The source-accuracy denominator: questions that declare expected sources.
@@ -2271,6 +2344,7 @@ class Benchmarker:
             arm_identity = ResultHandler.check_collection(arm_config)
             corpus_before = ResultHandler.get_corpus_fingerprint(arm_config)
             _, category_map_before = ResultHandler.get_category_map(arm_config)
+            self._judge_usage = None
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
                 Path(self.current_config),
@@ -2295,6 +2369,7 @@ class Benchmarker:
                 # between two arms leaves that boolean True on both sides.
                 ingest_wall_seconds=ingest_wall_seconds,
                 retrieval_identity=arm_identity,
+                judge_usage=getattr(self, "_judge_usage", None),
             )
             self.load_new_configuration()
 
@@ -2334,47 +2409,8 @@ class Benchmarker:
                 "Prompt-sweep leaderboard (ranked by %s):",
                 leaderboard["primary_metric"],
             )
-            logger.info(
-                "  %-4s %-28s %-10s %-10s %-10s %-10s %-10s %-10s %s",
-                "rank",
-                "name",
-                "ans_rel",
-                "faith",
-                "ctx_prec",
-                "ctx_rec",
-                "ans_corr",
-                "n_q",
-                "prompt",
-            )
-            for row in leaderboard["rows"]:
-                m = row["metrics"]
-                answered = row["query_count"]
-                scored = row.get("scored_counts", {})
-
-                # Annotate a metric with @<n> when its mean is over fewer than
-                # the answered questions (judge timeouts), so an under-sampled
-                # score can't masquerade as fully-backed.
-                def _fmt(metric_name: str) -> str:
-                    v = m[metric_name]
-                    if not isinstance(v, float):
-                        return "    n/a"
-                    n = scored.get(metric_name, answered)
-                    return f"{v:.4f}@{n}" if n < answered else f"{v:.4f}"
-
-                flag = "  (incomplete)" if row["incomplete"] else ""
-                logger.info(
-                    "  %-4s %-28s %-12s %-12s %-12s %-12s %-12s %-10d %s%s",
-                    ResultHandler.leaderboard_rank_label(row["rank"]),
-                    row["name"][:28],
-                    _fmt("answer_relevancy"),
-                    _fmt("faithfulness"),
-                    _fmt("context_precision"),
-                    _fmt("context_recall"),
-                    _fmt("answer_correctness"),
-                    answered,
-                    row["agent_md_file"],
-                    flag,
-                )
+            for line in ResultHandler.leaderboard_table_lines(leaderboard):
+                logger.info("%s", line)
 
         # Push to Argilla when ARCHI_ARGILLA=1 in the benchmarks container env.
         # The CLI flag --argilla on `archi evaluate` sets this (see Task 2.5).

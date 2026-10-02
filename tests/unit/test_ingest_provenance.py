@@ -31,7 +31,7 @@ def test_snapshot_reads_every_flag_from_a_full_config():
             "html_to_markdown": {"enabled": False},
             "categorization": {"enabled": True},
         },
-        "chunking": {"strategy": "markdown"},
+        "chunking": {"strategy": "markdown", "chunk_overlap": 0},
         "sources": {"links": {"sitemap": {"min_pages": 150}}},
     }
 
@@ -41,6 +41,7 @@ def test_snapshot_reads_every_flag_from_a_full_config():
         "html_to_markdown": False,
         "categorization": True,
         "chunking_strategy": "markdown",
+        "child_chunk_overlap": 0,
         "embedding_model": "OpenAIEmbeddings",
         "embedding_dimensions": 1536,
         "chunk_size": 800,
@@ -55,7 +56,8 @@ def test_snapshot_applies_the_ingest_paths_own_defaults_when_keys_are_absent():
 
     html_to_markdown defaults true and categorization defaults false in
     ``build_persistence_service``; chunking defaults to ``sentence`` in
-    ``_resolve_chunking_strategy``; the sitemap floor defaults to 1 in the
+    ``_resolve_chunking_strategy``; the child overlap defaults to 20 in
+    ``_resolve_chunk_overlap``; the sitemap floor defaults to 1 in the
     scraper manager; the remaining values mirror the config-seed fallbacks.
     """
     snapshot = build_ingest_config_snapshot({})
@@ -64,6 +66,7 @@ def test_snapshot_applies_the_ingest_paths_own_defaults_when_keys_are_absent():
         "html_to_markdown": True,
         "categorization": False,
         "chunking_strategy": "sentence",
+        "child_chunk_overlap": 20,
         "embedding_model": "HuggingFaceEmbeddings",
         "embedding_dimensions": 384,
         "chunk_size": 1000,
@@ -75,6 +78,19 @@ def test_snapshot_applies_the_ingest_paths_own_defaults_when_keys_are_absent():
 
 def test_snapshot_covers_exactly_the_declared_key_set():
     assert set(build_ingest_config_snapshot({})) == set(INGEST_CONFIG_KEYS)
+
+
+def test_snapshot_child_overlap_default_mirrors_the_node_parser():
+    from src.data_manager.vectorstore.node_parsing import CHILD_CHUNK_OVERLAP
+
+    snapshot = build_ingest_config_snapshot({})
+    assert snapshot["child_chunk_overlap"] == CHILD_CHUNK_OVERLAP
+
+
+def test_snapshot_reads_a_null_child_overlap_as_the_default():
+    """``_resolve_chunk_overlap`` maps an empty YAML value to the default."""
+    dm = {"chunking": {"chunk_overlap": None}}
+    assert build_ingest_config_snapshot(dm)["child_chunk_overlap"] == 20
 
 
 @pytest.mark.parametrize("bad", [None, [], "nope", 7])
@@ -166,13 +182,27 @@ def test_compare_orders_drift_by_the_declared_key_order():
 
 def test_compare_reports_a_key_present_on_one_side_only():
     at_ingest = {"categorization": False}
-    current = {"categorization": False, "chunking_strategy": "sentence"}
+    current = {"categorization": False, "future_flag": "on"}
 
     drift = compare_ingest_config(current, at_ingest)
 
     assert drift == [
-        {"key": "chunking_strategy", "current": "sentence", "at_ingest": None},
+        {"key": "future_flag", "current": "on", "at_ingest": None},
     ]
+
+
+def test_compare_skips_a_declared_key_the_older_snapshot_did_not_record():
+    """A snapshot written before a key was declared is silent about that key.
+
+    The builder always emits every declared key, so a declared key absent from
+    the recorded snapshot means "not recorded", not "changed". Without this,
+    adding a key to the snapshot flags every older ingest as drifted.
+    """
+    at_ingest = build_ingest_config_snapshot({})
+    del at_ingest["child_chunk_overlap"]
+    current = build_ingest_config_snapshot({"chunking": {"chunk_overlap": 0}})
+
+    assert compare_ingest_config(current, at_ingest) == []
 
 
 def test_compare_treats_an_empty_snapshot_as_no_comparison():

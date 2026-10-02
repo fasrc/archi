@@ -66,6 +66,9 @@ services:
     # Question bank in ragas 0.3.5's modern dialect (user_input/reference); legacy
     # question/answer banks are normalized on read (see docs/docs/benchmarking.md).
     queries_path: {{ services.benchmarking.queries_path | default("queries", true) }}
+    # The metric the sweep leaderboard ranks by. Benchmarker.run reads it from this
+    # rendered file, so dropping it here silently ranks every sweep by faithfulness.
+    primary_metric: {{ services.benchmarking.primary_metric | default("faithfulness", true) }}
     {%- if services.benchmarking.anchors %}
     # Host and container MUST probe the same path. templates_manager stages the bank
     # and bind-mounts it at this path under the image WORKDIR; dropping the block
@@ -85,8 +88,10 @@ services:
       sources_settings:
         default_match_field: {{ services.benchmarking.mode_settings.sources_settings.default_match_field | default("file_name", true) }} # metadata field to check for source matching
       ragas_settings:
+        # Read from mode_settings.ragas_settings like every other RAGAS knob; the
+        # older services.benchmarking.ragas_settings spelling is still honoured.
         enabled_metrics:
-          {%- for metric in services.benchmarking.ragas_settings.enabled_metrics | default(["answer_relevancy", "faithfulness", "context_precision", "context_recall"]) %}
+          {%- for metric in services.benchmarking.mode_settings.ragas_settings.enabled_metrics | default(services.benchmarking.ragas_settings.enabled_metrics | default(["answer_relevancy", "faithfulness", "context_precision", "context_recall"])) %}
           - {{ metric }}
           {%- endfor %}
         embedding_model: {{ services.benchmarking.mode_settings.ragas_settings.embedding_model | default("OpenAI", true) }}
@@ -292,6 +297,11 @@ data_manager:
 {%- endif %}
 {%- if data_manager.chunking.child_chunk_size is defined %}
     child_chunk_size: {{ data_manager.chunking.child_chunk_size }}
+{%- endif %}
+{%- if data_manager.chunking.chunk_overlap is defined and data_manager.chunking.chunk_overlap is not none %}
+    # tojson keeps the configured type: a bare "20" or "null" would reload as an
+    # int or None and slip past the manager's type check.
+    chunk_overlap: {{ data_manager.chunking.chunk_overlap | tojson }}
 {%- endif %}
   parallel_workers: {{ data_manager.parallel_workers | default(32, true) }}
   # Scrape-phase concurrency (issue #136), independent of the embedding-phase

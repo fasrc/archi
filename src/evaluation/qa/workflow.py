@@ -59,6 +59,7 @@ from .schema import AnswerAttempt
 from .scoring import build_summary, write_report, write_summary
 from .validation import dataset_source_format, iter_dataset_items
 from .workspace import EvaluationWorkspace
+from src.utils.llm_usage import phase_usage_totals
 
 
 class QAWorkflow:
@@ -869,6 +870,11 @@ class QAWorkflow:
                 ],
                 # Copied, not re-read: only the answering phase retrieved.
                 **corpus_provenance.summary_fields(manifest),
+                "usage": phase_usage_totals(
+                    iter_jsonl(run_dir / "preparation.jsonl"),
+                    iter_jsonl(run_dir / "answers.jsonl"),
+                    iter_jsonl(run_dir / "evaluation_results.jsonl"),
+                ),
             }
             write_summary(run_dir / "summary.json", summary, iter_jsonl(item_rows_path))
             manifest["status"] = "scored"
@@ -1216,6 +1222,11 @@ class QAWorkflow:
                 ],
                 # Copied, not re-read: only the answering phase retrieved.
                 **corpus_provenance.summary_fields(manifest),
+                "usage": phase_usage_totals(
+                    iter_jsonl(output_dir / "preparation.jsonl"),
+                    iter_jsonl(output_dir / "answers.jsonl"),
+                    iter_jsonl(output_dir / "evaluation_results.jsonl"),
+                ),
             }
             write_summary(
                 output_dir / "summary.json", summary, iter_jsonl(item_rows_path)

@@ -12,6 +12,7 @@ import src.evaluation.qa.workflow as workflow_module
 from src.evaluation.qa.artifacts import read_json, read_jsonl
 from src.evaluation.qa.workflow import QAWorkflow
 from src.evaluation.qa.workspace import EvaluationWorkspace
+from src.utils.llm_usage import phase_usage_totals
 
 
 class _EvaluatorFactory:
@@ -81,6 +82,72 @@ class _AgentFactory:
                 return (
                     "malformed" if question in factory.malformed_questions else "answer"
                 )
+
+        return Agent()
+
+
+def _make_usage(provider, model, in_tok, out_tok):
+    entry = {
+        "provider": provider,
+        "model": model,
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+        "calls": 1,
+        "unreported_calls": 0,
+    }
+    return {
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+        "calls": 1,
+        "unreported_calls": 0,
+        "by_model": [entry],
+    }
+
+
+class _UsageEvaluatorFactory:
+    def __init__(self, extractor_usage, compare_usage):
+        self.extractor_usage = extractor_usage
+        self.compare_usage = compare_usage
+
+    def __call__(self, profile):
+        factory = self
+
+        class Evaluator:
+            def extract_gold(self, question, answer):
+                self.last_usage = factory.extractor_usage
+                return {"atoms": [{"id": "required", "text": answer, "required": True}]}
+
+            def compare(self, question, gold_atoms, answer):
+                self.last_usage = factory.compare_usage
+                return {
+                    "judgments": [
+                        {
+                            "atom_id": atom.id,
+                            "outcome": "entailed",
+                            "rationale": "fake",
+                        }
+                        for atom in gold_atoms
+                    ]
+                }
+
+        return Evaluator()
+
+
+class _UsageAgentFactory:
+    def __init__(self, agent_usage):
+        self.agent_usage = agent_usage
+
+    def __call__(self, config, spec, pipeline_class, vectorstore=None):
+        factory = self
+
+        class Agent:
+            def __init__(self):
+                self.tool_calls = []
+                self.usage = None
+
+            def run(self, question):
+                self.usage = factory.agent_usage
+                return "answer"
 
         return Agent()
 
@@ -231,6 +298,7 @@ def test_composite_and_staged_workflows_are_equivalent_at_four_attempts(
         "corpus_fingerprint_before",
         "corpus_fingerprint",
         "corpus_unchanged_at_endpoints",
+        "usage",
     }
     manifest = read_json(staged / "manifest.json")
     assert manifest["versions"] == {
@@ -1851,3 +1919,99 @@ def test_a_retry_with_fresh_attempts_takes_its_own_readings(
     assert manifest["retrieval_identity"]["embedding_model"] == "Qwen/Q"
     provenance = read_json(tmp_path / "successor" / "summary.json")["provenance"]
     assert provenance["corpus_fingerprint"] == "sha256/v2:d"
+
+
+def test_phase_usage_appears_in_summary_provenance(agent_inputs, monkeypatch, tmp_path):
+    extractor_usage = _make_usage("test-p", "extractor-m", 10, 5)
+    compare_usage = _make_usage("test-p", "compare-m", 20, 8)
+    agent_usage = _make_usage("test-p", "agent-m", 15, 6)
+
+    monkeypatch.setattr(
+        workflow_module,
+        "ArchiAgentRuntime",
+        _UsageAgentFactory(agent_usage),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "LangChainEvaluatorRuntime",
+        _UsageEvaluatorFactory(extractor_usage, compare_usage),
+    )
+
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    run_dir = tmp_path / "run"
+    QAWorkflow().composite(
+        dataset, tmp_path / "agent.yaml", tmp_path / "agent.md", run_dir
+    )
+
+    summary = read_json(run_dir / "summary.json")
+    prep_rows = list(read_jsonl(run_dir / "preparation.jsonl"))
+    answer_rows = list(read_jsonl(run_dir / "answers.jsonl"))
+    result_rows = list(read_jsonl(run_dir / "evaluation_results.jsonl"))
+
+    expected = phase_usage_totals(prep_rows, answer_rows, result_rows)
+    assert summary["provenance"]["usage"] == expected
+    assert expected["prepare"] is not None
+    assert expected["run"] is not None
+    assert expected["score"] is not None
+
+
+def test_retry_phase_usage_appears_in_summary_provenance(
+    agent_inputs, monkeypatch, tmp_path
+):
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "fail-item",
+                    "question": "fail-q",
+                    "answer": "a",
+                    "time_sensitive": False,
+                    "expected_atoms": [{"id": "r", "text": "a", "required": True}],
+                },
+                {
+                    "id": "pass-item",
+                    "question": "pass-q",
+                    "answer": "a",
+                    "time_sensitive": False,
+                    "expected_atoms": [{"id": "r", "text": "a", "required": True}],
+                },
+            ]
+        )
+    )
+    parent = tmp_path / "parent"
+    monkeypatch.setattr(
+        workflow_module,
+        "ArchiAgentRuntime",
+        _AgentFactory(failures={("fail-q", 1)}),
+    )
+    QAWorkflow().composite(
+        dataset, tmp_path / "agent.yaml", tmp_path / "agent.md", parent
+    )
+
+    compare_usage = _make_usage("test-p", "compare-m", 20, 8)
+    agent_usage = _make_usage("test-p", "agent-m", 15, 6)
+    monkeypatch.setattr(
+        workflow_module,
+        "ArchiAgentRuntime",
+        _UsageAgentFactory(agent_usage),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "LangChainEvaluatorRuntime",
+        _UsageEvaluatorFactory({}, compare_usage),
+    )
+
+    successor = tmp_path / "successor"
+    QAWorkflow().retry(parent, successor)
+
+    summary = read_json(successor / "summary.json")
+    prep_rows = list(read_jsonl(successor / "preparation.jsonl"))
+    answer_rows = list(read_jsonl(successor / "answers.jsonl"))
+    result_rows = list(read_jsonl(successor / "evaluation_results.jsonl"))
+
+    expected = phase_usage_totals(prep_rows, answer_rows, result_rows)
+    assert summary["provenance"]["usage"] == expected
+    assert expected["run"] is not None
+    assert expected["score"] is not None

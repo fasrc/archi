@@ -93,10 +93,12 @@ if "langchain_community.document_loaders.text" not in sys.modules:
 from src.data_manager.vectorstore import manager as manager_module
 from src.data_manager.vectorstore.manager import (
     VectorStoreManager,
+    _resolve_chunk_overlap,
     _resolve_chunk_sizes,
     _resolve_chunking_strategy,
 )
 from src.data_manager.vectorstore.node_parsing import (
+    CHILD_CHUNK_OVERLAP,
     CHILD_EMBEDDING_DIM,
     DEFAULT_CHILD_CHUNK_SIZE,
     DEFAULT_PARENT_CHUNK_SIZE,
@@ -174,6 +176,7 @@ def _make_manager():
     manager.hierarchical_chunking = True
     manager.parent_chunk_size = DEFAULT_PARENT_CHUNK_SIZE
     manager.child_chunk_size = DEFAULT_CHILD_CHUNK_SIZE
+    manager.child_chunk_overlap = CHILD_CHUNK_OVERLAP
     manager._data_manager_config = {"stemming": {"enabled": False}}
     manager._pg_config = {"host": "localhost"}
     manager.embedding_dimensions = EMBED_DIM
@@ -627,7 +630,9 @@ def test_build_hierarchical_payload_passes_configured_chunk_sizes(monkeypatch):
 
     captured = {}
 
-    def _capture(doc, strategy=None, parent_chunk_size=None, child_chunk_size=None):
+    def _capture(
+        doc, strategy=None, parent_chunk_size=None, child_chunk_size=None, **_kwargs
+    ):
         captured["strategy"] = strategy
         captured["parent_chunk_size"] = parent_chunk_size
         captured["child_chunk_size"] = child_chunk_size
@@ -748,3 +753,53 @@ def test_hierarchical_children_and_parents_carry_the_embedding_model(monkeypatch
         md["embedding_model"] == "text-embedding-3-small"
         for md in parent["child_metadatas"]
     )
+
+
+# ---------------------------------------------------------------------------
+# _resolve_chunk_overlap — task 2.1
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_chunk_overlap_absent_key():
+    assert _resolve_chunk_overlap({}) == CHILD_CHUNK_OVERLAP
+
+
+def test_resolve_chunk_overlap_none_resolves_to_default():
+    assert _resolve_chunk_overlap({"chunk_overlap": None}) == CHILD_CHUNK_OVERLAP
+
+
+def test_resolve_chunk_overlap_zero():
+    assert _resolve_chunk_overlap({"chunk_overlap": 0}) == 0
+
+
+def test_resolve_chunk_overlap_explicit_int():
+    assert _resolve_chunk_overlap({"chunk_overlap": 64}) == 64
+
+
+@pytest.mark.parametrize("bad", [-1, True, "20", 2.5])
+def test_resolve_chunk_overlap_rejects_invalid(bad):
+    with pytest.raises(ValueError, match="data_manager.chunking.chunk_overlap"):
+        _resolve_chunk_overlap({"chunk_overlap": bad})
+
+
+def test_build_hierarchical_payload_passes_child_chunk_overlap(monkeypatch):
+    manager = _make_manager()
+    manager.child_chunk_overlap = 64
+
+    captured_kwargs = {}
+
+    def _capture(doc, **kwargs):
+        captured_kwargs.update(kwargs)
+        return []
+
+    monkeypatch.setattr(manager_module, "build_hierarchical_nodes", _capture)
+
+    manager._build_hierarchical_payload(
+        docs=[SimpleNamespace(page_content="x", metadata={})],
+        file_level_metadata={},
+        filename="doc.txt",
+        filehash="h1",
+        apply_stemming=False,
+    )
+
+    assert captured_kwargs.get("child_chunk_overlap") == 64

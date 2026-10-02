@@ -284,11 +284,27 @@ def create(
             compose_config, use_podman=other_flags.get("podman", False), dry=dry
         )
 
+        # Full render into a temporary directory before any destructive step (#294):
+        # any deterministic render failure refuses here and leaves the existing
+        # deployment intact.  --dry performs the same check so a dry run reports
+        # the same failure a real run would hit.
+        template_manager = TemplateManager(env, verbosity)
+        template_manager.preflight_render(
+            compose_config, config_manager, secrets_manager, **other_flags
+        )
+
+        # Volumes only, no config: staging local_files copies into the data-manager
+        # volume the running deployment still mounts, so it waits for the teardown.
+        if not dry:
+            volume_manager = VolumeManager(compose_config.use_podman)
+            volume_manager.create_required_volumes(compose_config)
+
         # Everything above this line can still refuse the deployment — service
         # selection, config validation, secret validation, the compose plan,
-        # the pure port checks, and the base images.  So the --force teardown goes here and
-        # nowhere earlier: a create that was always going to fail must not cost
-        # the operator a running deployment first (fasrc/archi#287).
+        # the pure port checks, the base images, and the full render (#294).
+        # So the --force teardown goes here and nowhere earlier: a create that
+        # was always going to fail must not cost the operator a running
+        # deployment first (fasrc/archi#287).
         #
         # It cannot move below the --dry return either, or a dry run would stop
         # reporting the removal it would have performed.
@@ -323,13 +339,10 @@ def create(
             return
 
         # Actual deployment
-        template_manager = TemplateManager(env, verbosity)
+        volume_manager.stage_local_files(compose_config, config_manager.config)
         base_dir.mkdir(parents=True, exist_ok=True)
 
         secrets_manager.write_secrets_to_files(base_dir, all_secrets)
-
-        volume_manager = VolumeManager(compose_config.use_podman)
-        volume_manager.create_required_volumes(compose_config, config_manager.config)
 
         template_manager.prepare_deployment_files(
             compose_config,
@@ -838,19 +851,14 @@ def evaluate(
 
         # handle_existing_deployment stays here for error precedence: without
         # --force it must refuse before any validation or teardown logic runs.
-        # The destructive half (remove_existing_deployment) and the existence
-        # assertion travel together below, after the steps that can refuse the
-        # replacement on config input: config validation, secret construction
-        # and validation, and the compose plan (fasrc/archi#290).
-        #
-        # That is strictly weaker than "the replacement is constructible". The
-        # ten stages of prepare_deployment_files() (_build_workflow() in
-        # templates_manager.py) still run below the teardown, and several raise
-        # on deterministic config input — _stage_agents() on two configs whose
-        # agent_md_file share a basename, _check_ports_available() on an invalid
-        # or duplicated port. Enumerating those routes one at a time is what
-        # fasrc/archi#294 exists to stop doing; it closes the class for both
-        # create() and evaluate() by rendering before destroying.
+        # The destructive half (remove_existing_deployment) now travels further
+        # below, after a full preflight render confirms the replacement is
+        # constructible (fasrc/archi#294). The early checks above it (config
+        # validation, secret construction and validation, compose plan) remain
+        # and give better messages; the preflight closes the class for
+        # deterministic render failures. Only non-deterministic failures (a port
+        # held by another process, a full disk, compose up) remain below the
+        # teardown.
         handle_existing_deployment(base_dir, name, force)
 
         secrets_manager = SecretsManager(env_file, config_manager)
@@ -907,6 +915,19 @@ def evaluate(
             dry=False,
         )
 
+        template_manager = TemplateManager(env, verbosity)
+        template_manager.preflight_render(
+            compose_config,
+            config_manager,
+            secrets_manager,
+            **other_flags,
+        )
+
+        # Volumes only, as in create: a volume that cannot be created refuses here,
+        # before the teardown.  Staging local_files waits for the teardown.
+        volume_manager = VolumeManager(compose_config.use_podman)
+        volume_manager.create_required_volumes(compose_config)
+
         refuse_agent_config_inside_deployment(
             config_manager.get_configs(), base_dir, enabled_services
         )
@@ -919,13 +940,11 @@ def evaluate(
                 f"Benchmarking runtime '{name}' already exists at {base_dir}"
             )
 
-        template_manager = TemplateManager(env, verbosity)
         base_dir.mkdir(parents=True, exist_ok=True)
 
         secrets_manager.write_secrets_to_files(base_dir, all_secrets)
 
-        volume_manager = VolumeManager(compose_config.use_podman)
-        volume_manager.create_required_volumes(compose_config, config_manager.config)
+        volume_manager.stage_local_files(compose_config, config_manager.config)
 
         template_manager.prepare_deployment_files(
             compose_config,
