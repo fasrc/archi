@@ -1308,20 +1308,20 @@ def test_stale_template_exclusions_reports_a_bogus_relative_path_key(monkeypatch
     ], f"expected bogus relative-path key to be stale, got {stale!r}"
 
 
-def test_service_templates_has_15_of_21_and_excluded_relative_paths_match_the_declaration():
-    """service_templates() returns 15 of the 21 Dockerfile* files; the 6 excluded relative
+def test_service_templates_has_16_of_22_and_excluded_relative_paths_match_the_declaration():
+    """service_templates() returns 16 of the 22 Dockerfile* files; the 6 excluded relative
     paths are exactly the keys of NON_SERVICE_TEMPLATES."""
     template_dir = preflight.TEMPLATE_DIR
     all_dockerfiles = sorted(template_dir.rglob("Dockerfile*"))
     services = preflight.service_templates()
     assert (
-        len(all_dockerfiles) == 21
-    ), f"expected 21 Dockerfile* files, found {len(all_dockerfiles)}: " + ", ".join(
+        len(all_dockerfiles) == 22
+    ), f"expected 22 Dockerfile* files, found {len(all_dockerfiles)}: " + ", ".join(
         p.relative_to(template_dir).as_posix() for p in all_dockerfiles
     )
     assert (
-        len(services) == 15
-    ), f"expected 15 service templates, got {len(services)}: " + ", ".join(
+        len(services) == 16
+    ), f"expected 16 service templates, got {len(services)}: " + ", ".join(
         p.relative_to(template_dir).as_posix() for p in services
     )
     excluded = {p.relative_to(template_dir).as_posix() for p in all_dockerfiles} - {

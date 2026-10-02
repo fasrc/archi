@@ -170,6 +170,19 @@ class ServiceRegistry:
 
         self.register(
             ServiceDefinition(
+                name="slack",
+                description="Slack bot that answers @mentions and DMs through the chat app /v1 API",
+                category="integration",
+                # Reads its config from Postgres, then calls the chatbot's /v1 API.
+                # ARCHI_API_TOKEN is required only when chat auth is on; the secrets
+                # manager adds it (openspec/changes/add-slack-service).
+                depends_on=["postgres", "chatbot"],
+                required_secrets=["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+            )
+        )
+
+        self.register(
+            ServiceDefinition(
                 name="redmine-mailer",
                 consumes_agent_specs=True,
                 description="Email processing and Cleo/Redmine ticket management",
