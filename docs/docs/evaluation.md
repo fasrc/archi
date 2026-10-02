@@ -1275,6 +1275,9 @@ where `rate_in` and `rate_out` are the per-token input and output prices for tha
   gives an estimate that can be higher or lower than the bill.
 - A retry run directory copies rows from its parent; those rows carry the parent run's usage,
   so the retry totals include them.
+- `provider` is always `services.chat_app.default_provider`, also for a model that a
+  pipeline declares on another provider and for LLM calls inside tools. `model` comes
+  from the response, so check `provider` before you pick a rate (issue #597).
 
 ## Troubleshooting
 
