@@ -22,6 +22,10 @@ from src.utils.benchmark_schema import (
     anchors_enabled,
 )
 from src.utils.container_endpoint import container_endpoint_is_provably_local
+from src.utils.evaluations_config import (
+    AGENT_CONFIG_STAGED_FILENAME,
+    resolve_agent_config_source,
+)
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -91,6 +95,9 @@ EVALUATION_CONFIG_DIR = "evaluation_config"
 EVALUATION_MCP_CONFIG_FILENAME = "qa_evaluation_mcp.yaml"
 EVALUATION_MCP_RUNTIME_PATH = (
     f"/root/archi/{EVALUATION_CONFIG_DIR}/{EVALUATION_MCP_CONFIG_FILENAME}"
+)
+EVALUATION_AGENT_CONFIG_RUNTIME_PATH = (
+    f"/root/archi/{EVALUATION_CONFIG_DIR}/{AGENT_CONFIG_STAGED_FILENAME}"
 )
 
 
@@ -193,6 +200,7 @@ class TemplateContext:
     base_dir: Path = field(init=False)
     prompt_mappings: Dict[str, Dict[str, str]] = field(default_factory=dict)
     evaluation_mcp_configured: bool = False
+    evaluation_agent_config_staged: bool = False
 
     def __post_init__(self) -> None:
         self.base_dir = self.plan.base_dir
@@ -550,6 +558,7 @@ class TemplateManager:
             self._stage_agents,
             self._stage_skills,
             self._stage_evaluation_config,
+            self._stage_agent_config,
             self._stage_configs,
             self._stage_service_artifacts,
             self._stage_postgres_init,
@@ -769,6 +778,33 @@ class TemplateManager:
             staged_path,
         )
 
+    def _stage_agent_config(self, context: TemplateContext) -> None:
+        """Stage the operator's evaluations agent config into the deployment directory."""
+        config = context.config_manager.config or {}
+        staged_path = (
+            context.base_dir / EVALUATION_CONFIG_DIR / AGENT_CONFIG_STAGED_FILENAME
+        )
+
+        # The console runs in the chatbot container; without it an inactive
+        # evaluations block must not be resolved (see _validate_chat_app_config).
+        source = None
+        if "chatbot" in context.plan.get_enabled_services():
+            source = resolve_agent_config_source(config)
+        if source is None:
+            context.evaluation_agent_config_staged = False
+            if staged_path.exists() or staged_path.is_symlink():
+                staged_path.unlink()
+            return
+
+        staged_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, staged_path)
+        context.evaluation_agent_config_staged = True
+        logger.info(
+            "Staged evaluations agent config from %s to %s",
+            source,
+            staged_path,
+        )
+
     def _stage_configs(self, context: TemplateContext) -> None:
         self._render_config_files(context)
 
@@ -930,6 +966,12 @@ class TemplateManager:
                                 if context.evaluation_mcp_configured
                                 else None
                             )
+                            if getattr(
+                                context, "evaluation_agent_config_staged", False
+                            ):
+                                evaluations_cfg["agent_config_path"] = (
+                                    EVALUATION_AGENT_CONFIG_RUNTIME_PATH
+                                )
             if context.benchmarking:
                 benchmark_cfg = services_cfg.get("benchmarking")
                 if isinstance(benchmark_cfg, dict):
@@ -1159,6 +1201,9 @@ class TemplateManager:
 
         template_vars["benchmark_anchors_target"] = self._anchor_mount_target(context)
         template_vars["evaluation_mcp_configured"] = context.evaluation_mcp_configured
+        template_vars["evaluation_agent_config_staged"] = (
+            context.evaluation_agent_config_staged
+        )
 
         if context.plan.get_service("grader").enabled:
             template_vars["rubrics"] = self._get_grader_rubrics(context.config_manager)
