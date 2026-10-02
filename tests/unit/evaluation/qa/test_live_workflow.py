@@ -508,6 +508,61 @@ class TestLiveWorkflow:
             "static"
         ]
 
+    def test_continue_keeps_the_redacted_snapshot_digest(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        from pathlib import Path
+
+        import yaml
+
+        sentinel_config = {
+            "services": {
+                "chat_app": {
+                    "agent_class": "FakeAgent",
+                    "default_provider": "fake",
+                    "default_model": "fake-model",
+                    "providers": {"fake": {"api_key": "SENTINEL-APIKEY"}},
+                },
+                "postgres": {"password": "SENTINEL-PG"},
+            },
+        }
+        spec = SimpleNamespace(tools=[])
+        spec_text = "---\nname: fake\ntools: []\n---\n"
+
+        def sentinel_loader(config_path, spec_path):
+            if Path(config_path) == tmp_path / "agent.yaml":
+                return (sentinel_config, spec, spec_text, object)
+            return (
+                yaml.safe_load(Path(config_path).read_text(encoding="utf-8")),
+                spec,
+                spec_text,
+                object,
+            )
+
+        monkeypatch.setattr(workflow_module, "load_agent_inputs", sentinel_loader)
+        workflow, run_dir = _paused_at_live_gate(monkeypatch, tmp_path)
+        paused_digest = read_json(run_dir / "manifest.json")["artifacts"][
+            "agent_config.resolved.yaml"
+        ]
+        assert (
+            "SENTINEL"
+            not in (run_dir / "agent_config.resolved.yaml").read_bytes().decode()
+        )
+        manifest = workflow.run(
+            run_dir,
+            run_dir / "agent_config.resolved.yaml",
+            run_dir / "agent_spec.resolved.md",
+            overwrite=True,
+            pause_on_live_mismatch=True,
+            authorize_staged_invalid=True,
+        )
+        assert manifest["phases"]["run"]["status"] == "completed"
+        assert manifest["artifacts"]["agent_config.resolved.yaml"] == paused_digest
+        assert (
+            "SENTINEL"
+            not in (run_dir / "agent_config.resolved.yaml").read_bytes().decode()
+        )
+
     def test_high_cardinality_gate_persists_only_compact_attention_counts(
         self, monkeypatch, tmp_path, runtimes
     ):

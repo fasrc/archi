@@ -366,7 +366,7 @@ services:
     evaluations:
       enabled: true
       root: /root/archi/evaluations
-      agent_config_path: /root/archi/configs/config.eval.yaml
+      agent_config_path: ../configs/config.eval.yaml
       mcp_config_path: ../configs/qa_evaluation_mcp.yaml
 ```
 
@@ -405,21 +405,17 @@ services:
   mismatch on the host directory — the console disables itself and chat keeps
   serving. Look for the start-up error line naming the root, then correct this
   setting and redeploy to re-enable the console.
-- `evaluations.agent_config_path` is the in-container path to the Archi
-  deployment YAML that defines the agent under test. This key is **required**
-  when `enabled` is `true`; it has **no default**. `archi create` refuses a
-  config that omits it or that names the live deployment config
-  (`/root/archi/configs/config.yaml`), because every evaluation run copies the
-  named file into the host-mounted run workspace the console serves — credential
-  values included. Use a redacted copy such as
-  `/root/archi/configs/config.eval.yaml` instead. Archi does not generate that
-  copy: place the redacted file in the deployment's own `configs/` directory on
-  the host (`~/.archi/archi-<name>/configs/`, or `$ARCHI_DIR/archi-<name>/configs/`),
-  which Compose mounts at `/root/archi/configs`. A run whose `agent_config_path`
-  names a file that is absent from the container starts and then fails the file
-  check, so confirm the file is in place before the first run. A relative value
-  is read inside the container and so resolves against `/root/archi`, not against
-  the directory `archi create` ran in.
+- `evaluations.agent_config_path` is an absolute host path or a path relative
+  to this deployment YAML (the same resolution rule as `mcp_config_path`). This
+  key is **required** when `enabled` is `true`; it has **no default**. `archi
+  create` refuses a missing file, the deployment YAML itself, the live
+  deployment config (`/root/archi/configs/config.yaml`), and any file inside the
+  deployment directory (which `archi create --force` deletes on every run). On
+  every `archi create`, Archi copies the named file to
+  `evaluation_config/qa_agent_config.yaml` inside the deployment directory and
+  points the running config at `/root/archi/evaluation_config/qa_agent_config.yaml`.
+  Archi does not generate or redact the file — name a redacted copy, because
+  every evaluation run copies it into the run workspace the console serves.
 - `evaluations.mcp_config_path` is needed only for Dataset V2 live oracle
   items. It is an absolute host path or a path relative to this deployment YAML.
   Archi validates and stages the referenced evaluator MCP registry.

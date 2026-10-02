@@ -99,15 +99,15 @@ def test_empty_string_root_raises_naming_field_path():
 from src.cli.managers.config_manager import ConfigurationManager  # noqa: E402
 
 
-def _chat_app_config(root):
+def _chat_app_config(root, agent_config_path):
     """A config whose only questionable field is the evaluations root.
 
-    `agent_config_path` is present and deliberately not the live deployment
-    config: `_validate_chat_app_config` also runs `validate_evaluations_config`
-    (#330), which refuses an enabled console that names no path or names the live
-    one, and it runs *before* the root check. Without a valid path here these
-    tests would trip that sibling validator and never exercise the root
-    validation they exist for.
+    `agent_config_path` must be a path to a file that exists on the host so
+    that `resolve_agent_config_source` (called by `_validate_chat_app_config`
+    since #371) can check it. `_validate_chat_app_config` also runs
+    `validate_evaluations_config` (#330), which refuses a blank or live-config
+    path and runs before the root check, so the path must not be blank or name
+    the live deployment config.
     """
     return {
         "services": {
@@ -118,7 +118,7 @@ def _chat_app_config(root):
                 "evaluations": {
                     "enabled": True,
                     "root": root,
-                    "agent_config_path": "/root/archi/configs/agent_config.eval.yaml",
+                    "agent_config_path": agent_config_path,
                 },
             }
         }
@@ -131,28 +131,47 @@ def _manager():
 
 
 def test_validate_chat_app_config_outside_root_raises():
+    import os
+    import tempfile
+
     mgr = _manager()
-    with pytest.raises(ValueError) as exc_info:
-        mgr._validate_chat_app_config(
-            _chat_app_config("/data/evaluations"), ["chatbot"]
-        )
-    msg = str(exc_info.value)
-    assert "/data/evaluations" in msg
-    assert "/root/archi/evaluations" in msg
+    fd, agent_path = tempfile.mkstemp(suffix=".yaml")
+    try:
+        os.write(fd, b"model: gpt-4\n")
+        os.close(fd)
+        with pytest.raises(ValueError) as exc_info:
+            mgr._validate_chat_app_config(
+                _chat_app_config("/data/evaluations", agent_path), ["chatbot"]
+            )
+        msg = str(exc_info.value)
+        assert "/data/evaluations" in msg
+        assert "/root/archi/evaluations" in msg
+    finally:
+        os.unlink(agent_path)
 
 
 def test_validate_chat_app_config_mounted_root_does_not_raise():
+    import os
+    import tempfile
+
     mgr = _manager()
-    mgr._validate_chat_app_config(
-        _chat_app_config("/root/archi/evaluations"), ["chatbot"]
-    )
+    fd, agent_path = tempfile.mkstemp(suffix=".yaml")
+    try:
+        os.write(fd, b"model: gpt-4\n")
+        os.close(fd)
+        mgr._validate_chat_app_config(
+            _chat_app_config("/root/archi/evaluations", agent_path), ["chatbot"]
+        )
+    finally:
+        os.unlink(agent_path)
 
 
 def test_validate_chat_app_config_non_chatbot_service_skips():
     mgr = _manager()
     # data_manager service: should not raise even with an outside root
     mgr._validate_chat_app_config(
-        _chat_app_config("/data/evaluations"), ["data_manager"]
+        _chat_app_config("/data/evaluations", "/any/path/does/not/matter"),
+        ["data_manager"],
     )
 
 

@@ -83,7 +83,11 @@ dependencies = [
     "opentelemetry-instrumentation-psycopg2==0.65b0",
     "opentelemetry-instrumentation-sqlite3==0.65b0",
     "opentelemetry-instrumentation-logging==0.65b0",
-    "openinference-instrumentation-langchain==0.1.74"
+    "openinference-instrumentation-langchain==0.1.74",
+    # add-slack-service: the Slack bot's Socket Mode and Web API client. It has no
+    # required dependencies; its built-in Socket Mode client needs no websocket
+    # package. Version matches requirements-base.txt.
+    "slack_sdk==3.45.0"
 ]
 
 [project.scripts]

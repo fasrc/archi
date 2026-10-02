@@ -269,7 +269,7 @@ services:
     volumes:
       - {{ data_manager_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
-      {% if evaluation_mcp_configured | default(false) -%}
+      {% if evaluation_mcp_configured | default(false) or evaluation_agent_config_staged | default(false) -%}
       - ./evaluation_config:/root/archi/evaluation_config:ro
       {% endif -%}
       - ./data/prompts:/root/archi/data/prompts:ro

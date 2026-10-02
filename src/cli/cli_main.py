@@ -36,6 +36,7 @@ from src.cli.utils.helpers import (
 )
 from src.cli.utils.service_builder import ServiceBuilder
 from src.utils.benchmark_schema import preflight_benchmark_configs
+from src.utils.evaluations_config import refuse_agent_config_inside_deployment
 from src.utils.logging import get_logger, setup_cli_logging
 
 # DEFINITIONS
@@ -307,6 +308,9 @@ def create(
         #
         # It cannot move below the --dry return either, or a dry run would stop
         # reporting the removal it would have performed.
+        refuse_agent_config_inside_deployment(
+            config_manager.get_configs(), base_dir, enabled_services
+        )
         remove_existing_deployment(
             base_dir, name, force, dry, other_flags.get("podman", False)
         )
@@ -924,6 +928,9 @@ def evaluate(
         volume_manager = VolumeManager(compose_config.use_podman)
         volume_manager.create_required_volumes(compose_config)
 
+        refuse_agent_config_inside_deployment(
+            config_manager.get_configs(), base_dir, enabled_services
+        )
         remove_existing_deployment(
             base_dir, name, force, False, other_flags.get("podman", False)
         )
