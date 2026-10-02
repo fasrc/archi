@@ -79,7 +79,7 @@ Standing notes for every task:
 
 ## 4. Call site 3 and the index
 
-- [ ] 4.1 In `tests/unit/test_vectorstore_manager_hierarchical.py`, write failing tests for
+- [x] 4.1 In `tests/unit/test_vectorstore_manager_hierarchical.py`, write failing tests for
       `delete_existing_collection_if_reset` with `reset_collection: True` and a fake
       connection (read the method first; it sets `conn.autocommit` after the commit, so the
       fake must allow that): (a) with the table present, `TRUNCATE_PARENT_NODES` runs right
