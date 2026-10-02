@@ -31,6 +31,8 @@ ERROR_TEXT = (
     "An operator can find the reason in the slack service log."
 )
 
+_STATUS_TEXTS = frozenset({PLACEHOLDER_TEXT, ERROR_TEXT})
+
 DEFAULT_CHAT_URL = "http://chatbot:7861"
 DEFAULT_TIMEOUT_SECONDS = 600
 DEFAULT_MAX_WORKERS = 4
@@ -122,7 +124,11 @@ def build_messages(replies, bot_user_id, question, before_ts, limit):
         content = strip_mention(message.get("text"))
         if not content:
             continue
-        role = "assistant" if _is_own_message(message, bot_user_id) else "user"
+        own = _is_own_message(message, bot_user_id)
+        # A placeholder left by a failed delivery, or the error line, is not an answer.
+        if own and content in _STATUS_TEXTS:
+            continue
+        role = "assistant" if own else "user"
         turns.append({"role": role, "content": content})
     kept = turns[-limit:] if limit > 0 else []
     return kept + [{"role": "user", "content": question}]

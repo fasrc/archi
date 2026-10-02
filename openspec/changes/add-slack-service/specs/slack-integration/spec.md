@@ -53,6 +53,10 @@ The Slack bot SHALL send the thread messages older than the current question, in
 - **WHEN** a thread holds a user question, then a bot answer, and the user asks a follow-up
 - **THEN** the `/v1` request `messages` are `user`, `assistant`, `user` in that order
 
+#### Scenario: The bot's status messages are not history
+- **WHEN** the thread holds the bot's own placeholder or error line
+- **THEN** that message is not in the request `messages`
+
 #### Scenario: Another bot's post is a user turn
 - **WHEN** the thread holds a message with a `bot_id` whose `user` is not the bot's own user ID
 - **THEN** that message is sent with role `user`

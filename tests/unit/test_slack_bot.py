@@ -254,6 +254,29 @@ def test_build_messages_treats_only_own_messages_as_assistant():
     assert [m["role"] for m in out] == ["assistant", "user", "user", "user"]
 
 
+@pytest.mark.parametrize("status_text", [PLACEHOLDER_TEXT, ERROR_TEXT])
+def test_build_messages_drops_the_bots_status_messages(status_text):
+    # A placeholder left by a failed delivery, or the error line, is not an
+    # answer and must not reach /v1 as an assistant turn (local review, round 3).
+    replies = [
+        _reply("1.0", "<@UBOT> first"),
+        _reply("2.0", status_text, user=BOT, bot_id="B1"),
+        _reply("3.0", "real answer", user=BOT, bot_id="B1"),
+    ]
+    out = build_messages(replies, BOT, "q", before_ts="4.0", limit=20)
+    assert out == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "real answer"},
+        {"role": "user", "content": "q"},
+    ]
+
+
+def test_build_messages_keeps_a_user_message_that_quotes_a_status_text():
+    replies = [_reply("1.0", ERROR_TEXT)]
+    out = build_messages(replies, BOT, "q", before_ts="2.0", limit=20)
+    assert out[0] == {"role": "user", "content": ERROR_TEXT}
+
+
 def test_build_messages_drops_empty_texts():
     replies = [_reply("1.0", "<@UBOT>"), _reply("1.5", "")]
     assert build_messages(replies, BOT, "q", before_ts="2.0", limit=20) == [
