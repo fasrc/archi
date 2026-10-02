@@ -93,7 +93,7 @@ Standing notes for every task:
 
 ## 5. End-to-end behaviour on the stateful fake
 
-- [ ] 5.1 In `tests/unit/test_parent_nodes.py`, teach the stateful fake the parent
+- [x] 5.1 In `tests/unit/test_parent_nodes.py`, teach the stateful fake the parent
       `INSERT ... RETURNING id` (new serial id per row), `fetchone`, the chunk-insert path
       (monkeypatch `execute_values` in the `manager` module to append chunks with their
       `metadata.parent_id`), the chunk delete by `resource_hash` and collection, and
