@@ -18,6 +18,7 @@ from src.utils.ingest_provenance import build_ingest_config_snapshot
 from src.utils.ingest_run import collect_ingest_counts, record_ingest_run
 from src.utils.logging import get_logger
 
+from . import parent_nodes
 from .loader_utils import select_loader
 from .node_parsing import (
     CHILD_CHUNK_OVERLAP,
@@ -31,7 +32,7 @@ from .node_parsing import (
     resolve_effective_strategy,
 )
 from .postgres_vectorstore import PostgresVectorStore
-from .schema import ensure_hierarchical_schema
+from .schema import ensure_chunks_parent_id_index, ensure_hierarchical_schema
 
 logger = get_logger(__name__)
 
@@ -228,6 +229,10 @@ class VectorStoreManager:
             with conn.cursor() as cursor:
                 cursor.execute("TRUNCATE TABLE document_chunks CASCADE")
                 logger.info("Truncated document_chunks table")
+
+                if parent_nodes.parent_table_exists(cursor):
+                    parent_nodes.truncate_parent_nodes(cursor)
+                    logger.info("Truncated document_parent_nodes table")
 
                 # Reset ingestion status so all documents get re-embedded.
                 cursor.execute(
@@ -518,6 +523,10 @@ class VectorStoreManager:
         conn = psycopg2.connect(**self._pg_config)
         try:
             with conn.cursor() as cursor:
+                table_exists = parent_nodes.parent_table_exists(cursor)
+                if table_exists:
+                    ensure_chunks_parent_id_index(cursor)
+                deleted_count = 0
                 for resource_hash in hashes_to_remove:
                     cursor.execute(
                         """
@@ -527,7 +536,19 @@ class VectorStoreManager:
                         """,
                         (resource_hash, self.collection_name),
                     )
+                    if table_exists:
+                        deleted_count += (
+                            parent_nodes.delete_unreferenced_parents_for_resource(
+                                cursor, resource_hash
+                            )
+                        )
                 conn.commit()
+                if table_exists:
+                    logger.info(
+                        "Deleted %d unreferenced parent nodes for %d removed resources",
+                        deleted_count,
+                        len(hashes_to_remove),
+                    )
                 logger.debug(
                     f"Removed {len(hashes_to_remove)} resource hashes from vectorstore"
                 )
@@ -717,10 +738,12 @@ class VectorStoreManager:
                 # undefined-table error. Idempotent (CREATE ... IF NOT EXISTS).
                 if self.hierarchical_chunking:
                     ensure_hierarchical_schema(cursor)
+                    ensure_chunks_parent_id_index(cursor)
                     conn.commit()
 
                 total_files = len(files_to_add_items)
                 files_since_commit = 0
+                deleted_parent_count = 0
                 for file_idx, (filehash, file_path) in enumerate(files_to_add_items):
                     processed = processed_results.get(filehash)
                     if not processed:
@@ -746,6 +769,14 @@ class VectorStoreManager:
                             inserted = self._insert_hierarchical_file(
                                 cursor, document_id, parents
                             )
+                            if document_id is not None:
+                                deleted = parent_nodes.delete_unreferenced_parents(
+                                    cursor, document_id
+                                )
+                            else:
+                                deleted = parent_nodes.delete_unreferenced_parents_for_resource(
+                                    cursor, filehash
+                                )
                             cursor.execute(
                                 """UPDATE documents
                                    SET ingested_at = NOW(), ingestion_status = 'embedded',
@@ -754,6 +785,9 @@ class VectorStoreManager:
                                 (filehash,),
                             )
                             cursor.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                            # Count only once the savepoint holds: a rollback
+                            # above restores the deleted rows.
+                            deleted_parent_count += deleted
                             logger.debug(
                                 f"Added {inserted} child chunks for {filename} "
                                 f"(document_id={document_id})"
@@ -882,6 +916,12 @@ class VectorStoreManager:
                             files_since_commit,
                         )
                         files_since_commit = 0
+
+                if self.hierarchical_chunking:
+                    logger.info(
+                        "Deleted %d unreferenced parent nodes after re-ingest",
+                        deleted_parent_count,
+                    )
 
                 if files_since_commit > 0:
                     conn.commit()
