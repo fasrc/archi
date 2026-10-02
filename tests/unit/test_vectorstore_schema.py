@@ -46,6 +46,11 @@ class _FakeCursor:
                 return  # no-op: index already present
             self.db.indexes.add("idx_parent_nodes_document")
             self.db.created.append("idx_parent_nodes_document")
+        elif "CREATE INDEX IF NOT EXISTS idx_chunks_parent_id" in norm:
+            if "idx_chunks_parent_id" in self.db.indexes:
+                return  # no-op: index already present
+            self.db.indexes.add("idx_chunks_parent_id")
+            self.db.created.append("idx_chunks_parent_id")
         else:  # pragma: no cover - guards against unexpected DDL drift
             raise AssertionError(f"unexpected SQL issued by ensure step: {norm}")
 
@@ -58,8 +63,13 @@ def test_creates_table_and_index_when_absent():
 
     assert "document_parent_nodes" in db.tables
     assert "idx_parent_nodes_document" in db.indexes
-    # Table is created before its index (index depends on the table existing).
-    assert db.created == ["document_parent_nodes", "idx_parent_nodes_document"]
+    assert "idx_chunks_parent_id" in db.indexes
+    # Table and indexes are created in dependency order.
+    assert db.created == [
+        "document_parent_nodes",
+        "idx_parent_nodes_document",
+        "idx_chunks_parent_id",
+    ]
 
 
 def test_uses_if_not_exists_ddl():
@@ -81,7 +91,7 @@ def test_uses_if_not_exists_ddl():
 def test_idempotent_noop_when_already_present():
     db = _FakeSchemaDB(
         tables={"document_parent_nodes"},
-        indexes={"idx_parent_nodes_document"},
+        indexes={"idx_parent_nodes_document", "idx_chunks_parent_id"},
     )
     db.rows["document_parent_nodes"] = [{"id": 1, "parent_text": "existing"}]
     cursor = _FakeCursor(db)
@@ -103,5 +113,25 @@ def test_repeated_calls_are_stable():
     ensure_hierarchical_schema(cursor)
 
     # Second run creates nothing new; the schema converges and stays put.
-    assert first_created == ["document_parent_nodes", "idx_parent_nodes_document"]
+    assert first_created == [
+        "document_parent_nodes",
+        "idx_parent_nodes_document",
+        "idx_chunks_parent_id",
+    ]
     assert db.created == first_created
+
+
+def test_ensures_chunks_parent_id_index():
+    """ensure_hierarchical_schema executes CREATE INDEX IF NOT EXISTS idx_chunks_parent_id."""
+    db = _FakeSchemaDB()
+    cursor = _FakeCursor(db)
+
+    ensure_hierarchical_schema(cursor)
+
+    assert any(
+        "CREATE INDEX IF NOT EXISTS idx_chunks_parent_id" in s
+        and "document_chunks" in s
+        and "metadata->>'parent_id'" in s
+        for s in cursor.statements
+    ), "ensure_hierarchical_schema must create idx_chunks_parent_id on document_chunks"
+    assert "idx_chunks_parent_id" in db.indexes

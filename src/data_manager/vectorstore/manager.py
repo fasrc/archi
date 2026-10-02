@@ -230,6 +230,10 @@ class VectorStoreManager:
                 cursor.execute("TRUNCATE TABLE document_chunks CASCADE")
                 logger.info("Truncated document_chunks table")
 
+                if parent_nodes.parent_table_exists(cursor):
+                    parent_nodes.truncate_parent_nodes(cursor)
+                    logger.info("Truncated document_parent_nodes table")
+
                 # Reset ingestion status so all documents get re-embedded.
                 cursor.execute(
                     """

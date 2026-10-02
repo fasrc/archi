@@ -1270,4 +1270,69 @@ def test_remove_from_postgres_closes_connection_when_parent_delete_raises(monkey
     with pytest.raises(RuntimeError, match="simulated parent delete failure"):
         manager._remove_from_postgres(["hash-1"])
 
+
+# ── delete_existing_collection_if_reset + parent-node truncation (design D5b) ─
+
+
+def test_delete_existing_collection_if_reset_truncates_parents_when_table_present(
+    monkeypatch,
+):
+    """With table present, TRUNCATE_PARENT_NODES runs right after chunk truncate and before commit."""
+    from src.data_manager.vectorstore import parent_nodes
+
+    manager = _make_manager()
+    manager._data_manager_config = {
+        "stemming": {"enabled": False},
+        "reset_collection": True,
+    }
+
+    fake_cursor = _RemoveFakeCursor(table_exists=True)
+    fake_conn = _make_remove_conn(fake_cursor)
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+
+    manager.delete_existing_collection_if_reset()
+
+    sqls = [s for s, _ in fake_cursor.executed]
+
+    truncate_parents_idx = next(
+        (i for i, s in enumerate(sqls) if s is parent_nodes.TRUNCATE_PARENT_NODES),
+        None,
+    )
+    assert (
+        truncate_parents_idx is not None
+    ), "TRUNCATE_PARENT_NODES must run when the parent table is present"
+
+    chunks_idx = next(
+        i
+        for i, s in enumerate(sqls)
+        if isinstance(s, str) and "TRUNCATE TABLE document_chunks" in s
+    )
+    assert (
+        chunks_idx < truncate_parents_idx
+    ), "parent truncate must follow chunk truncate"
+
+
+def test_delete_existing_collection_if_reset_skips_parent_truncate_when_table_absent(
+    monkeypatch,
+):
+    """With table absent, TRUNCATE_PARENT_NODES must not run."""
+    from src.data_manager.vectorstore import parent_nodes
+
+    manager = _make_manager()
+    manager._data_manager_config = {
+        "stemming": {"enabled": False},
+        "reset_collection": True,
+    }
+
+    fake_cursor = _RemoveFakeCursor(table_exists=False)
+    fake_conn = _make_remove_conn(fake_cursor)
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+
+    manager.delete_existing_collection_if_reset()
+
+    sqls = [s for s, _ in fake_cursor.executed]
+    assert not any(
+        s is parent_nodes.TRUNCATE_PARENT_NODES for s in sqls
+    ), "TRUNCATE_PARENT_NODES must not run when the parent table is absent"
+
     fake_conn.close.assert_called_once()
