@@ -1093,3 +1093,181 @@ def test_add_to_postgres_non_hierarchical_runs_no_parent_delete(monkeypatch):
         or sql is parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE
         for sql, _ in fake_cursor.executed
     ), "non-hierarchical path must not execute any parent delete"
+
+
+# ── _remove_from_postgres + parent-node cleanup (design D5) ─────────────────
+
+
+class _RemoveFakeCursor:
+    """Fake cursor for _remove_from_postgres tests.
+
+    Answers PARENT_TABLE_EXISTS via fetchone(); tracks all execute() calls.
+    """
+
+    def __init__(self, table_exists=True, parent_rowcount=2):
+        self.executed = []
+        self._table_exists = table_exists
+        self.rowcount = parent_rowcount
+
+    def execute(self, sql, params=None):
+        self.executed.append((sql, params))
+
+    def fetchone(self):
+        return (self._table_exists,)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_a):
+        return False
+
+
+def _make_remove_conn(cursor):
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+    conn.cursor.return_value.__exit__.return_value = False
+    return conn
+
+
+def test_remove_from_postgres_parent_delete_ordering_when_table_present(monkeypatch):
+    """PARENT_TABLE_EXISTS runs once; per-hash: chunk delete then parent delete; one commit."""
+    from src.data_manager.vectorstore import parent_nodes
+
+    manager = _make_manager()
+    fake_cursor = _RemoveFakeCursor(table_exists=True, parent_rowcount=1)
+    fake_conn = _make_remove_conn(fake_cursor)
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+
+    manager._remove_from_postgres(["hash-1", "hash-2"])
+
+    sqls = [s for s, _ in fake_cursor.executed]
+    params_list = [p for _, p in fake_cursor.executed]
+
+    table_check_indices = [
+        i for i, s in enumerate(sqls) if s == parent_nodes.PARENT_TABLE_EXISTS
+    ]
+    assert len(table_check_indices) == 1, "PARENT_TABLE_EXISTS should run exactly once"
+
+    for resource_hash in ["hash-1", "hash-2"]:
+        chunk_delete_idx = next(
+            (
+                i
+                for i, (s, p) in enumerate(zip(sqls, params_list))
+                if isinstance(s, str)
+                and "DELETE FROM document_chunks" in s
+                and p is not None
+                and p[0] == resource_hash
+            ),
+            None,
+        )
+        parent_delete_idx = next(
+            (
+                i
+                for i, (s, p) in enumerate(zip(sqls, params_list))
+                if s is parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE
+                and p == (resource_hash, resource_hash)
+            ),
+            None,
+        )
+        assert (
+            chunk_delete_idx is not None
+        ), f"chunk delete for {resource_hash} not found"
+        assert (
+            parent_delete_idx is not None
+        ), f"parent delete for {resource_hash} not found"
+        assert (
+            chunk_delete_idx < parent_delete_idx
+        ), f"chunk delete must precede parent delete for {resource_hash}"
+
+    fake_conn.commit.assert_called_once()
+
+
+def test_remove_from_postgres_parent_delete_runs_when_not_hierarchical(monkeypatch):
+    """Parent delete runs even when hierarchical_chunking is False."""
+    from src.data_manager.vectorstore import parent_nodes
+
+    manager = _make_manager()
+    manager.hierarchical_chunking = False
+    fake_cursor = _RemoveFakeCursor(table_exists=True)
+    fake_conn = _make_remove_conn(fake_cursor)
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+
+    manager._remove_from_postgres(["hash-1"])
+
+    assert any(
+        s is parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE
+        for s, _ in fake_cursor.executed
+    ), "parent delete must run regardless of hierarchical_chunking flag"
+
+
+def test_remove_from_postgres_no_parent_statements_when_table_absent(monkeypatch):
+    """With the table absent, no parent delete or truncate runs; chunk deletes and commit proceed."""
+    from src.data_manager.vectorstore import parent_nodes
+
+    manager = _make_manager()
+    fake_cursor = _RemoveFakeCursor(table_exists=False)
+    fake_conn = _make_remove_conn(fake_cursor)
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+
+    manager._remove_from_postgres(["hash-1"])
+
+    assert not any(
+        s is parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE
+        or s is parent_nodes.TRUNCATE_PARENT_NODES
+        for s, _ in fake_cursor.executed
+    ), "no parent modification statement should run when table is absent"
+
+    assert any(
+        isinstance(s, str) and "DELETE FROM document_chunks" in s
+        for s, _ in fake_cursor.executed
+    ), "chunk delete must still run when parent table is absent"
+    fake_conn.commit.assert_called_once()
+
+
+def test_remove_from_postgres_logs_deleted_parent_count(monkeypatch, caplog):
+    """One INFO record reports the summed deleted count and number of removed resources."""
+    import logging
+
+    manager = _make_manager()
+    fake_cursor = _RemoveFakeCursor(table_exists=True, parent_rowcount=3)
+    fake_conn = _make_remove_conn(fake_cursor)
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+
+    with caplog.at_level(logging.INFO):
+        manager._remove_from_postgres(["hash-1", "hash-2"])
+
+    matching = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.INFO
+        and "unreferenced parent nodes" in r.message
+        and "removed resources" in r.message
+    ]
+    assert (
+        len(matching) == 1
+    ), f"expected exactly one INFO line; got: {[r.message for r in caplog.records]}"
+    # 3 rowcount × 2 hashes = 6 total; 2 removed resources
+    assert "6" in matching[0].message
+    assert "2" in matching[0].message
+
+
+def test_remove_from_postgres_closes_connection_when_parent_delete_raises(monkeypatch):
+    """conn.close() is called even if the parent delete raises."""
+    from src.data_manager.vectorstore import parent_nodes
+
+    manager = _make_manager()
+
+    class _RaisingCursor(_RemoveFakeCursor):
+        def execute(self, sql, params=None):
+            super().execute(sql, params)
+            if sql is parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE:
+                raise RuntimeError("simulated parent delete failure")
+
+    fake_cursor = _RaisingCursor(table_exists=True)
+    fake_conn = _make_remove_conn(fake_cursor)
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+
+    with pytest.raises(RuntimeError, match="simulated parent delete failure"):
+        manager._remove_from_postgres(["hash-1"])
+
+    fake_conn.close.assert_called_once()

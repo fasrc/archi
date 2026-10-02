@@ -519,6 +519,8 @@ class VectorStoreManager:
         conn = psycopg2.connect(**self._pg_config)
         try:
             with conn.cursor() as cursor:
+                table_exists = parent_nodes.parent_table_exists(cursor)
+                deleted_count = 0
                 for resource_hash in hashes_to_remove:
                     cursor.execute(
                         """
@@ -528,7 +530,19 @@ class VectorStoreManager:
                         """,
                         (resource_hash, self.collection_name),
                     )
+                    if table_exists:
+                        deleted_count += (
+                            parent_nodes.delete_unreferenced_parents_for_resource(
+                                cursor, resource_hash
+                            )
+                        )
                 conn.commit()
+                if table_exists:
+                    logger.info(
+                        "Deleted %d unreferenced parent nodes for %d removed resources",
+                        deleted_count,
+                        len(hashes_to_remove),
+                    )
                 logger.debug(
                     f"Removed {len(hashes_to_remove)} resource hashes from vectorstore"
                 )

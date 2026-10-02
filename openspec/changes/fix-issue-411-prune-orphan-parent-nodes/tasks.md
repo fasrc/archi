@@ -49,7 +49,7 @@ Standing notes for every task:
 
 ## 2. Call site 1 — after the new chunks of a document
 
-- [ ] 2.1 In `tests/unit/test_vectorstore_manager_hierarchical.py`, write failing tests
+- [x] 2.1 In `tests/unit/test_vectorstore_manager_hierarchical.py`, write failing tests
       (reuse the style of `test_add_to_postgres_hierarchical_persists_parents_and_children`,
       but make the `execute_values` capture ALSO append a marker such as
       `("EXECUTE_VALUES document_chunks", None)` to `fake_cursor.executed`, so one ordered
@@ -66,7 +66,7 @@ Standing notes for every task:
 
 ## 3. Call site 2 — after the chunk delete for a resource
 
-- [ ] 3.1 In `tests/unit/test_vectorstore_manager_hierarchical.py`, write failing tests for
+- [x] 3.1 In `tests/unit/test_vectorstore_manager_hierarchical.py`, write failing tests for
       `_remove_from_postgres` with a fake `psycopg2.connect` (monkeypatch the `psycopg2`
       that `manager.py` imports): (a) with the table present, `PARENT_TABLE_EXISTS` runs
       once, then for each hash the chunk delete runs first, then
