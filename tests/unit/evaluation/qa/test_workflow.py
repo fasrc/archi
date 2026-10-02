@@ -1,3 +1,4 @@
+import hashlib
 import json
 import threading
 import time
@@ -6,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 import src.evaluation.qa.phases as phases_module
 import src.evaluation.qa.workflow as workflow_module
@@ -1715,6 +1717,162 @@ def test_retry_defaults_legacy_manifests_to_one_worker_per_phase(
 
     assert manifest["phases"]["run"]["workers"] == 1
     assert manifest["phases"]["score"]["workers"] == 1
+
+
+# --- #562: redacted agent-config snapshot ---------------------------------
+def test_run_persists_no_secret_and_runs_from_the_snapshot(monkeypatch, tmp_path):
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    run_dir = tmp_path / "run"
+    sentinel_config = {
+        "services": {
+            "chat_app": {
+                "agent_class": "FakeAgent",
+                "default_provider": "fake",
+                "default_model": "fake-model",
+                "providers": {
+                    "fake": {
+                        "api_key": "SENTINEL-APIKEY",
+                        "extra_kwargs": {
+                            "max_tokens": 4096,
+                            "headers": {"Authorization": "Bearer SENTINEL-AUTH"},
+                        },
+                    }
+                },
+            },
+            "postgres": {"password": "SENTINEL-PG"},
+        },
+        "database_url": "postgresql://user:SENTINEL-URL@host/db",
+    }
+    spec = SimpleNamespace(tools=["fake"])
+    spec_text = "---\nname: Fake\ntools: [fake]\n---\nPrompt\n"
+    monkeypatch.setattr(
+        workflow_module,
+        "load_agent_inputs",
+        lambda config_path, spec_path: (sentinel_config, spec, spec_text, object),
+    )
+    recorded_configs = []
+
+    class RecordingAgentFactory:
+        def __call__(self, config, spec, pipeline_class, vectorstore=None):
+            recorded_configs.append(config)
+
+            class Agent:
+                tool_calls = []
+
+                def run(self, question):
+                    return "answer"
+
+            return Agent()
+
+    monkeypatch.setattr(workflow_module, "ArchiAgentRuntime", RecordingAgentFactory())
+    monkeypatch.setattr(
+        workflow_module, "LangChainEvaluatorRuntime", _EvaluatorFactory()
+    )
+    manifest = QAWorkflow().composite(
+        dataset,
+        tmp_path / "agent.yaml",
+        tmp_path / "agent.md",
+        run_dir,
+        run_workers=1,
+        score_workers=1,
+    )
+    sentinels = ("SENTINEL-APIKEY", "SENTINEL-AUTH", "SENTINEL-PG", "SENTINEL-URL")
+    for path in run_dir.iterdir():
+        if path.is_file():
+            content = path.read_bytes()
+            for s in sentinels:
+                assert s.encode() not in content, f"{s!r} found in {path.name}"
+    snapshot_bytes = (run_dir / "agent_config.resolved.yaml").read_bytes()
+    snapshot = yaml.safe_load(snapshot_bytes)
+    fake_provider = snapshot["services"]["chat_app"]["providers"]["fake"]
+    assert fake_provider["api_key"] == "[redacted]"
+    assert fake_provider["extra_kwargs"]["max_tokens"] == 4096
+    assert fake_provider["extra_kwargs"]["headers"]["Authorization"] == "[redacted]"
+    assert snapshot["services"]["postgres"]["password"] == "[redacted]"
+    assert snapshot["database_url"] == "postgresql://user:redacted@host/db"
+    assert recorded_configs[0] == yaml.safe_load(snapshot_bytes)
+    assert (
+        manifest["artifacts"]["agent_config.resolved.yaml"]
+        == hashlib.sha256(snapshot_bytes).hexdigest()
+    )
+
+
+def test_retry_runs_from_the_redacted_snapshot(monkeypatch, tmp_path):
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    parent = tmp_path / "parent"
+    sentinel_config = {
+        "services": {
+            "chat_app": {
+                "agent_class": "FakeAgent",
+                "default_provider": "fake",
+                "default_model": "fake-model",
+                "providers": {
+                    "fake": {"api_key": "SENTINEL-APIKEY"},
+                },
+            },
+            "postgres": {"password": "SENTINEL-PG"},
+        },
+    }
+    spec = SimpleNamespace(tools=["fake"])
+    spec_text = "---\nname: Fake\ntools: [fake]\n---\nPrompt\n"
+    monkeypatch.setattr(
+        workflow_module,
+        "load_agent_inputs",
+        lambda config_path, spec_path: (sentinel_config, spec, spec_text, object),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "ArchiAgentRuntime",
+        _AgentFactory(failures={("inferred question", 1)}),
+    )
+    monkeypatch.setattr(
+        workflow_module, "LangChainEvaluatorRuntime", _EvaluatorFactory()
+    )
+    QAWorkflow().composite(
+        dataset,
+        tmp_path / "agent.yaml",
+        tmp_path / "agent.md",
+        parent,
+        run_workers=1,
+        score_workers=1,
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "load_agent_inputs",
+        lambda config_path, spec_path: (
+            yaml.safe_load(Path(config_path).read_text(encoding="utf-8")),
+            spec,
+            spec_text,
+            object,
+        ),
+    )
+    retry_recorded_configs = []
+
+    class RetryRecordingFactory:
+        def __call__(self, config, spec, pipeline_class, vectorstore=None):
+            retry_recorded_configs.append(config)
+
+            class Agent:
+                tool_calls = []
+
+                def run(self, question):
+                    return "answer"
+
+            return Agent()
+
+    monkeypatch.setattr(workflow_module, "ArchiAgentRuntime", RetryRecordingFactory())
+    monkeypatch.setattr(
+        workflow_module, "LangChainEvaluatorRuntime", _EvaluatorFactory()
+    )
+    successor = tmp_path / "successor"
+    QAWorkflow().retry(parent, successor)
+    assert retry_recorded_configs, "retry did not call ArchiAgentRuntime"
+    assert "SENTINEL" not in json.dumps(retry_recorded_configs[0])
+    assert (successor / "agent_config.resolved.yaml").read_bytes() == (
+        parent / "agent_config.resolved.yaml"
+    ).read_bytes()
 
 
 def test_run_and_score_do_not_decode_the_input_snapshot(
