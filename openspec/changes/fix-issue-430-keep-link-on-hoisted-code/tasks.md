@@ -26,7 +26,7 @@ Standing notes for every task:
 
 ## 1. Keep the link (test and fix in one task)
 
-- [ ] 1.1 Add the tests for every scenario in this change's spec: untitled, titled, blank
+- [x] 1.1 Add the tests for every scenario in this change's spec: untitled, titled, blank
       title, nested `<a><em><code>` (exact string and the tree check through
       `_promote_block_code_soup`), whitespace and comment, two blocks, outer `<strong>`, no
       `href` and empty `href`, and the three "other content" strings. Run them with
