@@ -97,8 +97,11 @@ other integration services and proves the chat app is reachable before Slack con
 all attempts fail, the service exits with a non-zero status.
 
 ### D8. Minimal Markdown → Slack mrkdwn conversion
-Outside code fences: `**x**` → `*x*`, `[t](u)` → `<u|t>`, a `#` heading line → a bold line.
-Code fences pass through unchanged. The text is cut to 39,000 characters (Slack's limit for
+First, `&`, `<`, and `>` are escaped in the whole answer, code included. Slack reads
+`<!channel>`, `<!here>`, and `<@U…>` as real broadcasts and mentions, and model text (or a
+prompt injected through indexed content) must not trigger them. Then, outside code fences:
+`**x**` → `*x*`, `[t](u)` → `<u|t>`, a `#` heading line → a bold line. Code fences get no
+other change. The text is cut to 39,000 characters (Slack's limit for
 `text` is 40,000) with a visible marker.
 
 ### D9. Secrets and configuration

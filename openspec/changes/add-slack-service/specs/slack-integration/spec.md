@@ -85,11 +85,15 @@ The Slack bot SHALL answer each `(channel, ts)` pair at most once, also when Sla
 - **THEN** exactly one of them is accepted
 
 ### Requirement: Answers are converted to Slack mrkdwn
-The Slack bot SHALL convert the answer from Markdown to Slack mrkdwn outside code fences (`**x**` to `*x*`, `[t](u)` to `<u|t>`, a `#` heading line to a bold line), SHALL leave code fences unchanged, and SHALL cut the text to at most 39,000 characters with a visible marker.
+The Slack bot SHALL first escape `&`, `<`, and `>` in the whole answer, then convert it from Markdown to Slack mrkdwn outside code fences (`**x**` to `*x*`, `[t](u)` to `<u|t>`, a `#` heading line to a bold line), SHALL leave code fences otherwise unchanged, and SHALL cut the text to at most 39,000 characters with a visible marker.
 
 #### Scenario: Bold sources header is converted
 - **WHEN** the answer ends with `**Sources:**`
 - **THEN** the posted text ends with `*Sources:*`
+
+#### Scenario: Model text cannot broadcast or mention
+- **WHEN** the answer contains `<!channel>`, `<!here>`, or `<@U123>`
+- **THEN** the posted text has `&lt;` and `&gt;` in their place, so Slack shows the characters and notifies no one
 
 #### Scenario: Code fence is unchanged
 - **WHEN** the answer holds a code fence that contains `**x**`

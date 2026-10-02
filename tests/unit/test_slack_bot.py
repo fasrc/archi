@@ -69,6 +69,14 @@ def test_strip_mention_removes_every_mention_and_trims():
     assert strip_mention("<@UBOT> what is <@U2> scratch?  ") == "what is scratch?"
 
 
+def test_strip_mention_keeps_internal_whitespace():
+    # Pasted code keeps its lines and indentation (PR #598 review).
+    text = "<@UBOT> why does this fail?\n```\ndef f():\n    return 1\n```"
+    assert strip_mention(text) == (
+        "why does this fail?\n```\ndef f():\n    return 1\n```"
+    )
+
+
 def test_strip_mention_keeps_plain_text():
     assert strip_mention("no mention") == "no mention"
 
@@ -159,6 +167,27 @@ def test_to_mrkdwn_converts_headings():
 def test_to_mrkdwn_leaves_code_fences_alone():
     text = "**a**\n```\n**x** [t](u)\n# not a heading\n```\n**b**"
     assert to_mrkdwn(text) == "*a*\n```\n**x** [t](u)\n# not a heading\n```\n*b*"
+
+
+@pytest.mark.parametrize(
+    "raw, escaped",
+    [
+        ("ping <!channel> now", "ping &lt;!channel&gt; now"),
+        ("<!here>", "&lt;!here&gt;"),
+        ("ask <@U123>", "ask &lt;@U123&gt;"),
+        ("a & b", "a &amp; b"),
+    ],
+)
+def test_to_mrkdwn_escapes_slack_control_sequences(raw, escaped):
+    # Model text must not become a real broadcast or mention (PR #598 review).
+    assert to_mrkdwn(raw) == escaped
+
+
+def test_to_mrkdwn_escapes_inside_code_fences_and_link_urls():
+    text = "```\nif a < b & c:\n```\n[q](https://x.org/s?a=1&b=2)"
+    assert to_mrkdwn(text) == (
+        "```\nif a &lt; b &amp; c:\n```\n<https://x.org/s?a=1&amp;b=2|q>"
+    )
 
 
 def test_to_mrkdwn_truncates_long_text_with_marker():

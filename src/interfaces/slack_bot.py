@@ -41,7 +41,8 @@ REPLIES_PAGE_LIMIT = 1000
 MAX_REPLY_PAGES = 10
 CONNECT_TIMEOUT_SECONDS = 10
 
-_MENTION_RE = re.compile(r"<@[A-Z0-9]+>")
+# A mention plus the spaces or tabs beside it; newlines and indentation elsewhere stay.
+_MENTION_RE = re.compile(r"[ \t]*<@[A-Z0-9]+>[ \t]*")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.*)$")
@@ -53,8 +54,8 @@ def thread_key(team_id, channel, thread_ts):
 
 
 def strip_mention(text):
-    """Remove every ``<@U…>`` mention and surrounding space from ``text``."""
-    return " ".join(_MENTION_RE.sub("", text or "").split())
+    """Remove every ``<@U…>`` mention from ``text``; keep its internal whitespace."""
+    return _MENTION_RE.sub(" ", text or "").strip()
 
 
 def should_answer(event, bot_user_id):
@@ -80,11 +81,18 @@ def _convert_line(line):
     return _BOLD_RE.sub(r"*\1*", line)
 
 
+def _escape_control(text):
+    # Slack reads <!channel>, <!here> and <@U…> as real broadcasts and mentions.
+    # Escape the three control characters in all model text (code included), so the
+    # only markup Slack acts on is the <url|title> links this converter adds.
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def to_mrkdwn(markdown):
     """Convert the /v1 Markdown answer to Slack mrkdwn (design D8)."""
     out = []
     in_fence = False
-    for line in (markdown or "").split("\n"):
+    for line in _escape_control(markdown or "").split("\n"):
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
             out.append(line)
