@@ -132,10 +132,21 @@ after the truncate no parent can be referenced. Right after that statement, if
 
 `ensure_hierarchical_schema` (`src/data_manager/vectorstore/schema.py:36-46`) creates the
 table and `idx_parent_nodes_document`, but not `idx_chunks_parent_id`, which only
-`init.sql:346-347` creates. Without it, each `NOT EXISTS` scans `document_chunks`. Add a
-third idempotent statement to `ensure_hierarchical_schema`:
+`init.sql:346-347` creates. Without it, each `NOT EXISTS` scans `document_chunks`. Add
+`ensure_chunks_parent_id_index(cursor)` to `schema.py`, which runs
 `CREATE INDEX IF NOT EXISTS idx_chunks_parent_id ON document_chunks ((metadata->>'parent_id'))`,
-with the same name and expression as `init.sql`, and update its docstring.
+with the same name and expression as `init.sql`.
+
+Do not put this statement in `ensure_hierarchical_schema`. The chat retrieval path
+(`hierarchical_retriever.py:159`) calls that function and closes its connection without a
+commit, so the index build rolls back and repeats on each chat turn. Call the new function
+only from the two write paths that commit:
+
+- `_add_to_postgres`, in the setup step after `ensure_hierarchical_schema` and before its
+  `conn.commit()`.
+- `_remove_from_postgres`, when `parent_table_exists` is true, before the first parent
+  delete. `_sync_vectorstore` calls the remove path before the add path, and a sync can
+  remove resources and add none.
 
 ## Known gap — out of scope
 

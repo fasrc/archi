@@ -1336,3 +1336,158 @@ def test_delete_existing_collection_if_reset_skips_parent_truncate_when_table_ab
     ), "TRUNCATE_PARENT_NODES must not run when the parent table is absent"
 
     fake_conn.close.assert_called_once()
+
+
+def test_remove_from_postgres_ensures_parent_id_index_before_parent_delete(
+    monkeypatch,
+):
+    """A removal-only sync on an upgraded volume must create idx_chunks_parent_id
+    before the NOT EXISTS cleanup runs, inside the transaction that commits."""
+    from src.data_manager.vectorstore import parent_nodes
+
+    manager = _make_manager()
+    fake_cursor = _RemoveFakeCursor(table_exists=True, parent_rowcount=1)
+    fake_conn = _make_remove_conn(fake_cursor)
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+
+    manager._remove_from_postgres(["hash-1"])
+
+    sqls = [s for s, _ in fake_cursor.executed]
+    index_idx = next(
+        i
+        for i, s in enumerate(sqls)
+        if "CREATE INDEX IF NOT EXISTS idx_chunks_parent_id" in " ".join(s.split())
+    )
+    delete_idx = sqls.index(parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE)
+    assert index_idx < delete_idx
+    fake_conn.commit.assert_called_once()
+
+
+def test_remove_from_postgres_skips_parent_id_index_when_table_absent(monkeypatch):
+    """No parent table means no cleanup, so the index is not built either."""
+    manager = _make_manager()
+    fake_cursor = _RemoveFakeCursor(table_exists=False)
+    fake_conn = _make_remove_conn(fake_cursor)
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+
+    manager._remove_from_postgres(["hash-1"])
+
+    assert not any("idx_chunks_parent_id" in s for s, _ in fake_cursor.executed)
+
+
+def test_add_to_postgres_hierarchical_ensures_parent_id_index_before_commit(
+    monkeypatch,
+):
+    """The add path builds idx_chunks_parent_id in the committed setup step,
+    before any parent cleanup runs."""
+    from src.data_manager.vectorstore import parent_nodes
+
+    manager = _make_manager()
+    catalog = MagicMock()
+    catalog.get_document_id.return_value = 42
+    catalog.get_metadata_for_hash.return_value = {}
+    manager._catalog = catalog
+
+    doc = SimpleNamespace(page_content="some text", metadata={})
+    manager.loader = lambda _path: SimpleNamespace(load=lambda: [doc])
+    monkeypatch.setattr(
+        manager_module,
+        "build_hierarchical_nodes",
+        lambda document, strategy="sentence", **_kwargs: [
+            HierarchicalNode(
+                parent_index=0,
+                parent_text="Parent.",
+                child_texts=["child."],
+                metadata={},
+            )
+        ],
+    )
+
+    events = []
+
+    class _TrackingCursor(_FakeCursor):
+        def execute(self, sql, params=None):
+            events.append(sql)
+            super().execute(sql, params)
+
+    fake_cursor = _TrackingCursor()
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_conn.cursor.return_value.__exit__.return_value = False
+    fake_conn.commit.side_effect = lambda: events.append("COMMIT")
+
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", lambda *a, **k: None
+    )
+    monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
+    monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
+
+    manager._add_to_postgres({"hash-1": "/tmp/doc.html"})
+
+    index_idx = next(
+        i
+        for i, s in enumerate(events)
+        if "CREATE INDEX IF NOT EXISTS idx_chunks_parent_id" in " ".join(s.split())
+    )
+    first_commit = events.index("COMMIT")
+    delete_idx = events.index(parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_DOCUMENT)
+    assert index_idx < first_commit < delete_idx
+
+
+def test_add_to_postgres_hierarchical_count_excludes_rolled_back_deletes(
+    monkeypatch, caplog
+):
+    """A file whose savepoint rolls back after the parent delete must not add
+    its deleted count to the INFO summary: the rollback restored those rows."""
+    import logging
+
+    manager = _make_manager()
+    catalog = MagicMock()
+    catalog.get_document_id.return_value = 42
+    catalog.get_metadata_for_hash.return_value = {}
+    manager._catalog = catalog
+
+    doc = SimpleNamespace(page_content="some text", metadata={})
+    manager.loader = lambda _path: SimpleNamespace(load=lambda: [doc])
+    monkeypatch.setattr(
+        manager_module,
+        "build_hierarchical_nodes",
+        lambda document, strategy="sentence", **_kwargs: [
+            HierarchicalNode(
+                parent_index=0,
+                parent_text="Parent.",
+                child_texts=["child."],
+                metadata={},
+            )
+        ],
+    )
+
+    class _FailOnEmbeddedUpdate(_FakeCursor):
+        def execute(self, sql, params=None):
+            if "ingestion_status = 'embedded'" in sql:
+                raise RuntimeError("simulated update failure")
+            super().execute(sql, params)
+
+    fake_cursor = _FailOnEmbeddedUpdate()
+    fake_cursor.rowcount = 3
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_conn.cursor.return_value.__exit__.return_value = False
+
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", lambda *a, **k: None
+    )
+    monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
+    monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
+
+    with caplog.at_level(logging.INFO):
+        manager._add_to_postgres({"hash-1": "/tmp/doc.html"})
+
+    summary = [
+        r.message
+        for r in caplog.records
+        if "unreferenced parent nodes after re-ingest" in r.message
+    ]
+    assert summary == ["Deleted 0 unreferenced parent nodes after re-ingest"]

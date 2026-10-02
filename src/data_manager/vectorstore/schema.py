@@ -40,16 +40,28 @@ _CREATE_CHUNKS_PARENT_ID_INDEX = (
 
 
 def ensure_hierarchical_schema(cursor) -> None:
-    """Idempotently create ``document_parent_nodes``, its index, and the
-    ``idx_chunks_parent_id`` expression index if absent.
+    """Idempotently create ``document_parent_nodes`` and its index if absent.
 
-    Executes three ``CREATE … IF NOT EXISTS`` statements on the given DB-API
-    ``cursor``. All three are no-ops when the objects already exist. The
-    ``idx_chunks_parent_id`` index mirrors ``init.sql:346-347`` so that the
-    ``NOT EXISTS`` predicate in the parent-delete helpers uses the index instead
-    of a full scan of ``document_chunks``. The caller owns the surrounding
-    transaction/commit.
+    Executes ``CREATE TABLE IF NOT EXISTS`` followed by ``CREATE INDEX IF NOT
+    EXISTS`` on the given DB-API ``cursor``. Because both statements use ``IF NOT
+    EXISTS``, the call is a no-op (no error, no row changes) when the table and
+    index already exist, and creates them when they do not. The caller owns the
+    surrounding transaction/commit.
+
+    The chat retrieval path calls this without committing, so it must stay
+    cheap: the ``idx_chunks_parent_id`` build lives in
+    ``ensure_chunks_parent_id_index``, which only committed write paths call.
     """
     cursor.execute(_CREATE_PARENT_NODES_TABLE)
     cursor.execute(_CREATE_PARENT_NODES_INDEX)
+
+
+def ensure_chunks_parent_id_index(cursor) -> None:
+    """Idempotently create the ``idx_chunks_parent_id`` expression index.
+
+    Mirrors ``init.sql:346-347`` for volumes that predate it, so the ``NOT
+    EXISTS`` predicate in the parent-delete helpers uses the index instead of a
+    full scan of ``document_chunks``. Call it only from a path that commits;
+    a rolled-back ``CREATE INDEX`` is rebuilt on the next call.
+    """
     cursor.execute(_CREATE_CHUNKS_PARENT_ID_INDEX)

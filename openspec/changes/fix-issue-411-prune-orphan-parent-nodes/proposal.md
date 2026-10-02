@@ -29,8 +29,9 @@ the largest table in the retrieval schema. Each re-ingest adds about 2,390 more 
   now-unreferenced parents of the document with that `resource_hash`.
 - In `delete_existing_collection_if_reset`, truncate `document_parent_nodes` after the
   `document_chunks` truncate, because no parent can be referenced after it.
-- Make `ensure_hierarchical_schema` also create `idx_chunks_parent_id`, so the
-  unreferenced check uses an index on upgraded volumes.
+- Add `ensure_chunks_parent_id_index`, which creates `idx_chunks_parent_id`, and call it
+  from the committed setup step of `_add_to_postgres` and before the cleanup in
+  `_remove_from_postgres`, so the unreferenced check uses an index on upgraded volumes.
 - Skip the parent statements in the remove and reset paths when the table does not exist.
 - Log one INFO summary line per call with the number of parent rows deleted.
 - Add an operator section to `docs/docs/troubleshooting.md` with a one-off `psql` cleanup

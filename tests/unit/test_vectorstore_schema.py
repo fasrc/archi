@@ -9,7 +9,10 @@ table. These tests exercise the real function: it creates the table/index when
 absent and is a no-op (no error, no row changes) when already present.
 """
 
-from src.data_manager.vectorstore.schema import ensure_hierarchical_schema
+from src.data_manager.vectorstore.schema import (
+    ensure_chunks_parent_id_index,
+    ensure_hierarchical_schema,
+)
 
 
 class _FakeSchemaDB:
@@ -63,13 +66,8 @@ def test_creates_table_and_index_when_absent():
 
     assert "document_parent_nodes" in db.tables
     assert "idx_parent_nodes_document" in db.indexes
-    assert "idx_chunks_parent_id" in db.indexes
-    # Table and indexes are created in dependency order.
-    assert db.created == [
-        "document_parent_nodes",
-        "idx_parent_nodes_document",
-        "idx_chunks_parent_id",
-    ]
+    # Table and index are created in dependency order.
+    assert db.created == ["document_parent_nodes", "idx_parent_nodes_document"]
 
 
 def test_uses_if_not_exists_ddl():
@@ -113,25 +111,41 @@ def test_repeated_calls_are_stable():
     ensure_hierarchical_schema(cursor)
 
     # Second run creates nothing new; the schema converges and stays put.
-    assert first_created == [
-        "document_parent_nodes",
-        "idx_parent_nodes_document",
-        "idx_chunks_parent_id",
-    ]
+    assert first_created == ["document_parent_nodes", "idx_parent_nodes_document"]
     assert db.created == first_created
 
 
-def test_ensures_chunks_parent_id_index():
-    """ensure_hierarchical_schema executes CREATE INDEX IF NOT EXISTS idx_chunks_parent_id."""
+def test_hierarchical_schema_does_not_build_chunks_parent_id_index():
+    """The chat retrieval path calls ensure_hierarchical_schema and never
+    commits, so a CREATE INDEX there would build and roll back on every query."""
     db = _FakeSchemaDB()
     cursor = _FakeCursor(db)
 
     ensure_hierarchical_schema(cursor)
+
+    assert not any("idx_chunks_parent_id" in s for s in cursor.statements)
+
+
+def test_ensures_chunks_parent_id_index():
+    """ensure_chunks_parent_id_index executes CREATE INDEX IF NOT EXISTS idx_chunks_parent_id."""
+    db = _FakeSchemaDB()
+    cursor = _FakeCursor(db)
+
+    ensure_chunks_parent_id_index(cursor)
 
     assert any(
         "CREATE INDEX IF NOT EXISTS idx_chunks_parent_id" in s
         and "document_chunks" in s
         and "metadata->>'parent_id'" in s
         for s in cursor.statements
-    ), "ensure_hierarchical_schema must create idx_chunks_parent_id on document_chunks"
-    assert "idx_chunks_parent_id" in db.indexes
+    ), "ensure_chunks_parent_id_index must create idx_chunks_parent_id on document_chunks"
+    assert db.created == ["idx_chunks_parent_id"]
+
+
+def test_chunks_parent_id_index_is_idempotent():
+    db = _FakeSchemaDB(indexes={"idx_chunks_parent_id"})
+    cursor = _FakeCursor(db)
+
+    ensure_chunks_parent_id_index(cursor)
+
+    assert db.created == []
