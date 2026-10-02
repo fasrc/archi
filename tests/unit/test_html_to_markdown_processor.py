@@ -899,6 +899,41 @@ def test_hoist_two_blocks_in_one_anchor_give_one_link():
     )
 
 
+def test_hoist_anchor_with_empty_span_before_code_keeps_link():
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><span></span><code>a<br>b</code></a></p>'
+        )
+        == "<https://x/y>\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_anchor_with_empty_span_after_code_keeps_link():
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><span></span></a></p>'
+        )
+        == "<https://x/y>\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_anchor_with_only_br_before_code_keeps_link():
+    assert (
+        html_to_markdown('<p><a href="https://x/y"><br><code>a<br>b</code></a></p>')
+        == "<https://x/y>\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_anchor_with_image_before_code_keeps_linked_image():
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><img src="i.png" alt="pic">'
+            "<code>a<br>b</code></a></p>"
+        )
+        == "[![pic](i.png)](https://x/y)\n\n```\na\nb\n```"
+    )
+
+
 def test_hoist_outer_strong_wraps_kept_link():
     assert (
         html_to_markdown(

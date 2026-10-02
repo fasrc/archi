@@ -367,6 +367,15 @@ def _has_content(tag) -> bool:
     return False
 
 
+def _renders_link_text(tag) -> bool:
+    """True when *tag* gives ``markdownify`` link text: visible text or an image.
+
+    ``_has_content`` counts any child tag, but an empty ``<span>`` or a ``<br>``
+    renders no text, and ``markdownify`` drops an anchor with no text (issue #430).
+    """
+    return bool(tag.get_text().strip()) or tag.find("img") is not None
+
+
 def _cut_edge_text(half, *, trailing: bool):
     """Return the exact ``NavigableString`` that touches the cut edge of *half*, or None.
 
@@ -434,13 +443,18 @@ def _hoist_out_of_inline(pre, soup) -> None:
         parent.insert_after(pre)
         _trim_cut_whitespace(parent, trailing=True)
         _trim_cut_whitespace(tail, trailing=False)
-        if _has_content(tail):
-            pre.insert_after(tail)
-        elif parent.name == "a" and parent.get("href") and not _has_content(parent):
+        if (
+            parent.name == "a"
+            and parent.get("href")
+            and not _renders_link_text(parent)
+            and not _renders_link_text(tail)
+        ):
             link = soup.new_tag("a", href=parent["href"])
             link.string = (parent.get("title") or "").strip() or parent["href"]
             parent.replace_with(link)
             continue
+        if _has_content(tail):
+            pre.insert_after(tail)
         if not _has_content(parent):
             parent.decompose()
 

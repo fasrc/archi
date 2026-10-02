@@ -784,7 +784,11 @@ data_manager:
   markup, the fence stands on its own, and the text after the block continues in a fresh
   copy of the same tag with the same attributes. A link therefore renders as two links
   with the same `href` around the fence, a bold or italic run resumes after it, and an
-  ancestor left with no content is dropped. Whitespace that touches the cut is removed,
+  ancestor left with no content is dropped. The exception is a link left with no text or
+  image on either side of the fence (issue #430): it is replaced by one link before the
+  fence, whose text is the link's `title` or, if there is none, its `href` — so
+  `<a href="https://x/y">` around a lone block becomes `<https://x/y>` above the fence and
+  the target stays in the knowledge base. Whitespace that touches the cut is removed,
   so no line beside the fence begins or ends with a stray space. The shape is rare in the
   FASRC KB (0 of 25 sampled multi-line code elements) and, like every item in this list,
   it reaches disk only for new or force-overwritten documents.
