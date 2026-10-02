@@ -27,7 +27,7 @@ Standing notes for every task:
 
 ## 1. Helper module
 
-- [ ] 1.1 Create `tests/unit/test_parent_nodes.py` with the stateful fake cursor of design
+- [x] 1.1 Create `tests/unit/test_parent_nodes.py` with the stateful fake cursor of design
       D6 (parents with `id`, `document_id`, `metadata.resource_hash`; chunks with
       `collection` and `parent_id`; documents with `id` and `resource_hash`; a
       `table_exists` flag; `rowcount`). Write failing tests: (a)

@@ -1334,6 +1334,7 @@ def test_force_evaluate_refuses_when_removal_silently_fails(
     """
     from src.cli import cli_main
     from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.volume_manager import VolumeManager
 
     _existing_deployment(archi_home)
     teardowns = []
@@ -1345,6 +1346,9 @@ def test_force_evaluate_refuses_when_removal_silently_fails(
     monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
     monkeypatch.setattr(
         cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+    monkeypatch.setattr(
+        VolumeManager, "create_required_volumes", lambda self, *a, **kw: None
     )
 
     runner = CliRunner()
