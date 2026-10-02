@@ -1334,13 +1334,20 @@ def test_force_evaluate_refuses_when_removal_silently_fails(
     """
     from src.cli import cli_main
     from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.volume_manager import VolumeManager
 
     _existing_deployment(archi_home)
     teardowns = []
+    volume_calls = []
     monkeypatch.setattr(
         DeploymentManager,
         "delete_deployment",
         lambda self, **kwargs: teardowns.append(kwargs),
+    )
+    monkeypatch.setattr(
+        VolumeManager,
+        "create_required_volumes",
+        lambda self, *a, **kw: volume_calls.append((a, kw)),
     )
     monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
     monkeypatch.setattr(
@@ -1372,6 +1379,10 @@ def test_force_evaluate_refuses_when_removal_silently_fails(
     assert len(teardowns) == 1, (
         f"deletion must have been attempted exactly once. "
         f"teardowns={teardowns}\noutput:\n{result.output}\n"
+    )
+    assert len(volume_calls) == 1, (
+        f"create_required_volumes must have been called exactly once. "
+        f"volume_calls={volume_calls}\noutput:\n{result.output}\n"
     )
 
 
