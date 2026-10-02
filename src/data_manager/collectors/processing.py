@@ -422,7 +422,9 @@ def _hoist_out_of_inline(pre, soup) -> None:
     wrapped in the inline markers.  Walk up the parent chain while the parent is one of
     the eleven inline tags; at each level split the parent around *pre*: re-append the
     siblings that follow *pre* into a clone of the parent and insert that clone (and *pre*
-    itself) after the original parent, discarding the clone when it is empty.
+    itself) after the original parent, discarding the clone when it is empty. An anchor
+    left with no content in either half keeps its link instead of being dropped, so the
+    `href` is not lost from the knowledge base (issue #430).
     """
     while isinstance(pre.parent, Tag) and pre.parent.name in _INLINE_MARKUP_TAGS:
         parent = pre.parent
@@ -434,6 +436,11 @@ def _hoist_out_of_inline(pre, soup) -> None:
         _trim_cut_whitespace(tail, trailing=False)
         if _has_content(tail):
             pre.insert_after(tail)
+        elif parent.name == "a" and parent.get("href") and not _has_content(parent):
+            link = soup.new_tag("a", href=parent["href"])
+            link.string = (parent.get("title") or "").strip() or parent["href"]
+            parent.replace_with(link)
+            continue
         if not _has_content(parent):
             parent.decompose()
 
