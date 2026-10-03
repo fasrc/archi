@@ -2120,6 +2120,70 @@ def test_a_late_envelope_after_a_restart_never_resurrects_its_job(tmp_path):
     manager.close()
 
 
+def test_execute_process_writes_running_only_after_process_is_stored(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+    running_writes_saw_process = []
+    status_when_popen_called = []
+    release = threading.Event()
+    production_write_json = jobs_module.write_json
+
+    def recording_write_json(path, payload):
+        production_write_json(path, payload)
+        if isinstance(payload, dict) and payload.get("status") == "running":
+            running_writes_saw_process.append(payload["id"] in manager._processes)
+
+    class _FakeProcess:
+        pid = 2**31 - 1
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout=None):
+            release.wait(timeout)
+            self.returncode = 0
+            return self.returncode
+
+    def fake_popen(command, *args, **kwargs):
+        result_path = Path(command[4])
+        discovered_job_id = result_path.name[1 : -len(".result.json")]
+        status_when_popen_called.append(manager.get(discovered_job_id)["status"])
+        return _FakeProcess()
+
+    monkeypatch.setattr(jobs_module, "write_json", recording_write_json)
+    monkeypatch.setattr(jobs_module.subprocess, "Popen", fake_popen)
+
+    request = {
+        "operation": "composite",
+        "output_dir": str(tmp_path / "run"),
+        "dataset": str(tmp_path / "dataset.json"),
+        "agent_config": str(tmp_path / "config.yaml"),
+        "agent_spec": str(tmp_path / "agent.md"),
+        "evaluator_profile_path": str(tmp_path / "profile.yaml"),
+        "attempts": 1,
+        "run_workers": 1,
+        "score_workers": 1,
+    }
+    job = manager.start_process(
+        request,
+        context={"workspace_id": "run", "attempts": 1},
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while manager.get(job["id"])["status"] != "running":
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+
+        assert running_writes_saw_process
+        assert all(running_writes_saw_process)
+        assert status_when_popen_called == ["queued"]
+    finally:
+        release.set()
+        manager.close()
+
+
 def test_the_sweep_keeps_a_uuid_spelled_differently_than_the_manager_writes_it(
     tmp_path,
 ):

@@ -235,9 +235,6 @@ class EvaluationJobManager:
             job = read_json(self._path(job_id))
             if job["status"] == JobStatus.CANCEL_REQUESTED.value:
                 return
-            job["status"] = JobStatus.RUNNING.value
-            job["started_at"] = utc_now()
-            write_json(self._path(job_id), job)
             try:
                 process = subprocess.Popen(
                     [
@@ -256,6 +253,9 @@ class EvaluationJobManager:
                 write_json(self._path(job_id), job)
                 return
             self._processes[job_id] = process
+            job["status"] = JobStatus.RUNNING.value
+            job["started_at"] = utc_now()
+            write_json(self._path(job_id), job)
 
         return_code = process.wait()
         with self._lock:
