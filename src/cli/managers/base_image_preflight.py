@@ -890,13 +890,20 @@ def compose_message(outcome: Outcome, container_tool: str = "docker") -> str:
     registry = reference.split("/", 1)[0] if "/" in reference else reference
 
     if outcome.cause is Cause.UNAUTHORIZED:
+        if reference.startswith("ghcr.io/fasrc/"):
+            return (
+                f"Not authorized to pull the base image {reference}.\n"
+                f"  The fasrc packages are 'internal', so a login is required:\n"
+                f"    echo $TOKEN | {container_tool} login {registry} -u <user> --password-stdin\n"
+                f"  The token MUST be a classic personal access token carrying 'read:packages'. "
+                f"A fine-grained token has no Packages permission and fails identically.\n"
+                f"  If SSO is enforced, authorize the token for the organization first."
+            )
         return (
             f"Not authorized to pull the base image {reference}.\n"
-            f"  The fasrc packages are 'internal', so a login is required:\n"
+            f"  A login may be required for {registry}:\n"
             f"    echo $TOKEN | {container_tool} login {registry} -u <user> --password-stdin\n"
-            f"  The token MUST be a classic personal access token carrying 'read:packages'. "
-            f"A fine-grained token has no Packages permission and fails identically.\n"
-            f"  If SSO is enforced, authorize the token for the organization first."
+            f"  Check the registry's authentication requirements."
         )
     if outcome.cause is Cause.UNKNOWN_TAG:
         return (
@@ -1250,6 +1257,14 @@ def enforce_base_images(
             f"  The preflight cannot verify an image it cannot name, and will not proceed "
             f"as though there were nothing to check."
         )
+
+    # Append floor-free references for third-party service images (design D4).
+    # Deduplicate on the image string so a ref appearing in both sets is only probed once.
+    _seen_refs = set(references)
+    for _tp_ref in third_party_base_references(compose_config, template_dir):
+        if _tp_ref not in _seen_refs:
+            _seen_refs.add(_tp_ref)
+            references.append(BaseReference(_tp_ref, check_floor=False))
 
     # The floor must come from the same tree the Dockerfiles above came from. When the
     # caller pinned `template_dir`, it owns the tree and the pyproject default stays out
