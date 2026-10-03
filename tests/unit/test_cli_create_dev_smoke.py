@@ -28,8 +28,14 @@ def satisfied_base_images(monkeypatch):
     every test in this file would depend on the developer's machine being logged in to ghcr,
     and would fail for a reason unrelated to what it is testing. The preflight's own tests
     install their own probe after this one, so they still exercise the real decision paths.
+
+    `VolumeManager.create_required_volumes` is also stubbed out: it calls the container
+    tool directly via subprocess (not through ContainerProbe), so on a machine without the
+    tool it raises FileNotFoundError before the test can reach the assertion it is testing.
+    Volume creation is incidental to what any test in this file exercises.
     """
     from src.cli.managers import base_image_preflight
+    from src.cli.managers.volume_manager import VolumeManager
 
     class _SatisfiedProbe:
         def __init__(self, container_tool="docker", timeout=600):
@@ -51,6 +57,7 @@ def satisfied_base_images(monkeypatch):
             return "Python 3.11.9"
 
     monkeypatch.setattr(base_image_preflight, "ContainerProbe", _SatisfiedProbe)
+    monkeypatch.setattr(VolumeManager, "create_required_volumes", lambda *a, **kw: None)
 
 
 @pytest.fixture
