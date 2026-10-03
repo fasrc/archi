@@ -784,8 +784,8 @@ data_manager:
   markup, the fence stands on its own, and the text after the block continues in a fresh
   copy of the same tag with the same attributes. A link therefore renders as two links
   with the same `href` around the fence, a bold or italic run resumes after it, and an
-  ancestor left with no content is dropped. The exception is a link left with no text or
-  image on either side of the fence (issue #430): it is replaced by one link before the
+  ancestor left with no content is dropped. The exception is a link left with no text,
+  image, rule, or video on any side of the fences (issue #430): it is replaced by one link before the
   fence, whose text is the link's `title` or, if there is none, its `href` — so
   `<a href="https://x/y">` around a lone block becomes `<https://x/y>` above the fence and
   the target stays in the knowledge base. A relative or fragment target, such as `/docs`,

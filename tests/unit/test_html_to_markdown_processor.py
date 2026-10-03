@@ -23,6 +23,7 @@ from src.data_manager.collectors.processing import (
     _next_content_sibling,
     _promote_block_code,
     _promoted_fence_language,
+    _renders_link_text,
     _slice_kb_article,
     html_to_markdown,
 )
@@ -932,6 +933,47 @@ def test_hoist_anchor_with_image_before_code_keeps_linked_image():
         )
         == "[![pic](i.png)](https://x/y)\n\n```\na\nb\n```"
     )
+
+
+@pytest.mark.parametrize(
+    ("element", "link"),
+    [
+        ("<hr>", "[---](https://x/y)"),
+        ('<video src="v.mp4"></video>', "[[](v.mp4)](https://x/y)"),
+    ],
+)
+def test_hoist_anchor_with_textless_rendered_element_converts_as_before(element, link):
+    """markdownify renders ``<hr>`` and ``<video>`` with no text, so the anchor
+    still has link text and must not be replaced (Codex review on PR #602)."""
+    assert (
+        html_to_markdown(
+            f'<p><a href="https://x/y">{element}<code>a<br>b</code></a></p>'
+        )
+        == f"{link}\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_two_blocks_then_text_give_no_extra_link():
+    """The text after the last block keeps the link, so the emptied head half of
+    the anchor must not add a second one (Codex review on PR #602)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="http://x"><code>a<br>b</code><code>c<br>d</code> now</a></p>'
+        )
+        == "```\na\nb\n```\n\n```\nc\nd\n```\n\n[now](http://x)"
+    )
+
+
+def test_renders_link_text_stops_at_first_text(monkeypatch):
+    """The check runs once per block on the head half, which still holds every
+    earlier block; collecting all of its text makes the hoist quadratic."""
+    soup = BeautifulSoup("<a>x" + "<code>a</code>" * 3 + "</a>", "html.parser")
+
+    def _no_get_text(self, *args, **kwargs):
+        raise AssertionError("get_text walks the whole subtree")
+
+    monkeypatch.setattr(Tag, "get_text", _no_get_text)
+    assert _renders_link_text(soup.a) is True
 
 
 @pytest.mark.parametrize("href", ["/docs", "docs/page.html", "#section"])

@@ -300,6 +300,9 @@ _PROMOTED_ATTR = "data-archi-promoted"
 # Marks the link that ``_hoist_out_of_inline`` keeps for an emptied anchor (issue
 # #430), so ``_ArchiMarkdownConverter.convert_a`` can give it explicit link syntax.
 _KEPT_LINK_ATTR = "data-archi-kept-link"
+# Marks the head half of an anchor whose split-off tail already shows the link, so
+# a later block that empties the head half does not add a second link.
+_LINK_SHOWN_ATTR = "data-archi-link-shown"
 _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
@@ -371,13 +374,27 @@ def _has_content(tag) -> bool:
     return False
 
 
+# The tags that ``markdownify`` converts to output that has no text in it.
+_RENDERS_WITHOUT_TEXT: frozenset = frozenset({"img", "hr", "video"})
+
+
 def _renders_link_text(tag) -> bool:
-    """True when *tag* gives ``markdownify`` link text: visible text or an image.
+    """True when *tag* gives ``markdownify`` link text: visible text, or a tag in
+    ``_RENDERS_WITHOUT_TEXT``.
 
     ``_has_content`` counts any child tag, but an empty ``<span>`` or a ``<br>``
     renders no text, and ``markdownify`` drops an anchor with no text (issue #430).
+    The walk stops at the first match: the head half still holds every earlier
+    block, so collecting all of its text would make the hoist quadratic (Codex
+    review on PR #602).
     """
-    return bool(tag.get_text().strip()) or tag.find("img") is not None
+    for node in tag.descendants:
+        if isinstance(node, Tag):
+            if node.name in _RENDERS_WITHOUT_TEXT:
+                return True
+        elif type(node) is NavigableString and node.strip():
+            return True
+    return False
 
 
 def _cut_edge_text(half, *, trailing: bool):
@@ -447,11 +464,13 @@ def _hoist_out_of_inline(pre, soup) -> None:
         parent.insert_after(pre)
         _trim_cut_whitespace(parent, trailing=True)
         _trim_cut_whitespace(tail, trailing=False)
+        is_link = parent.name == "a" and bool(parent.get("href"))
+        tail_has_text = is_link and _renders_link_text(tail)
         if (
-            parent.name == "a"
-            and parent.get("href")
+            is_link
+            and not tail_has_text
+            and not parent.has_attr(_LINK_SHOWN_ATTR)
             and not _renders_link_text(parent)
-            and not _renders_link_text(tail)
         ):
             link = soup.new_tag("a", href=parent["href"], attrs={_KEPT_LINK_ATTR: ""})
             link.string = (parent.get("title") or "").strip() or parent["href"]
@@ -459,6 +478,10 @@ def _hoist_out_of_inline(pre, soup) -> None:
             continue
         if _has_content(tail):
             pre.insert_after(tail)
+            if tail_has_text:
+                # Blocks hoist last-to-first, so the head half meets the earlier
+                # blocks next; this link is already shown and needs no copy.
+                parent[_LINK_SHOWN_ATTR] = ""
         if not _has_content(parent):
             parent.decompose()
 
