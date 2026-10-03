@@ -17,6 +17,7 @@ Only a dry run, which must not pull, can end in "could not tell", and it names t
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -53,8 +54,9 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[3]
 _TEMPLATE_SUBPATH = ("src", "cli", "templates", "dockerfiles")
 
 # What ``copy_source_code()`` copies out of the recorded checkout
-# (``templates_manager.py:1201-1205``). It raises on any one of them that is absent, and it
-# runs below the teardown, so the preflight pre-checks exactly this list.
+# (``templates_manager.py:1201-1205``). It raises on any one of them that is absent *or
+# unreadable*, and it runs below the teardown, so the preflight pre-checks exactly this list
+# for both.
 _COPIED_SOURCE_PATHS = ("src", "pyproject.toml", "LICENSE")
 
 
@@ -78,15 +80,78 @@ def build_source_root() -> Optional[Path]:
     except Exception:
         # No checkout recorded. `PACKAGE_ROOT` is then the tree the build ships -- but that
         # is a claim, and this module may not pass on a claim, so check it too.
-        _refuse_a_root_the_source_copy_cannot_use(PACKAGE_ROOT, recorded=False)
+        _refuse_a_root_the_source_copy_cannot_read(PACKAGE_ROOT, recorded=False)
         return None
 
-    _refuse_a_root_the_source_copy_cannot_use(recorded, recorded=True)
+    _refuse_a_root_the_source_copy_cannot_read(recorded, recorded=True)
     return recorded
 
 
-def _refuse_a_root_the_source_copy_cannot_use(root: Path, *, recorded: bool) -> None:
-    """Raise unless ``root`` holds everything the build reads out of it.
+def _first_unreadable_under(src: Path, root: Path) -> Optional[str]:
+    """The first entry under ``src`` that `copytree` could not read, relative to ``root``.
+
+    Checked explicitly with `os.access` at every file and directory, rather than left to
+    `os.walk` to raise on: that is what lets a test drive this branch by monkeypatching
+    `os.access` without touching a real file mode (design D4), and it is cheap enough to
+    run unconditionally (design, Risks).
+    """
+    for dirpath, dirnames, filenames in os.walk(src):
+        current = Path(dirpath)
+        for filename in sorted(filenames):
+            candidate = current / filename
+            if not os.access(candidate, os.R_OK):
+                return candidate.relative_to(root).as_posix()
+        for dirname in sorted(dirnames):
+            candidate = current / dirname
+            if not (os.access(candidate, os.R_OK) and os.access(candidate, os.X_OK)):
+                return candidate.relative_to(root).as_posix()
+    return None
+
+
+def _unusable_source_paths(root: Path) -> tuple:
+    """``(missing, unreadable)`` names the source copy needs out of ``root``.
+
+    Mirrors what `copy_source_code()` will do: `copytree` must list and enter every
+    directory under `src` and read every file in it, and `copyfile` must read
+    `pyproject.toml` and `LICENSE` (design D1). A directory counts as readable only when
+    the user can both list it (`R_OK`) and enter it (`X_OK`).
+
+    `src` is walked only when `src` itself is missing or unreadable (design D2): a root
+    whose `src` cannot even be entered cannot be walked, and reporting `src` once is
+    enough for the operator to act on.
+    """
+    missing: List[str] = []
+    unreadable: List[str] = []
+    src_unusable = False
+
+    for name in _COPIED_SOURCE_PATHS:
+        path = root / name
+        if not path.exists():
+            missing.append(name)
+            if name == "src":
+                src_unusable = True
+            continue
+        if path.is_dir():
+            if not (os.access(path, os.R_OK) and os.access(path, os.X_OK)):
+                unreadable.append(name)
+                if name == "src":
+                    src_unusable = True
+                continue
+            if name == "src":
+                bad = _first_unreadable_under(path, root)
+                if bad is not None:
+                    unreadable.append(bad)
+        elif not os.access(path, os.R_OK):
+            unreadable.append(name)
+
+    if not src_unusable and not root.joinpath(*_TEMPLATE_SUBPATH).is_dir():
+        missing.append(Path(*_TEMPLATE_SUBPATH).as_posix())
+
+    return missing, unreadable
+
+
+def _refuse_a_root_the_source_copy_cannot_read(root: Path, *, recorded: bool) -> None:
+    """Raise unless ``root`` holds everything the build reads out of it, all of it readable.
 
     One check for both roots, deliberately. ``copy_source_code`` demands the same three
     paths whichever root it resolves (``templates_manager.py:1201-1205``, raising at
@@ -94,10 +159,8 @@ def _refuse_a_root_the_source_copy_cannot_use(root: Path, *, recorded: bool) -> 
     is good enough for one branch and not the other cannot exist -- and two copies of this
     rule would eventually disagree about it.
     """
-    unreadable = [name for name in _COPIED_SOURCE_PATHS if not (root / name).exists()]
-    if not root.joinpath(*_TEMPLATE_SUBPATH).is_dir():
-        unreadable.append(Path(*_TEMPLATE_SUBPATH).as_posix())
-    if not unreadable:
+    missing, unreadable = _unusable_source_paths(root)
+    if not missing and not unreadable:
         return
 
     if recorded:
@@ -114,9 +177,14 @@ def _refuse_a_root_the_source_copy_cannot_use(root: Path, *, recorded: bool) -> 
         )
         whose = f"This install records no checkout, and the package root {root}"
 
+    lines = []
+    if missing:
+        lines.append(f"  {whose} is missing {', '.join(missing)}.")
+    if unreadable:
+        lines.append(f"  {whose} has unreadable {', '.join(unreadable)}.")
+
     raise BaseImagePreflightError(
-        "Base image check failed:\n"
-        f"  {whose} is missing {', '.join(unreadable)}.\n"
+        "Base image check failed:\n" + "\n".join(lines) + "\n"
         f"  That is the tree the deployment builds from -- "
         f"prepare_deployment_files() copies it below the teardown -- so the preflight "
         f"cannot establish anything by reading the installed templates instead.\n"
