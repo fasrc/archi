@@ -783,6 +783,7 @@ services:
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
       {% endfor %}
+      - ./configs:/root/archi/configs:ro
       {% if gpu_ids -%}
       - archi-models:/root/models/
       {%- endif %}
