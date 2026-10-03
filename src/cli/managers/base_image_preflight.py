@@ -449,6 +449,7 @@ class Cause(str, Enum):
     UNAUTHORIZED = "unauthorized"
     UNKNOWN_TAG = "unknown_tag"
     UNREACHABLE = "unreachable"
+    RATE_LIMITED = "rate_limited"
     NO_DISK = "no_disk"
     LOCAL_BUILD_MISSING = "local_build_missing"
     NO_RUNTIME = "no_runtime"
@@ -553,7 +554,15 @@ def third_party_base_references(
                 f"template {template_name!r} does not exist under {directory}.\n"
                 f"  The preflight cannot name the third-party base image without it."
             )
-        ref = _final_stage_base(template_path.read_text())
+        try:
+            text = template_path.read_text()
+        except (OSError, UnicodeError) as exc:
+            raise BaseImagePreflightError(
+                f"Base image check failed: service {service_name!r} is planned but its "
+                f"template {template_name!r} under {directory} cannot be read ({exc}).\n"
+                f"  The preflight cannot name the third-party base image without it."
+            ) from exc
+        ref = _final_stage_base(text)
         if ref is None:
             raise BaseImagePreflightError(
                 f"Base image check failed: service {service_name!r} is planned but its "
@@ -906,10 +915,26 @@ def compose_message(outcome: Outcome, container_tool: str = "docker") -> str:
             f"  Check the registry's authentication requirements."
         )
     if outcome.cause is Cause.UNKNOWN_TAG:
+        if not _names_placeable_base(reference):
+            # The repin script rewrites only the a2rchi bases, so it cannot repair a
+            # third-party pin such as Dockerfile-postgres or Dockerfile-grafana.
+            return (
+                f"The base image {reference} does not exist in its registry.\n"
+                f"  The pin is stale or the tag was deleted. Logging in will not help.\n"
+                f"  Edit the FROM line of the service template that names it to a tag "
+                f"that exists upstream."
+            )
         return (
             f"The base image {reference} does not exist in its registry.\n"
             f"  The pin is stale or the tag was deleted. Logging in will not help.\n"
             f"  Re-run scripts/dev/update_service_base_images.py to repin."
+        )
+    if outcome.cause is Cause.RATE_LIMITED:
+        return (
+            f"The registry refused to serve the base image {reference}: pull rate limit "
+            f"reached.\n"
+            f"  Wait for the limit to reset and retry, or log in to raise it:\n"
+            f"    {container_tool} login {registry}"
         )
     if outcome.cause is Cause.UNREACHABLE:
         return (
@@ -966,6 +991,9 @@ _ERROR_PATTERNS = (
         Cause.PROBE_UNSUPPORTED,
         ("is not a docker command", "unknown command", "unrecognized command"),
     ),
+    # Before UNAUTHORIZED: Docker Hub's pull-limit text suggests "authenticating", and a
+    # rate limit is neither a credential fault nor a network fault.
+    (Cause.RATE_LIMITED, ("toomanyrequests", "too many requests", "pull rate limit")),
     (
         Cause.UNAUTHORIZED,
         (

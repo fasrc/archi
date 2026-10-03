@@ -3281,3 +3281,66 @@ def test_compose_message_unauthorized_ghcr_fasrc_keeps_fasrc_specific_wording():
 
     assert "read:packages" in message
     assert "fasrc" in message.lower()
+
+
+# --- PR #610 review: unreadable templates, third-party remedies, rate limits -----------
+
+
+@pytest.mark.parametrize("break_template", ["directory", "undecodable"])
+def test_third_party_base_references_wraps_an_unreadable_enabled_template(
+    tmp_path, break_template
+):
+    """The docstring promises BaseImagePreflightError for an unreadable template, not a
+    raw IsADirectoryError or UnicodeDecodeError that names no service."""
+    template = tmp_path / "Dockerfile-postgres"
+    if break_template == "directory":
+        template.mkdir()
+    else:
+        template.write_bytes(b"FROM docker.io/pgvector/pgvector:pg17\n\xff\xfe\n")
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.third_party_base_references(
+            _ThirdPartyPlan(enabled={"postgres"}), tmp_path
+        )
+    msg = str(exc_info.value)
+    assert "postgres" in msg
+    assert "Dockerfile-postgres" in msg
+    assert "cannot be read" in msg
+
+
+def test_compose_message_unknown_tag_for_a_third_party_base_names_the_template_not_the_repin_script():
+    """update_service_base_images.py rewrites only the a2rchi bases, so it cannot repair
+    a stale pgvector or grafana pin."""
+    outcome = preflight.Outcome(
+        _PGVECTOR_REF, preflight.Verdict.REFUSED, preflight.Cause.UNKNOWN_TAG
+    )
+    message = preflight.compose_message(outcome)
+
+    assert _PGVECTOR_REF in message
+    assert "update_service_base_images" not in message
+    assert "FROM" in message
+    assert "login" not in message.lower()
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "Error response from daemon: toomanyrequests: You have reached your pull rate "
+        "limit. You may increase the limit by authenticating and upgrading: "
+        "https://www.docker.com/increase-rate-limit",
+        "toomanyrequests: Too Many Requests (HAP429).",
+    ],
+)
+def test_docker_hub_rate_limit_responses_are_rate_limited_not_unreachable(stderr):
+    assert preflight.classify_fetch_error(stderr) is preflight.Cause.RATE_LIMITED
+
+
+def test_rate_limited_message_says_wait_or_log_in_and_is_not_a_network_fault():
+    outcome = preflight.Outcome(
+        _PGVECTOR_REF, preflight.Verdict.REFUSED, preflight.Cause.RATE_LIMITED
+    )
+    message = preflight.compose_message(outcome)
+
+    assert _PGVECTOR_REF in message
+    assert "rate" in message.lower()
+    assert "login docker.io" in message
+    assert "network" not in message.lower()
