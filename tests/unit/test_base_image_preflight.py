@@ -2978,3 +2978,175 @@ def test_the_package_root_is_the_root_template_dir_is_derived_from(monkeypatch):
         preflight.PACKAGE_ROOT.joinpath(*preflight._TEMPLATE_SUBPATH).resolve()
         == preflight.TEMPLATE_DIR.resolve()
     )
+
+
+# --- Floor-free BaseReference (fasrc/archi#444, design D1, D2) ---------------------------
+
+THIRD_PARTY_REF = "docker.io/pgvector/pgvector:pg17"
+
+
+def test_floor_free_reference_present_is_available_without_version_check():
+    probe = FakeProbe(present=(THIRD_PARTY_REF,))
+    outcomes = preflight.run_preflight(
+        [preflight.BaseReference(THIRD_PARTY_REF, check_floor=False)],
+        probe=probe,
+        floor=">=3.11",
+        dry=False,
+    )
+    assert outcomes[0].verdict is preflight.Verdict.AVAILABLE
+    assert outcomes[0].reference == THIRD_PARTY_REF
+    assert probe.versions_read == []
+
+
+def test_floor_free_reference_absent_refused_is_refused_without_version_check():
+    probe = FakeProbe(present=(), fetch_error=preflight.Cause.UNAUTHORIZED)
+    outcomes = preflight.run_preflight(
+        [preflight.BaseReference(THIRD_PARTY_REF, check_floor=False)],
+        probe=probe,
+        floor=">=3.11",
+        dry=False,
+    )
+    assert outcomes[0].verdict is preflight.Verdict.REFUSED
+    assert outcomes[0].cause is preflight.Cause.UNAUTHORIZED
+    assert probe.versions_read == []
+
+
+def test_plain_string_reference_still_checks_python_version_and_refuses_below_floor():
+    probe = FakeProbe(present=(GHCR_REF,), version="Python 3.10.20")
+    outcomes = preflight.run_preflight(
+        [GHCR_REF],
+        probe=probe,
+        floor=">=3.11",
+        dry=False,
+    )
+    assert probe.versions_read == [GHCR_REF]
+    assert outcomes[0].verdict is preflight.Verdict.REFUSED
+    assert outcomes[0].cause is preflight.Cause.VERSION_BELOW_FLOOR
+
+
+def test_floor_free_dry_run_reachable_image_is_available():
+    probe = FakeProbe(present=())
+    outcomes = preflight.run_preflight(
+        [preflight.BaseReference(THIRD_PARTY_REF, check_floor=False)],
+        probe=probe,
+        floor=">=3.11",
+        dry=True,
+    )
+    assert outcomes[0].verdict is preflight.Verdict.AVAILABLE
+    assert outcomes[0].reference == THIRD_PARTY_REF
+
+
+def test_floor_free_dry_run_no_runtime_is_unverified_without_floor_wording():
+    probe = FakeProbe(runtime=False)
+    outcomes = preflight.run_preflight(
+        [preflight.BaseReference(THIRD_PARTY_REF, check_floor=False)],
+        probe=probe,
+        floor=">=3.11",
+        dry=True,
+    )
+    assert outcomes[0].verdict is preflight.Verdict.UNVERIFIED
+    assert outcomes[0].cause is preflight.Cause.NO_RUNTIME
+    msg = preflight.compose_message(outcomes[0])
+    assert "Python" not in msg
+    assert "version" not in msg
+
+
+# --- third_party_base_references (fasrc/archi#444, design D3) ---------------------------
+
+
+class _ThirdPartyPlan:
+    """Fake plan for third_party_base_references tests.
+
+    get_service(name) returns an object with .enabled True for services in `enabled`,
+    or raises ValueError for services in `raises`, matching ComposeConfig behaviour.
+    """
+
+    def __init__(self, enabled=(), raises=()):
+        self._enabled = set(enabled)
+        self._raises = set(raises)
+
+    def get_service(self, name):
+        if name in self._raises:
+            raise ValueError(f"Unknown service: {name}")
+        return type("S", (), {"enabled": name in self._enabled})()
+
+
+def test_third_party_base_references_returns_postgres_when_enabled_omits_grafana_when_not(
+    tmp_path,
+):
+    (tmp_path / "Dockerfile-postgres").write_text(
+        "FROM docker.io/pgvector/pgvector:pg17\n"
+    )
+    (tmp_path / "Dockerfile-grafana").write_text(
+        "FROM docker.io/grafana/grafana-enterprise:10.2.0\n"
+    )
+    refs = preflight.third_party_base_references(
+        _ThirdPartyPlan(enabled={"postgres"}), tmp_path
+    )
+    assert refs == ["docker.io/pgvector/pgvector:pg17"]
+    assert "docker.io/grafana/grafana-enterprise:10.2.0" not in refs
+
+
+def test_third_party_base_references_includes_grafana_ref_when_grafana_is_enabled(
+    tmp_path,
+):
+    (tmp_path / "Dockerfile-postgres").write_text(
+        "FROM docker.io/pgvector/pgvector:pg17\n"
+    )
+    (tmp_path / "Dockerfile-grafana").write_text(
+        "FROM docker.io/grafana/grafana-enterprise:10.2.0\n"
+    )
+    refs = preflight.third_party_base_references(
+        _ThirdPartyPlan(enabled={"postgres", "grafana"}), tmp_path
+    )
+    assert "docker.io/grafana/grafana-enterprise:10.2.0" in refs
+
+
+def test_third_party_base_references_treats_value_error_as_not_planned(tmp_path):
+    (tmp_path / "Dockerfile-postgres").write_text(
+        "FROM docker.io/pgvector/pgvector:pg17\n"
+    )
+    (tmp_path / "Dockerfile-grafana").write_text(
+        "FROM docker.io/grafana/grafana-enterprise:10.2.0\n"
+    )
+    refs = preflight.third_party_base_references(
+        _ThirdPartyPlan(raises={"postgres", "grafana"}), tmp_path
+    )
+    assert refs == []
+
+
+def test_third_party_base_references_raises_when_enabled_template_is_missing(tmp_path):
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.third_party_base_references(
+            _ThirdPartyPlan(enabled={"postgres"}), tmp_path
+        )
+    msg = str(exc_info.value)
+    assert "postgres" in msg
+    assert "Dockerfile-postgres" in msg
+
+
+def test_third_party_base_references_raises_when_enabled_template_has_no_from(tmp_path):
+    (tmp_path / "Dockerfile-postgres").write_text("RUN echo hello\n")
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.third_party_base_references(
+            _ThirdPartyPlan(enabled={"postgres"}), tmp_path
+        )
+    msg = str(exc_info.value)
+    assert "postgres" in msg
+    assert "Dockerfile-postgres" in msg
+
+
+def test_every_third_party_base_template_is_a_key_of_non_service_templates():
+    for template_name in preflight.THIRD_PARTY_BASE_TEMPLATES.values():
+        assert template_name in preflight.NON_SERVICE_TEMPLATES, (
+            f"{template_name!r} is in THIRD_PARTY_BASE_TEMPLATES "
+            f"but not in NON_SERVICE_TEMPLATES"
+        )
+
+
+def test_third_party_base_references_real_templates_give_the_issue_from_refs():
+    refs = preflight.third_party_base_references(
+        _ThirdPartyPlan(enabled={"postgres", "grafana"})
+    )
+    assert "docker.io/pgvector/pgvector:pg17" in refs
+    assert "docker.io/grafana/grafana-enterprise:10.2.0" in refs
