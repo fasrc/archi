@@ -2457,6 +2457,7 @@ def test_force_create_with_agent_config_inside_deployment_keeps_existing_deploym
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
 
     from src.cli import cli_main
+    from src.cli.managers.volume_manager import VolumeManager
 
     existing = _existing_deployment(archi_home)
 
@@ -2474,6 +2475,9 @@ def test_force_create_with_agent_config_inside_deployment_keeps_existing_deploym
 
     teardowns = _record_teardowns(monkeypatch)
     monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        VolumeManager, "create_required_volumes", lambda self, *a, **kw: None
+    )
 
     runner = CliRunner()
     result = runner.invoke(
