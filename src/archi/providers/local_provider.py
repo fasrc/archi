@@ -155,7 +155,9 @@ class LocalProvider(BaseProvider):
         # Remove local_mode from kwargs as ChatOllama doesn't accept it
         model_kwargs.pop("local_mode", None)
 
-        if self.config.base_url:
+        if "base_url" in kwargs:
+            model_kwargs["base_url"] = kwargs["base_url"]
+        elif self.config.base_url:
             model_kwargs["base_url"] = self.config.base_url
 
         return ChatOllama(**model_kwargs)
