@@ -911,7 +911,7 @@ class _Plan:
     def get_service(self, name):
         if self._raises:
             raise ValueError(f"Unknown service: {name}")
-        return type("S", (), {"enabled": self._grader})()
+        return type("S", (), {"enabled": name == "grader" and self._grader})()
 
 
 def test_enforce_raises_with_the_operator_message_when_a_reference_is_refused():
@@ -2978,3 +2978,369 @@ def test_the_package_root_is_the_root_template_dir_is_derived_from(monkeypatch):
         preflight.PACKAGE_ROOT.joinpath(*preflight._TEMPLATE_SUBPATH).resolve()
         == preflight.TEMPLATE_DIR.resolve()
     )
+
+
+# --- Floor-free BaseReference (fasrc/archi#444, design D1, D2) ---------------------------
+
+THIRD_PARTY_REF = "docker.io/pgvector/pgvector:pg17"
+
+
+def test_floor_free_reference_present_is_available_without_version_check():
+    probe = FakeProbe(present=(THIRD_PARTY_REF,))
+    outcomes = preflight.run_preflight(
+        [preflight.BaseReference(THIRD_PARTY_REF, check_floor=False)],
+        probe=probe,
+        floor=">=3.11",
+        dry=False,
+    )
+    assert outcomes[0].verdict is preflight.Verdict.AVAILABLE
+    assert outcomes[0].reference == THIRD_PARTY_REF
+    assert probe.versions_read == []
+
+
+def test_floor_free_reference_absent_refused_is_refused_without_version_check():
+    probe = FakeProbe(present=(), fetch_error=preflight.Cause.UNAUTHORIZED)
+    outcomes = preflight.run_preflight(
+        [preflight.BaseReference(THIRD_PARTY_REF, check_floor=False)],
+        probe=probe,
+        floor=">=3.11",
+        dry=False,
+    )
+    assert outcomes[0].verdict is preflight.Verdict.REFUSED
+    assert outcomes[0].cause is preflight.Cause.UNAUTHORIZED
+    assert probe.versions_read == []
+
+
+def test_plain_string_reference_still_checks_python_version_and_refuses_below_floor():
+    probe = FakeProbe(present=(GHCR_REF,), version="Python 3.10.20")
+    outcomes = preflight.run_preflight(
+        [GHCR_REF],
+        probe=probe,
+        floor=">=3.11",
+        dry=False,
+    )
+    assert probe.versions_read == [GHCR_REF]
+    assert outcomes[0].verdict is preflight.Verdict.REFUSED
+    assert outcomes[0].cause is preflight.Cause.VERSION_BELOW_FLOOR
+
+
+def test_floor_free_dry_run_reachable_image_is_available():
+    probe = FakeProbe(present=())
+    outcomes = preflight.run_preflight(
+        [preflight.BaseReference(THIRD_PARTY_REF, check_floor=False)],
+        probe=probe,
+        floor=">=3.11",
+        dry=True,
+    )
+    assert outcomes[0].verdict is preflight.Verdict.AVAILABLE
+    assert outcomes[0].reference == THIRD_PARTY_REF
+
+
+def test_floor_free_dry_run_no_runtime_is_unverified_without_floor_wording():
+    probe = FakeProbe(runtime=False)
+    outcomes = preflight.run_preflight(
+        [preflight.BaseReference(THIRD_PARTY_REF, check_floor=False)],
+        probe=probe,
+        floor=">=3.11",
+        dry=True,
+    )
+    assert outcomes[0].verdict is preflight.Verdict.UNVERIFIED
+    assert outcomes[0].cause is preflight.Cause.NO_RUNTIME
+    msg = preflight.compose_message(outcomes[0])
+    assert "Python" not in msg
+    assert "version" not in msg
+
+
+# --- third_party_base_references (fasrc/archi#444, design D3) ---------------------------
+
+
+class _ThirdPartyPlan:
+    """Fake plan for third_party_base_references tests.
+
+    get_service(name) returns an object with .enabled True for services in `enabled`,
+    or raises ValueError for services in `raises`, matching ComposeConfig behaviour.
+    """
+
+    def __init__(self, enabled=(), raises=()):
+        self._enabled = set(enabled)
+        self._raises = set(raises)
+
+    def get_service(self, name):
+        if name in self._raises:
+            raise ValueError(f"Unknown service: {name}")
+        return type("S", (), {"enabled": name in self._enabled})()
+
+
+def test_third_party_base_references_returns_postgres_when_enabled_omits_grafana_when_not(
+    tmp_path,
+):
+    (tmp_path / "Dockerfile-postgres").write_text(
+        "FROM docker.io/pgvector/pgvector:pg17\n"
+    )
+    (tmp_path / "Dockerfile-grafana").write_text(
+        "FROM docker.io/grafana/grafana-enterprise:10.2.0\n"
+    )
+    refs = preflight.third_party_base_references(
+        _ThirdPartyPlan(enabled={"postgres"}), tmp_path
+    )
+    assert refs == ["docker.io/pgvector/pgvector:pg17"]
+    assert "docker.io/grafana/grafana-enterprise:10.2.0" not in refs
+
+
+def test_third_party_base_references_includes_grafana_ref_when_grafana_is_enabled(
+    tmp_path,
+):
+    (tmp_path / "Dockerfile-postgres").write_text(
+        "FROM docker.io/pgvector/pgvector:pg17\n"
+    )
+    (tmp_path / "Dockerfile-grafana").write_text(
+        "FROM docker.io/grafana/grafana-enterprise:10.2.0\n"
+    )
+    refs = preflight.third_party_base_references(
+        _ThirdPartyPlan(enabled={"postgres", "grafana"}), tmp_path
+    )
+    assert "docker.io/grafana/grafana-enterprise:10.2.0" in refs
+
+
+def test_third_party_base_references_treats_value_error_as_not_planned(tmp_path):
+    (tmp_path / "Dockerfile-postgres").write_text(
+        "FROM docker.io/pgvector/pgvector:pg17\n"
+    )
+    (tmp_path / "Dockerfile-grafana").write_text(
+        "FROM docker.io/grafana/grafana-enterprise:10.2.0\n"
+    )
+    refs = preflight.third_party_base_references(
+        _ThirdPartyPlan(raises={"postgres", "grafana"}), tmp_path
+    )
+    assert refs == []
+
+
+def test_third_party_base_references_raises_when_enabled_template_is_missing(tmp_path):
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.third_party_base_references(
+            _ThirdPartyPlan(enabled={"postgres"}), tmp_path
+        )
+    msg = str(exc_info.value)
+    assert "postgres" in msg
+    assert "Dockerfile-postgres" in msg
+
+
+def test_third_party_base_references_raises_when_enabled_template_has_no_from(tmp_path):
+    (tmp_path / "Dockerfile-postgres").write_text("RUN echo hello\n")
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.third_party_base_references(
+            _ThirdPartyPlan(enabled={"postgres"}), tmp_path
+        )
+    msg = str(exc_info.value)
+    assert "postgres" in msg
+    assert "Dockerfile-postgres" in msg
+
+
+def test_every_third_party_base_template_is_a_key_of_non_service_templates():
+    for template_name in preflight.THIRD_PARTY_BASE_TEMPLATES.values():
+        assert template_name in preflight.NON_SERVICE_TEMPLATES, (
+            f"{template_name!r} is in THIRD_PARTY_BASE_TEMPLATES "
+            f"but not in NON_SERVICE_TEMPLATES"
+        )
+
+
+def test_third_party_base_references_real_templates_give_the_issue_from_refs():
+    refs = preflight.third_party_base_references(
+        _ThirdPartyPlan(enabled={"postgres", "grafana"})
+    )
+    assert "docker.io/pgvector/pgvector:pg17" in refs
+    assert "docker.io/grafana/grafana-enterprise:10.2.0" in refs
+
+
+# --- Third-party images wired into enforce_base_images (fasrc/archi#444, design D4, D5) ---
+
+_PGVECTOR_REF = "docker.io/pgvector/pgvector:pg17"
+_GRAFANA_REF = "docker.io/grafana/grafana-enterprise:10.2.0"
+_PYTHON_BASE_REF = _PINNED_FROM.split()[1]
+
+
+class _ExtPlan:
+    """Plan with explicit per-service enablement for third-party probe tests."""
+
+    gpu_ids = None
+
+    def __init__(self, enabled=()):
+        self._enabled = set(enabled)
+
+    def get_service(self, name):
+        return type("S", (), {"enabled": name in self._enabled})()
+
+
+def _tp_template_dir(tmp_path):
+    """Template dir with one a2rchi service template plus both third-party templates."""
+    (tmp_path / "Dockerfile-chat").write_text(_PINNED_FROM)
+    (tmp_path / "Dockerfile-postgres").write_text(f"FROM {_PGVECTOR_REF}\n")
+    (tmp_path / "Dockerfile-grafana").write_text(f"FROM {_GRAFANA_REF}\n")
+    return tmp_path
+
+
+def test_enforce_raises_naming_pgvector_when_postgres_planned_and_pull_unauthorized(
+    tmp_path,
+):
+    """postgres planned, pgvector absent, UNAUTHORIZED pull → refusal names pgvector;
+    python_version is never called for a floor-free reference."""
+    template_dir = _tp_template_dir(tmp_path)
+    probe = FakeProbe(
+        present=(_PYTHON_BASE_REF,), fetch_error=preflight.Cause.UNAUTHORIZED
+    )
+
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.enforce_base_images(
+            _ExtPlan(enabled={"postgres"}),
+            probe=probe,
+            template_dir=template_dir,
+        )
+
+    assert _PGVECTOR_REF in str(exc_info.value)
+    assert _PGVECTOR_REF not in probe.versions_read
+
+
+def test_enforce_omits_grafana_entirely_when_grafana_not_planned(tmp_path):
+    """grafana not in the plan → grafana image absent from outcomes and from every probe list."""
+    template_dir = _tp_template_dir(tmp_path)
+    probe = FakeProbe(present=(_PYTHON_BASE_REF, _PGVECTOR_REF))
+
+    outcomes = preflight.enforce_base_images(
+        _ExtPlan(enabled={"postgres"}),
+        probe=probe,
+        template_dir=template_dir,
+    )
+
+    assert all(o.reference != _GRAFANA_REF for o in outcomes)
+    assert _GRAFANA_REF not in probe.pulled
+    assert _GRAFANA_REF not in probe.reachability_checked
+    assert _GRAFANA_REF not in probe.versions_read
+
+
+def test_enforce_grafana_planned_and_present_is_available_without_version_check(
+    tmp_path,
+):
+    """grafana planned and locally present → AVAILABLE with no python_version call."""
+    template_dir = _tp_template_dir(tmp_path)
+    probe = FakeProbe(present=(_PYTHON_BASE_REF, _PGVECTOR_REF, _GRAFANA_REF))
+
+    outcomes = preflight.enforce_base_images(
+        _ExtPlan(enabled={"postgres", "grafana"}),
+        probe=probe,
+        template_dir=template_dir,
+    )
+
+    grafana_outcomes = [o for o in outcomes if o.reference == _GRAFANA_REF]
+    assert grafana_outcomes, "grafana outcome must be in the returned set"
+    assert grafana_outcomes[0].verdict is preflight.Verdict.AVAILABLE
+    assert _GRAFANA_REF not in probe.versions_read
+
+
+def test_enforce_dry_no_runtime_pgvector_is_unverified_without_floor_wording(tmp_path):
+    """dry run with no runtime → pgvector is UNVERIFIED; unverified_notes has no floor wording."""
+    template_dir = _tp_template_dir(tmp_path)
+    probe = FakeProbe(runtime=False)
+
+    outcomes = preflight.enforce_base_images(
+        _ExtPlan(enabled={"postgres"}),
+        probe=probe,
+        template_dir=template_dir,
+        dry=True,
+    )
+
+    pgvector_outcomes = [o for o in outcomes if o.reference == _PGVECTOR_REF]
+    assert pgvector_outcomes, "pgvector must appear in the returned outcomes"
+    assert pgvector_outcomes[0].verdict is preflight.Verdict.UNVERIFIED
+
+    notes = preflight.unverified_notes(outcomes)
+    pgvector_notes = [n for n in notes if _PGVECTOR_REF in n]
+    assert pgvector_notes, "unverified_notes must include the pgvector reference"
+    assert all("Python" not in n and "version" not in n.lower() for n in pgvector_notes)
+
+
+def test_compose_message_unauthorized_docker_io_is_registry_neutral():
+    """An UNAUTHORIZED pull from docker.io names docker.io and the login command,
+    but not 'fasrc' or 'read:packages'."""
+    outcome = preflight.Outcome(
+        _PGVECTOR_REF, preflight.Verdict.REFUSED, preflight.Cause.UNAUTHORIZED
+    )
+    message = preflight.compose_message(outcome)
+
+    assert "docker.io" in message
+    assert "login" in message
+    assert "fasrc" not in message
+    assert "read:packages" not in message
+
+
+def test_compose_message_unauthorized_ghcr_fasrc_keeps_fasrc_specific_wording():
+    """A ghcr.io/fasrc/ reference keeps the classic-PAT and SSO instructions."""
+    outcome = preflight.Outcome(
+        GHCR_REF, preflight.Verdict.REFUSED, preflight.Cause.UNAUTHORIZED
+    )
+    message = preflight.compose_message(outcome)
+
+    assert "read:packages" in message
+    assert "fasrc" in message.lower()
+
+
+# --- PR #610 review: unreadable templates, third-party remedies, rate limits -----------
+
+
+@pytest.mark.parametrize("break_template", ["directory", "undecodable"])
+def test_third_party_base_references_wraps_an_unreadable_enabled_template(
+    tmp_path, break_template
+):
+    """The docstring promises BaseImagePreflightError for an unreadable template, not a
+    raw IsADirectoryError or UnicodeDecodeError that names no service."""
+    template = tmp_path / "Dockerfile-postgres"
+    if break_template == "directory":
+        template.mkdir()
+    else:
+        template.write_bytes(b"FROM docker.io/pgvector/pgvector:pg17\n\xff\xfe\n")
+    with pytest.raises(preflight.BaseImagePreflightError) as exc_info:
+        preflight.third_party_base_references(
+            _ThirdPartyPlan(enabled={"postgres"}), tmp_path
+        )
+    msg = str(exc_info.value)
+    assert "postgres" in msg
+    assert "Dockerfile-postgres" in msg
+    assert "cannot be read" in msg
+
+
+def test_compose_message_unknown_tag_for_a_third_party_base_names_the_template_not_the_repin_script():
+    """update_service_base_images.py rewrites only the a2rchi bases, so it cannot repair
+    a stale pgvector or grafana pin."""
+    outcome = preflight.Outcome(
+        _PGVECTOR_REF, preflight.Verdict.REFUSED, preflight.Cause.UNKNOWN_TAG
+    )
+    message = preflight.compose_message(outcome)
+
+    assert _PGVECTOR_REF in message
+    assert "update_service_base_images" not in message
+    assert "FROM" in message
+    assert "login" not in message.lower()
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "Error response from daemon: toomanyrequests: You have reached your pull rate "
+        "limit. You may increase the limit by authenticating and upgrading: "
+        "https://www.docker.com/increase-rate-limit",
+        "toomanyrequests: Too Many Requests (HAP429).",
+    ],
+)
+def test_docker_hub_rate_limit_responses_are_rate_limited_not_unreachable(stderr):
+    assert preflight.classify_fetch_error(stderr) is preflight.Cause.RATE_LIMITED
+
+
+def test_rate_limited_message_says_wait_or_log_in_and_is_not_a_network_fault():
+    outcome = preflight.Outcome(
+        _PGVECTOR_REF, preflight.Verdict.REFUSED, preflight.Cause.RATE_LIMITED
+    )
+    message = preflight.compose_message(outcome)
+
+    assert _PGVECTOR_REF in message
+    assert "rate" in message.lower()
+    assert "login docker.io" in message
+    assert "network" not in message.lower()
