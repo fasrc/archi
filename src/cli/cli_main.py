@@ -293,12 +293,6 @@ def create(
             compose_config, config_manager, secrets_manager, **other_flags
         )
 
-        # Volumes only, no config: staging local_files copies into the data-manager
-        # volume the running deployment still mounts, so it waits for the teardown.
-        if not dry:
-            volume_manager = VolumeManager(compose_config.use_podman)
-            volume_manager.create_required_volumes(compose_config)
-
         # Everything above this line can still refuse the deployment — service
         # selection, config validation, secret validation, the compose plan,
         # the pure port checks, the base images, and the full render (#294).
@@ -311,6 +305,13 @@ def create(
         refuse_agent_config_inside_deployment(
             config_manager.get_configs(), base_dir, enabled_services
         )
+
+        # Volumes only, no config: staging local_files copies into the data-manager
+        # volume the running deployment still mounts, so it waits for the teardown.
+        if not dry:
+            volume_manager = VolumeManager(compose_config.use_podman)
+            volume_manager.create_required_volumes(compose_config)
+
         remove_existing_deployment(
             base_dir, name, force, dry, other_flags.get("podman", False)
         )
