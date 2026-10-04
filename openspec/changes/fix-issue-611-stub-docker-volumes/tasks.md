@@ -4,4 +4,4 @@
 
 ## 2. Verify, push, and open the PR
 
-- [ ] 2.1 Run `bash scripts/gate.sh` on the branch tip and confirm it is green. Push with `git push -u origin fix/issue-611-stub-docker-volumes`. Open the PR with `gh pr create --repo fasrc/archi --base dev`, with `closes #611` in the PR **body** (not the title). The body states the before and after counts of the no-docker run. No `Co-Authored-By` trailer. Do not merge.
+- [x] 2.1 Run `bash scripts/gate.sh` on the branch tip and confirm it is green. Push with `git push -u origin fix/issue-611-stub-docker-volumes`. Open the PR with `gh pr create --repo fasrc/archi --base dev`, with `closes #611` in the PR **body** (not the title). The body states the before and after counts of the no-docker run. No `Co-Authored-By` trailer. Do not merge.
