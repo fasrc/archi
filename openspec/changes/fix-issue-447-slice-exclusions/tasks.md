@@ -29,7 +29,7 @@ Standing notes for every task:
 
 ## 1. Count over labelled arms and report at the top level
 
-- [ ] 1.1 Add `_slice_membership` and `slice_exclusions`, route `slice_block` through the
+- [x] 1.1 Add `_slice_membership` and `slice_exclusions`, route `slice_block` through the
       helper, and skip unlabelled rows (design D1, D2). RED first — append these tests:
       (a) `test_slice_exclusions_counts_when_every_question_is_relabelled` — two clean arms,
       questions `q1`, `q2`; baseline `difficulty="hard"`, treatment `difficulty="easy"`, both

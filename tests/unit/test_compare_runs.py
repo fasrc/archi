@@ -3410,3 +3410,141 @@ def test_a_qa_run_joins_only_on_the_arms_corpus(
         assert code == cr.EXIT_GATE
         err = capsys.readouterr().err
         assert "cannot join" in err and expected in err
+
+
+# --- issue #447: slice exclusions without a row or a baseline label ---
+
+
+def test_slice_exclusions_counts_when_every_question_is_relabelled(_artifact):
+    base_rows = [
+        _row("q1", difficulty="hard", faithfulness=0.5),
+        _row("q2", difficulty="hard", faithfulness=0.6),
+    ]
+    treat_rows = [
+        _row("q1", difficulty="easy", faithfulness=0.7),
+        _row("q2", difficulty="easy", faithfulness=0.8),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+    questions = ["q1", "q2"]
+
+    block = cr.slice_block(arms[0], arms, questions, {})
+
+    assert not [row for row in block if row["field"] == "difficulty"]
+    assert cr.slice_exclusions(arms[0], arms, questions)["difficulty"] == 2
+
+
+def test_slice_exclusions_counts_when_a_group_scores_nothing(_artifact):
+    base_rows = [
+        _row("agreed", difficulty="easy", faithfulness=0.5),
+        _row("relabelled", difficulty="easy", faithfulness=0.5),
+    ]
+    treat_rows = [
+        # No finite metric for "agreed", so its pair scores n == 0.
+        _row("agreed", difficulty="easy"),
+        _row("relabelled", difficulty="hard", faithfulness=0.9),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+    questions = ["agreed", "relabelled"]
+
+    block = [
+        row
+        for row in cr.slice_block(arms[0], arms, questions, {})
+        if row["field"] == "difficulty"
+    ]
+
+    assert not block, "the only surviving group scores nothing, so no row is emitted"
+    assert cr.slice_exclusions(arms[0], arms, questions)["difficulty"] == 1
+
+
+def test_an_unlabelled_baseline_does_not_hide_a_relabelling(_artifact):
+    arm_a_rows = [
+        _row("q1", faithfulness=0.5),  # no difficulty on the focus question
+        _row("q2", difficulty="easy", faithfulness=0.5),
+    ]
+    arm_b_rows = [
+        _row("q1", difficulty="easy", faithfulness=0.7),
+        _row("q2", difficulty="easy", faithfulness=0.7),
+    ]
+    arm_c_rows = [
+        _row("q1", difficulty="hard", faithfulness=0.9),
+        _row("q2", difficulty="easy", faithfulness=0.9),
+    ]
+    all_arms = cr.load_arms(
+        [
+            str(_artifact(arm_a_rows)),
+            str(_artifact(arm_b_rows)),
+            str(_artifact(arm_c_rows)),
+        ]
+    )
+    questions = ["q1", "q2"]
+
+    for index in range(len(all_arms)):
+        reordered = [all_arms[index]] + [
+            arm for i, arm in enumerate(all_arms) if i != index
+        ]
+        baseline = reordered[0]
+
+        exclusions = cr.slice_exclusions(baseline, reordered, questions)
+
+        assert exclusions["difficulty"] == 1, (
+            f"baseline {index} got {exclusions['difficulty']}, want 1 -- the count "
+            "must not move with the choice of baseline"
+        )
+
+
+def test_an_unlabelled_row_is_not_a_disagreement(_artifact):
+    """A clean row's label absent, ``None``, or ``""`` is not a disagreement.
+
+    D2 step 2 drops each of these three unlabelled representations before the
+    mismatch test runs, so two arms both labelling "hard" alongside a clean arm
+    that recorded no label for the field is zero mismatches, not one.
+    """
+
+    def count_for(focus_third_row):
+        base_rows = [
+            _row("focus", difficulty="hard", faithfulness=0.5),
+            _row("filler", difficulty="easy", faithfulness=0.5),
+        ]
+        agrees_hard = [
+            _row("focus", difficulty="hard", faithfulness=0.7),
+            _row("filler", difficulty="easy", faithfulness=0.7),
+        ]
+        third_rows = [
+            focus_third_row,
+            _row("filler", difficulty="easy", faithfulness=0.9),
+        ]
+        arms = cr.load_arms(
+            [
+                str(_artifact(base_rows)),
+                str(_artifact(agrees_hard)),
+                str(_artifact(third_rows)),
+            ]
+        )
+        return cr.slice_exclusions(arms[0], arms, ["focus", "filler"])["difficulty"]
+
+    absent = _row("focus", faithfulness=0.9)
+    assert "difficulty" not in absent
+    assert count_for(absent) == 0
+
+    none_valued = _row("focus", faithfulness=0.9)
+    none_valued["difficulty"] = None
+    assert count_for(none_valued) == 0
+
+    empty_valued = _row("focus", faithfulness=0.9)
+    empty_valued["difficulty"] = ""
+    assert count_for(empty_valued) == 0
+
+
+def test_slice_exclusions_lists_every_gated_field_with_zero(_artifact):
+    base_rows = [
+        _row("q1", anchor_type="reasoning", difficulty="easy", faithfulness=0.5)
+    ]
+    treat_rows = [
+        _row("q1", anchor_type="reasoning", difficulty="easy", faithfulness=0.6)
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+
+    assert cr.slice_exclusions(arms[0], arms, ["q1"]) == {
+        "anchor_type": 0,
+        "difficulty": 0,
+    }

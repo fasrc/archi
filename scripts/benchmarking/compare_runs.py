@@ -1745,6 +1745,71 @@ def _label_key(label: Any) -> str:
         return f"{type(label).__name__}:{label!r}"
 
 
+def _slice_membership(
+    baseline: Arm, arms: Sequence[Arm], questions: Sequence[str], field: str
+) -> Tuple[Dict[str, List[str]], int]:
+    """Return ``(groups, mismatched)`` for one slice field.
+
+    A clean row with no label for ``field`` -- the key absent, ``None``, or
+    ``""`` -- is dropped before the disagreement test, the baseline included,
+    so the count does not depend on which arm is the baseline. A question
+    joins a group only once it has survived that test *and* the baseline's own
+    row is clean with a non-empty string label: that label is the group key,
+    and a key from a row that did not run establishes nothing.
+    """
+    groups: Dict[str, List[str]] = {}
+    mismatched = 0
+    for question in questions:
+        ran_labels = [
+            arm.rows[question].get(field) for arm in arms if arm.has_clean_row(question)
+        ]
+        labelled = [label for label in ran_labels if label is not None and label != ""]
+        if not labelled:
+            continue
+        # `!=`, not a set: a bank label is whatever the JSON held, and a list
+        # or dict label would make a set raise `unhashable type` and abort the
+        # whole comparison. "Do they all agree" needs equality, not hashing.
+        #
+        # Compared as canonical JSON, because Python's `==` inherits the numeric
+        # tower and would call genuinely different artifacts equal: `True == 1`
+        # and `1 == 1.0`, and the same coercion recurs at any depth inside an
+        # accepted list or dict label, where `[True] == [1]`. Every such pair is
+        # a disagreement the artifacts recorded and `excluded_mismatched` exists
+        # to report.
+        #
+        # Canonicalising closes that whole class in one place instead of adding
+        # a type guard per nesting level. `json.dumps` cannot fail on a value
+        # that came out of `json.loads`, and it yields a string -- so the
+        # `unhashable type: 'list'` abort a `set` caused stays fixed.
+        if any(_label_key(label) != _label_key(labelled[0]) for label in labelled[1:]):
+            mismatched += 1
+            continue
+        if not baseline.has_clean_row(question):
+            continue
+        value = baseline.rows.get(question, {}).get(field)
+        if not (isinstance(value, str) and value):
+            continue
+        groups.setdefault(value, []).append(question)
+    return groups, mismatched
+
+
+def slice_exclusions(
+    baseline: Arm, arms: Sequence[Arm], questions: Sequence[str]
+) -> Dict[str, int]:
+    """``{field: mismatched}`` for every ``SLICE_FIELDS`` entry every arm carries.
+
+    Unlike ``slice_block``, this reports the count whether or not any slice row
+    is emitted for the field -- see issue #447.
+    """
+    exclusions: Dict[str, int] = {}
+    for field in SLICE_FIELDS:
+        if not all(arm.has_metric(field) for arm in arms):
+            continue
+        _, mismatched = _slice_membership(baseline, arms, questions, field)
+        exclusions[field] = mismatched
+    return exclusions
+
+
 def slice_block(
     baseline: Arm,
     arms: Sequence[Arm],
@@ -1784,55 +1849,22 @@ def slice_block(
     from a row that did not run establishes nothing. Dropped from the groups, not
     from the count.
 
-    The count is **not** yet independent of the baseline's *label*. The loop
-    still reads the baseline's own value first and skips the question when that
-    value is not a non-empty string, so a disagreement between two other clean
-    arms goes uncounted when the baseline's row carries no label for the field.
-    That predates this rule and is tracked in **#447**, together with the count
-    being discarded outright when no group is emitted. Do not read the paragraph
-    above as a claim that the count is invariant under every baseline.
+    The count no longer depends on the baseline's own label. Before the
+    mismatch test runs, every unlabelled clean row -- the field absent,
+    ``None``, or ``""`` -- is dropped, the baseline included, so a disagreement
+    between two other clean arms is counted whichever arm happens to be
+    ``--baseline``. The baseline's label still decides which group a surviving
+    question joins -- that check happens after the mismatch test -- so a
+    baseline row with no string label still drops the question from every
+    group, without affecting the count. The count survives even when no group
+    is emitted at all: see ``slice_exclusions``, which reports it independent
+    of any slice row.
     """
     block: List[dict] = []
     for field in SLICE_FIELDS:
         if not all(arm.has_metric(field) for arm in arms):
             continue
-        groups: Dict[str, List[str]] = {}
-        mismatched = 0
-        for question in questions:
-            value = baseline.rows.get(question, {}).get(field)
-            if not (isinstance(value, str) and value):
-                continue
-            ran_labels = [
-                arm.rows[question].get(field)
-                for arm in arms
-                if arm.has_clean_row(question)
-            ]
-            # `!=`, not a set: a bank label is whatever the JSON held, and a list
-            # or dict label would make a set raise `unhashable type` and abort the
-            # whole comparison. "Do they all agree" needs equality, not hashing.
-            # An empty list never indexes -- the slice is empty, so `[0]` is not
-            # evaluated inside the generator.
-            #
-            # Compared as canonical JSON, because Python's `==` inherits the numeric
-            # tower and would call genuinely different artifacts equal: `True == 1`
-            # and `1 == 1.0`, and the same coercion recurs at any depth inside an
-            # accepted list or dict label, where `[True] == [1]`. Every such pair is
-            # a disagreement the artifacts recorded and `excluded_mismatched` exists
-            # to report.
-            #
-            # Canonicalising closes that whole class in one place instead of adding
-            # a type guard per nesting level. `json.dumps` cannot fail on a value
-            # that came out of `json.loads`, and it yields a string -- so the
-            # `unhashable type: 'list'` abort a `set` caused stays fixed.
-            if any(
-                _label_key(label) != _label_key(ran_labels[0])
-                for label in ran_labels[1:]
-            ):
-                mismatched += 1
-                continue
-            if not baseline.has_clean_row(question):
-                continue
-            groups.setdefault(value, []).append(question)
+        groups, mismatched = _slice_membership(baseline, arms, questions, field)
         for value, members in sorted(groups.items()):
             for arm in arms:
                 if arm is baseline:
