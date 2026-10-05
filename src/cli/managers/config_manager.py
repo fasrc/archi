@@ -481,6 +481,10 @@ class ConfigurationManager:
                     )
                     continue
                 for raw_entry in entries:
+                    # Peeled first, as the runtime classifier does: a sitemap
+                    # whose path holds /elog/ is a sitemap, never an ELOG source.
+                    if raw_entry.startswith("sitemap-"):
+                        continue
                     parsed = split_prefixed_entry(raw_entry)
                     if parsed is not None:
                         source, _url = parsed

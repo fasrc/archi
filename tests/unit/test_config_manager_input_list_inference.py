@@ -105,6 +105,15 @@ def test_sitemap_entry_alone_adds_nothing(tmp_path):
     assert not any(s in enabled for s in ["git", "sso", "elog", "indico"])
 
 
+# (f2) sitemap- entry whose path contains /elog/ → no elog inference; the
+#      runtime classifier peels sitemap- before the ELOG heuristic
+def test_sitemap_entry_with_elog_path_does_not_infer_elog(tmp_path):
+    lst = tmp_path / "urls.list"
+    lst.write_text("sitemap-https://h/elog/sitemap.xml\n")
+    mgr = _manager([_config_with_list(lst)])
+    assert "elog" not in mgr.get_enabled_sources()
+
+
 # (g) git.enabled: true with entries → included; no WARNING about git
 def test_git_enabled_true_with_entries_no_warning(tmp_path, caplog):
     lst = tmp_path / "urls.list"
