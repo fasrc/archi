@@ -121,17 +121,14 @@ explicitly on every source you care about rather than relying on the default, an
 `archi create` when changing which sources are on.
 
 Of these, `enabled: false` is acted on by the `git`, `sso`, `indico`, `jira`, `redmine` and
-`elog` collectors, and by the Selenium scraper — with one exception for `git` and `sso`,
-described in the next paragraph.
+`elog` collectors, and by the Selenium scraper.
 
-**CAUTION: a `git-` or `sso-` entry in `input_lists` overrides `enabled: false` for that
-source.** `ScraperManager.collect_all_from_config()` sets `git_enabled = True` when the
-input lists yield any `git-` URL, and `sso_enabled = True` for any `sso-` URL, without
-consulting the flag. ELOG URLs are passed through as `extra_urls` and collected regardless
-of `elog.enabled`. So an ingest can fetch a source you configured as disabled — possibly
-after CLI validation skipped that source's required secrets. To disable one of these,
-remove its entries from `input_lists` as well as setting `enabled: false`. Tracked as
-[issue #460](https://github.com/fasrc/archi/issues/460).
+An explicit `enabled: false` wins over any `input_lists` entries: the data manager logs a
+WARNING naming how many entries were skipped and does not collect that source. With `enabled`
+absent, a prefixed entry (`git-`, `sso-`, `elog-`, `indico-`) or an ELOG-path URL (`/elog/`
+or `/elogs/` in the path) enables the source, and `archi create` validates its required
+secrets and config fields before deploying. `enabled: true` collects unconditionally.
+(Changed in [#460](https://github.com/fasrc/archi/issues/460).)
 
 **`anonymize_data: false` is the row to check first.** It was silently ignored before and is
 honored now, and it widens what a reader can see. `visible: false` is the opposite
