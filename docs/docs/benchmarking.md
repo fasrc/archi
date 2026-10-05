@@ -30,10 +30,17 @@ metrics are on by default and a fifth is opt-in:
 - **Context precision**: How relevant the retrieved documents are
 - **Context recall**: Whether retrieval found everything the reference answer needed
 - **Answer correctness** (opt-in): Whether the answer is *correct* against the
-  reference answer. The other four grade relevance and grounding, so none of them
-  can tell a right answer from a wrong one. Enable it by adding
+  reference answer, as one blended score. The other four above grade relevance
+  and grounding, so none of them can tell a right answer from a wrong one. Enable
+  it by adding
   `answer_correctness` to
   `services.benchmarking.mode_settings.ragas_settings.enabled_metrics`.
+- **Generation-side metrics** (opt-in, same list): `factual_correctness_recall`
+  (did the answer leave facts out?), `factual_correctness_precision` (did it add
+  unsupported claims?), `noise_sensitivity` (share of wrong claims; **lower is
+  better**), `answer_accuracy` and `response_groundedness` (two-rating averaged
+  variants of correctness and faithfulness). See
+  [Interpreting benchmark results §2.1](interpreting_benchmark_results.md).
 
 ---
 
@@ -68,8 +75,10 @@ read (`question`→`user_input`, `answer`→`reference`, `contexts`→`retrieved
 
 ¹ Only `user_input` is required at load (plus `sources` for SOURCES mode). An
 empty `reference` is a valid draft row: it is skipped by every metric that needs
-the ground truth (`context_precision`, `context_recall` and `answer_correctness`)
-but still scored by `answer_relevancy` and `faithfulness`.
+the ground truth (`context_precision`, `context_recall`, `answer_correctness`,
+`factual_correctness_recall`, `factual_correctness_precision`,
+`noise_sensitivity` and `answer_accuracy`) but still scored by
+`answer_relevancy`, `faithfulness` and `response_groundedness`.
 
 See `examples/benchmarking/queries.json` for a complete example.
 
@@ -109,6 +118,7 @@ services:
 | `out_dir` | — | Output directory for results (must exist) |
 | `modes` | — | List of evaluation modes (`RAGAS`, `SOURCES`) |
 | `mode_settings.ragas_settings.timeout` | `180` | Max seconds per QA pair for RAGAS evaluation |
+| `mode_settings.ragas_settings.max_workers` | `16` | Concurrent RAGAS judge calls. Lower it when the judge throttles: ragas wraps each row in one `timeout` budget with its retries inside, so throttling spends the budget and loses the score. Must be a positive integer; anything else falls back to the default with a warning |
 | `mode_settings.ragas_settings.batch_size` | Ragas default | Number of QA pairs to evaluate at once |
 
 `archi evaluate` now requires benchmark runtime fields under `services.benchmarking`.
@@ -183,7 +193,10 @@ arm and recording `corpus_unchanged_at_endpoints` in the results.
 A long-but-healthy ingest hits none of them. CPU-only ingest of the full FASRC
 corpus takes ~64 min; with `processing.categorization.enabled: true` it runs one
 extra LLM call per document before embedding, and has been measured at over two
-hours on a loaded host. Under the old absolute deadline that run was killed at
+hours on a loaded host. The 2026-09 feature-matrix campaign put that tax at about
++19 min on a 1091-document corpus — 4956 s against 3802 s, roughly +30 % to enable
+— which is why the FASRC configs now ship the feature off. The two arms did not
+ingest identical corpora, so treat the figure as approximate. Under the old absolute deadline that run was killed at
 exactly 7200s while every one of its 1433 status polls was succeeding, two
 minutes short of finishing (issue #378).
 
@@ -268,8 +281,10 @@ prompts:
 ```
 
 `primary_metric` is one of `answer_relevancy`, `faithfulness`,
-`context_precision`, `context_recall`, `answer_correctness` (default
-`faithfulness` — grounding is the load-bearing property for a "never guess"
+`context_precision`, `context_recall`, `answer_correctness`,
+`factual_correctness_recall`, `factual_correctness_precision`,
+`noise_sensitivity` (ranked lowest-first), `answer_accuracy`,
+`response_groundedness` (default `faithfulness` — grounding is the load-bearing property for a "never guess"
 support bot). Every enabled metric is reported per variant regardless; this only
 sets the ranking key.
 
@@ -318,9 +333,51 @@ The dump JSON gains a `leaderboard` key:
     primary metric, every row has one. Unranked rows do not consume rank numbers,
     so the scored variants still read 1..n.
 - `shared_context` — the model, provider, judge `evaluator_model`,
-  `queries_path`, and `corpus_snapshot_id` shared by all variants. If any of
+  `queries_path`, `corpus_snapshot_id`, and the judge-pressure pair
+  `judge_max_workers` / `judge_timeout`, shared by all variants. If any of
   these differ across the swept configs, the discrepancy is recorded in
   `shared_context.warnings` (the sweep is no longer apples-to-apples).
+
+    The two judge-pressure fields hold the **effective** values — the defaults
+    substituted, so an arm that omits the key and an arm that sets the default
+    explicitly agree. They come from each variant's own `ragas_effective_settings`
+    record, never from its configuration block, and they are `null` when no
+    judge ran: a SOURCES-only sweep renders the block like any other run, and
+    the leaderboard must not report a judge that never started. They are
+    recorded because concurrency and the per-row budget decide how often the
+    judge times out, and a timed-out row leaves the scored denominator that
+    every aggregate is divided by. A difference here **withholds ranks**: every
+    scored row's `rank` becomes `null`, the pairwise A/B winners are withheld
+    too, and the reason is recorded in `shared_context.warnings`. An arm that
+    was judged and one that was not (`ragas_effective_settings: null`) count as
+    differing, that being the starkest pressure difference there is.
+
+    This is deliberately stricter than the evidence alone demands. Pressure is
+    a proxy for lost scores rather than proof of them, so two arms driven at
+    different concurrency that both scored every question are in fact
+    comparable and are withheld anyway. Warning only was the previous
+    behaviour and it does not work: `rank` is what a consumer reads, and a
+    warning in `shared_context` that it never looks at cannot stop it.
+    Refusing to rank is recoverable — the metrics are still published, and the
+    per-metric `<metric>_scored` counts show whether anything was actually
+    lost — whereas publishing a ranking that asserts a controlled comparison
+    which did not happen is not.
+
+    `judge_participation` sits beside the pair and records whether a judge ran
+    at all: `"judged"`, `"none"`, or a sorted list when the arms disagree. It
+    exists because the two pressure fields are `null` when no judge ran, and
+    the drift reduction ignores `null` — so without it, one judged arm beside
+    an unjudged one reported that arm's worker count as shared by both.
+- `ragas_effective_settings` — on each run record, the judge `timeout` and
+  `max_workers` the run actually used, or `null` when `RAGAS` was not among the
+  run's `modes` and no judge ran. A rendered configuration always carries a
+  `ragas_settings` block, so its presence does not mean the judge was used.
+  The configuration is also recorded verbatim as `configuration`; when an
+  invalid setting was replaced by its default the two deliberately disagree,
+  and this field is the one that describes the run. `config_version.digest`
+  covers the normalized values for the same reason, while
+  `config_version.selected_file_digest` fingerprints the file as written, so
+  two different files stay distinguishable even when they drive identical runs.
 
 The pairwise `ab_comparisons` are still produced alongside the leaderboard; the
 leaderboard is computed independently from each config's aggregates.

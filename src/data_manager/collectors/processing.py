@@ -297,6 +297,13 @@ _BR_LEADING_WS = re.compile(r"^(?:[ \t]*\r?\n)+")
 # converting byte-identically to the output before #399. Only promoted blocks are ours
 # to label.
 _PROMOTED_ATTR = "data-archi-promoted"
+# Marks the link that ``_hoist_out_of_inline`` keeps for an emptied anchor (issue
+# #430), so ``_ArchiMarkdownConverter.convert_a`` can give it explicit link syntax.
+_KEPT_LINK_ATTR = "data-archi-kept-link"
+# Marks the head half of an anchor whose split-off tail already shows the link, so
+# a later block that empties the head half does not add a second link.
+_LINK_SHOWN_ATTR = "data-archi-link-shown"
+_URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def _edge_text(br, *, forward: bool, stop_at) -> NavigableString | None:
@@ -367,6 +374,29 @@ def _has_content(tag) -> bool:
     return False
 
 
+# The tags that ``markdownify`` converts to output that has no text in it.
+_RENDERS_WITHOUT_TEXT: frozenset = frozenset({"img", "hr", "video"})
+
+
+def _renders_link_text(tag) -> bool:
+    """True when *tag* gives ``markdownify`` link text: visible text, or a tag in
+    ``_RENDERS_WITHOUT_TEXT``.
+
+    ``_has_content`` counts any child tag, but an empty ``<span>`` or a ``<br>``
+    renders no text, and ``markdownify`` drops an anchor with no text (issue #430).
+    The walk stops at the first match: the head half still holds every earlier
+    block, so collecting all of its text would make the hoist quadratic (Codex
+    review on PR #602).
+    """
+    for node in tag.descendants:
+        if isinstance(node, Tag):
+            if node.name in _RENDERS_WITHOUT_TEXT:
+                return True
+        elif type(node) is NavigableString and node.strip():
+            return True
+    return False
+
+
 def _cut_edge_text(half, *, trailing: bool):
     """Return the exact ``NavigableString`` that touches the cut edge of *half*, or None.
 
@@ -422,7 +452,9 @@ def _hoist_out_of_inline(pre, soup) -> None:
     wrapped in the inline markers.  Walk up the parent chain while the parent is one of
     the eleven inline tags; at each level split the parent around *pre*: re-append the
     siblings that follow *pre* into a clone of the parent and insert that clone (and *pre*
-    itself) after the original parent, discarding the clone when it is empty.
+    itself) after the original parent, discarding the clone when it is empty. An anchor
+    left with no content in either half keeps its link instead of being dropped, so the
+    `href` is not lost from the knowledge base (issue #430).
     """
     while isinstance(pre.parent, Tag) and pre.parent.name in _INLINE_MARKUP_TAGS:
         parent = pre.parent
@@ -432,8 +464,24 @@ def _hoist_out_of_inline(pre, soup) -> None:
         parent.insert_after(pre)
         _trim_cut_whitespace(parent, trailing=True)
         _trim_cut_whitespace(tail, trailing=False)
+        is_link = parent.name == "a" and bool(parent.get("href"))
+        tail_has_text = is_link and _renders_link_text(tail)
+        if (
+            is_link
+            and not tail_has_text
+            and not parent.has_attr(_LINK_SHOWN_ATTR)
+            and not _renders_link_text(parent)
+        ):
+            link = soup.new_tag("a", href=parent["href"], attrs={_KEPT_LINK_ATTR: ""})
+            link.string = (parent.get("title") or "").strip() or parent["href"]
+            parent.replace_with(link)
+            continue
         if _has_content(tail):
             pre.insert_after(tail)
+            if tail_has_text:
+                # Blocks hoist last-to-first, so the head half meets the earlier
+                # blocks next; this link is already shown and needs no copy.
+                parent[_LINK_SHOWN_ATTR] = ""
         if not _has_content(parent):
             parent.decompose()
 
@@ -613,7 +661,8 @@ class _ArchiMarkdownConverter(MarkdownConverter):
     This is the one place project-specific ``MarkdownConverter`` overrides live.
     ``convert_pre`` sizes the fence delimiter past any backtick run inside the
     block (issue #407); ``convert_list`` keeps a newline after a nested list
-    (issue #410).
+    (issue #410); ``convert_a`` gives a kept link with a relative target explicit
+    link syntax (issue #430).
 
     markdownify binds ``convert_ul`` and ``convert_ol`` to the base
     ``convert_list`` at class-definition time, so overriding ``convert_list``
@@ -642,6 +691,21 @@ class _ArchiMarkdownConverter(MarkdownConverter):
         longest_run = max((len(m) for m in _BACKTICK_RUNS.findall(text)), default=0)
         fence = "`" * max(3, longest_run + 1)
         return "\n\n%s%s\n%s\n%s\n\n" % (fence, code_language, text, fence)
+
+    def convert_a(self, el, text, parent_tags):
+        """Give a kept link with a relative or fragment target explicit link syntax.
+
+        markdownify writes ``<href>`` when the text equals the ``href``, but a
+        CommonMark autolink needs a URI scheme: ``</docs>`` reads as an HTML end
+        tag. Only the link that ``_hoist_out_of_inline`` keeps is changed here;
+        other self-links convert as markdownify writes them (issue #604).
+        """
+        out = super().convert_a(el, text, parent_tags)
+        href = el.get("href") or ""
+        if el.has_attr(_KEPT_LINK_ATTR) and out == f"<{href}>":
+            if not _URI_SCHEME.match(href):
+                return f"[{href}]({href})"
+        return out
 
     def convert_list(self, el, text, parent_tags):
         """Append a trailing newline when inline content follows a nested list."""

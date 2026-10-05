@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1
-# base-image-pin: dev-4314ac4 (managed by update_service_base_images.py)
-FROM ghcr.io/fasrc/a2rchi-pytorch-base@sha256:c29c6e8b4262736e3a5d3d47756b0d483db88254a91b16932d37f498bc704b5e 
+FROM ghcr.io/fasrc/a2rchi-pytorch-base:v2026.08.0 
 RUN mkdir -p /root/archi
 WORKDIR /root/archi
 
@@ -54,10 +53,10 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 # Install Firefox ESR
-RUN wget -O /tmp/firefox-esr.tar.bz2 "https://download.mozilla.org/?product=firefox-esr-latest-ssl&os=linux64&lang=en-US" && \
-    tar -xjf /tmp/firefox-esr.tar.bz2 -C /opt/ && \
+RUN wget -O /tmp/firefox-esr.tar.xz "https://download.mozilla.org/?product=firefox-esr-latest-ssl&os=linux64&lang=en-US" && \
+    tar -xf /tmp/firefox-esr.tar.xz -C /opt/ && \
     ln -s /opt/firefox/firefox /usr/bin/firefox && \
-    rm /tmp/firefox-esr.tar.bz2
+    rm /tmp/firefox-esr.tar.xz
 
 # Install Geckodriver
 RUN wget -q "https://github.com/mozilla/geckodriver/releases/download/v0.36.0/geckodriver-v0.36.0-linux64.tar.gz" \

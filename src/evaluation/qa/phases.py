@@ -58,6 +58,7 @@ def run_attempt(
                 context="tested-agent tool_calls",
             ),
             "error": {"type": type(exc).__name__, "message": str(exc)},
+            "usage": getattr(runtime, "usage", None),
         }
     return {
         **identity,
@@ -68,6 +69,7 @@ def run_attempt(
             context="tested-agent tool_calls",
         ),
         "answer": answer,
+        "usage": getattr(runtime, "usage", None),
     }
 
 
@@ -128,12 +130,14 @@ def score_answer(
             "answer": answer["answer"],
             "judgments": [judgment.to_dict() for judgment in judgments],
             **score_attempt(gold_atoms, judgments),
+            "usage": getattr(evaluator, "last_usage", None),
         }
     except Exception as exc:
         return {
             **identity,
             "status": "evaluation_failed",
             "error": str(exc),
+            "usage": getattr(evaluator, "last_usage", None),
         }
 
 

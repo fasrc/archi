@@ -23,6 +23,7 @@ from src.data_manager.collectors.processing import (
     _next_content_sibling,
     _promote_block_code,
     _promoted_fence_language,
+    _renders_link_text,
     _slice_kb_article,
     html_to_markdown,
 )
@@ -825,6 +826,205 @@ def test_hoist_a_em_nested_pre_parent_is_p_two_anchors_each_with_em():
     anchors = soup.find_all("a")
     assert len(anchors) == 2
     assert all(len(a.find_all("em")) == 1 for a in anchors)
+
+
+# (f) anchor the hoist empties keeps its link (issue #430) — red today
+
+
+def test_hoist_untitled_anchor_around_code_keeps_autolink():
+    assert (
+        html_to_markdown('<p><a href="https://x/y"><code>a<br>b</code></a></p>')
+        == "<https://x/y>\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_titled_anchor_uses_title_as_link_text():
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y" title="Docs"><code>a<br>b</code></a></p>'
+        )
+        == "[Docs](https://x/y)\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_blank_title_anchor_falls_back_to_href():
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y" title="  "><code>a<br>b</code></a></p>'
+        )
+        == "<https://x/y>\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_a_em_nested_dropped_and_link_kept_exact_output():
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><em><code>a<br>b</code></em></a></p>'
+        )
+        == "<https://x/y>\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_a_em_nested_dropped_and_link_kept_tree():
+    soup = _promote_block_code_soup(
+        '<p><a href="https://x/y"><em><code>a<br>b</code></em></a></p>'
+    )
+    anchors = soup.find_all("a")
+    assert len(anchors) == 1
+    assert soup.find("em") is None
+    pre = soup.find("pre")
+    assert pre.previous_sibling.name == "a"
+    assert pre.parent.name == "p"
+
+
+def test_hoist_whitespace_only_anchor_around_code_keeps_link():
+    assert (
+        html_to_markdown('<p><a href="http://x"> <code>a<br>b</code> </a></p>')
+        == "<http://x>\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_comment_only_anchor_around_code_keeps_link():
+    assert (
+        html_to_markdown('<p><a href="http://x"><!-- c --><code>a<br>b</code></a></p>')
+        == "<http://x>\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_two_blocks_in_one_anchor_give_one_link():
+    assert (
+        html_to_markdown(
+            '<p><a href="http://x"><code>a<br>b</code><code>c<br>d</code></a></p>'
+        )
+        == "<http://x>\n\n```\na\nb\n```\n\n```\nc\nd\n```"
+    )
+
+
+def test_hoist_anchor_with_empty_span_before_code_keeps_link():
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><span></span><code>a<br>b</code></a></p>'
+        )
+        == "<https://x/y>\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_anchor_with_empty_span_after_code_keeps_link():
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><span></span></a></p>'
+        )
+        == "<https://x/y>\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_anchor_with_only_br_before_code_keeps_link():
+    assert (
+        html_to_markdown('<p><a href="https://x/y"><br><code>a<br>b</code></a></p>')
+        == "<https://x/y>\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_anchor_with_image_before_code_keeps_linked_image():
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><img src="i.png" alt="pic">'
+            "<code>a<br>b</code></a></p>"
+        )
+        == "[![pic](i.png)](https://x/y)\n\n```\na\nb\n```"
+    )
+
+
+@pytest.mark.parametrize(
+    ("element", "link"),
+    [
+        ("<hr>", "[---](https://x/y)"),
+        ('<video src="v.mp4"></video>', "[[](v.mp4)](https://x/y)"),
+    ],
+)
+def test_hoist_anchor_with_textless_rendered_element_converts_as_before(element, link):
+    """markdownify renders ``<hr>`` and ``<video>`` with no text, so the anchor
+    still has link text and must not be replaced (Codex review on PR #602)."""
+    assert (
+        html_to_markdown(
+            f'<p><a href="https://x/y">{element}<code>a<br>b</code></a></p>'
+        )
+        == f"{link}\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_two_blocks_then_text_give_no_extra_link():
+    """The text after the last block keeps the link, so the emptied head half of
+    the anchor must not add a second one (Codex review on PR #602)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="http://x"><code>a<br>b</code><code>c<br>d</code> now</a></p>'
+        )
+        == "```\na\nb\n```\n\n```\nc\nd\n```\n\n[now](http://x)"
+    )
+
+
+def test_renders_link_text_stops_at_first_text(monkeypatch):
+    """The check runs once per block on the head half, which still holds every
+    earlier block; collecting all of its text makes the hoist quadratic."""
+    soup = BeautifulSoup("<a>x" + "<code>a</code>" * 3 + "</a>", "html.parser")
+
+    def _no_get_text(self, *args, **kwargs):
+        raise AssertionError("get_text walks the whole subtree")
+
+    monkeypatch.setattr(Tag, "get_text", _no_get_text)
+    assert _renders_link_text(soup.a) is True
+
+
+@pytest.mark.parametrize("href", ["/docs", "docs/page.html", "#section"])
+def test_hoist_anchor_with_relative_href_keeps_a_markdown_link(href):
+    """A relative or fragment target is not a CommonMark autolink, so the kept
+    link uses explicit link syntax instead of ``<href>``."""
+    assert (
+        html_to_markdown(f'<p><a href="{href}"><code>a<br>b</code></a></p>')
+        == f"[{href}]({href})\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_outer_strong_wraps_kept_link():
+    assert (
+        html_to_markdown(
+            '<p><strong><a href="http://x"><code>a<br>b</code></a></strong></p>'
+        )
+        == "**<http://x>**\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_anchor_with_no_href_still_dropped():
+    assert html_to_markdown("<p><a><code>a<br>b</code></a></p>") == "```\na\nb\n```"
+
+
+def test_hoist_anchor_with_empty_href_still_dropped():
+    assert (
+        html_to_markdown('<p><a href=""><code>a<br>b</code></a></p>')
+        == "```\na\nb\n```"
+    )
+
+
+def test_hoist_anchor_with_trailing_content_converts_as_before():
+    assert (
+        html_to_markdown('<p><a href="http://x"><code>a<br>b</code> now</a></p>')
+        == "```\na\nb\n```\n\n[now](http://x)"
+    )
+
+
+def test_hoist_anchor_with_leading_content_converts_as_before():
+    assert (
+        html_to_markdown('<p><a href="http://x">See <code>a<br>b</code></a></p>')
+        == "[See](http://x)\n\n```\na\nb\n```"
+    )
+
+
+def test_hoist_anchor_with_leading_and_trailing_content_converts_as_before():
+    assert (
+        html_to_markdown('<p><a href="http://x">See <code>a<br>b</code> now</a></p>')
+        == "[See](http://x)\n\n```\na\nb\n```\n\n[now](http://x)"
+    )
 
 
 def test_hoist_em_class_preserved_on_both_halves():

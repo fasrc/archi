@@ -29,9 +29,19 @@ from src.bin.service_benchmark import ResultHandler
 @pytest.fixture(autouse=True)
 def _reset_results(monkeypatch):
     monkeypatch.setattr(ResultHandler, "results", [])
+    monkeypatch.setattr(ResultHandler, "category_map_records_by_arm", [])
+    # These tests are about the configuration and the corpus; a real map reading
+    # would find no factory and warn, which is covered in
+    # test_benchmark_category_map.py rather than asserted on here.
+    monkeypatch.setattr(
+        ResultHandler,
+        "get_category_map",
+        staticmethod(lambda _config: ([], "sha256:map")),
+    )
 
 
 def _write(tmp_path, config):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(config))
     return path
@@ -44,7 +54,7 @@ def _pin_corpus(monkeypatch, value):
     which is correct behaviour, but it is not what the caller is asserting on.
     """
     monkeypatch.setattr(
-        ResultHandler, "get_corpus_fingerprint", staticmethod(lambda: value)
+        ResultHandler, "get_corpus_fingerprint", staticmethod(lambda _config: value)
     )
 
 
@@ -54,6 +64,198 @@ FILE_CONFIG = {
 CHAIN_CONFIG = {
     "services": {"chat_app": {"context_editing": {"context_window": 8192, "keep": 1}}}
 }
+
+
+def _ragas_config(modes=("RAGAS",), **settings):
+    return {
+        "services": {
+            "benchmarking": {
+                "modes": list(modes),
+                "mode_settings": {"ragas_settings": dict(settings)},
+            }
+        }
+    }
+
+
+def test_records_the_judge_settings_the_run_actually_used(tmp_path):
+    """An invalid judge setting is substituted; the artifact must say what ran.
+
+    The validators replace a bad ``timeout`` or ``max_workers`` with the default
+    on the way into ``RunConfig``, and that substitution reached ragas and
+    nothing else -- so a run configured ``timeout: -1`` published evidence
+    claiming -1 when it used 180, and two runs that fell back from different
+    typos carried different config digests while behaving identically.
+
+    Writing the normalized values back over the in-memory config does NOT fix
+    this: ``handle_results`` re-reads the selected file from disk, so it never
+    sees such a mutation. The effective values have to be recorded here.
+    """
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=-1, max_workers="many")),
+        {},
+        {},
+        running_config=None,
+    )
+
+    record = ResultHandler.results[0]
+    assert record["ragas_effective_settings"] == {"timeout": 180, "max_workers": 16}
+    # The configuration as SELECTED is kept verbatim beside it. Normalizing it in
+    # place would fix the record of what ran by falsifying the record of what was
+    # asked for, and asserted_config_divergence exists to keep the two apart.
+    selected = record["configuration"]["services"]["benchmarking"]["mode_settings"]
+    assert selected["ragas_settings"] == {"timeout": -1, "max_workers": "many"}
+
+
+def test_judge_provenance_follows_what_executed_not_the_arms_own_file(tmp_path):
+    """In a sweep, the file's ``modes`` are not what the arm actually ran.
+
+    ``run()`` reads ``modes_being_run`` once from the FIRST config and reuses it
+    for every arm, so a later SOURCES-only file is judged anyway. Deriving the
+    judge provenance from the arm's own file then records
+    ``ragas_effective_settings: null`` for a run that really was judged -- and
+    the reverse ordering claims judge settings for an arm that never was.
+    The caller passes what executed; the file is not the authority here.
+    """
+    sources_only = _write(
+        tmp_path / "a",
+        _ragas_config(modes=("SOURCES",), timeout=600, max_workers=6),
+    )
+    ResultHandler.handle_results(
+        sources_only, {}, {}, running_config=None, modes_executed={"RAGAS"}
+    )
+    judged = ResultHandler.results[-1]
+    assert judged["ragas_effective_settings"] == {"timeout": 600, "max_workers": 6}
+
+    # ...and the reverse: a RAGAS file in a SOURCES-only sweep was not judged.
+    ragas_file = _write(tmp_path / "b", _ragas_config(modes=("RAGAS",), timeout=600))
+    ResultHandler.handle_results(
+        ragas_file, {}, {}, running_config=None, modes_executed={"SOURCES"}
+    )
+    assert ResultHandler.results[-1]["ragas_effective_settings"] is None
+
+
+def test_two_runs_that_fell_back_to_the_same_defaults_share_a_digest(tmp_path):
+    """The config digest is the identity of the EFFECTIVE settings, not the file.
+
+    Recording the effective values in a sibling field is not enough on its own:
+    the digest is what a later reader compares. While it hashed the file as
+    written, ``max_workers: 0`` and ``max_workers: many`` -- which run
+    identically at 16 -- carried different digests.
+    """
+    ResultHandler.handle_results(
+        _write(tmp_path / "a", _ragas_config(timeout=-1, max_workers=0)),
+        {},
+        {},
+        running_config=None,
+    )
+    ResultHandler.handle_results(
+        _write(tmp_path / "b", _ragas_config(timeout="many", max_workers="many")),
+        {},
+        {},
+        running_config=None,
+    )
+
+    first, second = ResultHandler.results
+    assert first["config_version"]["digest"] == second["config_version"]["digest"]
+    # And the two files are still recorded as the operator wrote them.
+    assert (
+        first["configuration"]["services"]["benchmarking"]["mode_settings"][
+            "ragas_settings"
+        ]["max_workers"]
+        == 0
+    )
+    assert (
+        second["configuration"]["services"]["benchmarking"]["mode_settings"][
+            "ragas_settings"
+        ]["max_workers"]
+        == "many"
+    )
+
+
+def test_effective_judge_settings_are_recorded_for_a_valid_config(tmp_path):
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+    )
+
+    assert ResultHandler.results[0]["ragas_effective_settings"] == {
+        "timeout": 600,
+        "max_workers": 4,
+    }
+
+
+def test_effective_judge_settings_survive_a_config_with_no_ragas_block(tmp_path):
+    """A RAGAS run whose config omits the block still records the defaults it used."""
+    ResultHandler.handle_results(
+        _write(tmp_path, {"services": {"benchmarking": {"modes": ["RAGAS"]}}}),
+        {},
+        {},
+        running_config=None,
+    )
+
+    assert ResultHandler.results[0]["ragas_effective_settings"] == {
+        "timeout": 180,
+        "max_workers": 16,
+    }
+
+
+def test_no_judge_settings_are_claimed_when_ragas_was_not_a_mode(tmp_path):
+    """A SOURCES-only run builds no RunConfig, so it used no judge settings.
+
+    A rendered configuration always carries a ``ragas_settings`` block, so the
+    block's presence cannot stand in for "RAGAS ran". Reporting a timeout and a
+    worker count for a run that never called the judge is evidence of something
+    that did not happen.
+    """
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(modes=("SOURCES",), timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+    )
+
+    record = ResultHandler.results[0]
+    assert record["ragas_effective_settings"] is None, (
+        "null says no judge ran; it is not the same claim as reporting the "
+        "settings a RunConfig would have been given"
+    )
+    # The file is still recorded as written, judge block included.
+    assert record["configuration"]["services"]["benchmarking"]["mode_settings"][
+        "ragas_settings"
+    ] == {"timeout": 600, "max_workers": 4}
+
+
+def test_two_files_that_differ_keep_different_selected_file_digests(tmp_path):
+    """Normalizing the DIGEST basis must not reach the file's own fingerprint.
+
+    ``selected_file_digest`` and the divergence list describe the configuration
+    as it was written; that is their audit purpose. Two files that differ must
+    fingerprint differently even when they drive identical runs -- which is
+    exactly the pair that now shares a ``config_version.digest``.
+    """
+    ResultHandler.handle_results(
+        _write(tmp_path / "a", _ragas_config(max_workers=0)),
+        {},
+        {},
+        running_config=None,
+    )
+    ResultHandler.handle_results(
+        _write(tmp_path / "b", _ragas_config(max_workers="many")),
+        {},
+        {},
+        running_config=None,
+    )
+
+    first, second = ResultHandler.results
+    assert (
+        first["config_version"]["digest"] == second["config_version"]["digest"]
+    ), "both ran at 16, so they are the same configuration"
+    assert (
+        first["config_version"]["selected_file_digest"]
+        != second["config_version"]["selected_file_digest"]
+    ), "but the two files are not the same file"
 
 
 def test_records_the_configuration_the_chain_held(tmp_path):
@@ -332,3 +534,59 @@ def test_ingest_wall_seconds_is_not_copied_onto_the_run_metadata(tmp_path, monke
     ResultHandler.add_metadata()
 
     assert "ingest_wall_seconds" not in ResultHandler.metadata
+
+
+# --- #582: judge_usage on the arm record ---
+
+
+def test_judge_usage_is_recorded_when_ragas_ran(tmp_path):
+    """handle_results records the judge_usage dict when RAGAS ran."""
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "calls": 2,
+        "unreported_calls": 0,
+        "by_model": [
+            {
+                "provider": "openai",
+                "model": "gpt-4o",
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "calls": 2,
+                "unreported_calls": 0,
+            }
+        ],
+    }
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(modes=("RAGAS",), timeout=60)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        judge_usage=usage,
+    )
+    record = ResultHandler.results[0]
+    assert "judge_usage" in record
+    assert record["judge_usage"] == usage
+
+
+def test_judge_usage_is_none_when_ragas_did_not_run(tmp_path):
+    """When RAGAS was not a mode, judge_usage is null regardless of the arg passed."""
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "calls": 2,
+        "unreported_calls": 0,
+        "by_model": [],
+    }
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(modes=("SOURCES",))),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"SOURCES"},
+        judge_usage=usage,
+    )
+    record = ResultHandler.results[0]
+    assert "judge_usage" in record
+    assert record["judge_usage"] is None

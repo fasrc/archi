@@ -43,11 +43,15 @@ Serialization boundary
 
 from __future__ import annotations
 
+import copy
 import json
+import logging
 import math
 import os
 import posixpath
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Mirror of the Jinja defaults in src/cli/templates/base-config.yaml so the
 # preflight judges a config by the SAME effective settings the rendered
@@ -63,6 +67,12 @@ DEFAULT_ENABLED_METRICS: List[str] = [
     "context_recall",
 ]
 DEFAULT_ANCHOR_PATH: str = "examples/benchmarking/anchor_questions.json"
+
+# RunConfig knobs. ``RAGAS_DEFAULT_TIMEOUT`` mirrors the Jinja default above;
+# ``RAGAS_DEFAULT_MAX_WORKERS`` mirrors ragas' own RunConfig default, which
+# applied unannounced before this key existed.
+RAGAS_DEFAULT_TIMEOUT: int = 180
+RAGAS_DEFAULT_MAX_WORKERS: int = 16
 
 # WORKDIR of the benchmarking image (src/cli/templates/dockerfiles/Dockerfile-benchmarks).
 # A relative anchor path is probed against this at runtime, so it is also where the
@@ -103,7 +113,95 @@ _METRIC_REQUIRED_COLUMN: Dict[str, Optional[str]] = {
     "answer_correctness": "reference",
     "answer_relevancy": None,
     "faithfulness": None,
+    # Generation-side metrics (opt-in): they grade the ANSWER, the half a prompt
+    # edit can move. Factual correctness is split into recall (omission) and
+    # precision (over-claiming) so one blended score cannot hide the trade.
+    "factual_correctness_recall": "reference",
+    "factual_correctness_precision": "reference",
+    "noise_sensitivity": "reference",
+    "answer_accuracy": "reference",
+    "response_groundedness": None,
 }
+
+# Display label per metric; its key order is THE ordered list of every metric
+# the harness can score (``RAGAS_METRIC_NAMES``). Other modules
+# (leaderboard, aggregates, report, compare_runs, Argilla, prompt sweep) keep
+# their own copies for historical reasons; test_ragas_generation_metrics.py pins
+# each copy to this one.
+RAGAS_METRIC_LABELS: Dict[str, str] = {
+    "answer_relevancy": "Answer Relevancy",
+    "faithfulness": "Faithfulness",
+    "context_precision": "Context Precision",
+    "context_recall": "Context Recall",
+    "answer_correctness": "Answer Correctness",
+    "factual_correctness_recall": "Factual Correctness (recall)",
+    "factual_correctness_precision": "Factual Correctness (precision)",
+    "noise_sensitivity": "Noise Sensitivity (lower is better)",
+    "answer_accuracy": "Answer Accuracy",
+    "response_groundedness": "Response Groundedness",
+}
+RAGAS_METRIC_NAMES: Tuple[str, ...] = tuple(RAGAS_METRIC_LABELS)
+
+# Metrics where a SMALLER score is the better one. Anything that picks a winner,
+# ranks variants, or flags a regression must consult this.
+LOWER_IS_BETTER_METRICS: frozenset = frozenset({"noise_sensitivity"})
+
+# Metric -> (ragas class name, constructor kwargs) for the metrics that are
+# built rather than pre-instantiated. ``name`` is always pinned so the result
+# column is predictable (see ``ragas_result_column``).
+_RAGAS_METRIC_CONSTRUCTORS: Dict[str, Tuple[str, Dict[str, str]]] = {
+    "factual_correctness_recall": ("FactualCorrectness", {"mode": "recall"}),
+    "factual_correctness_precision": ("FactualCorrectness", {"mode": "precision"}),
+    "noise_sensitivity": ("NoiseSensitivity", {"mode": "relevant"}),
+    "answer_accuracy": ("AnswerAccuracy", {}),
+    "response_groundedness": ("ResponseGroundedness", {}),
+}
+
+
+def build_ragas_metric_objects(
+    metrics_module: Any, names: Sequence[str]
+) -> Dict[str, Any]:
+    """The ragas metric object for each of ``names``, taken from
+    ``metrics_module`` (``ragas.metrics``; a fake in unit tests).
+
+    The five original metrics are ragas' pre-instantiated singletons; the rest
+    are constructed with a pinned ``name``. An unregistered name raises
+    ``KeyError`` rather than being silently skipped.
+    """
+    objects: Dict[str, Any] = {}
+    for name in names:
+        if name not in _METRIC_REQUIRED_COLUMN:
+            raise KeyError(f"unknown RAGAS metric: {name}")
+        if name in _RAGAS_METRIC_CONSTRUCTORS:
+            class_name, kwargs = _RAGAS_METRIC_CONSTRUCTORS[name]
+            objects[name] = getattr(metrics_module, class_name)(**kwargs, name=name)
+        else:
+            objects[name] = getattr(metrics_module, name)
+    return objects
+
+
+def ragas_result_column(metric_obj: Any) -> str:
+    """The ``evaluate(...).to_pandas()`` column ragas writes ``metric_obj``'s
+    scores under.
+
+    ragas 0.3.5 (``evaluation.py``) keys any metric satisfying its ``ModeMetric``
+    protocol — an object with both ``name`` and ``mode`` — as
+    ``name(mode=<mode>)``, and every other metric as plain ``name``.
+    """
+    if not hasattr(metric_obj, "mode"):
+        return metric_obj.name
+    return f"{metric_obj.name}(mode={metric_obj.mode})"
+
+
+def metric_winner(metric: str, score_a: float, score_b: float) -> str:
+    """``"a"``, ``"b"`` or ``"tie"`` for one metric, honoring its direction.
+    A NaN on either side is a tie: there is nothing to compare."""
+    if math.isnan(score_a) or math.isnan(score_b) or abs(score_a - score_b) < 1e-9:
+        return "tie"
+    a_higher = score_a > score_b
+    if metric in LOWER_IS_BETTER_METRICS:
+        return "b" if a_higher else "a"
+    return "a" if a_higher else "b"
 
 
 def normalize_record(record: Any) -> Any:
@@ -598,6 +696,175 @@ def score_metrics_per_eligibility(
 
 
 # --- serialization boundary -------------------------------------------------
+
+
+def _positive_int(value: Any, default: int, name: str) -> int:
+    """Accept a positive int, else fall back to ``default`` and say so.
+
+    ``bool`` is excluded deliberately: it is a subclass of ``int``, so a stray
+    ``max_workers: true`` would otherwise become one worker and quietly
+    serialize the whole judge pass.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        if value is not None:
+            logger.warning(
+                "Ignoring ragas_settings.%s=%r (want a positive integer); using %d",
+                name,
+                value,
+                default,
+            )
+        return default
+    return value
+
+
+def _positive_number(value: Any, default: int, name: str) -> Any:
+    """Accept any positive finite number, else fall back to ``default`` and say so.
+
+    ``timeout`` is a duration, not a count: ragas hands it to
+    ``asyncio.wait_for``, which takes a float, and before this knob was
+    validated a configured ``300.0`` reached ``RunConfig`` and worked. Demanding
+    an ``int`` here would silently downgrade that working config to the default
+    -- a narrowing introduced by the validation rather than by the operator.
+    ``max_workers`` keeps the stricter ``_positive_int``: a fractional worker
+    count has no meaning.
+
+    ``bool`` is excluded for the same reason as in ``_positive_int``, and a NaN
+    or infinity is rejected because neither is a duration.
+    """
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        if value is not None:
+            logger.warning(
+                "Ignoring ragas_settings.%s=%r (want a positive number); using %d",
+                name,
+                value,
+                default,
+            )
+        return default
+    return value
+
+
+def ragas_run_config_kwargs(
+    ragas_settings: Optional[Dict[str, Any]], verbosity: int = 0
+) -> Dict[str, Any]:
+    """Build the kwargs for ragas' ``RunConfig`` from the rendered config.
+
+    Kept here, beside the other pure helpers, so it is unit-testable without the
+    benchmark-only ragas dependency: the caller does ``RunConfig(**kwargs)``.
+
+    Why both knobs matter, and why ``max_retries`` is not among them: ragas wraps
+    each metric's per-row scoring in ``asyncio.wait_for(..., timeout)``
+    (``metrics/base.py::single_turn_ascore``), and the tenacity retry chain lives
+    INSIDE that call. One ``timeout`` therefore has to cover every retry and all
+    of its exponential backoff, so raising ``max_retries`` cannot rescue a row
+    that timed out — it just spends the same budget faster. The two knobs that
+    do help are a bigger budget (``timeout``) and hitting the judge less
+    concurrently so it throttles less (``max_workers``), the latter having never
+    been plumbed through at all.
+    """
+    settings = ragas_settings or {}
+    return {
+        "timeout": _positive_number(
+            settings.get("timeout"), RAGAS_DEFAULT_TIMEOUT, "timeout"
+        ),
+        "max_workers": _positive_int(
+            settings.get("max_workers"), RAGAS_DEFAULT_MAX_WORKERS, "max_workers"
+        ),
+        # verbosity 4 turns on tenacity's per-retry logging, which is the only
+        # way to see the judge retrying before it runs out of budget.
+        "log_tenacity": verbosity >= 4,
+    }
+
+
+def ragas_effective_settings(
+    ragas_settings: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """The two judge knobs a run WILL actually use, defaults already substituted.
+
+    Read by anything that has to compare runs rather than start one. A knob that
+    changes how hard the judge is pushed changes the missing-score rate, and a
+    missing score changes the denominator every aggregate is divided by -- so two
+    arms judged under different pressure are not comparable, whatever else
+    matched. Comparing the CONFIGURED values would miss exactly the case that
+    matters: one arm setting the default explicitly and another leaving it out
+    are the same run, while an unset arm and an arm set to 4 are not.
+    """
+    kwargs = ragas_run_config_kwargs(ragas_settings)
+    return {"timeout": kwargs["timeout"], "max_workers": kwargs["max_workers"]}
+
+
+def with_effective_ragas_settings(
+    config: Any, modes_executed: Optional[Sequence[str]] = None
+) -> Any:
+    """A deep copy of ``config`` whose judge knobs hold the values a run will use.
+
+    The basis for the artifact's configuration digest, which the interpreting
+    guide defines as the identity of the settings a run effectively had. The
+    validators substitute a default for an invalid setting, and hashing the
+    unnormalized file made that identity wrong in one direction: two runs that
+    both fell back to 16 from different typos -- ``max_workers: 0`` and
+    ``max_workers: many`` -- ran identically and carried different digests, so
+    the digest could not answer "was this the same configuration as that other
+    run?". It could never certify two DIFFERENT runs as the same, because the
+    normalizer is a pure function of the recorded value, so the error only ever
+    ran in the safe direction. It was still an error.
+
+    Normalizes only when ``RAGAS`` is among the configured ``modes``. The
+    ``ragas_settings`` block's presence cannot stand in for that: a rendered
+    configuration always carries the block, so gating on it normalized
+    SOURCES-only runs against defaults they never fell back to, and two such
+    files whose unused judge values differed then hashed alike on a
+    substitution that never happened. When RAGAS IS a mode, a missing key is
+    filled with the default, so a block that omits ``max_workers`` and a block
+    that sets 16 explicitly hash alike -- the case that motivated this.
+
+    A COPY, never in place: the artifact records the selected file verbatim
+    beside this, and ``asserted_config_divergence`` needs "what was asked for"
+    and "what happened" to stay separable.
+    """
+    if not isinstance(config, dict):
+        return config
+    updated = copy.deepcopy(config)
+    benchmarking = updated
+    for key in ("services", "benchmarking"):
+        benchmarking = benchmarking.get(key) if isinstance(benchmarking, dict) else None
+        if benchmarking is None:
+            return updated
+    if not isinstance(benchmarking, dict):
+        return updated
+    # Gate on whether a judge RAN, never on the block's presence: a rendered
+    # configuration always carries `ragas_settings`, so a SOURCES-only run would
+    # otherwise be normalized against defaults it never fell back to -- making
+    # two files whose unused judge values differ hash alike on a substitution
+    # that never happened. The sibling `ragas_effective_settings` field gates
+    # the same way.
+    #
+    # `modes_executed` overrides the file because in a sweep the file is not
+    # the authority: `run()` applies the FIRST config's modes to every arm. The
+    # caller that knows what executed passes it; the file is the fallback.
+    #
+    # The executed modes are written INTO the basis, not merely consulted. The
+    # digest is the identity of what ran and modes are part of that: leaving
+    # the declared list gave a SOURCES-only file executed as RAGAS a digest
+    # claiming SOURCES, and let two arms that executed identically hash
+    # differently over modes neither ran. Sorted, so set iteration order cannot
+    # move a digest.
+    if modes_executed is not None:
+        benchmarking["modes"] = sorted(modes_executed)
+    if "RAGAS" not in (benchmarking.get("modes") or []):
+        return updated
+    node = benchmarking.get("mode_settings")
+    if not isinstance(node, dict):
+        return updated
+    settings = node.get("ragas_settings")
+    if not isinstance(settings, dict):
+        return updated
+    settings.update(ragas_effective_settings(settings))
+    return updated
 
 
 def json_safe(value: Any) -> Any:

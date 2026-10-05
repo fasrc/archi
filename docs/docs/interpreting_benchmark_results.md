@@ -98,9 +98,12 @@ grading** in Argilla. See [`benchmarking.md`](benchmarking.md#human-grading-via-
 
 ## 2. The metrics, in plain words
 
-Archi reports two families of scores. All are between 0 and 1, higher is better.
+Archi reports two families of scores. All are between 0 and 1. Higher is better for
+every score except `noise_sensitivity`, where **lower is better** (it is the share of
+wrong claims). The leaderboard ranks it ascending, and the reports color it on that
+reversed scale.
 
-### 2.1 The five RAGAS metrics
+### 2.1 The RAGAS metrics
 
 RAGAS is the open-source library (version 0.3.5) that computes these. Each metric
 answers a different question, and — critically — **each one looks at a different
@@ -113,6 +116,11 @@ subset of the available information.**
 | `context_precision` | Of the chunks retrieved, how many were actually useful? | chunks + reference answer |
 | `context_recall` | Did retrieval find everything the reference answer needed? | chunks + reference answer |
 | `answer_correctness` | Is the answer *correct* against the reference answer? | answer + reference answer |
+| `factual_correctness_recall` | What share of the reference answer's claims does the answer cover? | answer + reference answer |
+| `factual_correctness_precision` | What share of the answer's claims does the reference support? | answer + reference answer |
+| `noise_sensitivity` | What share of the answer's claims are *wrong*? **Lower is better.** | question + answer + chunks + reference answer |
+| `answer_accuracy` | Does the answer agree with the reference? (two judge ratings, averaged) | question + answer + reference answer |
+| `response_groundedness` | Is the answer supported by the chunks? (two judge ratings, averaged) | answer + chunks |
 
 Read that last column carefully, because it determines what each metric can
 detect.
@@ -125,21 +133,45 @@ detect.
 - **`answer_relevancy` never looks at the retrieved chunks.** An answer can be
   perfectly relevant and entirely made up.
 
-- **`answer_correctness` is the only metric that compares the answer to the
-  reference answer.** The other four grade *relevance* and *grounding*; none of
-  them can tell a right answer from a wrong one. A fluent answer, grounded in
-  correctly retrieved chunks, that still contradicts the reference scores well on
-  all four and poorly only here. It blends factual overlap with the reference
-  (weight 0.75) and embedding similarity (0.25).
+- **`answer_correctness` is the only one of the original five that compares the
+  answer to the reference answer.** The other four grade *relevance* and
+  *grounding*; none of them can tell a right answer from a wrong one. A fluent
+  answer, grounded in correctly retrieved chunks, that still contradicts the
+  reference scores well on all four and poorly only here. It is one **blended**
+  score: factual overlap with the reference (weight 0.75) plus embedding
+  similarity (0.25). Four of the generation-side metrics below also compare the
+  answer to the reference, each on one narrower question:
+  `factual_correctness_recall`, `factual_correctness_precision`,
+  `noise_sensitivity` and `answer_accuracy`. `response_groundedness` does not.
 
     This metric is **opt-in**: add it to
     `services.benchmarking.mode_settings.ragas_settings.enabled_metrics`. A run
     that omits it reports the original four, so an older run's JSON carries no
     `aggregate_answer_correctness` key at all.
 
-- **Three metrics require a non-empty reference answer** — the two `context_*`
-  metrics and `answer_correctness`. Rows without one are silently excluded from
-  those metrics only. (In code: `src/utils/benchmark_schema.py`,
+- **The generation-side metrics are opt-in too** (the last five rows). They
+  grade the answer rather than retrieval, the half a prompt edit can move:
+
+    - `factual_correctness_recall` and `factual_correctness_precision` split
+      what `answer_correctness` blends. Recall falls when the answer *leaves
+      facts out*; precision falls when it *adds claims the reference does not
+      make*. A "be thorough" prompt can raise the first and lower the second, and
+      one blended score hides that trade. Neither includes an embedding
+      similarity term.
+    - `noise_sensitivity` is the only metric where **lower is better**. It counts
+      answer claims that are incorrect given the reference, attributing them to
+      the retrieved chunks (ragas' `relevant` mode). `faithfulness` asks only
+      whether a claim is *in* the chunks, not whether it is right. The
+      leaderboard, the A/B winner and `compare_runs`' regression checks all read
+      its direction from `LOWER_IS_BETTER_METRICS` in
+      `src/utils/benchmark_schema.py`.
+    - `answer_accuracy` and `response_groundedness` are ragas' NVIDIA metrics:
+      each asks the judge twice and averages, so they are steadier on small banks
+      but give no per-claim explanation.
+
+- **Seven metrics require a non-empty reference answer** — every metric above
+  except `answer_relevancy`, `faithfulness` and `response_groundedness`. Rows
+  without one are silently excluded from those metrics only. (In code: `src/utils/benchmark_schema.py`,
   `_METRIC_REQUIRED_COLUMN`.) This is why the metrics can each be averaged over a
   *different number of questions* in the same run — see
   [Denominator drift](#34-denominator-drift-the-quiet-one).
@@ -170,13 +202,15 @@ else changed too.
 | If you change… | Expect movement in | Should barely move |
 |---|---|---|
 | chunking, reranking, retrieval weights | `context_precision`, `context_recall`, both source metrics | `answer_relevancy` |
-| the system prompt, or the SUT model | `faithfulness`, `answer_relevancy`, `answer_correctness` | the `context_*` metrics |
+| the system prompt, or the SUT model | `faithfulness`, `answer_relevancy`, `answer_correctness`, and the five generation-side metrics | the `context_*` metrics — but the agent writes its own search queries, so a prompt edit *can* move them; if it does, the prompt changed retrieval too |
 
-`answer_correctness` is the one metric that can move when nothing else does. If a
+The reference-based answer metrics (`answer_correctness`, and when enabled
+`factual_correctness_recall`, `factual_correctness_precision`,
+`noise_sensitivity` and `answer_accuracy`) can move when nothing else does. If a
 change makes the bot *right* more often without changing what it retrieved or how
-grounded it sounds, only this metric registers it. In the other direction, a
-retrieval change moves it only when retrieval was the thing standing between the
-bot and a correct answer.
+grounded it sounds, only these metrics register it; of the original five, only
+`answer_correctness` does. In the other direction, a retrieval change moves them
+only when retrieval was the thing standing between the bot and a correct answer.
 
 !!! danger "The coupling that breaks this table"
     Archi's agent decides *its own search queries* as it reasons. So changing the
@@ -529,7 +563,7 @@ pre-reg that the corpora differ by design. Worked example:
 
 ### Procedure C: compare two arms
 
-`scripts/benchmarking/compare_runs.py` does this. It implements G3–G8 in one
+`scripts/benchmarking/compare_runs.py` does this. It implements G3–G10 in one
 tested place, so a comparison cannot skip a gate by accident:
 
 ```bash
@@ -547,6 +581,7 @@ it is compared against the first. `path@2` picks one arm out of a sweep, and
 | `--noise-floor METRIC=SIGMA,...` | the noise floor from [Procedure A](#procedure-a-measure-the-noise-floor). Without one, nothing is ever called SIGNIFICANT (G2) |
 | `--noise-runs FILE ...` | measure sigma here instead: every arm of every file is one replicate, and sigma is the standard deviation of the **recomputed** means (needs two or more). Replicates face the same bank, corpus, code/config identity and divergence checks as the arms, and sigma is measured over the *same* questions the paired table uses — sigma *is* the G7 threshold, so a stale or foreign replicate would move the bar rather than describe it |
 | `--corpus-differs-by-design` | the only way past the G3 corpus gate; prints both fingerprints and the Procedure B warning |
+| `--config-differs-by-design DOTTED.PATH` | the only way past the G10 answer-path gate for one named setting; accepts only `services.chat_app.context_editing` and `services.chat_app.recursion_limit`; repeatable; prints both values and marks the row OVERRIDDEN; never hides the difference |
 | `--ignore-config-divergence` | the only way past a non-empty `divergence_from_selected_file` |
 | `--anchors PATH` | the anchors file (default `examples/benchmarking/anchor_questions.json`). Required: the default is tracked, so a missing file means a broken checkout rather than a run without anchors. For a deliberately anchor-free comparison, point it at a file holding `[]` |
 | `--include-anchors-in-bank` | average the five anchors into the bank aggregates. Off by default — see [Gap 3](#gap-3-anchors-are-averaged-into-the-bank-aggregates) |
@@ -575,6 +610,15 @@ files are.
   questions against two of them even when it started and finished on the same
   one. `--corpus-differs-by-design` continues and prints the Procedure B
   warning; it does not make the arms comparable.
+- **The arms recorded different answer-path settings, or an arm recorded no
+  `configuration` at all** — the bound (`services.chat_app.context_editing`)
+  and the limit (`services.chat_app.recursion_limit`) decide which questions the
+  agent can finish, so a delta between arms set up differently does not measure
+  what it claims to measure (G10). In the 2026-09-19 case, 6 of 109 questions
+  were lost because the treatment arm had a lower recursion limit. To waive one
+  setting, use `--config-differs-by-design DOTTED.PATH`; both values are still
+  printed. `services.benchmarking.agent_md_file` is reported rather than
+  refused — prompt arms vary it on purpose.
 - **`divergence_from_selected_file` is non-empty** — the run did not use the
   settings you selected (Procedure E), so its scores belong to neither arm.
 
@@ -849,7 +893,8 @@ pointing at it still lands somewhere truthful.
 `scripts/benchmarking/compare_runs.py` exists. It refuses to run when the
 question sets differ (G4, with no override), when the corpus fingerprints differ
 or were never recorded (G3), or when `divergence_from_selected_file` is non-empty
-(Procedure E); and it prints the paired table, the slices, and the anchor
+(Procedure E), or when the arms recorded different answer-path settings (G10);
+and it prints the paired table, the slices, and the anchor
 pass/fail block. See [Procedure C](#procedure-c-compare-two-arms).
 
 Two limits are worth stating rather than discovering:

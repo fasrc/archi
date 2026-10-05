@@ -66,6 +66,9 @@ services:
     # Question bank in ragas 0.3.5's modern dialect (user_input/reference); legacy
     # question/answer banks are normalized on read (see docs/docs/benchmarking.md).
     queries_path: {{ services.benchmarking.queries_path | default("queries", true) }}
+    # The metric the sweep leaderboard ranks by. Benchmarker.run reads it from this
+    # rendered file, so dropping it here silently ranks every sweep by faithfulness.
+    primary_metric: {{ services.benchmarking.primary_metric | default("faithfulness", true) }}
     {%- if services.benchmarking.anchors %}
     # Host and container MUST probe the same path. templates_manager stages the bank
     # and bind-mounts it at this path under the image WORKDIR; dropping the block
@@ -85,12 +88,31 @@ services:
       sources_settings:
         default_match_field: {{ services.benchmarking.mode_settings.sources_settings.default_match_field | default("file_name", true) }} # metadata field to check for source matching
       ragas_settings:
+        # Read from mode_settings.ragas_settings like every other RAGAS knob; the
+        # older services.benchmarking.ragas_settings spelling is still honoured.
         enabled_metrics:
-          {%- for metric in services.benchmarking.ragas_settings.enabled_metrics | default(["answer_relevancy", "faithfulness", "context_precision", "context_recall"]) %}
+          {%- for metric in services.benchmarking.mode_settings.ragas_settings.enabled_metrics | default(services.benchmarking.ragas_settings.enabled_metrics | default(["answer_relevancy", "faithfulness", "context_precision", "context_recall"])) %}
           - {{ metric }}
           {%- endfor %}
         embedding_model: {{ services.benchmarking.mode_settings.ragas_settings.embedding_model | default("OpenAI", true) }}
-        timeout: {{ services.benchmarking.mode_settings.ragas_settings.timeout | default(180, true) }}
+        timeout: {{ services.benchmarking.mode_settings.ragas_settings.timeout | default(180, true) | tojson }}
+        # Judge concurrency. ragas wraps each row's scoring in
+        # asyncio.wait_for(timeout) with the tenacity retry chain INSIDE it, so
+        # `timeout` is one budget covering every retry and its backoff. Hitting
+        # the judge with too many parallel calls throttles it, the retries eat
+        # the budget, and the row times out unscored -- which is why this is a
+        # knob and not ragas' silent default of 16.
+        # A configured 0 must REACH the validator, not be swallowed here: 0 would
+        # stall the executor, and `default(16, true)` treats it as absent, so the
+        # typo would silently run at the high default -- the very condition this
+        # knob exists to reduce. Ternary per this template's numeric-site rule.
+        # tojson, so the configured SCALAR keeps its type. A bare interpolation
+        # writes `"4"` out as 4, which reloads as an int, passes validation
+        # unwarned, and runs at 4 -- while the campaign lock reads the original
+        # YAML, normalizes the string to 16, and certifies a concurrency the run
+        # never used. The lock and the run must see the same type.
+        {%- set v_ragas_max_workers = services.benchmarking.mode_settings.ragas_settings.max_workers %}
+        max_workers: {{ (v_ragas_max_workers if v_ragas_max_workers is defined and v_ragas_max_workers is not none else 16) | tojson }}
         batch_size: {{ services.benchmarking.mode_settings.ragas_settings.batch_size | default(false, true) }}
         # Judge/SUT split: when these are set, the RAGAS judge LLM is constructed
         # independent of the SUT (services.benchmarking.provider/model). Falls back
@@ -275,6 +297,11 @@ data_manager:
 {%- endif %}
 {%- if data_manager.chunking.child_chunk_size is defined %}
     child_chunk_size: {{ data_manager.chunking.child_chunk_size }}
+{%- endif %}
+{%- if data_manager.chunking.chunk_overlap is defined and data_manager.chunking.chunk_overlap is not none %}
+    # tojson keeps the configured type: a bare "20" or "null" would reload as an
+    # int or None and slip past the manager's type check.
+    chunk_overlap: {{ data_manager.chunking.chunk_overlap | tojson }}
 {%- endif %}
   parallel_workers: {{ data_manager.parallel_workers | default(32, true) }}
   # Scrape-phase concurrency (issue #136), independent of the embedding-phase
@@ -498,6 +525,23 @@ data_manager:
     # enabled, each document is tagged with one label from `categories`, stored under
     # metadata.llm_category (a key distinct from any source-provided `category`). The
     # chat model's provider_config is sourced from services.chat_app.providers.<provider>.
+    #
+    # Measured cost (2026-09 feature-matrix campaign arm 03, issue #396): about
+    # 19 minutes per 1091-document ingest on the FASRC host -- 4956 s with the
+    # feature on against 3802 s with it off, so enabling adds about 30 % and
+    # disabling saves about 23 %. Read the saving as approximate: the two arms did
+    # not ingest identical corpora (6926 chunks against 6896, 0.43 % apart), so the
+    # campaign calls this comparison "not a clean isolation".
+    #
+    # The campaign resolved no retrieval effect: context_precision moved -0.004 and
+    # -0.002 over two runs against a minimum detectable effect of 0.025 and 0.027.
+    # The default retrieval path does not read metadata.llm_category, but the label
+    # is reachable -- _build_extra_text writes "llm_category:<value>" into
+    # extra_text and CatalogPostgres.search_metadata matches any unmapped key by
+    # substring over that column, so the search_metadata_index tool can filter on
+    # it. Nothing tells the model the vocabulary, so arm 03 shows the label did not
+    # help as wired and as prompted, not that no reader exists. Issue #496;
+    # measurement table in docs/docs/proposals/categories-action-plan.md.
     categorization:
       enabled: {{ data_manager.processing.categorization.enabled | default(false, true) }}
       provider: {{ data_manager.processing.categorization.provider | default('', true) }}

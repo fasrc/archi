@@ -35,7 +35,10 @@ run?" without either source still existing. ``code_version`` and
 import hashlib
 import json
 import os
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from urllib.parse import urlsplit, urlunsplit
 
 __all__ = [
     "ARM_OVERRIDE_PATHS",
@@ -285,7 +288,7 @@ def _escape(value: Any) -> str:
     return str(value).replace("%", "%25").replace(":", "%3A").replace("\n", "%0A")
 
 
-def corpus_fingerprint(rows: Iterable[Sequence[Any]]) -> str:
+def corpus_fingerprint(rows: Iterable[Sequence[Any]], version: str = "") -> str:
     """Digest of the corpus, equal exactly when the supplied state is equal.
 
     *rows* are opaque ``(key, value)`` pairs. Order is irrelevant -- the rows are
@@ -302,9 +305,14 @@ def corpus_fingerprint(rows: Iterable[Sequence[Any]]) -> str:
     an unchanged corpus produce the same value here. That is what makes "these
     arms saw the same corpus" a checkable claim rather than an assumption.
 
+    *version* goes into the prefix (``sha256/v2:``), so a digest of one query
+    can never equal a digest of another query over the same rows.
+
     What it does NOT cover: re-embedding the same text with a different model
-    leaves every key and value here unchanged. That shows up instead as a
-    divergence on ``data_manager.embedding_name`` in the recorded configuration.
+    leaves every key and value here unchanged, on purpose. The model travels
+    beside the digest as ``retrieval_identity.embedding_model``, checked against
+    the chunks' ``embedding_model`` tags. ``embedding_name`` does not show it:
+    #216 changes only ``model_name``.
     """
     records: List[str] = []
     for row in rows:
@@ -315,7 +323,197 @@ def corpus_fingerprint(rows: Iterable[Sequence[Any]]) -> str:
         rendered = "\x00none" if value is None else _escape(value)
         records.append(f"{_escape(key)}:{rendered}")
     digest = hashlib.sha256("\n".join(sorted(records)).encode("utf-8")).hexdigest()
-    return f"sha256:{digest}"
+    prefix = f"sha256/{version}" if version else "sha256"
+    return f"{prefix}:{digest}"
+
+
+# The metadata keys that reach the agent and its citations through
+# ``_merge_row_metadata`` and the hierarchical retriever. Every chunk and parent
+# node carries them in its own ``metadata``; for a linked chunk the document's
+# non-empty columns override them, so the doc row hashes those columns too. The whole ``metadata`` object is never hashed:
+# ``parent_id`` is a SERIAL that changes on every ingest, the ingest status
+# fields churn, ``embedding_model`` must stay out (the digest is model-neutral),
+# and ``category`` belongs to the category-map digest.
+CITATION_FIELDS = ("url", "display_name", "source_type", "title", "filename")
+
+# What retrieval in one collection can return: the filter
+# ``PostgresVectorStore`` applies, with the ``LEFT JOIN`` it uses, so a chunk
+# with no document link is in scope.
+_SCOPED_CHUNKS = """
+WITH scoped AS (
+    SELECT c.id, c.chunk_index, c.chunk_text, c.metadata AS meta,
+           (c.embedding IS NULL) AS no_vector,
+           d.id AS doc_id, d.resource_hash, d.url, d.display_name,
+           d.source_type, d.extra_json
+    FROM document_chunks c
+    LEFT JOIN documents d ON d.id = c.document_id
+    WHERE (c.metadata->>'collection' = %s OR c.metadata->>'collection' IS NULL)
+      AND (d.id IS NULL OR d.is_deleted = FALSE)
+)
+"""
+
+
+def _citations(alias: str) -> str:
+    return ", ".join(f"{alias}->>'{name}'" for name in CITATION_FIELDS)
+
+
+# Fingerprint v2 (#570). Each value is md5 of a JSON array, which keeps field
+# boundaries and keeps NULL apart from "". Rows:
+#   chunk   text, collection tag, null-vector flag, and the chunk's own citation
+#           fields: ``filename`` exists only there, and the retrieval overlay keeps
+#           the chunk's ``url``/``title`` wherever the document leaves them empty;
+#   parent  only parents an in-scope chunk references: text, the ordered list
+#           of in-scope child indexes, and the parent's citation fields;
+#   doc     only live documents that own an in-scope chunk: the columns the
+#           retrieval overlay reads. ``size_bytes`` is out, because retrieval
+#           never reads it and the chunk rows catch every text change.
+CORPUS_STATE_V2_QUERY = (
+    _SCOPED_CHUNKS
+    + f"""
+SELECT 'chunk:' || COALESCE(s.resource_hash, s.meta->>'resource_hash', \
+s.meta->>'chunk_id', 'id:' || s.id::text) || ':' || s.chunk_index::text,
+       md5(jsonb_build_array(
+           s.chunk_text, s.meta->>'collection', s.no_vector,
+           {_citations("s.meta")}
+       )::text)
+FROM scoped s
+UNION ALL
+SELECT DISTINCT 'doc:' || s.resource_hash,
+       md5(jsonb_build_array(
+           s.url, s.display_name, s.source_type, s.extra_json->>'title'
+       )::text)
+FROM scoped s
+WHERE s.doc_id IS NOT NULL
+UNION ALL
+SELECT 'parent:' || COALESCE(pd.resource_hash, p.metadata->>'resource_hash', \
+'id:' || p.id::text) || ':' || p.parent_index::text,
+       md5(jsonb_build_array(
+           p.parent_text,
+           array_agg(s.chunk_index ORDER BY s.chunk_index),
+           {_citations("p.metadata")}
+       )::text)
+FROM document_parent_nodes p
+JOIN scoped s ON s.meta->>'parent_id' = p.id::text
+LEFT JOIN documents pd ON pd.id = p.document_id
+GROUP BY p.id, pd.resource_hash
+"""
+)
+
+# The URL -> category map, in the same scope: a relabel of a document that no
+# in-scope chunk belongs to is invisible to the run.
+CATEGORY_MAP_V2_QUERY = """
+SELECT d.url, d.extra_json->>'category'
+FROM documents d
+WHERE NOT d.is_deleted AND d.url IS NOT NULL
+  AND EXISTS (
+      SELECT 1 FROM document_chunks c
+      WHERE c.document_id = d.id
+        AND (c.metadata->>'collection' = %s OR c.metadata->>'collection' IS NULL)
+  )
+"""
+
+
+def corpus_state_rows(cursor: Any, collection: str) -> List[Tuple[Any, Any]]:
+    """The v2 ``(key, value)`` rows for *collection*, read on the caller's cursor.
+
+    The caller owns the transaction, so a census can read this and the
+    category map in one snapshot.
+    """
+    cursor.execute(CORPUS_STATE_V2_QUERY, (collection,))
+    return [tuple(row) for row in cursor.fetchall()]
+
+
+def category_map_rows(cursor: Any, collection: str) -> List[Tuple[Any, Any]]:
+    """Raw ``(url, category)`` rows for *collection*, on the caller's cursor."""
+    cursor.execute(CATEGORY_MAP_V2_QUERY, (collection,))
+    return [tuple(row) for row in cursor.fetchall()]
+
+
+def canonical_source_url(value: Any) -> str:
+    """Canonical form of a gold/retrieved source value, for comparison only.
+
+    Strips surrounding whitespace and a single trailing ``/`` from the URL
+    *path* — the one difference that actually occurs between an authored bank
+    URL and the ingested ``documents.url`` (PR #106). Deliberately conservative:
+    it does NOT lowercase (paths are case-sensitive), normalize the scheme, or
+    drop the query/fragment, because over-matching would silently conflate
+    distinct pages — a worse failure than the miss it fixes, and an invisible one.
+
+    The slash is stripped from the path only, so a query or fragment that
+    legitimately ends in ``/`` (e.g. ``...?redirect=/kb/foo/``) is preserved.
+    A value with no scheme (e.g. a ``file_name`` match field) parses as a bare
+    path, so the same one-trailing-slash rule applies without special-casing.
+
+    The harness's source matching, the category-map records and the category
+    slice join all use this one rule, so they agree about which page a URL names.
+    """
+    text = str(value).strip()
+    parts = urlsplit(text)
+    path = parts.path
+    if len(path) > 1 and path.endswith("/"):
+        path = path[:-1]
+        return urlunsplit(parts._replace(path=path))
+    return text
+
+
+def _escape_map_field(value: str) -> str:
+    """Make a category-map field unable to forge the tab/newline separators."""
+    return (
+        value.replace("%", "%25")
+        .replace("\t", "%09")
+        .replace("\n", "%0A")
+        .replace("\r", "%0D")
+    )
+
+
+def category_map_records(rows: Iterable[Sequence[Any]]) -> List[str]:
+    """Sorted ``<canonical_url>\\t<category>`` records for a URL -> category map.
+
+    *rows* are ``(url, category)`` pairs, one per non-deleted document. A
+    document without a URL cannot be joined to a bank source, so it contributes
+    no record; a missing category is an empty field. Duplicate URLs stay as
+    separate records — the consumer reports a URL with two categories as
+    unresolved rather than choosing one. Sorting makes the digest independent
+    of the order the query returned the rows in (#538 rule 5).
+    """
+    records: List[str] = []
+    for url, category in rows:
+        if url is None or not str(url).strip():
+            continue
+        canonical = _escape_map_field(canonical_source_url(url))
+        field = "" if category is None else _escape_map_field(str(category))
+        records.append(f"{canonical}\t{field}")
+    return sorted(records)
+
+
+def category_map_text(records: Sequence[str]) -> str:
+    """The exact text that is hashed and written to the per-arm snapshot file."""
+    return "\n".join(records)
+
+
+def category_map_digest(records: Sequence[str]) -> str:
+    """``sha256:<hex>`` of :func:`category_map_text`, so a file's hash equals it."""
+    text = category_map_text(records)
+    return f"sha256:{hashlib.sha256(text.encode('utf-8')).hexdigest()}"
+
+
+def prompt_text_sha256(path: Optional[Any]) -> Optional[str]:
+    """Hex sha256 of an agent prompt as ``load_agent_spec`` reads it.
+
+    Hashes ``read_text()`` re-encoded as UTF-8, not the raw bytes: that is the
+    text the harness parses (newline-normalized), so the digest names the
+    prompt the arm actually ran. Plain hex, the same form the QA workflow
+    records as ``agent_spec_sha256``. ``None`` when the arm names no prompt;
+    an ``<unavailable: …>`` marker when it cannot be read, because provenance
+    is never fatal.
+    """
+    if path is None:
+        return None
+    try:
+        text = Path(str(path)).read_text()
+    except OSError as exc:
+        return f"<unavailable: {exc}>"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def config_fingerprint(config: Any) -> str:
@@ -529,7 +727,10 @@ def collect_code_version(
 
 
 def config_version(
-    running: Any, selected: Any, selected_file: Optional[str]
+    running: Any,
+    selected: Any,
+    selected_file: Optional[str],
+    effective_selected: Any = None,
 ) -> Dict[str, Any]:
     """The ``config_version`` block for one arm of a run.
 
@@ -545,9 +746,18 @@ def config_version(
     stamp roughly 192 meaningless paths into every arm of every artifact, since
     ``get_full_config`` synthesizes keys no YAML file has and the deploy rewrites
     host paths into container paths.
+
+    *effective_selected* is an optional stand-in for *selected* in the DIGEST
+    basis only, for values the run normalizes before use -- the judge knobs,
+    where an invalid setting is replaced by its default. It must not reach
+    ``selected_file_digest`` or the divergence list: those two describe the file
+    as it was written, and that is their whole audit purpose. Two files that
+    differ must fingerprint differently even when they drive identical runs.
     """
     have_running = running is not None
-    basis = effective_config(running, selected)
+    basis = effective_config(
+        running, selected if effective_selected is None else effective_selected
+    )
 
     return {
         "digest": config_fingerprint(basis),
@@ -626,3 +836,221 @@ def reconstruct_version_stamp(
             "key_settings": settings_at_paths(recorded_config, KEY_SETTING_PATHS),
         },
     }
+
+
+# Constructor kwargs that name the model, per embedding class (base-config.yaml).
+_MODEL_KWARGS = ("model_name", "model")
+
+
+@dataclass(frozen=True)
+class RetrievalIdentity:
+    """What a run searched: the collection tag and the model behind its vectors.
+
+    ``embedding_name`` is the config key of the embedding class, and it does not
+    change when #216 swaps the model: only ``embedding_model`` does. A field is
+    ``None`` when the config does not say.
+    """
+
+    collection: Optional[str]
+    embedding_name: Optional[str]
+    embedding_model: Optional[str]
+
+    def as_dict(self) -> Dict[str, Optional[str]]:
+        return asdict(self)
+
+
+def retrieval_identity(config: Any) -> RetrievalIdentity:
+    """Derive the retrieval identity from a config dict, with no connection.
+
+    The collection formula is the one ``VectorstoreConnector`` uses, so the value
+    equals the tag the search filters on. The model is the class's model kwarg
+    (``model_name`` for HuggingFace, ``model`` for OpenAI), else the class name.
+    The embedding class is never imported, so a recorded
+    ``running_configuration`` is enough input.
+    """
+    data_manager = _as_mapping((_as_mapping(config) or {}).get("data_manager"))
+    if data_manager is None:
+        return RetrievalIdentity(None, None, None)
+    embedding_name = data_manager.get("embedding_name")
+    collection_name = data_manager.get("collection_name")
+    collection = (
+        f"{collection_name}_with_{embedding_name}"
+        if collection_name is not None and embedding_name is not None
+        else None
+    )
+    class_map = _as_mapping(data_manager.get("embedding_class_map")) or {}
+    entry = _as_mapping(class_map.get(embedding_name)) or {}
+    kwargs = _as_mapping(entry.get("kwargs")) or {}
+    model = next((kwargs[k] for k in _MODEL_KWARGS if kwargs.get(k)), None)
+    if model is None:
+        # A resolved config (``get_full_config(resolve_embeddings=True)``)
+        # holds the class itself; name it as the unresolved config does.
+        model = entry.get("class") or embedding_name
+        model = getattr(model, "__name__", model)
+    return RetrievalIdentity(
+        collection=collection,
+        embedding_name=embedding_name,
+        embedding_model=None if model is None else str(model),
+    )
+
+
+def _searched_collection(config: Any) -> str:
+    collection = retrieval_identity(config).collection
+    if collection is None:
+        raise ValueError(
+            "config names no collection (data_manager.collection_name and "
+            "embedding_name are required)"
+        )
+    return collection
+
+
+def _read_on_pool(pool: Any, read: Any, collection: str) -> Any:
+    with pool.get_connection() as connection:
+        with connection.cursor() as cursor:
+            return read(cursor, collection)
+
+
+def live_corpus_fingerprint(pool: Any, config: Any) -> str:
+    """The v2 fingerprint of the collection *config* searches, read on *pool*.
+
+    *config* is required: the default ``get_full_config()`` needs an installed
+    ``PostgresServiceFactory``, and a caller that built its own pool may not
+    have one. Every consumer reads through this, so their digests agree.
+    """
+    rows = _read_on_pool(pool, corpus_state_rows, _searched_collection(config))
+    return corpus_fingerprint(rows, version="v2")
+
+
+def live_category_map(pool: Any, config: Any) -> Tuple[list, List[str], str]:
+    """``(rows, records, digest)`` of the category map in *config*'s collection."""
+    rows = _read_on_pool(pool, category_map_rows, _searched_collection(config))
+    records = category_map_records(rows)
+    return rows, records, category_map_digest(records)
+
+
+def _container_factory_and_config() -> Tuple[Any, Any]:
+    """Build the factory from the environment, install it, and read the config.
+
+    The install comes first: ``get_full_config()`` reads through
+    ``PostgresServiceFactory.get_instance()`` and raises ``ConfigNotReadyError``
+    when no factory is installed.
+    """
+    from src.utils import config_access
+    from src.utils.postgres_service_factory import PostgresServiceFactory
+
+    factory = PostgresServiceFactory.from_env()
+    PostgresServiceFactory.set_instance(factory)
+    return factory, config_access.get_full_config()
+
+
+def container_corpus_fingerprint() -> str:
+    """The v2 fingerprint as ``feature_matrix/lib.sh`` reads it in a stack.
+
+    It runs inside the stack's data-manager, with that stack's config, so the
+    sweep's pin check and the harness compute one digest.
+    """
+    factory, config = _container_factory_and_config()
+    return live_corpus_fingerprint(factory.connection_pool, config)
+
+
+def container_category_map_digest() -> str:
+    """The searched collection's category-map digest, read in a stack."""
+    factory, config = _container_factory_and_config()
+    return live_category_map(factory.connection_pool, config)[2]
+
+
+class CollectionNotReadyError(RuntimeError):
+    """The searched collection cannot give this run a valid score."""
+
+
+_READINESS_QUERY = """
+SELECT count(*),
+       count(c.embedding),
+       count(*) FILTER (WHERE c.metadata->>'embedding_model' IS NULL),
+       array_agg(DISTINCT c.metadata->>'embedding_model')
+           FILTER (WHERE c.metadata->>'embedding_model' IS NOT NULL)
+FROM document_chunks c
+LEFT JOIN documents d ON d.id = c.document_id
+WHERE (c.metadata->>'collection' = %s OR c.metadata->>'collection' IS NULL)
+  AND (d.id IS NULL OR d.is_deleted = FALSE)
+"""
+
+
+def readiness_counts(cursor: Any, collection: str) -> Tuple[int, int, int, list]:
+    """``(chunk_count, usable_chunk_count, untagged_chunk_count, tags)``.
+
+    Counted under the retrieval filter, so the rows are the ones a search in
+    *collection* can return.
+    """
+    cursor.execute(_READINESS_QUERY, (collection,))
+    chunk_count, usable, untagged, tags = cursor.fetchone()
+    return int(chunk_count), int(usable), int(untagged), list(tags or [])
+
+
+def collection_readiness(pool: Any, identity: RetrievalIdentity) -> Dict[str, Any]:
+    """Refuse an empty or mismatched collection; say how well the model is known.
+
+    Raises ``CollectionNotReadyError`` when the collection has no chunk, no
+    chunk with a vector, or a chunk tagged with a model other than
+    ``identity.embedding_model``. Otherwise returns the counts and
+    ``embedding_model_source``: ``"chunks"`` when every chunk carries the run's
+    model, ``"chunks (N untagged)"`` when N chunks carry no tag, and
+    ``"config (chunks untagged)"`` when none does. The last two warn: those
+    vectors have no recorded model.
+    """
+    if identity.collection is None:
+        raise CollectionNotReadyError("the run's config names no collection")
+    chunk_count, usable, untagged, tags = _read_on_pool(
+        pool, readiness_counts, identity.collection
+    )
+    where = (
+        f"collection {identity.collection!r} "
+        f"(embedding_name={identity.embedding_name!r})"
+    )
+    if chunk_count == 0:
+        raise CollectionNotReadyError(f"{where} has no chunks; ingest it first")
+    if usable == 0:
+        raise CollectionNotReadyError(
+            f"{where} has no chunk with a vector: chunk_count={chunk_count}, "
+            f"usable_chunk_count={usable}"
+        )
+    others = sorted(tag for tag in tags if tag != identity.embedding_model)
+    if others:
+        raise CollectionNotReadyError(
+            f"{where} holds chunks embedded by {', '.join(others)}, but this run "
+            f"queries with {identity.embedding_model}; re-embed or fix the config"
+        )
+    if untagged == chunk_count:
+        source = "config (chunks untagged)"
+    elif untagged:
+        source = f"chunks ({untagged} untagged)"
+    else:
+        source = "chunks"
+    if untagged:
+        _logger().warning(
+            "%s: %d of %d chunks carry no embedding_model tag, so their model "
+            "is not verified; the run records embedding_model_source=%r",
+            where,
+            untagged,
+            chunk_count,
+            source,
+        )
+    return {
+        "chunk_count": chunk_count,
+        "usable_chunk_count": usable,
+        "untagged_chunk_count": untagged,
+        "embedding_model_source": source,
+    }
+
+
+def retrieval_record(
+    identity: RetrievalIdentity, readiness: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """The ``retrieval_identity`` block a run writes: identity plus the counts."""
+    return {**identity.as_dict(), **readiness}
+
+
+def _logger() -> Any:
+    from src.utils.logging import get_logger
+
+    return get_logger(__name__)

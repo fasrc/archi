@@ -21,6 +21,9 @@
 #     legitimate re-pin is the closing baseline (plan §6 step 7): --new-corpus is honoured
 #     only for arm 00, only when the stack's latest ragas-start was a fresh deploy (not a
 #     re-run or re-seed), and the old and new fingerprints are both recorded in the row.
+#     A pin and readings of different fingerprint versions (sha256: vs sha256/v2:) are
+#     refused with a version reason. The move to a new version is a re-pin, so it takes
+#     the same closing-baseline path: arm 00, fresh deploy, --new-corpus.
 #   - the arm YAML's fixed factors differ from the campaign lock, the YAML is not the locked
 #     file for that arm label, or the stack was deployed under a different lock,
 #   - no ragas-start row exists for the stack (nothing ties the artifact to a lock or a
@@ -28,9 +31,41 @@
 # On run 1 of a stack it writes the corpus pin every later re-run and re-seed checks.
 # Appends: fingerprint, snapshot id, config + code digests, ingest_wall_seconds, live
 # document and chunk counts (from the stack's Postgres), per-metric scored counts
-# recomputed from finite values (#279), and the degraded-row count.
+# recomputed from finite values (#279), the degraded-row count, and the searched
+# collection and embedding model from the artifact's retrieval_identity (null if unrecorded).
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+# Sweep mode: archive_run.sh --sweep <sweep_dir> --stack <name> --run <N> [--census <json>] [--wait]
+# Archives one multi-arm sweep artifact (the newest benchmarking-<stack>-*.json in FM_OUT):
+# every arm is checked before anything is written (sweep_tools.py archive), then the artifact,
+# its report and every _category_map_<N>.tsv are copied to $FM_OUT/archive/<stack>, one
+# ledger row per arm is appended in one write, and run 1 writes the corpus and map pins.
+if [ "${1:-}" = --sweep ]; then
+  SWEEP_DIR="${2:?--sweep needs the sweep directory}"; shift 2
+  STACK=""; RUN=""; CENSUS=""; WAIT=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --stack) STACK="${2:?}"; shift 2 ;;
+      --run) RUN="${2:?}"; shift 2 ;;
+      --census) CENSUS="${2:?}"; shift 2 ;;
+      --wait) WAIT=true; shift ;;
+      *) fm_die "unknown option $1" ;;
+    esac
+  done
+  fm_require_stack_name "$STACK"; fm_require_run_number "$RUN"
+  fm_require_sweep_lock "$STACK" --stamped
+  if [ "$WAIT" = true ]; then
+    while [ "$(fm_container_state "benchmarking-$STACK")" = "running" ]; do sleep "${FM_POLL_SECONDS:-30}"; done
+  fi
+  [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "benchmarking-$STACK is still running (use --wait)"
+  ARTIFACT="$(ls -t "$FM_OUT"/benchmarking-"$STACK"-*.json 2>/dev/null | head -1 || true)"
+  [ -n "$ARTIFACT" ] || fm_die "no artifact benchmarking-$STACK-*.json under $FM_OUT"
+  fm_sweep_tools archive --lock "$(fm_sweep_lock_file "$STACK")" --artifact "$ARTIFACT" --stack "$STACK" \
+    --run "$RUN" --ledger "$(fm_ledger)" --pins-dir "$FM_OUT" --dest "$FM_OUT/archive/$STACK" \
+    ${CENSUS:+--census "$CENSUS"} --finished "$(fm_now)" || fm_die "refusing to archive $ARTIFACT (see above)"
+  exit 0
+fi
 
 ARM="${1:-}"; fm_require_arm "$ARM"; RUN="${2:-}"; [ -n "$RUN" ] || fm_die "usage: archive_run.sh <arm> <run> <arm.yaml> [--stack <name>] [--wait] [--new-corpus]"; fm_require_run_number "$RUN"
 YAML="${3:-}"; fm_require_arm_yaml "$ARM" "$YAML"; shift 3
@@ -140,7 +175,11 @@ if div:
     print(f"REFUSED: the run did not use the selected settings — divergence_from_selected_file = {div}", file=sys.stderr); sys.exit(2)
 fp = arm.get("corpus_fingerprint")
 fp_before = arm.get("corpus_fingerprint_before")
-def usable(x): return isinstance(x, str) and x.startswith("sha256:")
+# The digest prefix names its version (v1 "sha256:", v2 "sha256/v2:"); readings of two
+# versions never compare equal, so a mix is a version finding, not a corpus change.
+def version(x):
+    return next((v for v in ("sha256/v2:", "sha256:") if isinstance(x, str) and x.startswith(v)), None)
+def usable(x): return version(x) is not None
 if not usable(fp) or not usable(fp_before):
     print(f"REFUSED: the artifact lacks usable endpoint fingerprints (before={fp_before!r}, after={fp!r})", file=sys.stderr); sys.exit(2)
 # The harness samples the corpus at both ends of the arm. Questions scored across two
@@ -151,6 +190,9 @@ pin_file, run = os.environ["FM_PIN_FILE"], int(os.environ["FM_RUN"])
 previous_pin = None
 if os.path.exists(pin_file):
     pin = open(pin_file).read().strip()
+    # A version change is a re-pin: it takes the closing-baseline path below, like a new corpus.
+    if version(pin) != version(fp) and os.environ["FM_NEW_CORPUS"] != "true":
+        print(f"REFUSED: the fingerprint versions differ (pin {pin} is {version(pin)!r}, the artifact's readings are {version(fp)!r}); a pin of one version never equals a reading of another — re-pin the stack under {version(fp)!r} with the closing baseline: arm 00, fresh deploy, --new-corpus", file=sys.stderr); sys.exit(2)
     if fp != pin:
         if os.environ["FM_NEW_CORPUS"] != "true":
             print(f"REFUSED: fingerprint {fp} != pin {pin} for this stack (a re-pin is only the closing baseline: arm 00, fresh deploy, --new-corpus)", file=sys.stderr); sys.exit(2)
@@ -171,6 +213,8 @@ rows = arm.get("single_question_results") or {}
 def finite(x): return isinstance(x, (int, float)) and math.isfinite(x)
 metrics = sorted({k for r in rows.values() for k in r if k in ("answer_relevancy", "faithfulness", "context_precision", "context_recall", "answer_correctness")})
 scored = {m: f"{sum(1 for r in rows.values() if r.get('status', 'ok') == 'ok' and finite(r.get(m)))} of {len(rows)}" for m in metrics}
+identity = arm.get("retrieval_identity")
+identity = identity if isinstance(identity, dict) else {}
 def num(s):
     try: return int(s)
     except (TypeError, ValueError): return None
@@ -179,6 +223,7 @@ entry = {
     "finished": os.environ["FM_FINISHED"], "artifact": p,
     "arm_config": os.environ["FM_ARM_YAML"], "configuration_file": arm.get("configuration_file"),
     "corpus_fingerprint": fp, "corpus_fingerprint_before": fp_before, "fingerprint_source": "artifact", "repinned_from": previous_pin,
+    "collection": identity.get("collection"), "embedding_model": identity.get("embedding_model"),
     "lock_sha256": os.environ["FM_LOCK_SHA"],
     "corpus_snapshot_id": (d.get("metadata") or {}).get("corpus_snapshot_id"),
     "config_digest": cv.get("digest"), "code_digest": ((d.get("metadata") or {}).get("code_version") or {}).get("digest"),

@@ -413,7 +413,7 @@ more detailed analysis or automation, the same workspace contains:
 | `preparation.jsonl` | Exactly one terminal record per input item: normalized prepared questions with canonical or resolved answers and fixed gold atoms, intentional live omissions, or oracle/atom-extraction failures. |
 | `live_checks.jsonl` | Ordered pre-run and post-run Dataset V2 oracle observations, answer hashes, metadata, call evidence, and item-scoped live failures. Static runs contain an empty file. |
 | `input.snapshot.json` or `input.snapshot.jsonl` | An exact snapshot of the input dataset used for the evaluation. |
-| `agent_config.resolved.yaml` and `agent_spec.resolved.md` | The resolved Archi configuration and exact agent spec used to generate the answers. |
+| `agent_config.resolved.yaml` and `agent_spec.resolved.md` | The resolved Archi configuration with secret values redacted, and the exact agent spec used to generate the answers. |
 | `evaluator_profile.resolved.yaml` | The resolved atoms-extractor and scoring-evaluator configuration. |
 | `manifest.json` | The run ID, phase states, attempt count, artifact names, versions, and SHA-256 hashes used to detect changes to completed-phase inputs. |
 
@@ -460,9 +460,12 @@ Editing an artifact from a completed phase makes the next phase fail closed.
 `run` uses the selected Archi pipeline through its normal production interface.
 The evaluation runner observes the pipeline's tool callbacks and stores complete
 ordered query, response, error, status, and available duration evidence in
-`answers.jsonl`. It does not add tool-schema preflight, secret redaction,
-automatic retries, or evaluation-specific changes to agent behavior. Treat the
-workspace as sensitive because tool evidence is not truncated or redacted.
+`answers.jsonl`. Before the first phase, `run` replaces secret values in the
+resolved Archi config with `[redacted]`, and every phase runs from that redacted
+config, so credentials must come from the environment. It does not add
+tool-schema preflight, automatic retries, or other evaluation-specific changes to
+agent behavior. Treat the workspace as sensitive because tool evidence is not
+truncated or redacted.
 When the selected agent spec enables `mcp` but normal pipeline construction
 loads no MCP tools, that attempt is recorded as `execution_failed` before the
 model is invoked.

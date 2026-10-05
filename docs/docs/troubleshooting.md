@@ -191,6 +191,61 @@ until the next deployment.
 
 ---
 
+## Orphaned parent nodes after re-ingest
+
+If hierarchical chunking was enabled before **archi v2026.10.0**, the
+`document_parent_nodes` table may contain rows that no chunk references.
+
+First, make sure that the parent-id index exists. Volumes created before this
+index was added do not have it, and an ingest creates it only when a document
+changes. Without it, the queries below scan all of `document_chunks` once for
+each parent row. The statement does nothing if the index exists:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_chunks_parent_id
+  ON document_chunks ((metadata->>'parent_id'));
+```
+
+The index build blocks writes to `document_chunks` until it completes. Run it
+when no ingest is active.
+
+Then check the counts with:
+
+```sql
+SELECT
+  COUNT(*) AS total,
+  COUNT(*) FILTER (WHERE EXISTS (
+      SELECT 1 FROM document_chunks c
+      WHERE c.metadata->>'parent_id' = p.id::text
+  )) AS referenced,
+  COUNT(*) FILTER (WHERE NOT EXISTS (
+      SELECT 1 FROM document_chunks c
+      WHERE c.metadata->>'parent_id' = p.id::text
+  )) AS orphaned
+FROM document_parent_nodes p;
+```
+
+> **CAUTION:** Run this cleanup only between benchmark campaigns, and record the
+> before and after counts. The corpus fingerprint hashes only parents that a
+> chunk references, so the cleanup does not change it.
+
+To remove orphaned rows:
+
+```sql
+DELETE FROM document_parent_nodes p
+WHERE NOT EXISTS (
+    SELECT 1 FROM document_chunks c
+    WHERE c.metadata->>'parent_id' = p.id::text
+);
+```
+
+As of v2026.10.0, a re-ingest, a removed document, and `reset_collection` all
+delete their own orphans automatically. A git or Jira source removal through the
+chat UI still leaves orphans (tracked in issue #600), so run the count query
+after one to check whether a manual cleanup is needed.
+
+---
+
 ## Getting Help
 
 - **GitHub Issues**: [archi-physics/archi](https://github.com/archi-physics/archi/issues)
