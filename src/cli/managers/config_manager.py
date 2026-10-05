@@ -464,10 +464,23 @@ class ConfigurationManager:
 
             counts: Dict[str, int] = {}
             for list_path in lists:
+                # Checked before isfile(), which reads an int as a file descriptor.
+                if not isinstance(list_path, (str, os.PathLike)):
+                    logger.warning(
+                        f"Input list entry is not a path, skipping: {list_path!r}"
+                    )
+                    continue
                 if not os.path.isfile(list_path):
                     logger.warning(f"Input list path not found, skipping: {list_path}")
                     continue
-                for raw_entry in read_input_list_entries(list_path):
+                try:
+                    entries = read_input_list_entries(list_path)
+                except (OSError, UnicodeDecodeError) as exc:
+                    logger.warning(
+                        f"Input list could not be read, skipping: {list_path} ({exc})"
+                    )
+                    continue
+                for raw_entry in entries:
                     parsed = split_prefixed_entry(raw_entry)
                     if parsed is not None:
                         source, _url = parsed
