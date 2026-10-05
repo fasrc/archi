@@ -136,7 +136,7 @@ Rules that apply to **every** task below:
 
 ## 2. Docs and spec
 
-- [ ] 2.1 Document the key and validate the change, in one commit.
+- [x] 2.1 Document the key and validate the change, in one commit.
 
   1. In `docs/docs/benchmarking.md`, in the **Judge/SUT split** section (line 492), document
      `evaluator_provider_mode`: it forces the judge's local client dialect the way

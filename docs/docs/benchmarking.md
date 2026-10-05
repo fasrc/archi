@@ -515,6 +515,16 @@ There is no way to give this provider a credential: the client is built through 
 
 `huggingface` is an evaluator-only provider name. Setting `services.benchmarking.provider: huggingface` for the system under test fails at startup, because the agent providers do not include it.
 
+`evaluator_provider_mode` sets the client dialect of a `local` judge, the way `provider_mode` does for the system under test. It is read only when the judge provider is `local`. It accepts `ollama` (ChatOllama) or `openai_compat` (ChatOpenAI); case and surrounding spaces are ignored. When the key is absent or empty, the judge inherits the system-under-test `provider_mode`; if that is also unset, the mode is auto-detected from the judge URL (`/v1` → `openai_compat`). Any other value, including `false` or `0`, is refused: the run fails with a `ValueError` when it builds the judge, instead of falling back to auto-detection.
+
+```yaml
+      ragas_settings:
+        evaluator_provider: local
+        evaluator_model: qwen3:32b
+        evaluator_ollama_url: http://host.containers.internal:7870
+        evaluator_provider_mode: ollama
+```
+
 #### Tool calling and structured output on `huit_bedrock`
 
 The provider supports **bound tools for a single request-and-response round**, which is
