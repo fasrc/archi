@@ -31,7 +31,7 @@ Rules that apply to **every** task below:
   Order of work:
 
   1. Append tests to the **end** of `tests/unit/test_base_config_benchmark_render.py`
-     (122 lines today — append after the last line). Mirror the tests already in that file
+     (213 lines on origin/dev `db701852` — append after the last line). Mirror the tests already in that file
      for `services.benchmarking.provider_mode`; they are the same assertions one level
      deeper in the config tree.
 
@@ -86,7 +86,7 @@ Rules that apply to **every** task below:
      consumer.
 
   3. Add the key to the RAGAS block of `src/cli/templates/base-config.yaml`, immediately
-     after `evaluator_ollama_url` (line 100). Use the presence guard and `| tojson`
+     after `evaluator_ollama_url` (line 122). Use the presence guard and `| tojson`
      exactly as the SUT key at lines 46-61 does:
 
      ```jinja
@@ -138,7 +138,7 @@ Rules that apply to **every** task below:
 
 - [ ] 2.1 Document the key and validate the change, in one commit.
 
-  1. In `docs/docs/benchmarking.md`, in the **Judge/SUT split** section (line 436), document
+  1. In `docs/docs/benchmarking.md`, in the **Judge/SUT split** section (line 492), document
      `evaluator_provider_mode`: it forces the judge's local client dialect the way
      `provider_mode` does for the system under test; it accepts `ollama` and
      `openai_compat`; when it is absent or empty the judge inherits the SUT's
