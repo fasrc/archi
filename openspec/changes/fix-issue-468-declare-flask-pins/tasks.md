@@ -1,6 +1,6 @@
 ## 1. Declare the flask pins, driven by a test that fails first
 
-- [ ] 1.1 Add `tests/unit/test_pyproject_flask_pins.py` and add the pins in the same task.
+- [x] 1.1 Add `tests/unit/test_pyproject_flask_pins.py` and add the pins in the same task.
   **Red first, inside this task:** write the guard per `design.md` Decisions 2–3. Parse
   `pyproject.toml` with `tomllib` (copy the pattern in
   `tests/unit/test_python_version_declaration.py`), read
