@@ -13,7 +13,7 @@
 
 ## 4. Docs
 
-- [ ] 4.1 Rewrite the CAUTION at `docs/docs/configuration.md:126-133` (the paragraph beginning "**CAUTION: a `git-` or `sso-` entry in `input_lists` overrides `enabled: false`") to state the rule: an explicit `enabled: false` wins and the data manager logs a WARNING naming the skipped entries; with `enabled` absent, a prefixed entry (or an ELOG-path URL) enables the source and `archi create` validates its secrets; `true` collects. Also fix the sentence at `:123-125` so it no longer says git and sso are an exception. Keep the link to issue #460 only as history ("Changed in #460"). Confirm `grep -n "overrides \`enabled: false\`" docs/docs/configuration.md` returns nothing. If `mkdocs` is installed, run `mkdocs build --strict -f docs/mkdocs.yml` and read the INFO lines for broken anchors. Run `bash scripts/gate.sh` (green) and commit.
+- [x] 4.1 Rewrite the CAUTION at `docs/docs/configuration.md:126-133` (the paragraph beginning "**CAUTION: a `git-` or `sso-` entry in `input_lists` overrides `enabled: false`") to state the rule: an explicit `enabled: false` wins and the data manager logs a WARNING naming the skipped entries; with `enabled` absent, a prefixed entry (or an ELOG-path URL) enables the source and `archi create` validates its secrets; `true` collects. Also fix the sentence at `:123-125` so it no longer says git and sso are an exception. Keep the link to issue #460 only as history ("Changed in #460"). Confirm `grep -n "overrides \`enabled: false\`" docs/docs/configuration.md` returns nothing. If `mkdocs` is installed, run `mkdocs build --strict -f docs/mkdocs.yml` and read the INFO lines for broken anchors. Run `bash scripts/gate.sh` (green) and commit.
 
 ## 5. Publish
 
