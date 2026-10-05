@@ -129,25 +129,27 @@ class ScraperManager:
         )
 
         self.links_enabled = True
-        self.git_enabled = (
-            git_config.get("enabled", False) if isinstance(git_config, dict) else True
-        )
+        # Compute three-way flags (None=absent, True=explicit true, False=explicit false)
+        # before coercing configs, so collect_all_from_config can honour explicit false
+        # over input-list entries without re-reading the raw config.
+        self._git_flag = self._input_list_flag(git_config)
+        self._sso_flag = self._input_list_flag(sso_config)
+        self._indico_flag = self._input_list_flag(indico_config)
+
+        self.git_enabled = bool(self._git_flag)
         self.git_config = git_config if isinstance(git_config, dict) else {}
-        self.indico_enabled = (
-            indico_config.get("enabled", False)
-            if isinstance(indico_config, dict)
-            else False
-        )
+        self.indico_enabled = bool(self._indico_flag)
         self.indico_config = indico_config if isinstance(indico_config, dict) else {}
         self.selenium_config = selenium_config or {}
         self.selenium_enabled = self.selenium_config.get("enabled", False)
         self.scrape_with_selenium = self.selenium_config.get("use_for_scraping", False)
 
-        self.sso_enabled = bool(sso_config.get("enabled", False))
+        self.sso_enabled = bool(self._sso_flag)
 
         elog_config = (
             sources_config.get("elog", {}) if isinstance(sources_config, dict) else {}
         )
+        self._elog_flag = self._input_list_flag(elog_config)
         self.elog_config = elog_config if isinstance(elog_config, dict) else {}
         # Gate on the explicit `enabled` flag (like git/indico/jira/redmine), not just
         # URL presence, so disabling ELOG while leaving the URL set stops collection.
@@ -186,16 +188,66 @@ class ScraperManager:
             enable_warnings=self.config.get("enable_warnings", False),
         )
 
+    @staticmethod
+    def _input_list_flag(config) -> Optional[bool]:
+        """Three-way enabled flag derived from a source config section.
+
+        Returns ``False`` when the section is explicitly disabled (``enabled:
+        false`` or the section itself is the boolean ``False``), ``None`` when
+        the ``enabled`` key is absent (list entries may activate the source),
+        and ``True`` when ``enabled: true``.
+        """
+        if not isinstance(config, dict):
+            return bool(config) if config else False
+        if "enabled" not in config:
+            return None
+        return bool(config["enabled"])
+
+    def _apply_input_list_flag(
+        self, source: str, flag: Optional[bool], urls: List[str]
+    ) -> List[str]:
+        """Apply the three-way flag to input-list entries for *source*.
+
+        Logs a WARNING and returns an empty list when *flag* is ``False``.
+        Logs an INFO and enables the source attribute when *flag* is ``None``
+        (absent key) and entries are present.  Returns *urls* unchanged when
+        *flag* is ``True`` or when the list is empty.
+        """
+        if not urls:
+            return urls
+        if flag is False:
+            logger.warning(
+                "%s disabled; skipping %d input-list entry(ies)", source, len(urls)
+            )
+            return []
+        if flag is None:
+            logger.info(
+                "%s: %d input-list entry(ies) enable this source for this run",
+                source,
+                len(urls),
+            )
+            setattr(self, f"{source}_enabled", True)
+        return urls
+
     def collect_all_from_config(self, persistence: PersistenceService) -> None:
         """Run the configured scrapers and persist their output."""
         link_urls, git_urls, sso_urls, elog_urls, indico_urls, sitemap_urls = (
             self._collect_urls_from_lists_by_type(self.input_lists)
         )
 
-        if git_urls:
-            self.git_enabled = True
+        git_urls = self._apply_input_list_flag(
+            "git", getattr(self, "_git_flag", True), git_urls
+        )
+        sso_urls = self._apply_input_list_flag(
+            "sso", getattr(self, "_sso_flag", True), sso_urls
+        )
+        elog_urls = self._apply_input_list_flag(
+            "elog", getattr(self, "_elog_flag", True), elog_urls
+        )
+        indico_urls = self._apply_input_list_flag(
+            "indico", getattr(self, "_indico_flag", True), indico_urls
+        )
         if sso_urls:
-            self.sso_enabled = True
             self._ensure_sso_defaults()
 
         # Expand any `sitemap-` sources into page URLs and append (dedup,
@@ -412,6 +464,9 @@ class ScraperManager:
     def schedule_collect_elog(
         self, persistence: PersistenceService, last_run: Optional[str] = None
     ) -> None:
+        if getattr(self, "_elog_flag", True) is False:
+            logger.warning("elog disabled; skipping scheduled ELOG re-collection")
+            return
         # ELOG entries are stored with source_type="web", so match the metadata-level
         # "scraper" marker instead (mirrors schedule_collect_indico).
         metadata = persistence.catalog.get_metadata_by_filter(
