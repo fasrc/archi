@@ -8,7 +8,7 @@
 
 ## 1. Normalize the source flags in restart, test-first
 
-- [ ] 1.1 Create `tests/unit/test_cli_restart_source_flags.py` with the fixtures from
+- [x] 1.1 Create `tests/unit/test_cli_restart_source_flags.py` with the fixtures from
   `design.md` ("Test seam"): a throwaway `ARCHI_DIR` (patch `cli_main.ARCHI_DIR` too), a
   deployment dir with `compose.yaml` and a deployed rendered config made the way `create`
   makes it, and `cli_main.ServiceBuilder.build_compose_config` patched to raise
