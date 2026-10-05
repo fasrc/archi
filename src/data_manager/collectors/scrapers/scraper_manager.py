@@ -194,12 +194,15 @@ class ScraperManager:
 
         Returns ``False`` when the section is explicitly disabled (``enabled:
         false`` or the section itself is the boolean ``False``), ``None`` when
-        the ``enabled`` key is absent (list entries may activate the source),
-        and ``True`` when ``enabled: true``.
+        the ``enabled`` key is absent or null, or the section itself is null
+        (list entries may activate the source), and ``True`` when ``enabled:
+        true``. This matches ``ConfigurationManager._input_list_flag``.
         """
+        if config is None:
+            return None
         if not isinstance(config, dict):
             return bool(config) if config else False
-        if "enabled" not in config:
+        if config.get("enabled") is None:
             return None
         return bool(config["enabled"])
 
