@@ -7,7 +7,12 @@ import yaml
 
 from src.cli.managers.templates_manager import BASE_CONFIG_TEMPLATE
 from src.cli.service_registry import service_registry
-from src.cli.source_registry import source_registry
+from src.cli.source_registry import (
+    is_elog_url,
+    read_input_list_entries,
+    source_registry,
+    split_prefixed_entry,
+)
 from src.utils.evaluations_config import (
     resolve_agent_config_source,
     validate_evaluations_config,
@@ -415,6 +420,18 @@ class ConfigurationManager:
                 collected.extend(lists)
         self.input_list = sorted(set(collected)) if collected else []
 
+    @staticmethod
+    def _input_list_flag(sources_section: Dict, name: str):
+        """Return True/False/None for a source: explicit value or None (absent)."""
+        entry = sources_section.get(name)
+        if isinstance(entry, bool):
+            return entry
+        if isinstance(entry, dict):
+            enabled = entry.get("enabled")
+            if enabled is not None:
+                return bool(enabled)
+        return None
+
     def get_enabled_sources(self) -> List[str]:
         """Return sources marked as enabled across all configs."""
         valid_names = set(source_registry.names())
@@ -422,6 +439,8 @@ class ConfigurationManager:
 
         for conf in self.configs:
             sources_section = conf.get("data_manager", {}).get("sources", {}) or {}
+
+            # Explicit enabled keys (existing logic).
             for name, entry in sources_section.items():
                 if name not in valid_names:
                     continue
@@ -430,6 +449,49 @@ class ConfigurationManager:
                         enabled.add(name)
                 elif isinstance(entry, bool) and entry:
                     enabled.add(name)
+
+            # D5: infer from input_lists using the D3 classifier.
+            links_section = (
+                sources_section.get("links", {})
+                if isinstance(sources_section, dict)
+                else {}
+            )
+            if not isinstance(links_section, dict):
+                links_section = {}
+            lists = links_section.get("input_lists") or []
+            if not isinstance(lists, list):
+                lists = []
+
+            counts: Dict[str, int] = {}
+            for list_path in lists:
+                if not os.path.isfile(list_path):
+                    logger.warning(f"Input list path not found, skipping: {list_path}")
+                    continue
+                for raw_entry in read_input_list_entries(list_path):
+                    parsed = split_prefixed_entry(raw_entry)
+                    if parsed is not None:
+                        source, _url = parsed
+                        counts[source] = counts.get(source, 0) + 1
+                    elif is_elog_url(raw_entry):
+                        counts["elog"] = counts.get("elog", 0) + 1
+
+            for source, count in counts.items():
+                if source not in valid_names:
+                    continue
+                flag = self._input_list_flag(sources_section, source)
+                if flag is None:
+                    enabled.add(source)
+                    logger.info(
+                        f"{count} input-list {'entry' if count == 1 else 'entries'} "
+                        f"for source '{source}': enabling"
+                    )
+                elif flag is False:
+                    logger.warning(
+                        f"{count} input-list "
+                        f"{'entry' if count == 1 else 'entries'} "
+                        f"for source '{source}' will be skipped: "
+                        f"data_manager.sources.{source}.enabled is false"
+                    )
 
         return sorted(enabled)
 

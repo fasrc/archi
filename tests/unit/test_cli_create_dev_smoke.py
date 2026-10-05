@@ -85,6 +85,8 @@ def env_file(tmp_path):
         "OPENAI_API_KEY=sk-test\n"
         "PG_PASSWORD=test-pg\n"
         "HUGGING_FACE_HUB_TOKEN=test-hf\n"
+        "GIT_USERNAME=test-git\n"
+        "GIT_TOKEN=test-git\n"
     )
     return p
 
