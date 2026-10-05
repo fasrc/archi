@@ -523,6 +523,12 @@ class ConfigurationManager:
 
             for name in managed_sources:
                 entry = sources_section.setdefault(name, {})
+                # `sources.<name>: true|false` is the scalar spelling of `enabled`,
+                # and `null` means the section is absent; both need the mapping form.
+                if isinstance(entry, bool):
+                    entry = sources_section[name] = {"enabled": entry}
+                elif entry is None:
+                    entry = sources_section[name] = {}
                 if name in enabled_set:
                     entry["enabled"] = True
                 elif "enabled" not in entry:
