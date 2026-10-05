@@ -26,7 +26,7 @@ Rules that apply to **every** task below:
 
 ## 1. The render
 
-- [ ] 1.1 Add the failing render tests and the template key, in one commit.
+- [x] 1.1 Add the failing render tests and the template key, in one commit.
 
   Order of work:
 
