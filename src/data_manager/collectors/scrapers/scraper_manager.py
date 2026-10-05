@@ -5,6 +5,11 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
+from src.cli.source_registry import (
+    is_elog_url,
+    read_input_list_entries,
+    split_prefixed_entry,
+)
 from src.data_manager.collectors.persistence import PersistenceService
 from src.data_manager.collectors.scrapers.scrape_pool import (
     host_key,
@@ -613,27 +618,29 @@ class ScraperManager:
         indico_urls: List[str] = []
         sitemap_urls: List[str] = []
         for raw_url in self._collect_urls_from_lists(input_lists):
-            if raw_url.startswith("git-"):
-                git_urls.append(raw_url.split("git-", 1)[1])
-                continue
-            if raw_url.startswith("sso-"):
-                sso_urls.append(raw_url.split("sso-", 1)[1])
-                continue
-            # Explicit `sitemap-` prefix is peeled before the elog/indico
-            # auto-detection heuristics below, so a sitemap URL whose path
-            # happens to contain `/elog/` or `/event/` still routes to sitemap
-            # expansion (mirrors the explicit-prefix-beats-heuristic rule).
+            # Explicit `sitemap-` prefix is peeled before all other checks so
+            # a sitemap URL whose path contains `/elog/` or `/event/` still
+            # routes to sitemap expansion (explicit prefix beats heuristic).
             if raw_url.startswith("sitemap-"):
                 sitemap_urls.append(raw_url.split("sitemap-", 1)[1])
                 continue
-            if raw_url.startswith("elog-"):
-                elog_urls.append(raw_url.split("elog-", 1)[1])
+            # All other explicit prefixes (git-, sso-, elog-, indico-) are
+            # handled centrally so an explicit prefix always beats
+            # auto-detection (design D3 ordering fix).
+            parsed = split_prefixed_entry(raw_url)
+            if parsed is not None:
+                source, url = parsed
+                if source == "git":
+                    git_urls.append(url)
+                elif source == "sso":
+                    sso_urls.append(url)
+                elif source == "elog":
+                    elog_urls.append(url)
+                elif source == "indico":
+                    indico_urls.append(url)
                 continue
             if self._is_elog_url(raw_url):
                 elog_urls.append(raw_url)
-                continue
-            if raw_url.startswith("indico-"):
-                indico_urls.append(raw_url.split("indico-", 1)[1])
                 continue
             if self._is_indico_url(raw_url):
                 indico_urls.append(raw_url)
@@ -761,13 +768,7 @@ class ScraperManager:
 
     @staticmethod
     def _is_elog_url(url: str) -> bool:
-        """Return True if the URL looks like an ELOG logbook index (fallback heuristic).
-        Prefer the explicit 'elog-' prefix in input lists over this auto-detection.
-        """
-        from urllib.parse import urlparse
-
-        path = urlparse(url).path.lower()
-        return "/elog/" in path or "/elogs/" in path
+        return is_elog_url(url)
 
     def _is_indico_url(self, url: str) -> bool:
         """Return True if the URL looks like an Indico event page.
@@ -862,18 +863,7 @@ class ScraperManager:
         return count
 
     def _extract_urls_from_file(self, path: Path) -> List[str]:
-        """Extract URLs from file, ignoring depth specifications for now."""
-        urls: List[str] = []
-        with path.open("r") as file:
-            for line in file:
-                stripped = line.strip()
-                if not stripped or stripped.startswith("#"):
-                    continue
-                # Extract just the URL part, ignoring depth specification if present
-                url_depth = stripped.split(",")
-                url = url_depth[0].strip()
-                urls.append(url)
-        return urls
+        return read_input_list_entries(path)
 
     def _collect_git_resources(
         self,
