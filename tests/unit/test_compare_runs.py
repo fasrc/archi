@@ -26,6 +26,7 @@ answer would silently pass*, not to decorate the implementation:
 import itertools
 import json
 import math
+import pathlib
 import re
 import statistics
 import sys
@@ -134,6 +135,7 @@ def _artifact(tmp_path):
         total=None,
         metadata=None,
         corpus_unchanged="absent",
+        configuration=None,
     ):
         arm_rows = arms if arms is not None else [rows or []]
         count = len(arm_rows)
@@ -141,6 +143,8 @@ def _artifact(tmp_path):
         digests = _per_arm(digest, count)
         divergences = _per_arm(divergence, count)
         totals = _per_arm(total, count)
+        effective_cfg = {} if configuration is None else configuration
+        configurations = _per_arm(effective_cfg, count)
         results = []
         for index, these in enumerate(arm_rows):
             arm = {
@@ -149,7 +153,6 @@ def _artifact(tmp_path):
                 },
                 "total_results": _honest_totals(these, totals[index]),
                 "configuration_file": f"configs/arm{index + 1}.yaml",
-                "configuration": {},
                 "config_version": {
                     "digest": digests[index],
                     "source": "test fixture",
@@ -159,6 +162,9 @@ def _artifact(tmp_path):
                     "key_settings": {},
                 },
             }
+            cfg = configurations[index]
+            if cfg != "absent":
+                arm["configuration"] = cfg
             if fingerprints[index] is not None:
                 arm["corpus_fingerprint"] = fingerprints[index]
             if corpus_unchanged != "absent":
@@ -744,6 +750,201 @@ def test_unavailable_fingerprint_counts_as_unrecorded(_artifact):
     assert cr.load_arms([str(path)])[0].corpus_fingerprint is None
 
 
+# --- #570: fingerprint version, collection, and embedding gates -------------
+
+
+def _identity(
+    model="model-a", *, collection="docs_with_HF", source="chunks", untagged=0
+):
+    """A ``retrieval_identity`` block shaped like ``retrieval_record``."""
+    return {
+        "collection": collection,
+        "embedding_name": "HuggingFaceEmbeddings",
+        "embedding_model": model,
+        "chunk_count": 10,
+        "usable_chunk_count": 10,
+        "untagged_chunk_count": untagged,
+        "embedding_model_source": source,
+    }
+
+
+def _with_identity(path, identity):
+    """Record ``identity`` on the single arm of an artifact written by the fixture."""
+    document = json.loads(path.read_text())
+    document["benchmarking_results"][0]["retrieval_identity"] = identity
+    path.write_text(json.dumps(document))
+    return str(path)
+
+
+def _config_for(model):
+    """A recorded ``configuration`` whose data manager names ``model``."""
+    return {
+        "data_manager": {
+            "collection_name": "docs",
+            "embedding_name": "HF",
+            "embedding_class_map": {
+                "HF": {
+                    "class": "HuggingFaceEmbeddings",
+                    "kwargs": {"model_name": model},
+                }
+            },
+        }
+    }
+
+
+@pytest.mark.parametrize("flag", [[], ["--corpus-differs-by-design"]])
+def test_a_v1_fingerprint_against_a_v2_one_is_refused_with_a_version_reason(
+    _artifact, capsys, flag
+):
+    # A v1 and a v2 digest never match, whatever the corpus. Reporting the pair
+    # as "different corpora" would invite the G3 override for what is really a
+    # stale pin.
+    base = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256:aaa"))
+    treat = str(_artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:aaa"))
+
+    code = cr.main([base, treat, *flag])
+
+    assert code == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "fingerprint versions differ" in err
+    assert "re-pin" in err
+    assert "G3" not in err
+
+
+@pytest.mark.parametrize("allow", [False, True])
+def test_a_v1_noise_replicate_against_a_v2_baseline_is_refused_by_version(
+    _artifact, allow
+):
+    baseline = cr.load_arms(
+        [str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"))]
+    )[0]
+    one = _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:a")
+    stale = _artifact([_row("q1", faithfulness=0.7)], fingerprint="sha256:a")
+
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.noise_floor_from_runs(
+            [str(one), str(stale)], baseline=baseline, allow_corpus_differs=allow
+        )
+
+    assert excinfo.value.code == cr.EXIT_GATE
+    message = str(excinfo.value)
+    assert "fingerprint versions differ" in message
+    assert "re-pin" in message
+    assert "G3" not in message
+
+
+def test_the_g3_reason_names_both_collections_when_they_differ(_artifact, capsys):
+    base = _with_identity(
+        _artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"),
+        _identity(collection="docs_with_HF"),
+    )
+    treat = _with_identity(
+        _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:b"),
+        _identity(collection="wiki_with_HF"),
+    )
+
+    code = cr.main([base, treat])
+
+    assert code == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "G3" in err
+    assert "docs_with_HF" in err and "wiki_with_HF" in err
+
+
+def test_an_embedding_ab_with_verified_provenance_states_the_varied_factor(
+    _artifact, capsys
+):
+    # The digest is model-neutral: equal digests prove the text and collection
+    # were the same, and the verified identities prove which model each used.
+    base = _with_identity(
+        _artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"),
+        _identity("model-a"),
+    )
+    treat = _with_identity(
+        _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:a"),
+        _identity("model-b"),
+    )
+
+    assert cr.main([base, treat]) == cr.EXIT_OK
+
+    header = capsys.readouterr().out.split("## Provenance")[0]
+    assert "varied factor" in header.lower()
+    assert "embedding_model" in header
+    assert "model-a" in header and "model-b" in header
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        _identity("model-b", source="config (chunks untagged)", untagged=10),
+        _identity("model-b", source="chunks (3 untagged)", untagged=3),
+        None,
+    ],
+    ids=["config-untagged", "chunks-partly-untagged", "no-identity"],
+)
+@pytest.mark.parametrize("flag", [[], ["--corpus-differs-by-design"]])
+def test_an_embedding_difference_with_unverified_provenance_is_refused(
+    _artifact, capsys, identity, flag
+):
+    # Two runs over an untagged legacy collection can both have been served by
+    # one older model, whatever their configs say, so no flag admits this.
+    base = _with_identity(
+        _artifact(
+            [_row("q1", faithfulness=0.5)], name="base.json", fingerprint="sha256/v2:a"
+        ),
+        _identity("model-a"),
+    )
+    treat_path = _artifact(
+        [_row("q1", faithfulness=0.6)],
+        name="treat.json",
+        fingerprint="sha256/v2:a",
+        configuration=_config_for("model-b"),
+    )
+    treat = (
+        str(treat_path) if identity is None else _with_identity(treat_path, identity)
+    )
+
+    code = cr.main([base, treat, *flag])
+
+    assert code == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "embedding provenance unverified" in err
+    # The refusal names the unverified arm, and only that arm.
+    flagged = err.split("embedding provenance unverified for ", 1)[1].split(": ")[0]
+    assert flagged.startswith("treat (")
+    assert "base (" not in flagged
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    [_config_for("model-a"), {}],
+    ids=["config-names-the-same-model", "model-unknowable"],
+)
+def test_an_unrecorded_identity_without_an_embedding_difference_is_noted(
+    _artifact, capsys, configuration
+):
+    # Absent is unknowable, not unequal, as for corpus_unchanged_at_endpoints.
+    base = _with_identity(
+        _artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"),
+        _identity("model-a"),
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            name="treat.json",
+            fingerprint="sha256/v2:a",
+            configuration=configuration,
+        )
+    )
+
+    assert cr.main([base, treat]) == cr.EXIT_OK
+
+    out = capsys.readouterr().out
+    assert "retrieval_identity" in out
+    assert re.search(r"`treat`[^\n]*not recorded", out)
+    assert "varied factor" not in out.lower()
+
+
 # --- Procedure E: the divergence gate ----------------------------------------
 
 
@@ -791,6 +992,594 @@ def test_null_divergence_prints_the_procedure_e_caveat(_artifact, capsys):
     out = capsys.readouterr().out
     assert "Procedure E" in out
     assert "backfilled" in out
+
+
+# --- G10: the answer-path gate ---------------------------------------------
+
+_G10_BOUND = {
+    "services": {
+        "chat_app": {
+            "recursion_limit": 50,
+            "context_editing": {"trigger": 32768, "keep": 1},
+        }
+    }
+}
+_G10_LIMIT_ONLY = {"services": {"chat_app": {"recursion_limit": 50}}}
+
+
+def test_g10_refuses_when_context_editing_is_absent(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_LIMIT_ONLY,
+        )
+    )
+
+    code = cr.main([base, treat])
+
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "G10" in err
+    assert "services.chat_app.context_editing" in err
+    assert "32768" in err
+    assert "absent" in err
+
+
+def test_g10_refuses_when_context_editing_is_null(_artifact, capsys):
+    treat_cfg = {
+        "services": {"chat_app": {"recursion_limit": 50, "context_editing": None}}
+    }
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=treat_cfg,
+        )
+    )
+
+    code = cr.main([base, treat])
+
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "null" in err
+    assert "32768" in err
+
+
+def test_g10_passes_and_shows_row_for_identical_answer_paths(
+    _artifact, capsys, tmp_path
+):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main([base, treat])
+    assert code == cr.EXIT_OK
+    out = capsys.readouterr().out
+    g10_line = [line for line in out.splitlines() if line.startswith("| G10 ")][0]
+    assert g10_line.startswith("| G10 one answer path | pass |")
+
+    code2 = cr.main([base, treat, "--json", str(out_json)])
+    capsys.readouterr()
+    assert code2 == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert len(g10_entries) == 1
+    g10 = g10_entries[0]
+    assert g10["status"] == "pass"
+    assert "services.chat_app.context_editing" in g10["detail"]
+    assert "services.chat_app.recursion_limit" in g10["detail"]
+
+
+def test_g10_constants_are_stable():
+    assert cr.ANSWER_PATH_REFUSED == (
+        "services.chat_app.context_editing",
+        "services.chat_app.recursion_limit",
+    )
+    assert cr.ANSWER_PATH_REPORTED == ("services.benchmarking.agent_md_file",)
+
+
+def test_g10_override_waives_named_path(_artifact, capsys, tmp_path):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_LIMIT_ONLY,
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    out = capsys.readouterr().out
+    assert code == cr.EXIT_OK
+    g10_lines = [line for line in out.splitlines() if line.startswith("| G10 ")]
+    assert g10_lines, "no G10 row in output"
+    g10_line = g10_lines[0]
+    assert "OVERRIDDEN" in g10_line
+    assert "--config-differs-by-design services.chat_app.context_editing" in g10_line
+    assert "32768" in out
+    assert "absent" in out
+
+    code2 = cr.main(
+        [
+            base,
+            treat,
+            "--config-differs-by-design",
+            "services.chat_app.context_editing",
+            "--json",
+            str(out_json),
+        ]
+    )
+    capsys.readouterr()
+    assert code2 == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert g10_entries
+    g10 = g10_entries[0]
+    assert "OVERRIDDEN" in g10["status"]
+    assert "32768" in g10["detail"] or "absent" in g10["detail"]
+
+
+def test_g10_override_wrong_path_does_not_waive(_artifact, capsys):
+    base_cfg = {"services": {"chat_app": {"recursion_limit": 50}}}
+    treat_cfg = {"services": {"chat_app": {"recursion_limit": 25}}}
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=base_cfg,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=treat_cfg,
+        )
+    )
+
+    code_no_flag = cr.main([base, treat])
+    err_no_flag = capsys.readouterr().err
+    assert code_no_flag == cr.EXIT_GATE
+    assert "services.chat_app.recursion_limit" in err_no_flag
+    assert "50" in err_no_flag
+    assert "25" in err_no_flag
+
+    code_wrong = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    capsys.readouterr()
+    assert code_wrong == cr.EXIT_GATE
+
+    code_right = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.recursion_limit"]
+    )
+    capsys.readouterr()
+    assert code_right == cr.EXIT_OK
+
+
+def test_g10_override_one_path_both_differing(_artifact, capsys):
+    treat_cfg = {"services": {"chat_app": {"recursion_limit": 25}}}
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=treat_cfg,
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "services.chat_app.recursion_limit" in err
+
+
+def test_g10_unknown_path_is_usage_error(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.default_model"]
+    )
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_USAGE
+    assert "services.chat_app.context_editing" in err
+    assert "services.chat_app.recursion_limit" in err
+
+
+def test_g10_reported_path_cannot_be_waived(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+
+    code = cr.main(
+        [
+            base,
+            treat,
+            "--config-differs-by-design",
+            "services.benchmarking.agent_md_file",
+        ]
+    )
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_USAGE
+    assert "services.chat_app.context_editing" in err
+    assert "services.chat_app.recursion_limit" in err
+
+
+def test_g10_override_nondiffering_path_stays_pass(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    out = capsys.readouterr().out
+    assert code == cr.EXIT_OK
+    g10_lines = [line for line in out.splitlines() if line.startswith("| G10 ")]
+    assert g10_lines
+    assert "pass" in g10_lines[0]
+    assert "OVERRIDDEN" not in g10_lines[0]
+
+
+def test_g10_agent_md_file_reported_when_different(_artifact, capsys, tmp_path):
+    cfg_a = {
+        "services": {
+            "chat_app": {
+                "recursion_limit": 50,
+                "context_editing": {"trigger": 32768, "keep": 1},
+            },
+            "benchmarking": {"agent_md_file": "prompts/a.md"},
+        }
+    }
+    cfg_b = {
+        "services": {
+            "chat_app": {
+                "recursion_limit": 50,
+                "context_editing": {"trigger": 32768, "keep": 1},
+            },
+            "benchmarking": {"agent_md_file": "prompts/b.md"},
+        }
+    }
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)], fingerprint="corpus-1", configuration=cfg_a
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)], fingerprint="corpus-1", configuration=cfg_b
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main([base, treat])
+    out = capsys.readouterr().out
+    assert code == cr.EXIT_OK
+    g10_lines = [line for line in out.splitlines() if line.startswith("| G10 ")]
+    assert g10_lines
+    assert g10_lines[0].startswith("| G10 one answer path | pass |")
+
+    code2 = cr.main([base, treat, "--json", str(out_json)])
+    capsys.readouterr()
+    assert code2 == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert g10_entries
+    detail = g10_entries[0]["detail"]
+    assert "agent_md_file" in detail
+    assert "prompts/a.md" in detail
+    assert "prompts/b.md" in detail
+
+
+def test_g10_agent_md_file_absent_from_detail_when_equal(_artifact, tmp_path):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main([base, treat, "--json", str(out_json)])
+    assert code == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert g10_entries
+    assert "agent_md_file" not in g10_entries[0]["detail"]
+
+
+def test_g10_both_arms_unrecorded_refused(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+
+    code = cr.main([base, treat])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "G10" in err
+    assert "not recorded" in err
+
+
+def test_g10_one_arm_unrecorded_refused(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+
+    code = cr.main([base, treat])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    treat_label = "run_2"
+    assert f"{treat_label}=not recorded" in err
+
+
+def test_g10_unrecorded_waived_by_both_paths(_artifact, capsys, tmp_path):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main(
+        [
+            base,
+            treat,
+            "--config-differs-by-design",
+            "services.chat_app.context_editing",
+            "--config-differs-by-design",
+            "services.chat_app.recursion_limit",
+            "--json",
+            str(out_json),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == cr.EXIT_OK
+    g10_lines = [line for line in out.splitlines() if line.startswith("| G10 ")]
+    assert g10_lines
+    assert "OVERRIDDEN" in g10_lines[0]
+
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert g10_entries
+    assert "not recorded" in g10_entries[0]["detail"]
+
+
+def test_g10_unrecorded_waived_partial_still_refuses(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    capsys.readouterr()
+    assert code == cr.EXIT_GATE
+
+
+def test_g10_null_configuration_counts_as_not_recorded(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=[None],
+        )
+    )
+
+    code = cr.main([base, treat])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "not recorded" in err
+
+
+@pytest.mark.parametrize(
+    "treat_cfg",
+    ["unknown", {"services": "unknown"}, {"services": {"benchmarking": "unknown"}}],
+)
+def test_g10_non_mapping_configuration_is_refused_not_crashed(
+    _artifact, capsys, treat_cfg
+):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=[treat_cfg],
+        )
+    )
+
+    code = cr.main([base, treat])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "G10" in err
+
+
+def test_g10_unknown_override_path_is_a_usage_error_before_other_gates(
+    _artifact, capsys
+):
+    base = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="corpus-1"))
+    treat = str(_artifact([_row("q1", faithfulness=0.6)], fingerprint="corpus-2"))
+
+    code = cr.main([base, treat, "--config-differs-by-design", "typo"])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_USAGE
+    assert "'typo'" in err
+
+
+def test_g10_refusal_still_names_the_waived_and_reported_differences(_artifact, capsys):
+    treat_cfg = {
+        "services": {
+            "chat_app": {"recursion_limit": 25},
+            "benchmarking": {"agent_md_file": "treat.md"},
+        }
+    }
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=treat_cfg,
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    refused = err.partition("waived")[0]
+    assert "services.chat_app.recursion_limit" in refused
+    assert "services.chat_app.context_editing" in err
+    assert "32768" in err
+    assert "services.benchmarking.agent_md_file" in err
+    assert '"treat.md"' in err
 
 
 # --- G8: the anchors ---------------------------------------------------------
@@ -2362,6 +3151,61 @@ def test_json_true_and_one_are_different_labels_not_the_same_one(_artifact):
     ), f"only q2 is groupable, got {[(r['value'], r['n']) for r in rows]}"
 
 
+# --- #582: usage keys are additive ---
+
+
+def test_load_qa_run_equals_with_and_without_usage_rows(tmp_path):
+    """usage dict in answers/evaluation rows is additive — load_qa_run is unaffected."""
+    item_id = "item-001"
+    _usage = {
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "calls": 1,
+        "unreported_calls": 0,
+        "by_model": [
+            {
+                "provider": "anthropic",
+                "model": "claude-3-5-haiku-20241022",
+                "input_tokens": 120,
+                "output_tokens": 30,
+            }
+        ],
+    }
+
+    plain_dir = tmp_path / "plain"
+    _qa_run(
+        plain_dir, item_id, item_pass_rate=0.8, atom_score=0.7, durations=(1000, 2000)
+    )
+
+    with_dir = tmp_path / "with_usage"
+    _qa_run(
+        with_dir, item_id, item_pass_rate=0.8, atom_score=0.7, durations=(1000, 2000)
+    )
+    for fname in ("answers.jsonl", "evaluation_results.jsonl"):
+        fpath = with_dir / fname
+        rows = [json.loads(line) for line in fpath.read_text().splitlines() if line]
+        for row in rows:
+            row["usage"] = _usage
+        fpath.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    plain = cr.load_qa_run(str(plain_dir))
+    with_usage = cr.load_qa_run(str(with_dir))
+
+    assert with_usage["items"] == plain["items"]
+    assert with_usage["durations"] == plain["durations"]
+    assert with_usage["overall_attempt_pass_rate"] == plain["overall_attempt_pass_rate"]
+    assert with_usage["macro_mean_item_pass_rate"] == plain["macro_mean_item_pass_rate"]
+    assert (
+        with_usage["macro_mean_scored_attempt_atom_score"]
+        == plain["macro_mean_scored_attempt_atom_score"]
+    )
+    assert set(with_usage["evaluations"]) == set(plain["evaluations"])
+    for iid in plain["evaluations"]:
+        plain_scores = [r["atom_score"] for r in plain["evaluations"][iid]]
+        with_scores = [r["atom_score"] for r in with_usage["evaluations"][iid]]
+        assert with_scores == plain_scores
+
+
 # --- host provenance ---------------------------------------------------------
 
 
@@ -2478,3 +3322,91 @@ def test_one_recorded_and_one_unrecorded_host_prints_no_warning(
     out = capsys.readouterr().out
     assert result == cr.EXIT_OK
     assert "host mismatch" not in out.lower()
+
+
+def test_recorded_accepts_a_v2_reading():
+    assert cr._recorded("sha256/v2:abc") == "sha256/v2:abc"
+
+
+def _qa_with_corpus(directory, item_id, **corpus):
+    """A QA run whose summary records the corpus readings of its answering phase."""
+    run = _qa_run(directory, item_id)
+    summary_path = pathlib.Path(run) / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["provenance"] = corpus
+    summary_path.write_text(json.dumps(summary))
+    return run
+
+
+_STABLE = {
+    "corpus_fingerprint_before": "sha256/v2:a",
+    "corpus_fingerprint": "sha256/v2:a",
+    "corpus_unchanged_at_endpoints": True,
+}
+
+
+@pytest.mark.parametrize(
+    "corpus, expected",
+    [
+        (_STABLE, None),
+        ({}, None),
+        (
+            {
+                "corpus_fingerprint_before": None,
+                "corpus_fingerprint": None,
+                "corpus_unchanged_at_endpoints": None,
+            },
+            None,
+        ),
+        ({**_STABLE, "corpus_fingerprint": "sha256/v2:b"}, "changed"),
+        ({**_STABLE, "corpus_unchanged_at_endpoints": False}, "changed"),
+        ({**_STABLE, "corpus_fingerprint_before": "<unavailable: x>"}, "unavailable"),
+        (
+            {
+                "corpus_fingerprint_before": "sha256/v2:z",
+                "corpus_fingerprint": "sha256/v2:z",
+                "corpus_unchanged_at_endpoints": True,
+            },
+            "different corpus",
+        ),
+        (
+            {
+                "corpus_fingerprint_before": "sha256:a",
+                "corpus_fingerprint": "sha256:a",
+                "corpus_unchanged_at_endpoints": True,
+            },
+            "versions differ",
+        ),
+    ],
+    ids=[
+        "same-stable-corpus",
+        "legacy-run",
+        "no-search-tool",
+        "moved-during-answering",
+        "flagged-unstable",
+        "unavailable-reading",
+        "other-corpus",
+        "other-version",
+    ],
+)
+def test_a_qa_run_joins_only_on_the_arms_corpus(
+    _artifact, tmp_path, capsys, corpus, expected
+):
+    """Its pass rates feed G8, so its answers must come from the arm's corpus."""
+    question, reference = "how do I request a GPU", "use --gres=gpu:1"
+    rows = [_row(question, reference=reference, faithfulness=0.5)]
+    base = str(_artifact(rows, fingerprint="sha256/v2:a"))
+    treat = str(_artifact(rows, fingerprint="sha256/v2:a"))
+    arms = cr.load_arms([base, treat])
+    run = _qa_with_corpus(
+        tmp_path / "qa", derive_item_id(question, reference), **corpus
+    )
+
+    code = cr.main([base, treat, "--qa-run", f"{arms[1].label}={run}"])
+
+    if expected is None:
+        assert code == cr.EXIT_OK
+    else:
+        assert code == cr.EXIT_GATE
+        err = capsys.readouterr().err
+        assert "cannot join" in err and expected in err

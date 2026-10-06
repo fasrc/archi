@@ -73,29 +73,25 @@ fm_require_stack_up() { # $1 = stack name; Postgres and the data-manager must st
   done
 }
 
-# The corpus fingerprint, computed EXACTLY as the benchmark artifact records it: the
-# harness's CORPUS_STATE_QUERY (documents, chunks and parent nodes — the retrievable
-# state, not just the document list) hashed by src.utils.benchmark_provenance
-# .corpus_fingerprint (sorted (key, value) rows, sha256). The pin archive_run.sh writes
-# comes from the artifact, so the live check must speak the same digest or every re-run
-# would refuse — or, worse, certify a stack whose chunks drifted under an unchanged
-# document list. The snippet runs inside the stack's data-manager container, which
-# carries the same source tree and the Postgres connection env; the query text is read
-# from the harness source (not re-typed here) so the two cannot drift apart.
+# The corpus fingerprint, computed EXACTLY as the benchmark artifact records it: fingerprint
+# v2 of the collection the stack's config searches, through the one routine the harness, the
+# QA workflow and the census also call (src.utils.benchmark_provenance, #570). The pin
+# archive_run.sh writes comes from the artifact, so the live check must speak the same digest
+# or every re-run would refuse — or, worse, certify a stack whose chunks drifted. The snippet
+# runs inside the stack's data-manager container, which carries the stack's source tree and
+# its Postgres connection env; the routine installs the factory it builds before it reads the
+# config. An image that predates the routine cannot import it, and says so.
+FM_FINGERPRINT_PY='
+import sys
+try:
+    from src.utils.benchmark_provenance import container_corpus_fingerprint
+except ImportError:
+    sys.exit("this image carries no container_corpus_fingerprint (it predates corpus "
+             "fingerprint v2); rebuild the stack from the campaign SHA")
+print(container_corpus_fingerprint())
+'
 fm_fingerprint() { # $1 = stack name
-  "$FM_DOCKER" exec -w /root/archi "data-manager-$1" python -c '
-import ast, pathlib, sys
-src = pathlib.Path("src/bin/service_benchmark.py").read_text()
-queries = [node.value.value for node in ast.parse(src).body
-           if isinstance(node, ast.Assign)
-           and any(getattr(t, "id", None) == "CORPUS_STATE_QUERY" for t in node.targets)]
-if not queries:
-    sys.exit("this image carries a harness with no CORPUS_STATE_QUERY (it predates the "
-             "corpus fingerprint); rebuild the stack from the campaign SHA")
-from src.utils.benchmark_provenance import corpus_fingerprint
-from src.utils.postgres_service_factory import PostgresServiceFactory
-print(corpus_fingerprint(PostgresServiceFactory.from_env().connection_pool.execute(queries[0])))
-' | tr -d '[:space:]'
+  "$FM_DOCKER" exec -w /root/archi "data-manager-$1" python -c "$FM_FINGERPRINT_PY" | tr -d '[:space:]'
 }
 
 fm_require_pinned_corpus() { # $1 = stack name → refuses unless the fingerprint equals the recorded pin
@@ -145,7 +141,7 @@ fm_lock_file() { printf '%s/campaign.lock\n' "$FM_OUT"; }
 # the SUT/judge/metric settings. Paths resolve from the cwd, like `archi evaluate` does.
 fm_fixed_factors_json() { # $1 = arm YAML
   FM_Y="$1" FM_KEYS="$FM_FACTOR_KEYS" "$FM_PYTHON" - <<'EOF'
-import hashlib, json, os, sys, yaml
+import hashlib, json, math, os, sys, yaml
 cfg = yaml.safe_load(open(os.environ["FM_Y"])) or {}
 b = (cfg.get("services") or {}).get("benchmarking") or {}
 rs = (b.get("mode_settings") or {}).get("ragas_settings") or {}
@@ -172,11 +168,35 @@ for key in os.environ["FM_KEYS"].split():
             break
     if isinstance(cur, dict):
         cur.pop(parts[-1], None)
+# The judge-pressure knobs are locked by EFFECTIVE value, not as written. An arm
+# that omits the key and an arm that sets the default explicitly run identically,
+# and recording null against 16 would make fm_require_lock reject the second for a
+# difference that does not exist. A value the benchmark would reject normalizes to
+# the same default it will actually run at, for the same reason. Mirrors
+# ragas_effective_settings in src/utils/benchmark_schema.py, including the split
+# contract: timeout is a duration and takes any positive number, max_workers is a
+# count and must be a whole one.
+def _judge(value, default, whole=False):
+    ok = (int,) if whole else (int, float)
+    # math.isfinite mirrors _positive_number: YAML `.nan` passes `<= 0` (NaN
+    # compares false against everything), and a NaN in the lock makes even two
+    # identical arms compare unequal, since nan != nan.
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, ok)
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        return default
+    return value
+
+
 out = {"files": {k: {"path": v, "sha256": sha(v)} for k, v in files.items()},
        "data_manager_rest": rest,
        "values": {"sut.agent_class": b.get("agent_class"), "sut.provider": provider, "sut.model": b.get("model"), "modes": b.get("modes"),
                   "judge.provider": rs.get("evaluator_provider"), "judge.model": rs.get("evaluator_model"),
-                  "judge.timeout": rs.get("timeout"), "ragas.batch_size": rs.get("batch_size"),
+                  "judge.timeout": _judge(rs.get("timeout"), 180), "judge.max_workers": _judge(rs.get("max_workers"), 16, whole=True),
+                  "ragas.batch_size": rs.get("batch_size"),
                   "metrics": rs.get("enabled_metrics"), "ragas.embedding_model": rs.get("embedding_model"),
                   "embedding_name": dm.get("embedding_name"),
                   "sut.base_url": prov_cfg.get("base_url"), "sut.extra_kwargs": prov_cfg.get("extra_kwargs"),
@@ -304,3 +324,84 @@ EOF
 }
 
 fm_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# --- sweep mode (change sweep-mode-feature-matrix-wrappers) ------------------------------
+# A rung-0 prompt sweep is one stack running every arm of a `generate_prompt_sweep.py`
+# directory in one `archi evaluate --config-dir` invocation. Its lock (sweep-<stack>.lock)
+# pins every arm's config and prompt instead of the campaign's single prompt; the
+# decisions live in sweep_tools.py, which these wrappers call.
+
+# The stack name reaches deployment paths, so it is validated like an arm label.
+fm_require_stack_name() { [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || fm_die "bad stack name '${1:-}' (lowercase letters, digits and '-', at most 41 characters)"; }
+
+fm_sweep_lock_file() { printf '%s/sweep-%s.lock\n' "$FM_OUT" "$1"; }
+fm_map_pin_file()    { printf '%s/category-map-pin-%s\n' "$FM_OUT" "$1"; }
+fm_sweep_tools()     { "$FM_PYTHON" "$(dirname "${BASH_SOURCE[0]}")/sweep_tools.py" "$@"; }
+
+# The live category-map digest, computed exactly as the harness records it: the searched
+# collection's URL -> category map through the shared routine, inside the stack's
+# data-manager. Never fails the caller: a failed reading prints `<unavailable: ...>` and the
+# consumer (compare_runs' QA join rule) decides what it costs (#538 rule 2).
+FM_CATEGORY_MAP_PY='
+try:
+    from src.utils.benchmark_provenance import container_category_map_digest
+    print(container_category_map_digest())
+except Exception as exc:
+    print(f"<unavailable: {exc}>")
+'
+fm_category_map_digest() { # $1 = stack name
+  local out
+  out="$("$FM_DOCKER" exec -w /root/archi "data-manager-$1" python -c "$FM_CATEGORY_MAP_PY" 2>/dev/null | tr -d '\n' || true)"
+  [ -n "$out" ] || out="<unavailable: could not read the category map from data-manager-$1>"
+  printf '%s\n' "$out"
+}
+
+# Every sweep step runs this first: the locked code tree with no tracked change, every
+# locked file unchanged, and — after the first run (pass --stamped) — the stack stamped
+# with this lock.
+fm_require_sweep_lock() { # $1 = stack name, [$2 = --stamped]
+  local lock have want dirty
+  lock="$(fm_sweep_lock_file "$1")"
+  [ -f "$lock" ] || fm_die "no sweep lock at $lock — run qa_prepare.sh --sweep and lock_campaign.sh --sweep first"
+  want="$(fm_sweep_tools verify --lock "$lock" --field code_tree)"
+  have="$(fm_code_tree)"
+  [ "$have" = "$want" ] || fm_die "the checkout's runtime trees ($have) are not the locked sweep code ($want)"
+  dirty="$("$FM_GIT" status --porcelain --untracked-files=no -- src scripts deploy pyproject.toml requirements 2>/dev/null || true)"
+  [ -z "$dirty" ] || fm_die "uncommitted source changes would run unlocked code:
+$dirty"
+  fm_sweep_tools verify --lock "$lock" || fm_die "the sweep's locked inputs changed (see above)"
+  if [ "${2:-}" = --stamped ]; then
+    local f; f="$(fm_stack_lock_file "$1")"
+    [ -f "$f" ] || fm_die "stack $1 carries no sweep lock stamp ($f) — it was not deployed by run_arm.sh --sweep"
+    [ "$(tr -d '[:space:]' < "$f")" = "$(fm_sha256 "$lock")" ] || fm_die "stack $1 was deployed under a different lock than $lock"
+  fi
+}
+
+# A secret-free agent config for `archi eval qa` from a stack's rendered config, with
+# services.chat_app.{agent_class,default_provider,default_model} overwritten from
+# services.benchmarking (an evaluate stack renders the template defaults into chat_app, and
+# the QA CLI reads chat_app) and the evaluations block dropped.
+fm_write_agent_config() { # $1 = rendered config.yaml, $2 = output path
+  FM_RENDERED="$1" FM_AGENT_CFG="$2" "$FM_PYTHON" - <<'EOF'
+import os, yaml
+c = yaml.safe_load(open(os.environ["FM_RENDERED"]))
+b = c["services"]["benchmarking"]; ca = c["services"].setdefault("chat_app", {})
+ca["agent_class"] = b["agent_class"]
+ca["default_provider"] = b["provider"]
+ca["default_model"] = b["model"]
+# the console refuses a config that carries its own evaluations block; the CLI does not
+# need it either
+ca.pop("evaluations", None)
+with open(os.environ["FM_AGENT_CFG"], "w") as f:
+    yaml.safe_dump(c, f, sort_keys=False)
+print(f"agent config: {ca['agent_class']} / {ca['default_provider']} / {ca['default_model']}")
+EOF
+}
+
+# QA readings file for compare_runs' join rule (#538 rule 1), written for every QA run.
+fm_write_map_readings() { # $1 = QA output dir, $2 = start digest, $3 = end digest
+  FM_DIR="$1" FM_START="$2" FM_END="$3" "$FM_PYTHON" -c '
+import json, os
+with open(os.path.join(os.environ["FM_DIR"], "category_map_readings.json"), "w") as f:
+    json.dump({"start": os.environ["FM_START"], "end": os.environ["FM_END"]}, f, indent=1)'
+}

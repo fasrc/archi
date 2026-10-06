@@ -26,6 +26,7 @@ from src.utils.benchmark_resilience import (
     scorable_items,
     source_hits,
 )
+from src.utils.benchmark_schema import RAGAS_METRIC_NAMES
 
 # --- classify_metadata: degraded detection (F3 / PR#91 F2) ------------------
 
@@ -278,13 +279,7 @@ def test_source_hits_strict():
 
 def test_build_ragas_aggregates_nan_when_none():
     aggs = build_ragas_aggregates(None)
-    assert set(aggs) == {
-        "aggregate_answer_relevancy",
-        "aggregate_faithfulness",
-        "aggregate_context_precision",
-        "aggregate_context_recall",
-        "aggregate_answer_correctness",
-    }
+    assert set(aggs) == {f"aggregate_{m}" for m in RAGAS_METRIC_NAMES}
     assert all(isinstance(v, float) and math.isnan(v) for v in aggs.values())
 
 

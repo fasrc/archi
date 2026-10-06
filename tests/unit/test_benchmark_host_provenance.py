@@ -100,7 +100,9 @@ def _sb_isolate(monkeypatch, tmp_path):
         ResultHandler, "get_corpus_snapshot_id", staticmethod(lambda: "snap")
     )
     monkeypatch.setattr(
-        ResultHandler, "get_corpus_fingerprint", staticmethod(lambda: "sha256:corpus")
+        ResultHandler,
+        "get_corpus_fingerprint",
+        staticmethod(lambda _config: "sha256:corpus"),
     )
     package = tmp_path / "pkg"
     package.mkdir()

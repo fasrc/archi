@@ -154,6 +154,17 @@ services:
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
       CONFIG_PATH: /rendered-config/config.yaml
+      # Config provenance, exported by ensure_config (deploy/scripts/lib.sh) and
+      # passed through from the deploy environment so config_seed can persist
+      # which config actually deployed. CONFIG_REF is otherwise a shell variable
+      # that never enters a container. Empty when `archi create` is run by hand
+      # rather than through the deploy scripts; the record then stores NULLs and
+      # the status board reports provenance as unavailable.
+      ARCHI_CONFIG_REF: ${ARCHI_CONFIG_REF:-}
+      ARCHI_CONFIG_SHA: ${ARCHI_CONFIG_SHA:-}
+      ARCHI_CONFIG_HEAD: ${ARCHI_CONFIG_HEAD:-}
+      ARCHI_CONFIG_PIN_MATCHED: ${ARCHI_CONFIG_PIN_MATCHED:-}
+      ARCHI_CONFIG_DIRTY_PATHS: ${ARCHI_CONFIG_DIRTY_PATHS:-}
     env_file:
       - .env
     volumes:
@@ -258,7 +269,7 @@ services:
     volumes:
       - {{ data_manager_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
-      {% if evaluation_mcp_configured | default(false) -%}
+      {% if evaluation_mcp_configured | default(false) or evaluation_agent_config_staged | default(false) -%}
       - ./evaluation_config:/root/archi/evaluation_config:ro
       {% endif -%}
       - ./data/prompts:/root/archi/data/prompts:ro
@@ -772,6 +783,7 @@ services:
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
       {% endfor %}
+      - ./configs:/root/archi/configs:ro
       {% if gpu_ids -%}
       - archi-models:/root/models/
       {%- endif %}

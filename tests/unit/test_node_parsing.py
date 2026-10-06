@@ -618,13 +618,13 @@ def test_cap_section_falls_back_to_join_when_a_piece_is_not_in_the_source():
 
 
 def test_clamped_overlap_boundary_values():
-    """The clamp preserves legal overlaps exactly (upstream raises only on >)."""
+    """The clamp is at most half the chunk size (design D2)."""
     from src.data_manager.vectorstore.node_parsing import _clamped_overlap
 
     assert _clamped_overlap(0) == 0
-    assert _clamped_overlap(1) == 1
-    assert _clamped_overlap(20) == 20  # unchanged topology at the boundary
-    assert _clamped_overlap(21) == 20
+    assert _clamped_overlap(1) == 0
+    assert _clamped_overlap(20) == 10
+    assert _clamped_overlap(21) == 10
     assert _clamped_overlap(200) == 20
 
 
@@ -708,3 +708,73 @@ def test_resolve_effective_strategy_passes_other_strategies_through():
         resolve_effective_strategy("character", filename="guide.md", suffix="md")
         == "character"
     )
+
+
+def test_clamped_overlap_with_explicit_overlap():
+    """_clamped_overlap(chunk_size, overlap) returns max(0, min(overlap, chunk_size // 2))."""
+    from src.data_manager.vectorstore.node_parsing import _clamped_overlap
+
+    assert _clamped_overlap(512, 500) == 256
+    assert _clamped_overlap(512, 0) == 0
+    assert _clamped_overlap(16, 20) == 8
+    assert _clamped_overlap(512) == 20
+
+
+def test_markdown_strategy_builds_child_splitter_with_clamped_overlap(monkeypatch):
+    """markdown path: child SentenceSplitter gets chunk_overlap=min(overlap, child//2)."""
+    import src.data_manager.vectorstore.node_parsing as np_mod
+
+    calls = []
+    _Real = np_mod.SentenceSplitter
+
+    class _Recorder(_Real):
+        def __init__(self, **kwargs):
+            calls.append(dict(kwargs))
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(np_mod, "SentenceSplitter", _Recorder)
+
+    doc = Document(page_content=_sentences(40), metadata={})
+    build_hierarchical_nodes(
+        doc,
+        strategy=MARKDOWN_STRATEGY,
+        parent_chunk_size=2048,
+        child_chunk_size=512,
+        child_chunk_overlap=500,
+    )
+
+    assert calls[0]["chunk_overlap"] == 0
+    assert calls[1]["chunk_overlap"] == 256
+
+
+@pytest.mark.parametrize(
+    "child_chunk_overlap,expected_overlap",
+    [(0, 0), (500, 256)],
+)
+def test_sentence_strategy_passes_clamped_overlap_to_hnp(
+    monkeypatch, child_chunk_overlap, expected_overlap
+):
+    """sentence path: HierarchicalNodeParser.from_defaults receives the clamped overlap."""
+    import src.data_manager.vectorstore.node_parsing as np_mod
+
+    captured = {}
+    _RealHNP = np_mod.HierarchicalNodeParser
+
+    class _Recorder:
+        @staticmethod
+        def from_defaults(**kwargs):
+            captured.update(kwargs)
+            return _RealHNP.from_defaults(**kwargs)
+
+    monkeypatch.setattr(np_mod, "HierarchicalNodeParser", _Recorder)
+
+    doc = Document(page_content=_sentences(40), metadata={})
+    build_hierarchical_nodes(
+        doc,
+        strategy=SENTENCE_STRATEGY,
+        parent_chunk_size=512,
+        child_chunk_size=512,
+        child_chunk_overlap=child_chunk_overlap,
+    )
+
+    assert captured["chunk_overlap"] == expected_overlap

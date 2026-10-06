@@ -130,16 +130,41 @@ GPU_IDS="${GPU_IDS-}"
 # by ensure_config on every deploy at a pinned, content-addressed ref: CONFIG_REF
 # names the tag, CONFIG_SHA is the commit it must resolve to (a re-pointed tag
 # aborts the deploy instead of being believed).
+# Each deployment has its own row in the table below, so a pin bump for one host
+# never moves another: bumping `claw` for a benchmark leaves the GPU host (`dev`)
+# on its pin. The table is tracked on purpose — host.env refuses the pin keys,
+# because a pin in a git-excluded file is invisible to review.
 # Pin bump procedure: create a NEW annotated tag in fasrc/archi-config (never
 # move an existing one — `git fetch --tags` refuses to clobber a moved tag), then
-# update CONFIG_REF + CONFIG_SHA here in the same PR. After bumping, deploy with
-# a clean config/ tree (or CONFIG_FORCE=1) so the checkout actually converges.
-# One-off override: CONFIG_REF=... CONFIG_SHA=... ./redeploy.sh
+# update the ref + sha of the target deployment's row here in the same PR. After
+# bumping, deploy that host with a clean config/ tree (or CONFIG_FORCE=1) so the
+# checkout actually converges.
+# A name with no row gets no pin: ensure_config aborts before it provisions, but
+# sourcing does not, so status.sh and nuke.sh still work for that name.
+# One-off override (any name, row or not): CONFIG_REF=... CONFIG_SHA=... ./redeploy.sh
 # CONFIG_REPO/CONFIG_DIR are overridable so test_ensure_config.sh can run
 # against a local fixture instead of the real remote/checkout.
+# Contract pinned by test_ensure_config.sh cases 14-18.
 CONFIG_REPO="${CONFIG_REPO:-git@github.com:fasrc/archi-config.git}"
-CONFIG_REF="${CONFIG_REF:-deploy-pin-2026-09a}"
-CONFIG_SHA="${CONFIG_SHA:-94ef612413f9f8ac04cc1e60698a69e9bd7a608c}"
+case "$DEPLOYMENT" in
+  dev)  _pin_ref=deploy-pin-2026-09f; _pin_sha=5b5982c03347d83be5d4e8593dd46da3d7c340d2 ;;
+  claw) _pin_ref=deploy-pin-2026-10a; _pin_sha=969f4dcd3d0516d927bd728b7deba6150a360821 ;;
+  *)    _pin_ref=; _pin_sha= ;;
+esac
+# The environment override is a PAIR: one key alone never borrows the other from
+# the row (that mixed pin would abort later as a false "re-pointed tag?"), so
+# ensure_config refuses it by name instead.
+CONFIG_REF="${CONFIG_REF:-}"
+CONFIG_SHA="${CONFIG_SHA:-}"
+CONFIG_PIN_PARTIAL=
+if [ -z "$CONFIG_REF$CONFIG_SHA" ]; then
+  CONFIG_REF="$_pin_ref"; CONFIG_SHA="$_pin_sha"
+elif [ -z "$CONFIG_SHA" ]; then
+  CONFIG_PIN_PARTIAL=CONFIG_REF
+elif [ -z "$CONFIG_REF" ]; then
+  CONFIG_PIN_PARTIAL=CONFIG_SHA
+fi
+unset _pin_ref _pin_sha
 CONFIG_DIR="${CONFIG_DIR:-$REPO_ROOT/config}"
 
 # Resolve the secrets file: absolute path used as-is, relative path is repo-relative.
@@ -221,6 +246,12 @@ check_llm() {
 # bind-mounted rw) — config/agents/ is the config-repo copy that OTHER hosts
 # bind-mount live (issue #99's capture); it is not consumed by this deployment.
 ensure_config() {
+  if [ -n "$CONFIG_PIN_PARTIAL" ]; then
+    die "config pin override sets only $CONFIG_PIN_PARTIAL: pass CONFIG_REF and CONFIG_SHA together, or neither to use the '$DEPLOYMENT' row"
+  fi
+  if [ -z "$CONFIG_REF" ] || [ -z "$CONFIG_SHA" ]; then
+    die "no config pin for deployment '$DEPLOYMENT': add its row to the pin table in deploy/scripts/lib.sh, or pass CONFIG_REF=... CONFIG_SHA=... for a one-off"
+  fi
   if [ ! -e "$CONFIG_DIR/.git" ]; then
     log "config/ absent — cloning $CONFIG_REPO…"
     git clone --quiet "$CONFIG_REPO" "$CONFIG_DIR" \
@@ -296,6 +327,25 @@ ensure_config() {
   local match=no
   [ "$head" = "$CONFIG_SHA" ] && match=yes
   log "config provenance: HEAD=$head pin=$CONFIG_REF@$CONFIG_SHA match=$match"
+
+  # Export the same provenance so config_seed can persist it and the status
+  # board can show which config is actually deployed. Logging alone leaves these
+  # values invisible to the running application: CONFIG_REF is a shell variable
+  # and never otherwise enters a container.
+  #
+  # The dirty listing is RE-DERIVED here and excludes untracked entries (`??`).
+  # Untracked files are not a live edit — the deploy converges to the pin around
+  # them (see the dirt table in README.md) — and the pre-branch `tracked_dirty`
+  # can be stale, because CONFIG_FORCE=1 stashes edits above that are therefore
+  # no longer part of the deployed config.
+  local deployed_tracked_dirty
+  deployed_tracked_dirty="$(git -C "$CONFIG_DIR" status --porcelain \
+    | grep -v '^??' | grep -v '^$' || true)"
+  export ARCHI_CONFIG_REF="$CONFIG_REF"
+  export ARCHI_CONFIG_SHA="$CONFIG_SHA"
+  export ARCHI_CONFIG_HEAD="$head"
+  export ARCHI_CONFIG_PIN_MATCHED="$match"
+  export ARCHI_CONFIG_DIRTY_PATHS="$deployed_tracked_dirty"
   if [ -n "$stashed" ]; then
     log "config provenance: stashed pre-deploy edits (NOT in the deployed config):"
     printf '%s\n' "$stashed"
@@ -326,6 +376,10 @@ archi_deploy() {
   check_llm
   cd "$REPO_ROOT"
   log "Deploying (hostmode, --force; data volumes preserved)…"
+  # Record the effective config path. host.env is git-excluded, so after the fact
+  # this log is the only artifact that says which file a deploy actually rendered
+  # — README.md points operators here. Pinned by test_host_env.sh 24-25.
+  log "config: deploying $CONFIG"
   local -a gpu_flag=()
   [ -n "$GPU_IDS" ] && gpu_flag=(--gpu-ids "$GPU_IDS")
   archi create \

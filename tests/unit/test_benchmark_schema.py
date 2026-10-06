@@ -22,15 +22,20 @@ import json
 import math
 
 from src.utils.benchmark_schema import (
+    RAGAS_DEFAULT_MAX_WORKERS,
+    RAGAS_DEFAULT_TIMEOUT,
     bank_status_counts,
     json_safe,
     metric_required_column,
     normalize_bank,
     normalize_record,
+    ragas_effective_settings,
+    ragas_run_config_kwargs,
     required_fields_for_modes,
     row_is_eligible,
     row_status,
     score_metrics_per_eligibility,
+    with_effective_ragas_settings,
 )
 
 # --- normalize_record: legacy -> modern dialect -----------------------------
@@ -594,3 +599,249 @@ def test_answer_correctness_excludes_reference_less_rows():
     assert row_is_eligible(draft, "answer_correctness") is False
     # The answer-only metrics are unaffected by a missing reference.
     assert row_is_eligible(draft, "answer_relevancy") is True
+
+
+# --- RunConfig kwargs -------------------------------------------------------
+#
+# The judge is the benchmark's only external paid dependency and its sole
+# source of lost scores. ragas applies ``timeout`` with ``asyncio.wait_for``
+# AROUND the tenacity retry chain (``metrics/base.py::single_turn_ascore``), so
+# one budget covers every retry and its backoff: raising ``max_retries`` cannot
+# recover a timed-out row, while ``max_workers`` governs how hard the judge is
+# hit concurrently and so how often it throttles into that backoff. Both need
+# to be operator-settable; ``max_workers`` was not reaching ``RunConfig`` at
+# all, leaving ragas' default of 16 in force unannounced.
+
+
+def test_run_config_kwargs_defaults_when_settings_are_absent():
+    kwargs = ragas_run_config_kwargs({})
+
+    assert kwargs["timeout"] == RAGAS_DEFAULT_TIMEOUT
+    assert kwargs["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS
+    assert kwargs["log_tenacity"] is False
+
+
+def test_run_config_kwargs_honours_explicit_settings():
+    kwargs = ragas_run_config_kwargs({"timeout": 600, "max_workers": 6})
+
+    assert kwargs["timeout"] == 600
+    assert kwargs["max_workers"] == 6
+
+
+def test_run_config_kwargs_enables_tenacity_logging_at_verbosity_4():
+    assert ragas_run_config_kwargs({}, verbosity=3)["log_tenacity"] is False
+    assert ragas_run_config_kwargs({}, verbosity=4)["log_tenacity"] is True
+
+
+def test_run_config_kwargs_rejects_non_positive_and_non_integer_values():
+    """A bad value falls back to the default rather than reaching RunConfig.
+
+    ``max_workers=0`` stalls the executor and a negative timeout makes every row
+    time out instantly; both are worse failures than ignoring the operator. A
+    bool is rejected too: ``True`` is an ``int`` in Python and would otherwise
+    silently become one worker.
+
+    The two knobs do NOT share a contract. ``timeout`` is a duration handed to
+    ``asyncio.wait_for``, so any positive finite number is valid; ``max_workers``
+    is a count, so it must be a positive int. Rejecting a float for both would
+    have narrowed a ``timeout: 300.0`` that worked before this validation
+    existed -- see ``test_a_float_timeout_is_still_accepted``.
+    """
+    for bad in (0, -1, "many", None, True):
+        kwargs = ragas_run_config_kwargs({"timeout": bad, "max_workers": bad})
+        assert kwargs["timeout"] == RAGAS_DEFAULT_TIMEOUT, bad
+        assert kwargs["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS, bad
+
+    # A fractional worker count is meaningless; a fractional duration is not.
+    split = ragas_run_config_kwargs({"timeout": 2.5, "max_workers": 2.5})
+    assert split["timeout"] == 2.5
+    assert split["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS
+
+
+def test_effective_settings_report_what_the_run_will_use():
+    """Comparing CONFIGURED values misses the two cases that decide comparability.
+
+    An arm that omits ``max_workers`` and an arm that sets 16 explicitly are the
+    same run and must compare equal; an arm that omits it and an arm that sets 4
+    are different runs and must not. Only the effective value says so.
+    """
+    assert ragas_effective_settings({})["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS
+    assert ragas_effective_settings(
+        {"max_workers": RAGAS_DEFAULT_MAX_WORKERS}
+    ) == ragas_effective_settings(
+        {}
+    ), "an explicit default and an absent key describe the same run"
+    assert ragas_effective_settings({"max_workers": 4}) != ragas_effective_settings(
+        {}
+    ), "4 concurrent judge calls is not the same run as 16"
+    assert ragas_effective_settings({"timeout": 600})["timeout"] == 600
+    # An invalid value reports the default it will actually run at, not the typo.
+    assert ragas_effective_settings({"max_workers": 0})["max_workers"] == (
+        RAGAS_DEFAULT_MAX_WORKERS
+    )
+    assert ragas_effective_settings(None)["timeout"] == RAGAS_DEFAULT_TIMEOUT
+    # The two comparison knobs only; nothing that does not affect the scores.
+    assert set(ragas_effective_settings({})) == {"timeout", "max_workers"}
+
+
+def test_a_float_timeout_is_still_accepted():
+    """``timeout`` is a duration, not a count, and a float worked before this knob.
+
+    ragas hands it to ``asyncio.wait_for``, which takes a float, and the previous
+    code passed ``ragas_settings["timeout"]`` through untouched. Validating it as
+    an ``int`` would have silently downgraded a working ``timeout: 300.0`` to the
+    default -- a narrowing introduced by the validation, not by the operator.
+    """
+    assert ragas_run_config_kwargs({"timeout": 300.0})["timeout"] == 300.0
+    assert ragas_run_config_kwargs({"timeout": 0.5})["timeout"] == 0.5
+    # A worker count has no fractional meaning and stays strict.
+    assert (
+        ragas_run_config_kwargs({"max_workers": 2.5})["max_workers"]
+        == RAGAS_DEFAULT_MAX_WORKERS
+    )
+    # Neither NaN nor infinity is a duration.
+    for bad in (float("nan"), float("inf"), -0.5, True):
+        assert (
+            ragas_run_config_kwargs({"timeout": bad})["timeout"]
+            == RAGAS_DEFAULT_TIMEOUT
+        ), bad
+
+
+def _cfg(modes=("RAGAS",), **settings):
+    return {
+        "services": {
+            "benchmarking": {
+                "modes": list(modes),
+                "mode_settings": {"ragas_settings": dict(settings)},
+            }
+        }
+    }
+
+
+def test_the_digest_basis_leaves_a_sources_only_config_alone():
+    """No judge ran, so there are no effective judge values to substitute.
+
+    A rendered configuration always carries a ``ragas_settings`` block, so its
+    presence cannot stand in for "RAGAS was a mode" -- the sibling
+    ``ragas_effective_settings`` field already gates on the mode for exactly
+    this reason. Normalizing regardless made the digest claim an identity that
+    never happened: two SOURCES-only files with ``max_workers: 0`` and
+    ``max_workers: "many"`` hashed alike on a fallback neither run performed,
+    while other unused judge values still told them apart.
+    """
+    sources_only = _cfg(modes=("SOURCES",), timeout=-1, max_workers=0)
+
+    assert with_effective_ragas_settings(sources_only) == sources_only
+    assert with_effective_ragas_settings(
+        _cfg(modes=("SOURCES",), max_workers=0)
+    ) != with_effective_ragas_settings(_cfg(modes=("SOURCES",), max_workers="many"))
+
+
+def test_the_digest_basis_records_the_modes_that_executed():
+    """The digest is the identity of what RAN, and modes are part of that.
+
+    Normalizing only the judge knobs left ``services.benchmarking.modes`` as the
+    arm's file declared them, so a SOURCES-only file executed as RAGAS in a
+    sweep carried a digest claiming SOURCES -- and two arms that executed
+    identically could still hash differently on modes neither of them ran.
+    """
+    declared_sources = _cfg(modes=("SOURCES",), timeout=600)
+    basis = with_effective_ragas_settings(declared_sources, modes_executed={"RAGAS"})
+
+    assert basis["services"]["benchmarking"]["modes"] == ["RAGAS"]
+    # The judge knobs are normalized too, because RAGAS did run.
+    assert (
+        basis["services"]["benchmarking"]["mode_settings"]["ragas_settings"][
+            "max_workers"
+        ]
+        == RAGAS_DEFAULT_MAX_WORKERS
+    )
+
+    # Two arms that executed the same modes agree, whatever their files said.
+    assert with_effective_ragas_settings(
+        _cfg(modes=("SOURCES",), timeout=600), modes_executed={"RAGAS"}
+    ) == with_effective_ragas_settings(
+        _cfg(modes=("RAGAS",), timeout=600), modes_executed={"RAGAS"}
+    )
+
+    # The selected file is still left verbatim.
+    assert declared_sources["services"]["benchmarking"]["modes"] == ["SOURCES"]
+
+
+def test_the_digest_basis_tolerates_ragas_declared_without_a_settings_block():
+    """A hand-written config may name the mode and omit the block entirely.
+
+    Nothing to normalize, and nothing to invent: injecting judge defaults here
+    would fabricate settings the file never stated. The run's own defaults are
+    reported by ``ragas_effective_settings`` instead.
+    """
+    declared = {"services": {"benchmarking": {"modes": ["RAGAS"], "mode_settings": {}}}}
+
+    assert with_effective_ragas_settings(declared) == declared
+
+
+def test_the_digest_basis_tolerates_a_malformed_benchmarking_node():
+    """A hand-written config can put anything under ``services.benchmarking``.
+
+    The digest basis is built while writing the artifact, so raising here would
+    lose a completed run's record over a config typo.
+    """
+    malformed = {"services": {"benchmarking": "not-a-mapping"}}
+
+    assert with_effective_ragas_settings(malformed) == malformed
+
+
+def test_the_digest_basis_normalizes_the_judge_knobs():
+    """Two runs that fell back to the same defaults must hash alike.
+
+    The digest is the identity of the settings a run effectively had. Hashing
+    the file as written made that identity wrong in one direction: ``0`` and
+    ``many`` both run at 16 and carried different digests, so the artifact could
+    not answer the one question it exists to answer.
+    """
+    assert with_effective_ragas_settings(
+        _cfg(timeout=-1, max_workers=0)
+    ) == with_effective_ragas_settings(_cfg(timeout="many", max_workers="many"))
+
+    # An omitted key and an explicitly-set default describe the same run.
+    assert with_effective_ragas_settings(_cfg()) == with_effective_ragas_settings(
+        _cfg(timeout=RAGAS_DEFAULT_TIMEOUT, max_workers=RAGAS_DEFAULT_MAX_WORKERS)
+    )
+
+    # A real difference still separates them.
+    assert with_effective_ragas_settings(
+        _cfg(max_workers=4)
+    ) != with_effective_ragas_settings(_cfg(max_workers=16))
+
+
+def test_the_digest_basis_is_a_copy_and_leaves_non_judge_configs_alone():
+    """The record of what was ASKED for must survive normalizing what RAN."""
+    original = _cfg(timeout=-1, max_workers=0)
+    with_effective_ragas_settings(original)
+    assert original["services"]["benchmarking"]["mode_settings"]["ragas_settings"] == {
+        "timeout": -1,
+        "max_workers": 0,
+    }, "the caller's config must not be mutated"
+
+    # No ragas block means no judge ran; inventing judge defaults would record
+    # settings a SOURCES-only run never had.
+    sources_only = {
+        "services": {"benchmarking": {"mode_settings": {"sources_settings": {}}}}
+    }
+    assert with_effective_ragas_settings(sources_only) == sources_only
+
+    # Shapes that are not a config at all pass through rather than raising.
+    assert with_effective_ragas_settings(None) is None
+    assert with_effective_ragas_settings({}) == {}
+    assert with_effective_ragas_settings({"services": None}) == {"services": None}
+    # mode_settings present but not a mapping: nothing to normalize, copy as is.
+    malformed = {"services": {"benchmarking": {"mode_settings": "unset"}}}
+    assert with_effective_ragas_settings(malformed) == malformed
+
+
+def test_run_config_kwargs_tolerates_a_none_settings_block():
+    """A config rendering ``ragas_settings:`` with no body yields None."""
+    kwargs = ragas_run_config_kwargs(None)
+
+    assert kwargs["timeout"] == RAGAS_DEFAULT_TIMEOUT
+    assert kwargs["max_workers"] == RAGAS_DEFAULT_MAX_WORKERS

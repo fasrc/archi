@@ -54,7 +54,10 @@ class CERNLiteLLMProvider(BaseProvider):
         config_stream_options = self.config.extra_kwargs.get("stream_options")
         request_stream_options = kwargs.get("stream_options")
 
-        merged_stream_options: Dict[str, Any] = {"include_usage": True}
+        # ChatOpenAI streams usage by default only without a custom base_url;
+        # an explicit caller stream_usage decides include_usage.
+        stream_usage = kwargs.get("stream_usage", True)
+        merged_stream_options: Dict[str, Any] = {"include_usage": stream_usage}
         if isinstance(config_stream_options, dict):
             merged_stream_options.update(config_stream_options)
         if isinstance(request_stream_options, dict):
@@ -63,6 +66,7 @@ class CERNLiteLLMProvider(BaseProvider):
         model_kwargs: Dict[str, Any] = {
             "model": model_name,
             "streaming": True,
+            "stream_usage": stream_usage,
             **self.config.extra_kwargs,
             **kwargs,
         }

@@ -33,6 +33,13 @@ program:
   divergence is a *backfilled* artifact: an equal digest then means "these files
   recorded the same configuration file", never "these runs used the same
   settings", and the report says so.
+* **G10 — one answer path.** The arms must have been run with the same
+  answer-path settings: ``services.chat_app.context_editing`` and
+  ``services.chat_app.recursion_limit``. A mismatch refuses with exit 2. To
+  waive one setting, use ``--config-differs-by-design DOTTED.PATH`` (repeatable;
+  accepts only the two refused paths; both values are printed and the row is
+  marked ``OVERRIDDEN``). ``services.benchmarking.agent_md_file`` is reported
+  rather than refused — prompt arms vary it on purpose.
 
 Two facts about the real artifacts shape the rest of the tool.
 
@@ -52,9 +59,10 @@ that file. They are reported in their own block and excluded from the bank
 aggregates by default (Gap 3: averaging a tripwire into the score you are trying
 to move both dilutes the signal and hides the tripwire).
 
-Standard library only, plus two reuses from the project: ``normalize_bank`` for
-the anchors file (so a legacy-dialect anchors file still matches) and
-``derive_item_id`` for the optional ``archi eval qa`` join.
+Standard library only, plus three reuses from the project: ``normalize_bank`` for
+the anchors file (so a legacy-dialect anchors file still matches),
+``retrieval_identity`` for an arm that recorded none (so its config names its
+embedding model), and ``derive_item_id`` for the optional ``archi eval qa`` join.
 
 Exit codes: 0 ok, 1 usage/IO, 2 gate refusal, 3 config-divergence stop.
 """
@@ -68,7 +76,7 @@ import math
 import re
 import statistics
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -78,7 +86,23 @@ METRICS: Tuple[str, ...] = (
     "context_precision",
     "context_recall",
     "answer_correctness",
+    "factual_correctness_recall",
+    "factual_correctness_precision",
+    "noise_sensitivity",
+    "answer_accuracy",
+    "response_groundedness",
 )
+
+#: Metrics where a smaller score is better (benchmark_schema
+#: LOWER_IS_BETTER_METRICS; kept local so this module loads without src).
+LOWER_IS_BETTER = frozenset({"noise_sensitivity"})
+
+
+def worsening(metric: str, delta: float) -> float:
+    """How much worse a treatment-minus-baseline ``delta`` is: positive when the
+    metric got worse, whichever direction is better for it."""
+    return delta if metric in LOWER_IS_BETTER else -delta
+
 
 #: Fields the bank may slice by. Reported only when the field is present in
 #: every arm, because a slice that exists on one side is not a comparison.
@@ -197,6 +221,14 @@ class Arm:
     #: the artifact predates the field (unknowable, not unstable).
     corpus_unchanged: Optional[bool] = None
     host: Optional[dict] = None
+    #: The arm entry as recorded, for the category-map and prompt fields.
+    raw: dict = field(default_factory=dict)
+    #: Where the artifact lives; per-arm snapshot files sit beside it.
+    artifact_dir: Optional[Path] = None
+    #: ``services.benchmarking.name`` as recorded — a sweep arm's prompt stem.
+    name: Optional[str] = None
+    #: ``retrieval_identity`` as recorded (#570), or None when the arm has none.
+    retrieval_identity: Optional[dict] = None
 
     def value(self, question: str, metric: str) -> Any:
         return self.rows.get(question, {}).get(metric)
@@ -323,7 +355,53 @@ def build_arm(document: dict, index: int, path: Path, label: str) -> Arm:
             else (None if "corpus_unchanged_at_endpoints" not in raw else False)
         ),
         host=host,
+        raw=raw,
+        artifact_dir=Path(path).parent,
+        name=_recorded_name(raw.get("configuration")),
+        retrieval_identity=(
+            raw["retrieval_identity"]
+            if isinstance(raw.get("retrieval_identity"), dict)
+            else None
+        ),
     )
+
+
+def _recorded_name(configuration: Any) -> Any:
+    """``services.benchmarking.name``, or None when any step is not a mapping.
+
+    A non-mapping ``configuration`` must reach G10 as "not recorded" rather
+    than crash here while the arm is built.
+    """
+    name = recorded_setting(configuration, "services.benchmarking.name")
+    return None if name is _ABSENT else name
+
+
+def resolve_arm(selector: str, arms: Sequence[Arm], flag: str) -> Arm:
+    """One arm by printed label, else by recorded ``services.benchmarking.name``.
+
+    A sweep arm is known to its operator by its prompt stem, not by the
+    ``<artifact>@N`` position ``load_arms`` prints, so both are accepted; a name
+    shared by two arms (two replicates) must be given as a label instead.
+    """
+    by_label = [arm for arm in arms if arm.label == selector]
+    if by_label:
+        return by_label[0]
+    by_name = [arm for arm in arms if arm.name == selector]
+    if len(by_name) == 1:
+        return by_name[0]
+    candidates = ", ".join(f"{arm.label} ({arm.name})" for arm in arms)
+    problem = "matches more than one arm" if by_name else "matches no arm"
+    raise CompareError(
+        f"{flag} {selector!r} {problem}; arms are {candidates}", EXIT_USAGE
+    )
+
+
+def _category_modules():
+    """The slice and paired-test modules, importable from a plain script run."""
+    _project_root_on_path()
+    from scripts.benchmarking import category_slice, paired_tests
+
+    return category_slice, paired_tests
 
 
 def load_arms(specs: Sequence[str]) -> List[Arm]:
@@ -508,6 +586,43 @@ def host_mismatch_note(arms: Sequence[Arm]) -> Optional[str]:
     return None
 
 
+def fingerprint_version(fingerprint: Optional[str]) -> Optional[str]:
+    """The digest's version prefix (``sha256``, ``sha256/v2``), or None."""
+    if fingerprint is None or ":" not in fingerprint:
+        return None
+    return fingerprint.partition(":")[0]
+
+
+def fingerprint_version_gate(
+    fingerprints: Dict[str, Optional[str]], scope: str
+) -> None:
+    """Refuse a mix of fingerprint versions before any corpus check (#570).
+
+    A digest of one version never equals a digest of another, whatever the
+    corpus, so G3 would report a v1/v2 mix as "different corpora" and
+    ``--corpus-differs-by-design`` would wave a stale pin through. No flag
+    admits it.
+    """
+    versions = {
+        name: version
+        for name, value in fingerprints.items()
+        if (version := fingerprint_version(value)) is not None
+    }
+    if len(set(versions.values())) > 1:
+        shown = ", ".join(f"{name}={version}" for name, version in versions.items())
+        raise CompareError(
+            f"fingerprint versions differ for {scope} ({shown}); re-pin and "
+            "re-run. Digests of different versions never match, so this is a "
+            "stale pin rather than a corpus difference, and "
+            "--corpus-differs-by-design does not admit it.",
+            EXIT_GATE,
+        )
+
+
+def _recorded_collection(arm: Arm) -> Optional[str]:
+    return _recorded((arm.retrieval_identity or {}).get("collection"))
+
+
 def corpus_gate(arms: Sequence[Arm], allow_differs: bool) -> dict:
     """G3: both arms must have run against one pinned corpus."""
     values = {arm.label: arm.corpus_fingerprint for arm in arms}
@@ -543,6 +658,12 @@ def corpus_gate(arms: Sequence[Arm], allow_differs: bool) -> dict:
         )
     else:
         reason = f"the arms ran against different corpora: {shown}"
+        collections = {arm.label: _recorded_collection(arm) for arm in arms}
+        if len({value for value in collections.values() if value}) > 1:
+            reason += "; they searched different collections: " + ", ".join(
+                f"{label}={value or 'not recorded'}"
+                for label, value in collections.items()
+            )
     if not allow_differs:
         raise CompareError(
             f"G3 refused: {reason}. Retrieval metrics move for free across "
@@ -564,6 +685,101 @@ def corpus_gate(arms: Sequence[Arm], allow_differs: bool) -> dict:
             "pre-registration."
         ),
     }
+
+
+def _embedding_model(arm: Arm) -> Optional[str]:
+    """The model the arm searched with: recorded, else derived from its config.
+
+    An arm without ``retrieval_identity`` still records the configuration it
+    ran, and the shared helper derives the same model from it the harness
+    would have recorded.
+    """
+    if arm.retrieval_identity is not None:
+        return _recorded(arm.retrieval_identity.get("embedding_model"))
+    for key in ("running_configuration", "configuration"):
+        config = arm.raw.get(key)
+        if isinstance(config, dict):
+            identity = _utils_function("benchmark_provenance", "retrieval_identity")
+            return identity(config).embedding_model
+    return None
+
+
+def _embedding_verified(arm: Arm) -> bool:
+    """Whether every chunk the arm searched carries the arm's model tag."""
+    identity = arm.retrieval_identity or {}
+    untagged = identity.get("untagged_chunk_count")
+    return (
+        identity.get("embedding_model_source") == "chunks"
+        and isinstance(untagged, int)
+        and not isinstance(untagged, bool)
+        and untagged == 0
+    )
+
+
+def _embedding_provenance(arm: Arm) -> str:
+    identity = arm.retrieval_identity
+    if identity is None:
+        return f"{arm.label} (no retrieval_identity)"
+    return (
+        f"{arm.label} (embedding_model_source="
+        f"{identity.get('embedding_model_source')}, untagged_chunk_count="
+        f"{identity.get('untagged_chunk_count')})"
+    )
+
+
+def embedding_gate(baseline: Arm, arms: Sequence[Arm]) -> dict:
+    """Name ``embedding_model`` as the varied factor, or refuse (#570, D7).
+
+    The fingerprint is model-neutral, so equal fingerprints prove the text and
+    the collection were the same, and only the identities show which model
+    served each arm. That proof needs verified provenance on both arms: a run
+    over untagged chunks can have been served by an older model whatever its
+    config says, so an embedding difference with unverified provenance is
+    refused and no flag admits it. An unrecorded identity with no embedding
+    difference is unknowable, not unequal, and is noted.
+    """
+    varied: List[str] = []
+    unverified: List[Arm] = []
+    notes = [
+        f"Note: the retrieval_identity of `{arm.label}` is not recorded, so the "
+        "report cannot show which collection it searched or which model "
+        "embedded its chunks."
+        for arm in arms
+        if arm.retrieval_identity is None
+    ]
+    base_model = _embedding_model(baseline)
+    for arm in arms:
+        model = _embedding_model(arm) if arm is not baseline else None
+        if base_model is None or model is None or model == base_model:
+            continue
+        bad = [one for one in (baseline, arm) if not _embedding_verified(one)]
+        if bad:
+            unverified += [one for one in bad if one not in unverified]
+            continue
+        if (
+            baseline.corpus_fingerprint is not None
+            and baseline.corpus_fingerprint == arm.corpus_fingerprint
+        ):
+            varied.append(
+                f"`embedding_model` `{base_model}` → `{model}` "
+                f"(`{baseline.label}` → `{arm.label}`)"
+            )
+    if unverified:
+        models = ", ".join(
+            f"{arm.label}={_embedding_model(arm) or 'not recorded'}" for arm in arms
+        )
+        raise CompareError(
+            "embedding provenance unverified for "
+            + ", ".join(_embedding_provenance(arm) for arm in unverified)
+            + f": the arms differ in embedding_model ({models}). Only an arm "
+            "whose every chunk carries its model tag (embedding_model_source="
+            "chunks, untagged_chunk_count=0) shows which model served it; two "
+            "runs over an untagged collection can both have been served by one "
+            "older model, whatever their configs say. Re-ingest and re-run; no "
+            "flag admits this.",
+            EXIT_GATE,
+        )
+    return {"varied_factor": varied, "identity_notes": notes}
 
 
 def divergence_gate(arms: Sequence[Arm], ignore: bool) -> dict:
@@ -616,6 +832,125 @@ def divergence_gate(arms: Sequence[Arm], ignore: bool) -> dict:
         "name": "config divergence",
         "status": "pass",
         "detail": "divergence_from_selected_file is empty for every arm",
+    }
+
+
+# --- G10: the answer-path gate -----------------------------------------------
+
+ANSWER_PATH_REFUSED = (
+    "services.chat_app.context_editing",
+    "services.chat_app.recursion_limit",
+)
+ANSWER_PATH_REPORTED = ("services.benchmarking.agent_md_file",)
+
+_ABSENT = object()
+
+
+def recorded_setting(configuration: Any, path: str) -> Any:
+    """Walk a dotted path through a mapping; return _ABSENT for any missing step."""
+    if not isinstance(configuration, dict):
+        return _ABSENT
+    node: Any = configuration
+    for key in path.split("."):
+        if not isinstance(node, dict) or key not in node:
+            return _ABSENT
+        node = node[key]
+    return node
+
+
+def _show_setting(value: Any) -> str:
+    """Render a setting value for the refusal message and gate row."""
+    if value is _ABSENT:
+        return "absent"
+    if value is None:
+        return "null"
+    return json.dumps(value, sort_keys=True)
+
+
+def validate_answer_path_waivers(allow_differs: Sequence[str]) -> None:
+    """Refuse a --config-differs-by-design value that names no refusable path."""
+    accepted = ", ".join(ANSWER_PATH_REFUSED)
+    for name in allow_differs:
+        if name not in ANSWER_PATH_REFUSED:
+            raise CompareError(
+                f"G10: {name!r} is not a refusable answer-path setting. "
+                f"Accepted paths for --config-differs-by-design: {accepted}",
+                EXIT_USAGE,
+            )
+
+
+def answer_path_gate(arms: Sequence[Arm], allow_differs: Sequence[str] = ()) -> dict:
+    """G10: all arms must record identical answer-path configuration settings."""
+    validate_answer_path_waivers(allow_differs)
+
+    unrecorded = [
+        arm.label for arm in arms if not isinstance(arm.raw.get("configuration"), dict)
+    ]
+
+    refusing: List[str] = []
+    named_differing: List[str] = []
+    detail_parts: List[str] = []
+    not_refused: List[str] = []
+
+    for path in ANSWER_PATH_REFUSED:
+        rendered: Dict[str, str] = {}
+        for arm in arms:
+            cfg = arm.raw.get("configuration")
+            if not isinstance(cfg, dict):
+                rendered[arm.label] = "not recorded"
+            else:
+                rendered[arm.label] = _show_setting(recorded_setting(cfg, path))
+        shown = ", ".join(f"{label}={v}" for label, v in rendered.items())
+        detail_parts.append(f"{path}: {shown}")
+        if len(set(rendered.values())) > 1 or unrecorded:
+            if path in allow_differs:
+                named_differing.append(path)
+                not_refused.append(f"{path}: {shown} (waived by design)")
+            else:
+                refusing.append(f"{path}: {shown}")
+
+    for path in ANSWER_PATH_REPORTED:
+        rendered_r: Dict[str, str] = {}
+        for arm in arms:
+            cfg = arm.raw.get("configuration")
+            if not isinstance(cfg, dict):
+                rendered_r[arm.label] = "not recorded"
+            else:
+                rendered_r[arm.label] = _show_setting(recorded_setting(cfg, path))
+        if len(set(rendered_r.values())) > 1:
+            shown_r = ", ".join(f"{label}={v}" for label, v in rendered_r.items())
+            detail_parts.append(f"{path} differs (reported, not refused): {shown_r}")
+            not_refused.append(f"{path}: {shown_r} (reported, not refused)")
+
+    if refusing:
+        diffs = "\n".join(refusing + not_refused)
+        raise CompareError(
+            f"G10 refused: the arms recorded different answer-path settings:\n"
+            f"{diffs}\n"
+            "The context bound and the recursion limit decide which questions the "
+            "agent can finish, so the delta would measure the configuration rather "
+            "than the system under test. Re-run with one answer-path configuration, "
+            "or pass --config-differs-by-design <path> if the difference is the "
+            "treatment.",
+            EXIT_GATE,
+        )
+
+    if named_differing:
+        paths_str = ", ".join(
+            f"--config-differs-by-design {p}" for p in named_differing
+        )
+        return {
+            "id": "G10",
+            "name": "one answer path",
+            "status": f"OVERRIDDEN ({paths_str})",
+            "detail": "; ".join(detail_parts),
+        }
+
+    return {
+        "id": "G10",
+        "name": "one answer path",
+        "status": "pass",
+        "detail": "; ".join(detail_parts),
     }
 
 
@@ -826,6 +1161,9 @@ def check_noise_replicates(
             EXIT_USAGE,
         )
     scope = list(replicates) + ([baseline] if baseline is not None else [])
+    fingerprint_version_gate(
+        {arm.source: arm.corpus_fingerprint for arm in scope}, "the noise replicates"
+    )
     unstable = [arm.source for arm in scope if arm.corpus_unchanged is False]
     if unstable and not allow_corpus_differs:
         raise CompareError(
@@ -1166,35 +1504,39 @@ def _project_root_on_path() -> None:
         sys.path.insert(0, str(REPO_ROOT))
 
 
-def _normalize_bank():
-    """The harness's own bank normalizer, without the package side effects.
+def _utils_function(module_name: str, name: str) -> Any:
+    """A function from a pure-stdlib ``src/utils`` file, without the package
+    side effects.
 
     ``src/utils/__init__.py`` imports the config service, which imports
-    ``psycopg2`` — so the ordinary ``from src.utils.benchmark_schema import ...``
+    ``psycopg2`` — so the ordinary ``from src.utils.<module> import ...``
     needs a database driver on a host that is only reading finished artifacts.
-    ``benchmark_schema.py`` is itself pure stdlib, so it is loaded straight from
-    its own file when the package import is unavailable. Same file, same
-    function: this is not a copy of the dialect rules.
+    ``benchmark_schema.py`` and ``benchmark_provenance.py`` are themselves pure
+    stdlib at import, so the file is loaded straight from disk when the package
+    import is unavailable. Same file, same function: this is not a copy.
     """
     _project_root_on_path()
     try:
-        from src.utils.benchmark_schema import normalize_bank
-
-        return normalize_bank
+        return getattr(importlib.import_module(f"src.utils.{module_name}"), name)
     except ImportError:
         pass
-    source = REPO_ROOT / "src" / "utils" / "benchmark_schema.py"
-    spec = importlib.util.spec_from_file_location("archi_benchmark_schema", source)
+    source = REPO_ROOT / "src" / "utils" / f"{module_name}.py"
+    spec = importlib.util.spec_from_file_location(f"archi_{module_name}", source)
     if spec is None or spec.loader is None:  # pragma: no cover - unreachable
-        raise CompareError(f"cannot load the bank normalizer from {source}", EXIT_USAGE)
+        raise CompareError(f"cannot load {name} from {source}", EXIT_USAGE)
     module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
     except Exception as exc:  # pragma: no cover - environment, not logic
         raise CompareError(
-            f"cannot load the bank normalizer from {source}: {exc}", EXIT_USAGE
+            f"cannot load {name} from {source}: {exc}", EXIT_USAGE
         ) from None
-    return module.normalize_bank
+    return getattr(module, name)
+
+
+def _normalize_bank():
+    """The harness's own bank normalizer (see ``_utils_function``)."""
+    return _utils_function("benchmark_schema", "normalize_bank")
 
 
 def anchor_questions(path: str, *, required: bool = True) -> Dict[str, dict]:
@@ -1321,13 +1663,13 @@ def anchor_block(
                         continue
                     delta = value - float(baseline.value(question, metric))
                     deltas[metric] = delta
-                    if anchor_type != "easy_retrieve" or delta >= 0:
+                    if anchor_type != "easy_retrieve" or worsening(metric, delta) <= 0:
                         continue
                     sigma = sigmas.get(metric)
                     threshold = (
                         sigma if sigma is not None else ANCHOR_DROP_WITHOUT_SIGMA
                     )
-                    if -delta > threshold:
+                    if worsening(metric, delta) > threshold:
                         alarms.append(metric)
                         thresholds[metric] = threshold
             arm_entry = {
@@ -1598,9 +1940,20 @@ def load_qa_run(directory: str) -> dict:
         if isinstance(item, dict) and isinstance(item.get("item_id"), str)
     }
     durations: Dict[str, List[float]] = {}
-    for row in _read_jsonl(base / "answers.jsonl"):
+    answers = _read_jsonl(base / "answers.jsonl")
+    for row in answers:
         if isinstance(row.get("item_id"), str) and is_finite(row.get("duration_ms")):
             durations.setdefault(row["item_id"], []).append(float(row["duration_ms"]))
+    # Written by `qa_arm.sh --sweep` around the run (#538 rule 1); absent for a
+    # QA run that predates it, which the join rule refuses for a digest-bearing arm.
+    readings_path = base / "category_map_readings.json"
+    try:
+        readings = (
+            json.loads(readings_path.read_text()) if readings_path.exists() else None
+        )
+    except (OSError, ValueError) as exc:
+        raise CompareError(f"cannot read {readings_path}: {exc}", EXIT_USAGE) from None
+    provenance = summary.get("provenance") or {}
     evaluations: Dict[str, List[dict]] = {}
     for row in _read_jsonl(base / "evaluation_results.jsonl"):
         if isinstance(row.get("item_id"), str):
@@ -1615,7 +1968,51 @@ def load_qa_run(directory: str) -> dict:
         "items": items,
         "durations": durations,
         "evaluations": evaluations,
+        "answers": answers,
+        "category_map_readings": readings,
+        "agent_spec_sha256": provenance.get("agent_spec_sha256"),
+        # The corpus readings that bracket the QA run's answering phase (#570);
+        # absent for a run that predates them, null for a run with no search.
+        "corpus": {
+            key: provenance.get(key)
+            for key in (
+                "corpus_fingerprint_before",
+                "corpus_fingerprint",
+                "corpus_unchanged_at_endpoints",
+            )
+        },
     }
+
+
+def qa_corpus_reason(arm: Arm, qa_run: dict) -> Optional[str]:
+    """Why a QA run cannot join *arm* on corpus grounds, or ``None``.
+
+    Its pass rates feed G8, so its answers must come from the corpus the arm
+    was scored on. A run that recorded no reading (it predates the readings, or
+    its agent had no search tool) is unknowable, not unequal, and joins.
+    """
+    corpus = qa_run.get("corpus") or {}
+    before = corpus.get("corpus_fingerprint_before")
+    after = corpus.get("corpus_fingerprint")
+    if before is None and after is None:
+        return None
+    if not _recorded(before) or not _recorded(after):
+        return f"its corpus reading is unavailable (before={before!r}, after={after!r})"
+    if before != after or corpus.get("corpus_unchanged_at_endpoints") is not True:
+        return f"the corpus changed while it answered ({before} -> {after})"
+    if not _recorded(arm.corpus_fingerprint):
+        return None
+    if fingerprint_version(after) != fingerprint_version(arm.corpus_fingerprint):
+        return (
+            f"the fingerprint versions differ (QA run {after}, arm "
+            f"{arm.corpus_fingerprint}); re-run it on the re-pinned stack"
+        )
+    if after != arm.corpus_fingerprint:
+        return (
+            f"it answered from a different corpus ({after}) than the arm "
+            f"({arm.corpus_fingerprint})"
+        )
+    return None
 
 
 def qa_block(
@@ -1803,6 +2200,9 @@ def render_markdown(report: dict) -> str:
         + f". Paired on {report['paired_question_count']} bank questions "
         f"(anchors {'included' if report['anchors_in_bank'] else 'excluded'})."
     )
+    for factor in report.get("varied_factor", []):
+        out.append("")
+        out.append(f"Varied factor: {factor}.")
     out.append("")
 
     out += ["## Provenance", ""]
@@ -1816,6 +2216,9 @@ def render_markdown(report: dict) -> str:
     out.append("")
     if report.get("host_mismatch"):
         out.append(report["host_mismatch"])
+        out.append("")
+    for note in report.get("identity_notes", []):
+        out.append(note)
         out.append("")
 
     out += ["## Gates", ""]
@@ -2101,7 +2504,111 @@ def render_markdown(report: dict) -> str:
                 ],
             )
         out.append("")
+    out += render_category_sections(report)
     return "\n".join(out).rstrip("\n")
+
+
+def render_category_sections(report: dict) -> List[str]:
+    """The paired-test and category-slice sections, when the report has them."""
+    out: List[str] = []
+    tests = report.get("paired_tests")
+    if tests:
+        out += [
+            "## Paired tests",
+            "",
+            "Exact two-sided McNemar per question against the baseline. b = baseline "
+            "succeeds and arm fails, c = the reverse. `source` pairs relative source "
+            "hits; `completion` pairs status `ok`. Secondaries are Holm-adjusted; "
+            "`no tool call` is descriptive only.",
+            "",
+        ]
+        rows = []
+        for entry in tests:
+            for test in PAIRED_TESTS:
+                result = entry[test]
+                role = (
+                    "primary"
+                    if entry["primary"] == test
+                    else (
+                        "secondary"
+                        if entry.get("secondary") == test
+                        else "no pre-registered primary"
+                    )
+                )
+                p_holm = (
+                    _fmt(entry.get("secondary_p_holm"))
+                    if entry.get("secondary") == test
+                    else "—"
+                )
+                rows.append(
+                    [
+                        f"{entry['label']} ({entry['name']})",
+                        test,
+                        role,
+                        str(result["pairs"]),
+                        str(result["b"]),
+                        str(result["c"]),
+                        _fmt(result["p"]),
+                        p_holm,
+                        result["direction"],
+                    ]
+                )
+        out += _table(
+            ["arm", "test", "role", "pairs", "b", "c", "p", "p (Holm)", "direction"],
+            rows,
+        )
+        out += [
+            "",
+            "no tool call (descriptive): "
+            + ", ".join(
+                f"{entry['name']} {entry['no_tool_call']}"
+                f" (baseline {entry['baseline_no_tool_call']})"
+                for entry in tests
+            ),
+            "",
+        ]
+    category = report.get("category")
+    if category:
+        out += ["## Category slice", ""]
+        for entry in category:
+            heading = f"**{entry['label']}** ({entry['name']}) — map rule `{entry['map_rule']}`"
+            if entry["slice"] is None:
+                out += [f"{heading}: no slice — {entry['no_slice_reason']}", ""]
+                continue
+            out += [heading, ""]
+            rows = [
+                [
+                    name,
+                    str(values["gold_rows"]),
+                    str(values["coverage"]),
+                    _fmt(values["source_accuracy"]),
+                    str(values["source_rows"]),
+                    _fmt(values["completion"]),
+                    ", ".join(values["underpowered"]) or "—",
+                ]
+                for name, values in entry["slice"]["categories"].items()
+            ]
+            out += _table(
+                [
+                    "category",
+                    "gold rows",
+                    "coverage",
+                    "source acc.",
+                    "source rows",
+                    "completion",
+                    "underpowered for",
+                ],
+                rows,
+            )
+            table = entry["slice"]
+            out += [
+                "",
+                f"cross-category rows: {len(table['cross_category'])}; "
+                f"uncategorized: {len(table['uncategorized'])}; "
+                f"unresolved sources: {len(table['unresolved'])}",
+                "",
+            ]
+    return out
 
 
 def g8_gate(
@@ -2155,8 +2662,7 @@ def g8_gate(
         for row in paired
         if row["mean"] is not None
         and row["sigma"] is not None
-        and row["mean"] < 0
-        and -row["mean"] > row["sigma"]
+        and worsening(row["metric"], row["mean"]) > row["sigma"]
     ]
     detail = []
     if failures:
@@ -2202,13 +2708,20 @@ def build_report(
     anchors_path: str,
     anchors_in_bank: bool,
     qa_runs: Optional[Dict[str, dict]] = None,
+    retrieval: Optional[dict] = None,
 ) -> dict:
+    retrieval = retrieval or {}
     paired = paired_block(baseline, arms, questions, sigmas)
     anchor_entries = anchor_block(baseline, arms, anchors, sigmas, qa_runs or {})
     return {
         "baseline": baseline.label,
         "arms": [
-            {"label": arm.label, "source": arm.source, "questions": len(arm.rows)}
+            {
+                "label": arm.label,
+                "name": arm.name,
+                "source": arm.source,
+                "questions": len(arm.rows),
+            }
             for arm in arms
         ],
         "counts": question_counts(baseline, anchors),
@@ -2217,6 +2730,8 @@ def build_report(
         "anchors_in_bank": anchors_in_bank,
         "provenance": provenance_rows(arms, anchors),
         "host_mismatch": host_mismatch_note(arms),
+        "varied_factor": list(retrieval.get("varied_factor", [])),
+        "identity_notes": list(retrieval.get("identity_notes", [])),
         "gates": list(gates) + [g8_gate(anchor_entries, paired, baseline.label)],
         "noise_floor": dict(sigmas),
         "paired": paired,
@@ -2277,6 +2792,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="allow unequal or unrecorded corpus fingerprints (Procedure B)",
     )
     parser.add_argument(
+        "--config-differs-by-design",
+        action="append",
+        default=[],
+        metavar="DOTTED.PATH",
+        help=(
+            "waive G10 for the named answer-path setting "
+            "(accepted: services.chat_app.context_editing, "
+            "services.chat_app.recursion_limit); "
+            "repeatable; prints both values and marks the G10 row OVERRIDDEN"
+        ),
+    )
+    parser.add_argument(
         "--ignore-config-divergence",
         action="store_true",
         help="continue despite a non-empty divergence_from_selected_file",
@@ -2298,28 +2825,193 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="LABEL=RUN_DIR",
         help="an `archi eval qa` run directory to join to an arm (repeatable)",
     )
+    parser.add_argument(
+        "--primary",
+        action="append",
+        default=[],
+        metavar="ARM=source|completion",
+        help=(
+            "the pre-registered primary paired test of a treatment arm (label or "
+            "recorded name); its other test is secondary and Holm-adjusted"
+        ),
+    )
+    parser.add_argument(
+        "--routes-on-category",
+        action="append",
+        default=[],
+        metavar="ARM",
+        help=(
+            "an arm whose mechanism reads the category map (r0a); a map mismatch "
+            "voids every comparison with it"
+        ),
+    )
     parser.add_argument("--json", metavar="PATH", help="write the report as JSON")
     return parser
 
 
+PAIRED_TESTS = ("source", "completion")
+
+
+def parse_primaries(specs: Sequence[str], arms: Sequence[Arm]) -> Dict[str, str]:
+    """``ARM=source|completion`` pairs, keyed by resolved arm label."""
+    primaries: Dict[str, str] = {}
+    for spec in specs:
+        selector, sep, test = spec.partition("=")
+        if not sep or test not in PAIRED_TESTS:
+            raise CompareError(
+                f"--primary expects ARM=source|completion, got {spec!r}", EXIT_USAGE
+            )
+        primaries[resolve_arm(selector, arms, "--primary").label] = test
+    return primaries
+
+
+def category_map_rules(
+    baseline: Arm,
+    arms: Sequence[Arm],
+    routed: set,
+    qa_runs: Dict[str, dict],
+) -> Dict[str, Tuple[str, Optional[str]]]:
+    """``(status, reason)`` per arm against the baseline (#538 rule 3)."""
+    category_slice, _ = _category_modules()
+
+    def traced(arm: Arm) -> bool:
+        answers = (qa_runs.get(arm.label) or {}).get("answers") or []
+        return category_slice.called_metadata_search(arm.rows, answers)
+
+    rules: Dict[str, Tuple[str, Optional[str]]] = {baseline.label: ("ok", None)}
+    for arm in arms:
+        if arm is baseline:
+            continue
+        rules[arm.label] = category_slice.map_rule(
+            baseline.raw,
+            arm.raw,
+            routes_on_category=arm.label in routed or baseline.label in routed,
+            traced=traced(arm) or traced(baseline),
+        )
+    return rules
+
+
+def map_rule_gate(
+    voided: Sequence[Arm], rules: Dict[str, Tuple[str, Optional[str]]]
+) -> dict:
+    """G9: which comparisons the category-map rule voided, and why."""
+    if not voided:
+        return {
+            "id": "G9",
+            "name": "category map",
+            "status": "pass",
+            "detail": "no comparison voided by a category-map mismatch",
+        }
+    return {
+        "id": "G9",
+        "name": "category map",
+        "status": "void",
+        "detail": "; ".join(
+            f"{arm.label} ({arm.name}): {rules[arm.label][1]}" for arm in voided
+        ),
+    }
+
+
+def _no_tool_call(arm: Arm) -> int:
+    return sum(
+        1
+        for row in arm.rows.values()
+        if not any(m.get("type") == "tool_call" for m in row.get("messages") or [])
+    )
+
+
+def paired_tests_block(
+    baseline: Arm, arms: Sequence[Arm], primaries: Dict[str, str]
+) -> List[dict]:
+    """Exact McNemar source and completion tests per arm against the baseline."""
+    _, paired_tests = _category_modules()
+    entries: List[dict] = []
+    for arm in arms:
+        if arm is baseline:
+            continue
+        entries.append(
+            {
+                "label": arm.label,
+                "name": arm.name,
+                "source": paired_tests.source_test(baseline.rows, arm.rows),
+                "completion": paired_tests.completion_test(baseline.rows, arm.rows),
+                "primary": primaries.get(arm.label),
+                "no_tool_call": _no_tool_call(arm),
+                "baseline_no_tool_call": _no_tool_call(baseline),
+            }
+        )
+    secondaries = [
+        (entry, "completion" if entry["primary"] == "source" else "source")
+        for entry in entries
+        if entry["primary"]
+    ]
+    adjusted = paired_tests.holm_adjust(
+        [entry[test]["p"] for entry, test in secondaries]
+    )
+    for (entry, test), p in zip(secondaries, adjusted):
+        entry["secondary"] = test
+        entry["secondary_p_holm"] = p
+    return entries
+
+
+def category_block(
+    baseline: Arm,
+    arms: Sequence[Arm],
+    rules: Dict[str, Tuple[str, Optional[str]]],
+) -> List[dict]:
+    """Per arm: the map rule, and the per-category table or why there is none."""
+    category_slice, _ = _category_modules()
+    entries: List[dict] = []
+    for arm in arms:
+        status, rule_reason = rules.get(arm.label, ("ok", None))
+        check = category_slice.snapshot_check(arm.raw, arm.artifact_dir or Path("."))
+        reason = check.reason
+        if reason is None and arm is not baseline:
+            reason = category_slice.pair_slice_reason(
+                baseline.raw,
+                arm.raw,
+                baseline.artifact_dir or Path("."),
+                arm.artifact_dir or Path("."),
+            )
+        if reason is None and status == "slice-only":
+            reason = rule_reason
+        entries.append(
+            {
+                "label": arm.label,
+                "name": arm.name,
+                "map_rule": status,
+                "no_slice_reason": reason,
+                "slice": (
+                    category_slice.category_table(arm.rows, check.category_of)
+                    if reason is None
+                    else None
+                ),
+            }
+        )
+    return entries
+
+
 def parse_qa_run_specs(specs: Sequence[str], arms: Sequence[Arm]) -> Dict[str, dict]:
-    """Resolve ``LABEL=RUN_DIR`` pairs against the loaded arms."""
+    """Resolve ``LABEL=RUN_DIR`` pairs against the loaded arms.
+
+    The selector is a label or a recorded arm name (``resolve_arm``). A QA run
+    joins only when its map readings match the arm's end digest and it used the
+    arm's prompt (``category_slice.qa_join_reason``); otherwise it is refused at
+    the gate exit code, because its pass rates feed the ``should_refuse`` path in
+    G8.
+    """
     labels = {arm.label for arm in arms}
     runs: Dict[str, dict] = {}
     for spec in specs:
-        label, sep, directory = spec.partition("=")
-        if not sep or not label or not directory:
+        selector, sep, directory = spec.partition("=")
+        if not sep or not selector or not directory:
             raise CompareError(
                 f"--qa-run expects LABEL=RUN_DIR, got {spec!r}; "
                 f"labels are {', '.join(sorted(labels))}",
                 EXIT_USAGE,
             )
-        if label not in labels:
-            raise CompareError(
-                f"--qa-run names no such arm: {label!r}; "
-                f"labels are {', '.join(sorted(labels))}",
-                EXIT_USAGE,
-            )
+        arm = resolve_arm(selector, arms, "--qa-run")
+        label = arm.label
         if label in runs:
             # The QA item pass overrides the refusal heuristic and feeds G8, so
             # last-write-wins could flip a candidate from FAIL to PASS with
@@ -2329,12 +3021,22 @@ def parse_qa_run_specs(specs: Sequence[str], arms: Sequence[Arm]) -> Dict[str, d
                 f"({runs[label]['path']} and {directory}); give one run per arm",
                 EXIT_USAGE,
             )
-        runs[label] = load_qa_run(directory)
+        qa_run = load_qa_run(directory)
+        category_slice, _ = _category_modules()
+        reason = category_slice.qa_join_reason(
+            arm.raw, qa_run["category_map_readings"], qa_run["agent_spec_sha256"]
+        ) or qa_corpus_reason(arm, qa_run)
+        if reason:
+            raise CompareError(
+                f"--qa-run {directory} cannot join {label}: {reason}", EXIT_GATE
+            )
+        runs[label] = qa_run
     return runs
 
 
 def run(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
+    validate_answer_path_waivers(args.config_differs_by_design)
     arms = load_arms(args.specs)
     if len(arms) < 2:
         raise CompareError(
@@ -2345,16 +3047,17 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     if args.baseline is None:
         baseline = arms[0]
     else:
-        matches = [arm for arm in arms if arm.label == args.baseline]
-        if not matches:
-            raise CompareError(
-                f"--baseline {args.baseline!r} matches no arm; "
-                f"labels are {', '.join(arm.label for arm in arms)}",
-                EXIT_USAGE,
-            )
-        baseline = matches[0]
+        baseline = resolve_arm(args.baseline, arms, "--baseline")
+    primaries = parse_primaries(args.primary, arms)
+    routed = {
+        resolve_arm(selector, arms, "--routes-on-category").label
+        for selector in args.routes_on_category
+    }
 
     require_same_question_sets(baseline, arms)
+    fingerprint_version_gate(
+        {arm.label: arm.corpus_fingerprint for arm in arms}, "the arms"
+    )
     gates = [
         {
             "id": "G4",
@@ -2364,7 +3067,9 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         },
         corpus_gate(arms, args.corpus_differs_by_design),
         divergence_gate(arms, args.ignore_config_divergence),
+        answer_path_gate(arms, args.config_differs_by_design),
     ]
+    retrieval = embedding_gate(baseline, arms)
 
     # The default anchors file is tracked in the repository. If it is absent the
     # checkout or package is incomplete, and continuing with G8 reported as
@@ -2373,6 +3078,18 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     # file holding an empty list.
     anchors = anchor_questions(args.anchors)
     qa_runs = parse_qa_run_specs(args.qa_run, arms)
+    # #538 rule 3: a comparison the category-map rule voids reports no numbers,
+    # so its arm leaves every section of the report and G9 names it.
+    map_rules = category_map_rules(baseline, arms, routed, qa_runs)
+    voided = [arm for arm in arms if map_rules[arm.label][0] == "void"]
+    gates.append(map_rule_gate(voided, map_rules))
+    arms = [arm for arm in arms if arm not in voided]
+    if len(arms) < 2:
+        raise CompareError(
+            "every comparison is void under the category-map rule: "
+            + "; ".join(f"{arm.label}: {map_rules[arm.label][1]}" for arm in voided),
+            EXIT_GATE,
+        )
     questions = bank_questions(
         baseline, anchors, include_anchors=args.include_anchors_in_bank
     )
@@ -2419,7 +3136,10 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         anchors_path=args.anchors,
         anchors_in_bank=args.include_anchors_in_bank,
         qa_runs=qa_runs,
+        retrieval=retrieval,
     )
+    report["paired_tests"] = paired_tests_block(baseline, arms, primaries)
+    report["category"] = category_block(baseline, arms, map_rules)
     print(render_markdown(report))
     if args.json:
         Path(args.json).write_text(json.dumps(report, indent=2, allow_nan=False))

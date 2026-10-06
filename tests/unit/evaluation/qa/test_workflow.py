@@ -1,3 +1,4 @@
+import hashlib
 import json
 import threading
 import time
@@ -6,12 +7,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 import src.evaluation.qa.phases as phases_module
 import src.evaluation.qa.workflow as workflow_module
 from src.evaluation.qa.artifacts import read_json, read_jsonl
 from src.evaluation.qa.workflow import QAWorkflow
 from src.evaluation.qa.workspace import EvaluationWorkspace
+from src.utils.llm_usage import phase_usage_totals
 
 
 class _EvaluatorFactory:
@@ -81,6 +84,72 @@ class _AgentFactory:
                 return (
                     "malformed" if question in factory.malformed_questions else "answer"
                 )
+
+        return Agent()
+
+
+def _make_usage(provider, model, in_tok, out_tok):
+    entry = {
+        "provider": provider,
+        "model": model,
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+        "calls": 1,
+        "unreported_calls": 0,
+    }
+    return {
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+        "calls": 1,
+        "unreported_calls": 0,
+        "by_model": [entry],
+    }
+
+
+class _UsageEvaluatorFactory:
+    def __init__(self, extractor_usage, compare_usage):
+        self.extractor_usage = extractor_usage
+        self.compare_usage = compare_usage
+
+    def __call__(self, profile):
+        factory = self
+
+        class Evaluator:
+            def extract_gold(self, question, answer):
+                self.last_usage = factory.extractor_usage
+                return {"atoms": [{"id": "required", "text": answer, "required": True}]}
+
+            def compare(self, question, gold_atoms, answer):
+                self.last_usage = factory.compare_usage
+                return {
+                    "judgments": [
+                        {
+                            "atom_id": atom.id,
+                            "outcome": "entailed",
+                            "rationale": "fake",
+                        }
+                        for atom in gold_atoms
+                    ]
+                }
+
+        return Evaluator()
+
+
+class _UsageAgentFactory:
+    def __init__(self, agent_usage):
+        self.agent_usage = agent_usage
+
+    def __call__(self, config, spec, pipeline_class, vectorstore=None):
+        factory = self
+
+        class Agent:
+            def __init__(self):
+                self.tool_calls = []
+                self.usage = None
+
+            def run(self, question):
+                self.usage = factory.agent_usage
+                return "answer"
 
         return Agent()
 
@@ -227,6 +296,11 @@ def test_composite_and_staged_workflows_are_equivalent_at_four_attempts(
         "agent_config_sha256",
         "agent_spec_sha256",
         "evaluator_profile_sha256",
+        "retrieval_identity",
+        "corpus_fingerprint_before",
+        "corpus_fingerprint",
+        "corpus_unchanged_at_endpoints",
+        "usage",
     }
     manifest = read_json(staged / "manifest.json")
     assert manifest["versions"] == {
@@ -285,6 +359,23 @@ def test_run_and_score_workers_overlap_with_isolated_runtimes_and_ordered_artifa
         workflow_module,
         "LazyVectorstore",
         lambda config: vectorstore_initializations.append(config) or shared_vectorstore,
+    )
+    # This test is about worker overlap; the corpus readings have their own tests.
+    monkeypatch.setattr(
+        workflow_module.corpus_provenance,
+        "start_readings",
+        lambda config, spec: {
+            "retrieval_identity": None,
+            "corpus_fingerprint_before": None,
+        },
+    )
+    monkeypatch.setattr(
+        workflow_module.corpus_provenance,
+        "end_readings",
+        lambda config, spec, before: {
+            "corpus_fingerprint": None,
+            "corpus_unchanged_at_endpoints": None,
+        },
     )
     monkeypatch.setattr(
         workflow_module,
@@ -1628,6 +1719,162 @@ def test_retry_defaults_legacy_manifests_to_one_worker_per_phase(
     assert manifest["phases"]["score"]["workers"] == 1
 
 
+# --- #562: redacted agent-config snapshot ---------------------------------
+def test_run_persists_no_secret_and_runs_from_the_snapshot(monkeypatch, tmp_path):
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    run_dir = tmp_path / "run"
+    sentinel_config = {
+        "services": {
+            "chat_app": {
+                "agent_class": "FakeAgent",
+                "default_provider": "fake",
+                "default_model": "fake-model",
+                "providers": {
+                    "fake": {
+                        "api_key": "SENTINEL-APIKEY",
+                        "extra_kwargs": {
+                            "max_tokens": 4096,
+                            "headers": {"Authorization": "Bearer SENTINEL-AUTH"},
+                        },
+                    }
+                },
+            },
+            "postgres": {"password": "SENTINEL-PG"},
+        },
+        "database_url": "postgresql://user:SENTINEL-URL@host/db",
+    }
+    spec = SimpleNamespace(tools=["fake"])
+    spec_text = "---\nname: Fake\ntools: [fake]\n---\nPrompt\n"
+    monkeypatch.setattr(
+        workflow_module,
+        "load_agent_inputs",
+        lambda config_path, spec_path: (sentinel_config, spec, spec_text, object),
+    )
+    recorded_configs = []
+
+    class RecordingAgentFactory:
+        def __call__(self, config, spec, pipeline_class, vectorstore=None):
+            recorded_configs.append(config)
+
+            class Agent:
+                tool_calls = []
+
+                def run(self, question):
+                    return "answer"
+
+            return Agent()
+
+    monkeypatch.setattr(workflow_module, "ArchiAgentRuntime", RecordingAgentFactory())
+    monkeypatch.setattr(
+        workflow_module, "LangChainEvaluatorRuntime", _EvaluatorFactory()
+    )
+    manifest = QAWorkflow().composite(
+        dataset,
+        tmp_path / "agent.yaml",
+        tmp_path / "agent.md",
+        run_dir,
+        run_workers=1,
+        score_workers=1,
+    )
+    sentinels = ("SENTINEL-APIKEY", "SENTINEL-AUTH", "SENTINEL-PG", "SENTINEL-URL")
+    for path in run_dir.iterdir():
+        if path.is_file():
+            content = path.read_bytes()
+            for s in sentinels:
+                assert s.encode() not in content, f"{s!r} found in {path.name}"
+    snapshot_bytes = (run_dir / "agent_config.resolved.yaml").read_bytes()
+    snapshot = yaml.safe_load(snapshot_bytes)
+    fake_provider = snapshot["services"]["chat_app"]["providers"]["fake"]
+    assert fake_provider["api_key"] == "[redacted]"
+    assert fake_provider["extra_kwargs"]["max_tokens"] == 4096
+    assert fake_provider["extra_kwargs"]["headers"]["Authorization"] == "[redacted]"
+    assert snapshot["services"]["postgres"]["password"] == "[redacted]"
+    assert snapshot["database_url"] == "postgresql://user:redacted@host/db"
+    assert recorded_configs[0] == yaml.safe_load(snapshot_bytes)
+    assert (
+        manifest["artifacts"]["agent_config.resolved.yaml"]
+        == hashlib.sha256(snapshot_bytes).hexdigest()
+    )
+
+
+def test_retry_runs_from_the_redacted_snapshot(monkeypatch, tmp_path):
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    parent = tmp_path / "parent"
+    sentinel_config = {
+        "services": {
+            "chat_app": {
+                "agent_class": "FakeAgent",
+                "default_provider": "fake",
+                "default_model": "fake-model",
+                "providers": {
+                    "fake": {"api_key": "SENTINEL-APIKEY"},
+                },
+            },
+            "postgres": {"password": "SENTINEL-PG"},
+        },
+    }
+    spec = SimpleNamespace(tools=["fake"])
+    spec_text = "---\nname: Fake\ntools: [fake]\n---\nPrompt\n"
+    monkeypatch.setattr(
+        workflow_module,
+        "load_agent_inputs",
+        lambda config_path, spec_path: (sentinel_config, spec, spec_text, object),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "ArchiAgentRuntime",
+        _AgentFactory(failures={("inferred question", 1)}),
+    )
+    monkeypatch.setattr(
+        workflow_module, "LangChainEvaluatorRuntime", _EvaluatorFactory()
+    )
+    QAWorkflow().composite(
+        dataset,
+        tmp_path / "agent.yaml",
+        tmp_path / "agent.md",
+        parent,
+        run_workers=1,
+        score_workers=1,
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "load_agent_inputs",
+        lambda config_path, spec_path: (
+            yaml.safe_load(Path(config_path).read_text(encoding="utf-8")),
+            spec,
+            spec_text,
+            object,
+        ),
+    )
+    retry_recorded_configs = []
+
+    class RetryRecordingFactory:
+        def __call__(self, config, spec, pipeline_class, vectorstore=None):
+            retry_recorded_configs.append(config)
+
+            class Agent:
+                tool_calls = []
+
+                def run(self, question):
+                    return "answer"
+
+            return Agent()
+
+    monkeypatch.setattr(workflow_module, "ArchiAgentRuntime", RetryRecordingFactory())
+    monkeypatch.setattr(
+        workflow_module, "LangChainEvaluatorRuntime", _EvaluatorFactory()
+    )
+    successor = tmp_path / "successor"
+    QAWorkflow().retry(parent, successor)
+    assert retry_recorded_configs, "retry did not call ArchiAgentRuntime"
+    assert "SENTINEL" not in json.dumps(retry_recorded_configs[0])
+    assert (successor / "agent_config.resolved.yaml").read_bytes() == (
+        parent / "agent_config.resolved.yaml"
+    ).read_bytes()
+
+
 def test_run_and_score_do_not_decode_the_input_snapshot(
     agent_inputs, monkeypatch, tmp_path
 ):
@@ -1685,3 +1932,244 @@ def test_composite_validates_selected_agent_inputs_before_gold_provider_call(
 
     assert evaluator.calls == Counter()
     assert not (tmp_path / "run").exists()
+
+
+# --- corpus provenance (#570) ---------------------------------------------------
+
+READY = {
+    "chunk_count": 3,
+    "usable_chunk_count": 3,
+    "untagged_chunk_count": 0,
+    "embedding_model_source": "chunks",
+}
+
+
+@pytest.fixture
+def corpus(monkeypatch, agent_inputs):
+    """A search-tool spec over a fake corpus whose readings the test scripts."""
+    import src.evaluation.qa.provenance as provenance
+
+    agent_inputs["data_manager"] = {
+        "collection_name": "fasrc",
+        "embedding_name": "HuggingFaceEmbeddings",
+        "embedding_class_map": {
+            "HuggingFaceEmbeddings": {"kwargs": {"model_name": "Qwen/Q"}}
+        },
+    }
+    spec = SimpleNamespace(tools=["search_vectorstore_hybrid"])
+    monkeypatch.setattr(
+        workflow_module,
+        "load_agent_inputs",
+        lambda config_path, spec_path: (agent_inputs, spec, "---\n---\n", object),
+    )
+    monkeypatch.setattr(
+        workflow_module, "LazyVectorstore", lambda config: SimpleNamespace()
+    )
+    state = {"readings": [], "guard": 0, "pools": 0, "next": ["sha256/v2:a"]}
+
+    def pool(config):
+        state["pools"] += 1
+        return object()
+
+    def readiness(pool, identity):
+        state["guard"] += 1
+        return READY
+
+    def fingerprint(pool, config):
+        value = state["next"].pop(0) if len(state["next"]) > 1 else state["next"][0]
+        state["readings"].append(value)
+        return value
+
+    monkeypatch.setattr(provenance, "direct_pool", pool)
+    monkeypatch.setattr(provenance, "collection_readiness", readiness)
+    monkeypatch.setattr(provenance, "live_corpus_fingerprint", fingerprint)
+    return state
+
+
+def test_a_search_run_records_the_identity_and_both_readings(corpus, tmp_path):
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    run_dir = tmp_path / "run"
+    corpus["next"] = ["sha256/v2:a", "sha256/v2:b"]
+    workflow = QAWorkflow()
+    workflow.prepare(dataset, run_dir)
+
+    workflow.run(run_dir, tmp_path / "agent.yaml", tmp_path / "agent.md")
+
+    manifest = read_json(run_dir / "manifest.json")
+    assert corpus["guard"] == 1
+    assert manifest["retrieval_identity"]["collection"] == (
+        "fasrc_with_HuggingFaceEmbeddings"
+    )
+    assert manifest["retrieval_identity"]["embedding_model"] == "Qwen/Q"
+    assert manifest["corpus_fingerprint_before"] == "sha256/v2:a"
+    assert manifest["corpus_fingerprint"] == "sha256/v2:b"
+    assert manifest["corpus_unchanged_at_endpoints"] is False
+
+
+def test_a_run_without_the_search_tool_opens_no_connection(
+    agent_inputs, monkeypatch, tmp_path
+):
+    import src.evaluation.qa.provenance as provenance
+
+    opened = []
+    monkeypatch.setattr(provenance, "direct_pool", lambda config: opened.append(1))
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    run_dir = tmp_path / "run"
+    workflow = QAWorkflow()
+    workflow.prepare(dataset, run_dir)
+
+    workflow.run(run_dir, tmp_path / "agent.yaml", tmp_path / "agent.md")
+
+    manifest = read_json(run_dir / "manifest.json")
+    assert opened == []
+    assert manifest["retrieval_identity"] is None
+    assert manifest["corpus_fingerprint_before"] is None
+    assert manifest["corpus_fingerprint"] is None
+    assert manifest["corpus_unchanged_at_endpoints"] is None
+
+
+def test_scoring_copies_the_readings_and_takes_none(corpus, tmp_path):
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    run_dir = tmp_path / "run"
+    workflow = QAWorkflow()
+    workflow.prepare(dataset, run_dir)
+    workflow.run(run_dir, tmp_path / "agent.yaml", tmp_path / "agent.md")
+    readings = len(corpus["readings"])
+
+    workflow.score(run_dir)
+
+    assert len(corpus["readings"]) == readings
+    provenance = read_json(run_dir / "summary.json")["provenance"]
+    assert provenance["corpus_fingerprint_before"] == "sha256/v2:a"
+    assert provenance["corpus_fingerprint"] == "sha256/v2:a"
+    assert provenance["corpus_unchanged_at_endpoints"] is True
+    assert provenance["retrieval_identity"]["embedding_model"] == "Qwen/Q"
+
+
+def test_a_retry_with_fresh_attempts_takes_its_own_readings(
+    corpus, monkeypatch, tmp_path
+):
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    parent = tmp_path / "parent"
+    monkeypatch.setattr(
+        workflow_module,
+        "ArchiAgentRuntime",
+        _AgentFactory(failures={("supplied question", 1)}),
+    )
+    QAWorkflow().composite(
+        dataset, tmp_path / "agent.yaml", tmp_path / "agent.md", parent
+    )
+    guards = corpus["guard"]
+    corpus["next"] = ["sha256/v2:c", "sha256/v2:d"]
+    monkeypatch.setattr(workflow_module, "ArchiAgentRuntime", _AgentFactory())
+
+    QAWorkflow().retry(parent, tmp_path / "successor")
+
+    manifest = read_json(tmp_path / "successor" / "manifest.json")
+    assert corpus["guard"] == guards + 1
+    assert manifest["corpus_fingerprint_before"] == "sha256/v2:c"
+    assert manifest["corpus_fingerprint"] == "sha256/v2:d"
+    assert manifest["corpus_unchanged_at_endpoints"] is False
+    assert manifest["retrieval_identity"]["embedding_model"] == "Qwen/Q"
+    provenance = read_json(tmp_path / "successor" / "summary.json")["provenance"]
+    assert provenance["corpus_fingerprint"] == "sha256/v2:d"
+
+
+def test_phase_usage_appears_in_summary_provenance(agent_inputs, monkeypatch, tmp_path):
+    extractor_usage = _make_usage("test-p", "extractor-m", 10, 5)
+    compare_usage = _make_usage("test-p", "compare-m", 20, 8)
+    agent_usage = _make_usage("test-p", "agent-m", 15, 6)
+
+    monkeypatch.setattr(
+        workflow_module,
+        "ArchiAgentRuntime",
+        _UsageAgentFactory(agent_usage),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "LangChainEvaluatorRuntime",
+        _UsageEvaluatorFactory(extractor_usage, compare_usage),
+    )
+
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    run_dir = tmp_path / "run"
+    QAWorkflow().composite(
+        dataset, tmp_path / "agent.yaml", tmp_path / "agent.md", run_dir
+    )
+
+    summary = read_json(run_dir / "summary.json")
+    prep_rows = list(read_jsonl(run_dir / "preparation.jsonl"))
+    answer_rows = list(read_jsonl(run_dir / "answers.jsonl"))
+    result_rows = list(read_jsonl(run_dir / "evaluation_results.jsonl"))
+
+    expected = phase_usage_totals(prep_rows, answer_rows, result_rows)
+    assert summary["provenance"]["usage"] == expected
+    assert expected["prepare"] is not None
+    assert expected["run"] is not None
+    assert expected["score"] is not None
+
+
+def test_retry_phase_usage_appears_in_summary_provenance(
+    agent_inputs, monkeypatch, tmp_path
+):
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "fail-item",
+                    "question": "fail-q",
+                    "answer": "a",
+                    "time_sensitive": False,
+                    "expected_atoms": [{"id": "r", "text": "a", "required": True}],
+                },
+                {
+                    "id": "pass-item",
+                    "question": "pass-q",
+                    "answer": "a",
+                    "time_sensitive": False,
+                    "expected_atoms": [{"id": "r", "text": "a", "required": True}],
+                },
+            ]
+        )
+    )
+    parent = tmp_path / "parent"
+    monkeypatch.setattr(
+        workflow_module,
+        "ArchiAgentRuntime",
+        _AgentFactory(failures={("fail-q", 1)}),
+    )
+    QAWorkflow().composite(
+        dataset, tmp_path / "agent.yaml", tmp_path / "agent.md", parent
+    )
+
+    compare_usage = _make_usage("test-p", "compare-m", 20, 8)
+    agent_usage = _make_usage("test-p", "agent-m", 15, 6)
+    monkeypatch.setattr(
+        workflow_module,
+        "ArchiAgentRuntime",
+        _UsageAgentFactory(agent_usage),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "LangChainEvaluatorRuntime",
+        _UsageEvaluatorFactory({}, compare_usage),
+    )
+
+    successor = tmp_path / "successor"
+    QAWorkflow().retry(parent, successor)
+
+    summary = read_json(successor / "summary.json")
+    prep_rows = list(read_jsonl(successor / "preparation.jsonl"))
+    answer_rows = list(read_jsonl(successor / "answers.jsonl"))
+    result_rows = list(read_jsonl(successor / "evaluation_results.jsonl"))
+
+    expected = phase_usage_totals(prep_rows, answer_rows, result_rows)
+    assert summary["provenance"]["usage"] == expected
+    assert expected["run"] is not None
+    assert expected["score"] is not None
