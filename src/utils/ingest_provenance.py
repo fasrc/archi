@@ -26,6 +26,7 @@ INGEST_CONFIG_KEYS = (
     "categorization",
     "chunking_strategy",
     "child_chunk_overlap",
+    "effective_chunking",
     "embedding_model",
     "embedding_dimensions",
     "chunk_size",
@@ -49,6 +50,13 @@ _DEFAULT_CHUNKING_STRATEGY = "sentence"
 _DEFAULT_CHILD_CHUNK_OVERLAP = 20
 _DEFAULT_SITEMAP_MIN_PAGES = 1
 
+# Restated from src/data_manager/vectorstore/node_parsing.py (module docstring):
+# the hierarchical path's own defaults and strategy names, so a drift there is
+# caught by tests rather than silently reported wrong here.
+_MARKDOWN_STRATEGY = "markdown"
+_DEFAULT_PARENT_CHUNK_SIZE = 2048
+_DEFAULT_CHILD_CHUNK_SIZE = 512
+
 
 def _mapping(value: Any) -> Dict[str, Any]:
     """Return ``value`` as a dict, or an empty dict when it is not a mapping.
@@ -57,6 +65,66 @@ def _mapping(value: Any) -> Dict[str, Any]:
     degrades to defaults instead of raising.
     """
     return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _is_non_negative_int(value: Any) -> bool:
+    """Return whether ``value`` is a plain non-negative ``int`` (not ``bool``)."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _clamped_overlap(chunk_size: int, overlap: int) -> int:
+    """Restated from ``node_parsing._clamped_overlap``: clamp to at most half ``chunk_size``."""
+    return max(0, min(overlap, chunk_size // 2))
+
+
+def effective_chunking(data_manager_config: Any) -> Dict[str, Any]:
+    """Report the chunking parameters the ingest path actually applies.
+
+    Mirrors the manager's path selection (``manager.py:169-172``): the
+    hierarchical path is used for the ``sentence`` and ``markdown`` strategies,
+    the ``CharacterTextSplitter`` path otherwise (including an unrecognized
+    strategy, which the manager also routes to the character splitter). Never
+    raises: an invalid parent/child size or overlap is reported unclamped
+    rather than failing provenance over a config the manager itself would
+    refuse (see ``_resolve_chunk_overlap``).
+    """
+    dm = _mapping(data_manager_config)
+    chunking = _mapping(dm.get("chunking"))
+    strategy = chunking.get("strategy", _DEFAULT_CHUNKING_STRATEGY)
+
+    if strategy in (_DEFAULT_CHUNKING_STRATEGY, _MARKDOWN_STRATEGY):
+        parent = chunking.get("parent_chunk_size", _DEFAULT_PARENT_CHUNK_SIZE)
+        child = chunking.get("child_chunk_size", _DEFAULT_CHILD_CHUNK_SIZE)
+        overlap = chunking.get("chunk_overlap")
+        if overlap is None:
+            overlap = _DEFAULT_CHILD_CHUNK_OVERLAP
+
+        if (
+            _is_non_negative_int(parent)
+            and _is_non_negative_int(child)
+            and _is_non_negative_int(overlap)
+        ):
+            clamp_basis = (
+                child if strategy == _MARKDOWN_STRATEGY else min(parent, child)
+            )
+            child_chunk_overlap = _clamped_overlap(clamp_basis, overlap)
+        else:
+            child_chunk_overlap = overlap
+
+        return {
+            "path": "hierarchical",
+            "strategy": strategy,
+            "parent_chunk_size": parent,
+            "child_chunk_size": child,
+            "child_chunk_overlap": child_chunk_overlap,
+        }
+
+    return {
+        "path": "character",
+        "strategy": strategy,
+        "chunk_size": dm.get("chunk_size", _DEFAULT_CHUNK_SIZE),
+        "chunk_overlap": dm.get("chunk_overlap", _DEFAULT_CHUNK_OVERLAP),
+    }
 
 
 def build_ingest_config_snapshot(data_manager_config: Any) -> Dict[str, Any]:
@@ -89,6 +157,7 @@ def build_ingest_config_snapshot(data_manager_config: Any) -> Dict[str, Any]:
             if chunking.get("chunk_overlap") is None
             else chunking["chunk_overlap"]
         ),
+        "effective_chunking": effective_chunking(dm),
         "embedding_model": embedding_model,
         "embedding_dimensions": embedding_entry.get(
             "dimensions", _DEFAULT_EMBEDDING_DIMENSIONS
