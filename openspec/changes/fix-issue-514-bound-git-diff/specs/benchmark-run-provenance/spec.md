@@ -17,7 +17,10 @@ cap.
 
 The stat is bounded structurally rather than by truncation: `--stat=120,,200` lets git keep
 at most 200 file lines of at most 120 columns and always keeps the `N files changed` summary
-line, so no truncation flag is needed for it.
+line, so no truncation flag is needed for it. Columns bound bytes only when every byte is
+visible, so the stat call SHALL force `core.quotePath=true`: a checkout with
+`core.quotePath=false` prints bytes above `0x80` verbatim, and a path of zero-width
+combining marks then takes kilobytes but no columns.
 
 #### Scenario: A clean tree records empty fields
 
@@ -61,6 +64,12 @@ line, so no truncation flag is needed for it.
 - **WHEN** 300 tracked files carry uncommitted changes
 - **THEN** `git_diff_stat` has at most 203 lines
 - **AND** its last line reads `300 files changed`
+
+#### Scenario: The stat stays bounded when the checkout prints paths verbatim
+
+- **WHEN** the checkout sets `core.quotePath=false` and 250 tracked files under a path of zero-width combining marks carry uncommitted changes
+- **THEN** `git_diff_stat` has at most 203 lines
+- **AND** its JSON escape is at most 203 × 122 bytes
 
 ### Requirement: Top-level artifact directories never enter provenance
 

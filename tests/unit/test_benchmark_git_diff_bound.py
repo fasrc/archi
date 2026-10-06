@@ -163,3 +163,36 @@ def test_capture_from_a_subdirectory_covers_the_whole_tree(repo):
     assert "README.md" in info["git_diff"]
     assert "bench_out" not in info["git_diff"]
     assert "bench_out" not in info["git_diff_stat"]
+
+
+def test_the_stat_stays_bounded_when_the_checkout_prints_paths_verbatim(repo):
+    import subprocess
+
+    from src.cli.managers.git_diff_capture import (
+        GIT_DIFF_STAT_MAX_FILES,
+        GIT_DIFF_STAT_WIDTH,
+    )
+
+    # With core.quotePath=false git prints bytes above 0x80 verbatim and shortens a
+    # stat name by display columns, so a path of zero-width combining marks takes
+    # kilobytes but no columns, and --stat's width stops bounding the bytes.
+    subprocess.check_call(["git", "config", "core.quotePath", "false"], cwd=repo)
+    segment = "a" + "\u0301" * 120
+    deep = repo.joinpath(*[segment] * 6)
+    deep.mkdir(parents=True)
+    for i in range(250):
+        (deep / f"f{i}").write_text("old\n")
+    subprocess.check_call(["git", "add", "-A"], cwd=repo)
+    subprocess.check_call(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "m"],
+        cwd=repo,
+    )
+    for i in range(250):
+        (deep / f"f{i}").write_text("new\n")
+    stat = get_git_information(wd=repo)["git_diff_stat"]
+    assert "250 files changed" in stat
+    lines = stat.splitlines()
+    assert len(lines) <= GIT_DIFF_STAT_MAX_FILES + 3
+    assert len(json.dumps(stat)) - 2 <= (GIT_DIFF_STAT_MAX_FILES + 3) * (
+        GIT_DIFF_STAT_WIDTH + 2
+    )

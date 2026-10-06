@@ -80,9 +80,13 @@ def capture_git_diff(wd: Path) -> Dict[str, Any]:
         cwd=wd,
         encoding="UTF-8",
     )
+    # quotePath=true makes git escape bytes above 0x80, and the escapes count
+    # as columns, so --stat's width bounds each line's bytes on any checkout.
     stat_raw = subprocess.check_output(
         [
             "git",
+            "-c",
+            "core.quotePath=true",
             "diff",
             "--no-ext-diff",
             "--no-color",
