@@ -49,6 +49,13 @@ line, so no truncation flag is needed for it.
 - **THEN** `git_diff` is non-empty, at most the cap in bytes, and decodes as valid UTF-8
 - **AND** `git_diff_truncated` is `True`
 
+#### Scenario: A non-ASCII oversized change stays under the serialized bound
+
+- **WHEN** the working tree carries more than 1 MB of uncommitted change made of non-ASCII text
+- **THEN** `git_diff` is at most 256 000 UTF-8 bytes, ends with a newline, and its JSON escape with `ensure_ascii` is at most 256 000 bytes
+- **AND** `git_diff_truncated` is `True`
+- **AND** the JSON serialization of the whole returned mapping is under 512 000 bytes
+
 #### Scenario: The stat is bounded by file count
 
 - **WHEN** 300 tracked files carry uncommitted changes

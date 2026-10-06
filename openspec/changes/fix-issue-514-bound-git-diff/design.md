@@ -67,6 +67,18 @@ name width".
 The kept text carries no in-band marker. The two keys in D4 are the contract; a marker
 line would change the byte count a reader compares against the cap.
 
+## D3a. The serialized bound (added in review, 2026-10-06)
+
+The artifact writer (`src/bin/service_benchmark.py:874`) calls `json.dump` with
+`ensure_ascii` on. Every non-ASCII character becomes a 6- or 12-byte escape, and a newline
+becomes 2 bytes, so a 256 000-byte UTF-8 prefix of emoji text serializes to about 750 KB.
+`capture_git_diff` therefore calls `bound_serialized_text`, which first applies D3 and then,
+if the kept text's escaped size (`len(json.dumps(kept)) - 2`) is over `max_bytes`, keeps the
+longest run of whole lines whose escaped size fits. If no whole line fits, it keeps the
+longest character prefix whose escaped size fits; that prefix is non-empty for any cap of
+12 bytes or more. `original_bytes` stays the UTF-8 size of the full diff. `bound_text` is
+unchanged.
+
 ## D4. The recorded keys
 
 `capture_git_diff(wd)` returns:
@@ -75,7 +87,7 @@ line would change the byte count a reader compares against the cap.
 |---|---|---|
 | `git_diff` | str | the bounded unified diff. `""` when the tree is clean or only top-level `bench_out/` changed |
 | `git_diff_stat` | str | the `--stat=120,,200` output for the same files. `""` on the same conditions |
-| `git_diff_truncated` | bool | `True` only when D3 step 4 or 5 cut the diff |
+| `git_diff_truncated` | bool | `True` only when D3 step 4 or 5, or D3a, cut the diff |
 | `git_diff_original_bytes` | int | UTF-8 byte length of the full filtered diff before the cut. `0` when clean |
 
 The key name `git_diff` is kept so the three readers in `src/utils/benchmark_provenance.py`
