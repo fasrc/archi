@@ -80,7 +80,7 @@ export ARCHI_DIR="$T/archi" FM_OUT="$T/out"
 export FM_DOCKER="$T/bin/docker" FM_ARCHI="$T/bin/archi" FM_PYTHON="${FM_PYTHON:-python3}"
 export FM_MAIL="$T/bin/mail"
 export FM_POLL_SECONDS=0
-unset RAGAS_ENV_FILE HUIT_API_KEY_FILE OPENAI_API_KEY FM_AGENT_SPEC
+unset RAGAS_ENV_FILE HUIT_API_KEY_FILE OPENAI_API_KEY FM_AGENT_SPEC FM_PAGE_MAIL_TO
 mkdir -p "$T/bin" "$T/state" "$FM_OUT"
 printf 'sha256:abc\n' > "$T/fp"
 printf 'sha256:map1\n' > "$T/mapfp"   # the live category-map digest the data-manager reports
