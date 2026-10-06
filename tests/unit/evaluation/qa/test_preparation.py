@@ -507,6 +507,18 @@ class TestGoldExtractionAttempts:
                 gold_extraction_attempts=value,
             )
 
+    @pytest.mark.parametrize("status", ["skipped_live", "skipped_time_sensitive"])
+    def test_skipped_record_rejects_attempts(self, status):
+        with pytest.raises(ValueError, match="cannot contain output"):
+            PreparationRecord(
+                item_id="ga6",
+                status=status,
+                category="category",
+                answer_mode="direct_answer",
+                answer_source="source",
+                gold_extraction_attempts=2,
+            )
+
     def test_row_without_attempts_key_still_loads(self):
         loaded = preparation_record_from_dict(_failed_row("ga5"))
 

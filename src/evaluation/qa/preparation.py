@@ -209,6 +209,7 @@ class PreparationRecord:
             or self.oracle_calls is not None
             or self.usage is not None
             or self.usage_recorded
+            or self.gold_extraction_attempts is not None
         ):
             raise ValueError("skipped preparation cannot contain output")
 
