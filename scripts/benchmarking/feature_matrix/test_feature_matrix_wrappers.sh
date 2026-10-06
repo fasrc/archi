@@ -61,6 +61,11 @@
 #   58. qa_arm.sh copies collection and embedding_model from the QA run manifest into the ledger
 #   59. the closing baseline with --new-corpus moves a v1 pin to v2 and records the old pin
 #       row, and writes nulls when the manifest recorded none
+#   60. a refused arm-mode archive pages once with the refusal reason in the body
+#   61. paging off sends no mail on the same refusal
+#   62. a failing mail binary still refuses and reports "page failed"
+#   63. a corpus drift during qa_arm.sh pages once
+#   64. a bad arm label with paging on sends nothing (preconditions never page)
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -73,6 +78,7 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export HOME="$T/home"; mkdir -p "$HOME"
 export ARCHI_DIR="$T/archi" FM_OUT="$T/out"
 export FM_DOCKER="$T/bin/docker" FM_ARCHI="$T/bin/archi" FM_PYTHON="${FM_PYTHON:-python3}"
+export FM_MAIL="$T/bin/mail"
 export FM_POLL_SECONDS=0
 unset RAGAS_ENV_FILE HUIT_API_KEY_FILE OPENAI_API_KEY FM_AGENT_SPEC
 mkdir -p "$T/bin" "$T/state" "$FM_OUT"
@@ -114,7 +120,15 @@ case "\$1" in
   *) exit 0 ;;
 esac
 EOF
-chmod +x "$T/bin/docker" "$T/bin/archi" "$T/bin/git"
+cat > "$T/bin/mail" <<EOF
+#!/usr/bin/env bash
+{ printf 'ARGS: %s\n' "\$*"; cat; } >> "$T/mail.calls"
+EOF
+cat > "$T/bin/mail-fail" <<EOF
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$T/bin/docker" "$T/bin/archi" "$T/bin/git" "$T/bin/mail" "$T/bin/mail-fail"
 export FM_GIT="$T/bin/git"; printf 'c0ffee00\n' > "$T/codesha"; : > "$T/dirty"
 
 # --- fake stack fm-00 --------------------------------------------------------------------
@@ -716,6 +730,44 @@ old = [r for r in rows if r.get("output_dir") == sys.argv[2]][0]   # check 38: n
 assert "collection" in old and old["collection"] is None and "embedding_model" in old and old["embedding_model"] is None, old
 PY2
 then ok "qa_arm copies collection and embedding_model from the run manifest, null when unrecorded"; else notok "qa_arm ledger identity fields (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# --- operator paging (#504): archive_run.sh and qa_arm.sh page by mail on the four refusals
+# that follow long unattended work; preconditions and paging-off never run the mail binary.
+
+# 60: a refused arm-mode archive (the duplicate-artifact guard at archive_run.sh's archive
+# site) pages once, with the stack and arm in the subject and the refusal reason in the body
+: > "$T/mail.calls"
+BEFORE="$(ledger_rows)"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 2 ] && [ "$(ledger_rows)" = "$BEFORE" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: refusing to archive" "$T/mail.calls" \
+   && grep -q "ops@example.org$" "$T/mail.calls" && grep -q "already archived" "$T/mail.calls"; then
+  ok "a refused arm-mode archive pages once with the refusal reason"; else notok "archive page-on-refuse (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 61: the same refusal with paging off sends no mail
+: > "$T/mail.calls"
+run bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && grep -q "already archived" "$T/stderr" && [ ! -s "$T/mail.calls" ] && ok "paging off sends no mail on the same refusal" || notok "archive paging-off (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"
+
+# 62: a failing mail binary still refuses with the same message and reports "page failed"
+run env FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-fail" bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && grep -q "already archived" "$T/stderr" && grep -q "page failed" "$T/stderr" && ok "a failing mail binary keeps the refusal and reports page failed" || notok "archive mail-fail (rc=$RC: $(cat "$T/stderr"))"
+
+# 63: a corpus drift during qa_arm.sh (reuse the drift-after-qa mechanism of case 42) pages once
+: > "$T/mail.calls"
+printf 'sha256:def\n' > "$T/fp"; printf 'sha256:def\n' > "$FM_OUT/corpus-pin-fm-00"; touch "$T/drift-after-qa"
+BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/drift-after-qa"; printf 'sha256:def\n' > "$T/fp"
+if [ "$RC" = 2 ] && [ "$(ledger_rows)" = "$BEFORE" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: corpus changed during the QA run" "$T/mail.calls" \
+   && grep -q "ops@example.org$" "$T/mail.calls"; then
+  ok "a corpus drift during qa_arm.sh pages once"; else notok "qa_arm page-on-drift (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 64: a bad arm label with paging on sends nothing (preconditions before long work never page)
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" "0x" 1 "$T/arms/01-rerank-off.yaml"
+[ "$RC" = 2 ] && grep -q "bad arm label" "$T/stderr" && [ ! -s "$T/mail.calls" ] && ok "a bad arm label with paging on sends nothing" || notok "precondition no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

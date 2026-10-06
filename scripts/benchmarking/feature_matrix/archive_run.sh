@@ -61,9 +61,15 @@ if [ "${1:-}" = --sweep ]; then
   [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "benchmarking-$STACK is still running (use --wait)"
   ARTIFACT="$(ls -t "$FM_OUT"/benchmarking-"$STACK"-*.json 2>/dev/null | head -1 || true)"
   [ -n "$ARTIFACT" ] || fm_die "no artifact benchmarking-$STACK-*.json under $FM_OUT"
-  fm_sweep_tools archive --lock "$(fm_sweep_lock_file "$STACK")" --artifact "$ARTIFACT" --stack "$STACK" \
+  FM_ERRF="$(mktemp)"
+  if ! fm_sweep_tools archive --lock "$(fm_sweep_lock_file "$STACK")" --artifact "$ARTIFACT" --stack "$STACK" \
     --run "$RUN" --ledger "$(fm_ledger)" --pins-dir "$FM_OUT" --dest "$FM_OUT/archive/$STACK" \
-    ${CENSUS:+--census "$CENSUS"} --finished "$(fm_now)" || fm_die "refusing to archive $ARTIFACT (see above)"
+    ${CENSUS:+--census "$CENSUS"} --finished "$(fm_now)" 2>"$FM_ERRF"; then
+    cat "$FM_ERRF" >&2
+    FM_REASON="$(cat "$FM_ERRF")"; rm -f "$FM_ERRF"
+    fm_die_paged "stack $STACK sweep" "refusing to archive $ARTIFACT (see above)" "$FM_REASON"
+  fi
+  rm -f "$FM_ERRF"
   exit 0
 fi
 
@@ -93,7 +99,8 @@ ARTIFACT="$(ls -t "$FM_OUT"/benchmarking-"$STACK"-*.json 2>/dev/null | head -1 |
 
 # One artifact, one ledger row: refuse a file already archived, and a file that predates
 # this stack's latest ragas-start (the re-run produced nothing; this is run 1's file).
-FM_LEDGER="$(fm_ledger)" FM_ARTIFACT="$ARTIFACT" FM_STACK="$STACK" FM_ARM="$ARM" FM_RUN="$RUN" FM_PIN_FILE="$(fm_pin_file "$STACK")" FM_ACTIVE_LOCK_SHA="$(fm_lock_sha)" "$FM_PYTHON" - <<'EOF' || fm_die "refusing to archive $ARTIFACT (see above)"
+FM_ERRF="$(mktemp)"
+if ! FM_LEDGER="$(fm_ledger)" FM_ARTIFACT="$ARTIFACT" FM_STACK="$STACK" FM_ARM="$ARM" FM_RUN="$RUN" FM_PIN_FILE="$(fm_pin_file "$STACK")" FM_ACTIVE_LOCK_SHA="$(fm_lock_sha)" "$FM_PYTHON" - 2>"$FM_ERRF" <<'EOF'
 import datetime as dt, json, os, sys
 ledger, artifact, stack = os.environ["FM_LEDGER"], os.environ["FM_ARTIFACT"], os.environ["FM_STACK"]
 arm, run = os.environ["FM_ARM"], int(os.environ["FM_RUN"])
@@ -129,6 +136,12 @@ if True:
     if latest_row.get("lock_sha256") != os.environ["FM_ACTIVE_LOCK_SHA"]:
         print(f"the run that produced this artifact started under lock {str(latest_row.get('lock_sha256'))[:12]}, not the active lock {os.environ['FM_ACTIVE_LOCK_SHA'][:12]} — re-run it under the current lock", file=sys.stderr); sys.exit(1)
 EOF
+then
+  cat "$FM_ERRF" >&2
+  FM_REASON="$(cat "$FM_ERRF")"; rm -f "$FM_ERRF"
+  fm_die_paged "stack $STACK arm $ARM" "refusing to archive $ARTIFACT (see above)" "$FM_REASON"
+fi
+rm -f "$FM_ERRF"
 
 # The live document and chunk counts are part of every arm's cost report and the stack is
 # deleted right after archiving, so they must be read NOW or never: refuse on failure.
