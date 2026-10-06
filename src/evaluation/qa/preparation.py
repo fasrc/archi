@@ -88,8 +88,17 @@ class PreparationRecord:
     usage: Optional[Dict[str, Any]] = None
     # True when the row carries a usage key, even a null one.
     usage_recorded: bool = False
+    gold_extraction_attempts: Optional[int] = None
 
     def __post_init__(self) -> None:
+        if self.gold_extraction_attempts is not None and (
+            isinstance(self.gold_extraction_attempts, bool)
+            or not isinstance(self.gold_extraction_attempts, int)
+            or self.gold_extraction_attempts < 1
+        ):
+            raise ValueError(
+                "preparation gold_extraction_attempts must be a positive integer"
+            )
         validate_nonempty_string(self.item_id, "preparation item_id")
         validate_optional_nonempty_string(
             self.category,
@@ -256,6 +265,8 @@ class PreparationRecord:
                 )
             if self.usage is not None or self.usage_recorded:
                 row["usage"] = self.usage
+            if self.gold_extraction_attempts is not None:
+                row["gold_extraction_attempts"] = self.gold_extraction_attempts
         elif self.status == "preparation_failed":
             row["error"] = self.error
             if self.oracle_calls is not None:
@@ -264,6 +275,8 @@ class PreparationRecord:
                 ]
             if self.usage is not None or self.usage_recorded:
                 row["usage"] = self.usage
+            if self.gold_extraction_attempts is not None:
+                row["gold_extraction_attempts"] = self.gold_extraction_attempts
         return row
 
 
@@ -444,6 +457,11 @@ def _record_from_row(row: Dict[str, Any], *, index: int) -> PreparationRecord:
         if row["usage"] is not None and not isinstance(row["usage"], dict):
             raise ValueError(f"{context} usage must be a dict or null")
         status_fields.add("usage")
+    if (
+        status in {"prepared", "preparation_failed"}
+        and "gold_extraction_attempts" in row
+    ):
+        status_fields.add("gold_extraction_attempts")
     _require_exact_keys(row, base_fields | status_fields, context=context)
     common = {
         "item_id": row["item_id"],
@@ -485,6 +503,7 @@ def _record_from_row(row: Dict[str, Any], *, index: int) -> PreparationRecord:
             ),
             usage=row.get("usage"),
             usage_recorded="usage" in row,
+            gold_extraction_attempts=row.get("gold_extraction_attempts"),
         )
 
     if status == "preparation_failed":
@@ -505,6 +524,7 @@ def _record_from_row(row: Dict[str, Any], *, index: int) -> PreparationRecord:
             ),
             usage=row.get("usage"),
             usage_recorded="usage" in row,
+            gold_extraction_attempts=row.get("gold_extraction_attempts"),
         )
     return PreparationRecord(**common, status=status)
 

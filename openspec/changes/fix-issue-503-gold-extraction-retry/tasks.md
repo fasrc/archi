@@ -37,7 +37,7 @@
 
 ## 1. The record field and the row reader
 
-- [ ] 1.1 Add `gold_extraction_attempts` to `PreparationRecord` and to `_record_from_row`
+- [x] 1.1 Add `gold_extraction_attempts` to `PreparationRecord` and to `_record_from_row`
       (design D2, D3). Tests first in `tests/unit/evaluation/qa/test_preparation.py`, then
       code, one commit (`feat: record gold extraction attempts on preparation rows`). Cover:
       (a) a prepared record and a `preparation_failed` record built with

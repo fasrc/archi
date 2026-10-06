@@ -463,3 +463,51 @@ class TestPreparationUsage:
 
         with pytest.raises(ValueError, match="usage must be a dict or null"):
             preparation_record_from_dict(row)
+
+
+class TestGoldExtractionAttempts:
+    def test_prepared_and_failed_rows_round_trip_attempts(self):
+        prepared = PreparationRecord(
+            **_record_fields(_item("ga1"), prepared=True),
+            status="prepared",
+            gold_atoms=(Atom(id="A1", text="answer", required=True),),
+            atom_source="inferred",
+            gold_extraction_attempts=2,
+        )
+        prepared_row = prepared.to_dict()
+        assert prepared_row["gold_extraction_attempts"] == 2
+        assert preparation_record_from_dict(prepared_row) == prepared
+
+        failed = PreparationRecord(
+            **_record_fields(_item("ga2")),
+            status="preparation_failed",
+            error="extraction failed",
+            gold_extraction_attempts=2,
+        )
+        failed_row = failed.to_dict()
+        assert failed_row["gold_extraction_attempts"] == 2
+        assert preparation_record_from_dict(failed_row) == failed
+
+    def test_default_attempts_has_no_key_in_to_dict(self):
+        record = PreparationRecord(
+            **_record_fields(_item("ga3")),
+            status="preparation_failed",
+            error="extraction failed",
+        )
+
+        assert "gold_extraction_attempts" not in record.to_dict()
+
+    @pytest.mark.parametrize("value", [True, 0, "2"])
+    def test_rejects_invalid_attempts(self, value):
+        with pytest.raises(ValueError, match="gold_extraction_attempts"):
+            PreparationRecord(
+                **_record_fields(_item("ga4")),
+                status="preparation_failed",
+                error="extraction failed",
+                gold_extraction_attempts=value,
+            )
+
+    def test_row_without_attempts_key_still_loads(self):
+        loaded = preparation_record_from_dict(_failed_row("ga5"))
+
+        assert loaded.gold_extraction_attempts is None
