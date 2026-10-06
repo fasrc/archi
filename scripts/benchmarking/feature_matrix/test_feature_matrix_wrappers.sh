@@ -66,6 +66,8 @@
 #   62. a failing mail binary still refuses and reports "page failed"
 #   63. a corpus drift during qa_arm.sh pages once
 #   64. a bad arm label with paging on sends nothing (preconditions never page)
+#   65. a refused sweep-mode archive pages once with the refusal reason in the body
+#   66. a corpus drift during qa_arm.sh --sweep pages once
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -768,6 +770,27 @@ if [ "$RC" = 2 ] && [ "$(ledger_rows)" = "$BEFORE" ] && [ "$(grep -c '^ARGS:' "$
 : > "$T/mail.calls"
 run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" "0x" 1 "$T/arms/01-rerank-off.yaml"
 [ "$RC" = 2 ] && grep -q "bad arm label" "$T/stderr" && [ ! -s "$T/mail.calls" ] && ok "a bad arm label with paging on sends nothing" || notok "precondition no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"
+
+# 65: a refused sweep-mode archive (run 1 of stack r0 is already archived by check 53) pages
+# once from the sweep site, with the stack in the subject and the refusal reason in the body
+: > "$T/mail.calls"
+BEFORE="$(ledger_rows)"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" --sweep "$SW/configs" --stack r0 --run 1 --census "$FM_OUT/census.json"
+if [ "$RC" = 2 ] && [ "$(ledger_rows)" = "$BEFORE" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack r0 sweep: refusing to archive" "$T/mail.calls" \
+   && grep -q "ops@example.org$" "$T/mail.calls" && [ "$(grep -vc '^ARGS:' "$T/mail.calls")" -ge 1 ]; then
+  ok "a refused sweep-mode archive pages once with the refusal reason"; else notok "sweep archive page-on-refuse (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 66: a corpus drift during qa_arm.sh --sweep (same drift-after-qa mechanism) pages once
+: > "$T/mail.calls"
+printf 'sha256:def\n' > "$T/fp"; printf 'sha256:def\n' > "$FM_OUT/corpus-pin-r0"; touch "$T/drift-after-qa"
+BEFORE="$(ledger_rows)"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl
+rm -f "$T/drift-after-qa"; printf 'sha256:def\n' > "$T/fp"
+if [ "$RC" = 2 ] && [ "$(ledger_rows)" = "$BEFORE" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack r0 arm fasrc-docs-r0b-icl: corpus changed during the QA run" "$T/mail.calls" \
+   && grep -q "ops@example.org$" "$T/mail.calls"; then
+  ok "a corpus drift during qa_arm.sh --sweep pages once"; else notok "sweep qa_arm page-on-drift (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
