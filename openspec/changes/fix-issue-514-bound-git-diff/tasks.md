@@ -107,13 +107,13 @@ Standing notes for every task:
 ## 2. Say so in the docs
 
 - [ ] 2.1 `model: sonnet` — Docs only. In `docs/docs/interpreting_benchmark_results.md`, in
-      the artifact tree (about `:702`), directly under the line
+      the artifact tree (about `:746`), directly under the line
       `│   ├── git_info.last_commit   # the DEPLOY's commit, NOT this run's code (§5.E)`, add
       two lines aligned the same way:
       `│   ├── git_info.git_diff      # uncommitted changes at DEPLOY; capped at 256 KB, top-level bench_out/ excluded`
       and
       `│   ├── git_info.git_diff_stat # git diff --stat of the same changes, at most 200 files`.
-      In Procedure E (about `:744-748`), after the sentence ending "even though they ran
+      In Procedure E (about `:788-791`), after the sentence ending "even though they ran
       different code.", add one sentence: "Since #514 the diff is bounded: `git_diff` holds
       at most 256 KB, `git_diff_truncated` says whether it was cut,
       `git_diff_original_bytes` gives the full size, and top-level `bench_out/` is
@@ -125,7 +125,7 @@ Standing notes for every task:
 
 - [ ] 3.1 `model: sonnet` — Run `bash scripts/gate.sh` once more on the finished change and
       confirm it exits 0. Run `grep -n 'git_diff' src/utils/benchmark_provenance.py` and
-      confirm the three matches (`:499`, `:524`, `:609`) are unchanged and all read the key
+      confirm the three matches (`:697`, `:722`, `:819` after the 2026-10-06 merge of `origin/dev`) are unchanged and all read the key
       `git_diff`. Confirm `git status --porcelain` is empty after the last commit. Push
       with `git push -u origin fix/issue-514-bound-git-diff` — the branch tracks
       `origin/dev`, so `-u` is required or the push retargets the trunk. Open the PR with
