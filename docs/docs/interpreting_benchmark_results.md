@@ -744,6 +744,8 @@ bench_out/benchmarking-<name>-<timestamp>.json
 ├── metadata
 │   ├── corpus_snapshot_id     # shared => ran together (see §3.3)
 │   ├── git_info.last_commit   # the DEPLOY's commit, NOT this run's code (§5.E)
+│   ├── git_info.git_diff      # uncommitted changes at DEPLOY; capped at 256 KB, top-level bench_out/ excluded
+│   ├── git_info.git_diff_stat # git diff --stat of the same changes, at most 200 files
 │   ├── code_version           # which code produced this (§5.E)
 │   ├── host                   # machine that ran the deploy (§5.E)
 │   └── config_versions[]      # one config digest per arm, in run order
@@ -788,7 +790,10 @@ fields.
 **Do not use `git_info.last_commit` for this.** `archi create` writes
 `git_info.yaml` once at deploy and then freezes it. Every run between 2026-08-11
 and 2026-08-17 reports the same commit (`0a157cdce0`) with an empty diff, because
-they shared one deployment — even though they ran different code. The field names
+they shared one deployment — even though they ran different code. Since #514 the diff
+is bounded: `git_diff` holds at most 256 KB (also once JSON-escaped in the artifact),
+`git_diff_truncated` says whether it was cut, `git_diff_original_bytes` gives the full
+size, and top-level `bench_out/` is excluded. The field names
 the deploy, not the image. It is kept, and labelled, for exactly that reason.
 `metadata.host` does not share this freeze trap: a container cannot move to another
 machine, so the host recorded at deploy is the host every run in that deployment

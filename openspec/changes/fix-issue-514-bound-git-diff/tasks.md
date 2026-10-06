@@ -106,7 +106,7 @@ Standing notes for every task:
 
 ## 2. Say so in the docs
 
-- [ ] 2.1 `model: sonnet` — Docs only. In `docs/docs/interpreting_benchmark_results.md`, in
+- [x] 2.1 `model: sonnet` — Docs only. In `docs/docs/interpreting_benchmark_results.md`, in
       the artifact tree (about `:746`), directly under the line
       `│   ├── git_info.last_commit   # the DEPLOY's commit, NOT this run's code (§5.E)`, add
       two lines aligned the same way:
