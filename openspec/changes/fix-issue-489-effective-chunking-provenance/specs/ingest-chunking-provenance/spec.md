@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: The ingest snapshot SHALL report the effective chunking parameters
-`build_ingest_config_snapshot` MUST emit an `effective_chunking` mapping computed by the public helper `effective_chunking(data_manager_config)` in `src/utils/ingest_provenance.py`. The path MUST be `"hierarchical"` when `data_manager.chunking.strategy` (default `"sentence"`) is `"sentence"` or `"markdown"`, and `"character"` otherwise. A hierarchical result MUST carry `path`, `strategy`, `parent_chunk_size` (default 2048), `child_chunk_size` (default 512), and `child_chunk_overlap` clamped as the node parser clamps it for that strategy. A character result MUST carry `path`, `strategy`, and the top-level `chunk_size` (default 1000) and `chunk_overlap` (default 150). The existing `chunk_size`, `chunk_overlap`, and `child_chunk_overlap` snapshot keys MUST keep their current values. The helper MUST NOT raise for any input.
+`build_ingest_config_snapshot` MUST emit an `effective_chunking` mapping computed by the public helper `effective_chunking(data_manager_config)` in `src/utils/ingest_provenance.py`. The path MUST be `"hierarchical"` when `data_manager.chunking.strategy` (default `"sentence"`) is `"sentence"` or `"markdown"`, and `"character"` otherwise. A hierarchical result MUST carry `path`, `strategy`, `parent_chunk_size` (default 2048), `child_chunk_size` (default 512), and `child_chunk_overlap` clamped as the node parser clamps it for that strategy. A character result MUST carry `path`, `strategy`, and the top-level `chunk_size` (default 1000) and `chunk_overlap` (default 150). The existing `chunk_size`, `chunk_overlap`, and `child_chunk_overlap` snapshot keys MUST keep their current values. Under the `markdown` strategy the result MUST also carry `non_markdown_child_chunk_overlap`, the overlap clamped as the sentence parser clamps it, because every non-Markdown file falls back to the sentence parser. The helper MUST NOT raise for any input.
 
 #### Scenario: Hierarchical config with no chunking block
 - **WHEN** the snapshot is built from a `data_manager` config with no `chunking:` block
@@ -20,6 +20,7 @@
 - **WHEN** the config sets `chunking.strategy: sentence`, `parent_chunk_size: 30`, `child_chunk_size: 512`, and `chunk_overlap: 40`
 - **THEN** `effective_chunking["child_chunk_overlap"]` is 15
 - **AND** with `strategy: markdown` and the same sizes it is 40
+- **AND** with `strategy: markdown` and the same sizes `non_markdown_child_chunk_overlap` is 15
 
 #### Scenario: Invalid values do not raise
 - **WHEN** a chunk size or the overlap is a bool, a string, or a negative number

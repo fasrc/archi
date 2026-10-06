@@ -49,6 +49,7 @@ def test_snapshot_reads_every_flag_from_a_full_config():
             "parent_chunk_size": 2048,
             "child_chunk_size": 512,
             "child_chunk_overlap": 0,
+            "non_markdown_child_chunk_overlap": 0,
         },
         "embedding_model": "OpenAIEmbeddings",
         "embedding_dimensions": 1536,
@@ -208,6 +209,32 @@ def test_effective_chunking_markdown_clamps_on_child_only():
         }
     }
     assert effective_chunking(dm)["child_chunk_overlap"] == 40
+
+
+def test_effective_chunking_markdown_reports_the_non_markdown_fallback_overlap():
+    # resolve_effective_strategy sends every non-Markdown file to the sentence
+    # parser, which clamps on min(parent, child), not on child alone.
+    dm = {
+        "chunking": {
+            "strategy": "markdown",
+            "parent_chunk_size": 30,
+            "child_chunk_size": 512,
+            "chunk_overlap": 40,
+        }
+    }
+    result = effective_chunking(dm)
+    assert result["child_chunk_overlap"] == 40
+    assert result["non_markdown_child_chunk_overlap"] == 15
+
+
+def test_effective_chunking_sentence_has_no_non_markdown_overlap():
+    dm = {"chunking": {"strategy": "sentence", "parent_chunk_size": 30}}
+    assert "non_markdown_child_chunk_overlap" not in effective_chunking(dm)
+
+
+def test_effective_chunking_markdown_invalid_size_reports_the_fallback_unclamped():
+    dm = {"chunking": {"strategy": "markdown", "parent_chunk_size": "nope"}}
+    assert effective_chunking(dm)["non_markdown_child_chunk_overlap"] == 20
 
 
 @pytest.mark.parametrize("bad", [True, "nope", -1])

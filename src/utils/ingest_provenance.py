@@ -104,20 +104,26 @@ def effective_chunking(data_manager_config: Any) -> Dict[str, Any]:
             and _is_non_negative_int(child)
             and _is_non_negative_int(overlap)
         ):
-            clamp_basis = (
-                child if strategy == _MARKDOWN_STRATEGY else min(parent, child)
-            )
-            child_chunk_overlap = _clamped_overlap(clamp_basis, overlap)
+            sentence_overlap = _clamped_overlap(min(parent, child), overlap)
+            markdown_overlap = _clamped_overlap(child, overlap)
         else:
-            child_chunk_overlap = overlap
+            sentence_overlap = markdown_overlap = overlap
 
-        return {
+        result = {
             "path": "hierarchical",
             "strategy": strategy,
             "parent_chunk_size": parent,
             "child_chunk_size": child,
-            "child_chunk_overlap": child_chunk_overlap,
+            "child_chunk_overlap": (
+                markdown_overlap if strategy == _MARKDOWN_STRATEGY else sentence_overlap
+            ),
         }
+        if strategy == _MARKDOWN_STRATEGY:
+            # Only Markdown files use the markdown parser; every other file falls
+            # back to the sentence parser (resolve_effective_strategy), which
+            # clamps on min(parent, child).
+            result["non_markdown_child_chunk_overlap"] = sentence_overlap
+        return result
 
     return {
         "path": "character",
