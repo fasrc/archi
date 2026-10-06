@@ -147,12 +147,14 @@ rm -f "$FM_ERRF"
 # deleted right after archiving, so they must be read NOW or never: refuse on failure.
 DOCS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "select count(*) from documents where is_deleted is not true;" 2>/dev/null | tr -d '[:space:]' || true)"
 CHUNKS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "select count(*) from document_chunks;" 2>/dev/null | tr -d '[:space:]' || true)"
-[[ "$DOCS" =~ ^[0-9]+$ && "$CHUNKS" =~ ^[0-9]+$ ]] || fm_die "could not read the live document/chunk counts from postgres-$STACK (got docs='${DOCS}' chunks='${CHUNKS}'); the stack must be up when a run is archived"
+[[ "$DOCS" =~ ^[0-9]+$ && "$CHUNKS" =~ ^[0-9]+$ ]] || fm_die_paged "stack $STACK arm $ARM" "could not read the live document/chunk counts from postgres-$STACK (got docs='${DOCS}' chunks='${CHUNKS}'); the stack must be up when a run is archived"
 
 PIN_FILE="$(fm_pin_file "$STACK")"
-ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \
+# The artifact checks below refuse after the run finished, so they page like the ones above.
+FM_ERRF="$(mktemp)"
+if ! ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \
   FM_LEDGER="$(fm_ledger)" FM_LOCK_SHA="$(fm_lock_sha)" \
-  FM_PIN_FILE="$PIN_FILE" FM_NEW_CORPUS="$NEW_CORPUS" FM_FINISHED="$(fm_now)" "$FM_PYTHON" - <<'EOF'
+  FM_PIN_FILE="$PIN_FILE" FM_NEW_CORPUS="$NEW_CORPUS" FM_FINISHED="$(fm_now)" "$FM_PYTHON" - 2>"$FM_ERRF" <<'EOF'
 import json, math, os, sys, yaml
 p = os.environ["FM_ARTIFACT"]
 d = json.loads(open(p).read().replace("NaN", "null"))          # pre-#279 artifacts carry bare NaN
@@ -248,7 +250,12 @@ entry = {
 }
 print(json.dumps(entry))
 EOF
-)"
+)"; then
+  cat "$FM_ERRF" >&2
+  FM_REASON="$(cat "$FM_ERRF")"; rm -f "$FM_ERRF"
+  fm_die_paged "stack $STACK arm $ARM" "refusing to archive $ARTIFACT (see above)" "$FM_REASON"
+fi
+rm -f "$FM_ERRF"
 fm_ledger_append "$ENTRY"
 fm_log "archived arm $ARM run $RUN: $ARTIFACT"
 FM_ENTRY="$ENTRY" "$FM_PYTHON" - <<'EOF'

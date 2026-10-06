@@ -2,7 +2,7 @@
 
 ### Requirement: The feature-matrix wrappers SHALL page the operator by mail when a run is refused after long work
 
-`scripts/benchmarking/feature_matrix/lib.sh` MUST provide `fm_page` and `fm_die_paged`, controlled by `FM_PAGE_MAIL_TO` (recipient; empty means off) and `FM_MAIL` (the mail binary; default `mail`). `archive_run.sh` MUST page at both "refusing to archive" exits, and `qa_arm.sh` MUST page at both "corpus changed during the QA run" exits. Each page MUST be one message whose subject starts with `feature_matrix:` and names the stack and the arm (or `sweep`). The wrapper MUST still exit 2 with the same stderr message as before.
+`scripts/benchmarking/feature_matrix/lib.sh` MUST provide `fm_page` and `fm_die_paged`, controlled by `FM_PAGE_MAIL_TO` (recipient; empty means off) and `FM_MAIL` (the mail binary; default `mail`). `archive_run.sh` MUST page at every refusal after the run finished (each "refusing to archive" exit, from the preliminary check, the artifact validator, or the sweep check, and the unreadable live-count exit), and `qa_arm.sh` MUST page at both "corpus changed during the QA run" exits. Each page MUST be one message whose subject starts with `feature_matrix:` and names the stack and the arm (or `sweep`). The wrapper MUST still exit 2 with the same stderr message as before.
 
 #### Scenario: Refused archive pages once with the reason
 

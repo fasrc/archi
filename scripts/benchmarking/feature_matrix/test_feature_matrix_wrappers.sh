@@ -68,6 +68,8 @@
 #   64. a bad arm label with paging on sends nothing (preconditions never page)
 #   65. a refused sweep-mode archive pages once with the refusal reason in the body
 #   66. a corpus drift during qa_arm.sh --sweep pages once
+#   67. a refusal from archive_run.sh's ENTRY validator pages once with the reason
+#   68. an unreadable live document/chunk count pages once
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -273,6 +275,15 @@ artifact "$FM_OUT/benchmarking-fm-00-20260903_000001.json" '["data_manager.retri
 BEFORE="$(ledger_rows)"
 run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml"
 if [ "$RC" = 2 ] && grep -q "divergence_from_selected_file" "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ] && [ ! -f "$FM_OUT/corpus-pin-fm-00" ]; then ok "archive refuses a diverged run, writes nothing"; else notok "archive refuses a diverged run (rc=$RC: $(cat "$T/stderr"))"; fi
+# 67: the same refusal comes from the ENTRY validator (after the preliminary check passed);
+# with paging on it pages once, with the refusal reason in the body, and still writes nothing
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 2 ] && grep -q "divergence_from_selected_file" "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ] && [ ! -f "$FM_OUT/corpus-pin-fm-00" ] \
+   && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: refusing to archive" "$T/mail.calls" \
+   && grep -q "divergence_from_selected_file" "$T/mail.calls"; then
+  ok "an ENTRY-validator refusal pages once with the refusal reason"; else notok "archive ENTRY page-on-refuse (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 rm -f "$FM_OUT"/benchmarking-fm-00-*.json
 
 # 6
@@ -514,6 +525,12 @@ rm -f "$FM_OUT"/benchmarking-fm-00-*.json; artifact "$FM_OUT/benchmarking-fm-00-
 touch "$T/nocounts"
 run bash "$HERE/archive_run.sh" 00 7 "$T/arms/00-baseline.yaml"
 R1=$RC; grep -q "could not read the live document/chunk counts" "$T/stderr" && M1=1 || M1=0
+# 68: the same count refusal follows the finished run, so with paging on it pages once
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 7 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 2 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: could not read the live document/chunk counts" "$T/mail.calls"; then
+  ok "an unreadable live count pages once"; else notok "archive count page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 rm -f "$T/nocounts"
 [ "$R1" = 2 ] && [ "$M1" = 1 ] && ok "archive refuses when the live counts cannot be read" || notok "count gate (rc=$R1 m=$M1: $(cat "$T/stderr"))"
 

@@ -19,7 +19,8 @@ The two exits that need a human after long work are:
   (the mail binary, default `mail`), documented in the header comment.
 - `lib.sh`: `fm_page <subject> <body>` sends one mail and never fails the caller, and
   `fm_die_paged <subject-context> <msg>` pages and then dies like `fm_die` (exit 2).
-- `archive_run.sh`: both "refusing to archive" sites page, with the refusal reason that the
+- `archive_run.sh`: every refusal after the run finished pages (each "refusing to archive"
+  site and the unreadable live-count exit), with the refusal reason that the
   check printed in the body. The reason still appears on stderr as before.
 - `qa_arm.sh`: both corpus-drift exits page.
 - Precondition refusals before long work do not page (the operator is at the keyboard).
