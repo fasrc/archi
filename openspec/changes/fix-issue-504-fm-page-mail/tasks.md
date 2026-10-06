@@ -6,4 +6,4 @@
 
 ## 2. Verify, push, and open the PR
 
-- [ ] 2.1 Run `bash scripts/gate.sh` on the branch tip and confirm it is green. Run `grep -c fm_page scripts/benchmarking/feature_matrix/lib.sh` (≥ 1) and confirm both archive sites and both QA drift exits call `fm_die_paged`. Push with `git push -u origin fix/issue-504-fm-page-mail`. Open the PR with `gh pr create --repo fasrc/archi --base dev`, with `closes #504` in the PR **body** (not the title). No `Co-Authored-By` trailer. Do not merge.
+- [x] 2.1 Run `bash scripts/gate.sh` on the branch tip and confirm it is green. Run `grep -c fm_page scripts/benchmarking/feature_matrix/lib.sh` (≥ 1) and confirm both archive sites and both QA drift exits call `fm_die_paged`. Push with `git push -u origin fix/issue-504-fm-page-mail`. Open the PR with `gh pr create --repo fasrc/archi --base dev`, with `closes #504` in the PR **body** (not the title). No `Co-Authored-By` trailer. Do not merge.
