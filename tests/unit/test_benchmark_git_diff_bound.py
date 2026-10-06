@@ -75,3 +75,31 @@ def test_an_oversized_change_is_cut_and_marked(repo):
     assert info["git_diff_truncated"] is True
     assert info["git_diff_original_bytes"] > 1_000_000
     assert len(json.dumps(info).encode("utf-8")) < 512_000
+
+
+def test_a_bench_out_only_deletion_records_a_clean_tree(repo):
+    (repo / "bench_out" / "art.json").unlink()
+    info = get_git_information(wd=repo)
+    assert info["git_diff"] == ""
+    assert info["git_diff_stat"] == ""
+    assert info["git_diff_original_bytes"] == 0
+
+
+def test_a_mixed_change_records_only_the_code_path(repo):
+    (repo / "src" / "pkg" / "mod.py").write_text("x = 1\ny = 2\n")
+    (repo / "bench_out" / "art.json").unlink()
+    info = get_git_information(wd=repo)
+    assert "src/pkg/mod.py" in info["git_diff"]
+    assert "bench_out" not in info["git_diff"]
+    assert "bench_out" not in info["git_diff_stat"]
+
+
+def test_capture_from_a_subdirectory_covers_the_whole_tree(repo):
+    (repo / "src" / "pkg" / "mod.py").write_text("x = 1\ny = 2\n")
+    (repo / "README.md").write_text("readme\nmore\n")
+    (repo / "bench_out" / "art.json").unlink()
+    info = get_git_information(wd=repo / "src" / "pkg")
+    assert "src/pkg/mod.py" in info["git_diff"]
+    assert "README.md" in info["git_diff"]
+    assert "bench_out" not in info["git_diff"]
+    assert "bench_out" not in info["git_diff_stat"]

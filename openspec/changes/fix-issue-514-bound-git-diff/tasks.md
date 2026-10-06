@@ -69,7 +69,7 @@ Standing notes for every task:
       `tests/unit/test_benchmark_host_provenance.py` still passes: its
       `test_git_info_yaml_carries_the_host_block` calls `get_git_information()` with no
       argument, which is the production call shape. Gate green; commit.
-- [ ] 1.2 `model: opus` — The exclusion, RED first, same test file. Add
+- [x] 1.2 `model: opus` — The exclusion, RED first, same test file. Add
       `test_a_bench_out_only_deletion_records_a_clean_tree` (delete `bench_out/art.json`;
       `git_diff == ""`, `git_diff_stat == ""`, `git_diff_original_bytes == 0`) and
       `test_a_mixed_change_records_only_the_code_path` (edit `src/pkg/mod.py` **and**
