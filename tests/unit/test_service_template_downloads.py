@@ -546,6 +546,8 @@ def _named_commands(command: str):
         rest = argv[position + 1 :]
         if name in _SHELLS and "-c" in rest:
             script = rest[rest.index("-c") + 1 :]
+            if script and script[0] == "--":
+                script = script[1:]
             if script:
                 yield from _named_commands(script[0])
             continue
@@ -1603,6 +1605,17 @@ class TestProvenanceFollowsDockerfileOrder:
             "wget's -O names ONE file for every URL, so a moving URL anywhere in the "
             "invocation makes that file moving"
         )
+
+
+class TestTheFindingsDeferredFromPr507:
+    """Tests and fixes for the 16 findings deferred from PR #507 (issue #519)."""
+
+    _MOVING = '"https://download.mozilla.org/?product=firefox-esr-latest-ssl"'
+    _PINNED = '"https://example.invalid/tool-v1.2.3.tar.gz"'
+
+    def test_sh_c_double_dash_reads_script(self):
+        text = f"RUN wget -O /tmp/a {self._MOVING}\n" "RUN sh -c -- 'tar -xzf /tmp/a'\n"
+        assert _offenders(text) == ["-xzf"]
 
 
 class TestTheGuardErrsClosedWhereItCannotSeeTheProgram:
