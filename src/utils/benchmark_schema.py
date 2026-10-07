@@ -719,6 +719,7 @@ def _positive_int(value: Any, default: int, name: str) -> int:
 
 def _positive_number(value: Any, default: int, name: str) -> Any:
     """Accept any positive finite number, else fall back to ``default`` and say so.
+    Also canonicalizes an integral float to the equivalent ``int``.
 
     ``timeout`` is a duration, not a count: ragas hands it to
     ``asyncio.wait_for``, which takes a float, and before this knob was
@@ -729,14 +730,20 @@ def _positive_number(value: Any, default: int, name: str) -> Any:
     count has no meaning.
 
     ``bool`` is excluded for the same reason as in ``_positive_int``, and a NaN
-    or infinity is rejected because neither is a duration.
+    or infinity is rejected because neither is a duration. An int too large to
+    convert to a float raises ``OverflowError`` from ``math.isfinite`` rather
+    than returning ``False``, so that is treated as not finite too. An
+    integral float (``600.0``) is returned as the ``int`` ``600`` so it compares
+    equal to, and reports as, the same setting as the int spelling.
     """
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(value)
-        or value <= 0
-    ):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        is_finite = False
+    else:
+        try:
+            is_finite = math.isfinite(value)
+        except OverflowError:
+            is_finite = False
+    if not is_finite or value <= 0:
         if value is not None:
             logger.warning(
                 "Ignoring ragas_settings.%s=%r (want a positive number); using %d",
@@ -745,6 +752,8 @@ def _positive_number(value: Any, default: int, name: str) -> Any:
                 default,
             )
         return default
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
     return value
 
 
