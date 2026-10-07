@@ -19,6 +19,10 @@ import sys
 
 import yaml
 
+from src.utils.benchmark_provenance import (
+    DIVERGENCE_IGNORED_PATHS,
+    asserted_config_divergence,
+)
 from src.utils.config_service import ConfigService
 from src.utils.deployment_record import record_deployment
 from src.utils.postgres_service_factory import PostgresServiceFactory
@@ -29,6 +33,24 @@ def load_config(path: str):
         return yaml.safe_load(f)
 
 
+def fallback_candidates(config_path: str) -> list:
+    """Return sorted ``*.yaml`` candidates when ``config_path`` is absent, else ``[]``.
+
+    Returns an empty list when ``config_path`` is an existing file (single-config
+    deployment). Otherwise returns the sorted ``*.yaml`` files in the same directory,
+    which are the arm files a multi-config deployment rendered instead of
+    ``config.yaml``.
+    """
+    if os.path.isfile(config_path):
+        return []
+    directory = (
+        config_path
+        if os.path.isdir(config_path)
+        else (os.path.dirname(config_path) or ".")
+    )
+    return sorted(glob.glob(os.path.join(directory, "*.yaml")))
+
+
 def resolve_config_path(config_path: str) -> str:
     """Resolve the config file to seed Postgres from.
 
@@ -37,21 +59,40 @@ def resolve_config_path(config_path: str) -> str:
     (e.g. ``fasrc-cannon-v1-strict.yaml``) instead, so the hardcoded
     ``config.yaml`` is absent — fall back to the first ``*.yaml`` in the
     rendered-config directory rather than aborting the whole deployment.
-    Seeding from any one config is harmless: the benchmarker reads the YAML
-    files directly and never consumes the seeded static_config. If nothing is
-    found, return the original path so ``load_config`` raises a clear error.
+    ``seed_entry`` refuses the deployment when the arm files disagree outside the
+    ignored paths, because the agent reads the seeded configuration for everything
+    else. If nothing is found, return the original path so ``load_config`` raises
+    a clear error.
     """
-    if os.path.isfile(config_path):
-        return config_path
-    directory = (
-        config_path
-        if os.path.isdir(config_path)
-        else (os.path.dirname(config_path) or ".")
-    )
-    candidates = sorted(glob.glob(os.path.join(directory, "*.yaml")))
+    candidates = fallback_candidates(config_path)
     if candidates:
         return candidates[0]
     return config_path
+
+
+def arm_config_divergence(paths: list) -> dict:
+    """Paths at which each arm file disagrees with the first, outside ignored paths.
+
+    Returns a dict mapping each differing file path to its sorted list of dotted
+    config paths. Files that agree with the first are absent from the dict. Fewer
+    than two paths, or an empty list, returns ``{}``.
+
+    Uses ``asserted_config_divergence`` in both directions so that a key present in
+    only one file with a non-null value is always reported against the non-first file.
+    """
+    if len(paths) < 2:
+        return {}
+    configs = [load_config(p) for p in paths]
+    first = configs[0]
+    result = {}
+    for path, cfg in zip(paths[1:], configs[1:]):
+        diff = sorted(
+            set(asserted_config_divergence(first, cfg))
+            | set(asserted_config_divergence(cfg, first))
+        )
+        if diff:
+            result[path] = diff
+    return result
 
 
 def seed(config: dict, cs: ConfigService):
