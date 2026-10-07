@@ -110,7 +110,7 @@
 
 ## 3. Correct the three docstrings
 
-- [ ] 3.1 Edit, gate, commit.
+- [x] 3.1 Edit, gate, commit.
 
       Replace the `resolve_config_path` sentence "Seeding from any one config is harmless:
       the benchmarker reads the YAML files directly and never consumes the seeded
