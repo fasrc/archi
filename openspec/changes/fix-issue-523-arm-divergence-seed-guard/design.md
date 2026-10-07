@@ -19,15 +19,19 @@ Anchors re-verified on `origin/dev` `db701852` (2026-10-07):
 
 ## Decisions
 
-**D1 — Reuse `asserted_config_divergence`, both directions.** For each candidate after the
-first: `sorted(set(asserted(first, other)) | set(asserted(other, first)))`. Each call reports
-only keys its first argument asserts, so the union covers a key present in only one file.
-Do not use `config_divergence` (it has no ignore list). Do not write a local walker.
+**D1 — A local symmetric walker, not `asserted_config_divergence`.** For each candidate
+after the first, `_arm_walk(first, other)` walks the union of keys and reports a key present
+in only one file. (Superseded on PR #628 review: the first version reused
+`asserted_config_divergence` in both directions; see D2 for why that was wrong here.)
 
-**D2 — Leaf semantics are inherited, not redefined.** `None` matches an empty container
-and an absent key (`_leaves_equal`), because every consumer reads with `.get(key)`. So
-`foo: null` vs no `foo` is NOT a difference; `foo: true` vs no `foo` IS one. `0` vs `False`
-is a difference. Tests pin the "key in only one file with a real value" case only.
+**D2 — Key presence is a setting between arms.** `asserted_config_divergence` compares
+sparse operator intent against a defaulted running config, so it treats `None`, an empty
+container and an absent key as one thing. Two arm files are both operator intent, and the
+consumers do not agree that the forms are equal: `GitScraper` reads
+`code_suffixes` with a default (`git_scraper.py:40`), so absent means the built-in list,
+`[]` means none, and `null` raises. So absent, `null`, `[]` and `{}` all differ, and leaves
+compare by type and value (`0` vs `False` differs). A false refusal names the path and
+costs one edit; a false pass silently changes one arm's corpus.
 
 **D3 — Compare the whole file, not only `services`.** The seeder writes `data_manager`,
 `global`, `archi` and `mcp_servers` too, and the agent reads them from Postgres. The ignore
@@ -37,7 +41,7 @@ its whole subtree (the walker's `prefix in ignore` check).
 **D4 — Return shape.** `arm_config_divergence(paths: list[str]) -> dict[str, list[str]]`
 maps each differing file's path to its sorted dotted paths. Files that agree are absent
 from the dict. Fewer than two paths → `{}`. An empty YAML file loads as `None`, which the
-walker treats as `{}`.
+walker reports as a `<root>` difference against a mapping.
 
 **D5 — Where the check runs.** Split the fallback decision out of `resolve_config_path`
 without changing its return value: add `fallback_candidates(config_path) -> list[str]`
@@ -68,3 +72,11 @@ multi-config deployment; to A/B it, run separate deployments (or re-seed) per va
   by the operator (#523 body, "Decision").
 - `src/cli/tools/config_seed.py` is black-clean at `db701852`, so the edit does not reflow
   unrelated lines; patch coverage comes from the new test file.
+
+**D6 — `archi evaluate` runs the same comparison first (PR #628 review).**
+`ConfigurationManager.__init__` logs and drops an arm whose `services` differ, and `--force`
+removes the existing runtime before Compose starts `config-seed`. So `evaluate` calls
+`arm_divergence_refusal(config_files)` on the operator's original files before it builds the
+manager, and raises a `ClickException` with the message. Files that are not YAML mappings
+are skipped there, as the manager skips them. `archi create` and `restart` keep the
+manager's existing behavior.

@@ -18,8 +18,8 @@ config-seed step closed. Warn-only and per-arm runtime settings were rejected.
 - Add `arm_config_divergence(paths)` to `src/cli/tools/config_seed.py`. It loads each arm
   file and reports, per file, the dotted paths where it differs from the first file. It
   ignores `DIVERGENCE_IGNORED_PATHS` (`services.benchmarking`, the deploy-rewritten
-  `agents_dir`/`skills_dir` paths, and `name`) and reuses `asserted_config_divergence` from
-  `src/utils/benchmark_provenance.py` in both directions, so the check is symmetric.
+  `agents_dir`/`skills_dir` paths, and `name`). The comparison is symmetric and keeps key
+  presence: an absent key, `null`, `[]` and `{}` all differ (design D2).
 - In `seed_entry`, on the fallback path only (no `config.yaml`, more than one `*.yaml`): if
   any arm differs, print the file names and the diverging paths to stderr and exit non-zero
   **before** any Postgres connection. `base-compose.yaml` already makes every dependant
