@@ -512,6 +512,7 @@ class ResultHandler:
         modes_executed: Optional[Set[str]] = None,
         retrieval_identity: Optional[Dict[str, Any]] = None,
         judge_usage: Optional[Dict[str, Any]] = None,
+        ragas_scored: Optional[bool] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -661,6 +662,12 @@ class ResultHandler:
             # timeout and a worker count as settings it used, when it never
             # built a RunConfig at all. Null says "no judge ran" and is not the
             # same claim as an absent key.
+            #
+            # Also None when RAGAS was a mode but every answer in the arm failed
+            # or was degraded, so `_process_config` never built a `RunConfig` and
+            # the judge never started (#518). `ragas_scored=False` is how the
+            # caller reports that; `None` means the caller does not know, which
+            # keeps today's behavior.
             "ragas_effective_settings": (
                 ragas_effective_settings(
                     (
@@ -670,7 +677,7 @@ class ResultHandler:
                         or {}
                     ).get("ragas_settings")
                 )
-                if ragas_ran
+                if ragas_ran and ragas_scored is not False
                 else None
             ),
             # Per-arm token usage from the ragas judge LLM calls (D7). Null when

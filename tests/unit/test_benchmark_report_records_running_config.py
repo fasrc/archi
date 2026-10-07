@@ -227,6 +227,87 @@ def test_no_judge_settings_are_claimed_when_ragas_was_not_a_mode(tmp_path):
     ] == {"timeout": 600, "max_workers": 4}
 
 
+def test_unjudged_ragas_arm_records_no_settings(tmp_path):
+    """RAGAS was a mode, but every answer failed, so the judge never scored (#518).
+
+    ``_process_config`` takes the ``build_ragas_aggregates(None, ...)`` branch for
+    an arm whose every answer failed or was degraded, and never builds a
+    ``RunConfig``. The caller reports this with ``ragas_scored=False``; the
+    record must not claim judge settings for a judge that never started.
+    """
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        ragas_scored=False,
+    )
+
+    assert ResultHandler.results[0]["ragas_effective_settings"] is None
+
+
+def test_judged_ragas_arm_records_settings_when_told_it_was_scored(tmp_path):
+    """``ragas_scored=True`` is the normal case: the judge ran, so settings are recorded."""
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        ragas_scored=True,
+    )
+
+    assert ResultHandler.results[0]["ragas_effective_settings"] == {
+        "timeout": 600,
+        "max_workers": 4,
+    }
+
+
+def test_omitting_ragas_scored_keeps_recording_settings(tmp_path):
+    """A caller that does not know whether the judge scored keeps today's behavior."""
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+    )
+
+    assert ResultHandler.results[0]["ragas_effective_settings"] == {
+        "timeout": 600,
+        "max_workers": 4,
+    }
+
+
+def test_unjudged_and_unspecified_ragas_arms_share_a_digest(tmp_path):
+    """``ragas_scored=False`` must not change the configuration digest (#518).
+
+    Only ``modes_executed`` feeds the digest basis (``with_effective_ragas_settings``);
+    ``ragas_scored`` only gates what ``ragas_effective_settings`` reports.
+    """
+    ResultHandler.handle_results(
+        _write(tmp_path / "a", _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        ragas_scored=False,
+    )
+    ResultHandler.handle_results(
+        _write(tmp_path / "b", _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+    )
+
+    unjudged, unspecified = ResultHandler.results
+    assert (
+        unjudged["config_version"]["digest"] == unspecified["config_version"]["digest"]
+    )
+
+
 def test_two_files_that_differ_keep_different_selected_file_digests(tmp_path):
     """Normalizing the DIGEST basis must not reach the file's own fingerprint.
 
