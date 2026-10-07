@@ -40,7 +40,7 @@
 
 ## 1. The comparison helper and the fallback-candidate split
 
-- [ ] 1.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 1.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Create `tests/unit/test_config_seed_arm_divergence.py` with a module
       docstring that cites #523, and tests that assert (each arm file is a full small config,
@@ -78,7 +78,7 @@
 
 ## 2. Refuse the deployment in seed_entry
 
-- [ ] 2.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 2.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Add tests to `tests/unit/test_config_seed_arm_divergence.py` that patch
       `config_seed.PostgresServiceFactory`, `config_seed.seed` and

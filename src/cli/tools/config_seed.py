@@ -168,6 +168,23 @@ def main():
 
 
 def seed_entry(config_path: str, env: dict):
+    candidates = fallback_candidates(config_path)
+    if len(candidates) >= 2:
+        divergence = arm_config_divergence(candidates)
+        if divergence:
+            print(
+                f"[config-seed] ARM CONFIG DIVERGENCE detected (reference: {candidates[0]}):",
+                file=sys.stderr,
+            )
+            for path, diffs in divergence.items():
+                print(f"  {path}: {', '.join(diffs)}", file=sys.stderr)
+            print(
+                "The agent reads the seeded services block, so arms must agree outside"
+                " services.benchmarking, the deploy-rewritten paths and name;"
+                " run separate deployments to A/B such a setting.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     config_path = resolve_config_path(config_path)
     print(f"[config-seed] Loading config from {config_path}")
     config = load_config(config_path)
