@@ -16,9 +16,21 @@ The config seeder SHALL exit non-zero, before it connects to Postgres, when a mu
 - **THEN** the seeder exits non-zero, the output names `services.chat_app.force_initial_retrieval` and both files, and no call reaches the config service
 
 #### Scenario: A key is present in only one arm file
-- **WHEN** one arm file sets a key with a non-null value and the other arm file does not have that key
+- **WHEN** one arm file sets a key and the other arm file does not have that key, whatever the value (including `null`, `[]` and `{}`)
 - **THEN** the seeder reports that dotted path as a difference and exits non-zero
 
 #### Scenario: config.yaml is present
 - **WHEN** the rendered-config directory contains `config.yaml` and other `*.yaml` files that differ from it
 - **THEN** the seeder seeds from `config.yaml` without a divergence check
+
+### Requirement: archi evaluate refuses divergent arms before it changes anything
+`archi evaluate` SHALL compare the operator's arm files with the same rule as the config seeder, and SHALL exit non-zero with the differing paths before `ConfigurationManager` loads them and before `--force` removes an existing runtime. Files in the config directory that are not YAML mappings SHALL be skipped by this comparison.
+
+#### Scenario: An arm differs in a services setting
+- **WHEN** `archi evaluate --force --config-dir` gets two arm files that differ in `services.chat_app`
+- **THEN** the command exits non-zero, names `services.chat_app`, and the existing runtime is not removed
+- **AND** no arm is dropped and deployed without the other
+
+#### Scenario: An arm differs in a data_manager setting
+- **WHEN** `archi evaluate --force --config-dir` gets two arm files that differ in `data_manager.chunk_size`
+- **THEN** the command exits non-zero, names `data_manager.chunk_size`, and the existing runtime is not removed

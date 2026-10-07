@@ -19,10 +19,7 @@ import sys
 
 import yaml
 
-from src.utils.benchmark_provenance import (
-    DIVERGENCE_IGNORED_PATHS,
-    asserted_config_divergence,
-)
+from src.utils.benchmark_provenance import DIVERGENCE_IGNORED_PATHS
 from src.utils.config_service import ConfigService
 from src.utils.deployment_record import record_deployment
 from src.utils.postgres_service_factory import PostgresServiceFactory
@@ -70,6 +67,23 @@ def resolve_config_path(config_path: str) -> str:
     return config_path
 
 
+def _arm_walk(left, right, prefix: str, found: list) -> None:
+    if prefix in DIVERGENCE_IGNORED_PATHS:
+        return
+    if isinstance(left, dict) and isinstance(right, dict):
+        for key in sorted(set(left) | set(right), key=str):
+            path = f"{prefix}.{key}" if prefix else str(key)
+            if (key in left) != (key in right):
+                if path not in DIVERGENCE_IGNORED_PATHS:
+                    found.append(path)
+                continue
+            _arm_walk(left[key], right[key], path, found)
+        return
+    # ``0 == False`` in Python; a numeric setting is not a boolean one.
+    if type(left) is not type(right) or left != right:
+        found.append(prefix or "<root>")
+
+
 def arm_config_divergence(paths: list) -> dict:
     """Paths at which each arm file disagrees with the first, outside ignored paths.
 
@@ -77,8 +91,9 @@ def arm_config_divergence(paths: list) -> dict:
     config paths. Files that agree with the first are absent from the dict. Fewer
     than two paths, or an empty list, returns ``{}``.
 
-    Uses ``asserted_config_divergence`` in both directions so that a key present in
-    only one file with a non-null value is always reported against the non-first file.
+    Both sides are files, so key presence is a setting: an absent key, ``null``
+    and an empty container all differ. ``GitScraper`` reads ``code_suffixes``
+    with a default, so absent means its built-in list and ``[]`` means none.
     """
     if len(paths) < 2:
         return {}
@@ -86,13 +101,45 @@ def arm_config_divergence(paths: list) -> dict:
     first = configs[0]
     result = {}
     for path, cfg in zip(paths[1:], configs[1:]):
-        diff = sorted(
-            set(asserted_config_divergence(first, cfg))
-            | set(asserted_config_divergence(cfg, first))
-        )
-        if diff:
-            result[path] = diff
+        found = []
+        _arm_walk(first, cfg, "", found)
+        if found:
+            result[path] = sorted(found)
     return result
+
+
+def format_arm_divergence(reference: str, divergence: dict) -> str:
+    """The refusal message for arm files that disagree with ``reference``."""
+    lines = [f"ARM CONFIG DIVERGENCE detected (reference: {reference}):"]
+    lines += [f"  {path}: {', '.join(diffs)}" for path, diffs in divergence.items()]
+    lines.append(
+        "The agent reads the seeded services block, so arms must agree outside"
+        " services.benchmarking, the deploy-rewritten paths and name;"
+        " run separate deployments to A/B such a setting."
+    )
+    return "\n".join(lines)
+
+
+def _is_config_file(path: str) -> bool:
+    try:
+        return isinstance(load_config(path), dict)
+    except (OSError, yaml.YAMLError):
+        return False
+
+
+def arm_divergence_refusal(paths: list):
+    """The refusal message when the arm files in ``paths`` disagree, else ``None``.
+
+    ``archi evaluate`` calls this on the operator's own files, before
+    ``ConfigurationManager`` drops a divergent arm and before ``--force`` tears
+    down the existing runtime. Files that are not YAML mappings are skipped; the
+    manager reports those.
+    """
+    arms = [p for p in paths if _is_config_file(p)]
+    divergence = arm_config_divergence(arms)
+    if not divergence:
+        return None
+    return format_arm_divergence(arms[0], divergence)
 
 
 def seed(config: dict, cs: ConfigService):
@@ -173,15 +220,7 @@ def seed_entry(config_path: str, env: dict):
         divergence = arm_config_divergence(candidates)
         if divergence:
             print(
-                f"[config-seed] ARM CONFIG DIVERGENCE detected (reference: {candidates[0]}):",
-                file=sys.stderr,
-            )
-            for path, diffs in divergence.items():
-                print(f"  {path}: {', '.join(diffs)}", file=sys.stderr)
-            print(
-                "The agent reads the seeded services block, so arms must agree outside"
-                " services.benchmarking, the deploy-rewritten paths and name;"
-                " run separate deployments to A/B such a setting.",
+                "[config-seed] " + format_arm_divergence(candidates[0], divergence),
                 file=sys.stderr,
             )
             sys.exit(1)

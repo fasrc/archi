@@ -318,3 +318,79 @@ def test_seed_entry_single_arm_seeds_normally(tmp_path, monkeypatch):
 
     assert len(seed_log) == 1
     assert len(record_log) == 1
+
+
+# --- key presence is a setting between arms (PR #628 review) ---
+
+
+def _git_source(**git):
+    return {**_BASE, "data_manager": {"chunk_size": 1000, "sources": {"git": git}}}
+
+
+@pytest.mark.parametrize("value", [[], None, {}])
+def test_absent_versus_present_empty_reported(tmp_path, value):
+    # GitScraper reads code_suffixes with a default: absent means the built-in
+    # suffix list, [] means no suffixes, null means a TypeError.
+    a = _write(tmp_path / "a.yaml", _git_source())
+    b = _write(tmp_path / "b.yaml", _git_source(code_suffixes=value))
+    result = config_seed.arm_config_divergence([a, b])
+    assert result == {b: ["data_manager.sources.git.code_suffixes"]}
+
+
+def test_present_empty_versus_absent_reported(tmp_path):
+    a = _write(tmp_path / "a.yaml", _git_source(code_suffixes=[]))
+    b = _write(tmp_path / "b.yaml", _git_source())
+    result = config_seed.arm_config_divergence([a, b])
+    assert result == {b: ["data_manager.sources.git.code_suffixes"]}
+
+
+def test_empty_list_versus_empty_mapping_reported(tmp_path):
+    a = _write(tmp_path / "a.yaml", _git_source(code_suffixes=[]))
+    b = _write(tmp_path / "b.yaml", _git_source(code_suffixes={}))
+    result = config_seed.arm_config_divergence([a, b])
+    assert result == {b: ["data_manager.sources.git.code_suffixes"]}
+
+
+def test_zero_versus_false_reported(tmp_path):
+    a = _write(tmp_path / "a.yaml", {**_BASE, "data_manager": {"chunk_size": 0}})
+    b = _write(tmp_path / "b.yaml", {**_BASE, "data_manager": {"chunk_size": False}})
+    result = config_seed.arm_config_divergence([a, b])
+    assert result == {b: ["data_manager.chunk_size"]}
+
+
+def test_identical_empty_values_agree(tmp_path):
+    a = _write(tmp_path / "a.yaml", _git_source(code_suffixes=[], branches=None))
+    b = _write(tmp_path / "b.yaml", _git_source(code_suffixes=[], branches=None))
+    assert config_seed.arm_config_divergence([a, b]) == {}
+
+
+# --- evaluate-time refusal over the operator's own arm files ---
+
+
+def test_arm_divergence_refusal_names_reference_and_paths(tmp_path):
+    a = _write(tmp_path / "a.yaml", _BASE)
+    b = _write(tmp_path / "b.yaml", {**_BASE, "data_manager": {"chunk_size": 500}})
+    message = config_seed.arm_divergence_refusal([a, b])
+    assert f"reference: {a}" in message
+    assert f"{b}: data_manager.chunk_size" in message
+    assert "separate deployments" in message
+
+
+def test_arm_divergence_refusal_none_when_arms_agree(tmp_path):
+    a = _write(tmp_path / "a.yaml", _BASE)
+    b = _write(tmp_path / "b.yaml", {**_BASE, "name": "b"})
+    assert config_seed.arm_divergence_refusal([a, b]) is None
+
+
+def test_arm_divergence_refusal_skips_files_that_are_not_configs(tmp_path):
+    # ConfigurationManager logs and skips these; the refusal must not read a
+    # README or a broken file as a divergent arm.
+    a = _write(tmp_path / "a.yaml", _BASE)
+    b = _write(tmp_path / "b.yaml", {**_BASE, "name": "b"})
+    readme = tmp_path / "README.md"
+    readme.write_text("These are the sweep arms.\n")
+    broken = tmp_path / "broken.yaml"
+    broken.write_text("key: [unclosed\n")
+    missing = str(tmp_path / "missing.yaml")
+    paths = [a, str(readme), str(broken), missing, b]
+    assert config_seed.arm_divergence_refusal(paths) is None

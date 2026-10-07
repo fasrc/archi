@@ -1006,3 +1006,68 @@ def test_evaluate_force_records_preflight_volumes_teardown_stage_render_order(
         "stage",
         "render",
     ], f"got {events}\noutput:\n{result.output}"
+
+
+# ---------------------------------------------------------------------------
+# PR #628 review — evaluate refuses divergent arms before the manager drops
+# one and before --force tears the runtime down
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "section, key, value",
+    [
+        # ConfigurationManager would log and drop this arm, then deploy one arm.
+        ("services", "chat_app", {"force_initial_retrieval": False}),
+        # ConfigurationManager accepts this arm; only config-seed refused it,
+        # after the teardown.
+        ("data_manager", "chunk_size", 500),
+    ],
+)
+def test_evaluate_force_divergent_arms_keeps_existing_runtime(
+    env_file, archi_home, benchmark_config, monkeypatch, tmp_path, section, key, value
+):
+    from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.templates_manager import TemplateManager
+
+    _satisfied_base_images(monkeypatch)
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+    monkeypatch.setattr(TemplateManager, "_probe_port", lambda self, port: None)
+    starts = []
+    monkeypatch.setattr(
+        DeploymentManager, "start_deployment", lambda self, d: starts.append(d)
+    )
+
+    base = yaml.safe_load(benchmark_config.read_text())
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    arm_a = {**base, "name": "bench-a"}
+    arm_b = {**base, "name": "bench-b"}
+    arm_b[section] = {**base[section], key: value}
+    (config_dir / "a.yaml").write_text(yaml.safe_dump(arm_a))
+    (config_dir / "b.yaml").write_text(yaml.safe_dump(arm_b))
+
+    result = CliRunner().invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "--config-dir",
+            str(config_dir),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, f"output:\n{result.output}"
+    assert f"{section}.{key}" in result.output, f"output:\n{result.output}"
+    assert teardowns == [], f"teardowns={teardowns}\noutput:\n{result.output}"
+    assert starts == [], f"output:\n{result.output}"
+    assert (existing / "marker.txt").exists(), f"output:\n{result.output}"
