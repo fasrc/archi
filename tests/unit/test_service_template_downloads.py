@@ -79,6 +79,10 @@ class _StdinTarget(str):
     """
 
 
+class _UnterminatedHeredocCommand(str):
+    """A command line that opened a heredoc body with no matching terminator."""
+
+
 # A redirection operator: ``>``, ``>>``, ``<``, ``>&``, ``&>`` and the rest, with an
 # optional descriptor in front (``2>``) and, for the dup forms, a descriptor or ``-``
 # behind (``2>&1``, ``>&-``). A dup form has no target word; every other form consumes
@@ -690,8 +694,45 @@ def _templates():
     return sorted(found)
 
 
+def _find_heredoc_openers(tokens: list) -> list:
+    """``(delimiter, strip_tabs)`` pairs for ``<<`` heredoc operators in ``tokens``.
+
+    ``<<<`` (here-string) is skipped. A word that starts with ``-`` after ``<<``
+    signals ``<<-`` mode (strip leading tabs from the terminator line); the delimiter
+    is the word without the leading ``-``.
+    """
+    openers = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if isinstance(tok, _Operator) and str(tok).lstrip("0123456789") == "<<":
+            j = i + 1
+            if j < len(tokens) and not isinstance(tokens[j], _Operator):
+                raw = str(tokens[j])
+                if raw.startswith("-") and len(raw) > 1:
+                    openers.append((raw[1:], True))
+                else:
+                    openers.append((raw, False))
+                i = j + 1
+                continue
+        i += 1
+    return openers
+
+
 def _commands(text: str) -> list:
-    """``text`` split into shell commands, with backslash continuations joined.
+    """``text`` split into shell commands, with backslash continuations joined and
+    heredoc bodies removed.
+
+    Heredoc openers are found from the tokens of each command line, never from raw
+    text: ``<<`` (not ``<<<``) operators paired with their delimiter word, with quotes
+    already resolved by :func:`_shell_tokens`. A ``<<-WORD`` opener (delimiter word
+    starts with ``-``) strips leading tabs when matching the terminator line. Body
+    lines — from the opener through its terminator — are dropped; the opener line
+    stays. Several openers on one line are closed in order.
+
+    An unterminated heredoc fails closed: the opener line is returned as an
+    :class:`_UnterminatedHeredocCommand` so :func:`_offenders` reports it as
+    ``unparseable command …: unterminated heredoc``.
 
     The pairing matters and is why this is not a whole-file scan. Forcing a
     decompressor is only wrong on a MOVING download: these templates also fetch
@@ -701,7 +742,31 @@ def _commands(text: str) -> list:
     the check has to see which download each extraction belongs to.
     """
     joined = re.sub(r"\\\s*\n\s*", " ", text)
-    return [line for line in joined.splitlines() if line.strip()]
+    lines = [line for line in joined.splitlines() if line.strip()]
+
+    result: list = []
+    heredoc_queue: list[tuple[str, bool]] = []
+    opener_idx: int | None = None
+
+    for line in lines:
+        if heredoc_queue:
+            delim, strip_tabs = heredoc_queue[0]
+            check = line.lstrip("\t") if strip_tabs else line
+            if check == delim:
+                heredoc_queue.pop(0)
+            continue
+        opener_idx = len(result)
+        result.append(line)
+        try:
+            tokens = _shell_tokens(line)
+        except ValueError:
+            continue
+        heredoc_queue = _find_heredoc_openers(tokens)
+
+    if heredoc_queue and opener_idx is not None:
+        result[opener_idx] = _UnterminatedHeredocCommand(result[opener_idx])
+
+    return result
 
 
 def _parse_download(name: str, span: list[str]) -> _Download:
@@ -889,6 +954,11 @@ def _offenders(text: str) -> list:
     result = []
     commands = []
     for command in _commands(text):
+        if isinstance(command, _UnterminatedHeredocCommand):
+            result.append(
+                f"unparseable command {command.strip()!r}: unterminated heredoc"
+            )
+            continue
         try:
             _shell_tokens(command)
         except ValueError as exc:
@@ -1816,6 +1886,50 @@ class TestTheFindingsDeferredFromPr507:
         # (c) wget piped to tar with a moving URL is still indicted
         text = f"RUN wget -O - {self._MOVING} | tar -xz\n"
         assert _offenders(text) == ["-xz"]
+
+    def test_heredoc_body_is_not_parsed_as_shell(self):
+        moving = f"RUN wget -O /tmp/a {self._MOVING}\n"
+        # (a) a heredoc body is not parsed as shell commands
+        text = "RUN <<EOF\nThis archive isn't forced.\nEOF\n"
+        assert _offenders(text) == []
+        # (b) a tar in a heredoc body is not an extraction
+        text = moving + "RUN cat <<EOF > /tmp/notes\ntar -xzf /tmp/a\nEOF\n"
+        assert _offenders(text) == []
+        # (c) <<-EOF strips leading tabs; <<'EOF' and <<"EOF" are quoted delimiters
+        text = moving + "RUN cat <<-EOF\n\ttar body\n\tEOF\nRUN tar -xzf /tmp/a\n"
+        assert _offenders(text) == ["-xzf"]
+        text = moving + "RUN cat <<'EOF'\ntar body\nEOF\nRUN tar -xzf /tmp/a\n"
+        assert _offenders(text) == ["-xzf"]
+        text = moving + 'RUN cat <<"EOF"\ntar body\nEOF\nRUN tar -xzf /tmp/a\n'
+        assert _offenders(text) == ["-xzf"]
+        # (d) two heredocs on one line are closed in order
+        text = moving + "RUN cat <<A <<B\nbody A\nA\nbody B\nB\nRUN tar -xzf /tmp/a\n"
+        assert _offenders(text) == ["-xzf"]
+        # (e) a command after the terminator is still read
+        text = (
+            moving
+            + "RUN cat <<EOF > /tmp/notes\ntar -xzf /tmp/a\nEOF\nRUN tar -xzf /tmp/a\n"
+        )
+        assert _offenders(text) == ["-xzf"]
+        # (f) <<< is a here-string, not a heredoc: the next line is not a body
+        text = moving + "RUN cat <<< x && tar -xzf /tmp/a\n"
+        assert _offenders(text) == ["-xzf"]
+        # (g) accepted limit (#519 D27): RUN <<EOF body is a script but is not read
+        text = "RUN <<EOF\n" + moving.rstrip("\n") + "\ntar -xzf /tmp/a\nEOF\n"
+        assert _offenders(text) == []  # accepted limit (#519 D27)
+        # (h) no false opener: comment, arithmetic, and quoted << do not open a heredoc
+        for preamble in (
+            "# cat <<EOF\n",
+            "RUN echo $((1<<2))\n",
+            "RUN echo '<<EOF'\n",
+        ):
+            text = moving + preamble + "RUN tar -xzf /tmp/a\n"
+            assert _offenders(text) == ["-xzf"], f"false heredoc opener in {preamble!r}"
+        # (i) fail closed: an unterminated heredoc is reported as unparseable
+        result = _offenders("RUN cat <<EOF\n")
+        assert len(result) == 1
+        assert result[0].startswith("unparseable command")
+        assert "unterminated heredoc" in result[0]
 
 
 class TestTheGuardErrsClosedWhereItCannotSeeTheProgram:
