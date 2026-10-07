@@ -56,6 +56,10 @@ _FORCING_LONG = frozenset(
     }
 )
 _FORCING_SHORT = frozenset("zjJZI")
+_WRITE_MODE_SHORT = frozenset("cruA")
+_WRITE_MODE_LONG = frozenset(
+    {"--create", "--append", "--update", "--catenate", "--concatenate"}
+)
 _STDOUT_SINKS = frozenset({"-", "/dev/stdout", "/dev/null"})
 
 
@@ -458,6 +462,14 @@ def _parse_tar_span(
         rest_idx = 0
         has_forcing = False
         archive = None
+        write_mode = False
+        for _wc in word:
+            if _wc in _WRITE_MODE_SHORT:
+                write_mode = True
+            if _wc in _SHORT_WITH_ARGUMENT:
+                break
+        if write_mode:
+            return [], None
         for char in word:
             if char in _FORCING_SHORT:
                 has_forcing = True
@@ -489,6 +501,8 @@ def _parse_tar_span(
             continue
         if token.startswith("--"):
             name, separator, attached = token.partition("=")
+            if name in _WRITE_MODE_LONG:
+                return [], None
             if name in _FORCING_LONG:
                 forcing.append(token)
             if name in _ARCHIVE_LONG:
@@ -503,6 +517,14 @@ def _parse_tar_span(
             i += 1
             continue
         cluster = token[1:]
+        write_before_arg = False
+        for _wc in cluster:
+            if _wc in _WRITE_MODE_SHORT:
+                write_before_arg = True
+            if _wc in _SHORT_WITH_ARGUMENT:
+                break
+        if write_before_arg:
+            return [], None
         forces = False
         for position, character in enumerate(cluster):
             if character in _FORCING_SHORT:
@@ -1751,6 +1773,34 @@ class TestTheFindingsDeferredFromPr507:
         assert _parse_tar_span(["xzfC", "/tmp/a", "/opt"]) == (["xzfC"], "/tmp/a")
         # (f) traditional=False treats the first word as an operand, not options
         assert _parse_tar_span(["xzf", "/tmp/a"], traditional=False) == ([], None)
+
+    def test_write_mode_tar_is_not_an_extraction(self):
+        moving = f"RUN wget -O /tmp/a {self._MOVING}\n"
+        # (a) tar -czf after a moving save reports nothing: create is not extract
+        text = moving + "RUN tar -czf /tmp/a /opt/data\n"
+        assert _offenders(text) == []
+        # (b) _parse_tar_span returns ([], None) for every write-mode invocation
+        assert _parse_tar_span(["-czf", "/tmp/a", "/opt"]) == ([], None)
+        assert _parse_tar_span(["--create", "-z", "-f", "/tmp/a", "/opt"]) == ([], None)
+        assert _parse_tar_span(["-rzf", "/tmp/a", "x"]) == ([], None)
+        assert _parse_tar_span(["-uzf", "/tmp/a", "x"]) == ([], None)
+        assert _parse_tar_span(["-Azf", "/tmp/a", "/tmp/b"]) == ([], None)
+        assert _parse_tar_span(["--append", "-zf", "/tmp/a", "x"]) == ([], None)
+        assert _parse_tar_span(["czf", "/tmp/a", "/opt"]) == ([], None)
+        # (c) extraction mode is preserved: -xzf and -xfc keep their archive
+        assert _parse_tar_span(["-xzf", "c"]) == (["-xzf"], "c")
+        assert _parse_tar_span(["-xfc"]) == ([], "c")
+        # (d) an ordinary extraction of a moving archive is still reported
+        text = f"RUN wget -O c {self._MOVING} && tar -xzf c\n"
+        assert _offenders(text) == ["-xzf"]
+        # (f) unresolved program ($SUDO, $(…)) still indicts moving extractions
+        text = moving + "RUN $SUDO tar -xzf /tmp/a\n"
+        assert _offenders(text) == ["-xzf"]
+        text = moving + "RUN $(command -v sudo) tar -xzf /tmp/a\n"
+        assert _offenders(text) == ["-xzf"]
+        # (e) accepted limit (#519 D30): create-mode does not clear the moving path
+        text = moving + "RUN tar -czf /tmp/a /opt\n" "RUN tar -xzf /tmp/a\n"
+        assert _offenders(text) == ["-xzf"]  # accepted limit (#519 D30)
 
 
 class TestTheGuardErrsClosedWhereItCannotSeeTheProgram:
