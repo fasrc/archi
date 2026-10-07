@@ -495,6 +495,25 @@ _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _TRANSPARENT_WRAPPERS = frozenset(
     {"sudo", "env", "exec", "command", "builtin", "nice", "nohup", "time"}
 )
+_RESERVED_WORDS = frozenset(
+    {
+        "if",
+        "then",
+        "else",
+        "elif",
+        "fi",
+        "do",
+        "done",
+        "while",
+        "until",
+        "for",
+        "case",
+        "esac",
+        "{",
+        "}",
+        "!",
+    }
+)
 _SHELLS = frozenset({"sh", "bash", "dash", "ash", "zsh"})
 # The programs the guard reads. Behind a wrapper, one of these anywhere after the
 # wrapper's options is the command — see ``_command_name_position``.
@@ -530,6 +549,8 @@ def _command_name_position(argv: list[str]) -> int | None:
     while i < len(argv):
         word = argv[i]
         if _ASSIGNMENT.match(word):
+            i += 1
+        elif word in _RESERVED_WORDS:
             i += 1
         elif _basename(word) in _TRANSPARENT_WRAPPERS:
             wrapped = True
@@ -1659,6 +1680,21 @@ class TestTheFindingsDeferredFromPr507:
         assert wget_inv[0].writes == {"/tmp/a": True}
         curl_inv = _download_invocations(f'curl -o /tmp/a </dev/null "{moving_url}"')
         assert curl_inv[0].writes == {"/tmp/a": True}
+
+    def test_shell_reserved_words_are_stepped_over(self):
+        moving = f"RUN wget -O /tmp/a {self._MOVING}\n"
+        # (a) then introduces tar after an if condition
+        text = moving + "RUN if test -f /tmp/a; then tar -xzf /tmp/a; fi\n"
+        assert _offenders(text) == ["-xzf"]
+        # (b) do introduces tar in a for loop
+        text = moving + "RUN for f in 1; do tar -xzf /tmp/a; done\n"
+        assert _offenders(text) == ["-xzf"]
+        # (c) stepping over then still leaves echo as the command, not tar
+        text = moving + "RUN if true; then echo tar -xzf /tmp/a; fi\n"
+        assert _offenders(text) == []
+        # (d) time stays a wrapper (not a reserved word); -p is its flag
+        text = moving + "RUN time -p tar -xzf /tmp/a\n"
+        assert _offenders(text) == ["-xzf"]
 
 
 class TestTheGuardErrsClosedWhereItCannotSeeTheProgram:
