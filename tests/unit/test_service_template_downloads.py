@@ -419,7 +419,13 @@ def _basename(token: str) -> str:
     return token.strip("\"'").rsplit("/", 1)[-1]
 
 
-def _parse_tar_span(span: list[str]) -> tuple[list[str], str | None]:
+_OLD_STYLE_MODES = frozenset("xctru")
+_OLD_STYLE_PATTERN = re.compile(r"^[A-Za-z]+$")
+
+
+def _parse_tar_span(
+    span: list[str], traditional: bool = True
+) -> tuple[list[str], str | None]:
     """One tar invocation's forcing options and the archive it reads.
 
     The archive comes from ``-f``/``--file`` only. An operand is never read as the
@@ -429,9 +435,43 @@ def _parse_tar_span(span: list[str]) -> tuple[list[str], str | None]:
     A :class:`_StdinTarget` word carries the stdin redirect target; it is ignored
     during the option scan. When the archive is ``None`` or ``-`` at the end, the
     stdin target becomes the archive (``tar -xzf - </tmp/a`` extracts ``/tmp/a``).
+
+    When ``traditional`` is true and the first span word matches ``^[A-Za-z]+$`` and
+    contains one of the mode letters ``xctru``, it is read as an old-style option
+    cluster (D24): each letter in ``_SHORT_WITH_ARGUMENT`` consumes the next word, the
+    letter ``f`` names the archive, and the whole word is the forcing token when any
+    forcing letter is present.  Only the first word is read this way; ``traditional``
+    must be false for ``_UNRESOLVED_PROGRAM`` spans that may begin with the literal
+    word ``tar``.
     """
     stdin_target = next((w for w in span if isinstance(w, _StdinTarget)), None)
     span = [w for w in span if not isinstance(w, _StdinTarget)]
+
+    if (
+        traditional
+        and span
+        and _OLD_STYLE_PATTERN.match(span[0])
+        and any(c in span[0] for c in _OLD_STYLE_MODES)
+    ):
+        word = span[0]
+        rest = span[1:]
+        rest_idx = 0
+        has_forcing = False
+        archive = None
+        for char in word:
+            if char in _FORCING_SHORT:
+                has_forcing = True
+            if char in _SHORT_WITH_ARGUMENT:
+                if rest_idx < len(rest):
+                    val = rest[rest_idx]
+                    rest_idx += 1
+                    if char == "f":
+                        archive = val
+        forcing = [word] if has_forcing else []
+        if (archive is None or archive == "-") and stdin_target is not None:
+            archive = str(stdin_target)
+        return forcing, archive
+
     forcing = []
     archive = None
     end_of_options = False
@@ -601,7 +641,7 @@ def _named_commands(command: str):
 def _tar_invocations(command: str) -> list:
     """Every tar invocation in ``command``: one per simple command whose command is tar."""
     return [
-        _parse_tar_span(arguments)
+        _parse_tar_span(arguments, traditional=(name == "tar"))
         for name, arguments in _named_commands(command)
         if name in ("tar", _UNRESOLVED_PROGRAM)
     ]
@@ -772,7 +812,7 @@ def _invocations(command: str):
     """
     for name, arguments in _named_commands(command):
         if name in ("tar", _UNRESOLVED_PROGRAM):
-            yield _parse_tar_span(arguments)
+            yield _parse_tar_span(arguments, traditional=(name == "tar"))
         elif name in _DOWNLOAD_OUTPUT_OPTIONS:
             yield _parse_download(name, arguments)
 
@@ -1695,6 +1735,22 @@ class TestTheFindingsDeferredFromPr507:
         # (d) time stays a wrapper (not a reserved word); -p is its flag
         text = moving + "RUN time -p tar -xzf /tmp/a\n"
         assert _offenders(text) == ["-xzf"]
+
+    def test_traditional_option_style_is_read_as_tar_does(self):
+        # (a) RUN tar xzf /tmp/a after a moving save reports the old-style cluster
+        text = f"RUN wget -O /tmp/a {self._MOVING}\n" "RUN tar xzf /tmp/a\n"
+        assert _offenders(text) == ["xzf"]
+        # (b) _parse_tar_span reads xzf as options and /tmp/a as the archive
+        assert _parse_tar_span(["xzf", "/tmp/a"]) == (["xzf"], "/tmp/a")
+        # (c) xf has no forcing letters; archive is still found
+        assert _parse_tar_span(["xf", "/tmp/a"]) == ([], "/tmp/a")
+        # (d) a bare word after the first word is an operand, not old-style
+        assert _parse_tar_span(["-xf", "/tmp/a", "xzf"]) == ([], "/tmp/a")
+        # (e) each _SHORT_WITH_ARGUMENT letter in order consumes the next word
+        assert _parse_tar_span(["xzCf", "/opt", "/tmp/a"]) == (["xzCf"], "/tmp/a")
+        assert _parse_tar_span(["xzfC", "/tmp/a", "/opt"]) == (["xzfC"], "/tmp/a")
+        # (f) traditional=False treats the first word as an operand, not options
+        assert _parse_tar_span(["xzf", "/tmp/a"], traditional=False) == ([], None)
 
 
 class TestTheGuardErrsClosedWhereItCannotSeeTheProgram:
