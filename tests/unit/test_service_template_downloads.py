@@ -898,7 +898,11 @@ def _offenders(text: str) -> list:
             commands.append(command)
     provenance: dict = {}  # saved path -> True while a moving download's file is there
     for command in commands:
-        is_moving = bool(_MOVING_DOWNLOAD.search(command))
+        is_moving = any(
+            _MOVING_DOWNLOAD.search(word)
+            for argv in _simple_commands(command)
+            for word in argv
+        )
         command_saved = _moving_saved_paths(command) if is_moving else set()
         for invocation in _invocations(command):
             if isinstance(invocation, _Download):
@@ -1801,6 +1805,17 @@ class TestTheFindingsDeferredFromPr507:
         # (e) accepted limit (#519 D30): create-mode does not clear the moving path
         text = moving + "RUN tar -czf /tmp/a /opt\n" "RUN tar -xzf /tmp/a\n"
         assert _offenders(text) == ["-xzf"]  # accepted limit (#519 D30)
+
+    def test_url_in_a_comment_is_not_a_moving_download(self):
+        # (a) URL in a comment triggers the raw regex but the word scan sees none
+        text = "RUN tar -xzf pinned-v1.tar.gz # https://download.mozilla.org/\n"
+        assert _offenders(text) == []
+        # (b) an unresolved fetcher with a moving URL is still indicted
+        text = f"RUN $CURL {self._MOVING} | tar -xz\n"
+        assert _offenders(text) == ["-xz"]
+        # (c) wget piped to tar with a moving URL is still indicted
+        text = f"RUN wget -O - {self._MOVING} | tar -xz\n"
+        assert _offenders(text) == ["-xz"]
 
 
 class TestTheGuardErrsClosedWhereItCannotSeeTheProgram:
