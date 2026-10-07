@@ -67,6 +67,14 @@ class _Operator(str):
     """
 
 
+class _StdinTarget(str):
+    """The target of a plain ``<`` or ``0<`` redirection, kept as a word in the argv.
+
+    Only ``tar`` and unresolved commands receive it; every other command's arguments
+    are cleaned of these before parsing so the download pairing never sees one.
+    """
+
+
 # A redirection operator: ``>``, ``>>``, ``<``, ``>&``, ``&>`` and the rest, with an
 # optional descriptor in front (``2>``) and, for the dup forms, a descriptor or ``-``
 # behind (``2>&1``, ``>&-``). A dup form has no target word; every other form consumes
@@ -394,6 +402,8 @@ def _simple_commands(command: str) -> list[list[str]]:
         elif _REDIRECTION.match(token):
             if not _REDIRECTION_DUP.search(token):
                 i += 1  # the target word
+                if token in ("<", "0<") and i < len(tokens):
+                    argv.append(_StdinTarget(tokens[i]))
         else:
             if argv:
                 commands.append(argv)
@@ -415,7 +425,13 @@ def _parse_tar_span(span: list[str]) -> tuple[list[str], str | None]:
     The archive comes from ``-f``/``--file`` only. An operand is never read as the
     archive: without ``-f`` tar reads its default device or stdin, and the operands
     are member names.
+
+    A :class:`_StdinTarget` word carries the stdin redirect target; it is ignored
+    during the option scan. When the archive is ``None`` or ``-`` at the end, the
+    stdin target becomes the archive (``tar -xzf - </tmp/a`` extracts ``/tmp/a``).
     """
+    stdin_target = next((w for w in span if isinstance(w, _StdinTarget)), None)
+    span = [w for w in span if not isinstance(w, _StdinTarget)]
     forcing = []
     archive = None
     end_of_options = False
@@ -466,6 +482,8 @@ def _parse_tar_span(span: list[str]) -> tuple[list[str], str | None]:
         if forces:
             forcing.append(token)
         i += 1
+    if (archive is None or archive == "-") and stdin_target is not None:
+        archive = str(stdin_target)
     return forcing, archive
 
 
@@ -536,14 +554,16 @@ def _named_commands(command: str):
     tar or download inside it is seen exactly as if it stood in the RUN directly.
     """
     for argv in _simple_commands(command):
-        position = _command_name_position(argv)
+        stdin_targets = [w for w in argv if isinstance(w, _StdinTarget)]
+        clean_argv = [w for w in argv if not isinstance(w, _StdinTarget)]
+        position = _command_name_position(clean_argv)
         if position is None:
             continue
-        word = argv[position]
+        word = clean_argv[position]
         name = _basename(word)
         if word.startswith("$") or "$(" in word or "`" in word:
             name = _UNRESOLVED_PROGRAM
-        rest = argv[position + 1 :]
+        rest = clean_argv[position + 1 :]
         if name in _SHELLS and "-c" in rest:
             script = rest[rest.index("-c") + 1 :]
             if script and script[0] == "--":
@@ -551,7 +571,10 @@ def _named_commands(command: str):
             if script:
                 yield from _named_commands(script[0])
             continue
-        yield name, rest
+        if name in ("tar", _UNRESOLVED_PROGRAM):
+            yield name, rest + stdin_targets
+        else:
+            yield name, rest
 
 
 def _tar_invocations(command: str) -> list:
@@ -1616,6 +1639,26 @@ class TestTheFindingsDeferredFromPr507:
     def test_sh_c_double_dash_reads_script(self):
         text = f"RUN wget -O /tmp/a {self._MOVING}\n" "RUN sh -c -- 'tar -xzf /tmp/a'\n"
         assert _offenders(text) == ["-xzf"]
+
+    def test_tar_reads_stdin_redirected_archive(self):
+        # (a) plain < redirect: tar -xzf - </tmp/a resolves the archive to /tmp/a
+        text = f"RUN wget -O /tmp/a {self._MOVING}\n" "RUN tar -xzf - </tmp/a\n"
+        assert _offenders(text) == ["-xzf"]
+        # (b) 0< is equivalent to <
+        text = f"RUN wget -O /tmp/a {self._MOVING}\n" "RUN tar -xzf - 0</tmp/a\n"
+        assert _offenders(text) == ["-xzf"]
+        # (c) stdin redirect to a non-moving path: no indictment
+        text = f"RUN wget -O /tmp/a {self._MOVING} && tar -xz </tmp/pinned\n"
+        assert _offenders(text) == []
+
+    def test_stdin_redirect_not_seen_by_download_pairing(self):
+        # (d) a _StdinTarget word is never passed to the download pairing;
+        # a leaked word would break curl's option-argument matching
+        moving_url = "https://download.mozilla.org/?product=firefox-esr-latest-ssl"
+        wget_inv = _download_invocations(f'wget -O /tmp/a "{moving_url}" </dev/null')
+        assert wget_inv[0].writes == {"/tmp/a": True}
+        curl_inv = _download_invocations(f'curl -o /tmp/a </dev/null "{moving_url}"')
+        assert curl_inv[0].writes == {"/tmp/a": True}
 
 
 class TestTheGuardErrsClosedWhereItCannotSeeTheProgram:
