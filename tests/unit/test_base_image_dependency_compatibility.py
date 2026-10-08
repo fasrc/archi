@@ -54,6 +54,7 @@ the first thing that builds the GPU image.
 """
 
 import re
+import shlex as _shlex
 from pathlib import Path
 
 import pytest
@@ -326,24 +327,23 @@ def _requirement_lines(text: str):
     """Yield the requirement lines of ``text``, without comments or option lines.
 
     Blanks, ``#`` comments and option lines such as ``--extra-index-url`` carry no
-    requirement. A trailing comment — by pip's rule, a ``#`` after whitespace — and an
-    environment marker are cut away, so the caller sees the requirement and nothing
-    else. A ``#`` with no whitespace before it is part of the requirement, as it is to
-    pip: the fragment of ``git+https://host/repo.git#egg=vllm`` or the literal hash in
-    ``foo#vllm.tar.gz``.
+    requirement. A trailing comment (``#`` after whitespace, pip's rule) is cut away.
+    A ``#`` with no whitespace before it is part of the requirement, as it is to pip.
 
-    Physical lines are joined first, then the per-requirement options a joined line
-    carries (``--hash``, ``--config-settings``) are cut away: they qualify the
-    requirement rather than name it, and leaving them attached defeats the anchored
-    ``_PIN_PATTERN``. A whole line that IS an option still starts with ``-`` after the
-    join and is skipped as before.
+    Physical lines are joined first. The option half (``--hash``, ``--config-settings``)
+    is separated by ``_break_args_options`` and validated by ``_options_ok``. If the
+    option half is non-empty and accepted, the line becomes the requirement half
+    (``args``). If rejected, the whole line is yielded as-is so downstream readers
+    report it. The marker (``;…``) is NOT cut here; readers that want only the name and
+    specifier cut it themselves.
     """
     for joined_line in _joined_lines(text):
-        line = joined_line.strip()
-        if not line or line.startswith("#") or line.startswith("-"):
+        line = _COMMENT.sub("", joined_line).strip()
+        if not line or line.startswith("-"):
             continue
-        line = _COMMENT.sub("", line).split(";", 1)[0].strip()
-        line = _PER_REQUIREMENT_OPTION.sub("", line).strip()
+        args, options = _break_args_options(line)
+        if options and _options_ok(options):
+            line = args.strip()
         if line:
             yield line
 
@@ -357,7 +357,7 @@ def _parse_pins(text: str) -> dict:
     """
     pins = {}
     for line in _requirement_lines(text):
-        match = _PIN_PATTERN.match(line)
+        match = _PIN_PATTERN.match(line.split(";", 1)[0].strip())
         if match:
             pins[_normalize_name(match.group(1))] = match.group(2)
     return pins
@@ -385,67 +385,81 @@ _VCS_OR_URL_REQUIREMENT = re.compile(
 # line at the first ``#`` and the suffix matcher saw only ``foo``.
 _COMMENT = re.compile(r"(^|\s+)#.*$")
 
-# The per-requirement options pip allows after a requirement on the same logical line:
-# ``numpy==2.0.0 --hash=sha256:...``. They qualify the requirement, never name it, so
-# they are cut away before matching. Round 5 on 2026-09-20: ``_PIN_PATTERN`` is anchored
-# at ``$``, so a hash left attached made an exactly-pinned protected package read as
-# absent and every pairwise guard skipped it. Round 7 on 2026-09-22: ``-C`` is the only
-# short form pip's ``SUPPORTED_OPTIONS_REQ`` carries (``--hash`` and
-# ``-C``/``--config-settings``, measured on pip 26.1.2); the pattern cut only ``--``
-# options, so ``-Cfoo=bar`` and ``-C foo=bar`` survived and the anchored
-# ``_PIN_PATTERN`` recorded no pin.
-#
-# A config setting is cut only when its value is ``KEY=VAL``, because that is the only
-# shape pip accepts: ``_handle_config_settings`` raises ``Arguments to -C must be of
-# the form KEY=VAL`` for ``-Cfoo``, ``-C foo``, ``--config-settings=foo`` and
-# ``--config-settings=`` alike (measured on pip 26.1.2). Review finding 2 of
-# 2026-09-22 (Codex): cutting ``-C`` plus one following character recorded an exact
-# pin from a line pip refuses, so the guard passed where the parent revision failed
-# closed and the image build was the first reader to object. The ``--`` branch keeps
-# the old breadth for every other long option (``--hash``) but hands
-# ``--config-settings`` to the KEY=VAL branch, which closes the same hole the long
-# spelling already had. A bare trailing ``-C`` carries no value and is likewise never
-# erased.
-#
-# The value is read the way pip reads it, not as raw text. ``get_line_parser`` runs
-# ``shlex.split`` over the option string before ``_handle_config_settings`` partitions
-# on ``=``, so quoted or backslash-escaped whitespace inside the KEY is legal:
-# ``-C "foo bar=baz"`` records the key ``foo bar`` (measured on pip 26.1.2). Round 3 of
-# 2026-09-22 (Codex, comment 4069783454): a raw ``[^\s=]*=`` key stopped at the space
-# inside the quotes, left the option attached, and reported an exactly pinned package
-# as unpinned — a false report on a line pip installs. A quoted value must therefore
-# carry the ``=`` INSIDE the quotes to be cut; ``-C "foo bar"`` still fails closed,
-# because pip rejects it.
-_CONFIG_SETTING_VALUE = (
-    r"(?:\"[^\"]*=[^\"]*\"|'[^']*=[^']*'|(?:[^\s='\"]|\\\s|\"[^\"=]*\"|'[^'=]*')*=)"
-)
-# The delimiter in front of the option is a literal space, not any whitespace.
-# ``break_args_options`` (``pip._internal.req.req_file``) runs ``line.split(" ")`` and
-# opens the option string at the first token that starts with ``-``, so a tab or a
-# no-break space before ``-C`` leaves the option inside the requirement and
-# ``install_req_from_line`` raises. Review round 4 of 2026-09-22 (Codex, comment
-# 4069945613): ``\s+`` cut the option away from ``vllm==0.9.0\t-Cfoo=bar``, the
-# anchored ``_PIN_PATTERN`` then recorded an exact pin, and every pairwise guard read
-# vllm as healthy on a file the image build refuses. Whitespace BEFORE that space stays
-# with the requirement, exactly as pip leaves it in ``args``, and ``_requirement_lines``
-# strips it. A doubled space is a run of spaces to pip too: the empty token it yields
-# names no option.
-#
-# The option NAME ends on ``=``, a space, a tab or the end of the line, and on nothing
-# else. ``break_args_options`` hands the whole option token to ``shlex.split`` (whose
-# whitespace is space, tab, CR and LF — and a logical line can hold neither CR nor LF),
-# and optparse then splits a long option on ``=``. So a no-break space after the name
-# stays INSIDE the name: pip looks up ``--config-settings\u00a0foo`` and
-# ``--hash\u00a0sha256:aa``, finds neither, and exits. Adversarial round 5 of
-# 2026-09-23: ``[=\s]`` and ``--\S+`` both stopped at that character and cut the
-# option away, so an exact pin was recorded from a line pip refuses. This is the
-# same class that 376b5867 had open.
-# The option VALUE is left alone: once the name has ended, a no-break space is ordinary
-# key text to ``_handle_config_settings``, which only partitions on ``=``.
-_PER_REQUIREMENT_OPTION = re.compile(
-    rf"[ ]+(?:(?:--config-settings[= \t]|-C)\s*{_CONFIG_SETTING_VALUE}"
-    rf"|--(?!config-settings\b)\S+(?=[ \t]|$)).*$"
-)
+# pip 26.1.2 SUPPORTED_OPTIONS_REQ allows only ``--hash`` and ``-C``/``--config-settings``.
+# The guard copies pip's ``break_args_options`` split (literal space, not ``\s``) and then
+# parses the option half with ``shlex.split`` against a closed table. Measured: a tab or
+# no-break space before ``-C`` is not a split point, so the option stays inside the
+# requirement and pip refuses it. A non-dash token in the option half is ignored, not
+# rejected (optparse keeps it as a positional; pip ignores it). The hash algorithm is
+# checked: ``--hash=md5:aa`` and ``--hash=sha256`` (no colon) are rejected. A config
+# setting's value must contain ``=``; ``-Cfoo`` and ``-C foo`` are rejected. An open quote
+# in the option half raises ``ValueError`` in ``shlex.split`` and rejects the whole line.
+# Measured at 5564e016, pip 26.1.2. See design D1.
+_STRONG_HASHES = ("sha256", "sha384", "sha512")
+
+
+def _break_args_options(line):
+    """pip's break_args_options: split on literal spaces, separate requirement from options.
+
+    Measured at 5564e016, pip 26.1.2 (``pip._internal.req.req_file.break_args_options``):
+    splits on ``" "`` (literal space), takes tokens up to the first one starting with ``-``
+    as the requirement half, the rest as the option half.
+    """
+    tokens = line.split(" ")
+    args, options = [], tokens[:]
+    for token in tokens:
+        if token.startswith("-"):
+            break
+        args.append(token)
+        options.pop(0)
+    return " ".join(args), " ".join(options)
+
+
+def _options_ok(options):
+    """Return True iff every option token in the option half is one pip accepts.
+
+    Measured at 5564e016, pip 26.1.2: ``shlex.split`` tokenises the option string
+    (a ``ValueError`` from an open quote means rejected). Each token is checked against
+    the closed table: ``--hash=<v>`` or ``--hash <v>`` (``<v>`` must be ``algo:hex``,
+    algo in sha256/sha384/sha512); ``-C<v>`` / ``-C <v>`` / ``--config-settings=<v>`` /
+    ``--config-settings <v>`` (value must contain ``=``); non-dash tokens are ignored
+    (pip keeps them as positionals); any other dash token is rejected.
+    """
+    try:
+        tokens = _shlex.split(options)
+    except ValueError:
+        return False
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if not token.startswith("-"):
+            pass
+        elif token.startswith("--hash=") or token == "--hash":
+            if token == "--hash":
+                i += 1
+                if i >= len(tokens):
+                    return False
+                value = tokens[i]
+            else:
+                value = token[7:]
+            algo, sep, _ = value.partition(":")
+            if not sep or algo not in _STRONG_HASHES:
+                return False
+        elif token in ("-C", "--config-settings"):
+            i += 1
+            if i >= len(tokens) or "=" not in tokens[i]:
+                return False
+        elif token.startswith("--config-settings="):
+            if "=" not in token[len("--config-settings=") :]:
+                return False
+        elif token.startswith("-C"):
+            if "=" not in token[2:]:
+                return False
+        else:
+            return False
+        i += 1
+    return True
+
 
 # A ``${NAME}`` placeholder pip substitutes from the build environment before it reads
 # the line (``ENV_VAR_RE``: uppercase letters, digits and underscores only). Round 3 on
@@ -597,7 +611,7 @@ def _parse_requirements(text: str) -> dict:
     """
     found = {}
     for line in _requirement_lines(text):
-        match = _REQUIREMENT_PATTERN.match(line)
+        match = _REQUIREMENT_PATTERN.match(line.split(";", 1)[0].strip())
         if match:
             found[_normalize_name(match.group(1))] = match.group(2).strip()
     return found
@@ -671,7 +685,7 @@ def _declarations(text: str) -> dict:
     """
     found = {}
     for line in _requirement_lines(text):
-        match = _REQUIREMENT_PATTERN.match(line)
+        match = _REQUIREMENT_PATTERN.match(line.split(";", 1)[0].strip())
         if match:
             found.setdefault(_normalize_name(match.group(1)), []).append(
                 match.group(2).strip()
@@ -682,28 +696,17 @@ def _declarations(text: str) -> dict:
 def _conditional_protected(text: str) -> dict:
     """Protected packages declared with an environment marker, mapped to that marker.
 
-    An empty mapping is the healthy answer. ``_requirement_lines`` cuts a line at
-    ``;`` so the guards never see the marker, which means a line pip may skip on this
-    image reads here as an unconditional pin.
+    An empty mapping is the healthy answer. A line pip may skip on this image reads
+    here as an unconditional pin if the marker is not detected.
 
-    Physical lines are joined first (pip rule: ``join_lines``), so a marker on the
-    continuation of a backslash-joined line is still detected.
-    Review finding 3, 2026-09-22.
-
-    The per-requirement options are then cut away, because pip reads the marker only
-    from the requirement half. Its ``break_args_options`` splits the logical line at
-    the first token beginning with ``-``, so a semicolon inside an option value —
-    ``--config-settings=foo=bar;baz`` — is part of that value and never a marker.
-    Review finding 1 of 2026-09-22 (Codex): partitioning the whole line on ``;``
-    read that value as a marker and rejected a valid unconditional pin.
+    Iterates ``_requirement_lines``, which joins physical lines (pip's ``join_lines``)
+    and applies ``_break_args_options`` before yielding, so a semicolon inside an
+    option value is never mistaken for a marker. Each line is then partitioned on the
+    first ``;`` to separate the requirement from the marker.
+    Review findings 1 and 3, 2026-09-22.
     """
     conditional = {}
-    for raw_line in _joined_lines(text):
-        line = raw_line.strip()
-        if not line or line.startswith("#") or line.startswith("-"):
-            continue
-        line = line.split("#", 1)[0].strip()
-        line = _PER_REQUIREMENT_OPTION.sub("", line).strip()
+    for line in _requirement_lines(text):
         requirement, separator, marker = line.partition(";")
         if not separator:
             continue
@@ -2421,6 +2424,61 @@ class TestCompactOptionFormsAreRecognized:
         records the key ``\\u00a0foo``. The short form carries no separator at all, so
         its value starts immediately after ``-C``. Narrowing the NAME boundary must not
         narrow the value, or the guard reports a pinned package as unpinned.
+        """
+        assert _parse_pins(text) == {"vllm": "0.9.0"}
+        assert _unpinned_protected(text) == {}
+
+
+class TestOptionHalfReadsAsPipDoes:
+    """The option half is read with pip's break_args_options + shlex against a closed table.
+
+    Review finding on 2026-10-08: a mixed-valid-invalid option string (e.g. one valid
+    ``-C`` followed by a bare ``-Cbad``) was cut to the valid portion by the regex, so an
+    exact pin was recorded from a line pip refuses. The guard now runs
+    ``_break_args_options`` (pip's literal-space split) and ``_options_ok`` (shlex +
+    closed table), rejecting any option half that contains an unknown token.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==0.9.0 -Cfoo=bar -Cbad",
+            "vllm==0.9.0 --hash=sha256:aa --bogus",
+            "vllm==0.9.0 --hash=sha256:aa -Cbad",
+            "vllm==0.9.0 --hash=md5:aa",
+            "vllm==0.9.0 --hash=sha256",
+        ],
+    )
+    def test_a_rejected_option_half_records_no_pin(self, text):
+        """pip 26.1.2 refuses each line; the guard must not record a pin.
+
+        Measured at 5564e016, pip 26.1.2:
+        - ``-Cfoo=bar -Cbad``: second -C has no ``=`` in value (rejected).
+        - ``--hash=sha256:aa --bogus``: ``--bogus`` is not in the closed table (rejected).
+        - ``--hash=sha256:aa -Cbad``: ``-Cbad`` has no ``=`` in value (rejected).
+        - ``--hash=md5:aa``: md5 is not a strong hash (rejected).
+        - ``--hash=sha256``: no colon, so no algorithm:hex format (rejected).
+        """
+        assert _parse_pins(text) == {}
+        assert "vllm" in _unpinned_protected(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            'vllm==0.9.0 -Cfoo"="bar',
+            "vllm==0.9.0 --hash sha256:aa",
+            "vllm==0.9.0 --hash=sha384:aa -Cfoo=bar",
+        ],
+    )
+    def test_an_accepted_option_half_is_cut_and_pin_is_read(self, text):
+        """pip 26.1.2 accepts each line; the guard must read the exact pin.
+
+        Measured at 5564e016, pip 26.1.2:
+        - ``-Cfoo"="bar``: shlex collapses the quotes, value becomes ``foo=bar`` (accepted).
+        - ``--hash sha256:aa``: spaced form accepted (pip also accepts ``--hash <v>``).
+        - ``--hash=sha384:aa -Cfoo=bar``: combined hash and config-setting (accepted).
+
+        The last two rows already pass at 5564e016 and are regression controls.
         """
         assert _parse_pins(text) == {"vllm": "0.9.0"}
         assert _unpinned_protected(text) == {}
