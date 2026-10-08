@@ -611,6 +611,8 @@ def restart(
         ]
         enabled_sources = source_registry.resolve_dependencies(enabled_sources)
 
+        config_manager.set_sources_enabled(enabled_sources)
+
         config_manager.validate_configs(enabled_services, enabled_sources)
 
         _validate_non_chatbot_sections(
