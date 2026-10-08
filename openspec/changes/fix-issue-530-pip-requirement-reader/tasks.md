@@ -43,7 +43,7 @@
 
 ## 1. Commit A — the option half (design D1, D4)
 
-- [ ] 1.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 1.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Add a test class `TestOptionHalfReadsAsPipDoes` after
       `TestCompactOptionFormsAreRecognized`. Parametrize:
@@ -80,7 +80,7 @@
 
 ## 2. Commit B — the requirement half (design D2, D3, D5, D6)
 
-- [ ] 2.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 2.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** Add a test class `TestRequirementHalfReadsAsPipDoes` after the class from
       task 1. Parametrize, each row with its pip 26.1.2 verdict in the docstring (design D7):

@@ -58,6 +58,8 @@ import shlex as _shlex
 from pathlib import Path
 
 import pytest
+from packaging.markers import InvalidMarker, Marker
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
@@ -263,15 +265,6 @@ def _satisfies(candidate: str, specifier: str) -> bool:
     return SpecifierSet(specifier).contains(Version(candidate), prereleases=True)
 
 
-# ``markitdown[pdf,pptx]==0.1.5`` -> name "markitdown". An extras marker belongs to the
-# requirement, not to the project name, so both patterns step over it. The trailing ``$``
-# on the pin pattern is deliberate: it makes a COMPOUND specifier such as
-# ``vllm==0.9.0,<0.10`` fail to read as an exact pin rather than reading as an exact pin
-# of 0.9.0 that the second clause silently contradicts.
-_NAME = r"([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?"
-_PIN_PATTERN = re.compile(rf"^{_NAME}==([^\s;#,]+)$")
-_REQUIREMENT_PATTERN = re.compile(rf"^{_NAME}\s*(.*)$")
-
 # Packages whose pin a guard in this module reads. Each guard SKIPS when its subject is
 # absent from the file, which is correct for a genuinely absent package — the CPU header
 # carries no vllm. For these names, therefore, "absent" must mean absent and never
@@ -357,9 +350,10 @@ def _parse_pins(text: str) -> dict:
     """
     pins = {}
     for line in _requirement_lines(text):
-        match = _PIN_PATTERN.match(line.split(";", 1)[0].strip())
-        if match:
-            pins[_normalize_name(match.group(1))] = match.group(2)
+        name, req, reported = _read(line)
+        pin = None if reported else _pin(req)
+        if name and pin:
+            pins[name] = pin
     return pins
 
 
@@ -461,6 +455,111 @@ def _options_ok(options):
     return True
 
 
+# A leading project name (best-effort, for fallback when Requirement parsing fails).
+_LEADING_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)")
+# A URL scheme, to distinguish named direct references from local paths.
+_URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+
+
+def _read(line):
+    """Classify one requirement line, in pip's install_req_from_line order.
+
+    Returns ``(name, req_or_None, reported)``. ``name`` is the normalized project name,
+    or a best-effort leading identifier when the line did not parse (kept so
+    ``_unpinned_protected`` can fail a protected package closed even when the specifier
+    is unreadable). ``reported`` means the guard cannot determine a version and the line
+    must fail the suite.
+
+    Classifier order, measured at 5564e016, pip 26.1.2:
+    1. ``${NAME}`` environment substitution → reported (pip substitutes before parsing;
+       this module cannot see the environment; 2026-09-20).
+    2. VCS / URL / Windows drive prefix → reported (2026-09-16).
+    3. Leading ``.``, or ``/``/``\\`` before ``;`` or ``@`` → reported (local path; 2026-09-18).
+    4. Suffix in pip's ARCHIVE_EXTENSIONS after stripping a trailing ``[extras]`` → reported,
+       unless the line is ``name [extras] @ <vcs/https/file>`` (named direct reference stays
+       readable; 2026-09-18). ``evil@../pkgs/vllm`` has no URL scheme and stays reported.
+    5. Non-empty option half after ``_break_args_options`` → the whole line was rejected by
+       D1 in ``_requirement_lines``; reported. Refuter finding 2026-10-08: in
+       ``vllm==0.9.0; os_name == "a -Cbad"`` the split opens inside the quoted marker value,
+       shlex raises ValueError, D1 rejects, but packaging parsed the full line as valid.
+       Step 5 detects the option half before ``Requirement`` is called.
+    6. ``Requirement`` or ``Marker`` parse failure → reported (2026-09-18, extended 2026-10-08).
+    7. ``req.url`` set to a target with no URL scheme, or not a vcs/https/file scheme →
+       reported (``evil@../pkgs/vllm`` guard; 2026-09-19).
+    """
+    fallback = _LEADING_NAME.match(line)
+    name = _normalize_name(fallback.group(1)) if fallback else None
+    if _ENVIRONMENT_SUBSTITUTION.search(line):
+        return name, None, True
+    if _VCS_OR_URL_REQUIREMENT.match(line):
+        return name, None, True
+    if line.startswith(".") or re.match(r"^[^;@]*[\\/]", line):
+        return name, None, True
+    head = line.split(";", 1)[0].strip()
+    stripped = re.sub(r"\[[^\]]*\]$", "", head).strip()
+    if re.search(rf"{_ARCHIVE_SUFFIX}$", stripped, re.IGNORECASE) and not re.match(
+        r"^[A-Za-z0-9][A-Za-z0-9._-]*[ \t]*(?:\[[^\]]*\])?[ \t]*@[ \t]*"
+        r"(?:(?:git|hg|bzr|svn)\+|https?://|file:)",
+        head,
+        re.IGNORECASE,
+    ):
+        return name, None, True
+    if _break_args_options(line)[1]:
+        return name, None, True
+    head, sep, marker_text = line.partition(";")
+    try:
+        req = Requirement(head.strip())
+        marker = Marker(marker_text.strip()) if marker_text.strip() else None
+    except (InvalidRequirement, InvalidMarker):
+        return name, None, True
+    req.marker = marker
+    if req.url is not None and (
+        not _URL_SCHEME.match(req.url)
+        or not re.match(
+            r"(?:(?:git|hg|bzr|svn)\+|https?://|file:)", req.url, re.IGNORECASE
+        )
+    ):
+        return _normalize_name(req.name), req, True
+    return _normalize_name(req.name), req, False
+
+
+def _pin(req):
+    """Return the pinned version string, or None when the requirement is not an exact pin.
+
+    Measured at 5564e016, pip 26.1.2:
+    - ``==`` and ``===`` (arbitrary equality) with no ``*`` wildcard are exact pins.
+    - ``vllm==1.0.*``: wildcard matches a range; ``Version("1.0.*")`` raises downstream.
+      The old ``_PIN_PATTERN`` recorded ``1.0.*`` as the version; ``_pin`` does not.
+    - ``vllm==0.9.0,<0.10``: two clauses; not a pin (regression control, already correct).
+    - ``vllm == 0.9.0``, ``vllm (==0.9.0)``: now pins — PEP 508 allows spaces and
+      parentheses around the specifier; the anchored ``_PIN_PATTERN`` missed both.
+    """
+    if req is None or req.url is not None:
+        return None
+    specs = list(req.specifier)
+    if (
+        len(specs) == 1
+        and specs[0].operator in ("==", "===")
+        and "*" not in specs[0].version
+    ):
+        return specs[0].version
+    return None
+
+
+def _spec_text(line, req):
+    """Source specifier text for a requirement line: what follows the name and extras.
+
+    Uses the source text rather than ``str(req.specifier)`` because
+    ``str(SpecifierSet(">1.13.0,<2"))`` is ``"<2,>1.13.0"`` (reordered), which fails the
+    range-not-absent test (measured at 5564e016; 2026-10-08).
+    """
+    m = _LEADING_NAME.match(line)
+    if m is None:
+        return line
+    rest = line[m.end() :].split(";", 1)[0]
+    return re.sub(r"^[ \t]*\[[^\]]*\]", "", rest).strip()
+
+
 # A ``${NAME}`` placeholder pip substitutes from the build environment before it reads
 # the line (``ENV_VAR_RE``: uppercase letters, digits and underscores only). Round 3 on
 # 2026-09-20: with ``VLLM_PATH=./foo`` a whole-line ``${VLLM_PATH}`` installs a local
@@ -487,120 +586,18 @@ _ENVIRONMENT_SUBSTITUTION = re.compile(r"\$\{[A-Z0-9_]+\}")
 _ARCHIVE_SUFFIX = (
     r"\.(?:whl|zip|tgz|tbz|txz|tlz|tar\.gz|tar\.bz2|tar\.xz|tar\.lzma|tar\.lz|tar)"
 )
-# A PEP 508 comparison, so that ``example.zip ==1.0`` — a legal dotted project name
-# whose tail looks like an archive — is not read as a filename because of the space
-# before its operator. Review on 2026-09-19: the compact spelling ``example.zip==1.0``
-# already passed, so whitespace alone decided the verdict. Round 2 added the optional
-# ``(``: the grammar also allows the specifier in parentheses, ``example.zip (==1.0)``,
-# which pip reads as the project ``example.zip``.
-# packaging's tokenizer accepts a space and a tab between tokens and nothing else
-# (``WS`` is ``[ \t]+`` in ``packaging._tokenizer``, measured on the copy pip 26.1.2
-# vendors). Round 4 of 2026-09-22 (Codex, comment 4069945622): the exemptions below
-# spelled their whitespace ``\s``, which also matches a no-break space, so
-# ``example.zip [a\u00a0,b] ==1.0`` — a line pip refuses, and one 376b5867 reported —
-# bought an exemption and reached the image build unreported.
-_WSP = r"[ \t]"
-_COMPARISON_AFTER_SUFFIX = rf"\(?{_WSP}*(?:===|==|!=|~=|<=|>=|<|>)"
-# An extras list attached to an archive: ``vllm-0.9.0-py3-none-any.whl[foo]``. pip
-# accepts it and resolves the wheel; round 2 found the guard reading the line as a
-# project named ``vllm-0-9-0-py3-none-any-whl``, so vllm read as absent and every
-# protected-vllm guard skipped — the silent-skip shape this change exists to close.
-_ATTACHED_EXTRAS = r"(?:\[[^\]]*\])?"
-# PEP 508's extras grammar, as packaging enforces it for pip:
-# ``'[' wsp* [ identifier (wsp* ',' wsp* identifier)* wsp* ] ']'``, with an identifier
-# starting on a letter or a digit. Measured on pip 26.1.2: ``[foo]``, ``[foo,bar]``,
-# ``[ foo , bar ]``, ``[]`` and ``[1foo]`` parse; ``[foo bar]`` ("Expected comma
-# between extra names"), ``[foo,]``, ``[,foo]`` and ``[-foo]`` raise.
-#
-# The LAST character is constrained as well as the first, because packaging's
-# IDENTIFIER token is ``\b[a-zA-Z0-9][a-zA-Z0-9._-]*\b`` (``packaging._tokenizer``,
-# measured on packaging as shipped with pip 26.1.2). The closing ``\b`` cannot sit
-# between two non-word characters, so ``[foo.]`` and ``[foo-]`` truncate to ``foo``
-# and raise ``Expected matching RIGHT_BRACKET``. Round 2 of 2026-09-22 (Codex
-# adversarial pass on 56baa86d) found both exempted here. The final class is
-# ``[A-Za-z0-9_]`` and NOT ``[A-Za-z0-9]``: ``_`` is a word character, so pip accepts
-# ``[foo_]``, and an alphanumeric-only rule would report a line pip installs.
-_EXTRA_NAME = r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?"
-_VALID_EXTRAS_LIST = (
-    rf"\[{_WSP}*(?:{_EXTRA_NAME}(?:{_WSP}*,{_WSP}*{_EXTRA_NAME})*{_WSP}*)?\]"
-)
-# ``example.zip [foo] ==1.0`` is the project ``example.zip[foo]`` with specifier
-# ``==1.0`` to pip (PEP 508 ``wsp* extras?`` allows whitespace before ``[``).
-# Review finding 2, 2026-09-22: ``_ATTACHED_EXTRAS`` required ``[`` to follow the
-# suffix immediately; a space before ``[foo]`` made it match empty, and ``\s`` then
-# matched that space — the comparison lookahead never fired. A second negative
-# lookahead now also blocks ``\s`` when a detached extras list leads to a comparison.
-# Review finding 3 of 2026-09-22 (Codex): that second lookahead first accepted any
-# bracket content, so ``example.zip [foo bar] ==1.0`` — which pip refuses — lost the
-# report the parent revision made. It reads ``_VALID_EXTRAS_LIST`` instead, so only a
-# list pip itself accepts suppresses the report.
-# The ``[^ \t\S]`` arm is whitespace OUTSIDE packaging's class — a no-break space and
-# its Unicode kin. It carries no lookahead because no exemption can apply: pip's parse
-# ends at that character whatever follows it, so the line is reported.
-_PATH_OR_ARCHIVE_REQUIREMENT = re.compile(
-    rf"^(?:\.|[^;]*[\\/]"
-    rf"|[^;]*{_ARCHIVE_SUFFIX}{_ATTACHED_EXTRAS}"
-    rf"(?:;|$|[^ \t\S]|{_WSP}(?!{_WSP}*{_COMPARISON_AFTER_SUFFIX})"
-    rf"(?!{_WSP}*{_VALID_EXTRAS_LIST}{_WSP}*{_COMPARISON_AFTER_SUFFIX})))",
-    re.IGNORECASE,
-)
-
-# A PEP 508 direct reference carrying a project name in front of the URL:
-# ``numpy@https://host/numpy.whl``, ``vllm @ git+https://host/vllm``. The name reader
-# reads ``numpy`` from both spellings, so design D4 leaves the class readable and
-# ``_unpinned_protected`` fails a protected name closed. Review on 2026-09-19: the
-# separator inside the URL made the compact spelling opaque while the spaced spelling
-# passed, so whitespace alone decided the verdict. The scheme set is the one
-# ``_VCS_OR_URL_REQUIREMENT`` uses; a target with NO scheme (``evil@../pkgs/vllm``) is a
-# local path by another name and stays reported.
-# PEP 508's grammar is ``name wsp* extras?``, so the brackets need not touch the name.
-# Round 5 on 2026-09-20: ``numpy [foo] @ https://host/numpy.whl`` is the project
-# ``numpy[foo]`` to pip, but ``_NAME`` demanded an attached ``[``, so this exemption
-# missed and the separator branch reported a line whose project name is readable. The
-# compact spelling already passed, so whitespace alone decided the verdict — the same
-# asymmetry round 1 fixed for the ``@`` itself. Widened HERE only: ``_PIN_PATTERN`` and
-# ``_REQUIREMENT_PATTERN`` keep the strict name so no pin is read across a space.
-_NAME_WITH_SPACED_EXTRAS = r"([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?"
-_NAMED_URL_REFERENCE = re.compile(
-    rf"^{_NAME_WITH_SPACED_EXTRAS}\s*@\s*(?:(?:git|hg|bzr|svn)\+|https?://|file:)",
-    re.IGNORECASE,
-)
 
 
 def _opaque_requirements(text: str) -> list:
-    """Requirement lines whose project name this module cannot read.
+    """Requirement lines that ``_read`` cannot classify, in pip's install_req_from_line order.
 
-    Reported rather than parsed. A VCS reference, a URL, a ``file://`` URL, a Windows
-    drive letter, a bare local path, or a bare archive path (every suffix in pip's
-    ``ARCHIVE_EXTENSIONS``: ``.whl``, ``.zip``, ``.tgz``, ``.tbz``, ``.txz``, ``.tlz``,
-    ``.tar``, ``.tar.gz``, ``.tar.bz2``, ``.tar.xz``, ``.tar.lz``, ``.tar.lzma``, with or
-    without an attached extras list) supplies a real package with no version this module can check, so each must fail the
-    suite instead of resolving to a nonsense name like ``git`` or
-    ``vllm-0-9-0-py3-none-any-whl``. A line is reported; no project name is ever resolved
-    from a path or an archive filename.
-
-    One shape is deliberately NOT reported: a PEP 508 direct reference carrying a project
-    name, ``numpy@https://host/numpy.whl``. The name reader reads it, and
-    ``_unpinned_protected`` fails a protected name closed — design D4. That exemption
-    needs a URL scheme; ``evil@../pkgs/vllm`` is a local path wearing a name and is
-    reported. Class measured 2026-09-18 (#491), widened after review 2026-09-19.
-
-    A line carrying a ``${NAME}`` placeholder is reported whatever else it says: pip
-    substitutes it from the build environment before parsing, and this module cannot
-    see that environment, so the line may name any package at any version (D14).
+    Each returned line will fail the suite rather than silently skip. The classifier
+    follows pip's ``_get_url_from_path`` / ``install_req_from_line``: environment
+    substitution, VCS/URL, local path, archive suffix, rejected option half (D1), then
+    ``Requirement`` parse failure. A named direct reference (``numpy @ https://…``) is
+    NOT reported — ``_unpinned_protected`` fails it closed (design D4).
     """
-    return [
-        line
-        for line in _requirement_lines(text)
-        if _ENVIRONMENT_SUBSTITUTION.search(line)
-        or (
-            not _NAMED_URL_REFERENCE.match(line)
-            and (
-                _VCS_OR_URL_REQUIREMENT.match(line)
-                or _PATH_OR_ARCHIVE_REQUIREMENT.match(line)
-            )
-        )
-    ]
+    return [line for line in _requirement_lines(text) if _read(line)[2]]
 
 
 def _parse_requirements(text: str) -> dict:
@@ -608,12 +605,13 @@ def _parse_requirements(text: str) -> dict:
 
     Operator-agnostic, unlike ``_parse_pins``, so a protected package written as a
     range stays visible instead of vanishing. That difference is the whole point.
+    Uses source specifier text rather than ``str(req.specifier)`` (see ``_spec_text``).
     """
     found = {}
     for line in _requirement_lines(text):
-        match = _REQUIREMENT_PATTERN.match(line.split(";", 1)[0].strip())
-        if match:
-            found[_normalize_name(match.group(1))] = match.group(2).strip()
+        name, req, reported = _read(line)
+        if name:
+            found[name] = _spec_text(line, req)
     return found
 
 
@@ -685,11 +683,9 @@ def _declarations(text: str) -> dict:
     """
     found = {}
     for line in _requirement_lines(text):
-        match = _REQUIREMENT_PATTERN.match(line.split(";", 1)[0].strip())
-        if match:
-            found.setdefault(_normalize_name(match.group(1)), []).append(
-                match.group(2).strip()
-            )
+        name, req, reported = _read(line)
+        if name:
+            found.setdefault(name, []).append(_spec_text(line, req))
     return found
 
 
@@ -697,22 +693,18 @@ def _conditional_protected(text: str) -> dict:
     """Protected packages declared with an environment marker, mapped to that marker.
 
     An empty mapping is the healthy answer. A line pip may skip on this image reads
-    here as an unconditional pin if the marker is not detected.
-
-    Iterates ``_requirement_lines``, which joins physical lines (pip's ``join_lines``)
-    and applies ``_break_args_options`` before yielding, so a semicolon inside an
-    option value is never mistaken for a marker. Each line is then partitioned on the
-    first ``;`` to separate the requirement from the marker.
+    here as an unconditional pin if the marker is not detected. ``_read`` splits at
+    the first ``;`` and passes the tail to ``packaging.markers.Marker``; an empty tail
+    means no marker, so ``vllm==0.9.0 ;`` is not conditional.
     Review findings 1 and 3, 2026-09-22.
     """
     conditional = {}
     for line in _requirement_lines(text):
-        requirement, separator, marker = line.partition(";")
-        if not separator:
-            continue
-        match = _REQUIREMENT_PATTERN.match(requirement.strip())
-        if match and _normalize_name(match.group(1)) in PROTECTED_PACKAGES:
-            conditional[_normalize_name(match.group(1))] = marker.strip()
+        name, req, reported = _read(line)
+        if req is not None and req.marker is not None and name in PROTECTED_PACKAGES:
+            conditional[name] = str(req.marker)
+        elif req is None and ";" in line and name in PROTECTED_PACKAGES:
+            conditional[name] = line.split(";", 1)[1].strip()
     return conditional
 
 
@@ -2482,3 +2474,290 @@ class TestOptionHalfReadsAsPipDoes:
         """
         assert _parse_pins(text) == {"vllm": "0.9.0"}
         assert _unpinned_protected(text) == {}
+
+
+class TestRequirementHalfReadsAsPipDoes:
+    """The requirement half is read with packaging.requirements.Requirement in pip's order.
+
+    Commit B adds a single ``_read`` helper that classifies each requirement line following
+    pip's ``install_req_from_line`` / ``_get_url_from_path`` order: environment substitution,
+    VCS/URL, local path, archive suffix, rejected option half (D1), then ``Requirement``
+    parsing. Several shapes that pip refuses were not reported before commit B:
+
+    - Attached malformed extras (``example.zip[foo bar]==1.0``): the old regex matched the
+      attached extras then stopped at ``=``, which is not a valid suffix terminator, so the
+      regex fell through and an incorrect pin was recorded instead of reporting.
+    - Named-URL references with malformed extras (``numpy [foo bar] @ https://host/numpy.whl``):
+      the old ``_NAMED_URL_REFERENCE`` regex exempted any bracket content, so these lines
+      bypassed the archive check even though pip refuses them.
+    - Bare-operator rows with no version (``example.zip ==``): the comparison lookahead in the
+      archive regex suppressed the report.
+    - Spaced/parenthesised specifiers (``vllm == 0.9.0``, ``vllm (==0.9.0)``): the anchored
+      ``_PIN_PATTERN`` did not match these valid PEP 508 spellings; they read as unpinned.
+    - Wildcard specifier (``vllm==1.0.*``): ``_PIN_PATTERN`` recorded ``1.0.*`` as a version;
+      ``Version("1.0.*")`` raises downstream. After commit B, the pin is rejected.
+    - Markers carrying rejected option syntax (``vllm==0.9.0; os_name == "a -Cbad"``):
+      ``_requirement_lines`` cut at ``;`` before any reader saw the marker, so a spurious pin
+      was recorded. Commit B lets the marker stay and step 5 of ``_read`` detects the
+      rejected option half first.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "example.zip [foo] ==",
+            "example.zip [foo] (>=)",
+            "example.zip ==",
+            "example.zip >=",
+        ],
+    )
+    def test_a_bare_operator_with_no_version_is_reported(self, text):
+        """pip 26.1.2 refuses each line; the guard must report it.
+
+        Measured at 5564e016, pip 26.1.2: each line raises InvalidRequirement because the
+        specifier has no version value (empty ``==`` or ``>=``). The old archive regex
+        suppressed these because the comparison lookahead fired on the operator token.
+        """
+        assert _opaque_requirements(text + "\n") != []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "example.zip[foo bar]==1.0",
+            "example.zip[foo,]==1.0",
+            "example.zip[,foo]==1.0",
+            "example.zip[-foo]==1.0",
+        ],
+    )
+    def test_an_attached_malformed_extras_list_is_reported(self, text):
+        """pip 26.1.2 refuses extras with bad syntax in the attached position; guard must report.
+
+        Measured at 5564e016, pip 26.1.2: ``[foo bar]`` lacks a comma, ``[foo,]`` and
+        ``[,foo]`` lack an identifier, ``[-foo]`` does not start with an alphanumeric — all
+        raise InvalidRequirement. The old ``_ATTACHED_EXTRAS`` regex ``(?:\\[\\[^\\]]*\\])?``
+        matched any bracket content, then stopped at ``=`` which is not a valid suffix
+        terminator, so the archive regex fell through and ``_REQUIREMENT_PATTERN`` recorded a
+        pin from a line pip refuses. (#528)
+        """
+        assert _opaque_requirements(text + "\n") != []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "example.zip [foo bar] ==1.0",
+            "example.zip [foo,] ==1.0",
+            "example.zip [,foo] ==1.0",
+            "example.zip [-foo] ==1.0",
+        ],
+    )
+    def test_a_detached_malformed_extras_list_is_reported(self, text):
+        """pip 26.1.2 refuses detached malformed extras; the guard must report them.
+
+        Measured at 5564e016, pip 26.1.2: same failures as the attached forms — the extras
+        grammar rejects the same identifiers regardless of whitespace. These rows already
+        pass at 5564e016 via ``_PATH_OR_ARCHIVE_REQUIREMENT`` (regression controls); they
+        are re-stated here because commit B replaces that regex with ``_read``. (#528)
+        """
+        assert _opaque_requirements(text + "\n") != []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "numpy [foo bar] @ https://host/numpy.whl",
+            "numpy [foo,] @ https://host/numpy.whl",
+            "numpy [,foo] @ https://host/numpy.whl",
+            "numpy [-foo] @ https://host/numpy.whl",
+        ],
+    )
+    def test_a_named_url_with_malformed_extras_is_reported(self, text):
+        """pip 26.1.2 refuses named URLs with malformed extras; the guard must report them.
+
+        Measured at 5564e016, pip 26.1.2: ``install_req_from_line`` raises InvalidRequirement
+        for each line. The old ``_NAMED_URL_REFERENCE`` regex used ``(?:\\[\\[^\\]]*\\])?``
+        which exempted any bracket content, so these lines bypassed the archive check while
+        pip refuses them. (#528)
+        """
+        assert _opaque_requirements(text + "\n") != []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "example.zip [\u0130] ==1.0",  # U+0130 Latin Capital I with Dot Above
+            "example.zip [\u0131] ==1.0",  # U+0131 Latin Small Dotless I
+            "example.zip [\u017f] ==1.0",  # U+017F Latin Small Letter Long S
+            "example.zip [\u212a] ==1.0",  # U+212A Kelvin Sign
+        ],
+    )
+    def test_a_non_ascii_extra_name_is_reported(self, text):
+        """pip 26.1.2 refuses non-ASCII extra names; the guard must report them.
+
+        Measured at 5564e016, pip 26.1.2: packaging's IDENTIFIER token is
+        ``[a-zA-Z0-9][a-zA-Z0-9._-]*``, so none of the four Unicode characters start a
+        valid extra name — pip refuses all four. These rows already pass at 5564e016
+        (regression controls); they are re-stated because commit B replaces
+        ``_PATH_OR_ARCHIVE_REQUIREMENT`` with ``_read``.
+        """
+        assert _opaque_requirements(text + "\n") != []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==0.9.0 -Cfoo=bar -Cbad",
+            "vllm==0.9.0 --hash=sha256:aa --bogus",
+            "vllm==0.9.0 --hash=sha256:aa -Cbad",
+        ],
+    )
+    def test_a_line_with_a_rejected_option_half_is_reported(self, text):
+        """pip 26.1.2 refuses each line; after commit B the guard must also report it.
+
+        Measured at 5564e016, pip 26.1.2: commit A records no pin (verified in
+        TestOptionHalfReadsAsPipDoes), but the line is not yet opaque —
+        ``_opaque_requirements`` still uses the old regex path. Commit B routes through
+        ``_read``, which detects the non-empty option half at step 5 and reports.
+        """
+        assert _opaque_requirements(text + "\n") != []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm-0.9.0-py3-none-any.whl[foo]",  # stricter than pip: no name from archive filename
+            "evil@../pkgs/vllm",  # stricter than pip: local path wearing a name
+            "vllm==0.9.0 --no-binary :all:",  # stricter than pip: closed two-option table (D1)
+            "vllm==0.9.0 --has=sha256:aa",  # stricter than pip: closed table (optparse abbreviation)
+        ],
+    )
+    def test_a_stricter_than_pip_line_is_reported(self, text):
+        """The guard is deliberately stricter than pip on these four shapes (design D6).
+
+        Measured at 5564e016, pip 26.1.2: pip installs each line; the guard reports it.
+        - Archive filename with extras: no project name is read from an archive path.
+        - ``evil@../pkgs/vllm``: wears a name but has no URL scheme — local path by another
+          name. Both rows above already pass at 5564e016 (regression controls).
+        - ``--no-binary :all:`` and ``--has=sha256:aa``: not in the guard's closed two-option
+          table (operator decision 2 in design D1). These are new after commit B.
+        """
+        assert _opaque_requirements(text + "\n") != []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # attached spelling
+            "example.zip[foo]==1.0",
+            "example.zip[foo,bar]==1.0",
+            "example.zip[ foo , bar ]==1.0",
+            "example.zip[]==1.0",
+            "example.zip[ ]==1.0",
+            "example.zip[foo.bar_1]==1.0",
+            # detached spelling
+            "example.zip [foo] ==1.0",
+            "example.zip [foo,bar] ==1.0",
+            "example.zip [ foo , bar ] ==1.0",
+            "example.zip [] ==1.0",
+            "example.zip [ ] ==1.0",
+            "example.zip [foo.bar_1] ==1.0",
+            # named URL spelling
+            "numpy [foo] @ https://host/numpy.whl",
+            "numpy [foo,bar] @ https://host/numpy.whl",
+            "numpy [ foo , bar ] @ https://host/numpy.whl",
+            "numpy [] @ https://host/numpy.whl",
+            "numpy [ ] @ https://host/numpy.whl",
+            "numpy [foo.bar_1] @ https://host/numpy.whl",
+        ],
+    )
+    def test_an_accepted_extras_list_is_not_reported(self, text):
+        """pip 26.1.2 accepts each line; the guard must not report it.
+
+        Measured at 5564e016, pip 26.1.2: all 18 rows parse cleanly as named requirements
+        with their extras and specifiers. These are regression controls that must stay green
+        through commit B's replacement of the archive regex with ``_read``.
+        """
+        assert _opaque_requirements(text + "\n") == []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm == 0.9.0",
+            "vllm (==0.9.0)",
+            "vllm===0.9.0",
+        ],
+    )
+    def test_a_spaced_or_parenthesised_specifier_is_read_as_a_pin(self, text):
+        """pip 26.1.2 accepts each form; the guard must record the exact pin (design D3).
+
+        Measured at 5564e016, pip 26.1.2:
+        - ``vllm == 0.9.0``: spaces around ``==`` are valid PEP 508.
+        - ``vllm (==0.9.0)``: parenthesised specifier is valid PEP 508.
+        - ``vllm===0.9.0``: arbitrary equality ``===`` is a valid specifier operator.
+        The anchored ``_PIN_PATTERN`` matched literal ``==`` and missed all three; commit B
+        reads them through ``packaging.requirements.Requirement``.
+        """
+        assert _parse_pins(text) == {"vllm": "0.9.0"}
+        assert _unpinned_protected(text) == {}
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vllm==1.0.*",
+            "vllm==0.9.0,<0.10",
+        ],
+    )
+    def test_a_wildcard_or_range_specifier_is_not_a_pin(self, text):
+        """pip 26.1.2 accepts these but neither is a single exact version (design D3).
+
+        Measured at 5564e016, pip 26.1.2:
+        - ``vllm==1.0.*``: wildcard matches a range; ``Version("1.0.*")`` raises downstream.
+          ``_PIN_PATTERN`` read ``1.0.*`` as the version today; commit B treats it as unpinned.
+        - ``vllm==0.9.0,<0.10``: two specifier clauses; already reads as unpinned (regression
+          control).
+        """
+        assert _parse_pins(text) == {}
+        assert "vllm" in _unpinned_protected(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            'vllm==0.9.0; os_name == "a -Cbad"',
+            'vllm==0.9.0 ; os_name == "x --bogus"',
+            "vllm==0.9.0 ; bogus marker",
+        ],
+    )
+    def test_a_marker_with_embedded_invalid_syntax_is_reported(self, text):
+        """pip 26.1.2 refuses each line; the guard must not record a pin.
+
+        Measured at 5564e016, pip 26.1.2:
+        - ``; os_name == "a -Cbad"``: the marker value contains ``-Cbad"``; the
+          option-half split (literal space) opens inside the quoted value, shlex raises
+          ValueError on the unclosed quote, D1 rejects the whole line, and step 5 of
+          ``_read`` detects the non-empty option half and reports.
+        - ``; os_name == "x --bogus"``: same — ``--bogus"`` creates an unclosed quote.
+        - ``; bogus marker``: D1 does not reject (no dash token in the option half),
+          but ``Marker("bogus marker")`` raises InvalidMarker.
+        Before commit B, ``_requirement_lines`` cut at ``;`` so each line supplied only
+        ``vllm==0.9.0`` to ``_PIN_PATTERN``, recording a spurious pin.
+
+        Refuter finding 2026-10-08: an earlier prototype passed the full line to
+        ``Requirement`` and packaging parsed it as valid (the marker swallowed the option
+        token). The correct reading is pip's: the option-half split opens inside the
+        quoted marker value, rejecting the whole line. Step 5 detects this before
+        ``Requirement`` is ever called.
+        """
+        assert _parse_pins(text) == {}
+        assert _opaque_requirements(text + "\n") != []
+        assert "vllm" in _unpinned_protected(text)
+
+    def test_a_pin_with_empty_trailing_semicolon_is_read(self):
+        """pip 26.1.2 accepts ``name==version ;`` as an unconditional pin (design D2 step 6).
+
+        Measured at 5564e016, pip 26.1.2: ``Requirement("vllm==0.9.0 ;")`` raises, but
+        pip accepts the line and treats the trailing semicolon as no marker. Splitting at
+        ``;`` first and passing only the head to ``Requirement`` is the correct reading;
+        passing the whole line would be a fifth undocumented stricter-than-pip row. The
+        pin assertions are regression controls (already correct at 5564e016); commit B also
+        fixes ``_conditional_protected`` to return ``{}`` rather than ``{"vllm": ""}`` for
+        a trailing semicolon with no marker text.
+        """
+        assert _parse_pins("vllm==0.9.0 ;") == {"vllm": "0.9.0"}
+        assert _opaque_requirements("vllm==0.9.0 ;\n") == []
+        assert _conditional_protected("vllm==0.9.0 ;\n") == {}
+        assert _parse_pins("sympy==1.13.1;") == {"sympy": "1.13.1"}
+        assert _opaque_requirements("sympy==1.13.1;\n") == []
