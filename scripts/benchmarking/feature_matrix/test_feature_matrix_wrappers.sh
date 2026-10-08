@@ -72,6 +72,7 @@
 #   68. an unreadable live document/chunk count pages once
 #   69. a hung mail binary is cut off after FM_MAIL_TIMEOUT and reports "page failed"
 #   70. without `timeout` on PATH the page is still sent, unbounded
+#   71. a hung mail binary that ignores SIGTERM is still killed and reports "page failed"
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -86,7 +87,7 @@ export ARCHI_DIR="$T/archi" FM_OUT="$T/out"
 export FM_DOCKER="$T/bin/docker" FM_ARCHI="$T/bin/archi" FM_PYTHON="${FM_PYTHON:-python3}"
 export FM_MAIL="$T/bin/mail"
 export FM_POLL_SECONDS=0
-unset RAGAS_ENV_FILE HUIT_API_KEY_FILE OPENAI_API_KEY FM_AGENT_SPEC FM_PAGE_MAIL_TO
+unset RAGAS_ENV_FILE HUIT_API_KEY_FILE OPENAI_API_KEY FM_AGENT_SPEC FM_PAGE_MAIL_TO FM_MAIL_TIMEOUT
 mkdir -p "$T/bin" "$T/state" "$FM_OUT"
 printf 'sha256:abc\n' > "$T/fp"
 printf 'sha256:map1\n' > "$T/mapfp"   # the live category-map digest the data-manager reports
@@ -138,7 +139,13 @@ cat > "$T/bin/mail-hang" <<EOF
 #!/usr/bin/env bash
 exec sleep 30
 EOF
-chmod +x "$T/bin/docker" "$T/bin/archi" "$T/bin/git" "$T/bin/mail" "$T/bin/mail-fail" "$T/bin/mail-hang"
+# an ignored signal stays ignored across exec, so this sleep does not die on SIGTERM
+cat > "$T/bin/mail-hang-noterm" <<EOF
+#!/usr/bin/env bash
+trap '' TERM
+exec sleep 30
+EOF
+chmod +x "$T/bin/docker" "$T/bin/archi" "$T/bin/git" "$T/bin/mail" "$T/bin/mail-fail" "$T/bin/mail-hang" "$T/bin/mail-hang-noterm"
 export FM_GIT="$T/bin/git"; printf 'c0ffee00\n' > "$T/codesha"; : > "$T/dirty"
 
 # --- fake stack fm-00 --------------------------------------------------------------------
@@ -785,6 +792,12 @@ run env FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-fail" bash "$HERE/a
 T0=$SECONDS
 run env FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-hang" FM_MAIL_TIMEOUT=1 bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
 [ "$RC" = 2 ] && [ $((SECONDS - T0)) -lt 15 ] && grep -q "already archived" "$T/stderr" && grep -q "page failed" "$T/stderr" && ok "a hung mail binary times out, keeps the refusal and reports page failed" || notok "archive mail-hang (rc=$RC after $((SECONDS - T0))s: $(cat "$T/stderr"))"
+
+# 71: a hung mail binary that ignores SIGTERM is killed after the grace period; the wrapper
+# still refuses with the same message and reports "page failed"
+T0=$SECONDS
+run env FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-hang-noterm" FM_MAIL_TIMEOUT=1 bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && [ $((SECONDS - T0)) -lt 15 ] && grep -q "already archived" "$T/stderr" && grep -q "page failed" "$T/stderr" && ok "a hung mail binary that ignores SIGTERM is killed, keeps the refusal and reports page failed" || notok "archive mail-hang-noterm (rc=$RC after $((SECONDS - T0))s: $(cat "$T/stderr"))"
 
 # 70: on a host without `timeout`, fm_page still sends the page (unbounded), not "page failed"
 mkdir -p "$T/notimeout"; for c in env bash cat; do ln -sf "$(command -v "$c")" "$T/notimeout/$c"; done
