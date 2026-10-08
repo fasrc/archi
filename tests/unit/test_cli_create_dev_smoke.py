@@ -2442,19 +2442,23 @@ def test_force_create_with_missing_agent_config_file_keeps_existing_deployment(
     ), f"the error should say 'not found'. output:\n{result.output}\n"
 
 
+@pytest.mark.parametrize("selected", ["chatbot", "slack"])
 def test_force_create_with_agent_config_inside_deployment_keeps_existing_deployment(
-    env_file, archi_home, monkeypatch, tmp_path
+    selected, env_file, archi_home, monkeypatch, tmp_path
 ):
     """A source file inside the deployment dir must not cost the operator a running deployment.
 
     refuse_agent_config_inside_deployment() runs above remove_existing_deployment(),
     so a config that names a file under the deployment directory is refused before any
-    teardown occurs.
+    teardown occurs. `--services slack` also runs the chatbot, so it is refused too.
     """
     import yaml
 
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+    env_file.write_text(
+        env_file.read_text() + "SLACK_BOT_TOKEN=xoxb-test\nSLACK_APP_TOKEN=xapp-test\n"
+    )
 
     from src.cli import cli_main
     from src.cli.managers.volume_manager import VolumeManager
@@ -2491,7 +2495,7 @@ def test_force_create_with_agent_config_inside_deployment_keeps_existing_deploym
             "-e",
             str(env_file),
             "--services",
-            "chatbot",
+            selected,
             "--hostmode",
         ],
     )

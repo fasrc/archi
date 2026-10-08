@@ -307,7 +307,7 @@ def create(
         # It cannot move below the --dry return either, or a dry run would stop
         # reporting the removal it would have performed.
         refuse_agent_config_inside_deployment(
-            config_manager.get_configs(), base_dir, enabled_services
+            config_manager.get_configs(), base_dir, validated_services
         )
 
         # Volumes only, no config: staging local_files copies into the data-manager
