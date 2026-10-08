@@ -149,6 +149,17 @@ archi evaluate -n benchmark -c config.yaml -e .secrets.env --gpu-ids all
 
 Make sure the `out_dir` exists before running.
 
+With `-cd`, the configs in the directory are the arms of one deployment. That
+deployment seeds Postgres once, and the agent reads every setting outside
+`services.benchmarking` from that seed. So the arms must agree everywhere except
+`services.benchmarking`, `name`, and the `agents_dir`/`skills_dir` paths that the
+deploy rewrites. `archi evaluate` compares the arm files before it touches an
+existing runtime, and refuses the run with the differing paths if they disagree.
+A missing key and an empty value count as different. To A/B a setting outside
+`services.benchmarking` (for example `services.chat_app.force_initial_retrieval`
+or a chunking setting), run one deployment per value, as in
+[Hierarchical-rerank A/B](#hierarchical-rerank-ab).
+
 ### Environment variables
 
 | Variable | Default | Description |

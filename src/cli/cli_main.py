@@ -25,7 +25,7 @@ from src.cli.qa_eval import eval_cli
 from src.cli.service_registry import service_registry
 from src.cli.source_registry import source_registry
 from src.cli.tools import sources_builder
-from src.cli.tools.config_seed import seed_entry
+from src.cli.tools.config_seed import arm_divergence_refusal, seed_entry
 from src.cli.utils.helpers import *
 from src.cli.utils.helpers import (
     _infer_gpu_ids_from_compose,
@@ -841,6 +841,9 @@ def evaluate(
         # Validate EVERY config's effective (template-defaulted) question set,
         # including enabled anchors, so a bank/mode mismatch never survives to
         # grading and wastes the ~50-min re-ingest.
+        arm_refusal = arm_divergence_refusal(config_files)
+        if arm_refusal:
+            raise click.ClickException(arm_refusal)
         config_manager = ConfigurationManager(config_files, env)
         bank_errors, bank_warnings = preflight_benchmark_configs(config_manager.configs)
         for bank_warning in bank_warnings:
