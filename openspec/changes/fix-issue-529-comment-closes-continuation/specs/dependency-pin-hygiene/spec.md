@@ -15,4 +15,4 @@ When a continuation buffer is open and the next physical line matches pip's comm
 #### Scenario: The monitored requirement files parse as before
 - **WHEN** the guard reads the five monitored requirement files after the change
 - **THEN** each reports 0 opaque lines
-- **AND** the pin counts are 1, 5, 104, 105 and 109, unchanged from `origin/dev`
+- **AND** the pin counts are 1, 5, 105, 106 and 110, unchanged from `origin/dev`
