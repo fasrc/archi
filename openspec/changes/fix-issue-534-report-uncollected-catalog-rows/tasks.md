@@ -5,7 +5,7 @@ code, run `bash scripts/gate.sh`, and commit. Do not end a task on a red test. R
 
 ## 1. The pure reconcile module
 
-- [ ] 1.1 Create `tests/unit/test_catalog_reconcile.py` and
+- [x] 1.1 Create `tests/unit/test_catalog_reconcile.py` and
   `src/data_manager/collectors/utils/catalog_reconcile.py` with `scope_for`,
   `CollectionPass` (`record_collected`, `record_failure`, thread-safe), `find_uncollected`,
   `ReconcileReport`, and `log_reconcile_report`, as `design.md` D1, D2, and D4 describe.
@@ -24,7 +24,7 @@ code, run `bash scripts/gate.sh`, and commit. Do not end a task on a red test. R
 
 ## 2. Record collected hashes in PersistenceService
 
-- [ ] 2.1 Add tests to `tests/unit/test_catalog_reconcile.py` (or a new
+- [x] 2.1 Add tests to `tests/unit/test_catalog_reconcile.py` (or a new
   `tests/unit/test_persistence_collection_pass.py`): with an open pass,
   `persist_resource` records the hash under the resource's scope only after
   `upsert_resource` returns (a fake catalog whose `upsert_resource` raises records
