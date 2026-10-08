@@ -276,10 +276,12 @@ BEFORE="$(ledger_rows)"
 run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml"
 if [ "$RC" = 2 ] && grep -q "divergence_from_selected_file" "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ] && [ ! -f "$FM_OUT/corpus-pin-fm-00" ]; then ok "archive refuses a diverged run, writes nothing"; else notok "archive refuses a diverged run (rc=$RC: $(cat "$T/stderr"))"; fi
 # 67: the same refusal comes from the ENTRY validator (after the preliminary check passed);
-# with paging on it pages once, with the refusal reason in the body, and still writes nothing
+# with paging on it pages once, with the refusal reason in the body, and still writes nothing;
+# the terminal output stays the validator's own REFUSED line, with no generic refusal added
 : > "$T/mail.calls"
 run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml"
 if [ "$RC" = 2 ] && grep -q "divergence_from_selected_file" "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ] && [ ! -f "$FM_OUT/corpus-pin-fm-00" ] \
+   && ! grep -q "^feature_matrix: refusing to archive" "$T/stderr" \
    && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
    && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: refusing to archive" "$T/mail.calls" \
    && grep -q "divergence_from_selected_file" "$T/mail.calls"; then

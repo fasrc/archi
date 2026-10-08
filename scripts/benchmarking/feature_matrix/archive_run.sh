@@ -151,8 +151,10 @@ CHUNKS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "se
 
 PIN_FILE="$(fm_pin_file "$STACK")"
 # The artifact checks below refuse after the run finished, so they page like the ones above.
+# Their REFUSED line is the whole terminal message: page it and keep the validator's exit
+# code, with no generic refusal line added (stderr is the same as with paging off).
 FM_ERRF="$(mktemp)"
-if ! ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \
+ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \
   FM_LEDGER="$(fm_ledger)" FM_LOCK_SHA="$(fm_lock_sha)" \
   FM_PIN_FILE="$PIN_FILE" FM_NEW_CORPUS="$NEW_CORPUS" FM_FINISHED="$(fm_now)" "$FM_PYTHON" - 2>"$FM_ERRF" <<'EOF'
 import json, math, os, sys, yaml
@@ -250,11 +252,12 @@ entry = {
 }
 print(json.dumps(entry))
 EOF
-)"; then
+)" || {
+  FM_RC=$?
   cat "$FM_ERRF" >&2
-  FM_REASON="$(cat "$FM_ERRF")"; rm -f "$FM_ERRF"
-  fm_die_paged "stack $STACK arm $ARM" "refusing to archive $ARTIFACT (see above)" "$FM_REASON"
-fi
+  fm_page "stack $STACK arm $ARM: refusing to archive $ARTIFACT" "$(cat "$FM_ERRF")"
+  rm -f "$FM_ERRF"; exit "$FM_RC"
+}
 rm -f "$FM_ERRF"
 fm_ledger_append "$ENTRY"
 fm_log "archived arm $ARM run $RUN: $ARTIFACT"
