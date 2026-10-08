@@ -252,7 +252,7 @@ _WEB_ROWS = [
 ]
 
 
-def _links_schedule_urls(monkeypatch, tmp_path, sources_config):
+def _links_schedule_urls(monkeypatch, tmp_path, sources_config, web_rows=_WEB_ROWS):
     manager = _make_manager(monkeypatch, tmp_path, sources_config)
     monkeypatch.setattr(
         manager, "_collect_urls_from_lists_by_type", lambda _l: ([], [], [], [], [], [])
@@ -265,7 +265,7 @@ def _links_schedule_urls(monkeypatch, tmp_path, sources_config):
     )
 
     def get_metadata_by_filter(field, value=None, metadata_keys=None, **kw):
-        rows = [(h, m) for h, m in _WEB_ROWS if m.get(field) == kw.get(field, value)]
+        rows = [(h, m) for h, m in web_rows if m.get(field) == kw.get(field, value)]
         if metadata_keys:
             rows = [(h, {k: m[k] for k in metadata_keys if k in m}) for h, m in rows]
         return rows
@@ -294,3 +294,29 @@ def test_schedule_collect_links_keeps_rows_when_flag_absent(monkeypatch, tmp_pat
     """No explicit false: the links schedule is unchanged and keeps every web row."""
     urls = _links_schedule_urls(monkeypatch, tmp_path, {})
     assert urls == [m["url"] for _, m in _WEB_ROWS]
+
+
+# An ELOG row that the old links schedule re-fetched lost its "scraper" marker: the
+# link scraper upserts the same resource_hash (md5 of the URL) and the catalog
+# upsert replaces extra_json wholesale.
+_UNMARKED_ELOG_ROWS = [
+    ("h1", {"url": "https://x/page", "source_type": "web"}),
+    ("h2", {"url": "https://h/elog/lb/1", "source_type": "web"}),
+]
+
+
+def test_schedule_collect_links_skips_unmarked_elog_rows_when_disabled(
+    monkeypatch, tmp_path
+):
+    """Without the marker, the URL classifier the input lists use decides."""
+    urls = _links_schedule_urls(
+        monkeypatch, tmp_path, {"elog": {"enabled": False}}, _UNMARKED_ELOG_ROWS
+    )
+    assert urls == ["https://x/page"]
+
+
+def test_schedule_collect_links_keeps_unmarked_elog_rows_when_flag_absent(
+    monkeypatch, tmp_path
+):
+    urls = _links_schedule_urls(monkeypatch, tmp_path, {}, _UNMARKED_ELOG_ROWS)
+    assert urls == ["https://x/page", "https://h/elog/lb/1"]

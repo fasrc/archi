@@ -363,10 +363,14 @@ class ScraperManager:
             for source in ("elog", "indico")
             if getattr(self, f"_{source}_flag", None) is False
         }
+        # A links re-fetch upserts an ELOG row under the same hash and replaces
+        # extra_json, so older rows can lack the marker; fall back to the URL
+        # classifier the input lists use, which ignores the flag for ELOG.
         catalog_urls = [
             m[1].get("url", "").strip()
             for m in metadata
-            if m[1].get("scraper") not in disabled
+            if (m[1].get("scraper") or self._unmarked_source(m[1].get("url", "")))
+            not in disabled
         ]
         catalog_urls = [u for u in catalog_urls if u]
         logger.info(
@@ -838,6 +842,15 @@ class ScraperManager:
     @staticmethod
     def _is_elog_url(url: str) -> bool:
         return is_elog_url(url)
+
+    @staticmethod
+    def _unmarked_source(url: str) -> Optional[str]:
+        """Source of a catalog row that carries no "scraper" marker.
+
+        Only ELOG: an unprefixed Indico-shaped URL is a plain link while Indico is
+        disabled, so its shape alone cannot name the source.
+        """
+        return "elog" if is_elog_url(url) else None
 
     def _is_indico_url(self, url: str) -> bool:
         """Return True if the URL looks like an Indico event page.
