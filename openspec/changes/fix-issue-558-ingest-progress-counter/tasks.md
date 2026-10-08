@@ -112,7 +112,7 @@
 
 ## 4. Benchmark stall rule
 
-- [ ] 4.1 In `tests/unit/test_benchmark_ingest_wait.py`, add tests (insert them above
+- [x] 4.1 In `tests/unit/test_benchmark_ingest_wait.py`, add tests (insert them above
       `test_default_fetch_parses_the_status_payload`, not at the end of the file), then
       implement design D5 in `src/bin/service_benchmark.py`, one commit
       (`feat: benchmark stall budget follows the progress counter`). Use the existing
