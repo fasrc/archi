@@ -6,6 +6,7 @@ Design: openspec/changes/fix-issue-534-report-uncollected-catalog-rows/design.md
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -171,22 +172,30 @@ def test_dangling_symlink_skipped_not_recorded(tmp_path):
     assert resources[0].file_name == "a.py"
 
 
-def test_binary_open_error_records_repo_not_binary(tmp_path, monkeypatch):
-    """An open error in _looks_binary records the repo; file is not silently skipped as binary."""
+def test_binary_open_error_records_repo_not_binary(tmp_path, monkeypatch, caplog):
+    """An open error in _looks_binary records the repo; file is not silently skipped as binary.
+
+    The real ``_looks_binary`` runs; only the binary-mode open fails.
+    """
     scraper = _make_git_scraper(tmp_path)
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
     (repo_path / "code.py").write_text("x = 1")
 
-    monkeypatch.setattr(
-        GitScraper,
-        "_looks_binary",
-        lambda self, p: (_ for _ in ()).throw(OSError("cannot open for binary read")),
-    )
-    resources = scraper._harvest_code(_fake_repo_info(repo_path))
+    real_open = Path.open
 
-    assert any(n == "my-repo" for n, _ in scraper.last_failures)
+    def _failing_binary_open(self, mode="r", *args, **kwargs):
+        if "b" in mode:
+            raise OSError("cannot open for binary read")
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _failing_binary_open)
+    with caplog.at_level(logging.WARNING):
+        resources = scraper._harvest_code(_fake_repo_info(repo_path))
+
+    assert scraper.last_failures == [("my-repo", "cannot open for binary read")]
     assert resources == []
+    assert not any("likely binary" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

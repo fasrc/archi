@@ -7,6 +7,7 @@ Design: openspec/changes/fix-issue-534-report-uncollected-catalog-rows/design.md
 
 import logging
 import threading
+import time
 
 import pytest
 
@@ -87,8 +88,22 @@ class TestScopeFor:
 
 
 def test_concurrent_record_collected_loses_no_hash():
-    """8 threads each record one hash; all 8 must appear in collected."""
+    """8 threads each record one hash; all 8 must appear in collected.
+
+    ``_SlowSetdefault`` makes the check-then-insert in ``setdefault`` slow, so
+    without ``_lock`` several threads see the scope missing and each installs
+    its own set, and all but one hash is lost.
+    """
+
+    class _SlowSetdefault(dict):
+        def setdefault(self, key, default=None):
+            if key not in self:
+                time.sleep(0.02)
+                self[key] = default
+            return self[key]
+
     cp = CollectionPass()
+    cp.collected = _SlowSetdefault()
     hashes = [f"hash_{i}" for i in range(8)]
     metadata = {"source_type": "git", "parent": "repo"}
 
@@ -147,6 +162,7 @@ class TestFindUncollected:
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 1
         assert "Bad_Repo" in warnings[0].getMessage()
+        assert "clone failed" in warnings[0].getMessage()
 
     def test_whole_type_failure_skips_all_scopes_of_that_type(self, caplog):
         """scope_key=None failure skips every scope of that source type."""
@@ -165,6 +181,10 @@ class TestFindUncollected:
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         # one WARNING per skipped scope (two distinct web scopes)
         assert len(warnings) == 2
+        messages = sorted(w.getMessage() for w in warnings)
+        assert "alpha.example.com" in messages[0]
+        assert "beta.example.com" in messages[1]
+        assert all("selenium missing" in m for m in messages)
 
     def test_zero_collected_yields_warning_with_row_count(self, caplog):
         """Scope ran but collected nothing while the catalog holds rows → WARNING names count."""
@@ -186,7 +206,9 @@ class TestFindUncollected:
         assert report.candidates == []
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 1
-        assert "5" in warnings[0].getMessage()
+        msg = warnings[0].getMessage()
+        assert "docs.example.org" in msg
+        assert "collected 0 resources while the catalog holds 5 rows" in msg
 
     def test_source_type_not_ran_yields_no_candidates_no_warning(self, caplog):
         """A source type that never ran produces no candidates and no WARNING."""
@@ -317,10 +339,8 @@ class TestLogReconcileReport:
         info = [r for r in caplog.records if r.levelno == logging.INFO]
         assert len(info) == 1
         msg = info[0].getMessage()
-        assert "8" in msg
-        assert "py" in msg
-        assert "sbatch" in msg
-        assert "md" in msg
+        assert msg.startswith("Reconcile: 8 candidate(s) [8 git]")
+        assert "[2 md, 4 py, 2 sbatch]" in msg
 
     def test_each_candidate_logged_at_debug(self, caplog):
         """Each candidate produces exactly one DEBUG log line."""
@@ -335,3 +355,7 @@ class TestLogReconcileReport:
 
         debug = [r for r in caplog.records if r.levelno == logging.DEBUG]
         assert len(debug) == 2
+        assert [r.getMessage() for r in debug] == [
+            "Candidate: h1 file1.py (git)",
+            "Candidate: h2 file2.py (git)",
+        ]

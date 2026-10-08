@@ -58,7 +58,7 @@ code, run `bash scripts/gate.sh`, and commit. Do not end a task on a red test. R
   a candidate row with `metadata["suffix"] = ".md"` and URL `https://example.org/guide`
   reports suffix `md`. Fix: use `metadata["suffix"]` (strip a leading dot) and parse the
   path only when it is absent. Run the gate and commit.
-- [ ] 3.1b Review fix (tests that cannot fail). Make each of these tests able to go red:
+- [x] 3.1b Review fix (tests that cannot fail). Make each of these tests able to go red:
   `test_binary_open_error_records_repo_not_binary` must let the real `_looks_binary` run
   (patch `Path.open` to raise) and assert no "likely binary" WARNING;
   `test_info_summary_reports_total_and_suffix_counts` must assert `4 py`, `2 sbatch`,
