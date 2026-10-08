@@ -283,6 +283,23 @@ class ServiceRegistry:
 
         return list(resolved)
 
+    def selected_with_dependencies(self, selected: List[str]) -> List[str]:
+        """Return the selected services plus the services they depend on.
+
+        Unlike resolve_dependencies, this adds no auto-enabled service that was
+        not selected, so validation of a plain `--services chatbot` is unchanged.
+        """
+        result = list(dict.fromkeys(selected))
+        for name in result:
+            service_def = self._services.get(name)
+            if not service_def:
+                continue
+            for dep in service_def.depends_on + service_def.requires_services:
+                dep_def = self._services.get(dep)
+                if dep_def and not dep_def.auto_enable and dep not in result:
+                    result.append(dep)
+        return result
+
     def get_required_secrets(self, enabled_services: List[str]) -> Set[str]:
         """Get all required secrets for enabled services"""
         secrets = set()

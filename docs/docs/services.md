@@ -389,6 +389,9 @@ ARCHI_API_TOKEN=archi_...
 
 When chat authentication is on, `/v1` needs a bearer token. Create one with `POST /api/users/me/api-token` (see the [/v1 API reference](api-reference-v1.md)) as the archi user that Slack questions run as. `archi create` refuses to deploy the Slack service without it.
 
+!!! warning "Turning on chat authentication later"
+    If you turn on `services.chat_app.auth.enabled` on a deployment that already runs the Slack service, add `ARCHI_API_TOKEN` to the secrets file, then run `archi create --force` with the same services. `archi restart --service chatbot` does not give the token to the Slack container, and the bot then gets HTTP 401 for each question.
+
 ### Running
 
 ```bash

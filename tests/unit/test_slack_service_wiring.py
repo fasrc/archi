@@ -47,6 +47,25 @@ def test_registry_requires_both_slack_tokens():
     assert SLACK_SECRETS <= service_registry.get_required_secrets(["slack"])
 
 
+def test_selected_services_gain_the_chatbot_that_slack_depends_on():
+    # `--services slack` runs the chatbot too, so the chatbot must be validated.
+    assert service_registry.selected_with_dependencies(["slack"]) == [
+        "slack",
+        "chatbot",
+    ]
+
+
+@pytest.mark.parametrize(
+    "selected", [["chatbot"], ["chatbot", "slack"], ["slack", "chatbot"]]
+)
+def test_selected_services_add_no_auto_enabled_or_duplicate_service(selected):
+    # postgres and data-manager run anyway; adding them here would change the
+    # validation of every deployment.
+    assert sorted(service_registry.selected_with_dependencies(selected)) == sorted(
+        set(selected) | {"chatbot"}
+    )
+
+
 def _plan(tmp_path, enabled=("chatbot", "slack")):
     return ServiceBuilder.build_compose_config(
         name="demo",

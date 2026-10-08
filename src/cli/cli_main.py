@@ -221,12 +221,16 @@ def create(
         log_deployment_start(name, services, enabled_sources, dry)
         log_dependency_resolution(services, enabled_services)
 
-        # Validate configuration and secrets
-        config_manager.validate_configs(enabled_services, enabled_sources)
+        # Validate configuration and secrets, including the services a selected
+        # service runs (`--services slack` also runs the chatbot)
+        validated_services = service_registry.selected_with_dependencies(
+            enabled_services
+        )
+        config_manager.validate_configs(validated_services, enabled_sources)
         logger.info("Configurations validated successfully")
 
         required_secrets, all_secrets = secrets_manager.get_secrets(
-            set(enabled_services), set(enabled_sources)
+            set(validated_services), set(enabled_sources)
         )
         try:
             secrets_manager.validate_secrets(required_secrets)

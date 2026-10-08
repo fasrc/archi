@@ -2511,3 +2511,45 @@ def test_force_create_with_agent_config_inside_deployment_keeps_existing_deploym
     assert (
         "services.chat_app.evaluations.agent_config_path" in result.output
     ), f"the error should name the key. output:\n{result.output}\n"
+
+
+@pytest.mark.usefixtures("fake_repo_root")
+def test_slack_only_selection_validates_the_chatbot_it_runs(
+    archi_home, tmp_path, monkeypatch
+):
+    """`--services slack` also runs the chatbot, so its chat config is validated."""
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        EXAMPLE_CONFIG.read_text().replace(
+            "  chat_app:\n", "  chat_app:\n    provider: openai\n", 1
+        )
+    )
+    env = tmp_path / "secrets.env"
+    env.write_text(
+        "OPENAI_API_KEY=sk-test\nPG_PASSWORD=test-pg\nHUGGING_FACE_HUB_TOKEN=test-hf\n"
+        "SLACK_BOT_TOKEN=xoxb-test\nSLACK_APP_TOKEN=xapp-test\n"
+    )
+
+    from src.cli import cli_main
+
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: False)
+    result = CliRunner().invoke(
+        cli_main.create,
+        [
+            "--dry",
+            "-n",
+            "slackonly",
+            "-c",
+            str(config),
+            "-e",
+            str(env),
+            "--services",
+            "slack",
+            "--hostmode",
+        ],
+    )
+
+    assert result.exit_code != 0, f"output:\n{result.output}\n"
+    assert "Legacy keys detected" in result.output, f"output:\n{result.output}\n"
