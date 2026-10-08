@@ -168,6 +168,22 @@ with `~/miniforge3/envs/archi` on `PATH`, the FASRC VPN up, and the judge key in
 file: `RAGAS_ENV_FILE=/home/austin/.archi/archi-ragas-205/.env`. The wrappers under
 `scripts/benchmarking/feature_matrix/` are one step each; the runbook is this section.
 
+**Paging (#504).** A wrapper can mail the operator when it stops after long unattended
+work. Set `FM_PAGE_MAIL_TO` to the recipient; it is empty by default, and empty means
+paging is off. `FM_MAIL` names the mail binary (default `mail`, called as
+`mail -s <subject> <recipient>` with the message on stdin). These exits page: the
+`archive_run.sh` refusals after the run finished (an arm artifact that fails any check in
+§5.1, live document and chunk counts that cannot be read, and a sweep artifact that fails
+its archive checks) and the two `qa_arm.sh` corpus-drift exits (the corpus changed during
+the QA run, for a normal arm or a sweep arm).
+The subject names the stack and the arm; the body carries the refusal reason. The exit
+code (2) and the terminal message do not change. Precondition refusals (a bad arm label,
+a missing file, a dirty checkout) fail before any long work starts and never page. A
+failing mail binary prints `feature_matrix: page failed` and does not change the exit.
+A mail binary that does not return in `FM_MAIL_TIMEOUT` seconds (default 60; a zero or
+non-numeric value also gives 60, because `timeout 0` means no bound) is stopped
+and counts as a failure. On a host without `timeout`, the page is still sent, with no bound.
+
 ### 5.1 Ingest arm (00, 02, 03, 04, 06, 07)
 
 ```bash
