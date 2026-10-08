@@ -180,7 +180,29 @@ def test_basename_collision_infers_from_the_staged_file_only(tmp_path, caplog):
     assert any(str(first) in w and str(second) in w for w in warnings), warnings
 
 
-def test_basename_collision_later_list_wins(tmp_path):
+# Staging copies the lists in sorted path order across every config
+# (_collect_input_lists), so the lexically last path wins, not the last YAML entry.
+def test_basename_collision_follows_staging_order_not_yaml_order(tmp_path):
     first, second = _two_lists_same_basename(tmp_path)
     mgr = _manager([_config_with_lists([second, first])])
+    assert "git" not in mgr.get_enabled_sources()
+
+
+def test_basename_collision_lexically_last_list_wins(tmp_path):
+    first, second = _two_lists_same_basename(tmp_path)
+    first.write_text("https://example.org/page\n")
+    second.write_text("git-https://github.com/org/repo.git\n")
+    mgr = _manager([_config_with_lists([second, first])])
     assert "git" in mgr.get_enabled_sources()
+
+
+# All configs stage into one weblists/ directory, so a list in another config can
+# replace this config's list of the same basename.
+def test_basename_collision_across_configs_uses_the_staged_file(tmp_path, caplog):
+    first, second = _two_lists_same_basename(tmp_path)
+    mgr = _manager([_config_with_list(first), _config_with_list(second)])
+    with caplog.at_level(logging.WARNING):
+        enabled = mgr.get_enabled_sources()
+    assert "git" not in enabled
+    warnings = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(str(first) in w and str(second) in w for w in warnings), warnings

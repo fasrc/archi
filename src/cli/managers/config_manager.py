@@ -420,6 +420,36 @@ class ConfigurationManager:
                 collected.extend(lists)
         self.input_list = sorted(set(collected)) if collected else []
 
+    def _staged_input_lists(self) -> Dict[str, str]:
+        """Return {basename: path} for the list file staging keeps per basename.
+
+        Staging copies get_input_lists() (every config's lists, sorted) to the one
+        weblists/<basename> directory, so for a shared basename the lexically
+        last regular file wins, whatever config or YAML position it came from.
+        """
+        paths: Set[str] = set()
+        for conf in self.configs:
+            sources_section = conf.get("data_manager", {}).get("sources", {}) or {}
+            links_section = (
+                sources_section.get("links", {})
+                if isinstance(sources_section, dict)
+                else {}
+            )
+            lists = (
+                links_section.get("input_lists")
+                if isinstance(links_section, dict)
+                else None
+            )
+            if isinstance(lists, list):
+                paths.update(
+                    os.fspath(p) for p in lists if isinstance(p, (str, os.PathLike))
+                )
+        staged: Dict[str, str] = {}
+        for path in sorted(paths):
+            if os.path.isfile(path):
+                staged[os.path.basename(path)] = path
+        return staged
+
     @staticmethod
     def _input_list_flag(sources_section: Dict, name: str):
         """Return True/False/None for a source: explicit value or None (absent)."""
@@ -436,6 +466,7 @@ class ConfigurationManager:
         """Return sources marked as enabled across all configs."""
         valid_names = set(source_registry.names())
         enabled: Set[str] = set()
+        staged_lists = self._staged_input_lists()
 
         for conf in self.configs:
             sources_section = conf.get("data_manager", {}).get("sources", {}) or {}
@@ -463,8 +494,8 @@ class ConfigurationManager:
                 lists = []
 
             # Staging copies each list to weblists/<basename> and the runtime reads
-            # it from there, so a later list with the same basename replaces an
-            # earlier one: infer only from the file staging keeps.
+            # it from there, so another list with the same basename can replace
+            # this one: infer only from the file staging keeps.
             staged: Dict[str, Any] = {}
             for list_path in lists:
                 # Checked before isfile(), which reads an int as a file descriptor.
@@ -477,12 +508,13 @@ class ConfigurationManager:
                     logger.warning(f"Input list path not found, skipping: {list_path}")
                     continue
                 basename = os.path.basename(list_path)
-                if basename in staged:
+                kept = staged_lists.get(basename, os.fspath(list_path))
+                if kept != os.fspath(list_path):
                     logger.warning(
-                        f"Input lists {staged[basename]} and {list_path} share the "
-                        f"name {basename}; only {list_path} is staged"
+                        f"Input lists {list_path} and {kept} share the "
+                        f"name {basename}; only {kept} is staged"
                     )
-                staged[basename] = list_path
+                staged[basename] = kept
 
             counts: Dict[str, int] = {}
             for list_path in staged.values():
