@@ -307,7 +307,7 @@ class VectorStoreManager:
         logger.info(f"N in PostgreSQL collection: {count}")
         return store
 
-    def update_vectorstore(self) -> None:
+    def update_vectorstore(self, embedding_progress=None) -> None:
         """Synchronise filesystem documents with the vectorstore.
 
         Wraps the sync so every outcome is recorded. A run that raises must not
@@ -317,13 +317,13 @@ class VectorStoreManager:
         """
         started_at = datetime.now(timezone.utc)
         try:
-            run_status = self._sync_vectorstore()
+            run_status = self._sync_vectorstore(embedding_progress=embedding_progress)
         except Exception:
             self._record_ingest_run(started_at, "failed")
             raise
         self._record_ingest_run(started_at, run_status)
 
-    def _sync_vectorstore(self) -> str:
+    def _sync_vectorstore(self, embedding_progress=None) -> str:
         """Do the synchronisation; return the terminal run status."""
         store = self.fetch_collection()
 
@@ -381,7 +381,9 @@ class VectorStoreManager:
             if files_to_add:
                 logger.info(f"Adding {len(files_to_add)} new documents")
                 try:
-                    self._add_to_postgres(files_to_add)
+                    self._add_to_postgres(
+                        files_to_add, embedding_progress=embedding_progress
+                    )
                 except Exception as e:
                     logger.error(f"Files could not be added", exc_info=e)
                     # The ingest carries on (unchanged behaviour), but the run

@@ -88,7 +88,7 @@
 
 ## 3. Thread the callback from the status helpers to the commit sites
 
-- [ ] 3.1 Add tests, then implement design D2, one commit
+- [x] 3.1 Add tests, then implement design D2, one commit
       (`feat: thread embedding progress from ingestion to vectorstore`).
       In `tests/unit/test_ingest_run.py` (insert above the last test, not at the end):
       `update_vectorstore(embedding_progress=cb)` passes `cb` to `_sync_vectorstore`
