@@ -67,3 +67,42 @@ configs should be the `title_header.enabled` / `title_weight` / `filename_boost`
 knobs toggled off vs. on (see `add-title-aware-retrieval` design.md, Migration
 Plan step 4). Until resolved, tasks 5.2–5.4 (which depend on the recorded
 results) and the test/validation work in section 6 remain queued behind this.
+
+## Task 2.1 (fix-issue-529-comment-closes-continuation) — CI red on PR #631 despite a green gate
+
+**Status: BLOCKED — fixing it for real means editing shared CI workflow config, which
+is outside this PR's scope and the loop's PAT cannot retrigger a run to confirm a flake.**
+
+`/review-findings.md` reported PR #631 (`fix/issue-529-comment-closes-continuation`) as
+CI-red and asked to "make the gate match CI and fix the failure." Checked both:
+
+- The actual gate (`gate` job, `.github/workflows/ci.yml` → `scripts/gate.sh`, the
+  project's documented single source of truth) is **green** — run `37727010875`
+  completed `success` at `2026-10-08T04:27:27Z`.
+- The red check is `unit-tests` in the separate `.github/workflows/pr-preview.yml`
+  workflow, which runs `python -m pytest tests/unit/ -v --tb=short` directly —
+  a job that predates the gate.sh consolidation (#69/#34) and duplicates, outside
+  the single source, exactly the full-suite run `gate.sh` already does.
+- The failure is
+  `tests/unit/evaluation/qa/test_jobs_history.py::test_console_persists_and_passes_phase_workers`
+  — `TimeoutError` from `service.job_manager.wait(job["id"], timeout=2)`. This PR's
+  diff touches only `openspec/` docs and
+  `tests/unit/test_base_image_dependency_compatibility.py`; zero lines in
+  `src/evaluation/` or `tests/unit/evaluation/`. Re-running that one test locally in
+  isolation passes (6.65s). It is a real-thread/subprocess test with a hardcoded 2s
+  timeout; issue #435 already tracks a sibling flake in the same job-manager test
+  family (`test_job_manager_terminates_running_evaluation_process`, "flaky ~3 in 5,
+  blocks the commit gate").
+- `gh run rerun 37727010872 --failed` returned `403 Resource not accessible by
+  personal access token` — the loop's fine-grained PAT cannot retrigger Actions runs
+  (same class of PAT-scope block as the task 5.1 entry above).
+
+**Decision needed from a human operator:** either (a) grant the loop's PAT
+`actions:write` so it can retrigger a flaky `pr-preview.yml` run itself, (b) decide
+whether `pr-preview.yml`'s `unit-tests` (and `lint`) jobs should be retired or folded
+into the single-source `gate` job per the consolidation `scripts/gate.sh`'s header
+describes, updating branch protection's required checks to match, or (c) manually
+re-run the failed job from the GitHub web UI. Fixing the flaky test itself is out of
+scope for #529 and would violate "never modify another subsystem's tests to make your
+code pass." PR #631 is already open with the substantive checks (format, coverage,
+full unit suite via `gate.sh`) green; only this duplicate check blocks it.
