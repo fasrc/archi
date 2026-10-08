@@ -125,6 +125,16 @@ or `/elogs/` in the path) enables the source, and `archi create` validates its r
 secrets and config fields before deploying. `enabled: true` collects unconditionally.
 (Changed in [#460](https://github.com/fasrc/archi/issues/460).)
 
+**CAUTION: re-render the configs after you upgrade to this change.** Before #460, the CLI
+wrote `enabled: false` for every source the config did not select, and the scraper ignored
+that value when the input lists held `git-`, `sso-` or ELOG entries. A deployment rendered
+then can carry that `false` for `git`, `sso` or `elog` while it still collects them.
+`archi restart` without `--config` keeps the rendered configs, so after the upgrade the data
+manager skips those entries and logs only a WARNING. Run `archi create --force` or
+`archi restart --config` once after the upgrade, so the CLI infers the sources from the input
+lists again.
+`deploy/scripts/redeploy.sh` runs `archi create --force`, so a redeploy needs no extra step.
+
 **`anonymize_data: false` is the row to check first.** It was silently ignored before and is
 honored now, and it widens what a reader can see. `visible: false` is the opposite
 direction — but see the list at the end of this section: for most sources it still does not
