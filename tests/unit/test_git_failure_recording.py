@@ -172,6 +172,21 @@ def test_dangling_symlink_skipped_not_recorded(tmp_path):
     assert resources[0].file_name == "a.py"
 
 
+def test_symlink_through_a_file_is_skipped_not_recorded(tmp_path):
+    """A symlink whose target passes through a regular file (ENOTDIR) is a skip, not a failure."""
+    scraper = _make_git_scraper(tmp_path)
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / "a.py").write_text("x = 1")
+    (repo_path / "notes.txt").write_text("plain file")
+    (repo_path / "broken.py").symlink_to(repo_path / "notes.txt" / "inner.py")
+
+    resources = scraper._harvest_code(_fake_repo_info(repo_path))
+
+    assert scraper.last_failures == []
+    assert sorted(r.file_name for r in resources) == ["a.py", "notes.txt"]
+
+
 def test_binary_open_error_records_repo_not_binary(tmp_path, monkeypatch, caplog):
     """An open error in _looks_binary records the repo; file is not silently skipped as binary.
 

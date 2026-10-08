@@ -240,7 +240,12 @@ class GitScraper:
                     logger.warning(f"Skipping {file_path} due to file size")
                     continue
             except OSError as e:
-                if e.errno in (errno.ENOENT, errno.ELOOP) and file_path.is_symlink():
+                # A broken symlink is a skip: missing target, loop, or a target
+                # path through a regular file (ENOTDIR).
+                if (
+                    e.errno in (errno.ENOENT, errno.ELOOP, errno.ENOTDIR)
+                    and file_path.is_symlink()
+                ):
                     continue
                 self.last_failures.append((repo_name, str(e)))
                 continue
