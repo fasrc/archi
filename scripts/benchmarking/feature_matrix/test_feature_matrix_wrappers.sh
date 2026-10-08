@@ -70,6 +70,7 @@
 #   66. a corpus drift during qa_arm.sh --sweep pages once
 #   67. a refusal from archive_run.sh's ENTRY validator pages once with the reason
 #   68. an unreadable live document/chunk count pages once
+#   69. a hung mail binary is cut off after FM_MAIL_TIMEOUT and reports "page failed"
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -132,7 +133,11 @@ cat > "$T/bin/mail-fail" <<EOF
 #!/usr/bin/env bash
 exit 1
 EOF
-chmod +x "$T/bin/docker" "$T/bin/archi" "$T/bin/git" "$T/bin/mail" "$T/bin/mail-fail"
+cat > "$T/bin/mail-hang" <<EOF
+#!/usr/bin/env bash
+exec sleep 30
+EOF
+chmod +x "$T/bin/docker" "$T/bin/archi" "$T/bin/git" "$T/bin/mail" "$T/bin/mail-fail" "$T/bin/mail-hang"
 export FM_GIT="$T/bin/git"; printf 'c0ffee00\n' > "$T/codesha"; : > "$T/dirty"
 
 # --- fake stack fm-00 --------------------------------------------------------------------
@@ -773,6 +778,12 @@ run bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
 # 62: a failing mail binary still refuses with the same message and reports "page failed"
 run env FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-fail" bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
 [ "$RC" = 2 ] && grep -q "already archived" "$T/stderr" && grep -q "page failed" "$T/stderr" && ok "a failing mail binary keeps the refusal and reports page failed" || notok "archive mail-fail (rc=$RC: $(cat "$T/stderr"))"
+
+# 69: a mail binary that never returns is cut off after FM_MAIL_TIMEOUT seconds; the wrapper
+# still refuses with the same message and reports "page failed"
+T0=$SECONDS
+run env FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-hang" FM_MAIL_TIMEOUT=1 bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && [ $((SECONDS - T0)) -lt 15 ] && grep -q "already archived" "$T/stderr" && grep -q "page failed" "$T/stderr" && ok "a hung mail binary times out, keeps the refusal and reports page failed" || notok "archive mail-hang (rc=$RC after $((SECONDS - T0))s: $(cat "$T/stderr"))"
 
 # 63: a corpus drift during qa_arm.sh (reuse the drift-after-qa mechanism of case 42) pages once
 : > "$T/mail.calls"

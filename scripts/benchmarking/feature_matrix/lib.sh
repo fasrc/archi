@@ -13,6 +13,7 @@
 #   FM_PAGE_MAIL_TO  operator mail recipient for paged refusals after long work (default:
 #               empty = paging off)
 #   FM_MAIL     the mail binary fm_page invokes (default: mail)
+#   FM_MAIL_TIMEOUT  seconds fm_page waits for FM_MAIL before it gives up (default: 60)
 set -euo pipefail
 
 FM_OUT="${FM_OUT:-$PWD/bench_out/feature_matrix}"
@@ -23,6 +24,7 @@ FM_PYTHON="${FM_PYTHON:-python3}"
 FM_GIT="${FM_GIT:-git}"
 FM_PAGE_MAIL_TO="${FM_PAGE_MAIL_TO:-}"
 FM_MAIL="${FM_MAIL:-mail}"
+FM_MAIL_TIMEOUT="${FM_MAIL_TIMEOUT:-60}"
 
 fm_require_run_number() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] || fm_die "run number must be a positive integer, got '${1:-}'"; }
 
@@ -32,10 +34,12 @@ fm_log() { printf '==> %s\n' "$*"; }
 # Pages the operator by mail when a run stops after long work at a point that needs a
 # human (plan: issue #504). A no-op when FM_PAGE_MAIL_TO is empty (paging off). A failing
 # or missing FM_MAIL never fails the caller: it logs `page failed` to stderr and returns 0,
-# so it cannot trip `set -e`/`pipefail` in the wrapper that called it.
+# so it cannot trip `set -e`/`pipefail` in the wrapper that called it. A FM_MAIL that does
+# not return in FM_MAIL_TIMEOUT seconds is killed and counts as a failure, so a hung MTA
+# cannot keep an unattended wrapper from its refusal exit.
 fm_page() { # $1 = subject (the "feature_matrix: " prefix is added here), $2 = body
   [ -n "$FM_PAGE_MAIL_TO" ] || return 0
-  printf '%s\n' "$2" | "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" \
+  printf '%s\n' "$2" | timeout "$FM_MAIL_TIMEOUT" "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" \
     || printf 'feature_matrix: page failed\n' >&2
   return 0
 }

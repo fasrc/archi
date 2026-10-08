@@ -180,6 +180,8 @@ The subject names the stack and the arm; the body carries the refusal reason. Th
 code (2) and the terminal message do not change. Precondition refusals (a bad arm label,
 a missing file, a dirty checkout) fail before any long work starts and never page. A
 failing mail binary prints `feature_matrix: page failed` and does not change the exit.
+A mail binary that does not return in `FM_MAIL_TIMEOUT` seconds (default 60) is stopped
+and counts as a failure.
 
 ### 5.1 Ingest arm (00, 02, 03, 04, 06, 07)
 
