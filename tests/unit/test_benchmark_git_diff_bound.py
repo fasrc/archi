@@ -220,8 +220,7 @@ def test_bound_text_keeps_a_prefix_when_the_first_line_exceeds_the_cap():
     from src.cli.managers.git_diff_capture import bound_text
 
     kept, truncated, original = bound_text("x" * 50, 10)
-    assert kept != ""
-    assert len(kept.encode("utf-8")) <= 10
+    assert kept == "x" * 10
     assert (truncated, original) == (True, 50)
 
 
@@ -255,5 +254,9 @@ def test_the_stat_is_bounded_by_file_count(repo):
     for path in files:
         path.write_text("old\nnew\n")
     stat = get_git_information(wd=repo)["git_diff_stat"]
+    lines = [line for line in stat.splitlines() if line]
+    # git keeps GIT_DIFF_STAT_MAX_FILES entry lines, then " ..." and the summary.
+    assert len([line for line in lines if " | " in line]) == GIT_DIFF_STAT_MAX_FILES
+    assert lines[-2].strip() == "..."
+    assert "300 files changed" in lines[-1]
     assert stat.count("\n") <= GIT_DIFF_STAT_MAX_FILES + 3
-    assert "300 files changed" in [line for line in stat.splitlines() if line][-1]
