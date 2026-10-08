@@ -21,6 +21,7 @@ def build_ingestion_helpers(
 
     Returns a dict with:
       - ``set_ingestion_status(state, *, step, error)``
+      - ``set_ingestion_progress(done, total=None)``
       - ``get_ingestion_status() -> dict``
       - ``run_initial_ingestion_async()``
       - ``ingestion_lock`` — the caller's ingestion mutual-exclusion lock
@@ -30,6 +31,7 @@ def build_ingestion_helpers(
         "state": "pending",
         "step": None,
         "error": None,
+        "progress": None,
     }
 
     def set_ingestion_status(
@@ -38,18 +40,31 @@ def build_ingestion_helpers(
         with _status_lock:
             _status.update({"state": state, "step": step, "error": error})
 
+    def set_ingestion_progress(done: int, total: Optional[int] = None) -> None:
+        with _status_lock:
+            _status["progress"] = {"done": done, "total": total}
+
     def get_ingestion_status() -> Dict[str, object]:
         with _status_lock:
             return dict(_status)
 
     def run_initial_ingestion_async() -> None:
-        set_ingestion_status("running", step="initializing")
+        with _status_lock:
+            _status.update(
+                {
+                    "state": "running",
+                    "step": "initializing",
+                    "error": None,
+                    "progress": None,
+                }
+            )
         try:
             with ingestion_lock:
                 run_ingestion_fn(
                     progress_callback=lambda step: set_ingestion_status(
                         "running", step=step
-                    )
+                    ),
+                    embedding_progress=set_ingestion_progress,
                 )
             set_ingestion_status("completed", step="done")
         except Exception as exc:
@@ -58,6 +73,7 @@ def build_ingestion_helpers(
 
     return {
         "set_ingestion_status": set_ingestion_status,
+        "set_ingestion_progress": set_ingestion_progress,
         "get_ingestion_status": get_ingestion_status,
         "run_initial_ingestion_async": run_initial_ingestion_async,
         "ingestion_lock": ingestion_lock,

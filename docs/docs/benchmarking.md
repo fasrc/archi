@@ -164,7 +164,7 @@ or a chunking setting), run one deployment per value, as in
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the ingest last reported progress. It restarts on every poll reporting work in progress (`state=running` at any step past `initializing`), so an ingest that is working is never cut off for taking a long time — only one that goes silent, or never starts, is. |
+| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the ingest last reported progress. It restarts on every poll reporting work in progress (`state=running` at any step past `initializing`), so an ingest that is working is never cut off for taking a long time — only one that goes silent, or never starts, is. When the status payload carries a `progress` counter, a `running` poll restarts the budget only if `progress.done` advanced. The counter advances once per batch of 25 files, so if one batch takes longer than this budget, raise it. |
 | `BENCH_INGEST_MAX_WAIT` | `21600` | Absolute ceiling on the whole wait, in seconds — the backstop for an ingest that reports `running` forever without finishing. `0` disables it and logs a warning; prefer a large finite value for unattended runs. |
 | `BENCH_INGEST_POLL_INTERVAL` | `5` | Seconds between ingestion-status polls. |
 
@@ -189,10 +189,13 @@ plain "give up after N seconds":
 - **The ingest is alive but stuck.** Polls keep reporting `running` and the
   state never reaches `completed`. `BENCH_INGEST_MAX_WAIT` ends that, and the
   error reports the last observed `state` and `step` rather than a connection
-  problem. Only the ceiling can catch this one: the status payload carries just
-  `state`, `step` and `error`, with no counter or timestamp, so a wedged ingest
-  is byte-for-byte indistinguishable from a working one. Tightening it needs a
-  progress signal from the data-manager itself (issue #428).
+  problem. A data manager that publishes the `progress` counter (see
+  [`GET /api/ingestion/status`](api_reference.md#get-apiingestionstatus))
+  lets the stall budget catch this case sooner: during the embedding loop, a
+  `running` poll whose `progress.done` did not advance does not restart
+  `BENCH_INGEST_WAIT_TIMEOUT`. Without the counter (an older data manager, or
+  a phase before the embedding loop starts), a wedged ingest is byte-for-byte
+  the same as a working one, and only the ceiling can catch it.
 
 What this wait does **not** cover: a corpus change that starts *after* the
 initial ingest reports `completed` — a scheduled source refresh, or a
