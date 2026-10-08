@@ -130,7 +130,7 @@
 
 ## 3. Prove the whole thing, then publish
 
-- [ ] 3.1 Run the acceptance checks and confirm every number. All of:
+- [x] 3.1 Run the acceptance checks and confirm every number. All of:
       the monitored-files command prints `[] 1 {} {}`, `[] 5 {} {}`, `[] 105 {} {}`,
       `[] 106 {} {}`, `[] 110 {} {}`;
       `python -m pytest tests/unit/test_base_image_dependency_compatibility.py -q` reports
@@ -142,7 +142,7 @@
       `git status --porcelain` is empty.
       Commit only if something changed; otherwise this task commits nothing and you move on.
 
-- [ ] 3.2 Push the branch and open the PR. The branch was cut with `checkout -b`, so its
+- [x] 3.2 Push the branch and open the PR. The branch was cut with `checkout -b`, so its
       upstream is `origin/dev` — push with
       `git push -u origin fix/issue-530-pip-requirement-reader` to repoint it.
       Confirm the push landed on **fasrc/archi**, not a fork:
@@ -155,7 +155,7 @@
       Verify the link: `gh pr view <pr> --repo fasrc/archi --json closingIssuesReferences`
       must list 530. If it does not, edit the body and re-verify.
 
-- [ ] 3.3 Reply in the five threads on PR #527 — 4069851117, 4069851128, 4069452153,
+- [x] 3.3 Reply in the five threads on PR #527 — 4069851117, 4069851128, 4069452153,
       4080523425 and 4080582910 — each with the SHA of the commit that closes it (task 1 for
       option findings, task 2 for requirement findings). Use the review-comment reply API
       (`gh api repos/fasrc/archi/pulls/527/comments/<id>/replies -f body=...`), not a new
