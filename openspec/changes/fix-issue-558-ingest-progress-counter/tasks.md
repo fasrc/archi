@@ -138,7 +138,7 @@
 
 ## 5. Docs
 
-- [ ] 5.1 Edit `docs/docs/benchmarking.md` (the `BENCH_INGEST_WAIT_TIMEOUT` table row and
+- [x] 5.1 Edit `docs/docs/benchmarking.md` (the `BENCH_INGEST_WAIT_TIMEOUT` table row and
       the "The ingest is alive but stuck" bullet) and `docs/docs/api_reference.md`
       (`GET /api/ingestion/status`: the four keys, the `progress` shape, that `done` counts
       committed files and can end below `total`, that `progress` is `null` outside the

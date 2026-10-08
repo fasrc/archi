@@ -687,6 +687,26 @@ These endpoints are served by the Data Manager service (default port: 7871).
 
 Get current ingestion progress.
 
+The response has four keys:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `state` | string | `pending`, `running`, `completed`, or `error`. |
+| `step` | string or `null` | The current ingestion step, for example `Updating vectorstore`. |
+| `error` | string or `null` | The error message when `state` is `error`. |
+| `progress` | object or `null` | The embedding counter: `{"done": <int>, "total": <int or null>}`. |
+
+`progress` is `null` until the embedding loop starts, and each new ingest resets it
+to `null`. After the embedding loop starts, `done` counts the files committed to the
+vectorstore. The counter advances once per committed batch of 25 files. `done` can
+end below `total`, because a file that a loader skips is never counted. After the
+ingest ends, `progress` keeps its last value.
+
+```json
+{"state": "running", "step": "Updating vectorstore", "error": null,
+ "progress": {"done": 150, "total": 412}}
+```
+
 ### `POST /api/reload-schedules`
 
 Trigger schedule reload from database.
