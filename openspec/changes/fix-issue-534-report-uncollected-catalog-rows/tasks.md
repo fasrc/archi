@@ -45,7 +45,7 @@ code, run `bash scripts/gate.sh`, and commit. Do not end a task on a red test. R
   `last_failures` is cleared at the start of each `collect`. Implement
   `GitScraper.last_failures` and the forwarding in
   `ScraperManager._collect_git_resources` (`design.md` D3). Run the gate and commit.
-- [ ] 3.1a Review fix (code). Two defects, one red-green unit:
+- [x] 3.1a Review fix (code). Two defects, one red-green unit:
   (1) `GitScraper._harvest_code` calls `file_path.stat()` before the suffix and exclusion
   checks, so a dangling symlink (for example `docs/img/logo.png -> ../missing.png`) or a
   symlink loop records `(repo_name, err)` in `last_failures` and the whole git scope is
