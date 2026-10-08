@@ -354,9 +354,20 @@ class ScraperManager:
         For now, this behaves the same as a full collection, overriding last_run depending on the persistence layer.
         """
         metadata = persistence.catalog.get_metadata_by_filter(
-            "source_type", source_type="web", metadata_keys=["url"]
+            "source_type", source_type="web", metadata_keys=["url", "scraper"]
         )
-        catalog_urls = [m[1].get("url", "").strip() for m in metadata]
+        # ELOG and Indico rows are also source_type="web"; an explicit false for
+        # either source must not be bypassed by re-fetching its rows as plain links.
+        disabled = {
+            source
+            for source in ("elog", "indico")
+            if getattr(self, f"_{source}_flag", None) is False
+        }
+        catalog_urls = [
+            m[1].get("url", "").strip()
+            for m in metadata
+            if m[1].get("scraper") not in disabled
+        ]
         catalog_urls = [u for u in catalog_urls if u]
         logger.info(
             "Scheduled links collection found %d URL(s) in catalog", len(catalog_urls)

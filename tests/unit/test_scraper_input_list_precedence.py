@@ -236,3 +236,61 @@ def test_schedule_collect_git_skips_when_git_disabled(monkeypatch, tmp_path):
     assert (
         not collect_git_called
     ), "_collect_git_resources must not be called when git_enabled is False"
+
+
+# ---------------------------------------------------------------------------
+# schedule_collect_links does not re-fetch rows of an explicitly disabled source
+# ---------------------------------------------------------------------------
+
+_WEB_ROWS = [
+    ("h1", {"url": "https://x/page", "source_type": "web"}),
+    ("h2", {"url": "https://h/elog/lb/1", "source_type": "web", "scraper": "elog"}),
+    (
+        "h3",
+        {"url": "https://indico.h/event/1", "source_type": "web", "scraper": "indico"},
+    ),
+]
+
+
+def _links_schedule_urls(monkeypatch, tmp_path, sources_config):
+    manager = _make_manager(monkeypatch, tmp_path, sources_config)
+    monkeypatch.setattr(
+        manager, "_collect_urls_from_lists_by_type", lambda _l: ([], [], [], [], [], [])
+    )
+    seen = {}
+    monkeypatch.setattr(
+        manager,
+        "collect_links",
+        lambda persistence, link_urls=None: seen.setdefault("urls", link_urls),
+    )
+
+    def get_metadata_by_filter(field, value=None, metadata_keys=None, **kw):
+        rows = [(h, m) for h, m in _WEB_ROWS if m.get(field) == kw.get(field, value)]
+        if metadata_keys:
+            rows = [(h, {k: m[k] for k in metadata_keys if k in m}) for h, m in rows]
+        return rows
+
+    persistence = _fake_persistence(tmp_path)
+    persistence.catalog.get_metadata_by_filter = get_metadata_by_filter
+    manager.schedule_collect_links(persistence)
+    return seen["urls"]
+
+
+@pytest.mark.parametrize(
+    "source, dropped",
+    [("elog", "https://h/elog/lb/1"), ("indico", "https://indico.h/event/1")],
+)
+def test_schedule_collect_links_skips_rows_of_a_disabled_source(
+    monkeypatch, tmp_path, source, dropped
+):
+    """The links schedule re-fetches every source_type="web" row, which includes
+    ELOG and Indico rows; an explicit false for that source must exclude them."""
+    urls = _links_schedule_urls(monkeypatch, tmp_path, {source: {"enabled": False}})
+    assert dropped not in urls
+    assert "https://x/page" in urls
+
+
+def test_schedule_collect_links_keeps_rows_when_flag_absent(monkeypatch, tmp_path):
+    """No explicit false: the links schedule is unchanged and keeps every web row."""
+    urls = _links_schedule_urls(monkeypatch, tmp_path, {})
+    assert urls == [m["url"] for _, m in _WEB_ROWS]
