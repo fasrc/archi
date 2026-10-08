@@ -130,9 +130,10 @@ wrote `enabled: false` for every source the config did not select, and the scrap
 that value when the input lists held `git-`, `sso-` or ELOG entries. A deployment rendered
 then can carry that `false` for `git`, `sso` or `elog` while it still collects them.
 `archi restart` without `--config` keeps the rendered configs, so after the upgrade the data
-manager skips those entries and logs only a WARNING. Run `archi create --force` or
-`archi restart --config` once after the upgrade, so the CLI infers the sources from the input
-lists again.
+manager skips those entries and logs only a WARNING. Run `archi create --force` once after
+the upgrade, so the CLI infers the sources from the input lists again.
+`archi restart --config` refuses this change: the inferred `enabled: true` differs from the
+stored `false`, and restart accepts no change to the `data_manager` section.
 `deploy/scripts/redeploy.sh` runs `archi create --force`, so a redeploy needs no extra step.
 
 **`anonymize_data: false` is the row to check first.** It was silently ignored before and is

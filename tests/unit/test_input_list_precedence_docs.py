@@ -17,13 +17,17 @@ def _upgrade_note():
     marker = "**CAUTION: re-render the configs after you upgrade to this change.**"
     assert marker in text, "the #460 upgrade caution is missing"
     start = text.index(marker)
-    return text[start : text.index("\n\n", start)]
+    # Join the wrapped lines so a phrase split across a line break still matches.
+    return " ".join(text[start : text.index("\n\n", start)].split())
 
 
-def test_upgrade_note_names_both_re_render_commands():
+def test_upgrade_note_names_create_force_as_the_only_fix():
     note = _upgrade_note()
     assert "`archi create --force`" in note
-    assert "`archi restart --config`" in note
+    # restart --config refuses any data_manager change
+    # (_validate_non_chatbot_sections), so it cannot do this migration.
+    assert "or `archi restart --config`" not in note
+    assert "`archi restart --config` refuses" in note
 
 
 def test_upgrade_note_says_a_bare_restart_does_not_re_render():
