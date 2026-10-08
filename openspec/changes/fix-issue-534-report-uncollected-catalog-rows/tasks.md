@@ -45,6 +45,28 @@ code, run `bash scripts/gate.sh`, and commit. Do not end a task on a red test. R
   `last_failures` is cleared at the start of each `collect`. Implement
   `GitScraper.last_failures` and the forwarding in
   `ScraperManager._collect_git_resources` (`design.md` D3). Run the gate and commit.
+- [ ] 3.1a Review fix (code). Two defects, one red-green unit:
+  (1) `GitScraper._harvest_code` calls `file_path.stat()` before the suffix and exclusion
+  checks, so a dangling symlink (for example `docs/img/logo.png -> ../missing.png`) or a
+  symlink loop records `(repo_name, err)` in `last_failures` and the whole git scope is
+  skipped on every run. Test first: a temp repo with `a.py` and a dangling symlink records
+  nothing in `last_failures` and still yields `a.py`. Fix: do the suffix and exclusion
+  checks before `stat()`, and treat a symlink whose target is missing (or ELOOP) as a skip,
+  not a failure. A real `stat()` error on a regular allowed file still records the repo.
+  (2) `find_uncollected` derives the candidate suffix from `Path(url).suffix`, which gives
+  `""` for `https://example.org/guide` and `py?download=1` for a query string. Test first:
+  a candidate row with `metadata["suffix"] = ".md"` and URL `https://example.org/guide`
+  reports suffix `md`. Fix: use `metadata["suffix"]` (strip a leading dot) and parse the
+  path only when it is absent. Run the gate and commit.
+- [ ] 3.1b Review fix (tests that cannot fail). Make each of these tests able to go red:
+  `test_binary_open_error_records_repo_not_binary` must let the real `_looks_binary` run
+  (patch `Path.open` to raise) and assert no "likely binary" WARNING;
+  `test_info_summary_reports_total_and_suffix_counts` must assert `4 py`, `2 sbatch`,
+  `2 md` exactly; the skip-WARNING tests must assert the reason text (`clone failed`,
+  `collected 0`, `selenium missing`) and the scope; the 8-thread test must force a thread
+  switch (a `threading.Barrier` inside a patched `setdefault` path, or similar) so it fails
+  with `_lock` replaced by `contextlib.nullcontext()`. Check each one red against a broken
+  variant, then restore. Run the gate and commit.
 - [ ] 3.2 Web and SSO: tests that `_handle_standard_url` records the seed host and the
   host of every page it yielded, under the passed `source_type`, when the crawl raises;
   that `LinkScraper.crawl_iter` calls `on_page_error` on a per-page fetch error, once per
