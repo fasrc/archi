@@ -158,7 +158,13 @@ def find_uncollected(
         for resource_hash, metadata in scope_rows:
             if resource_hash not in collected_hashes:
                 path_or_url = metadata.get("url") or metadata.get("path") or ""
-                suffix = Path(path_or_url).suffix.lstrip(".") if path_or_url else ""
+                raw_suffix = metadata.get("suffix") or ""
+                if raw_suffix:
+                    suffix = raw_suffix.lstrip(".")
+                elif path_or_url:
+                    suffix = Path(urlparse(path_or_url).path).suffix.lstrip(".")
+                else:
+                    suffix = ""
                 candidates.append(
                     (resource_hash, path_or_url, source_type, suffix, scope)
                 )

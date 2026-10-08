@@ -1,3 +1,4 @@
+import errno
 import os
 import re
 import shutil
@@ -230,16 +231,18 @@ class GitScraper:
             ):
                 continue
 
+            if not self._is_allowed_suffix(file_path):
+                logger.warning(f"Skipping {file_path} due to disallowed suffix")
+                continue
+
             try:
                 if file_path.stat().st_size > self.max_file_size_bytes:
                     logger.warning(f"Skipping {file_path} due to file size")
                     continue
             except OSError as e:
+                if e.errno in (errno.ENOENT, errno.ELOOP) and file_path.is_symlink():
+                    continue
                 self.last_failures.append((repo_name, str(e)))
-                continue
-
-            if not self._is_allowed_suffix(file_path):
-                logger.warning(f"Skipping {file_path} due to disallowed suffix")
                 continue
 
             try:

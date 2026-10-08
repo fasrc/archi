@@ -155,6 +155,22 @@ def test_walk_onerror_records_repo(tmp_path, monkeypatch):
     assert name == "my-repo"
 
 
+def test_dangling_symlink_skipped_not_recorded(tmp_path):
+    """A dangling symlink is skipped silently; last_failures stays empty and real files still yield."""
+    scraper = _make_git_scraper(tmp_path)
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / "a.py").write_text("x = 1")
+    dangling = repo_path / "dangling.py"
+    dangling.symlink_to(repo_path / "missing_target.py")
+
+    resources = scraper._harvest_code(_fake_repo_info(repo_path))
+
+    assert scraper.last_failures == []
+    assert len(resources) == 1
+    assert resources[0].file_name == "a.py"
+
+
 def test_binary_open_error_records_repo_not_binary(tmp_path, monkeypatch):
     """An open error in _looks_binary records the repo; file is not silently skipped as binary."""
     scraper = _make_git_scraper(tmp_path)

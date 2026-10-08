@@ -261,6 +261,27 @@ class TestFindUncollected:
         assert report.candidates == []
         assert report.unscoped_count == 1
 
+    def test_candidate_suffix_from_metadata_not_url_path(self):
+        """Candidate suffix comes from metadata['suffix'], not derived from the URL path."""
+        cp = CollectionPass()
+        cp.record_collected("existing", _web_meta("https://docs.example.com/page"))
+
+        rows = [
+            (
+                "uncollected",
+                {
+                    "source_type": "web",
+                    "url": "https://docs.example.com/guide",
+                    "suffix": ".md",
+                },
+            ),
+        ]
+        report = find_uncollected(rows, cp)
+
+        assert len(report.candidates) == 1
+        _hash, _url, _st, suffix, _scope = report.candidates[0]
+        assert suffix == "md"
+
 
 # ---------------------------------------------------------------------------
 # D4: log_reconcile_report
