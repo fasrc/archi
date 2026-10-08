@@ -34,6 +34,6 @@ Alternatives rejected:
 ## Risks
 
 - The five monitored requirement files must parse identically. Baseline: 0 opaque lines; pin
-  counts 1, 5, 104, 105, 109. The task re-checks them after the change.
+  counts 1, 5, 105, 106, 110 (measured at `5564e016`). The task re-checks them after the change.
 - The new branch's comment must name pip 26.1.2, the `COMMENT_RE` branch of `join_lines`, and
   the measured output, per the issue.
