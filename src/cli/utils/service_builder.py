@@ -90,6 +90,7 @@ class DeploymentPlan:
             "grader": ServiceState(),
             "piazza": ServiceState(),
             "mattermost": ServiceState(),
+            "slack": ServiceState(),
             "redmine-mailer": ServiceState(),
             "benchmarking": ServiceState(),
         }
