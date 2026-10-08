@@ -71,6 +71,7 @@
 #   67. a refusal from archive_run.sh's ENTRY validator pages once with the reason
 #   68. an unreadable live document/chunk count pages once
 #   69. a hung mail binary is cut off after FM_MAIL_TIMEOUT and reports "page failed"
+#   70. without `timeout` on PATH the page is still sent, unbounded
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -784,6 +785,12 @@ run env FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-fail" bash "$HERE/a
 T0=$SECONDS
 run env FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-hang" FM_MAIL_TIMEOUT=1 bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
 [ "$RC" = 2 ] && [ $((SECONDS - T0)) -lt 15 ] && grep -q "already archived" "$T/stderr" && grep -q "page failed" "$T/stderr" && ok "a hung mail binary times out, keeps the refusal and reports page failed" || notok "archive mail-hang (rc=$RC after $((SECONDS - T0))s: $(cat "$T/stderr"))"
+
+# 70: on a host without `timeout`, fm_page still sends the page (unbounded), not "page failed"
+mkdir -p "$T/notimeout"; for c in env bash cat; do ln -sf "$(command -v "$c")" "$T/notimeout/$c"; done
+: > "$T/mail.calls"
+PATH="$T/notimeout" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail" "$(command -v bash)" -c 'source "$1"; fm_page "stack fm-00 arm 00: probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
+[ "$RC" = 0 ] && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: probe ops@example.org" "$T/mail.calls" && ! grep -q "page failed" "$T/stderr" && ok "without timeout on PATH the page is still sent" || notok "no-timeout page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"
 
 # 63: a corpus drift during qa_arm.sh (reuse the drift-after-qa mechanism of case 42) pages once
 : > "$T/mail.calls"

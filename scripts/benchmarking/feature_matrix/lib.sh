@@ -36,10 +36,13 @@ fm_log() { printf '==> %s\n' "$*"; }
 # or missing FM_MAIL never fails the caller: it logs `page failed` to stderr and returns 0,
 # so it cannot trip `set -e`/`pipefail` in the wrapper that called it. A FM_MAIL that does
 # not return in FM_MAIL_TIMEOUT seconds is killed and counts as a failure, so a hung MTA
-# cannot keep an unattended wrapper from its refusal exit.
+# cannot keep an unattended wrapper from its refusal exit. On a host without `timeout` the
+# page is still sent, unbounded (a missing bound must not drop the page).
 fm_page() { # $1 = subject (the "feature_matrix: " prefix is added here), $2 = body
   [ -n "$FM_PAGE_MAIL_TO" ] || return 0
-  printf '%s\n' "$2" | timeout "$FM_MAIL_TIMEOUT" "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" \
+  local bound=()
+  command -v timeout >/dev/null 2>&1 && bound=(timeout "$FM_MAIL_TIMEOUT")
+  printf '%s\n' "$2" | ${bound[@]+"${bound[@]}"} "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" \
     || printf 'feature_matrix: page failed\n' >&2
   return 0
 }
