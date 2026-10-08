@@ -98,6 +98,8 @@ class GitScraper:
             )
 
     def collect(self, git_urls: List[str]) -> List[ScrapedResource]:
+        self.last_failures: List[Tuple[Optional[str], str]] = []
+
         if not git_urls:
             logger.warning("No git URLs provided for scraping; skipping git scraper.")
             return []
@@ -106,12 +108,17 @@ class GitScraper:
 
         for url in git_urls:
             try:
-                repo_info = self._prepare_repository(url)
+                repo_name = self._parse_url(url)["repo_name"]
             except ValueError as exc:
                 logger.info(f"{exc}")
+                self.last_failures.append((None, str(exc)))
                 continue
+
+            try:
+                repo_info = self._prepare_repository(url)
             except Exception as exc:
                 logger.error(f"Failed to clone {url}: {exc}")
+                self.last_failures.append((repo_name, str(exc)))
                 continue
 
             try:
@@ -208,7 +215,10 @@ class GitScraper:
         repo_name = repo_info["repo_name"]
 
         resources: List[ScrapedResource] = []
-        for file_path in self._iter_code_files(repo_path):
+        for file_path in self._iter_code_files(
+            repo_path,
+            on_error=lambda e: self.last_failures.append((repo_name, str(e))),
+        ):
             logger.debug(file_path)
             rel_path = file_path.relative_to(repo_path)
 
@@ -224,20 +234,28 @@ class GitScraper:
                 if file_path.stat().st_size > self.max_file_size_bytes:
                     logger.warning(f"Skipping {file_path} due to file size")
                     continue
-            except OSError:
+            except OSError as e:
+                self.last_failures.append((repo_name, str(e)))
                 continue
 
             if not self._is_allowed_suffix(file_path):
                 logger.warning(f"Skipping {file_path} due to disallowed suffix")
                 continue
 
-            if self._looks_binary(file_path):
+            try:
+                is_binary = self._looks_binary(file_path)
+            except Exception as e:
+                self.last_failures.append((repo_name, str(e)))
+                continue
+
+            if is_binary:
                 logger.warning(f"Skipping {file_path} due to likely binary content")
                 continue
 
             try:
                 text_content = file_path.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
+            except Exception as e:
+                self.last_failures.append((repo_name, str(e)))
                 continue
 
             if not text_content.strip():
@@ -352,8 +370,12 @@ class GitScraper:
             except Exception:
                 return "main"
 
-    def _iter_code_files(self, repo_path: Path):
-        for root, dirs, files in os.walk(repo_path):
+    def _iter_code_files(self, repo_path: Path, on_error=None):
+        def _onerror(err):
+            if on_error is not None:
+                on_error(err)
+
+        for root, dirs, files in os.walk(repo_path, onerror=_onerror):
             dirs[:] = [d for d in dirs if d not in self.exclude_dirs]
             for filename in files:
                 file_path = Path(root) / filename
@@ -363,12 +385,9 @@ class GitScraper:
         return file_path.suffix.lower() in self.code_suffixes
 
     def _looks_binary(self, file_path: Path) -> bool:
-        try:
-            with file_path.open("rb") as file:
-                sample = file.read(8000)
-            return b"\0" in sample
-        except Exception:
-            return True
+        with file_path.open("rb") as file:
+            sample = file.read(8000)
+        return b"\0" in sample
 
     def _build_blob_url(self, base_url: str, ref: str, rel_path: Path) -> str:
         base = base_url.rstrip("/")

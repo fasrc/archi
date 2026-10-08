@@ -37,7 +37,7 @@ code, run `bash scripts/gate.sh`, and commit. Do not end a task on a red test. R
 
 ## 3. Record failures at the swallow points
 
-- [ ] 3.1 Git: tests with a fake `GitScraper` path or by patching `_prepare_repository` /
+- [x] 3.1 Git: tests with a fake `GitScraper` path or by patching `_prepare_repository` /
   `_parse_url`: a clone error records `("git", <repo_name>)`; a bad URL `ValueError`
   records `("git", None)`; a `stat()` error and a read error in `_harvest_code` record the
   repo; an `os.walk` `onerror` in `_iter_code_files` records the repo; an open error in the

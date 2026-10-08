@@ -17,6 +17,9 @@ from src.data_manager.collectors.scrapers.sitemap_source import (
     SitemapExpansionError,
     normalize_page_url,
 )
+from src.data_manager.collectors.utils.catalog_reconcile import (
+    record_failure as _record_failure,
+)
 from src.utils.config_access import get_global_config
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
@@ -883,6 +886,8 @@ class ScraperManager:
     ) -> List[ScrapedResource]:
         git_scraper = self._get_git_scraper()
         resources = git_scraper.collect(git_urls)
+        for name, reason in getattr(git_scraper, "last_failures", []):
+            _record_failure(persistence, "git", name, reason)
         for resource in resources:
             persistence.persist_resource(resource, git_dir)
         return resources
