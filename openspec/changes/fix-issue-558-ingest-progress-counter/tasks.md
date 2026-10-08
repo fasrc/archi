@@ -40,7 +40,7 @@
 
 ## 1. Status dict: the `progress` key
 
-- [ ] 1.1 In `tests/unit/test_ingestion_status_lock.py`, add tests, then implement design D1
+- [x] 1.1 In `tests/unit/test_ingestion_status_lock.py`, add tests, then implement design D1
       in `src/utils/ingestion_status.py`, one commit
       (`feat: ingestion status carries a progress counter`). Assert:
       (a) `get_ingestion_status()` before any run has `progress` `None` and the same

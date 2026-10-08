@@ -23,7 +23,7 @@ def test_status_endpoint_responds_during_ingestion():
     ingestion_started = threading.Event()
     ingestion_release = threading.Event()
 
-    def fake_run_ingestion(progress_callback=None):
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
         if progress_callback:
             progress_callback("embedding")
         ingestion_started.set()
@@ -54,7 +54,7 @@ def test_status_shows_completed_after_ingestion():
     """After ingestion finishes, the status endpoint reflects completion."""
     from src.utils.ingestion_status import build_ingestion_helpers
 
-    def fake_run_ingestion(progress_callback=None):
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
         if progress_callback:
             progress_callback("done")
 
@@ -70,7 +70,7 @@ def test_status_shows_error_on_ingestion_failure():
     """A failed ingestion records the error without deadlocking."""
     from src.utils.ingestion_status import build_ingestion_helpers
 
-    def fake_run_ingestion(progress_callback=None):
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
         raise RuntimeError("disk full")
 
     helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock())
@@ -85,7 +85,7 @@ def test_ingestion_failure_logs_traceback(caplog):
     """A failed ingestion must log the full traceback, not just the status dict."""
     from src.utils.ingestion_status import build_ingestion_helpers
 
-    def fake_run_ingestion(progress_callback=None):
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
         raise RuntimeError("disk full")
 
     helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock())
@@ -103,7 +103,7 @@ def test_concurrent_ingestions_are_serialized():
     call_log = []
     barrier = threading.Barrier(2, timeout=5)
 
-    def fake_run_ingestion(progress_callback=None):
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
         call_log.append(("enter", threading.current_thread().name))
         try:
             barrier.wait(timeout=1)
@@ -135,3 +135,107 @@ def test_concurrent_ingestions_are_serialized():
         "exit",
         call_log[0][1],
     ), "second enter happened before first exit — lock did not serialize"
+
+
+def test_initial_status_has_progress_none():
+    """Before any ingest, get_ingestion_status returns progress=None with the baseline keys."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        pass
+
+    helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock())
+    status = helpers["get_ingestion_status"]()
+    assert status["progress"] is None
+    assert status["state"] == "pending"
+    assert status["step"] is None
+    assert status["error"] is None
+
+
+def test_set_ingestion_progress_stores_counter():
+    """set_ingestion_progress stores the done/total dict and is in the helpers."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        pass
+
+    helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock())
+    assert "set_ingestion_progress" in helpers
+
+    helpers["set_ingestion_progress"](3, 10)
+    assert helpers["get_ingestion_status"]()["progress"] == {"done": 3, "total": 10}
+
+    helpers["set_ingestion_progress"](4)
+    assert helpers["get_ingestion_status"]()["progress"] == {"done": 4, "total": None}
+
+
+def test_get_ingestion_status_snapshot_not_mutated_by_later_progress():
+    """A dict returned by get_ingestion_status is not changed by a later set_ingestion_progress."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        pass
+
+    helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock())
+    helpers["set_ingestion_progress"](1, 5)
+    snapshot = helpers["get_ingestion_status"]()
+    helpers["set_ingestion_progress"](2, 5)
+    assert snapshot["progress"] == {"done": 1, "total": 5}
+
+
+def test_set_ingestion_status_preserves_progress():
+    """set_ingestion_status does not clear or overwrite progress."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        pass
+
+    helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock())
+    helpers["set_ingestion_progress"](3, 10)
+    helpers["set_ingestion_status"]("running", step="x")
+    status = helpers["get_ingestion_status"]()
+    assert status["progress"] == {"done": 3, "total": 10}
+    assert status["state"] == "running"
+    assert status["step"] == "x"
+
+
+def test_embedding_progress_updates_status_and_is_kept_on_completion():
+    """embedding_progress callback updates status; completed payload retains the last counter."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    status_after_second_call = {}
+
+    def fake_run_ingestion(progress_callback=None, embedding_progress=None, **_kwargs):
+        if embedding_progress:
+            embedding_progress(0, 2)
+            embedding_progress(2, 2)
+        status_after_second_call.update(helpers["get_ingestion_status"]())
+
+    helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock())
+    helpers["run_initial_ingestion_async"]()
+
+    assert status_after_second_call["progress"] == {"done": 2, "total": 2}
+    completed = helpers["get_ingestion_status"]()
+    assert completed["state"] == "completed"
+    assert completed["progress"] == {"done": 2, "total": 2}
+
+
+def test_second_run_initial_ingestion_resets_progress():
+    """A second run_initial_ingestion_async resets progress to None before the fake fires."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    status_at_start_of_second = {}
+
+    call_count = [0]
+
+    def fake_run_ingestion(progress_callback=None, embedding_progress=None, **_kwargs):
+        call_count[0] += 1
+        if call_count[0] == 2:
+            status_at_start_of_second.update(helpers["get_ingestion_status"]())
+
+    helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock())
+    helpers["run_initial_ingestion_async"]()
+    helpers["set_ingestion_progress"](5, 10)
+    helpers["run_initial_ingestion_async"]()
+
+    assert status_at_start_of_second["progress"] is None
