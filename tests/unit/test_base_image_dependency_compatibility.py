@@ -315,8 +315,10 @@ def _joined_lines(text: str):
     then ``"torch==2.7.0"`` is one logical line, ``"vllm==0.9.0 # note \\\\"``, followed by
     ``"torch==2.7.0"``. This module had no separator there, so the same input joined to
     ``['vllm==0.9.0# note \\\\', 'torch==2.7.0']`` — the anchored ``_PIN_PATTERN`` no
-    longer matched, and ``_parse_pins`` read only ``{'torch': '2.7.0'}``, silently
-    dropping vllm. An ordinary (non-comment) continuation still joins with no separator.
+    longer matched, and ``_parse_pins`` read only ``{'torch': '2.7.0'}``, while
+    ``_unpinned_protected`` and ``_opaque_requirements`` flagged the valid vllm line as
+    malformed (a false rejection, not a pass). An ordinary (non-comment) continuation
+    still joins with no separator.
     """
     buffered = ""
     for raw_line in text.splitlines():
@@ -2206,7 +2208,8 @@ class TestOpaqueRequirementsFailClosed:
         ``"vllm==0.9.0\\\\\n# note \\\\\ntorch==2.7.0\n"`` joined to
         ``['vllm==0.9.0# note \\\\', 'torch==2.7.0']`` — the anchored ``_PIN_PATTERN``
         no longer matched the first line, and ``_parse_pins`` read only
-        ``{'torch': '2.7.0'}``, dropping vllm from the check entirely.
+        ``{'torch': '2.7.0'}``, and the exact-pin and opaque-line checks rejected
+        a file that pip reads as ``vllm==0.9.0``.
         """
         text = "vllm==0.9.0\\\n# note \\\ntorch==2.7.0\n"
         assert _parse_pins(text) == {"vllm": "0.9.0", "torch": "2.7.0"}

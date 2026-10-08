@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: The base-image guard SHALL insert pip's separator when a whole-line comment closes an open continuation
-When a continuation buffer is open and the next physical line matches pip's comment rule (`COMMENT_RE`, same as `_COMMENT`), the guard SHALL join it as `buffered + " " + line`, as pip 26.1.2's `join_lines` does in its `COMMENT_RE` branch. A non-comment continuation SHALL stay a plain concatenation with no separator. Without the separator the comment is not cut, the anchored pin pattern fails, and the protected package before the comment silently reads as absent (measured 2026-10-08 at `5564e016`: `_parse_pins` returned only `torch` for the repro below).
+When a continuation buffer is open and the next physical line matches pip's comment rule (`COMMENT_RE`, same as `_COMMENT`), the guard SHALL join it as `buffered + " " + line`, as pip 26.1.2's `join_lines` does in its `COMMENT_RE` branch. A non-comment continuation SHALL stay a plain concatenation with no separator. Without the separator the comment is not cut and the anchored pin pattern fails, so the guard rejects a valid file: `_parse_pins` drops the package before the comment, while `_unpinned_protected` and `_opaque_requirements` report it as malformed (measured 2026-10-08 at `5564e016`: `_parse_pins` returned only `torch` for the repro below, `_unpinned_protected` returned `{'vllm': '==0.9.0# note \\'}`).
 
 #### Scenario: A comment closing a continuation keeps the pin before it
 - **WHEN** a requirement file read by the guard contains `vllm==0.9.0\`, then `# note \`, then `torch==2.7.0`
