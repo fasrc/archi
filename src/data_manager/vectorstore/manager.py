@@ -36,6 +36,16 @@ from .schema import ensure_chunks_parent_id_index, ensure_hierarchical_schema
 
 logger = get_logger(__name__)
 
+
+def _report_embedding_progress(embedding_progress, done, total):
+    if embedding_progress is None:
+        return
+    try:
+        embedding_progress(done, total)
+    except Exception:
+        logger.warning("Embedding progress callback failed", exc_info=True)
+
+
 SUPPORTED_DISTANCE_METRICS = ["l2", "cosine", "ip"]
 
 
@@ -555,7 +565,9 @@ class VectorStoreManager:
         finally:
             conn.close()
 
-    def _add_to_postgres(self, files_to_add: Dict[str, str]) -> None:
+    def _add_to_postgres(
+        self, files_to_add: Dict[str, str], embedding_progress=None
+    ) -> None:
         """Add files to PostgreSQL vectorstore."""
         if not files_to_add:
             return
@@ -743,7 +755,9 @@ class VectorStoreManager:
 
                 total_files = len(files_to_add_items)
                 files_since_commit = 0
+                files_committed = 0
                 deleted_parent_count = 0
+                _report_embedding_progress(embedding_progress, 0, total_files)
                 for file_idx, (filehash, file_path) in enumerate(files_to_add_items):
                     processed = processed_results.get(filehash)
                     if not processed:
@@ -812,7 +826,11 @@ class VectorStoreManager:
                                 "Committed embedding progress batch (%d files)",
                                 files_since_commit,
                             )
+                            files_committed += files_since_commit
                             files_since_commit = 0
+                            _report_embedding_progress(
+                                embedding_progress, files_committed, total_files
+                            )
                         continue
 
                     filename, chunks, metadatas = processed
@@ -841,7 +859,11 @@ class VectorStoreManager:
                                 "Committed embedding progress batch (%d files)",
                                 files_since_commit,
                             )
+                            files_committed += files_since_commit
                             files_since_commit = 0
+                            _report_embedding_progress(
+                                embedding_progress, files_committed, total_files
+                            )
                         continue
 
                     logger.info(f"Finished embedding {filename}")
@@ -915,7 +937,11 @@ class VectorStoreManager:
                             "Committed embedding progress batch (%d files)",
                             files_since_commit,
                         )
+                        files_committed += files_since_commit
                         files_since_commit = 0
+                        _report_embedding_progress(
+                            embedding_progress, files_committed, total_files
+                        )
 
                 if self.hierarchical_chunking:
                     logger.info(
@@ -928,6 +954,11 @@ class VectorStoreManager:
                     logger.info(
                         "Committed final embedding progress batch (%d files)",
                         files_since_commit,
+                    )
+                    files_committed += files_since_commit
+                    files_since_commit = 0
+                    _report_embedding_progress(
+                        embedding_progress, files_committed, total_files
                     )
         finally:
             conn.close()

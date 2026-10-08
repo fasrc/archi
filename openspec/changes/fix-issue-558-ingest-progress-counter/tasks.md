@@ -62,7 +62,7 @@
 
 ## 2. Vectorstore manager reports committed batches
 
-- [ ] 2.1 In `tests/unit/test_vectorstore_manager_batch_commit.py`, add tests (insert them
+- [x] 2.1 In `tests/unit/test_vectorstore_manager_batch_commit.py`, add tests (insert them
       directly after `test_add_to_postgres_commits_every_25_files`, not at the end of the
       file), then implement design D3 and D4 in
       `src/data_manager/vectorstore/manager.py` `_add_to_postgres`, one commit
