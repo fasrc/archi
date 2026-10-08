@@ -462,7 +462,10 @@ class ConfigurationManager:
             if not isinstance(lists, list):
                 lists = []
 
-            counts: Dict[str, int] = {}
+            # Staging copies each list to weblists/<basename> and the runtime reads
+            # it from there, so a later list with the same basename replaces an
+            # earlier one: infer only from the file staging keeps.
+            staged: Dict[str, Any] = {}
             for list_path in lists:
                 # Checked before isfile(), which reads an int as a file descriptor.
                 if not isinstance(list_path, (str, os.PathLike)):
@@ -473,6 +476,16 @@ class ConfigurationManager:
                 if not os.path.isfile(list_path):
                     logger.warning(f"Input list path not found, skipping: {list_path}")
                     continue
+                basename = os.path.basename(list_path)
+                if basename in staged:
+                    logger.warning(
+                        f"Input lists {staged[basename]} and {list_path} share the "
+                        f"name {basename}; only {list_path} is staged"
+                    )
+                staged[basename] = list_path
+
+            counts: Dict[str, int] = {}
+            for list_path in staged.values():
                 try:
                     entries = read_input_list_entries(list_path)
                 except (OSError, UnicodeDecodeError) as exc:

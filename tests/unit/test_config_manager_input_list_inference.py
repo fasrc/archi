@@ -149,3 +149,38 @@ def test_indico_prefix_with_elog_path_goes_to_indico_not_elog(tmp_path):
     enabled = mgr.get_enabled_sources()
     assert "indico" in enabled
     assert "elog" not in enabled
+
+
+def _two_lists_same_basename(tmp_path):
+    """Two lists named urls.list in different directories; only the first has git-."""
+    first = tmp_path / "a" / "urls.list"
+    second = tmp_path / "b" / "urls.list"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_text("git-https://github.com/org/repo.git\n")
+    second.write_text("https://example.org/page\n")
+    return first, second
+
+
+def _config_with_lists(paths):
+    cfg = _config_with_list(paths[0])
+    cfg["data_manager"]["sources"]["links"]["input_lists"] = [str(p) for p in paths]
+    return cfg
+
+
+# Staging copies each list to weblists/<basename>, so a later list with the same
+# basename overwrites an earlier one; inference reads only the file staging keeps.
+def test_basename_collision_infers_from_the_staged_file_only(tmp_path, caplog):
+    first, second = _two_lists_same_basename(tmp_path)
+    mgr = _manager([_config_with_lists([first, second])])
+    with caplog.at_level(logging.WARNING):
+        enabled = mgr.get_enabled_sources()
+    assert "git" not in enabled
+    warnings = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(str(first) in w and str(second) in w for w in warnings), warnings
+
+
+def test_basename_collision_later_list_wins(tmp_path):
+    first, second = _two_lists_same_basename(tmp_path)
+    mgr = _manager([_config_with_lists([second, first])])
+    assert "git" in mgr.get_enabled_sources()
