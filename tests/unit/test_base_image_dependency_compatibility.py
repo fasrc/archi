@@ -308,6 +308,15 @@ def _joined_lines(text: str):
     opens a continuation buffer, even when it ends in ``\\``. Round 6 on 2026-09-22 found
     the module opening a buffer for ``# comment \\`` and joining the archive requirement
     after it onto the comment, hiding the archive from every reader.
+
+    A whole-line comment that CLOSES an already-open buffer joins with a space, not a
+    plain concatenation: measured at pip 26.1.2, ``join_lines`` prepends ``" "`` to a
+    line only in its ``COMMENT_RE`` branch, so ``"vllm==0.9.0\\\\" `` then ``"# note \\\\"``
+    then ``"torch==2.7.0"`` is one logical line, ``"vllm==0.9.0 # note \\\\"``, followed by
+    ``"torch==2.7.0"``. This module had no separator there, so the same input joined to
+    ``['vllm==0.9.0# note \\\\', 'torch==2.7.0']`` — the anchored ``_PIN_PATTERN`` no
+    longer matched, and ``_parse_pins`` read only ``{'torch': '2.7.0'}``, silently
+    dropping vllm. An ordinary (non-comment) continuation still joins with no separator.
     """
     buffered = ""
     for raw_line in text.splitlines():
@@ -315,6 +324,12 @@ def _joined_lines(text: str):
             # pip rule: a whole-line comment (COMMENT_RE) never opens a buffer.
             # Review finding 1, 2026-09-22.
             buffered += raw_line[:-1]
+            continue
+        if buffered and _COMMENT.match(raw_line):
+            # pip rule: join_lines' COMMENT_RE branch prepends " " to the line that
+            # closes the buffer; every other branch concatenates with no separator.
+            yield buffered + " " + raw_line
+            buffered = ""
             continue
         yield buffered + raw_line
         buffered = ""
@@ -2180,6 +2195,33 @@ class TestOpaqueRequirementsFailClosed:
         # so the buffer stays open and numpy joins it. Measured: pip yields one logical
         # line ``vllm==0.9.0  # note numpy==2.0.0``; _COMMENT.sub strips the tail.
         assert _parse_pins("vllm==0.9.0  # note \\\nnumpy==2.0.0\n")["vllm"] == "0.9.0"
+
+    def test_a_comment_line_closing_a_continuation_keeps_the_pin(self):
+        """A whole-line comment that closes an open continuation must not swallow it.
+
+        Measured at pip 26.1.2: ``join_lines`` joins a comment line onto an open
+        buffer in its ``COMMENT_RE`` branch by prepending ``" "`` — the only branch
+        where it inserts a separator; an ordinary continuation is a plain
+        concatenation. ``_joined_lines`` had none, so
+        ``"vllm==0.9.0\\\\\n# note \\\\\ntorch==2.7.0\n"`` joined to
+        ``['vllm==0.9.0# note \\\\', 'torch==2.7.0']`` — the anchored ``_PIN_PATTERN``
+        no longer matched the first line, and ``_parse_pins`` read only
+        ``{'torch': '2.7.0'}``, dropping vllm from the check entirely.
+        """
+        text = "vllm==0.9.0\\\n# note \\\ntorch==2.7.0\n"
+        assert _parse_pins(text) == {"vllm": "0.9.0", "torch": "2.7.0"}
+        assert list(_joined_lines(text))[0] == "vllm==0.9.0 # note \\"
+
+    def test_a_non_comment_continuation_joins_with_no_separator(self):
+        """A plain continuation still concatenates with no separator.
+
+        Control for the comment-close case above: pip's ``join_lines`` inserts a
+        separator only in its ``COMMENT_RE`` branch, so an ordinary continuation
+        (e.g. a hash option on its own line) must still join with none.
+        """
+        assert list(_joined_lines("vllm==0.9.0\\\n--hash=sha256:aa\n")) == [
+            "vllm==0.9.0--hash=sha256:aa"
+        ]
 
     def test_whitespace_may_separate_a_name_from_its_extras(self):
         """PEP 508 allows ``wsp*`` between the name and the extras list.
