@@ -73,6 +73,7 @@
 #   69. a hung mail binary is cut off after FM_MAIL_TIMEOUT and reports "page failed"
 #   70. without `timeout` on PATH the page is still sent, unbounded
 #   71. a hung mail binary that ignores SIGTERM is still killed and reports "page failed"
+#   72. an FM_MAIL_TIMEOUT that is zero or not a duration falls back to 60 seconds
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -798,6 +799,27 @@ run env FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-hang" FM_MAIL_TIMEO
 T0=$SECONDS
 run env FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-hang-noterm" FM_MAIL_TIMEOUT=1 bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
 [ "$RC" = 2 ] && [ $((SECONDS - T0)) -lt 15 ] && grep -q "already archived" "$T/stderr" && grep -q "page failed" "$T/stderr" && ok "a hung mail binary that ignores SIGTERM is killed, keeps the refusal and reports page failed" || notok "archive mail-hang-noterm (rc=$RC after $((SECONDS - T0))s: $(cat "$T/stderr"))"
+
+# 72: `timeout 0` disables the bound and a non-duration makes `timeout` itself fail, so an
+# FM_MAIL_TIMEOUT that is zero or not a positive duration falls back to the 60-second default
+mkdir -p "$T/fakebound"
+cat > "$T/fakebound/timeout" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$T/timeout.calls"
+shift 3; exec "\$@"
+EOF
+chmod +x "$T/fakebound/timeout"
+for bad in 0 00 0.0 abc -5 ""; do
+  : > "$T/timeout.calls"; : > "$T/mail.calls"
+  PATH="$T/fakebound:$PATH" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail" FM_MAIL_TIMEOUT="$bad" bash -c 'source "$1"; fm_page "probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
+  [ "$RC" = 0 ] && grep -qx -- "-k 5 60 $T/bin/mail -s feature_matrix: probe ops@example.org" "$T/timeout.calls" && grep -q "ARGS: -s feature_matrix: probe" "$T/mail.calls" \
+    && ok "FM_MAIL_TIMEOUT='$bad' falls back to the 60-second bound" || notok "FM_MAIL_TIMEOUT='$bad' fallback (rc=$RC: $(cat "$T/timeout.calls" "$T/stderr"))"
+done
+for good in 1 2.5 90; do
+  : > "$T/timeout.calls"
+  PATH="$T/fakebound:$PATH" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail" FM_MAIL_TIMEOUT="$good" bash -c 'source "$1"; fm_page "probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
+  [ "$RC" = 0 ] && grep -q -- "^-k 5 $good " "$T/timeout.calls" && ok "FM_MAIL_TIMEOUT='$good' is kept" || notok "FM_MAIL_TIMEOUT='$good' kept (rc=$RC: $(cat "$T/timeout.calls" "$T/stderr"))"
+done
 
 # 70: on a host without `timeout`, fm_page still sends the page (unbounded), not "page failed"
 mkdir -p "$T/notimeout"; for c in env bash cat; do ln -sf "$(command -v "$c")" "$T/notimeout/$c"; done
