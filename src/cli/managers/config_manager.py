@@ -7,7 +7,12 @@ import yaml
 
 from src.cli.managers.templates_manager import BASE_CONFIG_TEMPLATE
 from src.cli.service_registry import service_registry
-from src.cli.source_registry import source_registry
+from src.cli.source_registry import (
+    is_elog_url,
+    read_input_list_entries,
+    source_registry,
+    split_prefixed_entry,
+)
 from src.utils.evaluations_config import (
     resolve_agent_config_source,
     validate_evaluations_config,
@@ -415,13 +420,58 @@ class ConfigurationManager:
                 collected.extend(lists)
         self.input_list = sorted(set(collected)) if collected else []
 
+    def _staged_input_lists(self) -> Dict[str, str]:
+        """Return {basename: path} for the list file staging keeps per basename.
+
+        Staging copies get_input_lists() (every config's lists, sorted) to the one
+        weblists/<basename> directory, so for a shared basename the lexically
+        last regular file wins, whatever config or YAML position it came from.
+        """
+        paths: Set[str] = set()
+        for conf in self.configs:
+            sources_section = conf.get("data_manager", {}).get("sources", {}) or {}
+            links_section = (
+                sources_section.get("links", {})
+                if isinstance(sources_section, dict)
+                else {}
+            )
+            lists = (
+                links_section.get("input_lists")
+                if isinstance(links_section, dict)
+                else None
+            )
+            if isinstance(lists, list):
+                paths.update(
+                    os.fspath(p) for p in lists if isinstance(p, (str, os.PathLike))
+                )
+        staged: Dict[str, str] = {}
+        for path in sorted(paths):
+            if os.path.isfile(path):
+                staged[os.path.basename(path)] = path
+        return staged
+
+    @staticmethod
+    def _input_list_flag(sources_section: Dict, name: str):
+        """Return True/False/None for a source: explicit value or None (absent)."""
+        entry = sources_section.get(name)
+        if isinstance(entry, bool):
+            return entry
+        if isinstance(entry, dict):
+            enabled = entry.get("enabled")
+            if enabled is not None:
+                return bool(enabled)
+        return None
+
     def get_enabled_sources(self) -> List[str]:
         """Return sources marked as enabled across all configs."""
         valid_names = set(source_registry.names())
         enabled: Set[str] = set()
+        staged_lists = self._staged_input_lists()
 
         for conf in self.configs:
             sources_section = conf.get("data_manager", {}).get("sources", {}) or {}
+
+            # Explicit enabled keys (existing logic).
             for name, entry in sources_section.items():
                 if name not in valid_names:
                     continue
@@ -430,6 +480,80 @@ class ConfigurationManager:
                         enabled.add(name)
                 elif isinstance(entry, bool) and entry:
                     enabled.add(name)
+
+            # D5: infer from input_lists using the D3 classifier.
+            links_section = (
+                sources_section.get("links", {})
+                if isinstance(sources_section, dict)
+                else {}
+            )
+            if not isinstance(links_section, dict):
+                links_section = {}
+            lists = links_section.get("input_lists") or []
+            if not isinstance(lists, list):
+                lists = []
+
+            # Staging copies each list to weblists/<basename> and the runtime reads
+            # it from there, so another list with the same basename can replace
+            # this one: infer only from the file staging keeps.
+            staged: Dict[str, Any] = {}
+            for list_path in lists:
+                # Checked before isfile(), which reads an int as a file descriptor.
+                if not isinstance(list_path, (str, os.PathLike)):
+                    logger.warning(
+                        f"Input list entry is not a path, skipping: {list_path!r}"
+                    )
+                    continue
+                if not os.path.isfile(list_path):
+                    logger.warning(f"Input list path not found, skipping: {list_path}")
+                    continue
+                basename = os.path.basename(list_path)
+                kept = staged_lists.get(basename, os.fspath(list_path))
+                if kept != os.fspath(list_path):
+                    logger.warning(
+                        f"Input lists {list_path} and {kept} share the "
+                        f"name {basename}; only {kept} is staged"
+                    )
+                staged[basename] = kept
+
+            counts: Dict[str, int] = {}
+            for list_path in staged.values():
+                try:
+                    entries = read_input_list_entries(list_path)
+                except (OSError, UnicodeDecodeError) as exc:
+                    logger.warning(
+                        f"Input list could not be read, skipping: {list_path} ({exc})"
+                    )
+                    continue
+                for raw_entry in entries:
+                    # Peeled first, as the runtime classifier does: a sitemap
+                    # whose path holds /elog/ is a sitemap, never an ELOG source.
+                    if raw_entry.startswith("sitemap-"):
+                        continue
+                    parsed = split_prefixed_entry(raw_entry)
+                    if parsed is not None:
+                        source, _url = parsed
+                        counts[source] = counts.get(source, 0) + 1
+                    elif is_elog_url(raw_entry):
+                        counts["elog"] = counts.get("elog", 0) + 1
+
+            for source, count in counts.items():
+                if source not in valid_names:
+                    continue
+                flag = self._input_list_flag(sources_section, source)
+                if flag is None:
+                    enabled.add(source)
+                    logger.info(
+                        f"{count} input-list {'entry' if count == 1 else 'entries'} "
+                        f"for source '{source}': enabling"
+                    )
+                elif flag is False:
+                    logger.warning(
+                        f"{count} input-list "
+                        f"{'entry' if count == 1 else 'entries'} "
+                        f"for source '{source}' will be skipped: "
+                        f"data_manager.sources.{source}.enabled is false"
+                    )
 
         return sorted(enabled)
 
@@ -461,6 +585,12 @@ class ConfigurationManager:
 
             for name in managed_sources:
                 entry = sources_section.setdefault(name, {})
+                # `sources.<name>: true|false` is the scalar spelling of `enabled`,
+                # and `null` means the section is absent; both need the mapping form.
+                if isinstance(entry, bool):
+                    entry = sources_section[name] = {"enabled": entry}
+                elif entry is None:
+                    entry = sources_section[name] = {}
                 if name in enabled_set:
                     entry["enabled"] = True
                 elif "enabled" not in entry:
