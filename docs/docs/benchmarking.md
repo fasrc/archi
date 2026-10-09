@@ -149,11 +149,22 @@ archi evaluate -n benchmark -c config.yaml -e .secrets.env --gpu-ids all
 
 Make sure the `out_dir` exists before running.
 
+With `-cd`, the configs in the directory are the arms of one deployment. That
+deployment seeds Postgres once, and the agent reads every setting outside
+`services.benchmarking` from that seed. So the arms must agree everywhere except
+`services.benchmarking`, `name`, and the `agents_dir`/`skills_dir` paths that the
+deploy rewrites. `archi evaluate` compares the arm files before it touches an
+existing runtime, and refuses the run with the differing paths if they disagree.
+A missing key and an empty value count as different. To A/B a setting outside
+`services.benchmarking` (for example `services.chat_app.force_initial_retrieval`
+or a chunking setting), run one deployment per value, as in
+[Hierarchical-rerank A/B](#hierarchical-rerank-ab).
+
 ### Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the ingest last reported progress. It restarts on every poll reporting work in progress (`state=running` at any step past `initializing`), so an ingest that is working is never cut off for taking a long time — only one that goes silent, or never starts, is. |
+| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the ingest last reported progress. It restarts on every poll reporting work in progress (`state=running` at any step past `initializing`), so an ingest that is working is never cut off for taking a long time — only one that goes silent, or never starts, is. When the status payload carries a `progress` counter, a `running` poll restarts the budget only if `progress.done` advanced. The counter advances once per batch of 25 files, so if one batch takes longer than this budget, raise it. |
 | `BENCH_INGEST_MAX_WAIT` | `21600` | Absolute ceiling on the whole wait, in seconds — the backstop for an ingest that reports `running` forever without finishing. `0` disables it and logs a warning; prefer a large finite value for unattended runs. |
 | `BENCH_INGEST_POLL_INTERVAL` | `5` | Seconds between ingestion-status polls. |
 
@@ -169,25 +180,36 @@ plain "give up after N seconds":
   its own error instead, since then they are all separate facts.
 - **The ingest never started.** The endpoint answers, but with `state=pending`,
   with a state the harness does not recognize, or with `state=running
-  step=initializing` — the last of which means this ingest is queued behind
-  something else holding the data-manager's ingestion lock (a scheduled source
-  refresh, or a vectorstore update triggered by an upload). None of those is
-  progress, so none restarts the stall budget, and `BENCH_INGEST_WAIT_TIMEOUT`
+  step=initializing` past the moment the ingest is due to start. None of those
+  is progress, so none restarts the stall budget, and `BENCH_INGEST_WAIT_TIMEOUT`
   ends the wait on the same schedule as a dead endpoint — naming the state and
-  step, so the queued case is obvious from the error alone.
+  step in the error. An ingest queued behind a scheduled source refresh or an
+  upload does not show `initializing`: the endpoint keeps reporting the running
+  refresh (`step=scheduled:<source>` or `step=upload`) until the ingest takes
+  the lock.
 - **The ingest is alive but stuck.** Polls keep reporting `running` and the
   state never reaches `completed`. `BENCH_INGEST_MAX_WAIT` ends that, and the
   error reports the last observed `state` and `step` rather than a connection
-  problem. Only the ceiling can catch this one: the status payload carries just
-  `state`, `step` and `error`, with no counter or timestamp, so a wedged ingest
-  is byte-for-byte indistinguishable from a working one. Tightening it needs a
-  progress signal from the data-manager itself (issue #428).
+  problem. A data manager that publishes the `progress` counter (see
+  [`GET /api/ingestion/status`](api_reference.md#get-apiingestionstatus))
+  lets the stall budget catch this case sooner: during the embedding loop, a
+  `running` poll whose `progress.done` did not advance does not restart
+  `BENCH_INGEST_WAIT_TIMEOUT`. Without the counter (an older data manager, or
+  a phase before the embedding loop starts), a wedged ingest is byte-for-byte
+  the same as a working one, and only the ceiling can catch it.
+
+Scheduled source refreshes and upload-triggered vectorstore updates also report
+through this endpoint (`step=scheduled:<source>` or `step=upload`), so a
+benchmark that starts while one runs waits for it, and the refresh's polls keep
+the stall budget alive. The endpoint reports `completed` only when no such run is
+queued. A refresh is not the corpus build, so its time is not counted in
+`ingest_wall_seconds`. This includes a refresh that runs after the ingest and
+before `completed`: the timing stops at the first poll that shows the refresh.
 
 What this wait does **not** cover: a corpus change that starts *after* the
-initial ingest reports `completed` — a scheduled source refresh, or a
-vectorstore update triggered by an upload. Those hold the same lock but never
-touch this status endpoint, so the harness cannot block on them. It detects
-them after the fact instead, by fingerprinting the corpus on both sides of each
+benchmark's wait returned. That includes the collection phase of an upload,
+which runs before its vectorstore update begins to report. The harness detects
+those changes after the fact, by fingerprinting the corpus on both sides of each
 arm and recording `corpus_unchanged_at_endpoints` in the results.
 
 A long-but-healthy ingest hits none of them. CPU-only ingest of the full FASRC
@@ -514,6 +536,16 @@ The `huggingface` provider names an **unauthenticated** OpenAI-compatible judge 
 There is no way to give this provider a credential: the client is built through the local provider seam, which sends the placeholder token `not-needed`. An endpoint behind bearer authentication rejects every score request. Use `huit_bedrock` for an authenticated judge.
 
 `huggingface` is an evaluator-only provider name. Setting `services.benchmarking.provider: huggingface` for the system under test fails at startup, because the agent providers do not include it.
+
+`evaluator_provider_mode` sets the client dialect of a `local` judge, the way `provider_mode` does for the system under test. It is read only when the judge provider is `local`. It accepts `ollama` (ChatOllama) or `openai_compat` (ChatOpenAI); case and surrounding spaces are ignored. When the key is absent or empty, the judge inherits the system-under-test `provider_mode`; if that is also unset, the mode is auto-detected from the judge URL (`/v1` → `openai_compat`). Any other value, including `false` or `0`, is refused: the run fails with a `ValueError` when it builds the judge, instead of falling back to auto-detection.
+
+```yaml
+      ragas_settings:
+        evaluator_provider: local
+        evaluator_model: qwen3:32b
+        evaluator_ollama_url: http://host.containers.internal:7870
+        evaluator_provider_mode: ollama
+```
 
 #### Tool calling and structured output on `huit_bedrock`
 

@@ -13,6 +13,7 @@ from src.utils.ingest_provenance import (
     INGEST_CONFIG_KEYS,
     build_ingest_config_snapshot,
     compare_ingest_config,
+    effective_chunking,
 )
 
 # ---------------------------------------------------------------------------
@@ -42,6 +43,14 @@ def test_snapshot_reads_every_flag_from_a_full_config():
         "categorization": True,
         "chunking_strategy": "markdown",
         "child_chunk_overlap": 0,
+        "effective_chunking": {
+            "path": "hierarchical",
+            "strategy": "markdown",
+            "parent_chunk_size": 2048,
+            "child_chunk_size": 512,
+            "child_chunk_overlap": 0,
+            "non_markdown_child_chunk_overlap": 0,
+        },
         "embedding_model": "OpenAIEmbeddings",
         "embedding_dimensions": 1536,
         "chunk_size": 800,
@@ -67,6 +76,13 @@ def test_snapshot_applies_the_ingest_paths_own_defaults_when_keys_are_absent():
         "categorization": False,
         "chunking_strategy": "sentence",
         "child_chunk_overlap": 20,
+        "effective_chunking": {
+            "path": "hierarchical",
+            "strategy": "sentence",
+            "parent_chunk_size": 2048,
+            "child_chunk_size": 512,
+            "child_chunk_overlap": 20,
+        },
         "embedding_model": "HuggingFaceEmbeddings",
         "embedding_dimensions": 384,
         "chunk_size": 1000,
@@ -138,6 +154,147 @@ def test_snapshot_coerces_truthy_flag_values_to_bool():
 
 
 # ---------------------------------------------------------------------------
+# effective_chunking
+# ---------------------------------------------------------------------------
+
+
+def test_effective_chunking_default_is_hierarchical_sentence():
+    assert effective_chunking({}) == {
+        "path": "hierarchical",
+        "strategy": "sentence",
+        "parent_chunk_size": 2048,
+        "child_chunk_size": 512,
+        "child_chunk_overlap": 20,
+    }
+
+
+def test_effective_chunking_character_strategy():
+    dm = {
+        "chunking": {"strategy": "character"},
+        "chunk_size": 800,
+        "chunk_overlap": 100,
+    }
+    assert effective_chunking(dm) == {
+        "path": "character",
+        "strategy": "character",
+        "chunk_size": 800,
+        "chunk_overlap": 100,
+    }
+
+
+def test_effective_chunking_unknown_strategy_uses_the_character_path():
+    dm = {"chunking": {"strategy": "something-else"}}
+    assert effective_chunking(dm)["path"] == "character"
+
+
+def test_effective_chunking_sentence_clamps_on_the_smaller_of_parent_and_child():
+    dm = {
+        "chunking": {
+            "strategy": "sentence",
+            "parent_chunk_size": 30,
+            "child_chunk_size": 512,
+            "chunk_overlap": 40,
+        }
+    }
+    assert effective_chunking(dm)["child_chunk_overlap"] == 15
+
+
+def test_effective_chunking_markdown_clamps_on_child_only():
+    dm = {
+        "chunking": {
+            "strategy": "markdown",
+            "parent_chunk_size": 30,
+            "child_chunk_size": 512,
+            "chunk_overlap": 40,
+        }
+    }
+    assert effective_chunking(dm)["child_chunk_overlap"] == 40
+
+
+def test_effective_chunking_markdown_reports_the_non_markdown_fallback_overlap():
+    # resolve_effective_strategy sends every non-Markdown file to the sentence
+    # parser, which clamps on min(parent, child), not on child alone.
+    dm = {
+        "chunking": {
+            "strategy": "markdown",
+            "parent_chunk_size": 30,
+            "child_chunk_size": 512,
+            "chunk_overlap": 40,
+        }
+    }
+    result = effective_chunking(dm)
+    assert result["child_chunk_overlap"] == 40
+    assert result["non_markdown_child_chunk_overlap"] == 15
+
+
+def test_effective_chunking_sentence_has_no_non_markdown_overlap():
+    dm = {"chunking": {"strategy": "sentence", "parent_chunk_size": 30}}
+    assert "non_markdown_child_chunk_overlap" not in effective_chunking(dm)
+
+
+def test_effective_chunking_markdown_invalid_size_reports_the_fallback_unclamped():
+    dm = {"chunking": {"strategy": "markdown", "parent_chunk_size": "nope"}}
+    assert effective_chunking(dm)["non_markdown_child_chunk_overlap"] == 20
+
+
+@pytest.mark.parametrize("bad", [True, "nope", -1])
+def test_effective_chunking_invalid_overlap_is_reported_unclamped(bad):
+    dm = {"chunking": {"strategy": "sentence", "chunk_overlap": bad}}
+    assert effective_chunking(dm)["child_chunk_overlap"] == bad
+
+
+@pytest.mark.parametrize("bad", [True, "nope", -1])
+def test_effective_chunking_invalid_parent_size_skips_clamping(bad):
+    dm = {"chunking": {"strategy": "sentence", "parent_chunk_size": bad}}
+    assert effective_chunking(dm)["child_chunk_overlap"] == 20
+
+
+@pytest.mark.parametrize("bad", [True, "nope", -1])
+def test_effective_chunking_invalid_child_size_skips_clamping(bad):
+    dm = {"chunking": {"strategy": "markdown", "child_chunk_size": bad}}
+    assert effective_chunking(dm)["child_chunk_overlap"] == 20
+
+
+def test_effective_chunking_null_overlap_resolves_to_the_default():
+    dm = {"chunking": {"strategy": "sentence", "chunk_overlap": None}}
+    assert effective_chunking(dm)["child_chunk_overlap"] == 20
+
+
+@pytest.mark.parametrize("bad", [None, [], "nope", 7])
+def test_effective_chunking_tolerates_a_non_mapping_config(bad):
+    assert effective_chunking(bad) == effective_chunking({})
+
+
+def test_effective_chunking_restated_defaults_match_the_node_parser():
+    from src.data_manager.vectorstore.node_parsing import (
+        CHILD_CHUNK_OVERLAP,
+        DEFAULT_CHILD_CHUNK_SIZE,
+        DEFAULT_PARENT_CHUNK_SIZE,
+        MARKDOWN_STRATEGY,
+        SENTENCE_STRATEGY,
+        _clamped_overlap,
+    )
+    from src.utils.ingest_provenance import (
+        _DEFAULT_CHILD_CHUNK_OVERLAP,
+        _DEFAULT_CHILD_CHUNK_SIZE,
+        _DEFAULT_CHUNKING_STRATEGY,
+        _DEFAULT_PARENT_CHUNK_SIZE,
+        _MARKDOWN_STRATEGY,
+    )
+    from src.utils.ingest_provenance import _clamped_overlap as restated_clamped_overlap
+
+    assert _DEFAULT_PARENT_CHUNK_SIZE == DEFAULT_PARENT_CHUNK_SIZE
+    assert _DEFAULT_CHILD_CHUNK_SIZE == DEFAULT_CHILD_CHUNK_SIZE
+    assert _DEFAULT_CHILD_CHUNK_OVERLAP == CHILD_CHUNK_OVERLAP
+    assert _DEFAULT_CHUNKING_STRATEGY == SENTENCE_STRATEGY
+    assert _MARKDOWN_STRATEGY == MARKDOWN_STRATEGY
+    for chunk_size, overlap in [(2048, 20), (512, 300), (30, 40), (0, 5)]:
+        assert restated_clamped_overlap(chunk_size, overlap) == _clamped_overlap(
+            chunk_size, overlap
+        )
+
+
+# ---------------------------------------------------------------------------
 # compare_ingest_config
 # ---------------------------------------------------------------------------
 
@@ -200,6 +357,7 @@ def test_compare_skips_a_declared_key_the_older_snapshot_did_not_record():
     """
     at_ingest = build_ingest_config_snapshot({})
     del at_ingest["child_chunk_overlap"]
+    del at_ingest["effective_chunking"]
     current = build_ingest_config_snapshot({"chunking": {"chunk_overlap": 0}})
 
     assert compare_ingest_config(current, at_ingest) == []
@@ -210,3 +368,28 @@ def test_compare_treats_an_empty_snapshot_as_no_comparison():
     current = build_ingest_config_snapshot({})
     assert compare_ingest_config(current, {}) == []
     assert compare_ingest_config(current, None) == []
+
+
+def test_compare_skips_effective_chunking_absent_from_an_older_snapshot():
+    at_ingest = build_ingest_config_snapshot({})
+    del at_ingest["effective_chunking"]
+    current = build_ingest_config_snapshot({"chunking": {"child_chunk_size": 256}})
+
+    drift = compare_ingest_config(current, at_ingest)
+
+    assert "effective_chunking" not in {entry["key"] for entry in drift}
+
+
+def test_compare_reports_effective_chunking_when_both_sides_carry_it():
+    at_ingest = build_ingest_config_snapshot({})
+    current = build_ingest_config_snapshot({"chunking": {"child_chunk_size": 256}})
+
+    drift = compare_ingest_config(current, at_ingest)
+
+    assert [entry for entry in drift if entry["key"] == "effective_chunking"] == [
+        {
+            "key": "effective_chunking",
+            "current": effective_chunking({"chunking": {"child_chunk_size": 256}}),
+            "at_ingest": effective_chunking({}),
+        }
+    ]

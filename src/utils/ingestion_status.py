@@ -8,6 +8,7 @@ mutual-exclusion lock, which is held for the entire ingest (22–64 min).
 
 import logging
 import threading
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -21,8 +22,12 @@ def build_ingestion_helpers(
 
     Returns a dict with:
       - ``set_ingestion_status(state, *, step, error)``
+      - ``set_ingestion_progress(done, total=None)``
       - ``get_ingestion_status() -> dict``
       - ``run_initial_ingestion_async()``
+      - ``run_tracked(step, fn)``
+      - ``run_source_refresh(name, func, update_vectorstore, set_source_status)``
+      - ``run_upload_update(update_vectorstore)``
       - ``ingestion_lock`` — the caller's ingestion mutual-exclusion lock
     """
     _status_lock = threading.Lock()
@@ -30,6 +35,7 @@ def build_ingestion_helpers(
         "state": "pending",
         "step": None,
         "error": None,
+        "progress": None,
     }
 
     def set_ingestion_status(
@@ -38,27 +44,120 @@ def build_ingestion_helpers(
         with _status_lock:
             _status.update({"state": state, "step": step, "error": error})
 
+    def set_ingestion_progress(done: int, total: Optional[int] = None) -> None:
+        with _status_lock:
+            _status["progress"] = {"done": done, "total": total}
+
     def get_ingestion_status() -> Dict[str, object]:
         with _status_lock:
             return dict(_status)
 
+    # Runs that hold or wait for ingestion_lock. Only the lock owner publishes
+    # its step, and "completed" is published only when no run is queued: a
+    # benchmark that sees "completed" must not have a corpus change behind it.
+    _inflight = 0
+
+    def _set_running(step: str) -> None:
+        _status.update(
+            {"state": "running", "step": step, "error": None, "progress": None}
+        )
+
+    def _join(step: str) -> None:
+        """Count a run in, and publish its step if no other run is shown running.
+
+        One _status_lock hold for both, so a run that joins next cannot publish
+        between them and be masked. A terminal state is cleared here too: the
+        previous owner can publish completed and still hold ingestion_lock.
+        """
+        nonlocal _inflight
+        with _status_lock:
+            _inflight += 1
+            if _inflight == 1 and _status["state"] != "running":
+                _set_running(step)
+
+    def _publish_running(step: str) -> None:
+        with _status_lock:
+            _set_running(step)
+
+    def _finish(state: str, step: str, error: Optional[str] = None) -> None:
+        """Count a run out. Call it while the run still holds ingestion_lock."""
+        nonlocal _inflight
+        with _status_lock:
+            _inflight -= 1
+            if state == "error" or _inflight == 0:
+                _status.update({"state": state, "step": step, "error": error})
+
+    def run_tracked(step: str, fn: Callable[[], Any]) -> Any:
+        _join(step)
+        with ingestion_lock:
+            _publish_running(step)
+            try:
+                result = fn()
+            except Exception as exc:
+                _finish("error", "failed", str(exc))
+                raise
+            _finish("completed", "done")
+            return result
+
+    def _raise_if_failed(sync_status: Any) -> None:
+        # A sync that could not add its documents returns "failed" rather than
+        # raising; publishing "completed" after it would present a partial
+        # corpus as a finished one.
+        if sync_status == "failed":
+            raise RuntimeError("vectorstore update failed: documents not added")
+
+    def _update_or_raise(update_vectorstore: Callable[..., Any]) -> None:
+        _raise_if_failed(update_vectorstore(force=True))
+
+    def run_upload_update(update_vectorstore: Callable[..., Any]) -> None:
+        run_tracked("upload", lambda: _update_or_raise(update_vectorstore))
+
+    def run_source_refresh(
+        name: str,
+        func: Callable[[], None],
+        update_vectorstore: Callable[..., Any],
+        set_source_status: Callable[..., None],
+    ) -> None:
+        def body() -> None:
+            logger.info("Running ingestion task: %s", name)
+            set_source_status(name, state="running")
+            func()
+            logger.info("Updating vectorstore after scheduled task: %s", name)
+            _update_or_raise(update_vectorstore)
+            set_source_status(
+                name,
+                state="idle",
+                last_run=datetime.now(timezone.utc).isoformat(),
+            )
+
+        run_tracked(f"scheduled:{name}", body)
+
     def run_initial_ingestion_async() -> None:
-        set_ingestion_status("running", step="initializing")
-        try:
-            with ingestion_lock:
-                run_ingestion_fn(
-                    progress_callback=lambda step: set_ingestion_status(
-                        "running", step=step
+        _join("initializing")
+        with ingestion_lock:
+            _publish_running("initializing")
+            try:
+                _raise_if_failed(
+                    run_ingestion_fn(
+                        progress_callback=lambda step: set_ingestion_status(
+                            "running", step=step
+                        ),
+                        embedding_progress=set_ingestion_progress,
                     )
                 )
-            set_ingestion_status("completed", step="done")
-        except Exception as exc:
-            logger.exception("Initial ingestion failed")
-            set_ingestion_status("error", step="failed", error=str(exc))
+            except Exception as exc:
+                logger.exception("Initial ingestion failed")
+                _finish("error", "failed", str(exc))
+                return
+            _finish("completed", "done")
 
     return {
         "set_ingestion_status": set_ingestion_status,
+        "set_ingestion_progress": set_ingestion_progress,
         "get_ingestion_status": get_ingestion_status,
         "run_initial_ingestion_async": run_initial_ingestion_async,
+        "run_tracked": run_tracked,
+        "run_source_refresh": run_source_refresh,
+        "run_upload_update": run_upload_update,
         "ingestion_lock": ingestion_lock,
     }

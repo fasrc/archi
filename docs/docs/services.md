@@ -306,6 +306,100 @@ archi create [...] --services chatbot,mattermost
 
 ---
 
+## Slack Interface
+
+A Slack bot that answers `@archi` mentions in channels and direct messages, in the Slack thread of the question. The bot is a thin client of the chat app: it sends each question, with the earlier messages of its thread, to the chat app's [`/v1/chat/completions`](api-reference-v1.md) endpoint. It loads no model and needs no GPU.
+
+- One archi conversation for each Slack thread. A follow-up in the same thread continues it.
+- The bot connects to Slack in Socket Mode, an outbound websocket, so the deployment needs no public URL.
+- The bot posts a short placeholder at once and replaces it with the answer and its sources.
+
+### Prerequisites
+
+1. **Turn on the `/v1` API** in the chat app: `services.chat_app.openai_compat.enabled: true`. The Slack service checks `GET /v1/models` at start-up and stops with an error if `/v1` does not answer.
+2. **Create the Slack app.** A Slack workspace admin creates it from the [app manifest](#slack-app-manifest) below (api.slack.com → Your Apps → Create New App → From a manifest), then installs it in the workspace.
+3. **Get the two tokens.** In the app settings, Basic Information → App-Level Tokens → create a token with the scope `connections:write`: this is `SLACK_APP_TOKEN` (`xapp-…`). OAuth & Permissions → Bot User OAuth Token: this is `SLACK_BOT_TOKEN` (`xoxb-…`).
+4. **Invite the bot** to each channel where it must answer (`/invite @archi`).
+
+### Slack app manifest
+
+The bot needs `app_mentions:read` and `message.im` to receive questions, `chat:write` to answer, and the three `*:history` scopes to read the earlier messages of a thread.
+
+```yaml
+_metadata:
+  major_version: 1
+display_information:
+  name: archi
+features:
+  bot_user:
+    display_name: archi
+    always_online: false
+  app_home:
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - channels:history
+      - groups:history
+      - im:history
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.im
+  socket_mode_enabled: true
+  org_deploy_enabled: false
+  is_hosted: false
+  token_rotation_enabled: false
+```
+
+!!! warning "Keep the Slack app internal"
+    Do not distribute the app outside your workspace. Slack limits `conversations.replies`, which the bot uses to read a thread, to 1 request per minute for apps distributed outside the Slack Marketplace. Internal apps get Tier 3 limits.
+
+!!! note "Who can ask"
+    Every member of the workspace who can message the bot can query the knowledge base. The Slack workspace is the access boundary. All Slack questions use one archi identity; the bot log records the Slack user ID of each question.
+
+### Configuration
+
+```yaml
+services:
+  chat_app:
+    openai_compat:
+      enabled: true
+  slack:
+    chat_url: http://chatbot:7861   # default: the chatbot container, or localhost in host mode
+    timeout_seconds: 600            # longest wait for one answer
+    max_workers: 4                  # Slack threads answered at the same time
+    history_limit: 20               # earlier thread messages sent with a question (0 = none)
+```
+
+All four keys are optional. Questions in one thread are answered one at a time, in order; different threads run in parallel up to `max_workers`.
+
+### Secrets
+
+```bash
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_APP_TOKEN=xapp-...
+# Required only when services.chat_app.auth.enabled is true:
+ARCHI_API_TOKEN=archi_...
+```
+
+When chat authentication is on, `/v1` needs a bearer token. Create one with `POST /api/users/me/api-token` (see the [/v1 API reference](api-reference-v1.md)) as the archi user that Slack questions run as. `archi create` refuses to deploy the Slack service without it.
+
+!!! warning "Turning on chat authentication later"
+    If you turn on `services.chat_app.auth.enabled` on a deployment that already runs the Slack service, add `ARCHI_API_TOKEN` to the secrets file, then run `archi create --force` with the same services. `archi restart --service chatbot` does not give the token to the Slack container, and the bot then gets HTTP 401 for each question.
+
+### Running
+
+```bash
+archi create [...] --services chatbot,slack
+```
+
+---
+
 ## Grafana Monitoring
 
 Monitor system performance and LLM usage with a pre-configured Grafana dashboard.

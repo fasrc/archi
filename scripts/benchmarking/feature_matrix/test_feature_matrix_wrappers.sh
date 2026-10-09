@@ -61,6 +61,19 @@
 #   58. qa_arm.sh copies collection and embedding_model from the QA run manifest into the ledger
 #   59. the closing baseline with --new-corpus moves a v1 pin to v2 and records the old pin
 #       row, and writes nulls when the manifest recorded none
+#   60. a refused arm-mode archive pages once with the refusal reason in the body
+#   61. paging off sends no mail on the same refusal
+#   62. a failing mail binary still refuses and reports "page failed"
+#   63. a corpus drift during qa_arm.sh pages once
+#   64. a bad arm label with paging on sends nothing (preconditions never page)
+#   65. a refused sweep-mode archive pages once with the refusal reason in the body
+#   66. a corpus drift during qa_arm.sh --sweep pages once
+#   67. a refusal from archive_run.sh's ENTRY validator pages once with the reason
+#   68. an unreadable live document/chunk count pages once
+#   69. a hung mail binary is cut off after FM_MAIL_TIMEOUT and reports "page failed"
+#   70. without `timeout` on PATH the page is still sent, unbounded
+#   71. a hung mail binary that ignores SIGTERM is still killed and reports "page failed"
+#   72. an FM_MAIL_TIMEOUT that is zero or not a duration falls back to 60 seconds
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -73,8 +86,9 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export HOME="$T/home"; mkdir -p "$HOME"
 export ARCHI_DIR="$T/archi" FM_OUT="$T/out"
 export FM_DOCKER="$T/bin/docker" FM_ARCHI="$T/bin/archi" FM_PYTHON="${FM_PYTHON:-python3}"
+export FM_MAIL="$T/bin/mail"
 export FM_POLL_SECONDS=0
-unset RAGAS_ENV_FILE HUIT_API_KEY_FILE OPENAI_API_KEY FM_AGENT_SPEC
+unset RAGAS_ENV_FILE HUIT_API_KEY_FILE OPENAI_API_KEY FM_AGENT_SPEC FM_PAGE_MAIL_TO FM_MAIL_TIMEOUT
 mkdir -p "$T/bin" "$T/state" "$FM_OUT"
 printf 'sha256:abc\n' > "$T/fp"
 printf 'sha256:map1\n' > "$T/mapfp"   # the live category-map digest the data-manager reports
@@ -114,7 +128,25 @@ case "\$1" in
   *) exit 0 ;;
 esac
 EOF
-chmod +x "$T/bin/docker" "$T/bin/archi" "$T/bin/git"
+cat > "$T/bin/mail" <<EOF
+#!/usr/bin/env bash
+{ printf 'ARGS: %s\n' "\$*"; cat; } >> "$T/mail.calls"
+EOF
+cat > "$T/bin/mail-fail" <<EOF
+#!/usr/bin/env bash
+exit 1
+EOF
+cat > "$T/bin/mail-hang" <<EOF
+#!/usr/bin/env bash
+exec sleep 30
+EOF
+# an ignored signal stays ignored across exec, so this sleep does not die on SIGTERM
+cat > "$T/bin/mail-hang-noterm" <<EOF
+#!/usr/bin/env bash
+trap '' TERM
+exec sleep 30
+EOF
+chmod +x "$T/bin/docker" "$T/bin/archi" "$T/bin/git" "$T/bin/mail" "$T/bin/mail-fail" "$T/bin/mail-hang" "$T/bin/mail-hang-noterm"
 export FM_GIT="$T/bin/git"; printf 'c0ffee00\n' > "$T/codesha"; : > "$T/dirty"
 
 # --- fake stack fm-00 --------------------------------------------------------------------
@@ -257,6 +289,17 @@ artifact "$FM_OUT/benchmarking-fm-00-20260903_000001.json" '["data_manager.retri
 BEFORE="$(ledger_rows)"
 run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml"
 if [ "$RC" = 2 ] && grep -q "divergence_from_selected_file" "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ] && [ ! -f "$FM_OUT/corpus-pin-fm-00" ]; then ok "archive refuses a diverged run, writes nothing"; else notok "archive refuses a diverged run (rc=$RC: $(cat "$T/stderr"))"; fi
+# 67: the same refusal comes from the ENTRY validator (after the preliminary check passed);
+# with paging on it pages once, with the refusal reason in the body, and still writes nothing;
+# the terminal output stays the validator's own REFUSED line, with no generic refusal added
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 2 ] && grep -q "divergence_from_selected_file" "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ] && [ ! -f "$FM_OUT/corpus-pin-fm-00" ] \
+   && ! grep -q "^feature_matrix: refusing to archive" "$T/stderr" \
+   && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: refusing to archive" "$T/mail.calls" \
+   && grep -q "divergence_from_selected_file" "$T/mail.calls"; then
+  ok "an ENTRY-validator refusal pages once with the refusal reason"; else notok "archive ENTRY page-on-refuse (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 rm -f "$FM_OUT"/benchmarking-fm-00-*.json
 
 # 6
@@ -498,6 +541,12 @@ rm -f "$FM_OUT"/benchmarking-fm-00-*.json; artifact "$FM_OUT/benchmarking-fm-00-
 touch "$T/nocounts"
 run bash "$HERE/archive_run.sh" 00 7 "$T/arms/00-baseline.yaml"
 R1=$RC; grep -q "could not read the live document/chunk counts" "$T/stderr" && M1=1 || M1=0
+# 68: the same count refusal follows the finished run, so with paging on it pages once
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 7 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 2 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: could not read the live document/chunk counts" "$T/mail.calls"; then
+  ok "an unreadable live count pages once"; else notok "archive count page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 rm -f "$T/nocounts"
 [ "$R1" = 2 ] && [ "$M1" = 1 ] && ok "archive refuses when the live counts cannot be read" || notok "count gate (rc=$R1 m=$M1: $(cat "$T/stderr"))"
 
@@ -716,6 +765,104 @@ old = [r for r in rows if r.get("output_dir") == sys.argv[2]][0]   # check 38: n
 assert "collection" in old and old["collection"] is None and "embedding_model" in old and old["embedding_model"] is None, old
 PY2
 then ok "qa_arm copies collection and embedding_model from the run manifest, null when unrecorded"; else notok "qa_arm ledger identity fields (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# --- operator paging (#504): archive_run.sh and qa_arm.sh page by mail on the four refusals
+# that follow long unattended work; preconditions and paging-off never run the mail binary.
+
+# 60: a refused arm-mode archive (the duplicate-artifact guard at archive_run.sh's archive
+# site) pages once, with the stack and arm in the subject and the refusal reason in the body
+: > "$T/mail.calls"
+BEFORE="$(ledger_rows)"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
+if [ "$RC" = 2 ] && [ "$(ledger_rows)" = "$BEFORE" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: refusing to archive" "$T/mail.calls" \
+   && grep -q "ops@example.org$" "$T/mail.calls" && grep -q "already archived" "$T/mail.calls"; then
+  ok "a refused arm-mode archive pages once with the refusal reason"; else notok "archive page-on-refuse (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 61: the same refusal with paging off sends no mail
+: > "$T/mail.calls"
+run bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && grep -q "already archived" "$T/stderr" && [ ! -s "$T/mail.calls" ] && ok "paging off sends no mail on the same refusal" || notok "archive paging-off (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"
+
+# 62: a failing mail binary still refuses with the same message and reports "page failed"
+run env FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-fail" bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && grep -q "already archived" "$T/stderr" && grep -q "page failed" "$T/stderr" && ok "a failing mail binary keeps the refusal and reports page failed" || notok "archive mail-fail (rc=$RC: $(cat "$T/stderr"))"
+
+# 69: a mail binary that never returns is cut off after FM_MAIL_TIMEOUT seconds; the wrapper
+# still refuses with the same message and reports "page failed"
+T0=$SECONDS
+run env FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-hang" FM_MAIL_TIMEOUT=1 bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && [ $((SECONDS - T0)) -lt 15 ] && grep -q "already archived" "$T/stderr" && grep -q "page failed" "$T/stderr" && ok "a hung mail binary times out, keeps the refusal and reports page failed" || notok "archive mail-hang (rc=$RC after $((SECONDS - T0))s: $(cat "$T/stderr"))"
+
+# 71: a hung mail binary that ignores SIGTERM is killed after the grace period; the wrapper
+# still refuses with the same message and reports "page failed"
+T0=$SECONDS
+run env FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-hang-noterm" FM_MAIL_TIMEOUT=1 bash "$HERE/archive_run.sh" 00 11 "$T/arms/00-baseline.yaml"
+[ "$RC" = 2 ] && [ $((SECONDS - T0)) -lt 15 ] && grep -q "already archived" "$T/stderr" && grep -q "page failed" "$T/stderr" && ok "a hung mail binary that ignores SIGTERM is killed, keeps the refusal and reports page failed" || notok "archive mail-hang-noterm (rc=$RC after $((SECONDS - T0))s: $(cat "$T/stderr"))"
+
+# 72: `timeout 0` disables the bound and a non-duration makes `timeout` itself fail, so an
+# FM_MAIL_TIMEOUT that is zero or not a positive duration falls back to the 60-second default
+mkdir -p "$T/fakebound"
+cat > "$T/fakebound/timeout" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$T/timeout.calls"
+shift 3; exec "\$@"
+EOF
+chmod +x "$T/fakebound/timeout"
+for bad in 0 00 0.0 abc -5 ""; do
+  : > "$T/timeout.calls"; : > "$T/mail.calls"
+  PATH="$T/fakebound:$PATH" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail" FM_MAIL_TIMEOUT="$bad" bash -c 'source "$1"; fm_page "probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
+  [ "$RC" = 0 ] && grep -qx -- "-k 5 60 $T/bin/mail -s feature_matrix: probe ops@example.org" "$T/timeout.calls" && grep -q "ARGS: -s feature_matrix: probe" "$T/mail.calls" \
+    && ok "FM_MAIL_TIMEOUT='$bad' falls back to the 60-second bound" || notok "FM_MAIL_TIMEOUT='$bad' fallback (rc=$RC: $(cat "$T/timeout.calls" "$T/stderr"))"
+done
+for good in 1 2.5 90; do
+  : > "$T/timeout.calls"
+  PATH="$T/fakebound:$PATH" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail" FM_MAIL_TIMEOUT="$good" bash -c 'source "$1"; fm_page "probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
+  [ "$RC" = 0 ] && grep -q -- "^-k 5 $good " "$T/timeout.calls" && ok "FM_MAIL_TIMEOUT='$good' is kept" || notok "FM_MAIL_TIMEOUT='$good' kept (rc=$RC: $(cat "$T/timeout.calls" "$T/stderr"))"
+done
+
+# 70: on a host without `timeout`, fm_page still sends the page (unbounded), not "page failed"
+mkdir -p "$T/notimeout"; for c in env bash cat; do ln -sf "$(command -v "$c")" "$T/notimeout/$c"; done
+: > "$T/mail.calls"
+PATH="$T/notimeout" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail" "$(command -v bash)" -c 'source "$1"; fm_page "stack fm-00 arm 00: probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
+[ "$RC" = 0 ] && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: probe ops@example.org" "$T/mail.calls" && ! grep -q "page failed" "$T/stderr" && ok "without timeout on PATH the page is still sent" || notok "no-timeout page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"
+
+# 63: a corpus drift during qa_arm.sh (reuse the drift-after-qa mechanism of case 42) pages once
+: > "$T/mail.calls"
+printf 'sha256:def\n' > "$T/fp"; printf 'sha256:def\n' > "$FM_OUT/corpus-pin-fm-00"; touch "$T/drift-after-qa"
+BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/drift-after-qa"; printf 'sha256:def\n' > "$T/fp"
+if [ "$RC" = 2 ] && [ "$(ledger_rows)" = "$BEFORE" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: corpus changed during the QA run" "$T/mail.calls" \
+   && grep -q "ops@example.org$" "$T/mail.calls"; then
+  ok "a corpus drift during qa_arm.sh pages once"; else notok "qa_arm page-on-drift (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 64: a bad arm label with paging on sends nothing (preconditions before long work never page)
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" "0x" 1 "$T/arms/01-rerank-off.yaml"
+[ "$RC" = 2 ] && grep -q "bad arm label" "$T/stderr" && [ ! -s "$T/mail.calls" ] && ok "a bad arm label with paging on sends nothing" || notok "precondition no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"
+
+# 65: a refused sweep-mode archive (run 1 of stack r0 is already archived by check 53) pages
+# once from the sweep site, with the stack in the subject and the refusal reason in the body
+: > "$T/mail.calls"
+BEFORE="$(ledger_rows)"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" --sweep "$SW/configs" --stack r0 --run 1 --census "$FM_OUT/census.json"
+if [ "$RC" = 2 ] && [ "$(ledger_rows)" = "$BEFORE" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack r0 sweep: refusing to archive" "$T/mail.calls" \
+   && grep -q "ops@example.org$" "$T/mail.calls" && [ "$(grep -vc '^ARGS:' "$T/mail.calls")" -ge 1 ]; then
+  ok "a refused sweep-mode archive pages once with the refusal reason"; else notok "sweep archive page-on-refuse (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 66: a corpus drift during qa_arm.sh --sweep (same drift-after-qa mechanism) pages once
+: > "$T/mail.calls"
+printf 'sha256:def\n' > "$T/fp"; printf 'sha256:def\n' > "$FM_OUT/corpus-pin-r0"; touch "$T/drift-after-qa"
+BEFORE="$(ledger_rows)"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl
+rm -f "$T/drift-after-qa"; printf 'sha256:def\n' > "$T/fp"
+if [ "$RC" = 2 ] && [ "$(ledger_rows)" = "$BEFORE" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack r0 arm fasrc-docs-r0b-icl: corpus changed during the QA run" "$T/mail.calls" \
+   && grep -q "ops@example.org$" "$T/mail.calls"; then
+  ok "a corpus drift during qa_arm.sh --sweep pages once"; else notok "sweep qa_arm page-on-drift (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

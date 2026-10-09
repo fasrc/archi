@@ -68,6 +68,7 @@ if "langchain_community.document_loaders" not in sys.modules:
             return []
 
     loaders_module.BSHTMLLoader = _DummyLoader
+    loaders_module.NotebookLoader = _DummyLoader
     loaders_module.PyPDFLoader = _DummyLoader
     loaders_module.PythonLoader = _DummyLoader
     loaders_module.TextLoader = _DummyLoader
@@ -82,6 +83,10 @@ if "langchain_community.document_loaders.text" not in sys.modules:
 
 from src.data_manager.vectorstore import manager as manager_module
 from src.data_manager.vectorstore.manager import VectorStoreManager
+from src.data_manager.vectorstore.node_parsing import (
+    CHILD_EMBEDDING_DIM,
+    HierarchicalNode,
+)
 
 
 class _InlineFuture:
@@ -155,6 +160,197 @@ def test_add_to_postgres_commits_every_25_files(monkeypatch):
     assert fake_conn.commit.call_count == 2
     # All documents are marked embedding at start of run.
     assert catalog.update_ingestion_status.call_count >= 26
+
+
+class _FakeCursorH:
+    """Cursor stub that returns serial ids for parent-node RETURNING id queries."""
+
+    def __init__(self):
+        self._parent_seq = 0
+        self.rowcount = 0
+
+    def execute(self, sql, params=None):
+        if "document_parent_nodes" in sql and "RETURNING id" in sql:
+            self._parent_seq += 1
+
+    def fetchone(self):
+        return (self._parent_seq,)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_a):
+        return False
+
+
+def _setup_flat_manager(monkeypatch, embed_fn=None, loader_fn=None):
+    manager = VectorStoreManager.__new__(VectorStoreManager)
+    manager.parallel_workers = 1
+    manager.collection_name = "test_collection"
+    manager.hierarchical_chunking = False
+    manager._data_manager_config = {"stemming": {"enabled": False}}
+    manager._pg_config = {"host": "localhost"}
+
+    catalog = MagicMock()
+    catalog.get_document_id.return_value = 1
+    catalog.get_metadata_for_hash.return_value = {}
+    manager._catalog = catalog
+
+    split_doc = SimpleNamespace(page_content="hello world", metadata={})
+    manager.text_splitter = SimpleNamespace(split_documents=lambda docs: [split_doc])
+    if embed_fn is None:
+        embed_fn = lambda chunks: [[0.1, 0.2, 0.3] for _ in chunks]
+    manager.embedding_model = SimpleNamespace(embed_documents=embed_fn)
+    if loader_fn is None:
+        loader_fn = lambda _path: SimpleNamespace(load=lambda: [split_doc])
+    manager.loader = loader_fn
+
+    fake_cursor = MagicMock()
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_conn.cursor.return_value.__exit__.return_value = False
+
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
+    monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
+
+    return manager, fake_conn, catalog
+
+
+def test_embedding_progress_callback_reports_at_each_batch(monkeypatch):
+    manager, _, _ = _setup_flat_manager(monkeypatch)
+    calls = []
+
+    def cb(done, total):
+        calls.append((done, total))
+
+    files_to_add = {f"hash-{i}": f"/tmp/file-{i}.txt" for i in range(26)}
+    manager._add_to_postgres(files_to_add, embedding_progress=cb)
+
+    assert calls == [(0, 26), (25, 26), (26, 26)]
+
+
+def test_embedding_progress_counts_embed_failure_files(monkeypatch):
+    call_count = [0]
+
+    def embed_fn(chunks):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("embed fail")
+        return [[0.1, 0.2, 0.3] for _ in chunks]
+
+    manager, _, _ = _setup_flat_manager(monkeypatch, embed_fn=embed_fn)
+    calls = []
+
+    def cb(done, total):
+        calls.append((done, total))
+
+    files_to_add = {f"hash-{i}": f"/tmp/file-{i}.txt" for i in range(26)}
+    manager._add_to_postgres(files_to_add, embedding_progress=cb)
+
+    assert calls[-1] == (26, 26)
+
+
+def test_embedding_progress_callback_hierarchical(monkeypatch):
+    manager = VectorStoreManager.__new__(VectorStoreManager)
+    manager.parallel_workers = 1
+    manager.collection_name = "test_collection"
+    manager.chunking_strategy = "sentence"
+    manager.hierarchical_chunking = True
+    manager.parent_chunk_size = 2048
+    manager.child_chunk_size = 512
+    manager.child_chunk_overlap = 20
+    manager._data_manager_config = {"stemming": {"enabled": False}}
+    manager._pg_config = {"host": "localhost"}
+    manager.embedding_dimensions = CHILD_EMBEDDING_DIM
+    manager.embedding_model = SimpleNamespace(
+        embed_documents=lambda texts: [[0.0] * CHILD_EMBEDDING_DIM for _ in texts]
+    )
+
+    catalog = MagicMock()
+    catalog.get_document_id.return_value = 42
+    catalog.get_metadata_for_hash.return_value = {}
+    manager._catalog = catalog
+
+    doc = SimpleNamespace(page_content="some text", metadata={})
+    manager.loader = lambda _path: SimpleNamespace(load=lambda: [doc])
+
+    def _fake_nodes(document, strategy="sentence", **_kwargs):
+        return [
+            HierarchicalNode(
+                parent_index=0,
+                parent_text="Parent context.",
+                child_texts=["child one.", "child two."],
+                metadata={},
+            )
+        ]
+
+    monkeypatch.setattr(manager_module, "build_hierarchical_nodes", _fake_nodes)
+
+    fake_cursor = _FakeCursorH()
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_conn.cursor.return_value.__exit__.return_value = False
+
+    monkeypatch.setattr(manager_module.psycopg2, "connect", lambda **_kwargs: fake_conn)
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", lambda *a, **k: None
+    )
+    monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
+    monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
+
+    calls = []
+
+    def cb(done, total):
+        calls.append((done, total))
+
+    manager._add_to_postgres({"hash-1": "/tmp/doc.html"}, embedding_progress=cb)
+
+    assert calls == [(0, 1), (1, 1)]
+
+
+def test_embedding_progress_skipped_files_not_counted(monkeypatch):
+    split_doc = SimpleNamespace(page_content="hello world", metadata={})
+
+    def loader_fn(path):
+        if "file-1" in path:
+            return None
+        return SimpleNamespace(load=lambda: [split_doc])
+
+    manager, _, _ = _setup_flat_manager(monkeypatch, loader_fn=loader_fn)
+
+    calls = []
+
+    def cb(done, total):
+        calls.append((done, total))
+
+    files_to_add = {f"hash-{i}": f"/tmp/file-{i}.txt" for i in range(3)}
+    manager._add_to_postgres(files_to_add, embedding_progress=cb)
+
+    assert calls[-1] == (2, 3)
+
+
+def test_embedding_progress_callback_exception_does_not_abort(monkeypatch, caplog):
+    import logging
+
+    manager, fake_conn, _ = _setup_flat_manager(monkeypatch)
+
+    def raising_cb(done, total):
+        raise RuntimeError("cb fail")
+
+    files_to_add = {f"hash-{i}": f"/tmp/file-{i}.txt" for i in range(26)}
+    with caplog.at_level(
+        logging.WARNING, logger="src.data_manager.vectorstore.manager"
+    ):
+        manager._add_to_postgres(files_to_add, embedding_progress=raising_cb)
+
+    assert fake_conn.commit.call_count == 2
+    assert any(
+        "Embedding progress callback failed" in r.getMessage() for r in caplog.records
+    )
 
 
 def _tagging_config(embedding_name="HuggingFaceEmbeddings", kwargs=None):

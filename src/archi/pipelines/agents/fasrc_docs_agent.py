@@ -248,7 +248,9 @@ class FASRCDocsAgent(MessageContentMixin, BaseReActAgent):
         callback, so retrieved documents flow into ``source_documents``/links
         exactly as a model-initiated search would. The model may still search
         again. Gated by ``services.chat_app.force_initial_retrieval`` (default
-        on) so prompt-vs-enforcement variants can be A/B'd in the sweep.
+        on); this flag is read from the seeded configuration, so it cannot vary
+        per arm inside one multi-config deployment — to A/B it, run separate
+        deployments (or re-seed) per value.
         """
         if not getattr(self, "enable_vector_tools", False):
             logger.debug("Forced retrieval skipped: vector tools disabled")

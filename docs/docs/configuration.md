@@ -102,36 +102,39 @@ If you had `git.enabled: false` or a `git.schedule`, they were being ignored and
 effect — measured through the CLI's own normalised config, not just the bare template.
 
 **SSO does not switch itself on.** The last row above says `false` rather than the
-template's `true` default because `archi create` and `archi evaluate` both call
-`ConfigurationManager.set_sources_enabled()` before rendering
-(`src/cli/cli_main.py:248` and `:879`), and that writes `enabled: false` into every managed
+template's `true` default because `archi create`, `archi evaluate` and `archi restart --config`
+all call `ConfigurationManager.set_sources_enabled()` before rendering
+(`src/cli/cli_main.py:249`, `:894` and `:614`), and that writes `enabled: false` into every managed
 source the config does not select. A `schedule` alone does not select a source, so an
 omitted `sso.enabled` reaches the template as an explicit `false`. To turn SSO on, set
 `sources.sso.enabled: true`.
 
-**CAUTION: `archi restart --config` does not do that normalisation.** It renders the
-configuration without calling `set_sources_enabled()`, so every source whose `enabled` you
-omitted takes the template default of `true` — and its required credentials are not
-validated, because the source is absent from the enabled-source list the preflight checks.
-That applies to all six managed sources (`local_files`, `links`, `git`, `sso`, `jira`,
-`redmine`), not just SSO, and it means `archi create` and `archi restart --config` can
-produce different deployed configurations from the same input. Tracked as
-[issue #461](https://github.com/fasrc/archi/issues/461). Until it is fixed, write `enabled`
-explicitly on every source you care about rather than relying on the default, and prefer
-`archi create` when changing which sources are on.
+`archi restart --config` normalises the same way, so `archi create` and
+`archi restart --config` deploy the same source settings from the same input
+([issue #461](https://github.com/fasrc/archi/issues/461), fixed). Before that fix, restart
+rendered without `set_sources_enabled()`, so an omitted `enabled` took the template default
+of `true` and the source's credentials were not preflighted.
 
-Of these, `enabled: false` is acted on by the `git`, `sso`, `indico`, `jira`, `redmine` and
-`elog` collectors, and by the Selenium scraper — with one exception for `git` and `sso`,
-described in the next paragraph.
+`enabled: false` is acted on by the `git`, `sso`, `indico`, `jira`, `redmine` and
+`elog` collectors, and by the Selenium scraper.
 
-**CAUTION: a `git-` or `sso-` entry in `input_lists` overrides `enabled: false` for that
-source.** `ScraperManager.collect_all_from_config()` sets `git_enabled = True` when the
-input lists yield any `git-` URL, and `sso_enabled = True` for any `sso-` URL, without
-consulting the flag. ELOG URLs are passed through as `extra_urls` and collected regardless
-of `elog.enabled`. So an ingest can fetch a source you configured as disabled — possibly
-after CLI validation skipped that source's required secrets. To disable one of these,
-remove its entries from `input_lists` as well as setting `enabled: false`. Tracked as
-[issue #460](https://github.com/fasrc/archi/issues/460).
+An explicit `enabled: false` wins over any `input_lists` entries: the data manager logs a
+WARNING naming how many entries were skipped and does not collect that source. With `enabled`
+absent, a prefixed entry (`git-`, `sso-`, `elog-`, `indico-`) or an ELOG-path URL (`/elog/`
+or `/elogs/` in the path) enables the source, and `archi create` validates its required
+secrets and config fields before deploying. `enabled: true` collects unconditionally.
+(Changed in [#460](https://github.com/fasrc/archi/issues/460).)
+
+**CAUTION: re-render the configs after you upgrade to this change.** Before #460, the CLI
+wrote `enabled: false` for every source the config did not select, and the scraper ignored
+that value when the input lists held `git-`, `sso-` or ELOG entries. A deployment rendered
+then can carry that `false` for `git`, `sso` or `elog` while it still collects them.
+`archi restart` without `--config` keeps the rendered configs, so after the upgrade the data
+manager skips those entries and logs only a WARNING. Run `archi create --force` once after
+the upgrade, so the CLI infers the sources from the input lists again.
+`archi restart --config` refuses this change: the inferred `enabled: true` differs from the
+stored `false`, and restart accepts no change to the `data_manager` section.
+`deploy/scripts/redeploy.sh` runs `archi create --force`, so a redeploy needs no extra step.
 
 **`anonymize_data: false` is the row to check first.** It was silently ignored before and is
 honored now, and it widens what a reader can see. `visible: false` is the opposite
@@ -514,6 +517,7 @@ PostgreSQL database settings.
 
 - **`services.piazza`**: Requires `network_id`, `agent_class`, `provider`, `model`
 - **`services.mattermost`**: Requires `update_time`
+- **`services.slack`**: Optional `chat_url`, `timeout_seconds`, `max_workers`, `history_limit`; needs `services.chat_app.openai_compat.enabled: true`. See [Slack Interface](services.md#slack-interface)
 - **`services.redmine_mailbox`**: Requires `url`, `project`, `redmine_update_time`, `mailbox_update_time`
 - **`services.benchmarking`**: See [Benchmarking](benchmarking.md)
 

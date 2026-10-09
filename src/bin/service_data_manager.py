@@ -2,7 +2,6 @@
 import json
 import os
 import threading
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
@@ -18,6 +17,7 @@ from src.utils.config_access import (
 )
 from src.utils.config_service import ConfigService
 from src.utils.env import read_secret
+from src.utils.ingestion_status import build_ingestion_helpers
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
 from src.utils.telemetry import instrument_flask_app
@@ -43,6 +43,7 @@ def main() -> None:
 
     data_manager = DataManager(run_ingestion=False, factory=factory)
     lock = threading.RLock()
+    _ing = build_ingestion_helpers(data_manager.run_ingestion, lock)
 
     def load_status() -> Dict[str, Dict[str, str]]:
         if not status_file.exists():
@@ -69,19 +70,11 @@ def main() -> None:
         save_status(data)
 
     def run_locked(name: str, func: Callable[[], None]) -> None:
-        with lock:
-            logger.info("Running ingestion task: %s", name)
-            set_source_status(name, state="running")
-            func()
-            logger.info("Updating vectorstore after scheduled task: %s", name)
-            data_manager.update_vectorstore(force=True)
-            set_source_status(
-                name, state="idle", last_run=datetime.now(timezone.utc).isoformat()
-            )
+        update = data_manager.update_vectorstore
+        _ing["run_source_refresh"](name, func, update, set_source_status)
 
     def trigger_update() -> None:
-        with lock:
-            data_manager.update_vectorstore(force=True)
+        _ing["run_upload_update"](data_manager.update_vectorstore)
 
     schedule_map: Dict[str, Callable[[Optional[str]], None]] = {
         "local_files": lambda last_run=None: data_manager.localfile_manager.schedule_collect_local_files(
@@ -193,10 +186,6 @@ def main() -> None:
         static_folder=data_manager_cfg.get("static_folder"),
     )
     instrument_flask_app(app)
-
-    from src.utils.ingestion_status import build_ingestion_helpers
-
-    _ing = build_ingestion_helpers(data_manager.run_ingestion, lock)
 
     ingestion_thread = threading.Thread(
         target=_ing["run_initial_ingestion_async"],

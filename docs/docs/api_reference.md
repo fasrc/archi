@@ -687,6 +687,40 @@ These endpoints are served by the Data Manager service (default port: 7871).
 
 Get current ingestion progress.
 
+The response has four keys:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `state` | string | `pending`, `running`, `completed`, or `error`. |
+| `step` | string or `null` | The current ingestion step, for example `Updating vectorstore`. |
+| `error` | string or `null` | The error message when `state` is `error`. |
+| `progress` | object or `null` | The embedding counter: `{"done": <int>, "total": <int or null>}`. |
+
+`progress` is `null` until the embedding loop starts, and each new ingest resets it
+to `null`. After the embedding loop starts, `done` counts the files committed to the
+vectorstore. The counter advances once per committed batch of 25 files. `done` can
+end below `total`, because a file that a loader skips is never counted. After the
+ingest ends, `progress` keeps its last value.
+
+**Scheduled refreshes and upload runs** also move through this endpoint. While a
+scheduled source refresh is running, `state` is `running` and `step` is
+`scheduled:<source>` (for example `scheduled:git`). While a file upload is being
+ingested, `step` is `upload`. In both cases `progress` is `null` for the duration of
+the run. When the run ends, `state` becomes `completed` and `step` becomes `done`; on
+failure, `state` becomes `error` and `step` becomes `failed`. A run whose vectorstore
+sync could not add its documents also ends in `error`. If another run is queued for the
+ingestion lock, the endpoint keeps reporting `running` instead of `completed`, and it
+does not publish a queued run's step over a running one. A run that starts when no run
+is reported as `running` publishes its step at once, so `completed` never stays visible
+while that run waits for the lock. Any benchmark that
+polls this endpoint to wait for an idle system will also wait during scheduled
+refreshes and upload runs.
+
+```json
+{"state": "running", "step": "Updating vectorstore", "error": null,
+ "progress": {"done": 150, "total": 412}}
+```
+
 ### `POST /api/reload-schedules`
 
 Trigger schedule reload from database.

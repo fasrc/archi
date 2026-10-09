@@ -120,6 +120,13 @@ services:
         evaluator_provider: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_provider | default("", true) }}
         evaluator_model: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_model | default("", true) }}
         evaluator_ollama_url: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_ollama_url | default("", true) }}
+        {%- if services.benchmarking.mode_settings.ragas_settings.evaluator_provider_mode is defined and services.benchmarking.mode_settings.ragas_settings.evaluator_provider_mode is not none %}
+        # Guarded by presence and tojson, unlike the three evaluator_* keys above: this
+        # value reaches resolve_local_mode, so a configured false, 0 or "null" must
+        # arrive as written rather than being coerced by a truthy default or bare
+        # interpolation (see provider_mode above; design.md Decision 1).
+        evaluator_provider_mode: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_provider_mode | tojson }}
+        {%- endif %}
 
 
   piazza:
@@ -130,6 +137,19 @@ services:
     update_time: {{ services.piazza.update_time | default(60, true) }}
   mattermost:
     update_time: {{ services.mattermost.update_time | default(60, true) }}
+  slack:
+    {#- The chat app's address: the chatbot container on its container port, or, in
+        host mode, localhost on external_port when set (else port), as #310 does. -#}
+    {%- set v_slack_chat_url = services.slack.chat_url %}
+    {%- set v_chat_port = services.chat_app.port if services.chat_app.port is defined and services.chat_app.port is not none else 7861 %}
+    {%- set v_chat_ext_port = services.chat_app.external_port if services.chat_app.external_port is defined and services.chat_app.external_port is not none else v_chat_port %}
+    chat_url: "{{ v_slack_chat_url if v_slack_chat_url else ('http://localhost:' ~ v_chat_ext_port if host_mode else 'http://chatbot:' ~ v_chat_port) }}"
+    {%- set v_slack_timeout = services.slack.timeout_seconds %}
+    timeout_seconds: {{ v_slack_timeout if v_slack_timeout is defined and v_slack_timeout is not none else 600 }}
+    {%- set v_slack_workers = services.slack.max_workers %}
+    max_workers: {{ v_slack_workers if v_slack_workers is defined and v_slack_workers is not none else 4 }}
+    {%- set v_slack_history = services.slack.history_limit %}
+    history_limit: {{ v_slack_history if v_slack_history is defined and v_slack_history is not none else 20 }}
   redmine_mailbox:
     agent_class: {{ services.redmine_mailbox.agent_class | default('CMSCompOpsAgent', true) }}
     agents_dir: "{{ services.redmine_mailbox.agents_dir | default('', true) }}"
