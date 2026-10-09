@@ -725,7 +725,13 @@ class VectorStoreManager:
 
         if self.hierarchical_chunking:
             # Load NLTK's stopwords here, not first in a racing worker (#119).
-            warm_up_sentence_tokenizer()
+            # On failure, carry on: each worker then fails its own file
+            # through the handler below instead of the batch staying
+            # 'embedding'.
+            try:
+                warm_up_sentence_tokenizer()
+            except Exception as exc:
+                logger.warning("NLTK warm-up failed; files will retry it: %s", exc)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {

@@ -362,6 +362,30 @@ def test_character_ingest_skips_the_sentence_tokenizer_warm_up(monkeypatch):
     assert events == ["pool"]
 
 
+def test_a_failed_warm_up_still_runs_the_pool_so_files_fail_one_by_one(
+    monkeypatch, caplog
+):
+    """A warm-up error must not leave the whole batch in 'embedding' (#119)."""
+    import logging
+
+    manager = _setup_hierarchical_manager(monkeypatch)
+    events = _record_warm_up_and_pool(monkeypatch)
+
+    def _broken_warm_up():
+        events.append("warm")
+        raise LookupError("Resource stopwords not found.")
+
+    monkeypatch.setattr(manager_module, "warm_up_sentence_tokenizer", _broken_warm_up)
+
+    with caplog.at_level(
+        logging.WARNING, logger="src.data_manager.vectorstore.manager"
+    ):
+        manager._add_to_postgres({"hash-1": "/tmp/a.html"})
+
+    assert events == ["warm", "pool"]
+    assert any("NLTK warm-up failed" in r.getMessage() for r in caplog.records)
+
+
 def test_embedding_progress_skipped_files_not_counted(monkeypatch):
     split_doc = SimpleNamespace(page_content="hello world", metadata={})
 

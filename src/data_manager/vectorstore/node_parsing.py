@@ -32,6 +32,7 @@ handled by the caller, not here.
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -75,6 +76,8 @@ _MARKDOWN_SUFFIXES = frozenset({"md", "markdown"})
 # database.
 CHILD_EMBEDDING_DIM = 384
 
+_WARM_UP_LOCK = threading.Lock()
+
 
 @dataclass
 class HierarchicalNode:
@@ -99,9 +102,11 @@ def warm_up_sentence_tokenizer() -> None:
     split. Its first read loads NLTK's shared lazy ``stopwords`` corpus, which
     swaps the loader's class in place and is not thread-safe: ingest workers
     that make that first read together can see a half-built reader and fail
-    the file (#119). Call this once before a worker pool starts.
+    the file (#119). Call this once before a worker pool starts. The lock
+    keeps two ingests that start together from racing the same first load.
     """
-    globals_helper.punkt_tokenizer
+    with _WARM_UP_LOCK:
+        globals_helper.punkt_tokenizer
 
 
 def build_hierarchical_nodes(

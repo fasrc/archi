@@ -810,3 +810,34 @@ def test_warm_up_loads_the_sentence_tokenizer_and_stopwords(monkeypatch):
     assert type(nltk.corpus.stopwords) is WordListCorpusReader
     assert globals_helper._punkt_tokenizer is not None
     assert "the" in globals_helper._stopwords
+
+
+def test_concurrent_warm_ups_do_not_load_at_the_same_time(monkeypatch):
+    """Two ingests that start together must not race the first load (#119)."""
+    import threading
+    import time
+
+    from src.data_manager.vectorstore import node_parsing
+
+    active = []
+    overlaps = []
+
+    class _SlowHelper:
+        @property
+        def punkt_tokenizer(self):
+            active.append(1)
+            overlaps.append(len(active))
+            time.sleep(0.01)
+            active.pop()
+            return object()
+
+    monkeypatch.setattr(node_parsing, "globals_helper", _SlowHelper())
+
+    threads = [threading.Thread(target=warm_up_sentence_tokenizer) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(overlaps) == 8
+    assert max(overlaps) == 1
