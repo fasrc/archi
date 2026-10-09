@@ -77,6 +77,11 @@ def load_benchmark_results(filepath):
 #: reports say so differently.
 _INGEST_NOT_RECORDED = object()
 
+#: Sentinel for ``provenance["embedding_tags_unchanged_at_endpoints"]``: the
+#: artifact predates this field. ``None`` means the end reading failed or the
+#: search tool was absent; a bool is the comparison result.
+_TAGS_NOT_RECORDED = object()
+
 #: Sentinel for ``provenance["host"]``: the artifact predates host stamping.
 #: ``None`` means no host reached this artifact, which has FOUR causes: the
 #: deploy predates the field, capture ran and the hostname was unreadable, the
@@ -157,6 +162,9 @@ def parse_benchmark_results(results, metadata):
         "corpus_fingerprint_before": result.get("corpus_fingerprint_before"),
         "corpus_fingerprint": result.get("corpus_fingerprint"),
         "corpus_unchanged_at_endpoints": result.get("corpus_unchanged_at_endpoints"),
+        "embedding_tags_unchanged_at_endpoints": result.get(
+            "embedding_tags_unchanged_at_endpoints", _TAGS_NOT_RECORDED
+        ),
         # Identity, alongside the divergence findings above. Divergence says
         # whether this report can be trusted; the digests say whether this run is
         # the same code and settings as another one, which is the question a
@@ -242,6 +250,28 @@ def format_provenance_html(provenance):
             "</p>"
         )
 
+    tags = provenance.get("embedding_tags_unchanged_at_endpoints", _TAGS_NOT_RECORDED)
+    if tags is _TAGS_NOT_RECORDED:
+        tags_line = ""
+    elif tags is True:
+        tags_line = (
+            "<p class='provenance-ok'>The embedding model tags did not change "
+            "during the run.</p>"
+        )
+    elif tags is False:
+        tags_line = (
+            "<p class='provenance-alert'>The embedding model tags "
+            "<strong>changed</strong> while the run was in progress; some "
+            "questions searched vectors of another model or of no recorded "
+            "model.</p>"
+        )
+    else:
+        tags_line = (
+            "<p class='provenance-alert'>Embedding model tag stability is "
+            "<strong>unknown</strong>: it was not observed at the end of the "
+            "run.</p>"
+        )
+
     ingest = provenance.get("ingest_wall_seconds", _INGEST_NOT_RECORDED)
     if ingest is _INGEST_NOT_RECORDED:
         ingest_line = (
@@ -272,6 +302,7 @@ def format_provenance_html(provenance):
         "<div class='provenance'><h2>Run provenance</h2>"
         + config_line
         + corpus_line
+        + tags_line
         + ingest_line
         + format_version_html(provenance)
         + "</div>"
@@ -1211,6 +1242,23 @@ def format_provenance_markdown(provenance):
             "⚠️ Corpus stability is **unknown**: it was not observed both before "
             f"and after the run ({code_span(before)} → {code_span(after)})."
         )
+
+    tags = provenance.get("embedding_tags_unchanged_at_endpoints", _TAGS_NOT_RECORDED)
+    if tags is not _TAGS_NOT_RECORDED:
+        lines.append("")
+        if tags is True:
+            lines.append("✅ The embedding model tags did not change during the run.")
+        elif tags is False:
+            lines.append(
+                "⚠️ The embedding model tags **changed** while the run was in "
+                "progress; some questions searched vectors of another model or "
+                "of no recorded model."
+            )
+        else:
+            lines.append(
+                "⚠️ Embedding model tag stability is **unknown**: it was not "
+                "observed at the end of the run."
+            )
 
     ingest = provenance.get("ingest_wall_seconds", _INGEST_NOT_RECORDED)
     lines.append("")

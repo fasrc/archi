@@ -30,8 +30,10 @@ from src.utils.benchmark_provenance import (
     collect_code_version,
     collection_readiness,
     config_version,
+    embedding_tags_unchanged,
     live_category_map,
     live_corpus_fingerprint,
+    live_embedding_tag_state,
     prompt_text_sha256,
     retrieval_identity,
     retrieval_record,
@@ -264,6 +266,11 @@ class ResultHandler:
             stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is not _NOT_RECORDED and stability is not True:
                 return "the corpus was not stable across an arm's own questions"
+            tag_stability = record.get(
+                "embedding_tags_unchanged_at_endpoints", _NOT_RECORDED
+            )
+            if tag_stability is not _NOT_RECORDED and tag_stability is not True:
+                return "the embedding model tags changed while an arm was running"
             if record.get("configuration_divergence"):
                 return "an arm did not run the settings it was selected to run"
             fingerprint = record.get("corpus_fingerprint")
@@ -481,6 +488,23 @@ class ResultHandler:
             return None, f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
 
     @staticmethod
+    def get_embedding_tag_state(config: Optional[Dict[str, Any]]):
+        """End-of-arm embedding tag state, or a marker explaining why it is missing.
+
+        Like ``get_corpus_fingerprint``: never raises, warns on failure.
+        """
+        try:
+            return live_embedding_tag_state(_factory_pool(), config)
+        except Exception as exc:  # noqa: BLE001 - provenance is never fatal
+            logger.warning(
+                "Embedding tag provenance unavailable: %s. This arm cannot be "
+                "shown to have been searched by the configured embedding model "
+                "throughout.",
+                exc,
+            )
+            return f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
+
+    @staticmethod
     def map_prompts(config: Dict[str, Any]):
         prompts = config.get("services", {}).get("benchmarking", {}).get("prompts")
         if not isinstance(prompts, dict):
@@ -586,6 +610,15 @@ class ResultHandler:
                 corpus_after,
             )
 
+        tags_end = ResultHandler.get_embedding_tag_state(running_config)
+        tags_unchanged = embedding_tags_unchanged(retrieval_identity, tags_end)
+        if tags_unchanged is False:
+            logger.warning(
+                "The embedding model tags changed while this arm was running; "
+                "some questions searched vectors of another model or of no "
+                "recorded model"
+            )
+
         # The same three states for the URL -> category map (#538 rules 1-2).
         category_map_end_records, category_map_after = ResultHandler.get_category_map(
             running_config
@@ -621,6 +654,8 @@ class ResultHandler:
             "corpus_fingerprint_before": corpus_before,
             "corpus_fingerprint": corpus_after,
             "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
+            "embedding_tags_end": tags_end,
+            "embedding_tags_unchanged_at_endpoints": tags_unchanged,
             # The map a per-category slice may read, bound to this arm: the end
             # records are written by dump_artifacts as `category_map_file`, whose
             # sha256 equals `category_map_sha256_end` by construction.
@@ -1285,6 +1320,19 @@ class ResultHandler:
                 corpus_warnings.append(
                     f"corpus stability is unknown for variant '{name}'; it was "
                     "not observed before and after the run"
+                )
+            tag_stability = record.get(
+                "embedding_tags_unchanged_at_endpoints", _NOT_RECORDED
+            )
+            if tag_stability is False:
+                corpus_warnings.append(
+                    f"the embedding model tags changed while variant '{name}' was "
+                    "running; some questions searched vectors of another model or "
+                    "of no recorded model"
+                )
+            elif tag_stability is None:
+                corpus_warnings.append(
+                    f"embedding tag stability is unknown for variant '{name}'"
                 )
             divergence = record.get("configuration_divergence") or []
             if divergence:

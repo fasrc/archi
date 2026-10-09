@@ -203,6 +203,11 @@ if not usable(fp) or not usable(fp_before):
 # corpora are not one observation; such an artifact must never become the pin.
 if fp != fp_before or arm.get("corpus_unchanged_at_endpoints") is not True:
     print(f"REFUSED: the corpus changed during the run (before {fp_before}, after {fp}, unchanged={arm.get('corpus_unchanged_at_endpoints')!r}); the arm is void", file=sys.stderr); sys.exit(2)
+# #573: the fingerprint is model-neutral, so a re-embed under another model during the arm
+# shows only in the end-of-run tag reading. An absent key predates the reading and passes;
+# a recorded false (changed) or null (not observed) does not.
+if "embedding_tags_unchanged_at_endpoints" in arm and arm["embedding_tags_unchanged_at_endpoints"] is not True:
+    print(f"REFUSED: the embedding model tags changed during the run (embedding_tags_unchanged_at_endpoints={arm['embedding_tags_unchanged_at_endpoints']!r}, end={arm.get('embedding_tags_end')!r}); the arm is void", file=sys.stderr); sys.exit(2)
 pin_file, run = os.environ["FM_PIN_FILE"], int(os.environ["FM_RUN"])
 previous_pin = None
 if os.path.exists(pin_file):

@@ -380,3 +380,30 @@ def test_an_html_null_host_names_the_remote_engine_refusal_cause():
     assert "capture failed" in html_null
     assert "metadata could not be read" in html_null
     assert "predates the field" in html_null
+
+
+def test_html_flags_changed_embedding_model_tags():
+    html = _html(embedding_tags_unchanged_at_endpoints=False)
+
+    assert "embedding model tag" in html
+    assert "changed" in html.lower()
+
+
+def test_html_shows_unknown_for_none_embedding_tag_stability():
+    html = _html(embedding_tags_unchanged_at_endpoints=None)
+
+    assert "embedding model tag" in html.lower()
+    assert "unknown" in html.lower()
+
+
+def test_html_shows_unchanged_line_for_stable_embedding_tags():
+    html = _html(embedding_tags_unchanged_at_endpoints=True)
+
+    assert "embedding model tag" in html
+    assert "did not change" in html
+
+
+def test_html_shows_no_tag_line_for_artifact_without_embedding_tag_key():
+    html = _html()
+
+    assert "embedding model tag" not in html

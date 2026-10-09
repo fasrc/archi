@@ -354,3 +354,118 @@ class TestTheStartGuard:
         )
 
         assert ResultHandler.results[-1]["retrieval_identity"] == identity
+
+
+class TestTheHarnessEndTagReading:
+    """handle_results writes the two embedding-tag keys after each arm (#573)."""
+
+    def _call(
+        self,
+        monkeypatch,
+        tmp_path,
+        *,
+        identity,
+        tag_end,
+        results_arg=None,
+        corpus_before=None,
+    ):
+        _install_pool(monkeypatch, _FakePool(rows=[]))
+        config_path = tmp_path / "arm.yaml"
+        config_path.write_text(yaml.safe_dump({"services": {"benchmarking": {}}}))
+        monkeypatch.setattr(ResultHandler, "results", [])
+        monkeypatch.setattr(ResultHandler, "category_map_records_by_arm", [])
+        monkeypatch.setattr(
+            ResultHandler,
+            "get_embedding_tag_state",
+            staticmethod(lambda config: tag_end),
+        )
+        ResultHandler.handle_results(
+            config_path,
+            results_arg or {},
+            {},
+            running_config=RUNNING_CONFIG,
+            corpus_before=corpus_before,
+            retrieval_identity=identity,
+        )
+        return ResultHandler.results[-1]
+
+    def test_an_unchanged_state_records_true_and_the_end_dict(
+        self, monkeypatch, tmp_path
+    ):
+        end = {"embedding_model_tags": ["m1"], "untagged_chunk_count": 0}
+        record = self._call(
+            monkeypatch,
+            tmp_path,
+            identity={"embedding_model": "m1", "untagged_chunk_count": 0},
+            tag_end=end,
+        )
+        assert record["embedding_tags_unchanged_at_endpoints"] is True
+        assert record["embedding_tags_end"] == end
+
+    def test_a_foreign_tag_with_equal_corpus_records_false_and_logs_warning(
+        self, monkeypatch, tmp_path, caplog
+    ):
+        end = {"embedding_model_tags": ["m1", "m2"], "untagged_chunk_count": 0}
+        with caplog.at_level("WARNING", logger="src.bin.service_benchmark"):
+            record = self._call(
+                monkeypatch,
+                tmp_path,
+                identity={"embedding_model": "m1", "untagged_chunk_count": 0},
+                tag_end=end,
+                corpus_before=_v2([]),
+            )
+        assert record["corpus_unchanged_at_endpoints"] is True
+        assert record["embedding_tags_unchanged_at_endpoints"] is False
+        assert any(
+            "embedding model tags" in r.getMessage()
+            for r in caplog.records
+            if r.levelname == "WARNING"
+        )
+
+    def test_a_failed_end_reading_records_the_marker_and_none_and_keeps_scores(
+        self, monkeypatch, tmp_path
+    ):
+        marker = f"{ResultHandler.CORPUS_UNAVAILABLE} boom>"
+        record = self._call(
+            monkeypatch,
+            tmp_path,
+            identity={"embedding_model": "m1", "untagged_chunk_count": 0},
+            tag_end=marker,
+            results_arg={"q1": {"score": 0.9}},
+        )
+        assert record["embedding_tags_end"].startswith("<unavailable:")
+        assert record["embedding_tags_unchanged_at_endpoints"] is None
+        assert record["single_question_results"]["q1"]["score"] == 0.9
+
+    def test_retrieval_identity_none_records_none(self, monkeypatch, tmp_path):
+        end = {"embedding_model_tags": ["m1"], "untagged_chunk_count": 0}
+        record = self._call(
+            monkeypatch,
+            tmp_path,
+            identity=None,
+            tag_end=end,
+        )
+        assert record["embedding_tags_unchanged_at_endpoints"] is None
+
+    def test_the_real_wrapper_catches_a_failing_tag_read(self, monkeypatch, tmp_path):
+        _install_pool(monkeypatch, _FakePool(rows=[]))
+        config_path = tmp_path / "arm.yaml"
+        config_path.write_text(yaml.safe_dump({"services": {"benchmarking": {}}}))
+        monkeypatch.setattr(ResultHandler, "results", [])
+        monkeypatch.setattr(ResultHandler, "category_map_records_by_arm", [])
+
+        def _raise(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(sb, "live_embedding_tag_state", _raise)
+        ResultHandler.handle_results(
+            config_path,
+            {"q1": {"score": 0.9}},
+            {},
+            running_config=RUNNING_CONFIG,
+            retrieval_identity={"embedding_model": "m1", "untagged_chunk_count": 0},
+        )
+        record = ResultHandler.results[-1]
+        assert record["embedding_tags_end"].startswith(ResultHandler.CORPUS_UNAVAILABLE)
+        assert record["embedding_tags_unchanged_at_endpoints"] is None
+        assert record["single_question_results"]["q1"]["score"] == 0.9

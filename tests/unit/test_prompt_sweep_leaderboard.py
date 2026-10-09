@@ -342,6 +342,39 @@ def test_incomparability_reason_names_the_predicate_that_failed():
     assert ResultHandler.arms_comparable([judged_16, judged_16]) is True
 
 
+# --- #573: end-of-run embedding tags ---
+
+
+def test_embedding_tag_change_is_an_incomparability_reason():
+    base = {"corpus_fingerprint": "c1", "corpus_unchanged_at_endpoints": True}
+    changed = {**base, "embedding_tags_unchanged_at_endpoints": False}
+    reason = ResultHandler.arms_incomparability_reason([base, changed])
+    assert reason is not None
+    assert "embedding" in reason
+
+
+def test_embedding_tag_null_stability_is_an_incomparability_reason():
+    base = {"corpus_fingerprint": "c1", "corpus_unchanged_at_endpoints": True}
+    unknown = {**base, "embedding_tags_unchanged_at_endpoints": None}
+    reason = ResultHandler.arms_incomparability_reason([base, unknown])
+    assert reason is not None
+    assert "embedding" in reason
+
+
+def test_absent_embedding_tag_key_is_not_an_incomparability_reason():
+    base = {"corpus_fingerprint": "c1", "corpus_unchanged_at_endpoints": True}
+    assert ResultHandler.arms_incomparability_reason([base, base]) is None
+
+
+def test_true_embedding_tag_key_is_not_an_incomparability_reason():
+    base = {
+        "corpus_fingerprint": "c1",
+        "corpus_unchanged_at_endpoints": True,
+        "embedding_tags_unchanged_at_endpoints": True,
+    }
+    assert ResultHandler.arms_incomparability_reason([base, base]) is None
+
+
 def test_rank_label_renders_a_withheld_rank_without_percent_d():
     """A withheld rank must survive the console table.
 
