@@ -85,7 +85,7 @@ Standing notes for every task:
       `git_diff_stat`. **This test is the one that goes red if the issue's literal
       `-- . ':(exclude)bench_out'` was used**: from `src/pkg` that form drops `README.md`.
       If it fails, fix the pathspec to the `top` form, never the test. Gate green; commit.
-- [ ] 1.3 `model: sonnet` — Pin `bound_text` and the stat bound, same test file, importing
+- [x] 1.3 `model: sonnet` — Pin `bound_text` and the stat bound, same test file, importing
       `bound_text`, `GIT_DIFF_MAX_BYTES` and `GIT_DIFF_STAT_MAX_FILES` from
       `src.cli.managers.git_diff_capture`. Tests: `test_bound_text_keeps_empty_input_empty`
       (`bound_text("", 10) == ("", False, 0)`);
@@ -123,7 +123,7 @@ Standing notes for every task:
 
 ## 3. Close out
 
-- [ ] 3.1 `model: sonnet` — Run `bash scripts/gate.sh` once more on the finished change and
+- [x] 3.1 `model: sonnet` — Run `bash scripts/gate.sh` once more on the finished change and
       confirm it exits 0. Run `grep -n 'git_diff' src/utils/benchmark_provenance.py` and
       confirm the three matches (`:697`, `:722`, `:819` after the 2026-10-06 merge of `origin/dev`) are unchanged and all read the key
       `git_diff`. Confirm `git status --porcelain` is empty after the last commit. Push
