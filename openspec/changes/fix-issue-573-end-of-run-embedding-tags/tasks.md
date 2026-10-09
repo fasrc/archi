@@ -81,7 +81,7 @@
 
 ## 3. Harness consumers and the per-arm report
 
-- [ ] 3.1 In `tests/unit/test_prompt_sweep_leaderboard.py` (for
+- [x] 3.1 In `tests/unit/test_prompt_sweep_leaderboard.py` (for
       `arms_incomparability_reason`, see `:329-340`) and
       `tests/unit/test_leaderboard_corpus_provenance.py` (for the warnings), add tests, then
       implement the first two bullets of design D4 in `src/bin/service_benchmark.py`, one
