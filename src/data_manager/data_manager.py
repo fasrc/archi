@@ -67,7 +67,9 @@ class DataManager:
             self.run_ingestion()
 
     def run_ingestion(
-        self, progress_callback: Optional[Callable[[str], None]] = None
+        self,
+        progress_callback: Optional[Callable[[str], None]] = None,
+        embedding_progress=None,
     ) -> None:
         """Execute initial ingestion and vectorstore update."""
         source_aggregation = [
@@ -107,7 +109,7 @@ class DataManager:
         self.vector_manager.delete_existing_collection_if_reset()
         if progress_callback:
             progress_callback("Updating vectorstore")
-        self.vector_manager.update_vectorstore()
+        self.vector_manager.update_vectorstore(embedding_progress=embedding_progress)
 
     def delete_existing_collection_if_reset(self, *, force: bool = False):
         """Proxy to the underlying vector manager."""

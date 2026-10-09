@@ -25,7 +25,7 @@ from src.cli.qa_eval import eval_cli
 from src.cli.service_registry import service_registry
 from src.cli.source_registry import source_registry
 from src.cli.tools import sources_builder
-from src.cli.tools.config_seed import seed_entry
+from src.cli.tools.config_seed import arm_divergence_refusal, seed_entry
 from src.cli.utils.helpers import *
 from src.cli.utils.helpers import (
     _infer_gpu_ids_from_compose,
@@ -221,12 +221,16 @@ def create(
         log_deployment_start(name, services, enabled_sources, dry)
         log_dependency_resolution(services, enabled_services)
 
-        # Validate configuration and secrets
-        config_manager.validate_configs(enabled_services, enabled_sources)
+        # Validate configuration and secrets, including the services a selected
+        # service runs (`--services slack` also runs the chatbot)
+        validated_services = service_registry.selected_with_dependencies(
+            enabled_services
+        )
+        config_manager.validate_configs(validated_services, enabled_sources)
         logger.info("Configurations validated successfully")
 
         required_secrets, all_secrets = secrets_manager.get_secrets(
-            set(enabled_services), set(enabled_sources)
+            set(validated_services), set(enabled_sources)
         )
         try:
             secrets_manager.validate_secrets(required_secrets)
@@ -303,7 +307,7 @@ def create(
         # It cannot move below the --dry return either, or a dry run would stop
         # reporting the removal it would have performed.
         refuse_agent_config_inside_deployment(
-            config_manager.get_configs(), base_dir, enabled_services
+            config_manager.get_configs(), base_dir, validated_services
         )
 
         # Volumes only, no config: staging local_files copies into the data-manager
@@ -611,6 +615,8 @@ def restart(
         ]
         enabled_sources = source_registry.resolve_dependencies(enabled_sources)
 
+        config_manager.set_sources_enabled(enabled_sources)
+
         config_manager.validate_configs(enabled_services, enabled_sources)
 
         _validate_non_chatbot_sections(
@@ -841,6 +847,9 @@ def evaluate(
         # Validate EVERY config's effective (template-defaulted) question set,
         # including enabled anchors, so a bank/mode mismatch never survives to
         # grading and wastes the ~50-min re-ingest.
+        arm_refusal = arm_divergence_refusal(config_files)
+        if arm_refusal:
+            raise click.ClickException(arm_refusal)
         config_manager = ConfigurationManager(config_files, env)
         bank_errors, bank_warnings = preflight_benchmark_configs(config_manager.configs)
         for bank_warning in bank_warnings:

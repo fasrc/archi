@@ -10,6 +10,11 @@
 #   FM_DOCKER   the docker binary (default: docker)
 #   FM_ARCHI    the archi CLI (default: archi)
 #   FM_PYTHON   the python used for the YAML/JSON edits (default: python3)
+#   FM_PAGE_MAIL_TO  operator mail recipient for paged refusals after long work (default:
+#               empty = paging off)
+#   FM_MAIL     the mail binary fm_page invokes (default: mail)
+#   FM_MAIL_TIMEOUT  seconds fm_page waits for FM_MAIL before it gives up (default: 60;
+#               zero or a value that is not a positive number also gives 60)
 set -euo pipefail
 
 FM_OUT="${FM_OUT:-$PWD/bench_out/feature_matrix}"
@@ -18,11 +23,42 @@ FM_DOCKER="${FM_DOCKER:-docker}"
 FM_ARCHI="${FM_ARCHI:-archi}"
 FM_PYTHON="${FM_PYTHON:-python3}"
 FM_GIT="${FM_GIT:-git}"
+FM_PAGE_MAIL_TO="${FM_PAGE_MAIL_TO:-}"
+FM_MAIL="${FM_MAIL:-mail}"
+FM_MAIL_TIMEOUT="${FM_MAIL_TIMEOUT:-60}"
 
 fm_require_run_number() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] || fm_die "run number must be a positive integer, got '${1:-}'"; }
 
 fm_die() { printf 'feature_matrix: %s\n' "$*" >&2; exit 2; }
 fm_log() { printf '==> %s\n' "$*"; }
+
+# Pages the operator by mail when a run stops after long work at a point that needs a
+# human (plan: issue #504). A no-op when FM_PAGE_MAIL_TO is empty (paging off). A failing
+# or missing FM_MAIL never fails the caller: it logs `page failed` to stderr and returns 0,
+# so it cannot trip `set -e`/`pipefail` in the wrapper that called it. A FM_MAIL that does
+# not return in FM_MAIL_TIMEOUT seconds gets SIGTERM, then SIGKILL 5 seconds later if it
+# ignores SIGTERM, and counts as a failure, so a hung MTA cannot keep an unattended wrapper
+# from its refusal exit. On a host without `timeout` the page is still sent, unbounded (a
+# missing bound must not drop the page).
+fm_page() { # $1 = subject (the "feature_matrix: " prefix is added here), $2 = body
+  [ -n "$FM_PAGE_MAIL_TO" ] || return 0
+  local bound=() secs="$FM_MAIL_TIMEOUT"
+  # `timeout 0` disables the bound and a non-duration makes `timeout` fail, so anything but
+  # a positive number of seconds falls back to the default.
+  [[ "$secs" =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)$ && "$secs" =~ [1-9] ]] || secs=60
+  command -v timeout >/dev/null 2>&1 && bound=(timeout -k 5 "$secs")
+  printf '%s\n' "$2" | ${bound[@]+"${bound[@]}"} "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" \
+    || printf 'feature_matrix: page failed\n' >&2
+  return 0
+}
+
+# Pages, then dies exactly like fm_die (same stderr line, same exit 2) — for the handful of
+# refusals that follow long unattended work, where the operator needs the page because
+# nobody is watching the terminal.
+fm_die_paged() { # $1 = subject context (e.g. "stack fm-01 arm 01"), $2 = message, [$3 = body, default $2]
+  fm_page "$1: $2" "${3:-$2}"
+  fm_die "$2"
+}
 
 # Arm labels are two digits with an optional letter: 00, 05a. Anything else is refused
 # before it becomes a deployment name (the name reaches `archi delete --force` paths).

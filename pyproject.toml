@@ -87,7 +87,17 @@ dependencies = [
     # add-slack-service: the Slack bot's Socket Mode and Web API client. It has no
     # required dependencies; its built-in Socket Mode client needs no websocket
     # package. Version matches requirements-base.txt.
-    "slack_sdk==3.45.0"
+    "slack_sdk==3.45.0",
+    # issue #468: src/utils/__init__.py imports user_service, which imports
+    # src.utils.rbac.audit -- and importing any submodule of src.utils.rbac first
+    # runs src/utils/rbac/__init__.py, which imports src.utils.rbac.decorators,
+    # which imports flask directly. flask-login, flask-session, and flask-cors are
+    # declared alongside it since they are the other flask extensions the rbac/auth
+    # stack pulls in. Versions match requirements-base.txt.
+    "flask==3.0.3",
+    "flask-login==0.6.3",
+    "flask-session==0.8.0",
+    "flask-cors==5.0.0"
 ]
 
 [project.scripts]

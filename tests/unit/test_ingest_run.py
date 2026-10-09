@@ -319,7 +319,9 @@ def test_a_raising_sync_records_a_failed_run_and_reraises(monkeypatch):
 
     mgr = _bare_manager(_data_manager_config={})
     monkeypatch.setattr(
-        mgr, "_sync_vectorstore", lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        mgr,
+        "_sync_vectorstore",
+        lambda **_: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
     with pytest.raises(RuntimeError):
@@ -327,6 +329,47 @@ def test_a_raising_sync_records_a_failed_run_and_reraises(monkeypatch):
 
     _, params = conn.cursor_obj.executed[-1]
     assert "failed" in params
+
+
+def test_update_vectorstore_passes_embedding_progress_to_sync(monkeypatch):
+    conn = _FakeConn(rows=[[("embedded", 1)], [(1,)]])
+    monkeypatch.setattr(
+        "src.data_manager.vectorstore.manager.psycopg2.connect",
+        lambda **kwargs: conn,
+    )
+
+    mgr = _bare_manager(_data_manager_config={})
+    received = {}
+    monkeypatch.setattr(
+        mgr,
+        "_sync_vectorstore",
+        lambda **kwargs: received.update(kwargs) or "up_to_date",
+    )
+
+    cb = object()
+    mgr.update_vectorstore(embedding_progress=cb)
+
+    assert received.get("embedding_progress") is cb
+
+
+def test_update_vectorstore_passes_none_when_no_embedding_progress(monkeypatch):
+    conn = _FakeConn(rows=[[("embedded", 1)], [(1,)]])
+    monkeypatch.setattr(
+        "src.data_manager.vectorstore.manager.psycopg2.connect",
+        lambda **kwargs: conn,
+    )
+
+    mgr = _bare_manager(_data_manager_config={})
+    received = {}
+    monkeypatch.setattr(
+        mgr,
+        "_sync_vectorstore",
+        lambda **kwargs: received.update(kwargs) or "up_to_date",
+    )
+
+    mgr.update_vectorstore()
+
+    assert received.get("embedding_progress") is None
 
 
 def test_a_successful_sync_records_the_status_it_returned(monkeypatch):
@@ -337,7 +380,7 @@ def test_a_successful_sync_records_the_status_it_returned(monkeypatch):
     )
 
     mgr = _bare_manager(_data_manager_config={})
-    monkeypatch.setattr(mgr, "_sync_vectorstore", lambda: "up_to_date")
+    monkeypatch.setattr(mgr, "_sync_vectorstore", lambda **_: "up_to_date")
 
     mgr.update_vectorstore()
 

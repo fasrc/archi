@@ -1398,24 +1398,52 @@ _INGEST_PROGRESS_STATES = frozenset({"running"})
 _INGEST_PRELOCK_STEP = "initializing"
 
 
-def _ingest_is_progressing(state: str, step: Any) -> bool:
+def _ingest_progress_done(payload: Dict[str, Any]) -> Optional[int]:
+    """Return `progress.done` from a status payload, or `None` if absent or malformed.
+
+    Malformed means: `progress` is not a dict, `done` is missing, is a bool,
+    is not an int, or is negative. A malformed counter is treated as absent so
+    an old data manager without the counter field falls back to the pre-counter
+    stall rule and is never falsely killed.
+    """
+    progress = payload.get("progress")
+    if not isinstance(progress, dict):
+        return None
+    done = progress.get("done")
+    if isinstance(done, bool) or not isinstance(done, int) or done < 0:
+        return None
+    return done
+
+
+def _ingest_is_progressing(
+    state: str,
+    step: Any,
+    done: Optional[int] = None,
+    last_done: Optional[int] = None,
+) -> bool:
     """Is this status payload evidence the ingest is actually doing work?
 
-    Only payloads this accepts restart the stall budget. Two shapes are
-    excluded on purpose, because both are indistinguishable from a healthy
-    long run if you look only at "did the endpoint answer":
+    Only payloads this accepts restart the stall budget. Rules applied in order:
 
-    - any state but "running" -- notably the initial "pending", which persists
-      forever if the ingestion thread never starts;
-    - "running" at step "initializing" -- published before `ingestion_lock` is
-      taken, so it is also exactly what a benchmark sees while its own ingest
-      is queued behind a scheduled task or an upload-triggered vectorstore
-      update, neither of which touches this status dict
-      (`service_data_manager.py:70-83`).
+    1. Any state but "running" → False. Notably the initial "pending", which
+       persists forever if the ingestion thread never starts.
+    2. Step "initializing" → False. Published before `ingestion_lock` is taken,
+       so it is also exactly what a benchmark sees while its own ingest is queued
+       behind a scheduled task or an upload-triggered vectorstore update, neither
+       of which touches this status dict (`service_data_manager.py:70-83`).
+    3. `done is None` → True. No counter present (older data manager, or a phase
+       outside the embedding loop); fall back to the pre-counter rule where any
+       running poll restarts the budget.
+    4. Otherwise → `done != last_done`. The counter advanced → True; frozen → False.
+       The first poll that carries a counter is always accepted (0 != None).
     """
     if state not in _INGEST_PROGRESS_STATES:
         return False
-    return str(step).strip().lower() != _INGEST_PRELOCK_STEP
+    if str(step).strip().lower() == _INGEST_PRELOCK_STEP:
+        return False
+    if done is None:
+        return True
+    return done != last_done
 
 
 def _ingest_wait_budgets() -> _IngestWaitBudgets:
@@ -2621,17 +2649,19 @@ class Benchmarker:
 
         Two judgement calls, both deliberate:
 
-        - Restart on any *running* poll, not on a **changing `step`**.
+        - Restart on *progress*, not on a **changing `step`**.
           `data_manager.py:108-109` emits "Updating vectorstore" once for the
           whole embedding phase, so the step string is constant for hours on a
           healthy run; a step-change rule would kill exactly the runs this
-          exists to protect.
+          exists to protect. When the data manager publishes a `progress`
+          counter, the budget instead restarts on each advancing `done` value.
         - Restart on *progress* only, not on any **answered** poll --
           `_ingest_is_progressing` decides. An endpoint stuck at `pending`, or
           at `running`/`initializing` because this ingest is queued behind
           another holder of `ingestion_lock`, is answering happily while
           nothing of ours is happening; the stall budget must end those,
-          exactly as the old absolute deadline did.
+          exactly as the old absolute deadline did. A `progress` counter on
+          those excluded payloads does not override the exclusion.
         """
         budgets = _ingest_wait_budgets()
         fetch = fetch or _fetch_ingestion_status
@@ -2667,14 +2697,16 @@ class Benchmarker:
         # campaign's cost table depend on what else the data-manager was doing.
         # Still None at the completed poll = no ingest was observed at all (#417).
         ingest_started_at: Optional[float] = None
+        last_done: Optional[int] = None
         attempt = 0
 
         logger.info(
             "Waiting for data-manager ingestion to complete before benchmarking..."
         )
         if not budgets.max_wait_seconds:
-            # The status payload carries no progress counter (only state/step,
-            # `ingestion_status.py:29-33`), so an ingest wedged *inside*
+            # When the data manager publishes a progress counter the stall
+            # budget catches a wedged ingest. Without it (older data manager,
+            # or phases outside the embedding loop), an ingest wedged inside
             # `update_vectorstore()` still answers "running" forever and only
             # the ceiling can end it. Disabling the ceiling is a legitimate
             # choice for a corpus larger than the default 6h -- but an
@@ -2701,12 +2733,14 @@ class Benchmarker:
 
                 state = str(payload.get("state", "")).lower()
                 step = payload.get("step")
+                done = _ingest_progress_done(payload)
                 logger.info(
-                    "Ingestion status check #%s via %s -> state=%s step=%s",
+                    "Ingestion status check #%s via %s -> state=%s step=%s progress=%s",
                     attempt,
                     status_url,
                     state,
                     step,
+                    done,
                 )
                 # THIS URL answered, so only ITS own recorded failure is stale.
                 # Another candidate's error is still that candidate's business
@@ -2717,8 +2751,9 @@ class Benchmarker:
                 last_ok_url = status_url
                 last_state = state
                 last_step = step
-                if _ingest_is_progressing(state, step):
+                if _ingest_is_progressing(state, step, done=done, last_done=last_done):
                     last_ok_at = clock()
+                    last_done = done
                     if ingest_started_at is None:
                         ingest_started_at = last_ok_at
 
