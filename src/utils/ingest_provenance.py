@@ -43,6 +43,15 @@ INGEST_CONFIG_KEYS = (
 #   the rest                          -> the config-seed fallbacks
 _DEFAULT_EMBEDDING_MODEL = "HuggingFaceEmbeddings"
 _DEFAULT_EMBEDDING_DIMENSIONS = 384
+
+# Per-model dimension defaults, mirroring the `default_dimensions` local table in
+# src/data_manager/vectorstore/manager.py (manager.__init__).  The parity test
+# parses that file with `ast` and asserts equality, so a drift there is caught.
+_DEFAULT_EMBEDDING_DIMENSIONS_BY_MODEL = {
+    "all-MiniLM-L6-v2": 384,
+    "OpenAIEmbeddings": 1536,
+    "HuggingFaceEmbeddings": 384,
+}
 _DEFAULT_CHUNK_SIZE = 1000
 _DEFAULT_CHUNK_OVERLAP = 150
 _DEFAULT_DISTANCE_METRIC = "cosine"
@@ -166,7 +175,10 @@ def build_ingest_config_snapshot(data_manager_config: Any) -> Dict[str, Any]:
         "effective_chunking": effective_chunking(dm),
         "embedding_model": embedding_model,
         "embedding_dimensions": embedding_entry.get(
-            "dimensions", _DEFAULT_EMBEDDING_DIMENSIONS
+            "dimensions",
+            _DEFAULT_EMBEDDING_DIMENSIONS_BY_MODEL.get(
+                embedding_model, _DEFAULT_EMBEDDING_DIMENSIONS
+            ),
         ),
         "chunk_size": dm.get("chunk_size", _DEFAULT_CHUNK_SIZE),
         "chunk_overlap": dm.get("chunk_overlap", _DEFAULT_CHUNK_OVERLAP),
@@ -202,6 +214,20 @@ def compare_ingest_config(
     for key in keys:
         now = live.get(key)
         then = recorded.get(key)
-        if now != then:
-            drift.append({"key": key, "current": now, "at_ingest": then})
+        if now == then:
+            continue
+        # Skip false drift introduced by task 1.1: rows recorded before the
+        # per-model default table existed stored 384 for every model.  If the
+        # model is unchanged and the stored value is the old flat default while
+        # the current value is exactly the model's new default, the mismatch is
+        # an artefact of the old default, not a real configuration change.
+        if (
+            key == "embedding_dimensions"
+            and then == _DEFAULT_EMBEDDING_DIMENSIONS
+            and live.get("embedding_model") == recorded.get("embedding_model")
+            and now
+            == _DEFAULT_EMBEDDING_DIMENSIONS_BY_MODEL.get(live.get("embedding_model"))
+        ):
+            continue
+        drift.append({"key": key, "current": now, "at_ingest": then})
     return drift

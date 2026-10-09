@@ -61,17 +61,24 @@ _SQL_LATEST_DEPLOYMENT = f"""
     LIMIT 1
 """
 
-# Only a COMPLETED run describes a corpus that is actually serving queries.
+# Only a run that completed with updated or up_to_date status describes the serving corpus.
 _SQL_LATEST_INGEST_RUN = f"""
     SELECT {", ".join(_INGEST_RUN_COLUMNS)}
     FROM ingest_run
-    WHERE completed_at IS NOT NULL
+    WHERE completed_at IS NOT NULL AND status IN ('updated', 'up_to_date')
     ORDER BY completed_at DESC
     LIMIT 1
 """
 
 _SQL_CURRENT_DATA_MANAGER_CONFIG = """
     SELECT data_manager_config FROM static_config WHERE id = 1
+"""
+
+_SQL_LATEST_FAILED_INGEST_RUN = """
+    SELECT completed_at FROM ingest_run
+    WHERE status = 'failed' AND completed_at IS NOT NULL
+    ORDER BY completed_at DESC
+    LIMIT 1
 """
 
 
@@ -117,6 +124,7 @@ def build_deployment_panel(row: Optional[Mapping]) -> Dict[str, Any]:
             "config_sha_short": None,
             "config_head_short": None,
             "pin_matched": None,
+            "pin_mismatch": False,
             "pin_state": PIN_STATE_UNKNOWN,
             "live_edited": False,
             "dirty_path_count": 0,
@@ -132,6 +140,7 @@ def build_deployment_panel(row: Optional[Mapping]) -> Dict[str, Any]:
         "config_sha_short": _short(row.get("config_sha")),
         "config_head_short": _short(row.get("config_head")),
         "pin_matched": row.get("pin_matched"),
+        "pin_mismatch": row.get("pin_matched") is False,
         "pin_state": pin_state(row),
         "live_edited": is_live_edited(row),
         "dirty_path_count": len(dirty),
@@ -142,7 +151,9 @@ def build_deployment_panel(row: Optional[Mapping]) -> Dict[str, Any]:
 
 
 def build_knowledge_base_panel(
-    run: Optional[Mapping], current_snapshot: Mapping
+    run: Optional[Mapping],
+    current_snapshot: Optional[Mapping],
+    last_failed_at: Any = None,
 ) -> Dict[str, Any]:
     """Build the Knowledge base panel from the newest completed ingest run.
 
@@ -162,9 +173,17 @@ def build_knowledge_base_panel(
             "chunk_count": None,
             "config": {},
             "drift": [],
+            "current_config_available": current_snapshot is not None,
+            "last_attempt_failed_at": last_failed_at,
         }
 
     snapshot = _as_flag_mapping(run.get("config_snapshot"))
+    if current_snapshot is None:
+        drift: List[Dict[str, Any]] = []
+        current_config_available = False
+    else:
+        drift = compare_ingest_config(current_snapshot, snapshot)
+        current_config_available = True
     return {
         "available": True,
         "started_at": run.get("started_at"),
@@ -176,8 +195,28 @@ def build_knowledge_base_panel(
         "documents_pending": run.get("documents_pending"),
         "chunk_count": run.get("chunk_count"),
         "config": snapshot,
-        "drift": compare_ingest_config(current_snapshot, snapshot),
+        "drift": drift,
+        "current_config_available": current_config_available,
+        "last_attempt_failed_at": _newer_failed_at(
+            run.get("completed_at"), last_failed_at
+        ),
     }
+
+
+def _newer_failed_at(run_completed_at: Any, last_failed_at: Any) -> Any:
+    """Return last_failed_at only when it is strictly newer than run_completed_at.
+
+    On any comparison error (e.g. naive vs aware datetime), returns last_failed_at
+    because showing a failure is the safe side.
+    """
+    if last_failed_at is None:
+        return None
+    if run_completed_at is None:
+        return last_failed_at
+    try:
+        return last_failed_at if last_failed_at > run_completed_at else None
+    except Exception:
+        return last_failed_at
 
 
 def _as_flag_mapping(value: Any) -> Dict[str, Any]:
@@ -201,6 +240,28 @@ def _fetch_row(cursor, sql: str, columns) -> Optional[Dict[str, Any]]:
     return dict(zip(columns, row))
 
 
+def _read_current_snapshot(conn: Any, cursor: Any) -> Optional[Dict[str, Any]]:
+    """Read the running ingest config, or ``None`` when it cannot be read.
+
+    An error here must not stop the failed-attempt read that follows: a newer
+    failed ingest has to stay visible. In PostgreSQL a failed statement aborts
+    the transaction, so roll back before the next read.
+    """
+    try:
+        cursor.execute(_SQL_CURRENT_DATA_MANAGER_CONFIG)
+        config_row = cursor.fetchone()
+        if not config_row:
+            return None
+        return build_ingest_config_snapshot(config_row[0])
+    except Exception as exc:
+        logger.warning("Failed to read current ingest config: %s", exc)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+
+
 def load_status_provenance(conn: Any) -> Dict[str, Any]:
     """Load both panels. Never raises.
 
@@ -209,7 +270,8 @@ def load_status_provenance(conn: Any) -> Dict[str, Any]:
     """
     deployment_row = None
     run_row = None
-    current_snapshot: Dict[str, Any] = {}
+    current_snapshot: Optional[Dict[str, Any]] = None
+    last_failed_at = None
 
     try:
         cursor = conn.cursor()
@@ -219,10 +281,12 @@ def load_status_provenance(conn: Any) -> Dict[str, Any]:
             )
             run_row = _fetch_row(cursor, _SQL_LATEST_INGEST_RUN, _INGEST_RUN_COLUMNS)
 
-            cursor.execute(_SQL_CURRENT_DATA_MANAGER_CONFIG)
-            config_row = cursor.fetchone()
-            if config_row:
-                current_snapshot = build_ingest_config_snapshot(config_row[0])
+            current_snapshot = _read_current_snapshot(conn, cursor)
+
+            cursor.execute(_SQL_LATEST_FAILED_INGEST_RUN)
+            failed_row = cursor.fetchone()
+            if failed_row:
+                last_failed_at = failed_row[0]
         finally:
             cursor.close()
     except Exception as exc:
@@ -230,7 +294,9 @@ def load_status_provenance(conn: Any) -> Dict[str, Any]:
 
     return {
         "deployment": build_deployment_panel(deployment_row),
-        "knowledge_base": build_knowledge_base_panel(run_row, current_snapshot),
+        "knowledge_base": build_knowledge_base_panel(
+            run_row, current_snapshot, last_failed_at=last_failed_at
+        ),
     }
 
 

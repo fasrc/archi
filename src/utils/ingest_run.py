@@ -43,10 +43,16 @@ _SQL_DOCUMENT_COUNTS = """
     GROUP BY ingestion_status
 """
 
-_SQL_CHUNK_COUNT = "SELECT COUNT(*) FROM document_chunks"
+_SQL_CHUNK_COUNT_BASE = "SELECT COUNT(*)" " FROM document_chunks"
+_SQL_CHUNK_COUNT_SCOPED = (
+    _SQL_CHUNK_COUNT_BASE
+    + " WHERE metadata->>'collection' = %s OR metadata->>'collection' IS NULL"
+)
 
 
-def collect_ingest_counts(conn: Any) -> Dict[str, int]:
+def collect_ingest_counts(
+    conn: Any, collection_name: Optional[str] = None
+) -> Dict[str, int]:
     """Count documents by ingestion status, plus chunks.
 
     Returns an empty mapping when the counts cannot be read, so a caller can
@@ -58,7 +64,10 @@ def collect_ingest_counts(conn: Any) -> Dict[str, int]:
             cursor.execute(_SQL_DOCUMENT_COUNTS)
             by_status = {row[0]: row[1] for row in cursor.fetchall()}
 
-            cursor.execute(_SQL_CHUNK_COUNT)
+            if collection_name is not None:
+                cursor.execute(_SQL_CHUNK_COUNT_SCOPED, (collection_name,))
+            else:
+                cursor.execute(_SQL_CHUNK_COUNT_BASE)
             chunk_row = cursor.fetchone()
         finally:
             cursor.close()

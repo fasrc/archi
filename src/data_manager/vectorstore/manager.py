@@ -418,7 +418,10 @@ class VectorStoreManager:
                 config_snapshot=build_ingest_config_snapshot(
                     getattr(self, "_data_manager_config", {})
                 ),
-                counts=collect_ingest_counts(conn),
+                counts=collect_ingest_counts(
+                    conn,
+                    collection_name=getattr(self, "collection_name", None),
+                ),
             )
         finally:
             conn.close()

@@ -388,6 +388,57 @@ def test_a_successful_sync_records_the_status_it_returned(monkeypatch):
     assert "up_to_date" in params
 
 
+# ---------------------------------------------------------------------------
+# collect_ingest_counts — collection_name scoping (design D2)
+# ---------------------------------------------------------------------------
+
+
+def test_collect_ingest_counts_with_collection_name_scopes_chunk_sql():
+    conn = _FakeConn(rows=[[("embedded", 5)], [(20,)]])
+
+    collect_ingest_counts(conn, collection_name="x_with_y")
+
+    chunk_sql, chunk_params = conn.cursor_obj.executed[1]
+    assert "metadata->>'collection' = %s" in chunk_sql
+    assert "metadata->>'collection' IS NULL" in chunk_sql
+    assert chunk_params == ("x_with_y",)
+
+
+def test_collect_ingest_counts_without_collection_name_runs_unscoped_chunk_sql():
+    conn = _FakeConn(rows=[[("embedded", 5)], [(20,)]])
+
+    collect_ingest_counts(conn)
+
+    chunk_sql, chunk_params = conn.cursor_obj.executed[1]
+    assert "WHERE" not in chunk_sql
+    assert chunk_params is None
+
+
+def test_manager_passes_collection_name_to_collect_ingest_counts(monkeypatch):
+    import src.data_manager.vectorstore.manager as mgr_mod
+
+    conn = _FakeConn(rows=[[("embedded", 1)], [(1,)]])
+    monkeypatch.setattr(
+        "src.data_manager.vectorstore.manager.psycopg2.connect",
+        lambda **kwargs: conn,
+    )
+    captured = {}
+
+    def fake_collect(c, **kwargs):
+        captured.update(kwargs)
+        return {"chunk_count": 1}
+
+    monkeypatch.setattr(mgr_mod, "collect_ingest_counts", fake_collect)
+
+    mgr = _bare_manager(
+        collection_name="my_col_with_emb",
+        _data_manager_config={},
+    )
+    mgr._record_ingest_run(STARTED, "updated")
+
+    assert captured.get("collection_name") == "my_col_with_emb"
+
+
 def test_update_vectorstore_returns_the_sync_status(monkeypatch):
     """Callers need the terminal status: a "failed" sync must not read as done."""
     conn = _FakeConn(rows=[[("embedded", 1)], [(1,)]])
