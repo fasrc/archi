@@ -214,16 +214,26 @@ for key in os.environ["FM_KEYS"].split():
 # count and must be a whole one.
 def _judge(value, default, whole=False):
     ok = (int,) if whole else (int, float)
+    if isinstance(value, bool) or not isinstance(value, ok):
+        return default
     # math.isfinite mirrors _positive_number: YAML `.nan` passes `<= 0` (NaN
     # compares false against everything), and a NaN in the lock makes even two
-    # identical arms compare unequal, since nan != nan.
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, ok)
-        or not math.isfinite(value)
-        or value <= 0
-    ):
+    # identical arms compare unequal, since nan != nan. An int too large for a
+    # float raises OverflowError there, which also counts as not finite. A whole
+    # count is an int and always finite, so it skips the check, as
+    # _positive_int does.
+    if not whole:
+        try:
+            finite = math.isfinite(value)
+        except OverflowError:
+            finite = False
+        if not finite:
+            return default
+    if value <= 0:
         return default
+    # An integral float (600.0) locks as the int (600), as _positive_number returns it.
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
     return value
 
 

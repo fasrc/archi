@@ -1,3 +1,4 @@
+import copy
 import importlib
 import json
 import math
@@ -540,6 +541,10 @@ class ResultHandler:
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
 
+        # `map_prompts` swaps each prompt path for that file's text in place.
+        # `selected_file_digest` must fingerprint the file as written, so keep
+        # an untouched copy before the swap (#521).
+        selected_file = copy.deepcopy(config)
         ResultHandler.map_prompts(config)
 
         # What RAN, which in a sweep is not what this arm's file says. `run()`
@@ -726,7 +731,7 @@ class ResultHandler:
             # fingerprint differently even when they drive identical runs.
             "config_version": config_version(
                 running=running_config,
-                selected=config,
+                selected=selected_file,
                 effective_selected=with_effective_ragas_settings(
                     config, modes_executed=modes_executed
                 ),

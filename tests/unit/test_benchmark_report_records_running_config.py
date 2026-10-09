@@ -24,6 +24,7 @@ import yaml
 
 import src.bin.service_benchmark as sb
 from src.bin.service_benchmark import ResultHandler
+from src.utils.benchmark_provenance import config_version
 
 
 @pytest.fixture(autouse=True)
@@ -483,6 +484,67 @@ def test_a_missing_prompt_file_is_left_as_its_path(tmp_path):
 
     recorded = ResultHandler.results[0]["configuration"]
     assert recorded["services"]["benchmarking"]["prompts"]["main"]["greet"] == missing
+
+
+def _prompt_config(prompt_path):
+    return {
+        "services": {"benchmarking": {"prompts": {"main": {"greet": str(prompt_path)}}}}
+    }
+
+
+def test_selected_file_digest_differs_for_different_prompt_paths(tmp_path):
+    """Two files naming different prompt paths are different files (#521).
+
+    The digest fingerprints the file as written, so equal prompt contents
+    behind different paths must not make the two files look the same.
+    """
+    first_prompt = tmp_path / "one.txt"
+    second_prompt = tmp_path / "two.txt"
+    first_prompt.write_text("SAME BODY")
+    second_prompt.write_text("SAME BODY")
+
+    for name, prompt in (("a", first_prompt), ("b", second_prompt)):
+        config = _prompt_config(prompt)
+        ResultHandler.handle_results(
+            _write(tmp_path / name, config), {}, {}, running_config=config
+        )
+
+    first, second = ResultHandler.results
+    assert (
+        first["config_version"]["selected_file_digest"]
+        != second["config_version"]["selected_file_digest"]
+    )
+
+
+def test_selected_file_digest_ignores_prompt_file_edits(tmp_path):
+    """The same file reported twice keeps one digest when a prompt file changes."""
+    prompt = tmp_path / "p.txt"
+    prompt.write_text("FIRST BODY")
+    config = _prompt_config(prompt)
+    path = _write(tmp_path / "cfg", config)
+
+    ResultHandler.handle_results(path, {}, {}, running_config=config)
+    prompt.write_text("SECOND BODY")
+    ResultHandler.handle_results(path, {}, {}, running_config=config)
+
+    first, second = ResultHandler.results
+    assert (
+        first["config_version"]["selected_file_digest"]
+        == second["config_version"]["selected_file_digest"]
+    )
+
+
+def test_selected_file_digest_unchanged_without_prompts(tmp_path):
+    """A config with no prompts gets the same digest as before the fix."""
+    path = _write(tmp_path, FILE_CONFIG)
+
+    ResultHandler.handle_results(path, {}, {}, running_config=CHAIN_CONFIG)
+
+    expected = config_version(
+        running=CHAIN_CONFIG, selected=FILE_CONFIG, selected_file=str(path)
+    )["selected_file_digest"]
+    recorded = ResultHandler.results[0]["config_version"]["selected_file_digest"]
+    assert recorded == expected
 
 
 def test_records_ingest_wall_seconds_on_the_arm(tmp_path, monkeypatch):
