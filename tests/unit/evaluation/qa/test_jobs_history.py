@@ -2126,7 +2126,7 @@ def test_a_late_envelope_after_a_restart_never_resurrects_its_job(tmp_path):
         "generate_atoms"
     ), "a late envelope must not read as an active job and block the next one"
 
-    manager.wait(manager.list()[0]["id"], timeout=2)
+    manager.wait(manager.list()[0]["id"], timeout=JOB_WAIT_TIMEOUT)
     manager.close()
 
 
