@@ -166,7 +166,7 @@
 
 ## 7. Publish
 
-- [ ] 7.1 Run `bash scripts/gate.sh` on the tip and confirm it exits 0. Run each grep in
+- [x] 7.1 Run `bash scripts/gate.sh` on the tip and confirm it exits 0. Run each grep in
       issue #565's "Commands" section and confirm the stated results. Confirm
       `git diff origin/dev --stat -- docs/` lists only `docs/docs/services.md`. Push with
       `git push -u origin fix/issue-565-status-provenance-honesty`. Write the PR body to
