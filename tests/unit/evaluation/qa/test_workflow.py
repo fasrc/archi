@@ -2087,8 +2087,10 @@ def test_a_retry_with_fresh_attempts_takes_its_own_readings(
     assert manifest["corpus_fingerprint"] == "sha256/v2:d"
     assert manifest["corpus_unchanged_at_endpoints"] is False
     assert manifest["retrieval_identity"]["embedding_model"] == "Qwen/Q"
+    assert manifest["embedding_tags_unchanged_at_endpoints"] is True
     provenance = read_json(tmp_path / "successor" / "summary.json")["provenance"]
     assert provenance["corpus_fingerprint"] == "sha256/v2:d"
+    assert provenance["embedding_tags_unchanged_at_endpoints"] is True
 
 
 def test_a_search_run_records_both_tag_keys_in_manifest_and_summary(corpus, tmp_path):
@@ -2102,10 +2104,67 @@ def test_a_search_run_records_both_tag_keys_in_manifest_and_summary(corpus, tmp_
 
     manifest = read_json(run_dir / "manifest.json")
     assert "embedding_tags_end" in manifest
-    assert "embedding_tags_unchanged_at_endpoints" in manifest
+    assert manifest["embedding_tags_unchanged_at_endpoints"] is True
     prov = read_json(run_dir / "summary.json")["provenance"]
     assert "embedding_tags_end" in prov
-    assert "embedding_tags_unchanged_at_endpoints" in prov
+    assert prov["embedding_tags_unchanged_at_endpoints"] is True
+
+
+def test_a_search_run_with_a_foreign_end_tag_records_false(corpus, tmp_path):
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    run_dir = tmp_path / "run"
+    corpus["tags"] = {"embedding_model_tags": ["m2"], "untagged_chunk_count": 0}
+    workflow = QAWorkflow()
+    workflow.prepare(dataset, run_dir)
+    workflow.run(run_dir, tmp_path / "agent.yaml", tmp_path / "agent.md")
+    workflow.score(run_dir)
+
+    manifest = read_json(run_dir / "manifest.json")
+    assert manifest["embedding_tags_unchanged_at_endpoints"] is False
+    prov = read_json(run_dir / "summary.json")["provenance"]
+    assert prov["embedding_tags_unchanged_at_endpoints"] is False
+
+
+def test_a_retry_without_fresh_attempts_copies_the_parent_tag_values(
+    corpus, monkeypatch, tmp_path
+):
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    parent = tmp_path / "parent"
+    corpus["tags"] = {"embedding_model_tags": ["m2"], "untagged_chunk_count": 0}
+    monkeypatch.setattr(
+        workflow_module,
+        "ArchiAgentRuntime",
+        _AgentFactory(malformed_questions={"supplied question"}),
+    )
+    QAWorkflow().composite(
+        dataset, tmp_path / "agent.yaml", tmp_path / "agent.md", parent
+    )
+    parent_manifest = read_json(parent / "manifest.json")
+    assert parent_manifest["embedding_tags_unchanged_at_endpoints"] is False
+    corpus["tags"] = {"embedding_model_tags": ["Qwen/Q"], "untagged_chunk_count": 0}
+
+    class AcceptingEvaluatorFactory(_EvaluatorFactory):
+        def __call__(self, profile):
+            evaluator = super().__call__(profile)
+            original = evaluator.compare
+
+            def compare(question, gold_atoms, answer):
+                return original(question, gold_atoms, "answer")
+
+            evaluator.compare = compare
+            return evaluator
+
+    monkeypatch.setattr(
+        workflow_module, "LangChainEvaluatorRuntime", AcceptingEvaluatorFactory()
+    )
+
+    QAWorkflow().retry(parent, tmp_path / "successor")
+
+    manifest = read_json(tmp_path / "successor" / "manifest.json")
+    assert manifest["embedding_tags_unchanged_at_endpoints"] is False
+    assert manifest["embedding_tags_end"] == parent_manifest["embedding_tags_end"]
 
 
 def test_phase_usage_appears_in_summary_provenance(agent_inputs, monkeypatch, tmp_path):

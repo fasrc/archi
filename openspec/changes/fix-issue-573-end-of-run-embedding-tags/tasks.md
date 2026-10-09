@@ -135,7 +135,7 @@
       carry the two keys after a run with search; update the exact key set at `:295` to what
       that run now records, and widen the `end_readings` stub at `:372-379` to accept
       `identity_before=None`. Change no other existing assertion.
-- [ ] 4.1a (review finding) In `tests/unit/evaluation/qa/test_workflow.py`, the tag tests
+- [x] 4.1a (review finding) In `tests/unit/evaluation/qa/test_workflow.py`, the tag tests
       check only that the keys exist (`test_a_search_run_records_both_tag_keys_in_manifest_and_summary`
       ~:2094-2108 uses `key in manifest`). A mutation that sets `identity_before=None` at
       `src/evaluation/qa/workflow.py:603` and `:1150`, and replaces `:1006`
