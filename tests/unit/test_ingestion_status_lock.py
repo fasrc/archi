@@ -220,6 +220,139 @@ def test_embedding_progress_updates_status_and_is_kept_on_completion():
     assert completed["progress"] == {"done": 2, "total": 2}
 
 
+def test_initial_status_has_run_identity_none():
+    """Before any ingest, run_id, started_at, and finished_at are all None."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        pass
+
+    helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock())
+    status = helpers["get_ingestion_status"]()
+    assert status["run_id"] is None
+    assert status["started_at"] is None
+    assert status["finished_at"] is None
+
+
+def test_run_sets_run_id_and_started_at_while_running():
+    """A running ingest has a UUID4 run_id, an ISO-8601 started_at, and finished_at None."""
+    import uuid
+    from datetime import datetime, timezone
+
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    fixed_now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    observed = {}
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        observed.update(helpers["get_ingestion_status"]())
+
+    helpers = build_ingestion_helpers(
+        fake_run_ingestion, threading.RLock(), now=lambda: fixed_now
+    )
+    helpers["run_initial_ingestion_async"]()
+
+    assert uuid.UUID(observed["run_id"]).version == 4
+    assert observed["started_at"] == fixed_now.isoformat()
+    assert observed["finished_at"] is None
+
+
+def test_completed_sets_finished_at_and_keeps_run_id():
+    """A completed ingest sets finished_at and keeps the run_id it started with."""
+    from datetime import datetime, timezone
+
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    times = iter(
+        [
+            datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 1, 1, 0, 5, tzinfo=timezone.utc),
+        ]
+    )
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        pass
+
+    helpers = build_ingestion_helpers(
+        fake_run_ingestion, threading.RLock(), now=lambda: next(times)
+    )
+    helpers["run_initial_ingestion_async"]()
+
+    status = helpers["get_ingestion_status"]()
+    assert status["state"] == "completed"
+    assert status["run_id"] is not None
+    assert status["started_at"] == "2026-01-01T00:00:00+00:00"
+    assert status["finished_at"] == "2026-01-01T00:05:00+00:00"
+
+
+def test_error_sets_finished_at():
+    """A failed ingest sets finished_at alongside the error state."""
+    from datetime import datetime, timezone
+
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    times = iter(
+        [
+            datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+        ]
+    )
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        raise RuntimeError("disk full")
+
+    helpers = build_ingestion_helpers(
+        fake_run_ingestion, threading.RLock(), now=lambda: next(times)
+    )
+    helpers["run_initial_ingestion_async"]()
+
+    status = helpers["get_ingestion_status"]()
+    assert status["state"] == "error"
+    assert status["finished_at"] == "2026-01-01T00:01:00+00:00"
+
+
+def test_progress_callback_keeps_run_identity():
+    """A progress_callback step update does not disturb run_id or started_at."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    before = {}
+    after = {}
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        before.update(helpers["get_ingestion_status"]())
+        if progress_callback:
+            progress_callback("embedding")
+        after.update(helpers["get_ingestion_status"]())
+
+    helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock())
+    helpers["run_initial_ingestion_async"]()
+
+    assert after["run_id"] == before["run_id"]
+    assert after["started_at"] == before["started_at"]
+    assert after["state"] == "running"
+    assert after["step"] == "embedding"
+
+
+def test_two_runs_get_different_run_ids():
+    """Two consecutive run_initial_ingestion_async calls get distinct run_ids."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        pass
+
+    helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock())
+
+    helpers["run_initial_ingestion_async"]()
+    first_run_id = helpers["get_ingestion_status"]()["run_id"]
+
+    helpers["run_initial_ingestion_async"]()
+    second_run_id = helpers["get_ingestion_status"]()["run_id"]
+
+    assert first_run_id is not None
+    assert second_run_id is not None
+    assert first_run_id != second_run_id
+
+
 def test_second_run_initial_ingestion_resets_progress():
     """A second run_initial_ingestion_async resets progress to None before the fake fires."""
     from src.utils.ingestion_status import build_ingestion_helpers
