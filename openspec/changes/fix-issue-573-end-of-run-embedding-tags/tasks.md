@@ -89,6 +89,23 @@
       key `False` or `None` gives the tag reason; an absent key or `True` gives the same
       result as today; the leaderboard warning list carries the `False` and the `None`
       messages for the named variant.
+- [ ] 3.1a (review finding) In `tests/unit/test_leaderboard_corpus_provenance.py`,
+      `test_warns_when_an_arm_had_changed_embedding_tags` (~:119) and
+      `test_warns_when_embedding_tag_stability_is_unknown` (~:130) check the variant with
+      `"a" in w`, which every warning text satisfies ("changed", "stability"). Replace it
+      with `"variant 'a'" in w` in both tests. Confirm the stronger check fails if the
+      f-string at `src/bin/service_benchmark.py:1328` drops `{name}`, then restore it. One
+      commit (`test: pin the variant name in the tag warnings`).
+- [ ] 3.1b (review finding) `test_a_failed_end_reading_records_the_marker_and_none_and_keeps_scores`
+      (`tests/unit/test_benchmark_corpus_fingerprint.py` ~:425) stubs
+      `ResultHandler.get_embedding_tag_state` with a ready-made marker, so the wrapper's
+      except branch (`src/bin/service_benchmark.py:491-505`) is never asserted. Add a test
+      that leaves the wrapper real, makes `live_embedding_tag_state` (as imported in
+      `service_benchmark`) raise `RuntimeError("boom")`, and asserts
+      `embedding_tags_end` starts with `CORPUS_UNAVAILABLE`,
+      `embedding_tags_unchanged_at_endpoints is None`, and the scores are kept. Confirm it
+      fails if the except body returns `None`. One commit
+      (`test: drive the real tag-read wrapper through a failure`).
 - [ ] 3.2 In the existing report-provenance tests
       (`tests/unit/test_benchmark_report_provenance_panel.py`,
       `tests/unit/test_benchmark_report_markdown.py`, or
