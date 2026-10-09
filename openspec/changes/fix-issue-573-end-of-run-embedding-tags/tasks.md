@@ -66,7 +66,7 @@
 
 ## 2. Harness end reading
 
-- [ ] 2.1 In `tests/unit/test_benchmark_corpus_fingerprint.py`, add tests, then implement
+- [x] 2.1 In `tests/unit/test_benchmark_corpus_fingerprint.py`, add tests, then implement
       design D3 in `src/bin/service_benchmark.py`, one commit
       (`feat: harness records the end-of-arm tag state`). Assert, by calling
       `ResultHandler.handle_results` the way the existing identity test at `:340` does,

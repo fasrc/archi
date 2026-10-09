@@ -56,6 +56,13 @@ def _pin_corpus(monkeypatch, value):
     monkeypatch.setattr(
         ResultHandler, "get_corpus_fingerprint", staticmethod(lambda _config: value)
     )
+    monkeypatch.setattr(
+        ResultHandler,
+        "get_embedding_tag_state",
+        staticmethod(
+            lambda _config: {"embedding_model_tags": [], "untagged_chunk_count": 0}
+        ),
+    )
 
 
 FILE_CONFIG = {
