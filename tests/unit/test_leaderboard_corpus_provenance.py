@@ -115,7 +115,7 @@ def test_warns_when_an_arm_had_changed_embedding_tags():
 
     warnings = _warnings()
     assert any(
-        "embedding" in w.lower() and "changed" in w.lower() and "a" in w
+        "embedding" in w.lower() and "changed" in w.lower() and "variant 'a'" in w
         for w in warnings
     )
 
@@ -127,7 +127,7 @@ def test_warns_when_embedding_tag_stability_is_unknown():
 
     warnings = _warnings()
     assert any(
-        "embedding" in w.lower() and "unknown" in w.lower() and "a" in w
+        "embedding" in w.lower() and "unknown" in w.lower() and "variant 'a'" in w
         for w in warnings
     )
 

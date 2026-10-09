@@ -89,7 +89,7 @@
       key `False` or `None` gives the tag reason; an absent key or `True` gives the same
       result as today; the leaderboard warning list carries the `False` and the `None`
       messages for the named variant.
-- [ ] 3.1a (review finding) In `tests/unit/test_leaderboard_corpus_provenance.py`,
+- [x] 3.1a (review finding) In `tests/unit/test_leaderboard_corpus_provenance.py`,
       `test_warns_when_an_arm_had_changed_embedding_tags` (~:119) and
       `test_warns_when_embedding_tag_stability_is_unknown` (~:130) check the variant with
       `"a" in w`, which every warning text satisfies ("changed", "stability"). Replace it
