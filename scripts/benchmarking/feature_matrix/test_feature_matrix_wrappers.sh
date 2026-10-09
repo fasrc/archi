@@ -240,7 +240,11 @@ printf 'HUIT_API_KEY=x\n' > "$T/judge.env"
 
 artifact() { # $1 = path, $2 = divergence JSON, $3 = fingerprint, $4 = k in the recorded running configuration (default 5), $5 = fingerprint BEFORE the run (default = $3)
   # FP_PREFIX (default sha256:) is the digest version prefix; IDENTITY (default null) is the recorded retrieval_identity
-  # TAGS (default: key absent) is the recorded embedding_tags_unchanged_at_endpoints JSON value
+  # TAGS (default: key absent) is the recorded embedding_tags_unchanged_at_endpoints JSON value.
+  # Built here, not as ${TAGS:+ \"...\"} inside the heredoc: whether a heredoc strips those
+  # backslashes varies by bash version, and bash 4.4 (RHEL 8) keeps them -> invalid JSON.
+  local tags_kv=""
+  [ -n "${TAGS:-}" ] && tags_kv=" \"embedding_tags_unchanged_at_endpoints\": $TAGS,"
   cat > "$1" <<EOF
 {"metadata": {"corpus_snapshot_id": "snap-1", "code_version": {"digest": "sha256:code"}},
  "benchmarking_results": [{
@@ -250,7 +254,7 @@ artifact() { # $1 = path, $2 = divergence JSON, $3 = fingerprint, $4 = k in the 
      "stemming": {"enabled": false},
      "retrievers": {"hierarchical_rerank": {"enabled": true, "candidate_pool_size": 20, "num_documents_to_retrieve": ${4:-5}}}}},
    "config_version": {"digest": "sha256:cfg", "divergence_from_selected_file": $2},
-   "retrieval_identity": ${IDENTITY:-null},${TAGS:+ \"embedding_tags_unchanged_at_endpoints\": $TAGS,}
+   "retrieval_identity": ${IDENTITY:-null},$tags_kv
    "corpus_fingerprint": "${FP_PREFIX:-sha256:}$3", "corpus_fingerprint_before": "${FP_PREFIX:-sha256:}${5:-$3}", "corpus_unchanged_at_endpoints": $( [ "${5:-$3}" = "$3" ] && echo true || echo false ), "ingest_wall_seconds": 4321.0,
    "total_results": {"aggregate_context_precision": 0.5, "context_precision_scored": "3 of 3", "aggregate_faithfulness": 0.6},
    "single_question_results": {
