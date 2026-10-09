@@ -46,7 +46,7 @@
 
 ## 1. The shared helper
 
-- [ ] 1.1 In `tests/unit/test_collection_readiness.py`, add tests, then implement design
+- [x] 1.1 In `tests/unit/test_collection_readiness.py`, add tests, then implement design
       D1 and D2 in `src/utils/benchmark_provenance.py`, one commit
       (`feat: compare the embedding tag state at both ends`). Assert:
       (a) `live_embedding_tag_state(pool, config)` returns
