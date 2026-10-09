@@ -226,7 +226,9 @@ def wait_for_model(
     raise ArchiApiError(
         f"{url} did not answer after {attempts} attempts ({last_problem}). Check that "
         "the chatbot service runs and that services.chat_app.openai_compat.enabled "
-        "is true."
+        "is true (or, in host mode with auth off, that "
+        "services.chat_app.openai_compat.local_only is true and this bot calls the "
+        "chat app on localhost)."
     )
 
 

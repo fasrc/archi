@@ -16,3 +16,8 @@ TDD in every group: failing test first, watch it fail, then implement. Gate:
 ## 3. Docs
 
 - [x] 3.1 `model: haiku` — `api-reference-v1.md` "Local callers only"; the Slack prerequisites and config block in `services.md`; `configuration.md` `services.slack` line.
+
+## 4. Review fixes (pre-PR adversarial review, round 2)
+
+- [x] 4.1 `model: sonnet` — Red then green: `openai_compat_wanted` (enabled OR local_only) and `app.py` deciding with it; the Slack start-up error names `local_only` (D5).
+- [x] 4.2 `model: haiku` — Docs: `local_only: true` alone, never with `enabled`; design D5 (fail closed) and D6 (headerless relay declined, with reasons).

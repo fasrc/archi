@@ -81,6 +81,16 @@ def register_openai_compat(
     )
 
 
+def openai_compat_wanted(config: dict) -> bool:
+    """Whether to register /v1: `enabled`, or `local_only` alone.
+
+    A deployment that wants /v1 for local callers only sets `local_only: true` and
+    NOT `enabled`. An older chat app reads only `enabled`, so that config keeps /v1
+    off there instead of serving it to the network (openspec v1-local-only, D5).
+    """
+    return bool(config.get("enabled")) or bool(config.get("local_only"))
+
+
 def openai_compat_options(config: dict) -> dict:
     """The register_openai_compat keyword arguments read from
     services.chat_app.openai_compat (app.py passes them through unchanged)."""

@@ -22,6 +22,17 @@ A `before_request` on the blueprint answers before `require_bearer_auth` and bef
 
 Rejected: a CIDR allow-list. Only the same-host case is needed now; in bridge mode the bot is a container peer, and authentication is the right control there.
 
+### D5. `local_only` alone turns `/v1` on, so a config ahead of its code fails closed
+
+`/v1` is registered when `enabled` OR `local_only` is true (`openai_compat_wanted`). A deployment that wants a local-only `/v1` sets `local_only: true` and leaves `enabled` unset. A chat app older than this change reads only `enabled`, so that config keeps `/v1` OFF there (the Slack bot cannot start, which is visible and safe) instead of serving an unauthenticated `/v1` to the network. This holds on every path, including a hand-set `CONFIG_REF`/`CONFIG_SHA` and a raw `archi create`, with no version handshake. Review round 2 asked for a fail-closed guard; this is it.
+
+### D6. A headerless same-host relay is out of scope (declined, review rounds 1–2)
+
+A relay on the host that adds no forwarding header (an SSH `-L`, a bare TCP forwarder, a sidecar) would pass the gate. Declined because:
+- **No escalation.** Whoever can run such a relay on dev already has a shell on dev and can call `localhost:7861` directly.
+- **The network is already narrowed.** dev's firewall (`deploy/scripts/firewall.sh`) opens 7861 only to Harvard and FASRC VPN ranges. The 2026-10-08 probe shows nothing fronts 7861.
+- **The alternatives are the ones the operator set aside.** A separate private listener for the bot, or bearer auth on `/v1`, are the operator's other options (2026-10-08 decision: local-only). If dev ever puts a proxy in front of the chat app, turn on auth instead.
+
 ## Risks
 
-- **Config ahead of code.** An older chat app ignores `local_only` and would serve an open `/v1` if `enabled: true` is deployed with it. Mitigation, enforced by git order rather than procedure: dev's config pin (`deploy/scripts/lib.sh`) lives in the same checkout that builds the chat app, so the pin bump PR that points dev at the new `dev.yaml` can only land on a `dev` that already has this change; its test fails unless the gate is present. `redeploy.sh` (`archi create --force`) recreates the chatbot, so no older process keeps serving. Bypassed only by a hand-set `CONFIG_REF`/`CONFIG_SHA` or a hand-moved `config/` checkout on an old checkout.
+- **Config ahead of code.** Closed by D5: dev's config sets `local_only` without `enabled`, so an older chat app keeps `/v1` off. Only a config that sets BOTH keys reaches the old open behavior on old code; the docs say not to. A second layer, enforced by git order: dev's config pin (`deploy/scripts/lib.sh`) lives in the same checkout that builds the chat app, so the pin bump PR that points dev at the new `dev.yaml` can only land on a `dev` that already has this change; its test fails unless the gate is present. `redeploy.sh` (`archi create --force`) recreates the chatbot, so no older process keeps serving. Bypassed only by a hand-set `CONFIG_REF`/`CONFIG_SHA` or a hand-moved `config/` checkout on an old checkout.

@@ -180,6 +180,44 @@ class TestOptionsFromConfig:
         assert "**openai_compat_options(openai_compat_config)" in src
 
 
+class TestLocalOnlyTurnsV1On:
+    """local_only alone turns /v1 on, for local callers. A deployment that wants a
+    local-only /v1 sets local_only and NOT enabled, so an older chat app (which reads
+    only `enabled`) keeps /v1 off instead of serving it to the network: a config ahead
+    of its code fails closed (review round 2, design D5)."""
+
+    @pytest.mark.parametrize(
+        "cfg, want",
+        [
+            ({}, False),
+            ({"enabled": False}, False),
+            ({"enabled": True}, True),
+            ({"local_only": True}, True),
+            ({"enabled": False, "local_only": True}, True),
+            ({"enabled": True, "local_only": True}, True),
+            ({"local_only": False}, False),
+            ({"local_only": None}, False),
+        ],
+    )
+    def test_registered_when_enabled_or_local_only(self, cfg, want):
+        from src.interfaces.chat_app.openai_compat import openai_compat_wanted
+
+        assert openai_compat_wanted(cfg) is want
+
+    def test_app_py_decides_with_the_helper(self):
+        from pathlib import Path
+
+        src = Path("src/interfaces/chat_app/app.py").read_text()
+        assert "if openai_compat_wanted(openai_compat_config):" in src
+        assert 'openai_compat_config.get("enabled", False)' not in src
+
+    def test_slack_start_up_error_names_local_only(self):
+        from pathlib import Path
+
+        src = Path("src/interfaces/slack_bot.py").read_text()
+        assert "openai_compat.local_only" in src
+
+
 class TestTemplate:
     """base-config.yaml carries local_only into the stored config."""
 

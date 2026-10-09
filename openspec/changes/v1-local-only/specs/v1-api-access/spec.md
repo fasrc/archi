@@ -22,6 +22,17 @@ before.
 - **WHEN** `local_only` and authentication are both on and a remote caller sends no token
 - **THEN** the response is 403, not 401
 
+### Requirement: local_only alone turns /v1 on
+The chat app SHALL register `/v1` when `services.chat_app.openai_compat.enabled` or `services.chat_app.openai_compat.local_only` is true, so a config that sets only `local_only` keeps `/v1` off on a chat app that predates `local_only`.
+
+#### Scenario: Local-only config on new code
+- **WHEN** the config sets `openai_compat.local_only: true` and no `enabled`
+- **THEN** `/v1` is registered and answers loopback callers only
+
+#### Scenario: Local-only config on an older chat app
+- **WHEN** an older chat app, which reads only `enabled`, loads a config that sets only `local_only: true`
+- **THEN** `/v1` is not registered
+
 ### Requirement: The setting reaches the running app
 `base-config.yaml` SHALL render `services.chat_app.openai_compat.local_only` as a boolean (absent or null → `false`), and `app.py` SHALL pass it to `register_openai_compat` through `openai_compat_options`.
 

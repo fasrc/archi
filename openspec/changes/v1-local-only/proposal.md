@@ -14,5 +14,6 @@ The operator decided (2026-10-08) to run the Slack bot on dev with `/v1` reachab
 ## Impact
 
 - No change for a deployment that does not set `local_only` (claw keeps its open `/v1`).
-- dev: `environments/dev.yaml` (fasrc/archi-config) gets `openai_compat: {enabled: true, local_only: true}` in a separate PR, deployed only with code that includes this change.
+- `local_only: true` alone turns `/v1` on (`openai_compat_wanted`), so a config that sets only `local_only` keeps `/v1` off on an older chat app (fails closed).
+- dev: `environments/dev.yaml` (fasrc/archi-config) gets `openai_compat: {local_only: true}` (no `enabled`) in a separate PR.
 - Files: `src/interfaces/chat_app/openai_compat.py`, `src/interfaces/chat_app/app.py`, `src/cli/templates/base-config.yaml`, `tests/unit/test_openai_compat_local_only.py`, three docs pages.

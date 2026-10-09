@@ -20,9 +20,10 @@ When authentication is disabled, no token is required.
 services:
   chat_app:
     openai_compat:
-      enabled: true
-      local_only: true
+      local_only: true   # turns /v1 on, for local callers only; leave `enabled` unset
 ```
+
+`local_only: true` turns `/v1` on by itself. Do not also set `enabled: true`: a chat app older than this setting reads only `enabled`, so with `local_only` alone it keeps `/v1` off instead of serving it to the network.
 
 With `local_only: true`, `/v1` answers only a request whose TCP peer is a loopback address (`127.0.0.0/8` or `::1`) and that carries no proxy forwarding header (`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-IP`). Every other request gets HTTP 403 with `{"error": {"type": "permission_error", ...}}`, before authentication and before request validation. The rest of the chat app is not affected.
 

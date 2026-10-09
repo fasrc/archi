@@ -2852,12 +2852,13 @@ class FlaskAppWrapper(object):
 
         # Conditionally register OpenAI-compatible /v1 blueprint
         openai_compat_config = self.chat_app_config.get("openai_compat", {})
-        if openai_compat_config.get("enabled", False):
-            from src.interfaces.chat_app.openai_compat import (
-                openai_compat_options,
-                register_openai_compat,
-            )
+        from src.interfaces.chat_app.openai_compat import (
+            openai_compat_options,
+            openai_compat_wanted,
+            register_openai_compat,
+        )
 
+        if openai_compat_wanted(openai_compat_config):
             user_service = UserService(pg_config=self.pg_config)
             register_openai_compat(
                 self.app,
