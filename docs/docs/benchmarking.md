@@ -117,7 +117,7 @@ services:
 | `queries_path` | — | Path to the queries JSON file (ragas modern dialect `user_input`/`reference`; legacy `question`/`answer` banks are normalized on read) |
 | `out_dir` | — | Output directory for results (must exist) |
 | `modes` | — | List of evaluation modes (`RAGAS`, `SOURCES`) |
-| `mode_settings.ragas_settings.timeout` | `180` | Max seconds per QA pair for RAGAS evaluation |
+| `mode_settings.ragas_settings.timeout` | `180` | Max seconds per QA pair for RAGAS evaluation. Must be a positive number; fractions are allowed. An invalid value (`0`, `-1`, `"many"`, NaN, infinity, an oversized integer) falls back to `180` with a warning. An integral float such as `600.0` is recorded as `600` |
 | `mode_settings.ragas_settings.max_workers` | `16` | Concurrent RAGAS judge calls. Lower it when the judge throttles: ragas wraps each row in one `timeout` budget with its retries inside, so throttling spends the budget and loses the score. Must be a positive integer; anything else falls back to the default with a warning |
 | `mode_settings.ragas_settings.batch_size` | Ragas default | Number of QA pairs to evaluate at once |
 
@@ -386,9 +386,12 @@ The dump JSON gains a `leaderboard` key:
   `max_workers` the run actually used, or `null` when `RAGAS` was not among the
   run's `modes` and no judge ran. A rendered configuration always carries a
   `ragas_settings` block, so its presence does not mean the judge was used.
-  The configuration is also recorded verbatim as `configuration`; when an
-  invalid setting was replaced by its default the two deliberately disagree,
-  and this field is the one that describes the run. `config_version.digest`
+  `configuration` holds the selected file with each prompt path replaced by
+  that file's contents, and `config_version.selected_file_digest`
+  fingerprints the file as written, before that replacement. When an
+  invalid setting was replaced by its default, `configuration` and this
+  field deliberately disagree, and this field is the one that describes the
+  run. `config_version.digest`
   covers the normalized values for the same reason, while
   `config_version.selected_file_digest` fingerprints the file as written, so
   two different files stay distinguishable even when they drive identical runs.
