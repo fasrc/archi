@@ -316,7 +316,7 @@ A Slack bot that answers `@archi` mentions in channels and direct messages, in t
 
 ### Prerequisites
 
-1. **Turn on the `/v1` API** in the chat app: `services.chat_app.openai_compat.enabled: true`. The Slack service checks `GET /v1/models` at start-up and stops with an error if `/v1` does not answer.
+1. **Turn on the `/v1` API** in the chat app: `services.chat_app.openai_compat.enabled: true`. The Slack service checks `GET /v1/models` at start-up and stops with an error if `/v1` does not answer. On a host-mode deployment with authentication off, also set `local_only: true`, so `/v1` answers only the bot on the same host (see [Local callers only](api-reference-v1.md#local-callers-only)).
 2. **Create the Slack app.** A Slack workspace admin creates it from the [app manifest](#slack-app-manifest) below (api.slack.com → Your Apps → Create New App → From a manifest), then installs it in the workspace.
 3. **Get the two tokens.** In the app settings, Basic Information → App-Level Tokens → create a token with the scope `connections:write`: this is `SLACK_APP_TOKEN` (`xapp-…`). OAuth & Permissions → Bot User OAuth Token: this is `SLACK_BOT_TOKEN` (`xoxb-…`).
 4. **Invite the bot** to each channel where it must answer (`/invite @archi`).
@@ -369,6 +369,7 @@ services:
   chat_app:
     openai_compat:
       enabled: true
+      local_only: true              # host mode + auth off: only same-host callers
   slack:
     chat_url: http://chatbot:7861   # default: the chatbot container, or localhost in host mode
     timeout_seconds: 600            # longest wait for one answer

@@ -14,6 +14,23 @@ Generate tokens via `POST /api/users/me/api-token`.
 
 When authentication is disabled, no token is required.
 
+## Local callers only
+
+```yaml
+services:
+  chat_app:
+    openai_compat:
+      enabled: true
+      local_only: true
+```
+
+With `local_only: true`, `/v1` answers only a request whose TCP peer is a loopback address (`127.0.0.0/8` or `::1`) and that carries no proxy forwarding header (`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-IP`). Every other request gets HTTP 403 with `{"error": {"type": "permission_error", ...}}`, before authentication and before request validation. The rest of the chat app is not affected.
+
+Use it to turn on `/v1` for a client on the same host — the [Slack service](services.md#slack-interface) in host mode — on a deployment with authentication off, without opening a model API to the network. In container (bridge) mode the Slack container is not a loopback caller, so use authentication there instead.
+
+!!! warning "A same-host reverse proxy"
+    A proxy on the same host connects from loopback. The gate refuses a request that carries a forwarding header, but a proxy that forwards to `/v1` and adds none would pass it. Do not route `/v1` through such a proxy on a `local_only` deployment.
+
 ## Endpoints
 
 ### GET /v1/models

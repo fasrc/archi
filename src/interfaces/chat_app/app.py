@@ -2853,7 +2853,10 @@ class FlaskAppWrapper(object):
         # Conditionally register OpenAI-compatible /v1 blueprint
         openai_compat_config = self.chat_app_config.get("openai_compat", {})
         if openai_compat_config.get("enabled", False):
-            from src.interfaces.chat_app.openai_compat import register_openai_compat
+            from src.interfaces.chat_app.openai_compat import (
+                openai_compat_options,
+                register_openai_compat,
+            )
 
             user_service = UserService(pg_config=self.pg_config)
             register_openai_compat(
@@ -2861,7 +2864,7 @@ class FlaskAppWrapper(object):
                 self.chat,
                 user_service=user_service,
                 auth_enabled=self.auth_enabled,
-                token_ttl_days=openai_compat_config.get("token_ttl_days", 90),
+                **openai_compat_options(openai_compat_config),
             )
 
         # QA evaluation console: off unless services.chat_app.evaluations.enabled

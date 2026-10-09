@@ -8,6 +8,7 @@ to use archi as a backend.
 Registered conditionally via services.chat_app.openai_compat.enabled config.
 """
 
+import ipaddress
 import json
 import time
 import uuid
@@ -36,7 +37,12 @@ _chat_wrapper: Any = None
 _user_service: Any = None
 _auth_enabled: bool = False
 _token_ttl_days: int = 90
+_local_only: bool = False
 _boot_timestamp = int(time.time())
+
+# Headers a reverse proxy adds. A proxy on the same host connects from loopback, so
+# with local_only on, any of these means the real caller may be remote.
+_FORWARDING_HEADERS = ("Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Real-IP")
 
 
 def register_openai_compat(
@@ -46,6 +52,7 @@ def register_openai_compat(
     user_service=None,
     auth_enabled=False,
     token_ttl_days: int = 90,
+    local_only: bool = False,
 ):
     """
     Register the OpenAI-compatible blueprint with a Flask app.
@@ -56,14 +63,59 @@ def register_openai_compat(
         user_service: UserService instance for token auth
         auth_enabled: Whether authentication is enabled
         token_ttl_days: Number of days before API tokens expire (default 90)
+        local_only: Answer /v1 only for loopback callers with no proxy forwarding
+            headers (services.chat_app.openai_compat.local_only). For a deployment
+            that turns /v1 on for a same-host client (the Slack service in host
+            mode) without opening a model API to the network.
     """
-    global _chat_wrapper, _user_service, _auth_enabled, _token_ttl_days
+    global _chat_wrapper, _user_service, _auth_enabled, _token_ttl_days, _local_only
     _chat_wrapper = chat_wrapper
     _user_service = user_service
     _auth_enabled = auth_enabled
     _token_ttl_days = token_ttl_days
+    _local_only = bool(local_only)
     app.register_blueprint(openai_compat)
-    logger.info("Registered OpenAI-compatible API blueprint at /v1")
+    logger.info(
+        "Registered OpenAI-compatible API blueprint at /v1%s",
+        " (local_only: loopback callers only)" if _local_only else "",
+    )
+
+
+def openai_compat_options(config: dict) -> dict:
+    """The register_openai_compat keyword arguments read from
+    services.chat_app.openai_compat (app.py passes them through unchanged)."""
+    return {
+        "token_ttl_days": config.get("token_ttl_days", 90),
+        "local_only": bool(config.get("local_only")),
+    }
+
+
+def _is_local_request() -> bool:
+    """True when the TCP peer is loopback and no proxy forwarded the request.
+
+    request.remote_addr is the socket peer: the app installs no ProxyFix, so a client
+    cannot set it with a header.
+    """
+    if any(h in request.headers for h in _FORWARDING_HEADERS):
+        return False
+    try:
+        return ipaddress.ip_address(request.remote_addr or "").is_loopback
+    except ValueError:
+        return False
+
+
+@openai_compat.before_request
+def _enforce_local_only():
+    """With local_only on, refuse a non-local caller before auth and validation."""
+    if _local_only and not _is_local_request():
+        logger.warning(
+            "Refused /v1 request from %s: openai_compat.local_only is on",
+            request.remote_addr,
+        )
+        return _openai_error(
+            "This API answers local callers only", "permission_error", 403
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
