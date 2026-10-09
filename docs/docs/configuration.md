@@ -102,25 +102,20 @@ If you had `git.enabled: false` or a `git.schedule`, they were being ignored and
 effect — measured through the CLI's own normalised config, not just the bare template.
 
 **SSO does not switch itself on.** The last row above says `false` rather than the
-template's `true` default because `archi create` and `archi evaluate` both call
-`ConfigurationManager.set_sources_enabled()` before rendering
-(`src/cli/cli_main.py:248` and `:879`), and that writes `enabled: false` into every managed
+template's `true` default because `archi create`, `archi evaluate` and `archi restart --config`
+all call `ConfigurationManager.set_sources_enabled()` before rendering
+(`src/cli/cli_main.py:249`, `:894` and `:614`), and that writes `enabled: false` into every managed
 source the config does not select. A `schedule` alone does not select a source, so an
 omitted `sso.enabled` reaches the template as an explicit `false`. To turn SSO on, set
 `sources.sso.enabled: true`.
 
-**CAUTION: `archi restart --config` does not do that normalisation.** It renders the
-configuration without calling `set_sources_enabled()`, so every source whose `enabled` you
-omitted takes the template default of `true` — and its required credentials are not
-validated, because the source is absent from the enabled-source list the preflight checks.
-That applies to all six managed sources (`local_files`, `links`, `git`, `sso`, `jira`,
-`redmine`), not just SSO, and it means `archi create` and `archi restart --config` can
-produce different deployed configurations from the same input. Tracked as
-[issue #461](https://github.com/fasrc/archi/issues/461). Until it is fixed, write `enabled`
-explicitly on every source you care about rather than relying on the default, and prefer
-`archi create` when changing which sources are on.
+`archi restart --config` normalises the same way, so `archi create` and
+`archi restart --config` deploy the same source settings from the same input
+([issue #461](https://github.com/fasrc/archi/issues/461), fixed). Before that fix, restart
+rendered without `set_sources_enabled()`, so an omitted `enabled` took the template default
+of `true` and the source's credentials were not preflighted.
 
-Of these, `enabled: false` is acted on by the `git`, `sso`, `indico`, `jira`, `redmine` and
+`enabled: false` is acted on by the `git`, `sso`, `indico`, `jira`, `redmine` and
 `elog` collectors, and by the Selenium scraper — with one exception for `git` and `sso`,
 described in the next paragraph.
 
@@ -514,6 +509,7 @@ PostgreSQL database settings.
 
 - **`services.piazza`**: Requires `network_id`, `agent_class`, `provider`, `model`
 - **`services.mattermost`**: Requires `update_time`
+- **`services.slack`**: Optional `chat_url`, `timeout_seconds`, `max_workers`, `history_limit`; needs `services.chat_app.openai_compat.enabled: true`. See [Slack Interface](services.md#slack-interface)
 - **`services.redmine_mailbox`**: Requires `url`, `project`, `redmine_update_time`, `mailbox_update_time`
 - **`services.benchmarking`**: See [Benchmarking](benchmarking.md)
 

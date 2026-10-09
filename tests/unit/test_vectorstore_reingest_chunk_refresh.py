@@ -176,6 +176,33 @@ def test_unchanged_corpus_does_not_refresh(monkeypatch):
     added.assert_not_called()
 
 
+def test_sync_vectorstore_threads_embedding_progress_to_add_to_postgres(monkeypatch):
+    """_sync_vectorstore forwards embedding_progress keyword to _add_to_postgres."""
+    mgr = _manager()
+
+    monkeypatch.setattr(
+        mgr, "fetch_collection", lambda: SimpleNamespace(count=lambda: 0)
+    )
+    monkeypatch.setattr(
+        "src.data_manager.vectorstore.manager.PostgresCatalogService.load_sources_catalog",
+        staticmethod(lambda data_path, pg: {"h1": "x"}),
+    )
+    monkeypatch.setattr(
+        mgr, "_collect_indexed_documents", lambda sources: {"h1": "/data/page.md"}
+    )
+    monkeypatch.setattr(mgr, "_collect_postgres_hashes", lambda: set())
+    monkeypatch.setattr(mgr, "_collect_embedded_filenames", lambda: {})
+
+    added = MagicMock()
+    monkeypatch.setattr(mgr, "_add_to_postgres", added)
+
+    cb = object()
+    mgr._sync_vectorstore(embedding_progress=cb)
+
+    added.assert_called_once()
+    assert added.call_args.kwargs.get("embedding_progress") is cb
+
+
 def test_collect_embedded_filenames_queries_document_chunks(monkeypatch):
     """The SQL body maps resource_hash -> the SET of all distinct embedded filenames,
     skipping null rows."""
