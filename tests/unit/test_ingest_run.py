@@ -386,3 +386,17 @@ def test_a_successful_sync_records_the_status_it_returned(monkeypatch):
 
     _, params = conn.cursor_obj.executed[-1]
     assert "up_to_date" in params
+
+
+def test_update_vectorstore_returns_the_sync_status(monkeypatch):
+    """Callers need the terminal status: a "failed" sync must not read as done."""
+    conn = _FakeConn(rows=[[("embedded", 1)], [(1,)]])
+    monkeypatch.setattr(
+        "src.data_manager.vectorstore.manager.psycopg2.connect",
+        lambda **kwargs: conn,
+    )
+
+    mgr = _bare_manager(_data_manager_config={})
+    monkeypatch.setattr(mgr, "_sync_vectorstore", lambda **_: "failed")
+
+    assert mgr.update_vectorstore() == "failed"

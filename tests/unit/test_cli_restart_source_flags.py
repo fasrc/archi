@@ -147,11 +147,18 @@ def test_set_sources_enabled_runs_before_validation(archi_home, monkeypatch):
 
 
 def test_real_data_manager_change_still_refused(archi_home, tmp_path):
-    """A new config that genuinely enables `git` is still refused."""
-    _write_deployment(archi_home, _build_deployed_config())
+    """A new config that genuinely flips `git.enabled` is still refused.
+
+    The example's input list carries a `git-` entry, so whether the deployed
+    config has `git` enabled depends on input-list inference (#460); flip
+    whatever value was deployed rather than assume one.
+    """
+    deployed_config = _build_deployed_config()
+    _write_deployment(archi_home, deployed_config)
+    deployed_git = deployed_config["data_manager"]["sources"]["git"]["enabled"]
 
     new_config = yaml.safe_load(EXAMPLE_CONFIG.read_text())
-    new_config["data_manager"]["sources"]["git"] = {"enabled": True}
+    new_config["data_manager"]["sources"]["git"] = {"enabled": not deployed_git}
     new_config_path = tmp_path / "new_config.yaml"
     new_config_path.write_text(yaml.safe_dump(new_config))
 
