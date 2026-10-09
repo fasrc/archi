@@ -168,7 +168,7 @@ def test_failed_attempt_warning_renders_in_available_kb_panel(env):
         },
     )
     assert "the most recent ingest attempt failed at" in html
-    assert "the corpus above is from the last successful run" in html
+    assert "counts shown are from the last successful run" in html
 
 
 def test_failed_attempt_line_renders_in_unavailable_kb_panel(env):
@@ -184,3 +184,19 @@ def test_failed_attempt_line_renders_in_unavailable_kb_panel(env):
     )
     assert "The most recent ingest attempt failed at" in html
     assert "no successful run is recorded" in html
+
+
+def test_failed_attempt_warning_notes_possible_corpus_change(env):
+    failed = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(
+                _run_row(), {}, last_failed_at=failed
+            ),
+        },
+    )
+    assert "counts shown are from the last successful run" in html
+    assert "the failed attempt may have changed the live corpus" in html
+    assert "the corpus above is from the last successful run" not in html

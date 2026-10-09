@@ -367,7 +367,7 @@
           {% endif %}
           {% if kb.last_attempt_failed_at %}
           <div class="prov-warn">
-            ⚠ the most recent ingest attempt failed at {{ kb.last_attempt_failed_at.strftime('%Y-%m-%d %H:%M UTC') }} — the corpus above is from the last successful run
+            ⚠ the most recent ingest attempt failed at {{ kb.last_attempt_failed_at.strftime('%Y-%m-%d %H:%M UTC') }} — counts shown are from the last successful run; the failed attempt may have changed the live corpus
           </div>
           {% endif %}
         {% else %}

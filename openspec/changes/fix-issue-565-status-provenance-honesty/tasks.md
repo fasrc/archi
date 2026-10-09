@@ -83,7 +83,7 @@
       tests for the available-panel warning and the unavailable-panel line. Watch them
       fail. Implement design D3 in `status_provenance.py` and `status.html`. One commit
       (`fix(#565): never present a failed ingest attempt as the serving corpus`).
-- [ ] 3.1a Review fix (post-PR check, 2026-10-09). `status.html:370` says "the corpus
+- [x] 3.1a Review fix (post-PR check, 2026-10-09). `status.html:370` says "the corpus
       above is from the last successful run". That is false after a partial failure:
       `manager.py:372` commits deletions (`_remove_from_postgres`) before `_add_to_postgres`
       (`manager.py:384`), and the add commits in batches, so a `failed` run can change the
