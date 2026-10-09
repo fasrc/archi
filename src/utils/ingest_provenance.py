@@ -214,6 +214,20 @@ def compare_ingest_config(
     for key in keys:
         now = live.get(key)
         then = recorded.get(key)
-        if now != then:
-            drift.append({"key": key, "current": now, "at_ingest": then})
+        if now == then:
+            continue
+        # Skip false drift introduced by task 1.1: rows recorded before the
+        # per-model default table existed stored 384 for every model.  If the
+        # model is unchanged and the stored value is the old flat default while
+        # the current value is exactly the model's new default, the mismatch is
+        # an artefact of the old default, not a real configuration change.
+        if (
+            key == "embedding_dimensions"
+            and then == _DEFAULT_EMBEDDING_DIMENSIONS
+            and live.get("embedding_model") == recorded.get("embedding_model")
+            and now
+            == _DEFAULT_EMBEDDING_DIMENSIONS_BY_MODEL.get(live.get("embedding_model"))
+        ):
+            continue
+        drift.append({"key": key, "current": now, "at_ingest": then})
     return drift

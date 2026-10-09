@@ -93,7 +93,7 @@
       from the last successful run. Watch it fail. Change only the template wording, and
       the same sentence in `design.md` D3. One commit
       (`fix(#565): do not claim a failed attempt left the corpus unchanged`).
-- [ ] 3.1b Review fix (post-PR check, 2026-10-09). The per-model default from task 1.1
+- [x] 3.1b Review fix (post-PR check, 2026-10-09). The per-model default from task 1.1
       makes the board show false drift for every row recorded before the fix: an
       `OpenAIEmbeddings` deployment with no `dimensions` rebuilds its current snapshot as
       1536, the stored snapshot says 384, and `compare_ingest_config`

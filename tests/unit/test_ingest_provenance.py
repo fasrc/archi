@@ -452,3 +452,42 @@ def test_compare_reports_effective_chunking_when_both_sides_carry_it():
             "at_ingest": effective_chunking({}),
         }
     ]
+
+
+def test_compare_no_embedding_dimensions_drift_for_pre_fix_row_with_old_default():
+    """A row stored before task 1.1 has dimensions=384 even for OpenAIEmbeddings.
+
+    After task 1.1 the current snapshot resolves OpenAIEmbeddings to 1536.
+    The mismatch is an artefact of the old default, not a real config change.
+    """
+    at_ingest = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
+    at_ingest = dict(at_ingest, embedding_dimensions=384)
+    current = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
+
+    drift = compare_ingest_config(current, at_ingest)
+
+    assert "embedding_dimensions" not in {entry["key"] for entry in drift}
+
+
+def test_compare_embedding_dimensions_drift_when_current_is_not_model_default():
+    """If current dimensions differ from the model default, it is real drift."""
+    at_ingest = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
+    at_ingest = dict(at_ingest, embedding_dimensions=384)
+    current = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
+    current = dict(current, embedding_dimensions=768)
+
+    drift = compare_ingest_config(current, at_ingest)
+
+    assert any(entry["key"] == "embedding_dimensions" for entry in drift)
+
+
+def test_compare_embedding_dimensions_drift_when_model_changed():
+    """A model change means both embedding_model and embedding_dimensions drift."""
+    at_ingest = build_ingest_config_snapshot({})  # HuggingFaceEmbeddings, 384
+    current = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
+
+    drift = compare_ingest_config(current, at_ingest)
+
+    drift_keys = {entry["key"] for entry in drift}
+    assert "embedding_model" in drift_keys
+    assert "embedding_dimensions" in drift_keys
