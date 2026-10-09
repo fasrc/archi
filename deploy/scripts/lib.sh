@@ -109,7 +109,18 @@ esac
 # Secrets env (PG_PASSWORD, HUIT_API_KEY, ...). Override with ARCHI_ENV_FILE;
 # defaults to ~/.secrets/archi-secrets.env so the scripts aren't tied to one user.
 ENV_FILE="${ARCHI_ENV_FILE:-$HOME/.secrets/archi-secrets.env}"
-SERVICES="chatbot"                            # auto-pulls postgres + data-manager
+# Services each deployment runs (chatbot auto-pulls postgres + data-manager). A
+# tracked row per deployment, like the config pin below, so adding a service to
+# one host is a reviewed change and never moves another host. Not read from the
+# environment or host.env, for the same reason as the pin.
+# dev's slack needs SLACK_BOT_TOKEN and SLACK_APP_TOKEN in the secrets env
+# (archi create refuses without them) and /v1 on the chat app; dev's chat auth is
+# off, so its config sets openai_compat.local_only (openspec v1-local-only).
+# Pinned by tests/unit/test_deploy_services_per_deployment.py.
+case "$DEPLOYMENT" in
+  dev) SERVICES="chatbot,slack" ;;
+  *)   SERVICES="chatbot" ;;
+esac
 # GPU(s) to reserve for the data-manager embedding pass. Default OFF — and the
 # reason is the containers, not the host: both are deliberately configured
 # `device: cpu` (the chatbot ships CPU-only torch and would crash-loop on
