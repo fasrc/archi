@@ -230,6 +230,9 @@ services:
       # composite-unique migration noted in init.sql (drops & recreates
       # idx_conv_meta_external_chat as (user_id, external_chat_id)).
       enabled: {{ services.chat_app.openai_compat.enabled | default(false, true) }}
+      # true: /v1 answers only loopback callers with no proxy forwarding headers (the
+      # Slack service in host mode), so /v1 can be on without a network-facing API.
+      local_only: {{ services.chat_app.openai_compat.local_only | default(false, true) }}
     alerts:
       managers:
         {%- for manager in services.chat_app.alerts.managers | default([], true) %}

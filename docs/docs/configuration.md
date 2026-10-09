@@ -517,7 +517,7 @@ PostgreSQL database settings.
 
 - **`services.piazza`**: Requires `network_id`, `agent_class`, `provider`, `model`
 - **`services.mattermost`**: Requires `update_time`
-- **`services.slack`**: Optional `chat_url`, `timeout_seconds`, `max_workers`, `history_limit`; needs `services.chat_app.openai_compat.enabled: true`. See [Slack Interface](services.md#slack-interface)
+- **`services.slack`**: Optional `chat_url`, `timeout_seconds`, `max_workers`, `history_limit`; needs `services.chat_app.openai_compat.enabled: true` (in host mode with authentication off, `local_only: true` instead; see [Local callers only](api-reference-v1.md#local-callers-only)). See [Slack Interface](services.md#slack-interface)
 - **`services.redmine_mailbox`**: Requires `url`, `project`, `redmine_update_time`, `mailbox_update_time`
 - **`services.benchmarking`**: See [Benchmarking](benchmarking.md)
 
