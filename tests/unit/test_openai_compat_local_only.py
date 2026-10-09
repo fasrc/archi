@@ -202,7 +202,9 @@ class TestTemplate:
 
     def test_true_renders_true(self):
         cfg = self._render(
-            services={"chat_app": {"openai_compat": {"enabled": True, "local_only": True}}}
+            services={
+                "chat_app": {"openai_compat": {"enabled": True, "local_only": True}}
+            }
         )
         assert cfg["local_only"] is True
         assert cfg["enabled"] is True
