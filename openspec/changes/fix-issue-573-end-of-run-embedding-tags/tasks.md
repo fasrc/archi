@@ -106,7 +106,7 @@
       `embedding_tags_unchanged_at_endpoints is None`, and the scores are kept. Confirm it
       fails if the except body returns `None`. One commit
       (`test: drive the real tag-read wrapper through a failure`).
-- [ ] 3.2 In the existing report-provenance tests
+- [x] 3.2 In the existing report-provenance tests
       (`tests/unit/test_benchmark_report_provenance_panel.py`,
       `tests/unit/test_benchmark_report_markdown.py`, or
       `tests/unit/test_benchmark_report_html_provenance.py` — use the one whose fixtures
