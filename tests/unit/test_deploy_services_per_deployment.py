@@ -18,7 +18,11 @@ LIB = REPO / "deploy" / "scripts" / "lib.sh"
 def _services(deployment: str, **env) -> str:
     """SERVICES as lib.sh resolves it for one deployment name (nothing is deployed)."""
     script = f'source "{LIB}" >/dev/null 2>&1; printf %s "$SERVICES"'
-    run_env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "DEPLOYMENT": deployment}
+    run_env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/nonexistent",
+        "DEPLOYMENT": deployment,
+    }
     run_env.update(env)
     out = subprocess.run(
         ["bash", "-c", script],
