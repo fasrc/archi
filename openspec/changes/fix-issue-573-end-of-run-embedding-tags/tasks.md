@@ -173,7 +173,7 @@
       archived as today. Run the file directly
       (`bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh`) before
       the commit; `scripts/gate.sh` also runs it.
-- [ ] 5.3 In `tests/unit/test_sweep_tools.py`, add tests, then implement the `--sweep` part
+- [x] 5.3 In `tests/unit/test_sweep_tools.py`, add tests, then implement the `--sweep` part
       of design D8 in `scripts/benchmarking/feature_matrix/sweep_tools.py` (`archive`'s
       per-arm loop, next to the fingerprint check at `:377-385`), one commit
       (`feat: sweep archive refuses an arm whose tags changed`). Reuse the fixture the
