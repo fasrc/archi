@@ -148,7 +148,7 @@ GPU_IDS="${GPU_IDS-}"
 CONFIG_REPO="${CONFIG_REPO:-git@github.com:fasrc/archi-config.git}"
 case "$DEPLOYMENT" in
   dev)  _pin_ref=deploy-pin-2026-10c; _pin_sha=70eef5d6553e5c4dd6cb06274ebd4aecde2cc3bf ;;
-  claw) _pin_ref=deploy-pin-2026-10a; _pin_sha=969f4dcd3d0516d927bd728b7deba6150a360821 ;;
+  claw) _pin_ref=deploy-pin-2026-10b; _pin_sha=4d85fc08e85770552802e42ff3d1ed2ddbf44524 ;;
   *)    _pin_ref=; _pin_sha= ;;
 esac
 # The environment override is a PAIR: one key alone never borrows the other from

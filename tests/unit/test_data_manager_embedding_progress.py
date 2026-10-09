@@ -106,3 +106,16 @@ def test_run_ingestion_passes_none_when_no_embedding_progress():
     dm.vector_manager.update_vectorstore.assert_called_once_with(
         embedding_progress=None
     )
+
+
+def test_update_vectorstore_returns_the_vector_manager_status():
+    dm = _bare_data_manager()
+    dm.should_run_ingestion = False
+    dm.vector_manager.update_vectorstore.return_value = "failed"
+    assert dm.update_vectorstore(force=True) == "failed"
+
+
+def test_run_ingestion_returns_the_vectorstore_status():
+    dm = _bare_data_manager()
+    dm.vector_manager.update_vectorstore.return_value = "failed"
+    assert dm.run_ingestion() == "failed"

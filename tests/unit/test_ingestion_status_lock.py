@@ -239,3 +239,552 @@ def test_second_run_initial_ingestion_resets_progress():
     helpers["run_initial_ingestion_async"]()
 
     assert status_at_start_of_second["progress"] is None
+
+
+def test_run_tracked_publishes_running_and_completed():
+    """run_tracked sets running/step inside fn, completed/done after, and returns fn's value."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    status_inside = {}
+
+    def fn():
+        status_inside.update(helpers["get_ingestion_status"]())
+        return 42
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    result = helpers["run_tracked"]("upload", fn)
+
+    assert status_inside["state"] == "running"
+    assert status_inside["step"] == "upload"
+    assert status_inside["error"] is None
+    assert status_inside["progress"] is None
+    assert result == 42
+    after = helpers["get_ingestion_status"]()
+    assert after["state"] == "completed"
+    assert after["step"] == "done"
+
+
+def test_run_tracked_resets_progress():
+    """run_tracked resets progress to None before fn runs, even if set beforehand."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    progress_inside = {}
+
+    def fn():
+        progress_inside["value"] = helpers["get_ingestion_status"]()["progress"]
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    helpers["set_ingestion_progress"](3, 10)
+    helpers["run_tracked"]("upload", fn)
+
+    assert progress_inside["value"] is None
+
+
+def test_run_tracked_publishes_error_on_exception():
+    """run_tracked re-raises the exception and sets state=error/step=failed/error=msg."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    def failing_fn():
+        raise RuntimeError("boom")
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+
+    with pytest.raises(RuntimeError, match="boom"):
+        helpers["run_tracked"]("upload", failing_fn)
+
+    status = helpers["get_ingestion_status"]()
+    assert status["state"] == "error"
+    assert status["step"] == "failed"
+    assert status["error"] == "boom"
+
+
+def test_run_tracked_waits_for_lock():
+    """run_tracked waits for the ingestion lock; status is not mutated while the lock is held."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    lock = threading.RLock()
+    fn_ran = []
+    helpers = build_ingestion_helpers(lambda **_: None, lock)
+
+    lock.acquire()
+    try:
+        helpers["set_ingestion_status"]("running", step="embedding")
+        t = threading.Thread(
+            target=lambda: helpers["run_tracked"](
+                "upload", lambda: fn_ran.append(True)
+            ),
+            daemon=True,
+        )
+        t.start()
+        time.sleep(0.2)
+        assert helpers["get_ingestion_status"]()["step"] == "embedding"
+        assert not fn_ran
+    finally:
+        lock.release()
+
+    t.join(timeout=5)
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_run_tracked_is_reentrant():
+    """run_tracked completes without deadlock when the same thread already holds the lock."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    lock = threading.RLock()
+    helpers = build_ingestion_helpers(lambda **_: None, lock)
+    result = {}
+
+    def do_run():
+        with lock:
+            helpers["run_tracked"]("upload", lambda: result.update({"ok": True}))
+
+    t = threading.Thread(target=do_run, daemon=True)
+    t.start()
+    t.join(timeout=5)
+    assert result.get("ok") is True
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_run_source_refresh_publishes_running_and_completed():
+    """Inside func the status is running/scheduled:git; after, completed/done."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    status_inside = {}
+    calls = []
+
+    def func():
+        status_inside.update(helpers["get_ingestion_status"]())
+
+    def fake_update_vectorstore(**kwargs):
+        calls.append(("update_vectorstore", kwargs))
+
+    def fake_set_source_status(source, **kwargs):
+        calls.append(("set_source_status", source, kwargs))
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    helpers["run_source_refresh"](
+        "git", func, fake_update_vectorstore, fake_set_source_status
+    )
+
+    assert status_inside["state"] == "running"
+    assert status_inside["step"] == "scheduled:git"
+    after = helpers["get_ingestion_status"]()
+    assert after["state"] == "completed"
+
+
+def test_run_source_refresh_call_order():
+    """Call order: set_source_status running, func, update_vectorstore, set_source_status idle."""
+    from datetime import datetime, timezone
+
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    log = []
+
+    def func():
+        log.append("func")
+
+    def fake_update_vectorstore(**kwargs):
+        log.append(("update_vectorstore", kwargs))
+
+    def fake_set_source_status(source, **kwargs):
+        log.append(("set_source_status", source, kwargs))
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    helpers["run_source_refresh"](
+        "git", func, fake_update_vectorstore, fake_set_source_status
+    )
+
+    assert log[0] == ("set_source_status", "git", {"state": "running"})
+    assert log[1] == "func"
+    assert log[2] == ("update_vectorstore", {"force": True})
+    name, source, kwargs = log[3]
+    assert name == "set_source_status"
+    assert source == "git"
+    assert kwargs["state"] == "idle"
+    last_run = kwargs["last_run"]
+    parsed = datetime.fromisoformat(last_run)
+    assert parsed.utcoffset().total_seconds() == 0
+
+
+def test_run_source_refresh_error_from_update_vectorstore():
+    """If update_vectorstore raises, the status is error and idle set_source_status is skipped."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    idle_calls = []
+
+    def func():
+        pass
+
+    def fake_update_vectorstore(**kwargs):
+        raise RuntimeError("embed down")
+
+    def fake_set_source_status(source, **kwargs):
+        if kwargs.get("state") == "idle":
+            idle_calls.append(kwargs)
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    with pytest.raises(RuntimeError, match="embed down"):
+        helpers["run_source_refresh"](
+            "git", func, fake_update_vectorstore, fake_set_source_status
+        )
+
+    status = helpers["get_ingestion_status"]()
+    assert status["state"] == "error"
+    assert status["error"] == "embed down"
+    assert idle_calls == []
+
+
+class _RecordingLock:
+    """An RLock with hooks just before and just after each outermost release."""
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._depth = 0
+        self.on_release = lambda: None
+        self.after_release = lambda: None
+
+    def acquire(self, *args, **kwargs):
+        got = self._lock.acquire(*args, **kwargs)
+        if got:
+            self._depth += 1
+        return got
+
+    def release(self):
+        self._depth -= 1
+        if self._depth == 0:
+            self.on_release()
+            self._lock.release()
+            self.after_release()
+        else:
+            self._lock.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+
+
+def test_initial_ingest_completion_does_not_overwrite_a_queued_run():
+    """The initial ingest publishes its terminal state before it releases the lock.
+
+    Otherwise a run queued behind it publishes running, and the initial thread
+    then overwrites that with completed while the queued run mutates the corpus.
+    """
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    release_initial = threading.Event()
+    initial_started = threading.Event()
+    tracked_inside = threading.Event()
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        initial_started.set()
+        release_initial.wait(timeout=5)
+
+    lock = _RecordingLock()
+    helpers = build_ingestion_helpers(fake_run_ingestion, lock)
+    initial = threading.Thread(
+        target=helpers["run_initial_ingestion_async"], daemon=True
+    )
+    # Hold the initial thread between its release and anything after it, so a
+    # publication made outside the lock lands after the queued run's running.
+    lock.after_release = lambda: (
+        threading.current_thread() is initial and tracked_inside.wait(timeout=5)
+    )
+    initial.start()
+    assert initial_started.wait(timeout=5)
+
+    seen = {}
+
+    def tracked_fn():
+        tracked_inside.set()
+        initial.join(timeout=5)
+        seen.update(helpers["get_ingestion_status"]())
+
+    tracked = threading.Thread(
+        target=lambda: helpers["run_tracked"]("upload", tracked_fn), daemon=True
+    )
+    tracked.start()
+    time.sleep(0.2)
+    release_initial.set()
+    tracked.join(timeout=5)
+
+    assert seen["state"] == "running"
+    assert seen["step"] == "upload"
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_initial_ingest_does_not_mask_an_active_refresh():
+    """A queued initial ingest must not publish initializing over the lock owner."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    refresh_inside = threading.Event()
+    release_refresh = threading.Event()
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+
+    def refresh_fn():
+        refresh_inside.set()
+        release_refresh.wait(timeout=5)
+
+    refresh = threading.Thread(
+        target=lambda: helpers["run_tracked"]("scheduled:git", refresh_fn),
+        daemon=True,
+    )
+    refresh.start()
+    assert refresh_inside.wait(timeout=5)
+
+    initial = threading.Thread(
+        target=helpers["run_initial_ingestion_async"], daemon=True
+    )
+    initial.start()
+    time.sleep(0.2)
+    try:
+        status = helpers["get_ingestion_status"]()
+        assert status["state"] == "running"
+        assert status["step"] == "scheduled:git"
+    finally:
+        release_refresh.set()
+        refresh.join(timeout=5)
+        initial.join(timeout=5)
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_completed_is_not_published_while_a_run_is_queued():
+    """A run that finishes with another tracked run queued keeps the state running."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    lock = _RecordingLock()
+    helpers = build_ingestion_helpers(lambda **_: None, lock)
+    first_inside = threading.Event()
+    release_first = threading.Event()
+    at_release = []
+
+    def first_fn():
+        first_inside.set()
+        release_first.wait(timeout=5)
+
+    first = threading.Thread(
+        target=lambda: helpers["run_tracked"]("scheduled:git", first_fn),
+        daemon=True,
+    )
+    first.start()
+    assert first_inside.wait(timeout=5)
+
+    second = threading.Thread(
+        target=lambda: helpers["run_tracked"]("upload", lambda: None), daemon=True
+    )
+    second.start()
+    time.sleep(0.2)
+
+    lock.on_release = lambda: at_release.append(helpers["get_ingestion_status"]())
+    release_first.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert at_release[0]["state"] == "running"
+    assert at_release[-1]["state"] == "completed"
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_error_is_published_even_with_a_run_queued():
+    """A failure is never hidden behind a queued run; the queued run replaces it later."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    lock = _RecordingLock()
+    helpers = build_ingestion_helpers(lambda **_: None, lock)
+    first_inside = threading.Event()
+    release_first = threading.Event()
+    at_release = []
+
+    def first_fn():
+        first_inside.set()
+        release_first.wait(timeout=5)
+        raise RuntimeError("embed down")
+
+    def run_first():
+        with pytest.raises(RuntimeError):
+            helpers["run_tracked"]("scheduled:git", first_fn)
+
+    first = threading.Thread(target=run_first, daemon=True)
+    first.start()
+    assert first_inside.wait(timeout=5)
+    second = threading.Thread(
+        target=lambda: helpers["run_tracked"]("upload", lambda: None), daemon=True
+    )
+    second.start()
+    time.sleep(0.2)
+
+    lock.on_release = lambda: at_release.append(helpers["get_ingestion_status"]())
+    release_first.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert at_release[0]["state"] == "error"
+    assert at_release[0]["error"] == "embed down"
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_run_source_refresh_publishes_error_when_the_update_failed():
+    """A sync that returns "failed" (documents not added) is an error, not completed."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    idle_calls = []
+
+    def fake_set_source_status(source, **kwargs):
+        if kwargs.get("state") == "idle":
+            idle_calls.append(kwargs)
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    with pytest.raises(RuntimeError, match="failed"):
+        helpers["run_source_refresh"](
+            "git", lambda: None, lambda **_: "failed", fake_set_source_status
+        )
+
+    status = helpers["get_ingestion_status"]()
+    assert status["state"] == "error"
+    assert status["step"] == "failed"
+    assert idle_calls == []
+
+
+def test_run_upload_update_publishes_upload_lifecycle():
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    seen = {}
+    calls = []
+
+    def fake_update_vectorstore(**kwargs):
+        calls.append(kwargs)
+        seen.update(helpers["get_ingestion_status"]())
+        return "updated"
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    helpers["run_upload_update"](fake_update_vectorstore)
+
+    assert calls == [{"force": True}]
+    assert seen["state"] == "running"
+    assert seen["step"] == "upload"
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_run_upload_update_publishes_error_when_the_update_failed():
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    with pytest.raises(RuntimeError, match="failed"):
+        helpers["run_upload_update"](lambda **_: "failed")
+
+    assert helpers["get_ingestion_status"]()["state"] == "error"
+
+
+def test_initial_ingest_publishes_error_when_the_sync_failed():
+    """An initial ingest whose sync could not add its documents is not completed."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    helpers = build_ingestion_helpers(lambda **_: "failed", threading.RLock())
+    helpers["run_initial_ingestion_async"]()
+
+    status = helpers["get_ingestion_status"]()
+    assert status["state"] == "error"
+    assert status["step"] == "failed"
+    assert "documents not added" in status["error"]
+
+
+def test_initial_ingest_publishes_initializing_atomically_with_joining(monkeypatch):
+    """A refresh that joins right after the initial ingest keeps its own step.
+
+    If the initial thread counted itself in and published initializing in two
+    steps, a refresh could take the lock between them and then be masked.
+    """
+    from src.utils import ingestion_status
+
+    initial_thread = []
+    refresh_inside = threading.Event()
+    release_refresh = threading.Event()
+    hooked = []
+    holder = {}
+    real_lock = threading.Lock
+
+    class _HookLock:
+        def __init__(self):
+            self._lock = real_lock()
+
+        def __enter__(self):
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, *exc):
+            self._lock.release()
+            if threading.current_thread() in initial_thread and not hooked:
+                hooked.append(True)
+                refresh = threading.Thread(
+                    target=lambda: holder["helpers"]["run_tracked"](
+                        "scheduled:git", refresh_fn
+                    ),
+                    daemon=True,
+                )
+                holder["refresh"] = refresh
+                refresh.start()
+                refresh_inside.wait(timeout=5)
+
+    def refresh_fn():
+        refresh_inside.set()
+        release_refresh.wait(timeout=5)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(ingestion_status.threading, "Lock", _HookLock)
+        helpers = ingestion_status.build_ingestion_helpers(
+            lambda **_: None, threading.RLock()
+        )
+    holder["helpers"] = helpers
+
+    initial = threading.Thread(
+        target=helpers["run_initial_ingestion_async"], daemon=True
+    )
+    initial_thread.append(initial)
+    initial.start()
+    assert refresh_inside.wait(timeout=5)
+    time.sleep(0.2)
+    try:
+        status = helpers["get_ingestion_status"]()
+        assert status["state"] == "running"
+        assert status["step"] == "scheduled:git"
+    finally:
+        release_refresh.set()
+        holder["refresh"].join(timeout=5)
+        initial.join(timeout=5)
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_a_run_joining_during_lock_release_clears_completed():
+    """A run that joins after the owner published completed must not leave it shown.
+
+    The owner publishes completed while it still holds ingestion_lock. A run
+    that joins in that window is queued, so a poll must not read completed.
+    """
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    lock = _RecordingLock()
+    helpers = build_ingestion_helpers(lambda **_: None, lock)
+    at_release = []
+    second = {}
+
+    def start_second_then_read():
+        if second:
+            return
+        thread = threading.Thread(
+            target=lambda: helpers["run_tracked"]("upload", lambda: None),
+            daemon=True,
+        )
+        second["thread"] = thread
+        thread.start()
+        time.sleep(0.2)
+        at_release.append(helpers["get_ingestion_status"]())
+
+    lock.on_release = start_second_then_read
+    helpers["run_tracked"]("scheduled:git", lambda: None)
+    second["thread"].join(timeout=5)
+
+    assert at_release[0]["state"] == "running"
+    assert at_release[0]["step"] == "upload"
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
