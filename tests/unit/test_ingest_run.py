@@ -437,3 +437,17 @@ def test_manager_passes_collection_name_to_collect_ingest_counts(monkeypatch):
     mgr._record_ingest_run(STARTED, "updated")
 
     assert captured.get("collection_name") == "my_col_with_emb"
+
+
+def test_update_vectorstore_returns_the_sync_status(monkeypatch):
+    """Callers need the terminal status: a "failed" sync must not read as done."""
+    conn = _FakeConn(rows=[[("embedded", 1)], [(1,)]])
+    monkeypatch.setattr(
+        "src.data_manager.vectorstore.manager.psycopg2.connect",
+        lambda **kwargs: conn,
+    )
+
+    mgr = _bare_manager(_data_manager_config={})
+    monkeypatch.setattr(mgr, "_sync_vectorstore", lambda **_: "failed")
+
+    assert mgr.update_vectorstore() == "failed"
