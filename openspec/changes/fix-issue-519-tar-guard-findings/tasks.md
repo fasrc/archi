@@ -50,4 +50,4 @@ rewritten to the contract. No test function from `origin/dev`'s file is deleted.
 ## 7. Verify and hand over
 
 - [x] 7.1 `openspec validate fix-issue-519-tar-guard-findings --strict` exits 0. `bash scripts/gate.sh` is green on the tip. `git diff origin/dev -- tests/unit/test_service_template_downloads.py | grep -c '^-.*def test_'` prints `0`.
-- [ ] 7.2 Push to `fix/issue-519-tar-guard-findings` (merge, never force). Answer every PR #626 thread in-thread ("fixed in <sha>" or "out of contract: fails closed") and resolve it. Comment the decision on #519. The PR body states the contract, lists the allow-list entries, and carries `Closes #519`. No replies are posted on merged PR #507; the PR body's row table answers #519's 16 rows.
+- [x] 7.2 Push to `fix/issue-519-tar-guard-findings` (merge, never force). Answer every PR #626 thread in-thread ("fixed in <sha>" or "out of contract: fails closed") and resolve it. Comment the decision on #519. The PR body states the contract, lists the allow-list entries, and carries `Closes #519`. No replies are posted on merged PR #507; the PR body's row table answers #519's 16 rows.
