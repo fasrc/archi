@@ -30,6 +30,7 @@ from .node_parsing import (
     build_hierarchical_nodes,
     embed_child_nodes,
     resolve_effective_strategy,
+    warm_up_sentence_tokenizer,
 )
 from .postgres_vectorstore import PostgresVectorStore
 from .schema import ensure_chunks_parent_id_index, ensure_hierarchical_schema
@@ -721,6 +722,10 @@ class VectorStoreManager:
         processed_results: Dict[str, tuple] = {}
         max_workers = max(1, self.parallel_workers)
         logger.info(f"Processing files with up to {max_workers} parallel workers")
+
+        if self.hierarchical_chunking:
+            # Load NLTK's stopwords here, not first in a racing worker (#119).
+            warm_up_sentence_tokenizer()
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {

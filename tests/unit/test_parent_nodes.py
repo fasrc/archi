@@ -481,6 +481,12 @@ from src.data_manager.vectorstore.node_parsing import (  # noqa: E402
 _EMBED_DIM = CHILD_EMBEDDING_DIM
 
 
+@pytest.fixture(autouse=True)
+def _skip_nltk_warm_up(monkeypatch):
+    # nltk can be stubbed above, so the real warm-up (#119) cannot load it.
+    monkeypatch.setattr(manager_module, "warm_up_sentence_tokenizer", lambda: None)
+
+
 class _InlineFuture:
     def __init__(self, fn, *args, **kwargs):
         self._exc = None

@@ -89,6 +89,12 @@ from src.data_manager.vectorstore.node_parsing import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _skip_nltk_warm_up(monkeypatch):
+    # nltk can be stubbed above, so the real warm-up (#119) cannot load it.
+    monkeypatch.setattr(manager_module, "warm_up_sentence_tokenizer", lambda: None)
+
+
 class _InlineFuture:
     def __init__(self, fn, *args, **kwargs):
         self._exc = None
@@ -254,7 +260,7 @@ def test_embedding_progress_counts_embed_failure_files(monkeypatch):
     assert calls[-1] == (26, 26)
 
 
-def test_embedding_progress_callback_hierarchical(monkeypatch):
+def _setup_hierarchical_manager(monkeypatch):
     manager = VectorStoreManager.__new__(VectorStoreManager)
     manager.parallel_workers = 1
     manager.collection_name = "test_collection"
@@ -302,6 +308,12 @@ def test_embedding_progress_callback_hierarchical(monkeypatch):
     monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _InlineExecutor)
     monkeypatch.setattr(manager_module, "as_completed", lambda futures: list(futures))
 
+    return manager
+
+
+def test_embedding_progress_callback_hierarchical(monkeypatch):
+    manager = _setup_hierarchical_manager(monkeypatch)
+
     calls = []
 
     def cb(done, total):
@@ -310,6 +322,44 @@ def test_embedding_progress_callback_hierarchical(monkeypatch):
     manager._add_to_postgres({"hash-1": "/tmp/doc.html"}, embedding_progress=cb)
 
     assert calls == [(0, 1), (1, 1)]
+
+
+def _record_warm_up_and_pool(monkeypatch):
+    """Record the order of the NLTK warm-up and the worker pool start."""
+    events = []
+
+    class _RecordingExecutor(_InlineExecutor):
+        def __init__(self, max_workers=1):
+            events.append("pool")
+            super().__init__(max_workers=max_workers)
+
+    monkeypatch.setattr(manager_module, "ThreadPoolExecutor", _RecordingExecutor)
+    monkeypatch.setattr(
+        manager_module, "warm_up_sentence_tokenizer", lambda: events.append("warm")
+    )
+    return events
+
+
+def test_hierarchical_ingest_warms_the_sentence_tokenizer_before_the_pool(
+    monkeypatch,
+):
+    """The workers must not be the first to load NLTK's stopwords (#119)."""
+    manager = _setup_hierarchical_manager(monkeypatch)
+    events = _record_warm_up_and_pool(monkeypatch)
+
+    manager._add_to_postgres({"hash-1": "/tmp/a.html", "hash-2": "/tmp/b.html"})
+
+    assert events == ["warm", "pool"]
+
+
+def test_character_ingest_skips_the_sentence_tokenizer_warm_up(monkeypatch):
+    """The character splitter never reads NLTK, so it loads nothing."""
+    manager, _, _ = _setup_flat_manager(monkeypatch)
+    events = _record_warm_up_and_pool(monkeypatch)
+
+    manager._add_to_postgres({"hash-0": "/tmp/file-0.txt"})
+
+    assert events == ["pool"]
 
 
 def test_embedding_progress_skipped_files_not_counted(monkeypatch):

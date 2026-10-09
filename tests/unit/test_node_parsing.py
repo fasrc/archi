@@ -16,6 +16,7 @@ from src.data_manager.vectorstore.node_parsing import (
     build_hierarchical_nodes,
     embed_child_nodes,
     resolve_effective_strategy,
+    warm_up_sentence_tokenizer,
 )
 
 
@@ -778,3 +779,34 @@ def test_sentence_strategy_passes_clamped_overlap_to_hnp(
     )
 
     assert captured["chunk_overlap"] == expected_overlap
+
+
+def test_warm_up_loads_the_sentence_tokenizer_and_stopwords(monkeypatch):
+    """The warm-up turns NLTK's shared lazy stopwords loader into a reader (#119).
+
+    The ingest worker pool must find the corpus already loaded: the first load
+    swaps the shared loader's class in place, and threads that race it fail
+    with ``'WordListCorpusReader' object has no attribute
+    '_LazyCorpusLoader__reader_cls'``.
+    """
+    import nltk.corpus
+    from llama_index.core.utils import globals_helper
+    from nltk.corpus.reader import WordListCorpusReader
+    from nltk.corpus.util import LazyCorpusLoader
+
+    # The never-loaded state a fresh data-manager process starts in.
+    monkeypatch.setattr(
+        nltk.corpus,
+        "stopwords",
+        LazyCorpusLoader(
+            "stopwords", WordListCorpusReader, r"(?!README|\.).*", encoding="utf8"
+        ),
+    )
+    monkeypatch.setattr(globals_helper, "_stopwords", None)
+    monkeypatch.setattr(globals_helper, "_punkt_tokenizer", None)
+
+    warm_up_sentence_tokenizer()
+
+    assert type(nltk.corpus.stopwords) is WordListCorpusReader
+    assert globals_helper._punkt_tokenizer is not None
+    assert "the" in globals_helper._stopwords

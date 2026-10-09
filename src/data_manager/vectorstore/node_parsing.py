@@ -44,7 +44,7 @@ from llama_index.core.node_parser import (
     get_leaf_nodes,
 )
 from llama_index.core.schema import BaseNode, MetadataMode, NodeRelationship, TextNode
-from llama_index.core.utils import get_tokenizer
+from llama_index.core.utils import get_tokenizer, globals_helper
 
 # Default parent/child chunk sizes (in tokens, per LlamaIndex's splitters).
 # Parents hold a larger context window; children are small, precise leaves.
@@ -90,6 +90,18 @@ class HierarchicalNode:
     parent_text: str
     child_texts: List[str]
     metadata: Dict = field(default_factory=dict)
+
+
+def warm_up_sentence_tokenizer() -> None:
+    """Load the sentence tokenizer and NLTK stopwords on the calling thread.
+
+    :class:`SentenceSplitter` reads ``globals_helper.punkt_tokenizer`` on every
+    split. Its first read loads NLTK's shared lazy ``stopwords`` corpus, which
+    swaps the loader's class in place and is not thread-safe: ingest workers
+    that make that first read together can see a half-built reader and fail
+    the file (#119). Call this once before a worker pool starts.
+    """
+    globals_helper.punkt_tokenizer
 
 
 def build_hierarchical_nodes(
