@@ -675,3 +675,16 @@ def test_run_upload_update_publishes_error_when_the_update_failed():
         helpers["run_upload_update"](lambda **_: "failed")
 
     assert helpers["get_ingestion_status"]()["state"] == "error"
+
+
+def test_initial_ingest_publishes_error_when_the_sync_failed():
+    """An initial ingest whose sync could not add its documents is not completed."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    helpers = build_ingestion_helpers(lambda **_: "failed", threading.RLock())
+    helpers["run_initial_ingestion_async"]()
+
+    status = helpers["get_ingestion_status"]()
+    assert status["state"] == "error"
+    assert status["step"] == "failed"
+    assert "documents not added" in status["error"]

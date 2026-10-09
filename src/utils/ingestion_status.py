@@ -90,12 +90,15 @@ def build_ingestion_helpers(
             _finish("completed", "done")
             return result
 
-    def _update_or_raise(update_vectorstore: Callable[..., Any]) -> None:
+    def _raise_if_failed(sync_status: Any) -> None:
         # A sync that could not add its documents returns "failed" rather than
         # raising; publishing "completed" after it would present a partial
         # corpus as a finished one.
-        if update_vectorstore(force=True) == "failed":
+        if sync_status == "failed":
             raise RuntimeError("vectorstore update failed: documents not added")
+
+    def _update_or_raise(update_vectorstore: Callable[..., Any]) -> None:
+        _raise_if_failed(update_vectorstore(force=True))
 
     def run_upload_update(update_vectorstore: Callable[..., Any]) -> None:
         run_tracked("upload", lambda: _update_or_raise(update_vectorstore))
@@ -126,11 +129,13 @@ def build_ingestion_helpers(
         with ingestion_lock:
             _publish_running("initializing")
             try:
-                run_ingestion_fn(
-                    progress_callback=lambda step: set_ingestion_status(
-                        "running", step=step
-                    ),
-                    embedding_progress=set_ingestion_progress,
+                _raise_if_failed(
+                    run_ingestion_fn(
+                        progress_callback=lambda step: set_ingestion_status(
+                            "running", step=step
+                        ),
+                        embedding_progress=set_ingestion_progress,
+                    )
                 )
             except Exception as exc:
                 logger.exception("Initial ingestion failed")
