@@ -305,7 +305,7 @@
           <div class="prov-warn">
             <div class="prov-warn-title">⚠ live-edited config</div>
             <div>
-              {% if not dep.pin_matched %}The deployed config is not the pinned commit.{% endif %}
+              {% if dep.pin_mismatch %}The deployed config is not the pinned commit.{% endif %}
               {% if dep.dirty_path_count %}{{ dep.dirty_path_count }} tracked file{{ 's' if dep.dirty_path_count != 1 else '' }} edited on top of the pin — what is running is not the pinned config.{% endif %}
             </div>
             {% for path in dep.dirty_paths_preview %}

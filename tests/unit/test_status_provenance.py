@@ -509,3 +509,23 @@ def test_load_provenance_config_query_no_row_gives_config_unavailable():
     view = load_status_provenance(conn)
     assert view["knowledge_base"]["current_config_available"] is False
     assert view["knowledge_base"]["drift"] == []
+
+
+# ---------------------------------------------------------------------------
+# D5 — pin mismatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "pin_matched, expected_mismatch",
+    [(True, False), (False, True), (None, False)],
+)
+def test_pin_mismatch_reflects_only_a_confirmed_false_verdict(
+    pin_matched, expected_mismatch
+):
+    panel = build_deployment_panel(_deploy_row(pin_matched=pin_matched))
+    assert panel["pin_mismatch"] is expected_mismatch
+
+
+def test_unavailable_deployment_panel_has_no_pin_mismatch():
+    assert build_deployment_panel(None)["pin_mismatch"] is False

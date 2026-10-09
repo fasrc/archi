@@ -213,3 +213,28 @@ def test_unavailable_current_config_renders_text_and_no_drift_warning(env):
     assert "Current configuration unavailable" in html
     assert "drift not evaluated" in html
     assert "configuration changed after this ingest" not in html
+
+
+def test_unknown_pin_verdict_with_dirty_paths_does_not_say_not_pinned_commit(env):
+    row = _deploy_row(pin_matched=None, dirty_paths="M\tlists/sources.list")
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(row),
+            "knowledge_base": build_knowledge_base_panel(_run_row(), {}),
+        },
+    )
+    assert "live-edited config" in html
+    assert "not the pinned commit" not in html
+
+
+def test_confirmed_pin_mismatch_says_not_pinned_commit(env):
+    row = _deploy_row(pin_matched=False, config_head="0123456789abcdef")
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(row),
+            "knowledge_base": build_knowledge_base_panel(_run_row(), {}),
+        },
+    )
+    assert "not the pinned commit" in html

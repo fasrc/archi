@@ -127,7 +127,7 @@
 
 ## 5. F5 — pin mismatch (design D5)
 
-- [ ] 5.1 In `tests/unit/test_status_provenance.py` add a parametrised test:
+- [x] 5.1 In `tests/unit/test_status_provenance.py` add a parametrised test:
       `build_deployment_panel` with `pin_matched` `True`, `False`, `None` gives
       `pin_mismatch` `False`, `True`, `False`; the unavailable panel gives `False`. In
       `tests/unit/test_status_template_render.py` add render tests: `pin_matched=None` with
