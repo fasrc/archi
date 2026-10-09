@@ -2187,6 +2187,10 @@ class Benchmarker:
             logger.info("")
 
         if "RAGAS" in modes_being_run:
+            # Whether the judge scored anything for this arm. `run()` passes it
+            # to `handle_results`, which records no judge settings when it is
+            # False (#518). Left untouched when RAGAS is not a mode.
+            self._ragas_scored = bool(ragas_input)
             if ragas_input:
                 logger.info("Starting to collect RAGAS results")
                 # scorable_items carries #92's per-question keys in ragas_input
@@ -2380,6 +2384,7 @@ class Benchmarker:
             corpus_before = ResultHandler.get_corpus_fingerprint(arm_config)
             _, category_map_before = ResultHandler.get_category_map(arm_config)
             self._judge_usage = None
+            self._ragas_scored = None
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
                 Path(self.current_config),
@@ -2405,6 +2410,7 @@ class Benchmarker:
                 ingest_wall_seconds=ingest_wall_seconds,
                 retrieval_identity=arm_identity,
                 judge_usage=getattr(self, "_judge_usage", None),
+                ragas_scored=getattr(self, "_ragas_scored", None),
             )
             self.load_new_configuration()
 
