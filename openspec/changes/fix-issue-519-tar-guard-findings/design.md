@@ -3,6 +3,10 @@
 Read `openspec/changes/fix-issue-492-tar-forcing-guard/design.md` first: decisions D9–D21
 define the guard this change edits. The decisions below continue that numbering.
 
+**D31 (2026-10-09) supersedes D22–D30 where they conflict.** The operator replaced the
+"best-effort net" with a narrow, fail-closed contract. Read D31 first; D22–D30 are kept as
+the record of the first implementation.
+
 All anchors are `tests/unit/test_service_template_downloads.py` on `origin/dev` `db701852`.
 
 ## Baseline (measured 2026-10-07)
@@ -156,3 +160,93 @@ old-style argument order and its restriction to a literal `tar`, D25 without `ti
 token-based heredoc openers and a fail-closed unterminated heredoc, D28 `COPY --from`
 provenance, task 1.2(d) quoting, and two PR-body checks in task 8.1. None needed a human
 decision. The row-12 reading of D29 was checked and not refuted.
+
+## D31 — Narrow the contract and fail closed (operator decision, 2026-10-09)
+
+**Why.** Each review round on PR #626 found new shell forms the hand-rolled parser read
+wrongly (17 open Codex threads: `sh -- -c --`, the last of two `<` redirects, stdin into
+`sh -c`, a redirect on `if … fi`, quoted reserved words, `TAPE`, tar `d` mode, `for tar in`,
+function bodies, `coproc`, mixed old and new tar options, `<<- EOF`, `<<''`). Patching
+each one adds parser code that the next round attacks. The operator answered #519's Step 0
+again on 2026-10-09: read only simple, written-down forms; report everything else as
+"unparseable — needs review"; let a human allow a reviewed line by name.
+
+**Goals.** No false positive on a form the guard reads. No silent pass on a form it does
+not read. A small written contract, so review checks the contract instead of finding
+another shell feature.
+
+**The contract.** `tests/unit/test_service_template_downloads.py` carries the same text in
+its module docstring.
+
+1. *Instructions.* Comment lines (first non-blank character `#`) are dropped, then lines
+   ending in `\` are joined. Each resulting line is one instruction; its first word,
+   in any case, is the keyword.
+2. *Instructions that fail closed:*
+   - any instruction holding `<<` (heredoc or here-string). The guard cannot find where
+     the body ends without parsing it, so the scan stops there; this entry cannot be
+     allow-listed;
+   - `RUN [` (exec form);
+   - a second `FROM` (multi-stage build);
+   - `SHELL`;
+   - `ADD` with a URL source;
+   - `ENV` or `ARG` holding a moving URL, `TAR_OPTIONS`, or `TAPE`;
+   - a line whose first word is not a Dockerfile keyword.
+   Every other instruction except `RUN` runs no build shell and is skipped. `COPY` and
+   `ADD` do not change provenance: a forced extraction of a path a moving download wrote
+   is still reported after a `COPY` over it (conservative; no template does this).
+3. *Which RUNs are read.* A shell-form `RUN` is read when its text names `tar`, `wget`, or
+   `curl` as a word (any case), or holds a moving URL, `TAR_OPTIONS`, or `TAPE`. Other
+   RUNs are skipped. The `RUN` keyword and its `--flag` words are dropped.
+4. *Words and separators.* Words use `'…'`, `"…"`, and backslash escapes; an unquoted `#`
+   at the start of a word starts a comment. `&&`, `;`, and `|` separate simple commands,
+   read left to right. Output redirections (`>`, `>>`, `>|`, `N>`, `N>&M`, `&>`, `&>>`)
+   are allowed except on `wget` and `curl`; their target is dropped. Fails closed: an
+   unterminated quote; `||`; `&` (background); `|&`; `;;`; `(` or `)`; `` ` `` or `$(`;
+   any input redirection (`<`, `N<`, `<&`, `<>`).
+5. *Simple commands.* Leading `NAME=value` words are assignments. The next word is the
+   command. Fails closed: an assignment in front of `tar`, `wget`, or `curl`; a command
+   word holding `$`; a command word that is a shell reserved word or brace (`if then else
+   elif fi for while until do done case esac select function coproc time { } ! [[ ]]`);
+   a shell (`sh bash dash ash zsh`) or `eval`, `source`, `.`; any other command that
+   carries a word named `tar`, `wget`, `curl`, or a shell (by basename), unless the
+   command only prints or installs its arguments (`echo printf apt-get apt apk dnf yum
+   microdnf`); any command other than `wget` and `curl` that carries a moving URL.
+   A command with no `tar`/`wget`/`curl` role is otherwise skipped.
+6. *tar.* The command word's basename is `tar`. A first argument with no leading `-` is a
+   traditional option word: it must be letters only, and each letter that takes an
+   argument takes the next word, in letter order; the remaining words are read as usual,
+   so `tar xf /tmp/a -z` forces gzip. Dash clusters: each letter must be a GNU tar 1.35
+   short option; an argument-taking letter takes the rest of the cluster or the next
+   word. Long options: the name must be a GNU tar 1.35 long option, spelled in full
+   (abbreviations fail closed); `--name=value` or `--name value` for required arguments.
+   `--` ends options. Exactly one operation mode: read modes (`x t d`, `--extract --get
+   --list --diff --compare --test-label`) are judged; write modes (`c r u A`, `--create
+   --append --update --catenate --concatenate --delete`) are skipped. Fails closed: no
+   mode, two different modes, a second `-f`, or a forcing tar whose archive holds `$`.
+7. *wget and curl.* Read as D17/D18 and the #507 rounds describe: the output option and
+   curl's per-transfer pairing. Fails closed: any word holding `$`.
+8. *Provenance and verdict.* Unchanged from #507 (D17): writes are recorded in file order,
+   the last write to a path wins, and a forcing read-mode tar is reported when its archive
+   held a moving download, or when it shares the RUN with a moving download and reads an
+   unknown archive (none, `-`, `/dev/stdout`). Paths are normalised (`posixpath.normpath`);
+   an archive matches a saved path when they are equal, or when either is relative and
+   their basenames are equal (row 11).
+
+**Allow list.** `_REVIEWED_UNPARSEABLE` in the test file maps a template file name to the
+instruction texts a human reviewed (continuation-joined, exactly as `_commands` returns
+them), each with a comment that says why it is safe. A listed instruction is skipped. A
+test fails when an entry is stale (its template has no such unparseable instruction) or
+holds a moving URL. The heredoc entry is never accepted.
+
+**What happens to #519's rows and the PR #626 threads.** Rows 1, 2, 5, 11, 13 and the
+`&&` control are read and give the right verdict. Rows 3, 4, 6, 7, 8, 9, 10, 12, 14, 15,
+16 fail closed. Of the 17 threads, the mixed old/new tar options, `fcz` write mode, and tar
+`d` mode are now read correctly; the rest are out of contract and fail closed.
+
+**What is removed.** `_StdinTarget`, `_UnterminatedHeredocCommand`, heredoc body parsing,
+reserved-word stepping, `sh -c` script recursion, the wrapper rule of D19 (a wrapper now
+fails closed because it carries `tar` as a word), and `_UNRESOLVED_PROGRAM`.
+
+**Limits (not parser gaps).** The guard reads `tar`, `wget`, and `curl` only. A program
+that downloads or extracts by other means (a script file, `python -c`, `make`) is outside
+it, and a `RUN` that names none of the three words is not read.

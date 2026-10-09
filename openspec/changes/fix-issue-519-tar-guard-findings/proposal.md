@@ -19,6 +19,13 @@ now, but a tar added there would go unseen. All six moving templates report `[]`
 
 ## What Changes
 
+**Superseded in part on 2026-10-09 (design D31).** The operator narrowed the guard to a
+small written contract that fails closed: forms the guard does not read (heredocs,
+multi-stage builds, conditionals, `sh -c`, `||`, redirects into tar, variable URLs, and
+the rest listed in D31) are reported as `unparseable … needs review` unless a commented
+allow-list entry names the exact instruction. Rows 3, 4, 6–10, 12, 14–16 now fail closed
+instead of being fixed or pinned as silent limits. The list below is the original plan.
+
 The change is tests-only: every edit is inside `tests/unit/test_service_template_downloads.py`.
 
 - **Fix the false positives** (rows 1–4 of issue #519):
