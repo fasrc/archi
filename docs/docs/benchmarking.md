@@ -387,14 +387,14 @@ The dump JSON gains a `leaderboard` key:
   run's `modes` and no judge ran. A rendered configuration always carries a
   `ragas_settings` block, so its presence does not mean the judge was used.
   `configuration` holds the selected file with each prompt path replaced by
-  that file's contents, and `config_version.selected_file_digest`
-  fingerprints the file as written, before that replacement. When an
-  invalid setting was replaced by its default, `configuration` and this
-  field deliberately disagree, and this field is the one that describes the
-  run. `config_version.digest`
-  covers the normalized values for the same reason, while
-  `config_version.selected_file_digest` fingerprints the file as written, so
-  two different files stay distinguishable even when they drive identical runs.
+  that file's contents. When an invalid setting was replaced by its default,
+  `configuration` and `ragas_effective_settings` deliberately disagree, and
+  `ragas_effective_settings` is the one that describes the run.
+  `config_version.digest` covers the normalized values for the same reason.
+  `config_version.selected_file_digest` is not run provenance: it is the
+  audit fingerprint of the file as written, before prompt paths are replaced
+  and with any invalid setting left as written, so two different files stay
+  distinguishable even when they drive identical runs.
 
 The pairwise `ab_comparisons` are still produced alongside the leaderboard; the
 leaderboard is computed independently from each config's aggregates.

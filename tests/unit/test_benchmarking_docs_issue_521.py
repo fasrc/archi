@@ -33,4 +33,15 @@ def test_configuration_is_not_called_verbatim():
     text = " ".join(DOCS.read_text().split())
     assert "The configuration is also recorded verbatim as `configuration`" not in text
     assert "each prompt path replaced by that file's contents" in text
-    assert "before that replacement" in text
+    assert "before prompt paths are replaced" in text
+
+
+def test_fallback_comparison_names_the_effective_settings_field():
+    """The run's settings live in `ragas_effective_settings`, not in the digest
+    of the file as written, so the docs must name that field outright."""
+    text = " ".join(DOCS.read_text().split())
+    assert (
+        "`configuration` and `ragas_effective_settings` deliberately disagree, "
+        "and `ragas_effective_settings` is the one that describes the run"
+    ) in text
+    assert "audit fingerprint of the file as written" in text
