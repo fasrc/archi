@@ -158,7 +158,7 @@ GPU_IDS="${GPU_IDS-}"
 # Contract pinned by test_ensure_config.sh cases 14-18.
 CONFIG_REPO="${CONFIG_REPO:-git@github.com:fasrc/archi-config.git}"
 case "$DEPLOYMENT" in
-  dev)  _pin_ref=deploy-pin-2026-10c; _pin_sha=70eef5d6553e5c4dd6cb06274ebd4aecde2cc3bf ;;
+  dev)  _pin_ref=deploy-pin-2026-10d; _pin_sha=5c9f05806057f9de054241a780b1557fdf050383 ;;
   claw) _pin_ref=deploy-pin-2026-10b; _pin_sha=4d85fc08e85770552802e42ff3d1ed2ddbf44524 ;;
   *)    _pin_ref=; _pin_sha= ;;
 esac
