@@ -8,6 +8,7 @@ mutual-exclusion lock, which is held for the entire ingest (22–64 min).
 
 import logging
 import threading
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ def build_ingestion_helpers(
       - ``get_ingestion_status() -> dict``
       - ``run_initial_ingestion_async()``
       - ``run_tracked(step, fn)``
+      - ``run_source_refresh(name, func, update_vectorstore, set_source_status)``
       - ``ingestion_lock`` — the caller's ingestion mutual-exclusion lock
     """
     _status_lock = threading.Lock()
@@ -63,6 +65,26 @@ def build_ingestion_helpers(
             set_ingestion_status("completed", step="done")
             return result
 
+    def run_source_refresh(
+        name: str,
+        func: Callable[[], None],
+        update_vectorstore: Callable[..., Any],
+        set_source_status: Callable[..., None],
+    ) -> None:
+        def body() -> None:
+            logger.info("Running ingestion task: %s", name)
+            set_source_status(name, state="running")
+            func()
+            logger.info("Updating vectorstore after scheduled task: %s", name)
+            update_vectorstore(force=True)
+            set_source_status(
+                name,
+                state="idle",
+                last_run=datetime.now(timezone.utc).isoformat(),
+            )
+
+        run_tracked(f"scheduled:{name}", body)
+
     def run_initial_ingestion_async() -> None:
         with _status_lock:
             _status.update(
@@ -92,5 +114,6 @@ def build_ingestion_helpers(
         "get_ingestion_status": get_ingestion_status,
         "run_initial_ingestion_async": run_initial_ingestion_async,
         "run_tracked": run_tracked,
+        "run_source_refresh": run_source_refresh,
         "ingestion_lock": ingestion_lock,
     }

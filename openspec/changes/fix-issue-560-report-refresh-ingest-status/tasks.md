@@ -59,7 +59,7 @@
 
 ## 2. `run_source_refresh` and the call sites
 
-- [ ] 2.1 Add tests, then implement design D2 in `src/utils/ingestion_status.py` and
+- [x] 2.1 Add tests, then implement design D2 in `src/utils/ingestion_status.py` and
       design D4 in `src/bin/service_data_manager.py`, one commit
       (`feat: report scheduled and upload refreshes as running`). Assert, with a recording
       `set_source_status` fake and a `update_vectorstore` fake (`**kwargs` recorder):

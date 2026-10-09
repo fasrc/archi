@@ -343,3 +343,92 @@ def test_run_tracked_is_reentrant():
     t.join(timeout=5)
     assert result.get("ok") is True
     assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_run_source_refresh_publishes_running_and_completed():
+    """Inside func the status is running/scheduled:git; after, completed/done."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    status_inside = {}
+    calls = []
+
+    def func():
+        status_inside.update(helpers["get_ingestion_status"]())
+
+    def fake_update_vectorstore(**kwargs):
+        calls.append(("update_vectorstore", kwargs))
+
+    def fake_set_source_status(source, **kwargs):
+        calls.append(("set_source_status", source, kwargs))
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    helpers["run_source_refresh"](
+        "git", func, fake_update_vectorstore, fake_set_source_status
+    )
+
+    assert status_inside["state"] == "running"
+    assert status_inside["step"] == "scheduled:git"
+    after = helpers["get_ingestion_status"]()
+    assert after["state"] == "completed"
+
+
+def test_run_source_refresh_call_order():
+    """Call order: set_source_status running, func, update_vectorstore, set_source_status idle."""
+    from datetime import datetime, timezone
+
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    log = []
+
+    def func():
+        log.append("func")
+
+    def fake_update_vectorstore(**kwargs):
+        log.append(("update_vectorstore", kwargs))
+
+    def fake_set_source_status(source, **kwargs):
+        log.append(("set_source_status", source, kwargs))
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    helpers["run_source_refresh"](
+        "git", func, fake_update_vectorstore, fake_set_source_status
+    )
+
+    assert log[0] == ("set_source_status", "git", {"state": "running"})
+    assert log[1] == "func"
+    assert log[2] == ("update_vectorstore", {"force": True})
+    name, source, kwargs = log[3]
+    assert name == "set_source_status"
+    assert source == "git"
+    assert kwargs["state"] == "idle"
+    last_run = kwargs["last_run"]
+    parsed = datetime.fromisoformat(last_run)
+    assert parsed.utcoffset().total_seconds() == 0
+
+
+def test_run_source_refresh_error_from_update_vectorstore():
+    """If update_vectorstore raises, the status is error and idle set_source_status is skipped."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    idle_calls = []
+
+    def func():
+        pass
+
+    def fake_update_vectorstore(**kwargs):
+        raise RuntimeError("embed down")
+
+    def fake_set_source_status(source, **kwargs):
+        if kwargs.get("state") == "idle":
+            idle_calls.append(kwargs)
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    with pytest.raises(RuntimeError, match="embed down"):
+        helpers["run_source_refresh"](
+            "git", func, fake_update_vectorstore, fake_set_source_status
+        )
+
+    status = helpers["get_ingestion_status"]()
+    assert status["state"] == "error"
+    assert status["error"] == "embed down"
+    assert idle_calls == []
