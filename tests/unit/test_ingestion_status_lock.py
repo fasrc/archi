@@ -239,3 +239,107 @@ def test_second_run_initial_ingestion_resets_progress():
     helpers["run_initial_ingestion_async"]()
 
     assert status_at_start_of_second["progress"] is None
+
+
+def test_run_tracked_publishes_running_and_completed():
+    """run_tracked sets running/step inside fn, completed/done after, and returns fn's value."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    status_inside = {}
+
+    def fn():
+        status_inside.update(helpers["get_ingestion_status"]())
+        return 42
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    result = helpers["run_tracked"]("upload", fn)
+
+    assert status_inside["state"] == "running"
+    assert status_inside["step"] == "upload"
+    assert status_inside["error"] is None
+    assert status_inside["progress"] is None
+    assert result == 42
+    after = helpers["get_ingestion_status"]()
+    assert after["state"] == "completed"
+    assert after["step"] == "done"
+
+
+def test_run_tracked_resets_progress():
+    """run_tracked resets progress to None before fn runs, even if set beforehand."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    progress_inside = {}
+
+    def fn():
+        progress_inside["value"] = helpers["get_ingestion_status"]()["progress"]
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    helpers["set_ingestion_progress"](3, 10)
+    helpers["run_tracked"]("upload", fn)
+
+    assert progress_inside["value"] is None
+
+
+def test_run_tracked_publishes_error_on_exception():
+    """run_tracked re-raises the exception and sets state=error/step=failed/error=msg."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    def failing_fn():
+        raise RuntimeError("boom")
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+
+    with pytest.raises(RuntimeError, match="boom"):
+        helpers["run_tracked"]("upload", failing_fn)
+
+    status = helpers["get_ingestion_status"]()
+    assert status["state"] == "error"
+    assert status["step"] == "failed"
+    assert status["error"] == "boom"
+
+
+def test_run_tracked_waits_for_lock():
+    """run_tracked waits for the ingestion lock; status is not mutated while the lock is held."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    lock = threading.RLock()
+    fn_ran = []
+    helpers = build_ingestion_helpers(lambda **_: None, lock)
+
+    lock.acquire()
+    try:
+        helpers["set_ingestion_status"]("running", step="embedding")
+        t = threading.Thread(
+            target=lambda: helpers["run_tracked"](
+                "upload", lambda: fn_ran.append(True)
+            ),
+            daemon=True,
+        )
+        t.start()
+        time.sleep(0.2)
+        assert helpers["get_ingestion_status"]()["step"] == "embedding"
+        assert not fn_ran
+    finally:
+        lock.release()
+
+    t.join(timeout=5)
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_run_tracked_is_reentrant():
+    """run_tracked completes without deadlock when the same thread already holds the lock."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    lock = threading.RLock()
+    helpers = build_ingestion_helpers(lambda **_: None, lock)
+    result = {}
+
+    def do_run():
+        with lock:
+            helpers["run_tracked"]("upload", lambda: result.update({"ok": True}))
+
+    t = threading.Thread(target=do_run, daemon=True)
+    t.start()
+    t.join(timeout=5)
+    assert result.get("ok") is True
+    assert helpers["get_ingestion_status"]()["state"] == "completed"

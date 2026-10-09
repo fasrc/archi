@@ -37,7 +37,7 @@
 
 ## 1. `run_tracked` in the status helpers
 
-- [ ] 1.1 In `tests/unit/test_ingestion_status_lock.py`, add tests, then implement design
+- [x] 1.1 In `tests/unit/test_ingestion_status_lock.py`, add tests, then implement design
       D1 in `src/utils/ingestion_status.py`, one commit
       (`feat: run_tracked publishes a refresh lifecycle`). Assert:
       (a) inside `fn`, `get_ingestion_status()` has `state == "running"`,

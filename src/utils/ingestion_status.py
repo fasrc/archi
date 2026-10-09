@@ -24,6 +24,7 @@ def build_ingestion_helpers(
       - ``set_ingestion_progress(done, total=None)``
       - ``get_ingestion_status() -> dict``
       - ``run_initial_ingestion_async()``
+      - ``run_tracked(step, fn)``
       - ``ingestion_lock`` — the caller's ingestion mutual-exclusion lock
     """
     _status_lock = threading.Lock()
@@ -47,6 +48,20 @@ def build_ingestion_helpers(
     def get_ingestion_status() -> Dict[str, object]:
         with _status_lock:
             return dict(_status)
+
+    def run_tracked(step: str, fn: Callable[[], Any]) -> Any:
+        with ingestion_lock:
+            with _status_lock:
+                _status.update(
+                    {"state": "running", "step": step, "error": None, "progress": None}
+                )
+            try:
+                result = fn()
+            except Exception as exc:
+                set_ingestion_status("error", step="failed", error=str(exc))
+                raise
+            set_ingestion_status("completed", step="done")
+            return result
 
     def run_initial_ingestion_async() -> None:
         with _status_lock:
@@ -76,5 +91,6 @@ def build_ingestion_helpers(
         "set_ingestion_progress": set_ingestion_progress,
         "get_ingestion_status": get_ingestion_status,
         "run_initial_ingestion_async": run_initial_ingestion_async,
+        "run_tracked": run_tracked,
         "ingestion_lock": ingestion_lock,
     }
