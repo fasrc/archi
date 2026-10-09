@@ -367,6 +367,8 @@ class QAWorkflow:
             manifest.pop("attention_required", None)
             for key in corpus_provenance.PROVENANCE_KEYS:
                 manifest.pop(key, None)
+            for key in corpus_provenance.TAG_KEYS:
+                manifest.pop(key, None)
             for name in RUN_FILES | SCORE_FILES:
                 manifest["artifacts"].pop(name, None)
         write_yaml(run_dir / "agent_config.resolved.yaml", config)
@@ -595,7 +597,10 @@ class QAWorkflow:
         }
         manifest.update(
             corpus_provenance.end_readings(
-                config, spec, manifest.get("corpus_fingerprint_before")
+                config,
+                spec,
+                manifest.get("corpus_fingerprint_before"),
+                identity_before=manifest.get("retrieval_identity"),
             )
         )
         manifest["artifacts"].update(artifact_hashes(run_dir, RUN_FILES))
@@ -991,14 +996,14 @@ class QAWorkflow:
         fresh_attempts = bool(
             parent_store.execution_retry_count()
         ) and corpus_provenance.uses_search(spec)
-        corpus_readings = (
-            corpus_provenance.start_readings(config, spec)
-            if fresh_attempts
-            else {
+        if fresh_attempts:
+            corpus_readings = corpus_provenance.start_readings(config, spec)
+        else:
+            corpus_readings = {
                 key: deepcopy(parent_manifest.get(key))
                 for key in corpus_provenance.PROVENANCE_KEYS
             }
-        )
+            corpus_readings.update(corpus_provenance.carried_readings(parent_manifest))
 
         output_dir.mkdir(parents=True, exist_ok=True)
         snapshot = parent_manifest["input"]["snapshot"]
@@ -1139,7 +1144,10 @@ class QAWorkflow:
         if fresh_attempts:
             manifest.update(
                 corpus_provenance.end_readings(
-                    config, spec, corpus_readings["corpus_fingerprint_before"]
+                    config,
+                    spec,
+                    corpus_readings["corpus_fingerprint_before"],
+                    identity_before=corpus_readings.get("retrieval_identity"),
                 )
             )
         manifest["artifacts"].update(artifact_hashes(output_dir, RUN_FILES))

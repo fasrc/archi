@@ -15,7 +15,9 @@ import psycopg2
 from src.archi.utils.vectorstore_connector import postgres_connection_params
 from src.utils.benchmark_provenance import (
     collection_readiness,
+    embedding_tags_unchanged,
     live_corpus_fingerprint,
+    live_embedding_tag_state,
     retrieval_identity,
     retrieval_record,
 )
@@ -26,6 +28,10 @@ PROVENANCE_KEYS = (
     "corpus_fingerprint_before",
     "corpus_fingerprint",
     "corpus_unchanged_at_endpoints",
+)
+TAG_KEYS = (
+    "embedding_tags_end",
+    "embedding_tags_unchanged_at_endpoints",
 )
 UNAVAILABLE = "<unavailable:"
 
@@ -61,6 +67,14 @@ def _reading(config: Mapping[str, Any]) -> str:
         return f"{UNAVAILABLE} {exc}>"
 
 
+def _tag_reading(config: Mapping[str, Any]):
+    """One embedding tag state reading; a failure is a marker, never an exception."""
+    try:
+        return live_embedding_tag_state(direct_pool(config), config)
+    except Exception as exc:  # noqa: BLE001 - provenance is never fatal
+        return f"{UNAVAILABLE} {exc}>"
+
+
 def start_readings(config: Mapping[str, Any], spec: Any) -> Dict[str, Any]:
     """Run the start guard and take the first reading, before any question.
 
@@ -78,22 +92,44 @@ def start_readings(config: Mapping[str, Any], spec: Any) -> Dict[str, Any]:
 
 
 def end_readings(
-    config: Mapping[str, Any], spec: Any, before: Optional[str]
+    config: Mapping[str, Any],
+    spec: Any,
+    before: Optional[str],
+    identity_before: Any = None,
 ) -> Dict[str, Any]:
     """Take the second reading when the attempts finish, and compare."""
     if not uses_search(spec):
-        return {"corpus_fingerprint": None, "corpus_unchanged_at_endpoints": None}
+        return {
+            "corpus_fingerprint": None,
+            "corpus_unchanged_at_endpoints": None,
+            "embedding_tags_end": None,
+            "embedding_tags_unchanged_at_endpoints": None,
+        }
     after = _reading(config)
     readable = all(
         value is not None and not value.startswith(UNAVAILABLE)
         for value in (before, after)
     )
+    tags_end = _tag_reading(config)
     return {
         "corpus_fingerprint": after,
         "corpus_unchanged_at_endpoints": (before == after) if readable else None,
+        "embedding_tags_end": tags_end,
+        "embedding_tags_unchanged_at_endpoints": embedding_tags_unchanged(
+            identity_before, tags_end
+        ),
     }
 
 
 def summary_fields(manifest: Mapping[str, Any]) -> Dict[str, Any]:
     """The readings and identity scoring copies into ``summary.provenance``."""
-    return {key: manifest.get(key) for key in PROVENANCE_KEYS}
+    result = {key: manifest.get(key) for key in PROVENANCE_KEYS}
+    for key in TAG_KEYS:
+        if key in manifest:
+            result[key] = manifest[key]
+    return result
+
+
+def carried_readings(parent_manifest: Mapping[str, Any]) -> Dict[str, Any]:
+    """TAG_KEYS from parent_manifest that are present, for the retry copy path."""
+    return {key: parent_manifest[key] for key in TAG_KEYS if key in parent_manifest}

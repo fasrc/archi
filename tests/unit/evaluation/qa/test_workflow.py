@@ -300,6 +300,8 @@ def test_composite_and_staged_workflows_are_equivalent_at_four_attempts(
         "corpus_fingerprint_before",
         "corpus_fingerprint",
         "corpus_unchanged_at_endpoints",
+        "embedding_tags_end",
+        "embedding_tags_unchanged_at_endpoints",
         "usage",
     }
     manifest = read_json(staged / "manifest.json")
@@ -372,7 +374,7 @@ def test_run_and_score_workers_overlap_with_isolated_runtimes_and_ordered_artifa
     monkeypatch.setattr(
         workflow_module.corpus_provenance,
         "end_readings",
-        lambda config, spec, before: {
+        lambda config, spec, before, identity_before=None: {
             "corpus_fingerprint": None,
             "corpus_unchanged_at_endpoints": None,
         },
@@ -1965,7 +1967,13 @@ def corpus(monkeypatch, agent_inputs):
     monkeypatch.setattr(
         workflow_module, "LazyVectorstore", lambda config: SimpleNamespace()
     )
-    state = {"readings": [], "guard": 0, "pools": 0, "next": ["sha256/v2:a"]}
+    state = {
+        "readings": [],
+        "guard": 0,
+        "pools": 0,
+        "next": ["sha256/v2:a"],
+        "tags": {"embedding_model_tags": ["Qwen/Q"], "untagged_chunk_count": 0},
+    }
 
     def pool(config):
         state["pools"] += 1
@@ -1980,9 +1988,13 @@ def corpus(monkeypatch, agent_inputs):
         state["readings"].append(value)
         return value
 
+    def tag_state(pool, config):
+        return state["tags"]
+
     monkeypatch.setattr(provenance, "direct_pool", pool)
     monkeypatch.setattr(provenance, "collection_readiness", readiness)
     monkeypatch.setattr(provenance, "live_corpus_fingerprint", fingerprint)
+    monkeypatch.setattr(provenance, "live_embedding_tag_state", tag_state)
     return state
 
 
@@ -2077,6 +2089,23 @@ def test_a_retry_with_fresh_attempts_takes_its_own_readings(
     assert manifest["retrieval_identity"]["embedding_model"] == "Qwen/Q"
     provenance = read_json(tmp_path / "successor" / "summary.json")["provenance"]
     assert provenance["corpus_fingerprint"] == "sha256/v2:d"
+
+
+def test_a_search_run_records_both_tag_keys_in_manifest_and_summary(corpus, tmp_path):
+    dataset = tmp_path / "dataset.json"
+    _dataset(dataset)
+    run_dir = tmp_path / "run"
+    workflow = QAWorkflow()
+    workflow.prepare(dataset, run_dir)
+    workflow.run(run_dir, tmp_path / "agent.yaml", tmp_path / "agent.md")
+    workflow.score(run_dir)
+
+    manifest = read_json(run_dir / "manifest.json")
+    assert "embedding_tags_end" in manifest
+    assert "embedding_tags_unchanged_at_endpoints" in manifest
+    prov = read_json(run_dir / "summary.json")["provenance"]
+    assert "embedding_tags_end" in prov
+    assert "embedding_tags_unchanged_at_endpoints" in prov
 
 
 def test_phase_usage_appears_in_summary_provenance(agent_inputs, monkeypatch, tmp_path):
