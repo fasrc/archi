@@ -446,3 +446,26 @@ class TestTheHarnessEndTagReading:
             tag_end=end,
         )
         assert record["embedding_tags_unchanged_at_endpoints"] is None
+
+    def test_the_real_wrapper_catches_a_failing_tag_read(self, monkeypatch, tmp_path):
+        _install_pool(monkeypatch, _FakePool(rows=[]))
+        config_path = tmp_path / "arm.yaml"
+        config_path.write_text(yaml.safe_dump({"services": {"benchmarking": {}}}))
+        monkeypatch.setattr(ResultHandler, "results", [])
+        monkeypatch.setattr(ResultHandler, "category_map_records_by_arm", [])
+
+        def _raise(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(sb, "live_embedding_tag_state", _raise)
+        ResultHandler.handle_results(
+            config_path,
+            {"q1": {"score": 0.9}},
+            {},
+            running_config=RUNNING_CONFIG,
+            retrieval_identity={"embedding_model": "m1", "untagged_chunk_count": 0},
+        )
+        record = ResultHandler.results[-1]
+        assert record["embedding_tags_end"].startswith(ResultHandler.CORPUS_UNAVAILABLE)
+        assert record["embedding_tags_unchanged_at_endpoints"] is None
+        assert record["single_question_results"]["q1"]["score"] == 0.9

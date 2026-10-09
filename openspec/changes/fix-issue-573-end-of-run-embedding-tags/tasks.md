@@ -96,7 +96,7 @@
       with `"variant 'a'" in w` in both tests. Confirm the stronger check fails if the
       f-string at `src/bin/service_benchmark.py:1328` drops `{name}`, then restore it. One
       commit (`test: pin the variant name in the tag warnings`).
-- [ ] 3.1b (review finding) `test_a_failed_end_reading_records_the_marker_and_none_and_keeps_scores`
+- [x] 3.1b (review finding) `test_a_failed_end_reading_records_the_marker_and_none_and_keeps_scores`
       (`tests/unit/test_benchmark_corpus_fingerprint.py` ~:425) stubs
       `ResultHandler.get_embedding_tag_state` with a ready-made marker, so the wrapper's
       except branch (`src/bin/service_benchmark.py:491-505`) is never asserted. Add a test
