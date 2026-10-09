@@ -51,18 +51,42 @@ def build_ingestion_helpers(
         with _status_lock:
             return dict(_status)
 
+    # Runs that hold or wait for ingestion_lock. Only the lock owner publishes
+    # its step, and "completed" is published only when no run is queued: a
+    # benchmark that sees "completed" must not have a corpus change behind it.
+    _inflight = 0
+
+    def _join() -> bool:
+        """Count a run in; True when no other run holds or awaits the lock."""
+        nonlocal _inflight
+        with _status_lock:
+            _inflight += 1
+            return _inflight == 1
+
+    def _publish_running(step: str) -> None:
+        with _status_lock:
+            _status.update(
+                {"state": "running", "step": step, "error": None, "progress": None}
+            )
+
+    def _finish(state: str, step: str, error: Optional[str] = None) -> None:
+        """Count a run out. Call it while the run still holds ingestion_lock."""
+        nonlocal _inflight
+        with _status_lock:
+            _inflight -= 1
+            if state == "error" or _inflight == 0:
+                _status.update({"state": state, "step": step, "error": error})
+
     def run_tracked(step: str, fn: Callable[[], Any]) -> Any:
+        _join()
         with ingestion_lock:
-            with _status_lock:
-                _status.update(
-                    {"state": "running", "step": step, "error": None, "progress": None}
-                )
+            _publish_running(step)
             try:
                 result = fn()
             except Exception as exc:
-                set_ingestion_status("error", step="failed", error=str(exc))
+                _finish("error", "failed", str(exc))
                 raise
-            set_ingestion_status("completed", step="done")
+            _finish("completed", "done")
             return result
 
     def run_source_refresh(
@@ -86,27 +110,22 @@ def build_ingestion_helpers(
         run_tracked(f"scheduled:{name}", body)
 
     def run_initial_ingestion_async() -> None:
-        with _status_lock:
-            _status.update(
-                {
-                    "state": "running",
-                    "step": "initializing",
-                    "error": None,
-                    "progress": None,
-                }
-            )
-        try:
-            with ingestion_lock:
+        if _join():
+            _publish_running("initializing")
+        with ingestion_lock:
+            _publish_running("initializing")
+            try:
                 run_ingestion_fn(
                     progress_callback=lambda step: set_ingestion_status(
                         "running", step=step
                     ),
                     embedding_progress=set_ingestion_progress,
                 )
-            set_ingestion_status("completed", step="done")
-        except Exception as exc:
-            logger.exception("Initial ingestion failed")
-            set_ingestion_status("error", step="failed", error=str(exc))
+            except Exception as exc:
+                logger.exception("Initial ingestion failed")
+                _finish("error", "failed", str(exc))
+                return
+            _finish("completed", "done")
 
     return {
         "set_ingestion_status": set_ingestion_status,
