@@ -183,7 +183,7 @@
 
 ## 6. Docs
 
-- [ ] 6.1 In `docs/docs/interpreting_benchmark_results.md`, next to the
+- [x] 6.1 In `docs/docs/interpreting_benchmark_results.md`, next to the
       `corpus_unchanged_at_endpoints: false` entry near line 608, add one entry for
       `embedding_tags_unchanged_at_endpoints: false` (what it means: the collection was
       re-embedded during the arm, so some questions searched vectors of another model or of no recorded model;
