@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from scripts.benchmarking import compare_runs as cr
 from src.utils.benchmark_resilience import (
     BANK_SLICE_FIELDS,
@@ -446,15 +448,19 @@ def test_process_config_marks_an_all_failed_ragas_arm_as_unscored():
     assert agent._ragas_scored is False
 
 
-def test_process_config_marks_a_ragas_arm_with_scorable_input_as_scored():
+@pytest.mark.parametrize("judge_ran", [True, False])
+def test_process_config_keeps_the_judge_verdict_from_get_ragas_results(judge_ran):
+    """Scorable input is not enough: the verdict is whether the judge ran (#518)."""
+
     class _RagasStub(_ConfigStub):
         def get_ragas_results(self, rows, keys, results_by_key):
+            self._ragas_scored = judge_ran
             return {"aggregate_faithfulness": 1.0}
 
     agent = _RagasStub(queries=[{"user_input": "q"}], bundles=[_ok_bundle()])
     agent._ragas_scored = None
     agent._process_config({"RAGAS"})
-    assert agent._ragas_scored is True
+    assert agent._ragas_scored is judge_ran
 
 
 def test_process_config_leaves_ragas_scored_unset_when_ragas_is_not_a_mode():

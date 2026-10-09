@@ -2087,8 +2087,12 @@ class Benchmarker:
         embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
         judge_provider, judge_model = ragas_judge_identity(self.config)
         recorder = UsageRecorder(judge_provider, judge_model or "")
+        # Input rows alone do not prove the judge ran: a metric with no
+        # eligible row records n/a without calling score_fn (#518).
+        self._ragas_scored = False
 
         def score_fn(metric, eligible_rows):
+            self._ragas_scored = True
             # One metric at a time over its own eligible subset: keeps a single
             # bad metric from failing the batch and preserves per-metric
             # denominators (the modern EvaluationDataset replaces the legacy
@@ -2189,8 +2193,9 @@ class Benchmarker:
         if "RAGAS" in modes_being_run:
             # Whether the judge scored anything for this arm. `run()` passes it
             # to `handle_results`, which records no judge settings when it is
-            # False (#518). Left untouched when RAGAS is not a mode.
-            self._ragas_scored = bool(ragas_input)
+            # False (#518). get_ragas_results sets it True only when a metric
+            # invokes the judge. Left untouched when RAGAS is not a mode.
+            self._ragas_scored = False
             if ragas_input:
                 logger.info("Starting to collect RAGAS results")
                 # scorable_items carries #92's per-question keys in ragas_input
