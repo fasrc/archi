@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from scripts.benchmarking import compare_runs as cr
 from src.utils.benchmark_resilience import (
     BANK_SLICE_FIELDS,
@@ -436,6 +438,91 @@ def test_process_config_all_failed_ragas_is_nan():
     # no scorable RAGAS input -> aggregates are NaN, not an empty-Dataset crash
     assert math.isnan(total["aggregate_faithfulness"])
     assert math.isnan(total["aggregate_answer_relevancy"])
+
+
+def test_process_config_marks_an_all_failed_ragas_arm_as_unscored():
+    """No scorable input means the judge never ran for this arm (#518)."""
+    agent = _ConfigStub(queries=[{"user_input": "q"}], bundles=[_fail_bundle()])
+    agent._ragas_scored = None
+    agent._process_config({"RAGAS"})
+    assert agent._ragas_scored is False
+
+
+@pytest.mark.parametrize("judge_ran", [True, False])
+def test_process_config_keeps_the_judge_verdict_from_get_ragas_results(judge_ran):
+    """Scorable input is not enough: the verdict is whether the judge ran (#518)."""
+
+    class _RagasStub(_ConfigStub):
+        def get_ragas_results(self, rows, keys, results_by_key):
+            self._ragas_scored = judge_ran
+            return {"aggregate_faithfulness": 1.0}
+
+    agent = _RagasStub(queries=[{"user_input": "q"}], bundles=[_ok_bundle()])
+    agent._ragas_scored = None
+    agent._process_config({"RAGAS"})
+    assert agent._ragas_scored is judge_ran
+
+
+def test_process_config_leaves_ragas_scored_unset_when_ragas_is_not_a_mode():
+    agent = _ConfigStub(
+        queries=[{"user_input": "q", "sources": ["x"]}], bundles=[_ok_bundle()]
+    )
+    agent._ragas_scored = None
+    agent._process_config({"SOURCES"})
+    assert agent._ragas_scored is None
+
+
+def test_run_passes_each_arms_ragas_scored_to_handle_results(monkeypatch):
+    """``run()`` must hand ``_process_config``'s verdict to the record (#518).
+
+    The first arm was scored, the second was not, so the reset before each arm
+    must not let the first arm's ``True`` leak into the second.
+    """
+    calls = []
+    verdicts = [True, False]
+
+    class _RunStub(Benchmarker):
+        def __init__(self):
+            self.benchmarking_configs = {"modes": ["RAGAS"]}
+            self.benchmark_name = "t"
+            self.queries_to_answers = []
+            self.all_config_files = ["a.yaml", "b.yaml"]
+            self.current_config = "a.yaml"
+            self.chain = None
+            self.config = {}
+
+        def wait_for_ingestion_completion(self):
+            return 0.0
+
+        def _merge_anchor_questions(self):
+            return None
+
+        def _process_config(self, modes_being_run):
+            assert self._ragas_scored is None
+            self._ragas_scored = verdicts.pop(0)
+            return {}, {}
+
+        def load_new_configuration(self):
+            self.all_config_files.pop(0)
+            if self.all_config_files:
+                self.current_config = self.all_config_files[0]
+
+    monkeypatch.setattr(ResultHandler, "check_collection", lambda cfg: None)
+    monkeypatch.setattr(ResultHandler, "get_corpus_fingerprint", lambda cfg: None)
+    monkeypatch.setattr(ResultHandler, "get_category_map", lambda cfg: (None, None))
+    monkeypatch.setattr(
+        ResultHandler,
+        "handle_results",
+        lambda *args, **kwargs: calls.append(kwargs.get("ragas_scored", "missing")),
+    )
+    monkeypatch.setattr(ResultHandler, "add_metadata", lambda: None)
+    monkeypatch.setattr(ResultHandler, "dump_artifacts", lambda name: None)
+    monkeypatch.setattr(ResultHandler, "results", [])
+    monkeypatch.delenv("ARCHI_ARGILLA", raising=False)
+
+    _RunStub().run()
+
+    assert calls == [True, False]
 
 
 def test_process_config_skips_invalid_items():

@@ -391,8 +391,13 @@ The dump JSON gains a `leaderboard` key:
     the drift reduction ignores `null` — so without it, one judged arm beside
     an unjudged one reported that arm's worker count as shared by both.
 - `ragas_effective_settings` — on each run record, the judge `timeout` and
-  `max_workers` the run actually used, or `null` when `RAGAS` was not among the
-  run's `modes` and no judge ran. A rendered configuration always carries a
+  `max_workers` the run actually used, or `null` when no judge ran. That is
+  the case when `RAGAS` was not among the run's `modes`, and also when it was
+  but every answer in the arm failed or was degraded, so there was nothing to
+  score and the judge never started, or when no enabled metric had an
+  eligible row (for example, only `context_recall` with draft rows that have
+  no reference). In a sweep, such an arm beside a judged
+  one withholds the ranking ("one arm was not judged"). A rendered configuration always carries a
   `ragas_settings` block, so its presence does not mean the judge was used.
   `configuration` holds the selected file with each prompt path replaced by
   that file's contents. When an invalid setting was replaced by its default,

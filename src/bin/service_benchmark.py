@@ -537,6 +537,7 @@ class ResultHandler:
         modes_executed: Optional[Set[str]] = None,
         retrieval_identity: Optional[Dict[str, Any]] = None,
         judge_usage: Optional[Dict[str, Any]] = None,
+        ragas_scored: Optional[bool] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -701,6 +702,12 @@ class ResultHandler:
             # timeout and a worker count as settings it used, when it never
             # built a RunConfig at all. Null says "no judge ran" and is not the
             # same claim as an absent key.
+            #
+            # Also None when RAGAS was a mode but every answer in the arm failed
+            # or was degraded, so `_process_config` never built a `RunConfig` and
+            # the judge never started (#518). `ragas_scored=False` is how the
+            # caller reports that; `None` means the caller does not know, which
+            # keeps today's behavior.
             "ragas_effective_settings": (
                 ragas_effective_settings(
                     (
@@ -710,7 +717,7 @@ class ResultHandler:
                         or {}
                     ).get("ragas_settings")
                 )
-                if ragas_ran
+                if ragas_ran and ragas_scored is not False
                 else None
             ),
             # Per-arm token usage from the ragas judge LLM calls (D7). Null when
@@ -2144,8 +2151,12 @@ class Benchmarker:
         embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
         judge_provider, judge_model = ragas_judge_identity(self.config)
         recorder = UsageRecorder(judge_provider, judge_model or "")
+        # Input rows alone do not prove the judge ran: a metric with no
+        # eligible row records n/a without calling score_fn (#518).
+        self._ragas_scored = False
 
         def score_fn(metric, eligible_rows):
+            self._ragas_scored = True
             # One metric at a time over its own eligible subset: keeps a single
             # bad metric from failing the batch and preserves per-metric
             # denominators (the modern EvaluationDataset replaces the legacy
@@ -2244,6 +2255,11 @@ class Benchmarker:
             logger.info("")
 
         if "RAGAS" in modes_being_run:
+            # Whether the judge scored anything for this arm. `run()` passes it
+            # to `handle_results`, which records no judge settings when it is
+            # False (#518). get_ragas_results sets it True only when a metric
+            # invokes the judge. Left untouched when RAGAS is not a mode.
+            self._ragas_scored = False
             if ragas_input:
                 logger.info("Starting to collect RAGAS results")
                 # scorable_items carries #92's per-question keys in ragas_input
@@ -2437,6 +2453,7 @@ class Benchmarker:
             corpus_before = ResultHandler.get_corpus_fingerprint(arm_config)
             _, category_map_before = ResultHandler.get_category_map(arm_config)
             self._judge_usage = None
+            self._ragas_scored = None
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
                 Path(self.current_config),
@@ -2462,6 +2479,7 @@ class Benchmarker:
                 ingest_wall_seconds=ingest_wall_seconds,
                 retrieval_identity=arm_identity,
                 judge_usage=getattr(self, "_judge_usage", None),
+                ragas_scored=getattr(self, "_ragas_scored", None),
             )
             self.load_new_configuration()
 
