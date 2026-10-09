@@ -180,12 +180,13 @@ plain "give up after N seconds":
   its own error instead, since then they are all separate facts.
 - **The ingest never started.** The endpoint answers, but with `state=pending`,
   with a state the harness does not recognize, or with `state=running
-  step=initializing` — the last of which means this ingest is queued behind
-  something else holding the data-manager's ingestion lock (a scheduled source
-  refresh, or a vectorstore update triggered by an upload). None of those is
-  progress, so none restarts the stall budget, and `BENCH_INGEST_WAIT_TIMEOUT`
+  step=initializing` past the moment the ingest is due to start. None of those
+  is progress, so none restarts the stall budget, and `BENCH_INGEST_WAIT_TIMEOUT`
   ends the wait on the same schedule as a dead endpoint — naming the state and
-  step, so the queued case is obvious from the error alone.
+  step in the error. An ingest queued behind a scheduled source refresh or an
+  upload does not show `initializing`: the endpoint keeps reporting the running
+  refresh (`step=scheduled:<source>` or `step=upload`) until the ingest takes
+  the lock.
 - **The ingest is alive but stuck.** Polls keep reporting `running` and the
   state never reaches `completed`. `BENCH_INGEST_MAX_WAIT` ends that, and the
   error reports the last observed `state` and `step` rather than a connection
@@ -197,11 +198,17 @@ plain "give up after N seconds":
   a phase before the embedding loop starts), a wedged ingest is byte-for-byte
   the same as a working one, and only the ceiling can catch it.
 
+Scheduled source refreshes and upload-triggered vectorstore updates also report
+through this endpoint (`step=scheduled:<source>` or `step=upload`), so a
+benchmark that starts while one runs waits for it, and the refresh's polls keep
+the stall budget alive. The endpoint reports `completed` only when no such run is
+queued. A refresh is not the corpus build, so its time is not counted in
+`ingest_wall_seconds`.
+
 What this wait does **not** cover: a corpus change that starts *after* the
-initial ingest reports `completed` — a scheduled source refresh, or a
-vectorstore update triggered by an upload. Those hold the same lock but never
-touch this status endpoint, so the harness cannot block on them. It detects
-them after the fact instead, by fingerprinting the corpus on both sides of each
+benchmark's wait returned. That includes the collection phase of an upload,
+which runs before its vectorstore update begins to report. The harness detects
+those changes after the fact, by fingerprinting the corpus on both sides of each
 arm and recording `corpus_unchanged_at_endpoints` in the results.
 
 A long-but-healthy ingest hits none of them. CPU-only ingest of the full FASRC
