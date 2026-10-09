@@ -55,4 +55,6 @@ def test_the_local_only_gate_ships_with_slack_on_dev():
     compat = (REPO / "src/interfaces/chat_app/openai_compat.py").read_text()
     template = (REPO / "src/cli/templates/base-config.yaml").read_text()
     assert "def _enforce_local_only" in compat
+    # dev's config turns /v1 on by local_only alone (fails closed on older code)
+    assert "def openai_compat_wanted" in compat
     assert "services.chat_app.openai_compat.local_only" in template
