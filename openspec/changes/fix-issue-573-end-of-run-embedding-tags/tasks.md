@@ -163,7 +163,7 @@
       `--noise-runs` replicate recording `False` is refused with the gate exit code, also
       with `--corpus-differs-by-design`; a `--qa-run` with equal readings and the key `False`
       is refused with the tag reason; a QA run without the key joins as before.
-- [ ] 5.2 In `scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh`, add two
+- [x] 5.2 In `scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh`, add two
       numbered cases after the last existing case (update the numbered case list in the
       header comment), then implement the single-arm part of design D8 in
       `scripts/benchmarking/feature_matrix/archive_run.sh`, one commit
