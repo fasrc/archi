@@ -27,6 +27,7 @@ def build_ingestion_helpers(
       - ``run_initial_ingestion_async()``
       - ``run_tracked(step, fn)``
       - ``run_source_refresh(name, func, update_vectorstore, set_source_status)``
+      - ``run_upload_update(update_vectorstore)``
       - ``ingestion_lock`` — the caller's ingestion mutual-exclusion lock
     """
     _status_lock = threading.Lock()
@@ -89,6 +90,16 @@ def build_ingestion_helpers(
             _finish("completed", "done")
             return result
 
+    def _update_or_raise(update_vectorstore: Callable[..., Any]) -> None:
+        # A sync that could not add its documents returns "failed" rather than
+        # raising; publishing "completed" after it would present a partial
+        # corpus as a finished one.
+        if update_vectorstore(force=True) == "failed":
+            raise RuntimeError("vectorstore update failed: documents not added")
+
+    def run_upload_update(update_vectorstore: Callable[..., Any]) -> None:
+        run_tracked("upload", lambda: _update_or_raise(update_vectorstore))
+
     def run_source_refresh(
         name: str,
         func: Callable[[], None],
@@ -100,7 +111,7 @@ def build_ingestion_helpers(
             set_source_status(name, state="running")
             func()
             logger.info("Updating vectorstore after scheduled task: %s", name)
-            update_vectorstore(force=True)
+            _update_or_raise(update_vectorstore)
             set_source_status(
                 name,
                 state="idle",
@@ -134,5 +145,6 @@ def build_ingestion_helpers(
         "run_initial_ingestion_async": run_initial_ingestion_async,
         "run_tracked": run_tracked,
         "run_source_refresh": run_source_refresh,
+        "run_upload_update": run_upload_update,
         "ingestion_lock": ingestion_lock,
     }

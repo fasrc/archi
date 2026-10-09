@@ -127,7 +127,7 @@ class DataManager:
         if not (self.should_run_ingestion or force):
             logger.debug("Skipping vectorstore update (ingestion disabled).")
             return None
-        self.vector_manager.update_vectorstore()
+        return self.vector_manager.update_vectorstore()
 
     def _update_after_collect(self) -> None:
         self.persistence.flush_index()

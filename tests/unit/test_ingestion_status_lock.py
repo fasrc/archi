@@ -623,3 +623,55 @@ def test_error_is_published_even_with_a_run_queued():
     assert at_release[0]["state"] == "error"
     assert at_release[0]["error"] == "embed down"
     assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_run_source_refresh_publishes_error_when_the_update_failed():
+    """A sync that returns "failed" (documents not added) is an error, not completed."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    idle_calls = []
+
+    def fake_set_source_status(source, **kwargs):
+        if kwargs.get("state") == "idle":
+            idle_calls.append(kwargs)
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    with pytest.raises(RuntimeError, match="failed"):
+        helpers["run_source_refresh"](
+            "git", lambda: None, lambda **_: "failed", fake_set_source_status
+        )
+
+    status = helpers["get_ingestion_status"]()
+    assert status["state"] == "error"
+    assert status["step"] == "failed"
+    assert idle_calls == []
+
+
+def test_run_upload_update_publishes_upload_lifecycle():
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    seen = {}
+    calls = []
+
+    def fake_update_vectorstore(**kwargs):
+        calls.append(kwargs)
+        seen.update(helpers["get_ingestion_status"]())
+        return "updated"
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    helpers["run_upload_update"](fake_update_vectorstore)
+
+    assert calls == [{"force": True}]
+    assert seen["state"] == "running"
+    assert seen["step"] == "upload"
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_run_upload_update_publishes_error_when_the_update_failed():
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    with pytest.raises(RuntimeError, match="failed"):
+        helpers["run_upload_update"](lambda **_: "failed")
+
+    assert helpers["get_ingestion_status"]()["state"] == "error"

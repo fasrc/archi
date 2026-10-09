@@ -74,9 +74,7 @@ def main() -> None:
         _ing["run_source_refresh"](name, func, update, set_source_status)
 
     def trigger_update() -> None:
-        _ing["run_tracked"](
-            "upload", lambda: data_manager.update_vectorstore(force=True)
-        )
+        _ing["run_upload_update"](data_manager.update_vectorstore)
 
     schedule_map: Dict[str, Callable[[Optional[str]], None]] = {
         "local_files": lambda last_run=None: data_manager.localfile_manager.schedule_collect_local_files(
