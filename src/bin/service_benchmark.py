@@ -2708,6 +2708,10 @@ class Benchmarker:
         # campaign's cost table depend on what else the data-manager was doing.
         # Still None at the completed poll = no ingest was observed at all (#417).
         ingest_started_at: Optional[float] = None
+        # The first refresh or upload step seen after the ingest started. The
+        # data manager holds "completed" back while such a run is queued, so
+        # the ingest ended here, not at the completed poll.
+        ingest_ended_at: Optional[float] = None
         last_done: Optional[int] = None
         attempt = 0
 
@@ -2765,14 +2769,19 @@ class Benchmarker:
                 if _ingest_is_progressing(state, step, done=done, last_done=last_done):
                     last_ok_at = clock()
                     last_done = done
-                    if ingest_started_at is None and not _is_refresh_step(step):
-                        ingest_started_at = last_ok_at
+                    if not _is_refresh_step(step):
+                        if ingest_started_at is None:
+                            ingest_started_at = last_ok_at
+                    elif ingest_started_at is not None and ingest_ended_at is None:
+                        ingest_ended_at = last_ok_at
 
                 if state == "completed":
                     logger.info("Data-manager ingestion completed; starting benchmark.")
                     if ingest_started_at is None:
                         return None
-                    return clock() - ingest_started_at
+                    if ingest_ended_at is None:
+                        ingest_ended_at = clock()
+                    return ingest_ended_at - ingest_started_at
                 if state == "error":
                     raise RuntimeError(
                         f"Data-manager ingestion failed at step '{step}': "

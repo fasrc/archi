@@ -705,3 +705,28 @@ def test_ingest_cost_starts_at_the_first_non_refresh_step(monkeypatch):
     )
 
     assert elapsed == 10.0
+
+
+def test_a_refresh_queued_behind_the_ingest_is_not_counted_as_ingest_cost(
+    monkeypatch,
+):
+    """A refresh that runs after the ingest, before completed, ends the timing.
+
+    The data manager keeps the state running while a refresh is queued, so the
+    completed poll arrives only after the refresh. The ingest ended when the
+    refresh step first appeared.
+    """
+    _budget_env(monkeypatch, stall="60", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted(
+        [_running()] * 2
+        + [_running("scheduled:git")] * 3
+        + [{"state": "completed", "step": "done"}]
+    )
+
+    elapsed = _bench().wait_for_ingestion_completion(
+        fetch=fetch, clock=clock, sleep=clock.sleep
+    )
+
+    assert clock.now - 1000.0 == 25.0, "the wait blocked on the refresh"
+    assert elapsed == 10.0

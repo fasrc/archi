@@ -203,7 +203,8 @@ through this endpoint (`step=scheduled:<source>` or `step=upload`), so a
 benchmark that starts while one runs waits for it, and the refresh's polls keep
 the stall budget alive. The endpoint reports `completed` only when no such run is
 queued. A refresh is not the corpus build, so its time is not counted in
-`ingest_wall_seconds`.
+`ingest_wall_seconds`. This includes a refresh that runs after the ingest and
+before `completed`: the timing stops at the first poll that shows the refresh.
 
 What this wait does **not** cover: a corpus change that starts *after* the
 benchmark's wait returned. That includes the collection phase of an upload,
