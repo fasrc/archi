@@ -195,8 +195,10 @@ its module docstring.
    `ADD` do not change provenance: a forced extraction of a path a moving download wrote
    is still reported after a `COPY` over it (conservative; no template does this).
 3. *Which RUNs are read.* A shell-form `RUN` is read when its text names `tar`, `wget`, or
-   `curl` as a word (any case), or holds a moving URL, `TAR_OPTIONS`, or `TAPE`. Other
-   RUNs are skipped. The `RUN` keyword and its `--flag` words are dropped.
+   `curl` as a word (any case), or holds a moving URL, `TAR_OPTIONS`, or `TAPE`, in its
+   raw text or in its words after quote removal (PR #626: `t\ar` and `t'a'r` name tar).
+   Other RUNs are skipped; a RUN that cannot be split into words fails closed. The `RUN`
+   keyword and its `--flag` words are dropped.
 4. *Words and separators.* Words use `'…'`, `"…"`, and backslash escapes; an unquoted `#`
    at the start of a word starts a comment. `&&`, `;`, and `|` separate simple commands,
    read left to right. Output redirections (`>`, `>>`, `>|`, `N>`, `N>&M`, `&>`, `&>>`)

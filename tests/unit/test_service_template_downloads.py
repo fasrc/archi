@@ -38,8 +38,10 @@ finding the next shell feature a hand-written parser misreads.
    instruction. Every other instruction except ``RUN`` is skipped; ``COPY`` and ``ADD``
    do not change what the guard knows about a path.
 3. A shell-form ``RUN`` is read when it names ``tar``, ``wget`` or ``curl`` as a word (any
-   case), or holds a moving URL, ``TAR_OPTIONS`` or ``TAPE``. Other RUNs are skipped. The
-   ``RUN`` keyword and its ``--flag`` words are dropped.
+   case), or holds a moving URL, ``TAR_OPTIONS`` or ``TAPE``, in its raw text or in its
+   words after quote removal (so ``t\\ar`` names tar). Other RUNs are skipped; a RUN
+   that cannot be split into words fails closed. The ``RUN`` keyword and its ``--flag``
+   words are dropped.
 4. Words use ``'…'``, ``"…"`` and backslash escapes; an unquoted ``#`` at the start of a
    word starts a comment. ``&&``, ``;`` and ``|`` separate simple commands, read left to
    right. Output redirections (``>``, ``>>``, ``>|``, ``2>``, ``2>&1``, ``&>``) are
@@ -823,7 +825,14 @@ def _instruction_invocations(instruction: str, keyword: str) -> list:
     command = _RUN_PREFIX.sub("", instruction, count=1)
     if command.startswith("["):
         raise _Unreadable("exec-form RUN")
-    if not (_READ_RUN.search(command) or _MOVING_DOWNLOAD.search(command)):
+    try:
+        # Relevance is decided on the words the shell reads, so ``t\ar`` and
+        # ``t'a'r`` name tar (PR #626). A RUN that cannot be split into words is read,
+        # and so fails closed.
+        words = [command] + _shell_tokens(command)
+    except ValueError as exc:
+        raise _Unreadable(str(exc)) from exc
+    if not any(_READ_RUN.search(w) or _MOVING_DOWNLOAD.search(w) for w in words):
         return []
     return _invocations(command)
 
@@ -1783,6 +1792,9 @@ class TestTheGuardReadsOnlyItsContract:
             (f'RUN wget -O - "{_M}" | tar -xz\n', ["-xz"]),
             # An assignment on its own is not in front of tar.
             (_SAVE_MOVING + "RUN V=1 && tar -xzf /tmp/a\n", ["-xzf"]),
+            # PR #626: a quoted or escaped name is still tar once the shell reads it.
+            (_SAVE_MOVING + "RUN t\\ar -xzf /tmp/a\n", ["-xzf"]),
+            (_SAVE_MOVING + "RUN t'a'r -xzf /tmp/a\n", ["-xzf"]),
             # Package installers and echo only take the program names as data.
             (_SAVE_MOVING + "RUN apt-get install -y wget curl tar\n", []),
             # A RUN that names neither tar, wget nor curl is not read.
@@ -1833,6 +1845,8 @@ class TestTheGuardReadsOnlyItsContract:
             f'RUN curl "{_M}" > /tmp/b',
             f'RUN python3 fetch.py "{_M}"',
             "RUN tar -xzf '/tmp/a",
+            # A RUN the guard cannot split into words may name tar inside it.
+            "RUN echo 'unterminated",
             "tar -xzf /tmp/a",
             'SHELL ["/bin/bash", "-c"]',
             "ADD https://example.invalid/x.tar.gz /tmp/",
