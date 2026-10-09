@@ -74,6 +74,9 @@
 #   70. without `timeout` on PATH the page is still sent, unbounded
 #   71. a hung mail binary that ignores SIGTERM is still killed and reports "page failed"
 #   72. an FM_MAIL_TIMEOUT that is zero or not a duration falls back to 60 seconds
+#   73. an oversized judge timeout locks as the 180 default instead of aborting the lock
+#   74. an integral float judge timeout locks as the int (600.0 -> 600)
+#   75. an oversized max_workers is kept, as _positive_int keeps it
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -502,6 +505,22 @@ run bash "$HERE/archive_run.sh" 03 2 "$T/arms/03-categorization-off.yaml"
 sed 's/timeout: 300/timeout: 180/' "$T/arms/00-baseline.yaml" > "$T/variants/00-timeout.yaml"
 run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/variants/00-timeout.yaml"
 [ "$RC" = 2 ] && grep -q "fixed factor judge.timeout: locked 300, arm has 180" "$T/stderr" && ok "a different judge timeout is refused by the lock" || notok "judge timeout lock (rc=$RC: $(cat "$T/stderr"))"
+
+# 73-75: fm_fixed_factors_json mirrors _positive_number / _positive_int (#521)
+fixed_factor() { # $1 = arm YAML, $2 = values key → prints the locked value as JSON, or fails
+  "$(command -v bash)" -c 'source "$1"; fm_fixed_factors_json "$2"' _ "$HERE/lib.sh" "$1" 2>"$T/stderr" \
+    | "$FM_PYTHON" -c "import json,sys; print(json.dumps(json.load(sys.stdin)['values']['$2']))"
+}
+HUGE="1$(printf '0%.0s' $(seq 309))"
+sed "s/timeout: 300/timeout: $HUGE/" "$T/arms/00-baseline.yaml" > "$T/variants/00-timeout-huge.yaml"
+V="$(fixed_factor "$T/variants/00-timeout-huge.yaml" judge.timeout || true)"
+[ "$V" = 180 ] && ok "an oversized judge timeout locks as the 180 default" || notok "oversized judge timeout (got '$V': $(cat "$T/stderr"))"
+sed 's/timeout: 300/timeout: 600.0/' "$T/arms/00-baseline.yaml" > "$T/variants/00-timeout-float.yaml"
+V="$(fixed_factor "$T/variants/00-timeout-float.yaml" judge.timeout || true)"
+[ "$V" = 600 ] && ok "an integral float judge timeout locks as the int" || notok "integral float judge timeout (got '$V': $(cat "$T/stderr"))"
+sed "s/timeout: 300/timeout: 300, max_workers: $HUGE/" "$T/arms/00-baseline.yaml" > "$T/variants/00-workers-huge.yaml"
+V="$(fixed_factor "$T/variants/00-workers-huge.yaml" judge.max_workers || true)"
+[ "$V" = "$HUGE" ] && ok "an oversized max_workers is kept" || notok "oversized max_workers (got '$V': $(cat "$T/stderr"))"
 
 # 38: qa_arm picks the next unused run number when --run is omitted (the stack is back on arm 00 since check 33)
 run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
