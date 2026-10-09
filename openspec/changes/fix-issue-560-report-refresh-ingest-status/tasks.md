@@ -81,7 +81,7 @@
 
 ## 3. Docs
 
-- [ ] 3.1 Edit `docs/docs/api_reference.md`, `GET /api/ingestion/status` (near line 686),
+- [x] 3.1 Edit `docs/docs/api_reference.md`, `GET /api/ingestion/status` (near line 686),
       per design D5: the `step` values `scheduled:<source>` and `upload` while `running`,
       `completed`/`done` or `error`/`failed` after, that `progress` is `null` during these
       runs, and that a benchmark that waits on this endpoint also waits for them. If

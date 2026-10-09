@@ -702,6 +702,15 @@ vectorstore. The counter advances once per committed batch of 25 files. `done` c
 end below `total`, because a file that a loader skips is never counted. After the
 ingest ends, `progress` keeps its last value.
 
+**Scheduled refreshes and upload runs** also move through this endpoint. While a
+scheduled source refresh is running, `state` is `running` and `step` is
+`scheduled:<source>` (for example `scheduled:git`). While a file upload is being
+ingested, `step` is `upload`. In both cases `progress` is `null` for the duration of
+the run. When the run ends, `state` becomes `completed` and `step` becomes `done`; on
+failure, `state` becomes `error` and `step` becomes `failed`. Any benchmark that polls
+this endpoint to wait for an idle system will also wait during scheduled refreshes and
+upload runs.
+
 ```json
 {"state": "running", "step": "Updating vectorstore", "error": null,
  "progress": {"done": 150, "total": 412}}
