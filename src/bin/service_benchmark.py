@@ -1397,6 +1397,17 @@ _INGEST_PROGRESS_STATES = frozenset({"running"})
 #: started.
 _INGEST_PRELOCK_STEP = "initializing"
 
+#: Steps a scheduled source refresh (``scheduled:<source>``) or an upload
+#: (``upload``) publishes. They change the corpus, so the wait blocks on them,
+#: but they are not the corpus build whose cost ``ingest_wall_seconds`` records.
+_INGEST_REFRESH_STEP_PREFIX = "scheduled:"
+_INGEST_UPLOAD_STEP = "upload"
+
+
+def _is_refresh_step(step: Any) -> bool:
+    step = str(step).strip().lower()
+    return step == _INGEST_UPLOAD_STEP or step.startswith(_INGEST_REFRESH_STEP_PREFIX)
+
 
 def _ingest_progress_done(payload: Dict[str, Any]) -> Optional[int]:
     """Return `progress.done` from a status payload, or `None` if absent or malformed.
@@ -1427,10 +1438,10 @@ def _ingest_is_progressing(
 
     1. Any state but "running" → False. Notably the initial "pending", which
        persists forever if the ingestion thread never starts.
-    2. Step "initializing" → False. Published before `ingestion_lock` is taken,
-       so it is also exactly what a benchmark sees while its own ingest is queued
-       behind a scheduled task or an upload-triggered vectorstore update, neither
-       of which touches this status dict (`service_data_manager.py:70-83`).
+    2. Step "initializing" → False. Published before the ingest's work starts
+       (and before `ingestion_lock` is taken when no other run holds it), so it
+       never proves work. A scheduled refresh or an upload publishes its own
+       ``scheduled:<source>`` or ``upload`` step instead.
     3. `done is None` → True. No counter present (older data manager, or a phase
        outside the embedding loop); fall back to the pre-counter rule where any
        running poll restarts the budget.
@@ -2754,7 +2765,7 @@ class Benchmarker:
                 if _ingest_is_progressing(state, step, done=done, last_done=last_done):
                     last_ok_at = clock()
                     last_done = done
-                    if ingest_started_at is None:
+                    if ingest_started_at is None and not _is_refresh_step(step):
                         ingest_started_at = last_ok_at
 
                 if state == "completed":
