@@ -119,7 +119,7 @@
 
 ## 4. QA end reading
 
-- [ ] 4.1 In `tests/unit/evaluation/qa/test_provenance.py` and
+- [x] 4.1 In `tests/unit/evaluation/qa/test_provenance.py` and
       `tests/unit/evaluation/qa/test_workflow.py`, add tests, then implement design D5 in
       `src/evaluation/qa/provenance.py` and the call sites in
       `src/evaluation/qa/workflow.py` (`:368`, `:597`, `:995-1001`, `:1141`), one commit
