@@ -51,7 +51,7 @@
 
 ## 2. F3 — collection-scoped chunk count (design D2)
 
-- [ ] 2.1 In `tests/unit/test_ingest_run.py` add tests: (a)
+- [x] 2.1 In `tests/unit/test_ingest_run.py` add tests: (a)
       `collect_ingest_counts(conn, collection_name="x_with_y")` executes chunk SQL that
       contains `metadata->>'collection' = %s` and `metadata->>'collection' IS NULL` and
       binds `("x_with_y",)`; (b) with no `collection_name` the chunk SQL has no `WHERE`
