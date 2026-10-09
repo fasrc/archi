@@ -195,7 +195,7 @@
 
 ## 7. Publish
 
-- [ ] 7.1 Run `bash scripts/gate.sh` on the tip and confirm it exits 0. Run
+- [x] 7.1 Run `bash scripts/gate.sh` on the tip and confirm it exits 0. Run
       `grep -rn "embedding_tags_unchanged_at_endpoints" src/ scripts/` and confirm it
       prints matches in `service_benchmark.py`, `qa/provenance.py`,
       `generate_benchmark_report.py`, `compare_runs.py`, `archive_run.sh` and
