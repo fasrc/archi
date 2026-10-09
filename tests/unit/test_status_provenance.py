@@ -432,3 +432,80 @@ def test_load_status_provenance_three_results_leaves_failed_at_none():
     )
     view = load_status_provenance(conn)
     assert view["knowledge_base"]["last_attempt_failed_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# D4 — unavailable current config
+# ---------------------------------------------------------------------------
+
+
+def test_build_kb_panel_none_current_snapshot_gives_no_drift_and_config_unavailable():
+    panel = build_knowledge_base_panel(_run_row(), None)
+    assert panel["drift"] == []
+    assert panel["current_config_available"] is False
+
+
+def test_build_kb_panel_with_mapping_current_snapshot_gives_config_available_and_drift():
+    run = _run_row(config_snapshot={"categorization": True})
+    panel = build_knowledge_base_panel(run, {"categorization": False})
+    assert panel["current_config_available"] is True
+    assert panel["drift"] == [
+        {"key": "categorization", "current": False, "at_ingest": True}
+    ]
+
+
+class _NthCallRaisingCursor:
+    """Raises on the Nth execute call; otherwise behaves like _FakeCursor."""
+
+    def __init__(self, results, raise_on_call):
+        self.results = list(results)
+        self.raise_on_call = raise_on_call
+        self._row = None
+        self._call_count = 0
+
+    def execute(self, sql, params=None):
+        self._call_count += 1
+        if self._call_count == self.raise_on_call:
+            raise RuntimeError("forced error on call %d" % self.raise_on_call)
+        self._row = self.results.pop(0) if self.results else None
+
+    def fetchone(self):
+        return self._row
+
+    def close(self):
+        pass
+
+
+class _NthCallRaisingConn:
+    def __init__(self, results, raise_on_call):
+        self._cursor = _NthCallRaisingCursor(results, raise_on_call)
+
+    def cursor(self, **kwargs):
+        return self._cursor
+
+
+def test_load_provenance_config_query_raises_keeps_deploy_and_run_panels_available():
+    conn = _NthCallRaisingConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+        ],
+        raise_on_call=3,
+    )
+    view = load_status_provenance(conn)
+    assert view["deployment"]["available"] is True
+    assert view["knowledge_base"]["available"] is True
+    assert view["knowledge_base"]["drift"] == []
+    assert view["knowledge_base"]["current_config_available"] is False
+
+
+def test_load_provenance_config_query_no_row_gives_config_unavailable():
+    conn = _FakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+        ]
+    )
+    view = load_status_provenance(conn)
+    assert view["knowledge_base"]["current_config_available"] is False
+    assert view["knowledge_base"]["drift"] == []

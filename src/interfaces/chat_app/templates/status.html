@@ -356,6 +356,9 @@
           </div>
           {% endif %}
 
+          {% if not kb.current_config_available %}
+          <div class="prov-unavailable">Current configuration unavailable — drift not evaluated.</div>
+          {% endif %}
           {% if kb.drift %}
           <div class="prov-warn">
             <div class="prov-warn-title">⚠ configuration changed after this ingest</div>

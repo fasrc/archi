@@ -149,7 +149,9 @@ def build_deployment_panel(row: Optional[Mapping]) -> Dict[str, Any]:
 
 
 def build_knowledge_base_panel(
-    run: Optional[Mapping], current_snapshot: Mapping, last_failed_at: Any = None
+    run: Optional[Mapping],
+    current_snapshot: Optional[Mapping],
+    last_failed_at: Any = None,
 ) -> Dict[str, Any]:
     """Build the Knowledge base panel from the newest completed ingest run.
 
@@ -169,10 +171,17 @@ def build_knowledge_base_panel(
             "chunk_count": None,
             "config": {},
             "drift": [],
+            "current_config_available": current_snapshot is not None,
             "last_attempt_failed_at": last_failed_at,
         }
 
     snapshot = _as_flag_mapping(run.get("config_snapshot"))
+    if current_snapshot is None:
+        drift: List[Dict[str, Any]] = []
+        current_config_available = False
+    else:
+        drift = compare_ingest_config(current_snapshot, snapshot)
+        current_config_available = True
     return {
         "available": True,
         "started_at": run.get("started_at"),
@@ -184,7 +193,8 @@ def build_knowledge_base_panel(
         "documents_pending": run.get("documents_pending"),
         "chunk_count": run.get("chunk_count"),
         "config": snapshot,
-        "drift": compare_ingest_config(current_snapshot, snapshot),
+        "drift": drift,
+        "current_config_available": current_config_available,
         "last_attempt_failed_at": _newer_failed_at(
             run.get("completed_at"), last_failed_at
         ),
@@ -236,7 +246,7 @@ def load_status_provenance(conn: Any) -> Dict[str, Any]:
     """
     deployment_row = None
     run_row = None
-    current_snapshot: Dict[str, Any] = {}
+    current_snapshot: Optional[Dict[str, Any]] = None
     last_failed_at = None
 
     try:

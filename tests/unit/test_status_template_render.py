@@ -200,3 +200,16 @@ def test_failed_attempt_warning_notes_possible_corpus_change(env):
     assert "counts shown are from the last successful run" in html
     assert "the failed attempt may have changed the live corpus" in html
     assert "the corpus above is from the last successful run" not in html
+
+
+def test_unavailable_current_config_renders_text_and_no_drift_warning(env):
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(_run_row(), None),
+        },
+    )
+    assert "Current configuration unavailable" in html
+    assert "drift not evaluated" in html
+    assert "configuration changed after this ingest" not in html

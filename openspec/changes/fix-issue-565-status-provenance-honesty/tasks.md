@@ -112,7 +112,7 @@
 
 ## 4. F4 — unavailable current config (design D4)
 
-- [ ] 4.1 In `tests/unit/test_status_provenance.py` add tests: (a)
+- [x] 4.1 In `tests/unit/test_status_provenance.py` add tests: (a)
       `build_knowledge_base_panel(run, None)` gives `drift == []` and
       `current_config_available is False`; (b) with a mapping it gives
       `current_config_available is True` and drift as today; (c) `load_status_provenance`
