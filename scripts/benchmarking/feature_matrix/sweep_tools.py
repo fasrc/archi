@@ -384,6 +384,15 @@ def archive(
                 f"{name}: corpus fingerprint not usable and stable at both endpoints"
             )
         fingerprints.add(after)
+        # #573: the fingerprint is model-neutral; only the end-of-run tag reading
+        # shows a re-embed under another model. Absent (a legacy arm) passes; a
+        # recorded false (changed) or null (not observed) does not.
+        tags = "embedding_tags_unchanged_at_endpoints"
+        if tags in entry and entry[tags] is not True:
+            raise SweepError(
+                f"{name}: embedding model tags changed during the arm "
+                f"({tags}={entry[tags]!r}); the arm is void"
+            )
         if entry.get("agent_md_sha256") != lock["arms"][name]["prompt_text_sha256"]:
             raise SweepError(
                 f"{name}: the arm ran prompt {entry.get('agent_md_sha256')}, the lock "

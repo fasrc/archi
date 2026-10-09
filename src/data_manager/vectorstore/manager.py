@@ -307,7 +307,7 @@ class VectorStoreManager:
         logger.info(f"N in PostgreSQL collection: {count}")
         return store
 
-    def update_vectorstore(self, embedding_progress=None) -> None:
+    def update_vectorstore(self, embedding_progress=None) -> str:
         """Synchronise filesystem documents with the vectorstore.
 
         Wraps the sync so every outcome is recorded. A run that raises must not
@@ -322,6 +322,7 @@ class VectorStoreManager:
             self._record_ingest_run(started_at, "failed")
             raise
         self._record_ingest_run(started_at, run_status)
+        return run_status
 
     def _sync_vectorstore(self, embedding_progress=None) -> str:
         """Do the synchronisation; return the terminal run status."""
@@ -417,7 +418,10 @@ class VectorStoreManager:
                 config_snapshot=build_ingest_config_snapshot(
                     getattr(self, "_data_manager_config", {})
                 ),
-                counts=collect_ingest_counts(conn),
+                counts=collect_ingest_counts(
+                    conn,
+                    collection_name=getattr(self, "collection_name", None),
+                ),
             )
         finally:
             conn.close()

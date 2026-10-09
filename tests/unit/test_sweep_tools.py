@@ -190,6 +190,7 @@ def _artifact(
     map_pairs=None,
     prompt_override=None,
     unchanged=True,
+    tags=None,
 ):
     out = sweep / "bench_out"
     out.mkdir(exist_ok=True)
@@ -217,6 +218,12 @@ def _artifact(
                 "category_map_file": tsv,
                 "agent_md_sha256": (prompt_override or {}).get(name)
                 or (_prompt_text_sha(prompt) if prompt else None),
+                # #573: the end-of-run tag comparison, absent unless the test names it.
+                **(
+                    {"embedding_tags_unchanged_at_endpoints": (tags or {})[name]}
+                    if name in (tags or {})
+                    else {}
+                ),
             }
         )
     path = out / f"{stem}.json"
@@ -363,6 +370,31 @@ def test_a_changed_map_is_archived_with_its_state(sweep):
     _ledger(sweep)
     rows = _archive(sweep, lock, artifact, 1, _census(sweep, digest, lock))
     assert all(row["category_map_unchanged_at_endpoints"] is False for row in rows)
+
+
+@pytest.mark.parametrize("value", [False, None], ids=["changed", "not-observed"])
+def test_an_arm_whose_embedding_tags_changed_is_refused(sweep, value):
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep, tags={STEMS[1]: value})
+    _ledger(sweep)
+    with pytest.raises(st.SweepError) as excinfo:
+        _archive(sweep, lock, artifact, 1, _census(sweep, digest, lock))
+    message = str(excinfo.value)
+    assert STEMS[1] in message and "embedding model tags changed" in message
+    assert not (sweep / "out/corpus-pin-r0").exists()
+    assert not (sweep / "out/category-map-pin-r0").exists()
+    assert len(json.loads((sweep / "out/ledger.json").read_text())) == 1
+
+
+@pytest.mark.parametrize("value", ["absent", True], ids=["legacy", "unchanged"])
+def test_an_arm_without_a_tag_change_archives_as_before(sweep, value):
+    lock = _lock(sweep)
+    tags = None if value == "absent" else {name: value for name in STEMS}
+    artifact, digest = _artifact(sweep, tags=tags)
+    _ledger(sweep)
+    rows = _archive(sweep, lock, artifact, 1, _census(sweep, digest, lock))
+    assert [row["arm"] for row in rows] == STEMS
+    assert (sweep / "out/corpus-pin-r0").read_text().strip() == "sha256:corpus"
 
 
 def test_stale_artifact_is_refused(sweep):

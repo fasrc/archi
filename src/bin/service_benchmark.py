@@ -31,8 +31,10 @@ from src.utils.benchmark_provenance import (
     collect_code_version,
     collection_readiness,
     config_version,
+    embedding_tags_unchanged,
     live_category_map,
     live_corpus_fingerprint,
+    live_embedding_tag_state,
     prompt_text_sha256,
     retrieval_identity,
     retrieval_record,
@@ -265,6 +267,11 @@ class ResultHandler:
             stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is not _NOT_RECORDED and stability is not True:
                 return "the corpus was not stable across an arm's own questions"
+            tag_stability = record.get(
+                "embedding_tags_unchanged_at_endpoints", _NOT_RECORDED
+            )
+            if tag_stability is not _NOT_RECORDED and tag_stability is not True:
+                return "the embedding model tags changed while an arm was running"
             if record.get("configuration_divergence"):
                 return "an arm did not run the settings it was selected to run"
             fingerprint = record.get("corpus_fingerprint")
@@ -482,6 +489,23 @@ class ResultHandler:
             return None, f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
 
     @staticmethod
+    def get_embedding_tag_state(config: Optional[Dict[str, Any]]):
+        """End-of-arm embedding tag state, or a marker explaining why it is missing.
+
+        Like ``get_corpus_fingerprint``: never raises, warns on failure.
+        """
+        try:
+            return live_embedding_tag_state(_factory_pool(), config)
+        except Exception as exc:  # noqa: BLE001 - provenance is never fatal
+            logger.warning(
+                "Embedding tag provenance unavailable: %s. This arm cannot be "
+                "shown to have been searched by the configured embedding model "
+                "throughout.",
+                exc,
+            )
+            return f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
+
+    @staticmethod
     def map_prompts(config: Dict[str, Any]):
         prompts = config.get("services", {}).get("benchmarking", {}).get("prompts")
         if not isinstance(prompts, dict):
@@ -591,6 +615,15 @@ class ResultHandler:
                 corpus_after,
             )
 
+        tags_end = ResultHandler.get_embedding_tag_state(running_config)
+        tags_unchanged = embedding_tags_unchanged(retrieval_identity, tags_end)
+        if tags_unchanged is False:
+            logger.warning(
+                "The embedding model tags changed while this arm was running; "
+                "some questions searched vectors of another model or of no "
+                "recorded model"
+            )
+
         # The same three states for the URL -> category map (#538 rules 1-2).
         category_map_end_records, category_map_after = ResultHandler.get_category_map(
             running_config
@@ -626,6 +659,8 @@ class ResultHandler:
             "corpus_fingerprint_before": corpus_before,
             "corpus_fingerprint": corpus_after,
             "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
+            "embedding_tags_end": tags_end,
+            "embedding_tags_unchanged_at_endpoints": tags_unchanged,
             # The map a per-category slice may read, bound to this arm: the end
             # records are written by dump_artifacts as `category_map_file`, whose
             # sha256 equals `category_map_sha256_end` by construction.
@@ -1291,6 +1326,19 @@ class ResultHandler:
                     f"corpus stability is unknown for variant '{name}'; it was "
                     "not observed before and after the run"
                 )
+            tag_stability = record.get(
+                "embedding_tags_unchanged_at_endpoints", _NOT_RECORDED
+            )
+            if tag_stability is False:
+                corpus_warnings.append(
+                    f"the embedding model tags changed while variant '{name}' was "
+                    "running; some questions searched vectors of another model or "
+                    "of no recorded model"
+                )
+            elif tag_stability is None:
+                corpus_warnings.append(
+                    f"embedding tag stability is unknown for variant '{name}'"
+                )
             divergence = record.get("configuration_divergence") or []
             if divergence:
                 corpus_warnings.append(
@@ -1402,6 +1450,17 @@ _INGEST_PROGRESS_STATES = frozenset({"running"})
 #: started.
 _INGEST_PRELOCK_STEP = "initializing"
 
+#: Steps a scheduled source refresh (``scheduled:<source>``) or an upload
+#: (``upload``) publishes. They change the corpus, so the wait blocks on them,
+#: but they are not the corpus build whose cost ``ingest_wall_seconds`` records.
+_INGEST_REFRESH_STEP_PREFIX = "scheduled:"
+_INGEST_UPLOAD_STEP = "upload"
+
+
+def _is_refresh_step(step: Any) -> bool:
+    step = str(step).strip().lower()
+    return step == _INGEST_UPLOAD_STEP or step.startswith(_INGEST_REFRESH_STEP_PREFIX)
+
 
 def _ingest_progress_done(payload: Dict[str, Any]) -> Optional[int]:
     """Return `progress.done` from a status payload, or `None` if absent or malformed.
@@ -1432,10 +1491,10 @@ def _ingest_is_progressing(
 
     1. Any state but "running" → False. Notably the initial "pending", which
        persists forever if the ingestion thread never starts.
-    2. Step "initializing" → False. Published before `ingestion_lock` is taken,
-       so it is also exactly what a benchmark sees while its own ingest is queued
-       behind a scheduled task or an upload-triggered vectorstore update, neither
-       of which touches this status dict (`service_data_manager.py:70-83`).
+    2. Step "initializing" → False. Published before the ingest's work starts
+       (and before `ingestion_lock` is taken when no other run holds it), so it
+       never proves work. A scheduled refresh or an upload publishes its own
+       ``scheduled:<source>`` or ``upload`` step instead.
     3. `done is None` → True. No counter present (older data manager, or a phase
        outside the embedding loop); fall back to the pre-counter rule where any
        running poll restarts the budget.
@@ -2702,6 +2761,10 @@ class Benchmarker:
         # campaign's cost table depend on what else the data-manager was doing.
         # Still None at the completed poll = no ingest was observed at all (#417).
         ingest_started_at: Optional[float] = None
+        # The first refresh or upload step seen after the ingest started. The
+        # data manager holds "completed" back while such a run is queued, so
+        # the ingest ended here, not at the completed poll.
+        ingest_ended_at: Optional[float] = None
         last_done: Optional[int] = None
         attempt = 0
 
@@ -2759,14 +2822,19 @@ class Benchmarker:
                 if _ingest_is_progressing(state, step, done=done, last_done=last_done):
                     last_ok_at = clock()
                     last_done = done
-                    if ingest_started_at is None:
-                        ingest_started_at = last_ok_at
+                    if not _is_refresh_step(step):
+                        if ingest_started_at is None:
+                            ingest_started_at = last_ok_at
+                    elif ingest_started_at is not None and ingest_ended_at is None:
+                        ingest_ended_at = last_ok_at
 
                 if state == "completed":
                     logger.info("Data-manager ingestion completed; starting benchmark.")
                     if ingest_started_at is None:
                         return None
-                    return clock() - ingest_started_at
+                    if ingest_ended_at is None:
+                        ingest_ended_at = clock()
+                    return ingest_ended_at - ingest_started_at
                 if state == "error":
                     raise RuntimeError(
                         f"Data-manager ingestion failed at step '{step}': "

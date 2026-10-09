@@ -196,3 +196,67 @@ def test_the_stat_stays_bounded_when_the_checkout_prints_paths_verbatim(repo):
     assert len(json.dumps(stat)) - 2 <= (GIT_DIFF_STAT_MAX_FILES + 3) * (
         GIT_DIFF_STAT_WIDTH + 2
     )
+
+
+def test_bound_text_keeps_empty_input_empty():
+    from src.cli.managers.git_diff_capture import bound_text
+
+    assert bound_text("", 10) == ("", False, 0)
+
+
+def test_bound_text_keeps_text_under_the_cap_whole():
+    from src.cli.managers.git_diff_capture import bound_text
+
+    assert bound_text("a\nb\n", 100) == ("a\nb\n", False, 4)
+
+
+def test_bound_text_cuts_at_a_line_boundary():
+    from src.cli.managers.git_diff_capture import bound_text
+
+    assert bound_text("aaaa\nbbbb\ncccc\n", 11) == ("aaaa\nbbbb\n", True, 15)
+
+
+def test_bound_text_keeps_a_prefix_when_the_first_line_exceeds_the_cap():
+    from src.cli.managers.git_diff_capture import bound_text
+
+    kept, truncated, original = bound_text("x" * 50, 10)
+    assert kept == "x" * 10
+    assert (truncated, original) == (True, 50)
+
+
+def test_bound_text_never_splits_a_multibyte_character():
+    from src.cli.managers.git_diff_capture import bound_text
+
+    # "é" is 2 UTF-8 bytes, so a 7-byte cap keeps three of them (6 bytes).
+    kept, truncated, original = bound_text("é" * 20, 7)
+    assert kept == "é" * 3
+    assert len(kept.encode("utf-8")) <= 7
+    assert kept.encode("utf-8").decode("utf-8") == kept
+    assert (truncated, original) == (True, 40)
+
+
+def test_the_stat_is_bounded_by_file_count(repo):
+    import subprocess
+
+    from src.cli.managers.git_diff_capture import GIT_DIFF_STAT_MAX_FILES
+
+    files = []
+    for i in range(300):
+        part = repo / "src" / "many" / f"part{i}"
+        part.mkdir(parents=True)
+        files.append(part / f"file{i}.py")
+        files[-1].write_text("old\n")
+    subprocess.check_call(["git", "add", "-A"], cwd=repo)
+    subprocess.check_call(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "m"],
+        cwd=repo,
+    )
+    for path in files:
+        path.write_text("old\nnew\n")
+    stat = get_git_information(wd=repo)["git_diff_stat"]
+    lines = [line for line in stat.splitlines() if line]
+    # git keeps GIT_DIFF_STAT_MAX_FILES entry lines, then " ..." and the summary.
+    assert len([line for line in lines if " | " in line]) == GIT_DIFF_STAT_MAX_FILES
+    assert lines[-2].strip() == "..."
+    assert "300 files changed" in lines[-1]
+    assert stat.count("\n") <= GIT_DIFF_STAT_MAX_FILES + 3

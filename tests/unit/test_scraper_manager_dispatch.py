@@ -109,3 +109,48 @@ class TestStandardPathDispatchesThroughPool:
         assert recorded, "standard link path did not dispatch through run_seeds"
         assert recorded["workers"] == 8
         assert recorded["per_host_workers"] == 4
+
+
+class TestCollectUrlsFromListsByType:
+    """_collect_urls_from_lists_by_type routes entries by prefix then heuristic."""
+
+    def test_all_six_entry_types_dispatched_correctly(
+        self, make_manager, tmp_path, monkeypatch
+    ):
+        weblists = tmp_path / "weblists"
+        weblists.mkdir()
+        (weblists / "mixed.list").write_text(
+            "git-https://x/r.git\n"
+            "sso-https://x/s\n"
+            "sitemap-https://x/sm.xml\n"
+            "elog-https://h/elog/logbook\n"
+            "https://h/elog/x\n"
+            "indico-https://indico.h/event/1\n"
+            "https://example.com/page\n"
+        )
+        manager = make_manager({})
+        monkeypatch.chdir(tmp_path)
+        link_urls, git_urls, sso_urls, elog_urls, indico_urls, sitemap_urls = (
+            manager._collect_urls_from_lists_by_type(["mixed.list"])
+        )
+        assert git_urls == ["https://x/r.git"]
+        assert sso_urls == ["https://x/s"]
+        assert sitemap_urls == ["https://x/sm.xml"]
+        assert elog_urls == ["https://h/elog/logbook", "https://h/elog/x"]
+        assert indico_urls == ["https://indico.h/event/1"]
+        assert link_urls == ["https://example.com/page"]
+
+    def test_indico_prefix_beats_elog_path_heuristic(
+        self, make_manager, tmp_path, monkeypatch
+    ):
+        """Explicit indico- prefix routes to indico even when the path contains /elog/."""
+        weblists = tmp_path / "weblists"
+        weblists.mkdir()
+        (weblists / "mixed.list").write_text("indico-https://indico.h/elog/x\n")
+        manager = make_manager({})
+        monkeypatch.chdir(tmp_path)
+        link_urls, git_urls, sso_urls, elog_urls, indico_urls, sitemap_urls = (
+            manager._collect_urls_from_lists_by_type(["mixed.list"])
+        )
+        assert indico_urls == ["https://indico.h/elog/x"]
+        assert elog_urls == []

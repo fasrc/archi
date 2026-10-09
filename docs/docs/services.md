@@ -66,6 +66,38 @@ The **Status Board** at `/ssb/status` provides:
 - **Active Alerts** — non-expired alerts with severity badges, creator, and timestamp
 - **Expired Alerts** — historical record shown at reduced opacity
 - **Post New Alert form** — visible only to configured alert managers
+- **Deployment** and **Knowledge Base** panels — which config is deployed and how the corpus was built; see [Deployment and Knowledge Base provenance](#deployment-and-knowledge-base-provenance)
+
+### Deployment and Knowledge Base provenance
+
+Two panels at the top of `/ssb/status` show where the running service came from. Both are read from Postgres. If a record cannot be read, the panel says it is unavailable and the alert sections still render.
+
+**Deployment panel** (newest row of `deployment_record`, written by each deploy):
+
+- **Config pin** — the config ref and short commit SHA that the deploy was pinned to, with one of three verdicts:
+    - **✓ matches pin** — the deploy recorded that the config checkout was the pinned commit, with no tracked edits.
+    - **pin verdict not recorded** — the deploy recorded no verdict (for example a hand-run `archi create`). This is not a claim that the config is clean, and not a claim that it was edited.
+    - **⚠ live-edited config** — a warning box shown when there is evidence the running config is not the pin. It says "The deployed config is not the pinned commit." only when the deploy recorded a mismatch. It lists the tracked files edited on top of the pin (first 5, then "… N more").
+- **Deployed HEAD** — shown only with the live-edited warning: the commit the config checkout was actually on.
+- **App version** and **Deployed** — the archi version and the deploy time (UTC).
+
+If no record exists, the panel says "Deployment provenance unavailable — recorded from the next deploy onward."
+
+**Knowledge Base panel** (newest *successful* row of `ingest_run`, status `updated` or `up_to_date`):
+
+- **Last ingest** — start time, end time (UTC), and duration of that run.
+- **Documents** — embedded, failed, and pending counts at the end of that run.
+- **Chunks** — the chunk count for the active collection only (chunks tagged with that collection, plus untagged chunks). Rows recorded before this rule counted chunks from every collection.
+- **Ingest configuration (as used at ingest)** — the ingest settings saved with that run, such as chunking, embedding model, and **embedding dimensions**. With no `dimensions` set in `embedding_class_map`, the recorded dimension is the model's default (1536 for `OpenAIEmbeddings`, 384 for `HuggingFaceEmbeddings` and unknown models). Rows recorded before this rule stored 384 for every model; for those rows a change from 384 to the model's default is not reported as drift. An explicit `dimensions: 384` cannot yet be told apart from that old default (follow-up [#654](https://github.com/fasrc/archi/issues/654)).
+- **⚠ configuration changed after this ingest** — the running config differs from the saved one. Each changed setting is listed with its value now and at ingest.
+
+Unknown and failure states:
+
+- **Current configuration unavailable — drift not evaluated.** The running config could not be read, so no drift check was done. This does not mean there is no drift.
+- **⚠ the most recent ingest attempt failed at …** — a failed run is newer than the run shown. The counts and config are from the last successful run, but the failed attempt may have changed the live corpus (deletions and partial additions are committed as they happen).
+- **No successful ingest run recorded** — no successful run exists yet. If a failed attempt exists, its time is shown below.
+
+Values are recorded when a deploy or ingest runs. A row written before a rule above existed keeps its old value until the next deploy or ingest.
 
 ### Severity Levels
 
@@ -316,7 +348,7 @@ A Slack bot that answers `@archi` mentions in channels and direct messages, in t
 
 ### Prerequisites
 
-1. **Turn on the `/v1` API** in the chat app: `services.chat_app.openai_compat.enabled: true`. The Slack service checks `GET /v1/models` at start-up and stops with an error if `/v1` does not answer.
+1. **Turn on the `/v1` API** in the chat app: `services.chat_app.openai_compat.enabled: true`. The Slack service checks `GET /v1/models` at start-up and stops with an error if `/v1` does not answer. On a host-mode deployment with authentication off, set `local_only: true` instead of `enabled: true`, so `/v1` answers only the bot on the same host (see [Local callers only](api-reference-v1.md#local-callers-only)).
 2. **Create the Slack app.** A Slack workspace admin creates it from the [app manifest](#slack-app-manifest) below (api.slack.com → Your Apps → Create New App → From a manifest), then installs it in the workspace.
 3. **Get the two tokens.** In the app settings, Basic Information → App-Level Tokens → create a token with the scope `connections:write`: this is `SLACK_APP_TOKEN` (`xapp-…`). OAuth & Permissions → Bot User OAuth Token: this is `SLACK_BOT_TOKEN` (`xoxb-…`).
 4. **Invite the bot** to each channel where it must answer (`/invite @archi`).
@@ -368,7 +400,7 @@ settings:
 services:
   chat_app:
     openai_compat:
-      enabled: true
+      enabled: true                 # or, host mode + auth off: local_only: true alone
   slack:
     chat_url: http://chatbot:7861   # default: the chatbot container, or localhost in host mode
     timeout_seconds: 600            # longest wait for one answer

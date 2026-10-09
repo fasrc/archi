@@ -74,9 +74,12 @@
 #   70. without `timeout` on PATH the page is still sent, unbounded
 #   71. a hung mail binary that ignores SIGTERM is still killed and reports "page failed"
 #   72. an FM_MAIL_TIMEOUT that is zero or not a duration falls back to 60 seconds
-#   73. an oversized judge timeout locks as the 180 default instead of aborting the lock
-#   74. an integral float judge timeout locks as the int (600.0 -> 600)
-#   75. an oversized max_workers is kept, as _positive_int keeps it
+#   73. archive_run.sh refuses an artifact whose embedding model tags changed during the run
+#       (#573): no ledger row, pin file unchanged
+#   74. the same artifact recording unchanged tags is archived as before
+#   75. an oversized judge timeout locks as the 180 default instead of aborting the lock
+#   76. an integral float judge timeout locks as the int (600.0 -> 600)
+#   77. an oversized max_workers is kept, as _positive_int keeps it
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -237,6 +240,7 @@ printf 'HUIT_API_KEY=x\n' > "$T/judge.env"
 
 artifact() { # $1 = path, $2 = divergence JSON, $3 = fingerprint, $4 = k in the recorded running configuration (default 5), $5 = fingerprint BEFORE the run (default = $3)
   # FP_PREFIX (default sha256:) is the digest version prefix; IDENTITY (default null) is the recorded retrieval_identity
+  # TAGS (default: key absent) is the recorded embedding_tags_unchanged_at_endpoints JSON value
   cat > "$1" <<EOF
 {"metadata": {"corpus_snapshot_id": "snap-1", "code_version": {"digest": "sha256:code"}},
  "benchmarking_results": [{
@@ -246,7 +250,7 @@ artifact() { # $1 = path, $2 = divergence JSON, $3 = fingerprint, $4 = k in the 
      "stemming": {"enabled": false},
      "retrievers": {"hierarchical_rerank": {"enabled": true, "candidate_pool_size": 20, "num_documents_to_retrieve": ${4:-5}}}}},
    "config_version": {"digest": "sha256:cfg", "divergence_from_selected_file": $2},
-   "retrieval_identity": ${IDENTITY:-null},
+   "retrieval_identity": ${IDENTITY:-null},${TAGS:+ \"embedding_tags_unchanged_at_endpoints\": $TAGS,}
    "corpus_fingerprint": "${FP_PREFIX:-sha256:}$3", "corpus_fingerprint_before": "${FP_PREFIX:-sha256:}${5:-$3}", "corpus_unchanged_at_endpoints": $( [ "${5:-$3}" = "$3" ] && echo true || echo false ), "ingest_wall_seconds": 4321.0,
    "total_results": {"aggregate_context_precision": 0.5, "context_precision_scored": "3 of 3", "aggregate_faithfulness": 0.6},
    "single_question_results": {
@@ -506,7 +510,7 @@ sed 's/timeout: 300/timeout: 180/' "$T/arms/00-baseline.yaml" > "$T/variants/00-
 run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/variants/00-timeout.yaml"
 [ "$RC" = 2 ] && grep -q "fixed factor judge.timeout: locked 300, arm has 180" "$T/stderr" && ok "a different judge timeout is refused by the lock" || notok "judge timeout lock (rc=$RC: $(cat "$T/stderr"))"
 
-# 73-75: fm_fixed_factors_json mirrors _positive_number / _positive_int (#521)
+# 75-77: fm_fixed_factors_json mirrors _positive_number / _positive_int (#521)
 fixed_factor() { # $1 = arm YAML, $2 = values key → prints the locked value as JSON, or fails
   "$(command -v bash)" -c 'source "$1"; fm_fixed_factors_json "$2"' _ "$HERE/lib.sh" "$1" 2>"$T/stderr" \
     | "$FM_PYTHON" -c "import json,sys; print(json.dumps(json.load(sys.stdin)['values']['$2']))"
@@ -882,6 +886,23 @@ if [ "$RC" = 2 ] && [ "$(ledger_rows)" = "$BEFORE" ] && [ "$(grep -c '^ARGS:' "$
    && grep -q "ARGS: -s feature_matrix: stack r0 arm fasrc-docs-r0b-icl: corpus changed during the QA run" "$T/mail.calls" \
    && grep -q "ops@example.org$" "$T/mail.calls"; then
   ok "a corpus drift during qa_arm.sh --sweep pages once"; else notok "sweep qa_arm page-on-drift (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 73: an artifact whose embedding model tags changed during the run is void (#573)
+mkdir -p "$ARCHI_DIR/archi-fm-tags"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-tags
+TAGS=false artifact "$FM_OUT/benchmarking-fm-tags-20260903_000020.json" '[]' def 5
+BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-tags
+if [ "$RC" = 2 ] && grep -q "^REFUSED: the embedding model tags changed during the run" "$T/stderr" \
+   && [ "$(ledger_rows)" = "$BEFORE" ] && [ ! -e "$FM_OUT/corpus-pin-fm-tags" ]; then
+  ok "archive refuses an artifact whose embedding model tags changed"; else notok "archive tag gate (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 74: the same artifact recording unchanged tags is archived as before
+TAGS=true artifact "$FM_OUT/benchmarking-fm-tags-20260903_000020.json" '[]' def 5
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-tags
+if [ "$RC" = 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-tags" 2>/dev/null)" = sha256:def ] \
+   && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['stack']=='fm-tags' and e['kind']=='ragas' else 1)"; then
+  ok "archive accepts an artifact whose embedding model tags did not change"; else notok "archive tag pass (rc=$RC: $(cat "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

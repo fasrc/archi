@@ -5,6 +5,11 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
+from src.cli.source_registry import (
+    is_elog_url,
+    read_input_list_entries,
+    split_prefixed_entry,
+)
 from src.data_manager.collectors.persistence import PersistenceService
 from src.data_manager.collectors.scrapers.scrape_pool import (
     host_key,
@@ -127,25 +132,27 @@ class ScraperManager:
         )
 
         self.links_enabled = True
-        self.git_enabled = (
-            git_config.get("enabled", False) if isinstance(git_config, dict) else True
-        )
+        # Compute three-way flags (None=absent, True=explicit true, False=explicit false)
+        # before coercing configs, so collect_all_from_config can honour explicit false
+        # over input-list entries without re-reading the raw config.
+        self._git_flag = self._input_list_flag(git_config)
+        self._sso_flag = self._input_list_flag(sso_config)
+        self._indico_flag = self._input_list_flag(indico_config)
+
+        self.git_enabled = bool(self._git_flag)
         self.git_config = git_config if isinstance(git_config, dict) else {}
-        self.indico_enabled = (
-            indico_config.get("enabled", False)
-            if isinstance(indico_config, dict)
-            else False
-        )
+        self.indico_enabled = bool(self._indico_flag)
         self.indico_config = indico_config if isinstance(indico_config, dict) else {}
         self.selenium_config = selenium_config or {}
         self.selenium_enabled = self.selenium_config.get("enabled", False)
         self.scrape_with_selenium = self.selenium_config.get("use_for_scraping", False)
 
-        self.sso_enabled = bool(sso_config.get("enabled", False))
+        self.sso_enabled = bool(self._sso_flag)
 
         elog_config = (
             sources_config.get("elog", {}) if isinstance(sources_config, dict) else {}
         )
+        self._elog_flag = self._input_list_flag(elog_config)
         self.elog_config = elog_config if isinstance(elog_config, dict) else {}
         # Gate on the explicit `enabled` flag (like git/indico/jira/redmine), not just
         # URL presence, so disabling ELOG while leaving the URL set stops collection.
@@ -184,16 +191,69 @@ class ScraperManager:
             enable_warnings=self.config.get("enable_warnings", False),
         )
 
+    @staticmethod
+    def _input_list_flag(config) -> Optional[bool]:
+        """Three-way enabled flag derived from a source config section.
+
+        Returns ``False`` when the section is explicitly disabled (``enabled:
+        false`` or the section itself is the boolean ``False``), ``None`` when
+        the ``enabled`` key is absent or null, or the section itself is null
+        (list entries may activate the source), and ``True`` when ``enabled:
+        true``. This matches ``ConfigurationManager._input_list_flag``.
+        """
+        if config is None:
+            return None
+        if not isinstance(config, dict):
+            return bool(config) if config else False
+        if config.get("enabled") is None:
+            return None
+        return bool(config["enabled"])
+
+    def _apply_input_list_flag(
+        self, source: str, flag: Optional[bool], urls: List[str]
+    ) -> List[str]:
+        """Apply the three-way flag to input-list entries for *source*.
+
+        Logs a WARNING and returns an empty list when *flag* is ``False``.
+        Logs an INFO and enables the source attribute when *flag* is ``None``
+        (absent key) and entries are present.  Returns *urls* unchanged when
+        *flag* is ``True`` or when the list is empty.
+        """
+        if not urls:
+            return urls
+        if flag is False:
+            logger.warning(
+                "%s disabled; skipping %d input-list entry(ies)", source, len(urls)
+            )
+            return []
+        if flag is None:
+            logger.info(
+                "%s: %d input-list entry(ies) enable this source for this run",
+                source,
+                len(urls),
+            )
+            setattr(self, f"{source}_enabled", True)
+        return urls
+
     def collect_all_from_config(self, persistence: PersistenceService) -> None:
         """Run the configured scrapers and persist their output."""
         link_urls, git_urls, sso_urls, elog_urls, indico_urls, sitemap_urls = (
             self._collect_urls_from_lists_by_type(self.input_lists)
         )
 
-        if git_urls:
-            self.git_enabled = True
+        git_urls = self._apply_input_list_flag(
+            "git", getattr(self, "_git_flag", True), git_urls
+        )
+        sso_urls = self._apply_input_list_flag(
+            "sso", getattr(self, "_sso_flag", True), sso_urls
+        )
+        elog_urls = self._apply_input_list_flag(
+            "elog", getattr(self, "_elog_flag", True), elog_urls
+        )
+        indico_urls = self._apply_input_list_flag(
+            "indico", getattr(self, "_indico_flag", True), indico_urls
+        )
         if sso_urls:
-            self.sso_enabled = True
             self._ensure_sso_defaults()
 
         # Expand any `sitemap-` sources into page URLs and append (dedup,
@@ -297,9 +357,24 @@ class ScraperManager:
         For now, this behaves the same as a full collection, overriding last_run depending on the persistence layer.
         """
         metadata = persistence.catalog.get_metadata_by_filter(
-            "source_type", source_type="web", metadata_keys=["url"]
+            "source_type", source_type="web", metadata_keys=["url", "scraper"]
         )
-        catalog_urls = [m[1].get("url", "").strip() for m in metadata]
+        # ELOG and Indico rows are also source_type="web"; an explicit false for
+        # either source must not be bypassed by re-fetching its rows as plain links.
+        disabled = {
+            source
+            for source in ("elog", "indico")
+            if getattr(self, f"_{source}_flag", None) is False
+        }
+        # A links re-fetch upserts an ELOG row under the same hash and replaces
+        # extra_json, so older rows can lack the marker; fall back to the URL
+        # classifier the input lists use, which ignores the flag for ELOG.
+        catalog_urls = [
+            m[1].get("url", "").strip()
+            for m in metadata
+            if (m[1].get("scraper") or self._unmarked_source(m[1].get("url", "")))
+            not in disabled
+        ]
         catalog_urls = [u for u in catalog_urls if u]
         logger.info(
             "Scheduled links collection found %d URL(s) in catalog", len(catalog_urls)
@@ -410,6 +485,9 @@ class ScraperManager:
     def schedule_collect_elog(
         self, persistence: PersistenceService, last_run: Optional[str] = None
     ) -> None:
+        if getattr(self, "_elog_flag", True) is False:
+            logger.warning("elog disabled; skipping scheduled ELOG re-collection")
+            return
         # ELOG entries are stored with source_type="web", so match the metadata-level
         # "scraper" marker instead (mirrors schedule_collect_indico).
         metadata = persistence.catalog.get_metadata_by_filter(
@@ -616,27 +694,29 @@ class ScraperManager:
         indico_urls: List[str] = []
         sitemap_urls: List[str] = []
         for raw_url in self._collect_urls_from_lists(input_lists):
-            if raw_url.startswith("git-"):
-                git_urls.append(raw_url.split("git-", 1)[1])
-                continue
-            if raw_url.startswith("sso-"):
-                sso_urls.append(raw_url.split("sso-", 1)[1])
-                continue
-            # Explicit `sitemap-` prefix is peeled before the elog/indico
-            # auto-detection heuristics below, so a sitemap URL whose path
-            # happens to contain `/elog/` or `/event/` still routes to sitemap
-            # expansion (mirrors the explicit-prefix-beats-heuristic rule).
+            # Explicit `sitemap-` prefix is peeled before all other checks so
+            # a sitemap URL whose path contains `/elog/` or `/event/` still
+            # routes to sitemap expansion (explicit prefix beats heuristic).
             if raw_url.startswith("sitemap-"):
                 sitemap_urls.append(raw_url.split("sitemap-", 1)[1])
                 continue
-            if raw_url.startswith("elog-"):
-                elog_urls.append(raw_url.split("elog-", 1)[1])
+            # All other explicit prefixes (git-, sso-, elog-, indico-) are
+            # handled centrally so an explicit prefix always beats
+            # auto-detection (design D3 ordering fix).
+            parsed = split_prefixed_entry(raw_url)
+            if parsed is not None:
+                source, url = parsed
+                if source == "git":
+                    git_urls.append(url)
+                elif source == "sso":
+                    sso_urls.append(url)
+                elif source == "elog":
+                    elog_urls.append(url)
+                elif source == "indico":
+                    indico_urls.append(url)
                 continue
             if self._is_elog_url(raw_url):
                 elog_urls.append(raw_url)
-                continue
-            if raw_url.startswith("indico-"):
-                indico_urls.append(raw_url.split("indico-", 1)[1])
                 continue
             if self._is_indico_url(raw_url):
                 indico_urls.append(raw_url)
@@ -764,13 +844,16 @@ class ScraperManager:
 
     @staticmethod
     def _is_elog_url(url: str) -> bool:
-        """Return True if the URL looks like an ELOG logbook index (fallback heuristic).
-        Prefer the explicit 'elog-' prefix in input lists over this auto-detection.
-        """
-        from urllib.parse import urlparse
+        return is_elog_url(url)
 
-        path = urlparse(url).path.lower()
-        return "/elog/" in path or "/elogs/" in path
+    @staticmethod
+    def _unmarked_source(url: str) -> Optional[str]:
+        """Source of a catalog row that carries no "scraper" marker.
+
+        Only ELOG: an unprefixed Indico-shaped URL is a plain link while Indico is
+        disabled, so its shape alone cannot name the source.
+        """
+        return "elog" if is_elog_url(url) else None
 
     def _is_indico_url(self, url: str) -> bool:
         """Return True if the URL looks like an Indico event page.
@@ -865,18 +948,7 @@ class ScraperManager:
         return count
 
     def _extract_urls_from_file(self, path: Path) -> List[str]:
-        """Extract URLs from file, ignoring depth specifications for now."""
-        urls: List[str] = []
-        with path.open("r") as file:
-            for line in file:
-                stripped = line.strip()
-                if not stripped or stripped.startswith("#"):
-                    continue
-                # Extract just the URL part, ignoring depth specification if present
-                url_depth = stripped.split(",")
-                url = url_depth[0].strip()
-                urls.append(url)
-        return urls
+        return read_input_list_entries(path)
 
     def _collect_git_resources(
         self,

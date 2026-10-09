@@ -667,3 +667,66 @@ def test_default_fetch_parses_the_status_payload(monkeypatch):
     assert payload == {"state": "running", "step": "Flushing indices"}
     assert captured["url"] == LOCAL_INTERNAL
     assert captured["timeout"] == 5
+
+
+def test_a_refresh_is_waited_for_but_not_counted_as_ingest_cost(monkeypatch):
+    """Scheduled refreshes and uploads now report running; they are not the corpus build.
+
+    The wait must block on them (the corpus is changing), and they must keep the
+    stall budget alive, but their duration is not `ingest_wall_seconds`.
+    """
+    _budget_env(monkeypatch, stall="12", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted(
+        [_running("scheduled:git")] * 3
+        + [_running("upload")] * 2
+        + [{"state": "completed", "step": "done"}]
+    )
+
+    elapsed = _bench().wait_for_ingestion_completion(
+        fetch=fetch, clock=clock, sleep=clock.sleep
+    )
+
+    assert clock.now - 1000.0 == 25.0, "the wait blocked on the refresh"
+    assert elapsed is None
+
+
+def test_ingest_cost_starts_at_the_first_non_refresh_step(monkeypatch):
+    _budget_env(monkeypatch, stall="60", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted(
+        [_running("scheduled:links")] * 2
+        + [_running()] * 2
+        + [{"state": "completed", "step": "done"}]
+    )
+
+    elapsed = _bench().wait_for_ingestion_completion(
+        fetch=fetch, clock=clock, sleep=clock.sleep
+    )
+
+    assert elapsed == 10.0
+
+
+def test_a_refresh_queued_behind_the_ingest_is_not_counted_as_ingest_cost(
+    monkeypatch,
+):
+    """A refresh that runs after the ingest, before completed, ends the timing.
+
+    The data manager keeps the state running while a refresh is queued, so the
+    completed poll arrives only after the refresh. The ingest ended when the
+    refresh step first appeared.
+    """
+    _budget_env(monkeypatch, stall="60", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted(
+        [_running()] * 2
+        + [_running("scheduled:git")] * 3
+        + [{"state": "completed", "step": "done"}]
+    )
+
+    elapsed = _bench().wait_for_ingestion_completion(
+        fetch=fetch, clock=clock, sleep=clock.sleep
+    )
+
+    assert clock.now - 1000.0 == 25.0, "the wait blocked on the refresh"
+    assert elapsed == 10.0
