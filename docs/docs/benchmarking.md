@@ -386,7 +386,9 @@ The dump JSON gains a `leaderboard` key:
   `max_workers` the run actually used, or `null` when no judge ran. That is
   the case when `RAGAS` was not among the run's `modes`, and also when it was
   but every answer in the arm failed or was degraded, so there was nothing to
-  score and the judge never started. In a sweep, such an arm beside a judged
+  score and the judge never started, or when no enabled metric had an
+  eligible row (for example, only `context_recall` with draft rows that have
+  no reference). In a sweep, such an arm beside a judged
   one withholds the ranking ("one arm was not judged"). A rendered configuration always carries a
   `ragas_settings` block, so its presence does not mean the judge was used.
   The configuration is also recorded verbatim as `configuration`; when an

@@ -11,7 +11,7 @@
 ## Decisions
 
 1. **Carry the flag on the instance, not in the return tuple.** `_process_config` sets `self._ragas_scored`; `run()` resets it to `None` before each arm (next to `self._judge_usage = None`) and passes `ragas_scored=getattr(self, "_ragas_scored", None)`. Reason: the return shape stays a 2-tuple, so existing callers and tests do not change, and it mirrors `_judge_usage`.
-   - In `_process_config`, inside `if "RAGAS" in modes_being_run:` set `self._ragas_scored = bool(ragas_input)`. When RAGAS is not a mode, leave it `None`.
+   - In `_process_config`, inside `if "RAGAS" in modes_being_run:` set `self._ragas_scored = False`; `get_ragas_results` sets it `True` when a metric calls the judge (input rows alone do not prove the judge ran: a metric with no eligible row records n/a without a call). When RAGAS is not a mode, leave it `None`.
 2. **Tri-state keyword.** `handle_results(..., ragas_scored: Optional[bool] = None)`. Only `False` changes behavior: `ragas_effective_settings` becomes `None` when `ragas_ran and ragas_scored is False`. `True` and `None` keep today's output.
 3. **Digest basis unchanged.** `config_version(... effective_selected=with_effective_ragas_settings(config, modes_executed=modes_executed))` still reads `modes_executed`, so the digest of an unjudged RAGAS arm equals the digest the same arm had before this change.
 4. **Leaderboard effect accepted, not coded.** `arms_incomparability_reason` already adds `None` for a null pressure. No change there; a test pins the withheld ranking.

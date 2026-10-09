@@ -9,9 +9,14 @@
 - **WHEN** a RAGAS-mode arm has an empty `ragas_input`, so `_process_config` does not call `get_ragas_results`
 - **THEN** the arm's record has `ragas_effective_settings` equal to `None`
 
-#### Scenario: RAGAS arm with scorable input
+#### Scenario: RAGAS arm with input but no eligible row
 
-- **WHEN** a RAGAS-mode arm has a non-empty `ragas_input`
+- **WHEN** a RAGAS-mode arm has a non-empty `ragas_input`, but no enabled metric has an eligible row (for example, only `context_recall` is enabled and every row is a draft with no reference), so `get_ragas_results` never calls the judge
+- **THEN** the arm's record has `ragas_effective_settings` equal to `None`
+
+#### Scenario: RAGAS arm the judge scored
+
+- **WHEN** at least one enabled metric calls the judge for a RAGAS-mode arm
 - **THEN** the arm's record has `ragas_effective_settings` with the effective `timeout` and `max_workers`
 
 #### Scenario: Caller that does not pass ragas_scored

@@ -4,7 +4,7 @@ A RAGAS-mode benchmark arm whose every answer failed or was degraded never calls
 
 ## What Changes
 
-- `_process_config` records whether the judge scored anything (`ragas_input` non-empty while `RAGAS` is in `modes_being_run`) on the instance, beside the existing `_judge_usage` attribute.
+- `_process_config` records whether the judge scored anything (a metric called the judge while `RAGAS` is in `modes_being_run`; input rows with no eligible row for any enabled metric do not count) on the instance, beside the existing `_judge_usage` attribute.
 - `run()` resets that attribute before each arm and passes it to `handle_results` as a new keyword argument `ragas_scored: Optional[bool] = None`.
 - `handle_results` writes `ragas_effective_settings: null` when `ragas_ran` is true and `ragas_scored is False`. `None` (a caller that does not know) keeps today's behavior.
 - `modes_executed` and the digest basis (`with_effective_ragas_settings(config, modes_executed=modes_executed)`) do not change, so the configuration digest of an unjudged RAGAS arm does not change.
