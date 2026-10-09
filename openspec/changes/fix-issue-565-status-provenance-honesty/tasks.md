@@ -158,7 +158,7 @@
 
 ## 6. F6 — docs (design D6)
 
-- [ ] 6.1 Edit `docs/docs/services.md` per design D6. Describe only fields that exist:
+- [x] 6.1 Edit `docs/docs/services.md` per design D6. Describe only fields that exist:
       `grep -n '"' src/interfaces/chat_app/status_provenance.py` and check each field you
       name. If `mkdocs` is installed, run `mkdocs build --strict -f docs/mkdocs.yml` and
       read its INFO lines for a broken anchor; if it is not installed, say so in the commit
