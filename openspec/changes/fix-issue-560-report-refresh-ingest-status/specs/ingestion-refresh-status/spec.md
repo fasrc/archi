@@ -29,11 +29,15 @@ The data manager SHALL publish `state == "error"` with the exception message in 
 - **AND** `run_tracked` raises the same `RuntimeError`
 
 ### Requirement: The running status is published only after the ingestion lock is held
-The data manager SHALL NOT change the ingestion status for a refresh or update that waits for the ingestion lock.
+The data manager SHALL NOT change the ingestion status for a refresh or update that waits for the ingestion lock while another run is reported as `running`; when no run is reported as `running`, the run SHALL publish its step when it is counted in, in the same status-lock hold, so a `completed` left by a previous owner that still holds the lock is not visible while the run waits.
 
 #### Scenario: A refresh queued behind a running ingest
 - **WHEN** another thread holds the ingestion lock with `step == "embedding"` and a refresh calls `run_tracked`
 - **THEN** the status keeps `step == "embedding"` until the other thread releases the lock
+
+#### Scenario: A run joins while the previous owner releases the lock
+- **WHEN** a run has published `completed` and still holds the ingestion lock, and an upload calls `run_tracked`
+- **THEN** the status has `state == "running"` and `step == "upload"` before the previous owner releases the lock
 
 ### Requirement: The initial ingest lifecycle is unchanged
 The initial ingest SHALL keep its `pending` → `running` → `completed` or `error` lifecycle and its step values.

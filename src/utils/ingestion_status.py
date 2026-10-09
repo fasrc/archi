@@ -57,18 +57,27 @@ def build_ingestion_helpers(
     # benchmark that sees "completed" must not have a corpus change behind it.
     _inflight = 0
 
-    def _join() -> bool:
-        """Count a run in; True when no other run holds or awaits the lock."""
+    def _set_running(step: str) -> None:
+        _status.update(
+            {"state": "running", "step": step, "error": None, "progress": None}
+        )
+
+    def _join(step: str) -> None:
+        """Count a run in, and publish its step if no other run is shown running.
+
+        One _status_lock hold for both, so a run that joins next cannot publish
+        between them and be masked. A terminal state is cleared here too: the
+        previous owner can publish completed and still hold ingestion_lock.
+        """
         nonlocal _inflight
         with _status_lock:
             _inflight += 1
-            return _inflight == 1
+            if _inflight == 1 and _status["state"] != "running":
+                _set_running(step)
 
     def _publish_running(step: str) -> None:
         with _status_lock:
-            _status.update(
-                {"state": "running", "step": step, "error": None, "progress": None}
-            )
+            _set_running(step)
 
     def _finish(state: str, step: str, error: Optional[str] = None) -> None:
         """Count a run out. Call it while the run still holds ingestion_lock."""
@@ -79,7 +88,7 @@ def build_ingestion_helpers(
                 _status.update({"state": state, "step": step, "error": error})
 
     def run_tracked(step: str, fn: Callable[[], Any]) -> Any:
-        _join()
+        _join(step)
         with ingestion_lock:
             _publish_running(step)
             try:
@@ -124,8 +133,7 @@ def build_ingestion_helpers(
         run_tracked(f"scheduled:{name}", body)
 
     def run_initial_ingestion_async() -> None:
-        if _join():
-            _publish_running("initializing")
+        _join("initializing")
         with ingestion_lock:
             _publish_running("initializing")
             try:

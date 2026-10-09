@@ -710,7 +710,9 @@ the run. When the run ends, `state` becomes `completed` and `step` becomes `done
 failure, `state` becomes `error` and `step` becomes `failed`. A run whose vectorstore
 sync could not add its documents also ends in `error`. If another run is queued for the
 ingestion lock, the endpoint keeps reporting `running` instead of `completed`, and it
-never publishes a queued run's step until that run holds the lock. Any benchmark that
+does not publish a queued run's step over a running one. A run that starts when no run
+is reported as `running` publishes its step at once, so `completed` never stays visible
+while that run waits for the lock. Any benchmark that
 polls this endpoint to wait for an idle system will also wait during scheduled
 refreshes and upload runs.
 

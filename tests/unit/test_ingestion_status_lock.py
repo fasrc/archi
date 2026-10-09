@@ -688,3 +688,103 @@ def test_initial_ingest_publishes_error_when_the_sync_failed():
     assert status["state"] == "error"
     assert status["step"] == "failed"
     assert "documents not added" in status["error"]
+
+
+def test_initial_ingest_publishes_initializing_atomically_with_joining(monkeypatch):
+    """A refresh that joins right after the initial ingest keeps its own step.
+
+    If the initial thread counted itself in and published initializing in two
+    steps, a refresh could take the lock between them and then be masked.
+    """
+    from src.utils import ingestion_status
+
+    initial_thread = []
+    refresh_inside = threading.Event()
+    release_refresh = threading.Event()
+    hooked = []
+    holder = {}
+    real_lock = threading.Lock
+
+    class _HookLock:
+        def __init__(self):
+            self._lock = real_lock()
+
+        def __enter__(self):
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, *exc):
+            self._lock.release()
+            if threading.current_thread() in initial_thread and not hooked:
+                hooked.append(True)
+                refresh = threading.Thread(
+                    target=lambda: holder["helpers"]["run_tracked"](
+                        "scheduled:git", refresh_fn
+                    ),
+                    daemon=True,
+                )
+                holder["refresh"] = refresh
+                refresh.start()
+                refresh_inside.wait(timeout=5)
+
+    def refresh_fn():
+        refresh_inside.set()
+        release_refresh.wait(timeout=5)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(ingestion_status.threading, "Lock", _HookLock)
+        helpers = ingestion_status.build_ingestion_helpers(
+            lambda **_: None, threading.RLock()
+        )
+    holder["helpers"] = helpers
+
+    initial = threading.Thread(
+        target=helpers["run_initial_ingestion_async"], daemon=True
+    )
+    initial_thread.append(initial)
+    initial.start()
+    assert refresh_inside.wait(timeout=5)
+    time.sleep(0.2)
+    try:
+        status = helpers["get_ingestion_status"]()
+        assert status["state"] == "running"
+        assert status["step"] == "scheduled:git"
+    finally:
+        release_refresh.set()
+        holder["refresh"].join(timeout=5)
+        initial.join(timeout=5)
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_a_run_joining_during_lock_release_clears_completed():
+    """A run that joins after the owner published completed must not leave it shown.
+
+    The owner publishes completed while it still holds ingestion_lock. A run
+    that joins in that window is queued, so a poll must not read completed.
+    """
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    lock = _RecordingLock()
+    helpers = build_ingestion_helpers(lambda **_: None, lock)
+    at_release = []
+    second = {}
+
+    def start_second_then_read():
+        if second:
+            return
+        thread = threading.Thread(
+            target=lambda: helpers["run_tracked"]("upload", lambda: None),
+            daemon=True,
+        )
+        second["thread"] = thread
+        thread.start()
+        time.sleep(0.2)
+        at_release.append(helpers["get_ingestion_status"]())
+
+    lock.on_release = start_second_then_read
+    helpers["run_tracked"]("scheduled:git", lambda: None)
+    second["thread"].join(timeout=5)
+
+    assert at_release[0]["state"] == "running"
+    assert at_release[0]["step"] == "upload"
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
