@@ -499,6 +499,78 @@ def test_load_provenance_config_query_raises_keeps_deploy_and_run_panels_availab
     assert view["knowledge_base"]["current_config_available"] is False
 
 
+class _RollbackRecordingConn(_NthCallRaisingConn):
+    def __init__(self, results, raise_on_call):
+        super().__init__(results, raise_on_call)
+        self.rollbacks = 0
+
+    def rollback(self):
+        self.rollbacks += 1
+
+
+_FAILED_AT = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+
+
+def test_a_failed_config_query_still_reads_the_newer_failed_attempt():
+    conn = _RollbackRecordingConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+            (_FAILED_AT,),
+        ],
+        raise_on_call=3,
+    )
+    view = load_status_provenance(conn)
+    assert view["knowledge_base"]["last_attempt_failed_at"] == _FAILED_AT
+    assert view["knowledge_base"]["current_config_available"] is False
+
+
+def test_a_failed_config_query_rolls_the_connection_back():
+    conn = _RollbackRecordingConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+            (_FAILED_AT,),
+        ],
+        raise_on_call=3,
+    )
+    load_status_provenance(conn)
+    assert conn.rollbacks == 1
+
+
+def test_a_config_snapshot_build_error_still_reads_the_failed_attempt(monkeypatch):
+    import src.interfaces.chat_app.status_provenance as provenance
+
+    def _boom(_config):
+        raise ValueError("bad config")
+
+    monkeypatch.setattr(provenance, "build_ingest_config_snapshot", _boom)
+    conn = _FakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+            ({"data_manager": {}},),
+            (_FAILED_AT,),
+        ]
+    )
+    view = load_status_provenance(conn)
+    assert view["knowledge_base"]["last_attempt_failed_at"] == _FAILED_AT
+    assert view["knowledge_base"]["current_config_available"] is False
+
+
+def test_a_config_read_error_without_rollback_support_does_not_raise():
+    conn = _NthCallRaisingConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+            (_FAILED_AT,),
+        ],
+        raise_on_call=3,
+    )
+    view = load_status_provenance(conn)
+    assert view["knowledge_base"]["last_attempt_failed_at"] == _FAILED_AT
+
+
 def test_load_provenance_config_query_no_row_gives_config_unavailable():
     conn = _FakeConn(
         results=[

@@ -117,7 +117,7 @@
       Update the existing no-record render test's headline assertion to match. Watch it
       fail. Change only the template headline. One commit
       (`fix(#565): say no successful ingest run in the unavailable headline`).
-- [ ] 3.1d Review fix (review thread, 2026-10-09). In `load_status_provenance` the four
+- [x] 3.1d Review fix (review thread, 2026-10-09). In `load_status_provenance` the four
       reads share one `try`. If the config query or `build_ingest_config_snapshot` raises,
       the failed-attempt query never runs, so a newer failed attempt is hidden; in
       PostgreSQL the failed statement also aborts the transaction, so a later read would

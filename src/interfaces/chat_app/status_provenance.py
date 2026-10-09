@@ -240,6 +240,28 @@ def _fetch_row(cursor, sql: str, columns) -> Optional[Dict[str, Any]]:
     return dict(zip(columns, row))
 
 
+def _read_current_snapshot(conn: Any, cursor: Any) -> Optional[Dict[str, Any]]:
+    """Read the running ingest config, or ``None`` when it cannot be read.
+
+    An error here must not stop the failed-attempt read that follows: a newer
+    failed ingest has to stay visible. In PostgreSQL a failed statement aborts
+    the transaction, so roll back before the next read.
+    """
+    try:
+        cursor.execute(_SQL_CURRENT_DATA_MANAGER_CONFIG)
+        config_row = cursor.fetchone()
+        if not config_row:
+            return None
+        return build_ingest_config_snapshot(config_row[0])
+    except Exception as exc:
+        logger.warning("Failed to read current ingest config: %s", exc)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+
+
 def load_status_provenance(conn: Any) -> Dict[str, Any]:
     """Load both panels. Never raises.
 
@@ -259,10 +281,7 @@ def load_status_provenance(conn: Any) -> Dict[str, Any]:
             )
             run_row = _fetch_row(cursor, _SQL_LATEST_INGEST_RUN, _INGEST_RUN_COLUMNS)
 
-            cursor.execute(_SQL_CURRENT_DATA_MANAGER_CONFIG)
-            config_row = cursor.fetchone()
-            if config_row:
-                current_snapshot = build_ingest_config_snapshot(config_row[0])
+            current_snapshot = _read_current_snapshot(conn, cursor)
 
             cursor.execute(_SQL_LATEST_FAILED_INGEST_RUN)
             failed_row = cursor.fetchone()
