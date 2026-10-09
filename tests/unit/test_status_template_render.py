@@ -129,7 +129,7 @@ def test_the_page_renders_when_no_record_exists_and_alerts_survive(env):
     )
 
     assert "Deployment provenance unavailable" in html
-    assert "No completed ingest run recorded" in html
+    assert "No successful ingest run recorded" in html
     # The pre-existing sections must be untouched by this change.
     assert "Active Alerts" in html
     assert "All systems operational" in html
@@ -184,6 +184,21 @@ def test_failed_attempt_line_renders_in_unavailable_kb_panel(env):
     )
     assert "The most recent ingest attempt failed at" in html
     assert "no successful run is recorded" in html
+
+
+def test_failure_only_headline_says_no_successful_run_not_no_completed_run(env):
+    failed = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(
+                None, {}, last_failed_at=failed
+            ),
+        },
+    )
+    assert "No successful ingest run recorded" in html
+    assert "No completed ingest run recorded" not in html
 
 
 def test_failed_attempt_warning_notes_possible_corpus_change(env):

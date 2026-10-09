@@ -374,7 +374,7 @@
           </div>
           {% endif %}
         {% else %}
-          <div class="prov-unavailable">No completed ingest run recorded — recorded from the next ingest onward.</div>
+          <div class="prov-unavailable">No successful ingest run recorded —recorded from the next ingest onward.</div>
           {% if kb and kb.last_attempt_failed_at %}
           <div>The most recent ingest attempt failed at {{ kb.last_attempt_failed_at.strftime('%Y-%m-%d %H:%M UTC') }}; no successful run is recorded.</div>
           {% endif %}

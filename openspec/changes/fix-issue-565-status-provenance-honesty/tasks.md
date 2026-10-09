@@ -109,6 +109,26 @@
       `embedding_model` is the same in both snapshots, and the current value equals
       `_DEFAULT_EMBEDDING_DIMENSIONS_BY_MODEL.get(model)`. Must not raise. One commit
       (`fix(#565): do not report pre-fix dimension rows as config drift`).
+- [x] 3.1c Review fix (review thread, 2026-10-09). With only failed runs recorded, the
+      unavailable headline said "No completed ingest run recorded" while the next line
+      said the latest attempt failed (it did complete). In
+      `tests/unit/test_status_template_render.py` add a render test: the headline says
+      "No successful ingest run recorded" and not "No completed ingest run recorded".
+      Update the existing no-record render test's headline assertion to match. Watch it
+      fail. Change only the template headline. One commit
+      (`fix(#565): say no successful ingest run in the unavailable headline`).
+- [ ] 3.1d Review fix (review thread, 2026-10-09). In `load_status_provenance` the four
+      reads share one `try`. If the config query or `build_ingest_config_snapshot` raises,
+      the failed-attempt query never runs, so a newer failed attempt is hidden; in
+      PostgreSQL the failed statement also aborts the transaction, so a later read would
+      fail too. In `tests/unit/test_status_provenance.py` add tests: (a) the config query
+      raises on the third `execute` and the fourth result's time still reaches
+      `last_attempt_failed_at`; (b) the connection's `rollback` is called after that error;
+      (c) `build_ingest_config_snapshot` raising still leaves the failed time set and the
+      config unavailable. Watch them fail. Isolate the config read in its own `try`; on an
+      error roll the connection back (guarded) and go on to the failed-attempt read. Keep
+      the read order. Update design D3/D4 to match. One commit
+      (`fix(#565): keep a newer failed attempt visible when the config read fails`).
 
 ## 4. F4 — unavailable current config (design D4)
 
