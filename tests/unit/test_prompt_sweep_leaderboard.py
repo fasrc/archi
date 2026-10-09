@@ -417,6 +417,28 @@ def test_mixed_judge_participation_warns_and_withholds():
     assert all(row["rank"] is None for row in lb["rows"])
 
 
+def test_an_arm_the_judge_never_scored_withholds_the_ranking():
+    """Accepted behavior change of #518, pinned.
+
+    An arm whose every answer failed now records ``ragas_effective_settings:
+    null``. Beside a judged arm, that reads as different judge pressure, so
+    the sweep withholds its ranking and says one arm was not judged.
+    """
+    records = [
+        _make_record(
+            "a",
+            "p/a.md",
+            ragas_effective_settings={"timeout": 180, "max_workers": 16},
+        ),
+        _make_record("b", "p/b.md", ragas_effective_settings=None),
+    ]
+
+    reason = ResultHandler.arms_incomparability_reason(records)
+
+    assert reason is not None
+    assert "one arm was not judged" in reason
+
+
 def test_shared_context_reads_judge_pressure_from_the_record():
     """The record holds what the judge ran with; the block holds what the file
     asked for. When the two differ, the leaderboard reports the record."""
