@@ -23,6 +23,10 @@ from src.evaluation.qa.artifacts import (  # isort: skip
     write_jsonl,
 )
 
+# A passing wait returns as soon as the job ends; only a hang reaches this.
+# 2 s timed out on loaded CI runners (#655).
+JOB_WAIT_TIMEOUT = 30
+
 
 class _RetryWorkflow:
     def retry_plan(self, _parent_path):
@@ -290,7 +294,7 @@ def test_console_atom_generation_constructs_evaluator_directly(monkeypatch, tmp_
     )
 
     job = service.start_atom_generation(dataset["id"], "builtin")
-    completed = service.job_manager.wait(job["id"], timeout=2)
+    completed = service.job_manager.wait(job["id"], timeout=JOB_WAIT_TIMEOUT)
     draft = service.catalog.get_atom_draft(completed["result"]["draft_id"])
 
     assert completed["status"] == "completed"
@@ -368,7 +372,7 @@ def test_console_persists_and_passes_phase_workers(monkeypatch, tmp_path):
         run_workers=4,
         score_workers=3,
     )
-    completed = service.job_manager.wait(job["id"], timeout=2)
+    completed = service.job_manager.wait(job["id"], timeout=JOB_WAIT_TIMEOUT)
 
     assert completed["status"] == "completed"
     assert job["context"]["run_workers"] == 4
@@ -405,7 +409,7 @@ def test_job_manager_enforces_single_flight_and_persists_result(tmp_path):
     with pytest.raises(JobConflictError, match="already"):
         manager.start("generate_atoms", lambda: {})
     release.set()
-    completed = manager.wait(job["id"], timeout=2)
+    completed = manager.wait(job["id"], timeout=JOB_WAIT_TIMEOUT)
 
     assert completed["status"] == "completed"
     assert completed["result"] == {"draft_id": "draft"}
@@ -485,10 +489,13 @@ def test_job_manager_terminates_running_evaluation_process(monkeypatch, tmp_path
         request,
         context={"workspace_id": "run", "attempts": 1},
     )
-    deadline = time.monotonic() + 5
-    while manager.get(job["id"])["status"] != "running":
+    # The job file says "running" before Popen returns and the process is
+    # registered, and get() reads the file without the lock (#655).
+    deadline = time.monotonic() + JOB_WAIT_TIMEOUT
+    while job["id"] not in manager._processes:
         assert time.monotonic() < deadline
         time.sleep(0.01)
+    assert manager.get(job["id"])["status"] == "running"
     process_id = manager._processes[job["id"]].pid
 
     def on_terminated(terminated_job):
@@ -500,7 +507,7 @@ def test_job_manager_terminates_running_evaluation_process(monkeypatch, tmp_path
 
     assert canceled["status"] == "canceled"
     assert terminal_callback_statuses == ["cancel_requested"]
-    assert manager.wait(job["id"], timeout=2)["status"] == "canceled"
+    assert manager.wait(job["id"], timeout=JOB_WAIT_TIMEOUT)["status"] == "canceled"
     with pytest.raises(ProcessLookupError):
         os.kill(process_id, 0)
     manager.close()
@@ -533,7 +540,7 @@ def test_job_manager_kills_signal_resistant_evaluation_descendants(
         context={"workspace_id": "run", "attempts": 1},
     )
     child_pid_path = output_dir / "child.pid"
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + JOB_WAIT_TIMEOUT
     while not child_pid_path.is_file():
         assert time.monotonic() < deadline
         time.sleep(0.01)
@@ -576,7 +583,7 @@ def test_job_manager_preserves_completed_state_when_cancel_loses_race(
     completed_job = manager.start_process(
         request, context={"workspace_id": "run", "attempts": 1}
     )
-    completed = manager.wait(completed_job["id"], timeout=2)
+    completed = manager.wait(completed_job["id"], timeout=JOB_WAIT_TIMEOUT)
 
     with pytest.raises(JobConflictError, match="already completed"):
         manager.cancel(completed_job["id"])
@@ -615,7 +622,7 @@ def test_console_conflicting_launch_leaves_no_history_workspace(tmp_path):
 
     assert list(service.catalog.runs_dir.iterdir()) == []
     release.set()
-    service.job_manager.wait(active["id"], timeout=2)
+    service.job_manager.wait(active["id"], timeout=JOB_WAIT_TIMEOUT)
     service.job_manager.close()
 
 
@@ -737,7 +744,7 @@ def test_console_cancellation_persists_valid_unscored_history(monkeypatch, tmp_p
         agent_spec="agent.md",
         attempts=2,
     )
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + JOB_WAIT_TIMEOUT
     while service.get_job(job["id"])["status"] != "running":
         assert time.monotonic() < deadline
         time.sleep(0.01)
@@ -787,7 +794,10 @@ def test_console_cancellation_persists_valid_unscored_history(monkeypatch, tmp_p
         service.history.get_report(payload["history_id"])
 
     next_job = service.job_manager.start("generate_atoms", lambda: {"draft_id": "next"})
-    assert service.job_manager.wait(next_job["id"], timeout=2)["status"] == "completed"
+    assert (
+        service.job_manager.wait(next_job["id"], timeout=JOB_WAIT_TIMEOUT)["status"]
+        == "completed"
+    )
     service.job_manager.close()
 
 
@@ -1746,7 +1756,7 @@ def test_console_retry_keeps_root_name_across_retry_generations(monkeypatch, tmp
 
     job = service.start_evaluation_retry(history_id)
     assert job["context"]["retry_attempt_count"] == 1
-    completed = service.job_manager.wait(job["id"], timeout=2)
+    completed = service.job_manager.wait(job["id"], timeout=JOB_WAIT_TIMEOUT)
 
     assert completed["status"] == "completed"
     successor = service.history.run_path(completed["result"]["history_id"])
@@ -1932,7 +1942,7 @@ def test_active_ignores_hidden_result_envelope(tmp_path):
 
     # _active() must not see the envelope, so start() must not raise JobConflictError.
     job = manager.start("generate_atoms", lambda: {"draft_id": "d"})
-    manager.wait(job["id"], timeout=2)
+    manager.wait(job["id"], timeout=JOB_WAIT_TIMEOUT)
     manager.close()
 
 
@@ -2116,7 +2126,7 @@ def test_a_late_envelope_after_a_restart_never_resurrects_its_job(tmp_path):
         "generate_atoms"
     ), "a late envelope must not read as an active job and block the next one"
 
-    manager.wait(manager.list()[0]["id"], timeout=2)
+    manager.wait(manager.list()[0]["id"], timeout=JOB_WAIT_TIMEOUT)
     manager.close()
 
 
