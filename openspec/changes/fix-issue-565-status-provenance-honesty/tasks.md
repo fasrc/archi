@@ -83,6 +83,32 @@
       tests for the available-panel warning and the unavailable-panel line. Watch them
       fail. Implement design D3 in `status_provenance.py` and `status.html`. One commit
       (`fix(#565): never present a failed ingest attempt as the serving corpus`).
+- [ ] 3.1a Review fix (post-PR check, 2026-10-09). `status.html:370` says "the corpus
+      above is from the last successful run". That is false after a partial failure:
+      `manager.py:372` commits deletions (`_remove_from_postgres`) before `_add_to_postgres`
+      (`manager.py:384`), and the add commits in batches, so a `failed` run can change the
+      live corpus. In `tests/unit/test_status_template_render.py` add a render test: the
+      failed-attempt warning says the counts are from the last successful run AND that the
+      failed attempt can have changed the live corpus; it does not say the corpus above is
+      from the last successful run. Watch it fail. Change only the template wording, and
+      the same sentence in `design.md` D3. One commit
+      (`fix(#565): do not claim a failed attempt left the corpus unchanged`).
+- [ ] 3.1b Review fix (post-PR check, 2026-10-09). The per-model default from task 1.1
+      makes the board show false drift for every row recorded before the fix: an
+      `OpenAIEmbeddings` deployment with no `dimensions` rebuilds its current snapshot as
+      1536, the stored snapshot says 384, and `compare_ingest_config`
+      (`src/utils/ingest_provenance.py:190-218`) reports "configuration changed after this
+      ingest". In `tests/unit/test_ingest_provenance.py` add tests: (a) stored
+      `{embedding_model: OpenAIEmbeddings, embedding_dimensions: 384}` against current
+      `{OpenAIEmbeddings, 1536}` gives no `embedding_dimensions` drift; (b) control: the
+      same stored row against current `{OpenAIEmbeddings, 768}` still reports drift;
+      (c) control: stored `{HuggingFaceEmbeddings, 384}` against current
+      `{OpenAIEmbeddings, 1536}` still reports drift on both keys. Watch them fail. In
+      `compare_ingest_config`, skip only the mismatch where the key is
+      `embedding_dimensions`, the stored value equals `_DEFAULT_EMBEDDING_DIMENSIONS`, the
+      `embedding_model` is the same in both snapshots, and the current value equals
+      `_DEFAULT_EMBEDDING_DIMENSIONS_BY_MODEL.get(model)`. Must not raise. One commit
+      (`fix(#565): do not report pre-fix dimension rows as config drift`).
 
 ## 4. F4 — unavailable current config (design D4)
 
