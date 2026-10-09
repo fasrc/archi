@@ -120,6 +120,13 @@ services:
         evaluator_provider: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_provider | default("", true) }}
         evaluator_model: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_model | default("", true) }}
         evaluator_ollama_url: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_ollama_url | default("", true) }}
+        {%- if services.benchmarking.mode_settings.ragas_settings.evaluator_provider_mode is defined and services.benchmarking.mode_settings.ragas_settings.evaluator_provider_mode is not none %}
+        # Guarded by presence and tojson, unlike the three evaluator_* keys above: this
+        # value reaches resolve_local_mode, so a configured false, 0 or "null" must
+        # arrive as written rather than being coerced by a truthy default or bare
+        # interpolation (see provider_mode above; design.md Decision 1).
+        evaluator_provider_mode: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_provider_mode | tojson }}
+        {%- endif %}
 
 
   piazza:
