@@ -61,17 +61,24 @@ _SQL_LATEST_DEPLOYMENT = f"""
     LIMIT 1
 """
 
-# Only a COMPLETED run describes a corpus that is actually serving queries.
+# Only a run that completed with updated or up_to_date status describes the serving corpus.
 _SQL_LATEST_INGEST_RUN = f"""
     SELECT {", ".join(_INGEST_RUN_COLUMNS)}
     FROM ingest_run
-    WHERE completed_at IS NOT NULL
+    WHERE completed_at IS NOT NULL AND status IN ('updated', 'up_to_date')
     ORDER BY completed_at DESC
     LIMIT 1
 """
 
 _SQL_CURRENT_DATA_MANAGER_CONFIG = """
     SELECT data_manager_config FROM static_config WHERE id = 1
+"""
+
+_SQL_LATEST_FAILED_INGEST_RUN = """
+    SELECT completed_at FROM ingest_run
+    WHERE status = 'failed' AND completed_at IS NOT NULL
+    ORDER BY completed_at DESC
+    LIMIT 1
 """
 
 
@@ -142,7 +149,7 @@ def build_deployment_panel(row: Optional[Mapping]) -> Dict[str, Any]:
 
 
 def build_knowledge_base_panel(
-    run: Optional[Mapping], current_snapshot: Mapping
+    run: Optional[Mapping], current_snapshot: Mapping, last_failed_at: Any = None
 ) -> Dict[str, Any]:
     """Build the Knowledge base panel from the newest completed ingest run.
 
@@ -162,6 +169,7 @@ def build_knowledge_base_panel(
             "chunk_count": None,
             "config": {},
             "drift": [],
+            "last_attempt_failed_at": last_failed_at,
         }
 
     snapshot = _as_flag_mapping(run.get("config_snapshot"))
@@ -177,7 +185,26 @@ def build_knowledge_base_panel(
         "chunk_count": run.get("chunk_count"),
         "config": snapshot,
         "drift": compare_ingest_config(current_snapshot, snapshot),
+        "last_attempt_failed_at": _newer_failed_at(
+            run.get("completed_at"), last_failed_at
+        ),
     }
+
+
+def _newer_failed_at(run_completed_at: Any, last_failed_at: Any) -> Any:
+    """Return last_failed_at only when it is strictly newer than run_completed_at.
+
+    On any comparison error (e.g. naive vs aware datetime), returns last_failed_at
+    because showing a failure is the safe side.
+    """
+    if last_failed_at is None:
+        return None
+    if run_completed_at is None:
+        return last_failed_at
+    try:
+        return last_failed_at if last_failed_at > run_completed_at else None
+    except Exception:
+        return last_failed_at
 
 
 def _as_flag_mapping(value: Any) -> Dict[str, Any]:
@@ -210,6 +237,7 @@ def load_status_provenance(conn: Any) -> Dict[str, Any]:
     deployment_row = None
     run_row = None
     current_snapshot: Dict[str, Any] = {}
+    last_failed_at = None
 
     try:
         cursor = conn.cursor()
@@ -223,6 +251,11 @@ def load_status_provenance(conn: Any) -> Dict[str, Any]:
             config_row = cursor.fetchone()
             if config_row:
                 current_snapshot = build_ingest_config_snapshot(config_row[0])
+
+            cursor.execute(_SQL_LATEST_FAILED_INGEST_RUN)
+            failed_row = cursor.fetchone()
+            if failed_row:
+                last_failed_at = failed_row[0]
         finally:
             cursor.close()
     except Exception as exc:
@@ -230,7 +263,9 @@ def load_status_provenance(conn: Any) -> Dict[str, Any]:
 
     return {
         "deployment": build_deployment_panel(deployment_row),
-        "knowledge_base": build_knowledge_base_panel(run_row, current_snapshot),
+        "knowledge_base": build_knowledge_base_panel(
+            run_row, current_snapshot, last_failed_at=last_failed_at
+        ),
     }
 
 

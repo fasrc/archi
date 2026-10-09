@@ -154,3 +154,33 @@ def test_dirty_path_overflow_is_summarised_not_dumped(env):
 
     assert "20 tracked files" in html
     assert "15 more" in html
+
+
+def test_failed_attempt_warning_renders_in_available_kb_panel(env):
+    failed = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(
+                _run_row(), {}, last_failed_at=failed
+            ),
+        },
+    )
+    assert "the most recent ingest attempt failed at" in html
+    assert "the corpus above is from the last successful run" in html
+
+
+def test_failed_attempt_line_renders_in_unavailable_kb_panel(env):
+    failed = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(
+                None, {}, last_failed_at=failed
+            ),
+        },
+    )
+    assert "The most recent ingest attempt failed at" in html
+    assert "no successful run is recorded" in html

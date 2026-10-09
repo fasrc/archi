@@ -71,7 +71,7 @@
 
 ## 3. F2 — corpus run vs failed attempt (design D3)
 
-- [ ] 3.1 In `tests/unit/test_status_provenance.py` add tests: (a) `_SQL_LATEST_INGEST_RUN`
+- [x] 3.1 In `tests/unit/test_status_provenance.py` add tests: (a) `_SQL_LATEST_INGEST_RUN`
       contains `status IN ('updated', 'up_to_date')`; (b) `build_knowledge_base_panel`
       with a corpus run and a newer `last_failed_at` sets `last_attempt_failed_at` to it;
       (c) with an older `last_failed_at` it is `None`; (d) with no run and a

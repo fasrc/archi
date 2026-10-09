@@ -365,8 +365,16 @@
             {% endfor %}
           </div>
           {% endif %}
+          {% if kb.last_attempt_failed_at %}
+          <div class="prov-warn">
+            ⚠ the most recent ingest attempt failed at {{ kb.last_attempt_failed_at.strftime('%Y-%m-%d %H:%M UTC') }} — the corpus above is from the last successful run
+          </div>
+          {% endif %}
         {% else %}
           <div class="prov-unavailable">No completed ingest run recorded — recorded from the next ingest onward.</div>
+          {% if kb and kb.last_attempt_failed_at %}
+          <div>The most recent ingest attempt failed at {{ kb.last_attempt_failed_at.strftime('%Y-%m-%d %H:%M UTC') }}; no successful run is recorded.</div>
+          {% endif %}
         {% endif %}
       </div>
 

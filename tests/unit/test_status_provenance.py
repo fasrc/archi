@@ -362,3 +362,73 @@ def test_snapshot_keys_are_coerced_to_strings():
     panel = build_knowledge_base_panel(_run_row(config_snapshot={1: "a"}), {})
 
     assert panel["config"] == {"1": "a"}
+
+
+# ---------------------------------------------------------------------------
+# D3 — corpus run vs failed attempt
+# ---------------------------------------------------------------------------
+
+FAILED_LATER = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+FAILED_EARLIER = datetime(2026, 9, 22, 15, 0, tzinfo=timezone.utc)
+FAILED_AT = datetime(2026, 9, 23, 3, 0, tzinfo=timezone.utc)
+
+
+def test_sql_latest_ingest_run_filters_by_success_status():
+    from src.interfaces.chat_app.status_provenance import _SQL_LATEST_INGEST_RUN
+
+    assert "status IN ('updated', 'up_to_date')" in _SQL_LATEST_INGEST_RUN
+
+
+def test_build_kb_panel_reports_failed_at_when_newer_than_corpus_run():
+    panel = build_knowledge_base_panel(
+        _run_row(), current_snapshot={}, last_failed_at=FAILED_LATER
+    )
+    assert panel["last_attempt_failed_at"] == FAILED_LATER
+
+
+def test_build_kb_panel_clears_failed_at_when_older_than_corpus_run():
+    panel = build_knowledge_base_panel(
+        _run_row(), current_snapshot={}, last_failed_at=FAILED_EARLIER
+    )
+    assert panel["last_attempt_failed_at"] is None
+
+
+def test_build_kb_panel_unavailable_carries_failed_at():
+    panel = build_knowledge_base_panel(
+        None, current_snapshot={}, last_failed_at=FAILED_LATER
+    )
+    assert panel["available"] is False
+    assert panel["last_attempt_failed_at"] == FAILED_LATER
+
+
+def test_build_kb_panel_naive_vs_aware_datetime_does_not_raise():
+    naive_failed = datetime(2026, 9, 23, 2, 0)
+    panel = build_knowledge_base_panel(
+        _run_row(), current_snapshot={}, last_failed_at=naive_failed
+    )
+    assert panel["last_attempt_failed_at"] == naive_failed
+
+
+def test_load_status_provenance_four_results_puts_failed_at_in_kb():
+    conn = _FakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+            ({"data_manager": {}},),
+            (FAILED_AT,),
+        ]
+    )
+    view = load_status_provenance(conn)
+    assert view["knowledge_base"]["last_attempt_failed_at"] == FAILED_AT
+
+
+def test_load_status_provenance_three_results_leaves_failed_at_none():
+    conn = _FakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+            ({"data_manager": {}},),
+        ]
+    )
+    view = load_status_provenance(conn)
+    assert view["knowledge_base"]["last_attempt_failed_at"] is None
