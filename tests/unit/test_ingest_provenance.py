@@ -140,6 +140,65 @@ def test_snapshot_falls_back_when_the_embedding_is_missing_from_the_map():
     assert build_ingest_config_snapshot(dm)["embedding_dimensions"] == 384
 
 
+def test_snapshot_openai_without_explicit_dimensions_uses_model_default():
+    dm = {
+        "embedding_name": "OpenAIEmbeddings",
+        "embedding_class_map": {"OpenAIEmbeddings": {}},
+    }
+    assert build_ingest_config_snapshot(dm)["embedding_dimensions"] == 1536
+
+
+def test_snapshot_huggingface_without_explicit_dimensions_uses_model_default():
+    dm = {
+        "embedding_name": "HuggingFaceEmbeddings",
+        "embedding_class_map": {"HuggingFaceEmbeddings": {}},
+    }
+    assert build_ingest_config_snapshot(dm)["embedding_dimensions"] == 384
+
+
+def test_snapshot_explicit_dimensions_wins_over_model_default():
+    dm = {
+        "embedding_name": "OpenAIEmbeddings",
+        "embedding_class_map": {"OpenAIEmbeddings": {"dimensions": 3072}},
+    }
+    assert build_ingest_config_snapshot(dm)["embedding_dimensions"] == 3072
+
+
+def test_snapshot_unknown_model_without_dimensions_falls_back_to_384():
+    dm = {
+        "embedding_name": "UnknownEmbedder",
+        "embedding_class_map": {"UnknownEmbedder": {}},
+    }
+    assert build_ingest_config_snapshot(dm)["embedding_dimensions"] == 384
+
+
+def test_default_dimensions_table_matches_manager():
+    import ast
+    import pathlib
+
+    from src.utils.ingest_provenance import _DEFAULT_EMBEDDING_DIMENSIONS_BY_MODEL
+
+    src = pathlib.Path("src/data_manager/vectorstore/manager.py").read_text()
+    tree = ast.parse(src)
+
+    assignment = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "default_dimensions":
+                    assignment = node
+                    break
+
+    assert (
+        assignment is not None
+    ), "No assignment to 'default_dimensions' found in manager.py"
+    manager_table = ast.literal_eval(assignment.value)
+    assert manager_table == _DEFAULT_EMBEDDING_DIMENSIONS_BY_MODEL, (
+        f"manager.py default_dimensions {manager_table!r} != "
+        f"_DEFAULT_EMBEDDING_DIMENSIONS_BY_MODEL {_DEFAULT_EMBEDDING_DIMENSIONS_BY_MODEL!r}"
+    )
+
+
 def test_snapshot_coerces_truthy_flag_values_to_bool():
     """Flags must round-trip through JSONB as booleans, not as 1/0 or "yes"."""
     dm = {

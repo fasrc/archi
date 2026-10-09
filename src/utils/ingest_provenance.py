@@ -43,6 +43,15 @@ INGEST_CONFIG_KEYS = (
 #   the rest                          -> the config-seed fallbacks
 _DEFAULT_EMBEDDING_MODEL = "HuggingFaceEmbeddings"
 _DEFAULT_EMBEDDING_DIMENSIONS = 384
+
+# Per-model dimension defaults, mirroring the `default_dimensions` local table in
+# src/data_manager/vectorstore/manager.py (manager.__init__).  The parity test
+# parses that file with `ast` and asserts equality, so a drift there is caught.
+_DEFAULT_EMBEDDING_DIMENSIONS_BY_MODEL = {
+    "all-MiniLM-L6-v2": 384,
+    "OpenAIEmbeddings": 1536,
+    "HuggingFaceEmbeddings": 384,
+}
 _DEFAULT_CHUNK_SIZE = 1000
 _DEFAULT_CHUNK_OVERLAP = 150
 _DEFAULT_DISTANCE_METRIC = "cosine"
@@ -166,7 +175,10 @@ def build_ingest_config_snapshot(data_manager_config: Any) -> Dict[str, Any]:
         "effective_chunking": effective_chunking(dm),
         "embedding_model": embedding_model,
         "embedding_dimensions": embedding_entry.get(
-            "dimensions", _DEFAULT_EMBEDDING_DIMENSIONS
+            "dimensions",
+            _DEFAULT_EMBEDDING_DIMENSIONS_BY_MODEL.get(
+                embedding_model, _DEFAULT_EMBEDDING_DIMENSIONS
+            ),
         ),
         "chunk_size": dm.get("chunk_size", _DEFAULT_CHUNK_SIZE),
         "chunk_overlap": dm.get("chunk_overlap", _DEFAULT_CHUNK_OVERLAP),

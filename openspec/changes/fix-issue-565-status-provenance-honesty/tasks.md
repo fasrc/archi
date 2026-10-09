@@ -38,7 +38,7 @@
 
 ## 1. F1 — recorded embedding dimensions (design D1)
 
-- [ ] 1.1 In `tests/unit/test_ingest_provenance.py` add tests: (a) `OpenAIEmbeddings` with
+- [x] 1.1 In `tests/unit/test_ingest_provenance.py` add tests: (a) `OpenAIEmbeddings` with
       a class-map entry that has no `dimensions` records 1536; (b) `HuggingFaceEmbeddings`
       with no `dimensions` records 384; (c) an explicit `dimensions` value wins for
       `OpenAIEmbeddings`; (d) an unknown model with no `dimensions` records 384;
