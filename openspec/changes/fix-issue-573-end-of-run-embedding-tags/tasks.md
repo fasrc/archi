@@ -151,7 +151,7 @@
 
 ## 5. compare_runs and archive tooling refuse
 
-- [ ] 5.1 In `tests/unit/test_compare_runs.py`, add tests in a new section marked
+- [x] 5.1 In `tests/unit/test_compare_runs.py`, add tests in a new section marked
       `# --- #573: end-of-run embedding tags ---` placed above an existing section marker
       (not at the end of the file), then implement design D7 in
       `scripts/benchmarking/compare_runs.py`, one commit
