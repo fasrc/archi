@@ -50,5 +50,14 @@ def delete_unreferenced_parents_for_resource(cursor, resource_hash) -> int:
     return max(0, cursor.rowcount)
 
 
+def delete_unreferenced_parents_for_resources(cursor, resource_hashes) -> int:
+    hashes = list(resource_hashes or ())
+    if not hashes:
+        return 0
+    if not parent_table_exists(cursor):
+        return 0
+    return sum(delete_unreferenced_parents_for_resource(cursor, h) for h in hashes)
+
+
 def truncate_parent_nodes(cursor) -> None:
     cursor.execute(TRUNCATE_PARENT_NODES)

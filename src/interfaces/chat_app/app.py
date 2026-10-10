@@ -68,6 +68,7 @@ from src.archi.utils.output_dataclass import PipelineOutput
 
 # from src.data_manager.data_manager import DataManager
 from src.data_manager.data_viewer_service import DataViewerService
+from src.data_manager.vectorstore import parent_nodes
 from src.data_manager.vectorstore.manager import VectorStoreManager
 from src.interfaces.chat_app.config_fingerprint import (
     build_health_payload,
@@ -6191,11 +6192,19 @@ class FlaskAppWrapper(object):
                         logger.info(
                             f"Deleted {chunks_deleted} chunks for {len(hashes_to_delete)} documents"
                         )
+                        parents_deleted = (  # pragma: no cover
+                            parent_nodes.delete_unreferenced_parents_for_resources(
+                                cursor, hashes_to_delete
+                            )
+                        )
+                        logger.info(  # pragma: no cover
+                            f"Deleted {parents_deleted} unreferenced parent nodes"
+                        )
 
                     # Mark documents as deleted
                     cursor.execute(
                         """
-                        UPDATE documents 
+                        UPDATE documents
                         SET is_deleted = TRUE, deleted_at = NOW()
                         WHERE source_type = 'git' 
                           AND NOT is_deleted
@@ -6824,6 +6833,14 @@ class FlaskAppWrapper(object):
                         chunks_deleted = cursor.rowcount
                         logger.info(
                             f"Deleted {chunks_deleted} chunks for {len(hashes_to_delete)} Jira documents"
+                        )
+                        parents_deleted = (  # pragma: no cover
+                            parent_nodes.delete_unreferenced_parents_for_resources(
+                                cursor, hashes_to_delete
+                            )
+                        )
+                        logger.info(  # pragma: no cover
+                            f"Deleted {parents_deleted} unreferenced parent nodes"
                         )
 
                     # Mark documents from this Jira project as deleted
