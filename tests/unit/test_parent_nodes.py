@@ -916,3 +916,30 @@ def test_delete_unreferenced_parents_for_resources_never_calls_commit():
     parent_nodes.delete_unreferenced_parents_for_resources(cursor, ["hash-a"])
 
     assert committed == []
+
+
+def test_delete_unreferenced_parents_for_resources_ensures_parent_id_index_first():
+    """On an upgraded volume the table can exist without idx_chunks_parent_id, so the
+    plural helper builds the index once, before its first NOT EXISTS delete."""
+    documents = [
+        {"id": 10, "resource_hash": "hash-a"},
+        {"id": 11, "resource_hash": "hash-b"},
+    ]
+    cursor = _FakeCursor(parents={}, chunks=[], documents=documents)
+
+    parent_nodes.delete_unreferenced_parents_for_resources(cursor, ["hash-a", "hash-b"])
+
+    sqls = [" ".join(s.split()) for s in cursor.executed_sqls()]
+    index_positions = [
+        i
+        for i, s in enumerate(sqls)
+        if "CREATE INDEX IF NOT EXISTS idx_chunks_parent_id" in s
+    ]
+    delete_positions = [
+        i
+        for i, sql in enumerate(cursor.executed_sqls())
+        if sql is parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE
+    ]
+    assert len(index_positions) == 1
+    assert len(delete_positions) == 2
+    assert index_positions[0] < delete_positions[0]

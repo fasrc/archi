@@ -12,6 +12,7 @@ def delete_unreferenced_parents_for_resources(cursor, resource_hashes) -> int:
         return 0
     if not parent_table_exists(cursor):
         return 0
+    ensure_chunks_parent_id_index(cursor)
     return sum(delete_unreferenced_parents_for_resource(cursor, h) for h in hashes)
 ```
 
@@ -19,8 +20,11 @@ def delete_unreferenced_parents_for_resources(cursor, resource_hashes) -> int:
 - Missing table: one `PARENT_TABLE_EXISTS` query, then `0`. The removal must not break
   on a volume that predates hierarchical chunking (acceptance criterion 2).
 - The helper never commits. The caller owns the transaction (module docstring rule).
-- It does not call `ensure_chunks_parent_id_index`. That index is created by `init.sql`
-  and by the ingest paths; adding a DDL call to a chat-app request path is out of scope.
+- When the table exists, it calls `ensure_chunks_parent_id_index` once, before the first
+  delete, as `_remove_from_postgres` does. An upgraded volume can lack that index
+  (`docs/docs/troubleshooting.md`), and then each `NOT EXISTS` scans all of
+  `document_chunks` once for each removed hash. The statement is a no-op when the index
+  exists. Both chat-app callers commit, so the build persists.
 
 ## D2. Predicate is unchanged
 
