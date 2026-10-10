@@ -986,6 +986,66 @@ def test_hoist_anchor_with_relative_href_keeps_a_markdown_link(href):
     )
 
 
+def test_root_relative_self_link_becomes_a_markdown_link():
+    assert html_to_markdown('<p><a href="/docs">/docs</a></p>') == "[/docs](/docs)"
+
+
+def test_fragment_self_link_becomes_a_markdown_link():
+    assert html_to_markdown('<p><a href="#sec">#sec</a></p>') == "[#sec](#sec)"
+
+
+def test_path_relative_self_link_becomes_a_markdown_link():
+    assert (
+        html_to_markdown('<p><a href="docs/page.html">docs/page.html</a></p>')
+        == "[docs/page.html](docs/page.html)"
+    )
+
+
+def test_whitespace_around_a_self_link_is_kept():
+    assert (
+        html_to_markdown('<p>see<a href="/docs"> /docs </a>now</p>')
+        == "see [/docs](/docs) now"
+    )
+
+
+def test_self_link_text_keeps_the_converters_escapes():
+    assert html_to_markdown('<p><a href="/a_b">/a_b</a></p>') == "[/a\\_b](/a_b)"
+
+
+def test_absolute_self_link_stays_an_autolink():
+    assert (
+        html_to_markdown('<p><a href="https://x/y">https://x/y</a></p>')
+        == "<https://x/y>"
+    )
+    assert (
+        html_to_markdown('<p><a href="mailto:a@b">mailto:a@b</a></p>') == "<mailto:a@b>"
+    )
+
+
+def test_self_link_with_other_text_is_unchanged():
+    assert html_to_markdown('<p><a href="/docs">Docs</a></p>') == "[Docs](/docs)"
+
+
+def test_titled_self_link_is_unchanged():
+    assert (
+        html_to_markdown('<p><a href="/docs" title="T">/docs</a></p>')
+        == '[/docs](/docs "T")'
+    )
+
+
+def test_self_link_inside_code_is_unchanged():
+    assert (
+        html_to_markdown('<p><code><a href="/x">&lt;/x&gt;</a></code></p>') == "`</x>`"
+    )
+
+
+def test_hoist_kept_link_with_underscore_href_uses_same_rule():
+    assert (
+        html_to_markdown('<p><a href="/a_b"><code>a<br>b</code></a></p>')
+        == "[/a\\_b](/a_b)\n\n```\na\nb\n```"
+    )
+
+
 def test_hoist_outer_strong_wraps_kept_link():
     assert (
         html_to_markdown(

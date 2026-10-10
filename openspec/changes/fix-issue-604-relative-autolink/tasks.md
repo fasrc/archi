@@ -25,7 +25,7 @@ Standing notes for every task:
 
 ## 1. Rewrite every scheme-less self-link (test and fix in one task)
 
-- [ ] 1.1 Add one test for every scenario in this change's spec (exact strings). Run
+- [x] 1.1 Add one test for every scenario in this change's spec (exact strings). Run
       `python -m pytest tests/unit/test_html_to_markdown_processor.py -q` and confirm the
       `/docs`, `#sec`, `docs/page.html`, whitespace, `/a_b`, and kept-link `/a_b` tests fail
       because the output is `<href>` or keeps the unescaped text (the unchanged-behaviour
