@@ -157,10 +157,9 @@ data_manager:
 
 
 @pytest.mark.usefixtures("fake_repo_root")
-def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
+def test_dev_flag_prints_warning_in_dry_run(env_file, archi_home, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
-    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
 
     from src.cli.cli_main import create
 
@@ -192,10 +191,9 @@ def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
     )
 
 
-def test_dry_run_succeeds_without_docker(env_file, tmp_path, monkeypatch):
+def test_dry_run_succeeds_without_docker(env_file, archi_home, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
-    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
 
     from src.cli import cli_main
 
@@ -418,10 +416,9 @@ def test_non_dry_create_requires_docker_under_verbose_logging(
     )
 
 
-def test_no_dev_flag_no_warning(env_file, tmp_path, monkeypatch):
+def test_no_dev_flag_no_warning(env_file, archi_home, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
-    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
 
     from src.cli.cli_main import create
 
