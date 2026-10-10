@@ -53,7 +53,7 @@ Standing notes for every task:
 
 ## 3. Verify, push, and open the PR
 
-- [ ] 3.1 Confirm `git diff origin/dev --stat` lists only `processing.py`, the test file,
+- [x] 3.1 Confirm `git diff origin/dev --stat` lists only `processing.py`, the test file,
       `docs/docs/configuration.md`, and files under
       `openspec/changes/fix-issue-604-relative-autolink/`. Run the gate once more and confirm
       it exits 0 with patch coverage at or above 80 %. Confirm `git status` is empty. Push
