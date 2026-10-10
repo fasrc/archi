@@ -801,6 +801,11 @@ data_manager:
   paragraph, code block, heading, or list is unchanged; like the body slice, the change
   reaches disk only for new or force-overwritten documents — see *Applying to an existing
   corpus* below.
+- **A relative or fragment self-link becomes a Markdown link.** A link whose text equals
+  a relative or fragment `href`, such as `/docs`, becomes `[/docs](/docs)`, because a
+  CommonMark autolink needs a URI scheme and `</docs>` reads as an HTML end tag
+  (issue #604); absolute URLs stay `<https://...>`; like the other items, it reaches disk
+  only for new or force-overwritten documents.
 - **Cost.** Categorization issues one LLM call per document — expensive on large
   crawls, hence off by default.
 - **Local `.html` uploads are not converted.** Uploaded local files arrive as `bytes`

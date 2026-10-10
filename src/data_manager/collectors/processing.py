@@ -30,7 +30,14 @@ from typing import (
 )
 
 from bs4 import BeautifulSoup, Comment, Doctype, NavigableString, Tag
-from markdownify import STRIP, STRIP_ONE, MarkdownConverter, strip1_pre, strip_pre
+from markdownify import (
+    STRIP,
+    STRIP_ONE,
+    MarkdownConverter,
+    chomp,
+    strip1_pre,
+    strip_pre,
+)
 
 from src.data_manager.collectors.resource_base import BaseResource
 from src.utils.local_mode import LOCAL_PROVIDER_KEY, apply_local_mode
@@ -297,9 +304,6 @@ _BR_LEADING_WS = re.compile(r"^(?:[ \t]*\r?\n)+")
 # converting byte-identically to the output before #399. Only promoted blocks are ours
 # to label.
 _PROMOTED_ATTR = "data-archi-promoted"
-# Marks the link that ``_hoist_out_of_inline`` keeps for an emptied anchor (issue
-# #430), so ``_ArchiMarkdownConverter.convert_a`` can give it explicit link syntax.
-_KEPT_LINK_ATTR = "data-archi-kept-link"
 # Marks the head half of an anchor whose split-off tail already shows the link, so
 # a later block that empties the head half does not add a second link.
 _LINK_SHOWN_ATTR = "data-archi-link-shown"
@@ -472,7 +476,7 @@ def _hoist_out_of_inline(pre, soup) -> None:
             and not parent.has_attr(_LINK_SHOWN_ATTR)
             and not _renders_link_text(parent)
         ):
-            link = soup.new_tag("a", href=parent["href"], attrs={_KEPT_LINK_ATTR: ""})
+            link = soup.new_tag("a", href=parent["href"])
             link.string = (parent.get("title") or "").strip() or parent["href"]
             parent.replace_with(link)
             continue
@@ -661,8 +665,8 @@ class _ArchiMarkdownConverter(MarkdownConverter):
     This is the one place project-specific ``MarkdownConverter`` overrides live.
     ``convert_pre`` sizes the fence delimiter past any backtick run inside the
     block (issue #407); ``convert_list`` keeps a newline after a nested list
-    (issue #410); ``convert_a`` gives a kept link with a relative target explicit
-    link syntax (issue #430).
+    (issue #410); ``convert_a`` gives every self-link without a URI scheme
+    explicit link syntax (issues #430 and #604).
 
     markdownify binds ``convert_ul`` and ``convert_ol`` to the base
     ``convert_list`` at class-definition time, so overriding ``convert_list``
@@ -693,18 +697,23 @@ class _ArchiMarkdownConverter(MarkdownConverter):
         return "\n\n%s%s\n%s\n%s\n\n" % (fence, code_language, text, fence)
 
     def convert_a(self, el, text, parent_tags):
-        """Give a kept link with a relative or fragment target explicit link syntax.
+        """Give every scheme-less self-link explicit link syntax.
 
         markdownify writes ``<href>`` when the text equals the ``href``, but a
         CommonMark autolink needs a URI scheme: ``</docs>`` reads as an HTML end
-        tag. Only the link that ``_hoist_out_of_inline`` keeps is changed here;
-        other self-links convert as markdownify writes them (issue #604).
+        tag. An ``href`` with a URI scheme keeps the ``<href>`` autolink (issues
+        #430 and #604).
         """
         out = super().convert_a(el, text, parent_tags)
         href = el.get("href") or ""
-        if el.has_attr(_KEPT_LINK_ATTR) and out == f"<{href}>":
-            if not _URI_SCHEME.match(href):
-                return f"[{href}]({href})"
+        if (
+            "_noformat" not in parent_tags
+            and href
+            and out == f"<{href}>"
+            and not _URI_SCHEME.match(href)
+        ):
+            prefix, suffix, text = chomp(text)
+            return f"{prefix}[{text}]({href}){suffix}"
         return out
 
     def convert_list(self, el, text, parent_tags):
