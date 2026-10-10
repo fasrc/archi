@@ -708,6 +708,7 @@ class _ArchiMarkdownConverter(MarkdownConverter):
         href = el.get("href") or ""
         if (
             "_noformat" not in parent_tags
+            and href
             and out == f"<{href}>"
             and not _URI_SCHEME.match(href)
         ):

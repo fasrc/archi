@@ -1039,6 +1039,11 @@ def test_self_link_inside_code_is_unchanged():
     )
 
 
+@pytest.mark.parametrize("anchor", ["<a>&lt;&gt;</a>", '<a href="">&lt;&gt;</a>'])
+def test_anchor_without_href_keeps_its_literal_text(anchor):
+    assert html_to_markdown(f"<p>{anchor}</p>") == "<>"
+
+
 def test_hoist_kept_link_with_underscore_href_uses_same_rule():
     assert (
         html_to_markdown('<p><a href="/a_b"><code>a<br>b</code></a></p>')
