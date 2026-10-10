@@ -4,4 +4,4 @@
 
 ## 2. Publish
 
-- [ ] 2.1 Push the branch with `git push -u origin fix/issue-587-archi-dir-test-isolation`. Open the PR with `gh pr create --repo fasrc/archi --base dev`. Put `closes #587` in the PR body (not only the title), and record the repro counts before (2 failed) and after (0 failed). No `Co-Authored-By` trailer. Do not merge.
+- [x] 2.1 Push the branch with `git push -u origin fix/issue-587-archi-dir-test-isolation`. Open the PR with `gh pr create --repo fasrc/archi --base dev`. Put `closes #587` in the PR body (not only the title), and record the repro counts before (2 failed) and after (0 failed). No `Co-Authored-By` trailer. Do not merge.
