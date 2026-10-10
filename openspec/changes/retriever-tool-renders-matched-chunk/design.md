@@ -57,11 +57,21 @@ Alternatives considered:
 
 **D2: render the span itself, truncated to `max_chars`; no centred window.** The median child (1433 characters) already exceeds the 1200-character limit, so a window around it would have nothing to add. Rendering from the span start keeps the heading that usually opens a child. Example: the FASSE child begins 466 characters before "Large Data Transfer with Globus", so 1200 characters show the heading plus ~700 characters of that section. Title and URL stay in the header, so the parent's breadcrumb is not needed for citation.
 
-**D3: fixed defaults 5 × 1200, the 8000 clamp unchanged.** 5 × (145 + 1203) + separators ≈ 6.7k characters, which leaves ~1.2k characters of headroom for long titles and URLs before the clamp marks a cut. The alternative was an adaptive per-document share (`max_result_chars / n` minus a header allowance). It handles any top N, but it adds a computation whose output depends on metadata length, and only #498 would ever exercise it. Deferred (see Open Questions). The clamp is not raised: raising it would break the ceiling relationship that `test_ceiling_sits_above_both_source_clamps` pins and would invalidate the archi-config exemption derivation.
+**D3: render every returned document (up to 8), each body capped at its fair share of the unchanged 8000 clamp.** The formatter renders up to `max_documents` (default **8**) documents. Each body is limited to `min(max_chars, share)`, where `max_chars` defaults to **1200** and `share = (max_result_chars − total header characters − separators − n × len("...")) // n`, floored at 200. `n` is the number of documents rendered. The `...` term matters: a first prototype that left it out overran the clamp by 18 characters at n = 8.
+- At today's top 5 the share is ≈ 1450, so the limit is the full 1200. The output is identical to a fixed 5 × 1200: ≈ 6.7k characters, ~1.2k headroom.
+- At #498's proposed top 8 the share is ≈ 850. All eight documents fit under the clamp, instead of the clamp cutting the 6th–8th.
+
+That matters: for "what is the best way to move large files onto FASSE?" the FASSE transfer page is parent rank **6** (rerank 0.260, measured 2026-10-10). The read-only prototype (`render_proto8.py`, retriever asked for 8) measured headers = 1164 characters, share = 849, and output = 7992 characters with 8 snippets and no clamp. The FASSE child shows the Globus heading plus 356 characters of that section.
+
+The 200-character floor only matters for pathological metadata. There the whole-result clamp still bounds the output and marks the cut (#235 behaviour).
+
+Alternative considered: fixed defaults `max_documents=5`, `max_chars=1200`. They give the same output today, but #498 would then also need to change this tool, and a sixth result would be fetched yet never shown to the model.
+
+The clamp is not raised. Raising it would break the ceiling relationship that `test_ceiling_sits_above_both_source_clamps` pins and would invalidate the archi-config exemption derivation.
 
 **D4: validate the span in the formatter.** Metadata can come from other retrievers or be edited downstream. The formatter uses the span only when both values are non-boolean integers with `0 <= start < end <= len(page_content)`. Otherwise it renders as if no span were present. It strips the rendered slice as today.
 
-**D5: CMS agent unchanged apart from the defaults.** `HybridRetriever` returns `(Document, score)` tuples of chunks with no span. With the new defaults it renders 5 chunks of up to 1200 characters instead of 4 × 800, under the same clamp.
+**D5: CMS agent unchanged apart from the defaults.** `HybridRetriever` returns `(Document, score)` tuples of chunks with no span. With the new defaults it renders all 5 chunks (its default `k`) at up to 1200 characters each instead of 4 × 800, under the same clamp.
 
 ## Risks / Trade-offs
 
@@ -70,7 +80,8 @@ Alternatives considered:
 - [The parent's opening breadcrumb is no longer shown] → the header carries title and URL, and `fetch_catalog_document` remains for full text.
 - [Spans past 1200 characters of a long child (p90 2014) are still cut] → strictly better than today's parent[:800]. Tune `max_chars` only with golden-set evidence.
 - [Golden-set comparability] → agent behaviour changes, so runs after this land are a new era; note it in the report.
-- [#498 (top N 5 → 8) adopted later] → with fixed defaults the tool still shows only 5, and the clamp would cut a sixth anyway. Raising top N therefore needs a matching change here (see Open Questions).
+- [#498 (top N 5 → 8) adopted later] → the tool renders all eight at ≈ 850 characters each with no change here. Shorter bodies per document is the trade #498's golden-set run should measure.
+- [The per-document limit now depends on header lengths] → it is deterministic for a given result; unit tests pin the 5- and 8-document cases and the floor.
 
 ## Migration Plan
 
@@ -80,6 +91,4 @@ Verification after deploy: run `live_retriever.py` through the tool wrapper insi
 
 ## Open Questions
 
-- If #498 raises top N, should the per-document share become adaptive (D3 alternative), or should `max_documents` follow the configured top N with `max_chars` reduced to fit? Decide in #498, with golden-set evidence.
-
-  Measured 2026-10-10 for "what is the best way to move large files onto FASSE?": the FASSE transfer page is **parent rank 6** (rerank 0.260). It would be retrieved at top N 8, but with fixed 5 × 1200 defaults the tool would not render it, and the clamp would cut the 6th–8th documents. An adaptive share would render all returned documents, with each body capped at `min(max_chars, (max_result_chars − headers − separators) / n)`. That share is ≈ 1200 at n = 5 (identical to D3) and ≈ 840 at n = 8. At 840 characters the FASSE child still shows its Globus heading (child offset 465) plus ~370 characters of that section. Evidence posted on #498.
+- Whether #498 should raise top N to 8 stays #498's decision, made with golden-set evidence. This change only makes the tool render whatever N the retriever returns (evidence posted on #498).

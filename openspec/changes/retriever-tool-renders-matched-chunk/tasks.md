@@ -13,8 +13,10 @@
       `page_content`
 - [ ] 1.5 Tool-level test (in `test_retriever_llm_context_format.py` or a new
       `test_retriever_tool_defaults.py`): `create_retriever_tool` with defaults over a retriever
-      returning 5 documents with realistic metadata → 5 headers `[1]`…`[5]`, output ≤ 8000 chars;
-      oversized metadata → clamped with the truncation marker (existing #235 behaviour still holds)
+      returning 5 long documents with realistic metadata → 5 headers, each body 1200 chars + `...`,
+      output ≤ 8000 chars with no truncation marker; 8 long documents → 8 headers, ≤ 8000 chars,
+      no truncation marker (bodies shrink to the fair share); oversized metadata → clamped with
+      the truncation marker (existing #235 behaviour still holds)
 
 ## 2. Implementation (minimum to turn 1.x green)
 
@@ -23,9 +25,11 @@
       via `parent_text.find(child_text)` when found
 - [ ] 2.2 `tools/retriever.py` `_format_documents_for_llm`: use the validated span when present,
       else the start of `page_content`; truncation and `...` marker unchanged
-- [ ] 2.3 `tools/retriever.py` `create_retriever_tool`: defaults `max_documents=5`,
-      `max_chars=1200`; update the `DEFAULT_RETRIEVER_RESULT_CHARS` comment ("4 documents x 800")
-      and the docstring
+- [ ] 2.3 `tools/retriever.py`: defaults `max_documents=8`, `max_chars=1200`; pass
+      `max_result_chars` into `_format_documents_for_llm` so it limits each body to
+      `min(max_chars, share)` (share = (ceiling − headers − separators − n × len("...")) // n,
+      floor 200); update
+      the `DEFAULT_RETRIEVER_RESULT_CHARS` comment ("4 documents x 800") and the docstring
 - [ ] 2.4 `tools/local_files.py:484` comment and `tests/unit/test_context_budget.py`
       `_retrieval_result` fixture → 5 documents × 1200 chars (confirm the margin test still passes;
       if it does not, stop and revisit design D3)
