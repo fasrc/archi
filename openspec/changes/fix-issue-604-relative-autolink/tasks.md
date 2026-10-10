@@ -42,7 +42,7 @@ Standing notes for every task:
 
 ## 2. Document the change
 
-- [ ] 2.1 In `docs/docs/configuration.md`, in the conversion list that contains "A promoted
+- [x] 2.1 In `docs/docs/configuration.md`, in the conversion list that contains "A promoted
       block leaves its inline ancestors" (about line 780), add one bullet after the
       "Content after a nested list starts on its own line" bullet: a link whose text equals a
       relative or fragment `href`, such as `/docs`, becomes `[/docs](/docs)`, because a
