@@ -33,6 +33,10 @@ source-removal paths:
   `.delete(ids=...)` or `.delete(document_id=...)` on dev `6156b760`
   (`git grep -nE "\.delete\((ids|document_id)=" -- src/` is empty). It does not delete
   by resource, so the issue's condition ("if its callers delete by resource") is false.
+- The Jira removal selector (#666). `app.py` selects and soft-deletes Jira rows with
+  `source_type = 'jira'`, which `init.sql:253` forbids; the collector writes `ticket`.
+  The Jira call site is wired but unreachable until #666 fixes the selector, a change
+  that makes the endpoint delete data it never deleted before.
 - Cleanup of parent rows that earlier removals already orphaned. A later re-ingest or
   `_remove_from_postgres` does not reach them; a one-off SQL backfill is a human decision.
 

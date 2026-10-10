@@ -1,14 +1,14 @@
 ## ADDED Requirements
 
 ### Requirement: Chat-app source removal deletes unreferenced parent nodes
-The system SHALL, when the chat app removes a git repository or a Jira project, delete in the same transaction every `document_parent_nodes` row of the removed resource hashes that no `document_chunks` row in any collection references.
+The system SHALL, when the chat app removes a git repository or a Jira project, delete in the same transaction every `document_parent_nodes` row of the resource hashes that the removal selects that no `document_chunks` row in any collection references.
 
 #### Scenario: A git repository is removed
 - **WHEN** the chat app removes a git repository whose documents have hierarchical parent rows
 - **THEN** after the removal no parent row of those documents remains that no chunk references
 
 #### Scenario: A Jira project is removed
-- **WHEN** the chat app removes a Jira project whose documents have hierarchical parent rows
+- **WHEN** the chat app Jira project removal selects documents that have hierarchical parent rows (the selector matches no row until issue #666 is fixed)
 - **THEN** after the removal no parent row of those documents remains that no chunk references
 
 #### Scenario: A parent that another collection references survives
