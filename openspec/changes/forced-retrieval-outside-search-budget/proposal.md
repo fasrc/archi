@@ -45,7 +45,9 @@ search in a turn was refused. The cap (`38a2c55b`, 2026-06-04) predates the forc
 
 - **Code:** `src/archi/pipelines/agents/fasrc_docs_agent.py` (`_update_vector_retrievers`,
   `_inject_forced_retrieval`), `src/archi/pipelines/agents/cms_comp_ops_agent.py` (same two
-  methods). No change to `base_react.py`, `tools/retriever.py` or `run_memory.py`.
+  methods), `src/interfaces/chat_app/app.py` (`_build_request_local_pipeline` resets the new
+  attribute), and comment-only corrections in `utils/context_budget.py`. No change to
+  `base_react.py`, `tools/retriever.py` or `run_memory.py`.
 - **Tests:** `tests/unit/test_forced_retrieval.py` gains FASRCDocsAgent + CMSCompOpsAgent cases
   that drive the forced round through a *real budgeted* tool and assert the forced call's
   registration in run memory; its `_make_agent` fixture learns the unbudgeted tool. No existing

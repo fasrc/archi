@@ -52,4 +52,15 @@ a search slot.
 
 #### Scenario: Fallback with warning
 - **WHEN** an agent has model-facing vector tools but no unbudgeted forced-retrieval tool
-- **THEN** the forced initial retrieval still runs through the budgeted tool and a warning is logged
+- **THEN** the forced initial retrieval still runs through the budgeted tool, a warning is logged,
+  and the query the budgeted tool queued is bound to the forced call id, so no pending tool input
+  for `search_vectorstore_hybrid` is left
+
+### Requirement: Request-local pipeline views rebuild the forced tool
+A request-local view of a shared pipeline SHALL reset `_forced_vector_tool` along with the other
+per-run vector attributes, because the tool's `store_docs` callback is bound to the pipeline that
+built it.
+
+#### Scenario: View does not inherit the source's forced tool
+- **WHEN** a request-local view is built from a pipeline that has a `_forced_vector_tool`
+- **THEN** the view's `_forced_vector_tool` is `None` until the view rebuilds its own tools

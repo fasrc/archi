@@ -273,6 +273,11 @@ def test_missing_unbudgeted_tool_falls_back_with_a_warning(monkeypatch, caplog, 
     assert memory.tool_call_count(TOOL_NAME) == 1
     # ...and the cost is named.
     assert "consumes one of the model's" in caplog.text
+    # The budgeted tool queued the question as a runtime input; the forced call
+    # claims it, so the model's first call does not inherit it.
+    forced_id = out[-2].tool_calls[0]["id"]
+    assert memory.tool_inputs_by_id()[forced_id]["tool_input"] == {"query": QUESTION}
+    assert memory.resolve_tool_input("probe", TOOL_NAME, {}) == {}
 
 
 @pytest.mark.parametrize("build", AGENT_BUILDERS)

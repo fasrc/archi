@@ -68,7 +68,16 @@ pinned archi-config. That re-derivation is tracked as a follow-up, not bundled.
 **D4 — Fail-open stays fail-open.** A retriever error still returns the messages unchanged. If an
 agent reaches `_inject_forced_retrieval` without an unbudgeted instance (only possible for a
 subclass that builds its tools elsewhere), it falls back to the budgeted tool with a warning that
-names the cost, so the grounding guarantee is never silently lost.
+names the cost, so the grounding guarantee is never silently lost. The budgeted tool queues the
+question as a pending input on that path, so after any forced call the agent first claims the
+queue (`resolve_tool_input(call_id, …, {})`, a no-op when nothing is queued) and then records the
+forced call; the model's first call never inherits the forced query.
+
+**D5 — The request-local view resets the forced tool.** `_build_request_local_pipeline`
+(`src/interfaces/chat_app/app.py`) shallow-copies the shared pipeline and resets every attribute that
+closes over a bound method of the source. `_forced_vector_tool` does (its `store_docs`), so it is
+reset with `_vector_tools`/`_vector_retrievers`. Today `_inject_forced_retrieval` would skip anyway
+when `_vector_tools` is `None`, but the invariant should not rest on that ordering.
 
 ## Risks / Trade-offs
 

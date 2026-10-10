@@ -412,6 +412,9 @@ class CMSCompOpsAgent(BaseReActAgent):
         call_id = f"forced_search_{uuid.uuid4().hex}"
         memory = self.active_memory
         if memory is not None:
+            # Claim any runtime input the tool queued (only the budgeted fallback
+            # does), so the model's first streamed call resolves its own args.
+            memory.resolve_tool_input(call_id, "search_vectorstore_hybrid", {})
             memory.record_tool_call(
                 call_id, "search_vectorstore_hybrid", {"query": query}
             )
