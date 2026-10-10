@@ -241,8 +241,9 @@ WHERE NOT EXISTS (
 
 As of v2026.10.0, a re-ingest, a removed document, and `reset_collection` all
 delete their own orphans automatically. A git or Jira source removal through the
-chat UI still leaves orphans (tracked in issue #600), so run the count query
-after one to check whether a manual cleanup is needed.
+chat UI also deletes its own orphans once the fix for issue #600 is deployed. A
+removal done on an earlier build can have left orphans, so run the count query
+once after you upgrade to check whether a manual cleanup is needed.
 
 ---
 
