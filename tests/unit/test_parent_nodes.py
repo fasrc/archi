@@ -820,3 +820,126 @@ def test_e2e_cross_collection_parent_survives_both_orders(monkeypatch):
     assert (
         first_id in cursor.parents
     ), "cross-collection reference must keep parent through remove+add"
+
+
+# ---------------------------------------------------------------------------
+# (i) delete_unreferenced_parents_for_resources — plural helper (D4 tests 1–5)
+# ---------------------------------------------------------------------------
+
+
+def test_delete_unreferenced_parents_for_resources_two_hashes_orphans_deleted():
+    """Two hashes, each with an orphan parent and a referenced parent: both orphans deleted,
+    both referenced parents survive, return value is 2."""
+    documents = [
+        {"id": 10, "resource_hash": "hash-a"},
+        {"id": 11, "resource_hash": "hash-b"},
+    ]
+    parents = {
+        1: {"document_id": 10, "metadata": {}},  # orphan for hash-a
+        2: {"document_id": 10, "metadata": {}},  # referenced for hash-a
+        3: {"document_id": 11, "metadata": {}},  # orphan for hash-b
+        4: {"document_id": 11, "metadata": {}},  # referenced for hash-b
+    }
+    chunks = [
+        {"collection": "col_x", "parent_id": 2},
+        {"collection": "col_x", "parent_id": 4},
+    ]
+
+    cursor = _FakeCursor(parents=parents, chunks=chunks, documents=documents)
+    deleted = parent_nodes.delete_unreferenced_parents_for_resources(
+        cursor, ["hash-a", "hash-b"]
+    )
+
+    assert deleted == 2
+    assert 1 not in cursor.parents
+    assert 2 in cursor.parents
+    assert 3 not in cursor.parents
+    assert 4 in cursor.parents
+
+
+def test_delete_unreferenced_parents_for_resources_other_collection_ref_survives():
+    """A parent of a removed hash that a chunk in ANOTHER collection references survives."""
+    documents = [{"id": 10, "resource_hash": "hash-a"}]
+    parents = {
+        5: {"document_id": 10, "metadata": {}},  # referenced by other collection
+        6: {"document_id": 10, "metadata": {}},  # orphan
+    }
+    chunks = [{"collection": "other_col", "parent_id": 5}]
+
+    cursor = _FakeCursor(parents=parents, chunks=chunks, documents=documents)
+    deleted = parent_nodes.delete_unreferenced_parents_for_resources(cursor, ["hash-a"])
+
+    assert deleted == 1
+    assert 5 in cursor.parents
+    assert 6 not in cursor.parents
+
+
+def test_delete_unreferenced_parents_for_resources_empty_and_none_return_zero():
+    """Empty list and None return 0 with no execute calls recorded."""
+    cursor = _FakeCursor(parents={1: {"document_id": 10, "metadata": {}}})
+
+    result_empty = parent_nodes.delete_unreferenced_parents_for_resources(cursor, [])
+    result_none = parent_nodes.delete_unreferenced_parents_for_resources(cursor, None)
+
+    assert result_empty == 0
+    assert result_none == 0
+    assert cursor._sqls == []
+
+
+def test_delete_unreferenced_parents_for_resources_table_missing_returns_zero():
+    """table_exists=False: return 0, exactly one execute (existence probe), no DELETE ran."""
+    cursor = _FakeCursor(table_exists=False)
+    deleted = parent_nodes.delete_unreferenced_parents_for_resources(cursor, ["hash-a"])
+
+    assert deleted == 0
+    assert len(cursor._sqls) == 1
+    assert cursor._sqls[0][0] is parent_nodes.PARENT_TABLE_EXISTS
+    assert not any(
+        "DELETE" in (sql if isinstance(sql, str) else "") for sql, _ in cursor._sqls
+    )
+
+
+def test_delete_unreferenced_parents_for_resources_never_calls_commit():
+    """The plural helper never calls commit (callers own the transaction)."""
+    committed = []
+
+    class _CommitTrackingCursor(_FakeCursor):
+        def commit(self):
+            committed.append(True)
+
+    documents = [{"id": 10, "resource_hash": "hash-a"}]
+    parents = {1: {"document_id": 10, "metadata": {}}}
+    cursor = _CommitTrackingCursor(
+        parents=parents, chunks=[], documents=documents, table_exists=True
+    )
+
+    parent_nodes.delete_unreferenced_parents_for_resources(cursor, ["hash-a"])
+
+    assert committed == []
+
+
+def test_delete_unreferenced_parents_for_resources_ensures_parent_id_index_first():
+    """On an upgraded volume the table can exist without idx_chunks_parent_id, so the
+    plural helper builds the index once, before its first NOT EXISTS delete."""
+    documents = [
+        {"id": 10, "resource_hash": "hash-a"},
+        {"id": 11, "resource_hash": "hash-b"},
+    ]
+    cursor = _FakeCursor(parents={}, chunks=[], documents=documents)
+
+    parent_nodes.delete_unreferenced_parents_for_resources(cursor, ["hash-a", "hash-b"])
+
+    sqls = [" ".join(s.split()) for s in cursor.executed_sqls()]
+    index_positions = [
+        i
+        for i, s in enumerate(sqls)
+        if "CREATE INDEX IF NOT EXISTS idx_chunks_parent_id" in s
+    ]
+    delete_positions = [
+        i
+        for i, sql in enumerate(cursor.executed_sqls())
+        if sql is parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE
+    ]
+    assert len(index_positions) == 1
+    assert len(delete_positions) == 2
+    assert index_positions[0] < delete_positions[0]
