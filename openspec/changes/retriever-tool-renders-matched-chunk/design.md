@@ -81,3 +81,5 @@ Verification after deploy: run `live_retriever.py` through the tool wrapper insi
 ## Open Questions
 
 - If #498 raises top N, should the per-document share become adaptive (D3 alternative), or should `max_documents` follow the configured top N with `max_chars` reduced to fit? Decide in #498, with golden-set evidence.
+
+  Measured 2026-10-10 for "what is the best way to move large files onto FASSE?": the FASSE transfer page is **parent rank 6** (rerank 0.260). It would be retrieved at top N 8, but with fixed 5 × 1200 defaults the tool would not render it, and the clamp would cut the 6th–8th documents. An adaptive share would render all returned documents, with each body capped at `min(max_chars, (max_result_chars − headers − separators) / n)`. That share is ≈ 1200 at n = 5 (identical to D3) and ≈ 840 at n = 8. At 840 characters the FASSE child still shows its Globus heading (child offset 465) plus ~370 characters of that section. Evidence posted on #498.
