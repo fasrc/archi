@@ -154,7 +154,7 @@ PIN_FILE="$(fm_pin_file "$STACK")"
 # Their REFUSED line is the whole terminal message: page it and keep the validator's exit
 # code, with no generic refusal line added (stderr is the same as with paging off).
 FM_ERRF="$(mktemp)"
-ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \
+FM_VALIDATED="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \
   FM_LEDGER="$(fm_ledger)" FM_LOCK_SHA="$(fm_lock_sha)" \
   FM_PIN_FILE="$PIN_FILE" FM_NEW_CORPUS="$NEW_CORPUS" FM_FINISHED="$(fm_now)" "$FM_PYTHON" - 2>"$FM_ERRF" <<'EOF'
 import json, math, os, sys, yaml
@@ -210,6 +210,7 @@ if "embedding_tags_unchanged_at_endpoints" in arm and arm["embedding_tags_unchan
     print(f"REFUSED: the embedding model tags changed during the run (embedding_tags_unchanged_at_endpoints={arm['embedding_tags_unchanged_at_endpoints']!r}, end={arm.get('embedding_tags_end')!r}); the arm is void", file=sys.stderr); sys.exit(2)
 pin_file, run = os.environ["FM_PIN_FILE"], int(os.environ["FM_RUN"])
 previous_pin = None
+new_pin = None
 if os.path.exists(pin_file):
     pin = open(pin_file).read().strip()
     # A version change is a re-pin: it takes the closing-baseline path below, like a new corpus.
@@ -228,9 +229,9 @@ if os.path.exists(pin_file):
         if not starts or starts[-1].get("rerun") is not False:
             print("REFUSED: --new-corpus needs a fresh deploy (run_arm.sh <arm> <yaml>) as this stack's latest ragas-start; the latest was a re-run or re-seed", file=sys.stderr); sys.exit(2)
         previous_pin = pin
-        open(pin_file, "w").write(fp + "\n")
+        new_pin = fp
 else:
-    open(pin_file, "w").write(fp + "\n")
+    new_pin = fp
 rows = arm.get("single_question_results") or {}
 def finite(x): return isinstance(x, (int, float)) and math.isfinite(x)
 metrics = sorted({k for r in rows.values() for k in r if k in ("answer_relevancy", "faithfulness", "context_precision", "context_recall", "answer_correctness")})
@@ -256,6 +257,7 @@ entry = {
     "aggregates": {m: arm.get("total_results", {}).get(f"aggregate_{m}") for m in metrics},
 }
 print(json.dumps(entry))
+print(new_pin or "")
 EOF
 )" || {
   FM_RC=$?
@@ -264,7 +266,19 @@ EOF
   rm -f "$FM_ERRF"; exit "$FM_RC"
 }
 rm -f "$FM_ERRF"
+ENTRY="${FM_VALIDATED%%$'\n'*}"
+# $(...) strips ALL trailing newlines, so an empty second line (no new pin) leaves
+# FM_VALIDATED with no newline at all; without this guard the `#*$'\n'` below would then
+# return the whole (unmatched) string, turning the ENTRY json itself into "the new pin".
+if [[ "$FM_VALIDATED" == *$'\n'* ]]; then
+  NEW_PIN="${FM_VALIDATED#*$'\n'}"
+else
+  NEW_PIN=""
+fi
 fm_ledger_append "$ENTRY"
+if [ -n "$NEW_PIN" ]; then
+  printf '%s\n' "$NEW_PIN" > "$PIN_FILE.tmp.$$" && mv -f "$PIN_FILE.tmp.$$" "$PIN_FILE"
+fi
 fm_log "archived arm $ARM run $RUN: $ARTIFACT"
 FM_ENTRY="$ENTRY" "$FM_PYTHON" - <<'EOF'
 import json, os
