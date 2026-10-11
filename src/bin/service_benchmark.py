@@ -22,7 +22,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
-from src.archi.providers.local_provider import normalize_base_url
+from src.archi.providers.local_provider import LocalProvider, normalize_base_url
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
 from src.utils.benchmark_provenance import (
     asserted_config_divergence,
@@ -220,10 +220,14 @@ def ragas_judge_effective_identity(config: Dict[str, Any]) -> Dict[str, Optional
                 else benchmark_cfg.get("provider_mode")
             )
             mode = resolve_local_mode(ollama_url, explicit_mode)
+            if not ollama_url and mode == "openai_compat":
+                base_url = LocalProvider.DEFAULT_OPENAI_COMPAT_BASE_URL
+            else:
+                base_url = ollama_url
             return {
                 "provider": provider,
                 "model": model,
-                "base_url": ollama_url,
+                "base_url": base_url,
                 "mode": mode,
             }
         case "huggingface":

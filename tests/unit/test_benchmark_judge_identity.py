@@ -11,7 +11,7 @@ from that dict.
 
 import unittest.mock
 
-from src.archi.providers.local_provider import normalize_base_url
+from src.archi.providers.local_provider import LocalProvider, normalize_base_url
 from src.bin.service_benchmark import Benchmarker, ragas_judge_effective_identity
 
 
@@ -121,6 +121,17 @@ def test_local_empty_evaluator_mode_inherits_sut_provider_mode():
         "base_url": "http://vllm:8001",
         "mode": "openai_compat",
     }
+
+
+def test_local_openai_compat_no_url_uses_default_base_url():
+    """mode resolves to openai_compat with no URL → DEFAULT_OPENAI_COMPAT_BASE_URL."""
+    cfg = _cfg(
+        {"provider": "local", "model": "qwen-x"},
+        ragas_settings={"evaluator_provider_mode": "openai_compat"},
+    )
+    result = ragas_judge_effective_identity(cfg)
+    assert result["base_url"] == LocalProvider.DEFAULT_OPENAI_COMPAT_BASE_URL
+    assert result["mode"] == "openai_compat"
 
 
 # ---------------------------------------------------------------------------
