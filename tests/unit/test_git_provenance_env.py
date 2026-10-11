@@ -10,8 +10,10 @@ from pathlib import Path
 
 import pytest
 
+import src.cli.managers.templates_manager as _tm
 from src.cli.managers.git_diff_capture import capture_git_diff
-from src.cli.managers.templates_manager import get_git_information
+from src.cli.managers.source_version import resolve_source_commit
+from src.cli.managers.templates_manager import get_git_information, get_git_version
 
 
 def _git(args, *, cwd):
@@ -80,3 +82,52 @@ def test_capture_git_diff_reads_wd_not_env(poisoned_repos):
     result = capture_git_diff(repo_a)
     assert "modified by A" in result["git_diff"]
     assert "repo B content" not in result["git_diff"]
+
+
+def test_resolve_source_commit_reads_repo_root_not_env(poisoned_repos):
+    repo_a, _a_head = poisoned_repos
+    clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    a_short = subprocess.check_output(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=str(repo_a),
+        encoding="UTF-8",
+        env=clean,
+    ).strip()
+
+    # repo_a has an uncommitted modification, so result must be <sha>-dirty
+    result = resolve_source_commit(repo_a)
+    assert result == f"{a_short}-dirty", f"expected {a_short}-dirty, got {result!r}"
+
+    # commit the pending change; result must then be the bare short sha
+    _git(["add", "readme.txt"], cwd=repo_a)
+    _git(["commit", "-m", "second A"], cwd=repo_a)
+    clean2 = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    a_short2 = subprocess.check_output(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=str(repo_a),
+        encoding="UTF-8",
+        env=clean2,
+    ).strip()
+    result2 = resolve_source_commit(repo_a)
+    assert result2 == a_short2, f"expected {a_short2}, got {result2!r}"
+
+
+def test_get_git_version_passes_clean_env(monkeypatch):
+    captured = {}
+
+    def fake_check_output(cmd, **kwargs):
+        captured["env"] = kwargs.get("env")
+        return b"v1.2.3"
+
+    monkeypatch.setenv("GIT_DIR", "/fake/poisoned/path")
+    monkeypatch.setattr(_tm.subprocess, "check_output", fake_check_output)
+
+    get_git_version()
+
+    assert (
+        "env" in captured
+    ), "get_git_version did not pass env= to subprocess.check_output"
+    assert captured["env"] is not None, "env= must not be None"
+    assert (
+        "GIT_DIR" not in captured["env"]
+    ), "GIT_DIR must be stripped from the env passed to git"

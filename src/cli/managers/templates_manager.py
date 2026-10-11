@@ -182,6 +182,7 @@ def get_git_version() -> str:
                 ["git", "describe", "--tags", "--always", "--dirty"],
                 stderr=subprocess.DEVNULL,
                 cwd=Path(__file__).parent,
+                env=git_env(),
             )
             .strip()
             .decode("utf-8")
