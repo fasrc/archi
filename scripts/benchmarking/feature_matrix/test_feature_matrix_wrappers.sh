@@ -85,6 +85,8 @@
 #       leaves the pin at its previous value
 #   80. a pin-file write that fails after the ledger append succeeds fails the archive
 #       (no success line, non-zero exit) instead of reporting success with no pin
+#   81. a directory at the pin path fails the archive instead of taking the pin inside it
+#   82. the same directory, created after the ledger append, still fails the archive
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -994,6 +996,47 @@ FM_PYTHON="$REAL_PY"
 if [ -f "$FM_OUT" ]; then rm -f "$FM_OUT"; mv "$FM_OUT.moved" "$FM_OUT"; fi
 if [ "$RC" != 0 ] && ! grep -q 'archived arm' "$T/stdout" && [ ! -e "$FM_OUT/corpus-pin-fm-pin80" ]; then
   ok "a failed pin write after the ledger append fails the archive"; else notok "pin-write failure guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# 81: a directory at the pin path. A plain `mv -f tmp dir` moves the pin INTO the
+# directory and exits 0, so the archive must refuse the directory instead of reporting success.
+mkdir -p "$ARCHI_DIR/archi-fm-pin81"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-pin81
+artifact "$FM_OUT/benchmarking-fm-pin81-20260903_000024.json" '[]' pin81 5
+mkdir -p "$FM_OUT/corpus-pin-fm-pin81"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin81
+if [ "$RC" != 0 ] && ! grep -q 'archived arm' "$T/stdout" && [ -z "$(ls -A "$FM_OUT/corpus-pin-fm-pin81")" ]; then
+  ok "a directory at the pin path fails the archive"; else notok "pin-directory guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+rm -rf "$FM_OUT/corpus-pin-fm-pin81"
+
+# 82: the same directory, created after the validation read the pin path and the ledger
+# append succeeded (the shim makes it then). The final mv must still refuse it.
+cat > "$T/bin/python-pin-dir" <<SHIM
+#!/usr/bin/env bash
+if [ "\$1" = "-" ]; then
+  shift
+  tmp="\$(mktemp)"
+  cat > "\$tmp"
+  "$REAL_PY" "\$tmp" "\$@"
+  rc=\$?
+  if [ "\$rc" = 0 ] && grep -q 'rows.append(entry)' "\$tmp"; then
+    mkdir -p "$FM_OUT/corpus-pin-fm-pin82"
+  fi
+  rm -f "\$tmp"
+  exit "\$rc"
+else
+  exec "$REAL_PY" "\$@"
+fi
+SHIM
+chmod +x "$T/bin/python-pin-dir"
+mkdir -p "$ARCHI_DIR/archi-fm-pin82"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-pin82
+artifact "$FM_OUT/benchmarking-fm-pin82-20260903_000025.json" '[]' pin82 5
+FM_PYTHON="$T/bin/python-pin-dir"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin82
+FM_PYTHON="$REAL_PY"
+if [ "$RC" != 0 ] && ! grep -q 'archived arm' "$T/stdout" && [ -z "$(ls -A "$FM_OUT/corpus-pin-fm-pin82")" ]; then
+  ok "a directory that appears at the pin path after the ledger append fails the archive"; else notok "late pin-directory guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+rm -rf "$FM_OUT/corpus-pin-fm-pin82" "$FM_OUT"/corpus-pin-fm-pin82.tmp.*
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
