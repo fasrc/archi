@@ -19,7 +19,7 @@
 
 ## 5. Document the behavior change
 
-- [ ] 5.1 In `docs/docs/benchmarking.md`, under "Reading the leaderboard" (~line 337), add the judge-identity reason to the list of rank-withholding conditions; under "Judge/SUT split" (~line 522), add one paragraph: each arm records `ragas_judge_identity_effective` (provider, model, endpoint, client mode), and arms scored by different judges are not ranked; old result files without the field still rank. Run `(cd docs && mkdocs build --strict)` if mkdocs is available and check the INFO lines for broken anchors. Run `bash scripts/gate.sh` and commit when green.
+- [x] 5.1 In `docs/docs/benchmarking.md`, under "Reading the leaderboard" (~line 337), add the judge-identity reason to the list of rank-withholding conditions; under "Judge/SUT split" (~line 522), add one paragraph: each arm records `ragas_judge_identity_effective` (provider, model, endpoint, client mode), and arms scored by different judges are not ranked; old result files without the field still rank. Run `(cd docs && mkdocs build --strict)` if mkdocs is available and check the INFO lines for broken anchors. Run `bash scripts/gate.sh` and commit when green.
 
 ## 6. Verify, push, and open the PR
 

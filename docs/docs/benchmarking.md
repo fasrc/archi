@@ -390,6 +390,17 @@ The dump JSON gains a `leaderboard` key:
     exists because the two pressure fields are `null` when no judge ran, and
     the drift reduction ignores `null` — so without it, one judged arm beside
     an unjudged one reported that arm's worker count as shared by both.
+
+    `judge_identity` records which RAGAS judge scored the arms: the JSON form
+    of each arm's `ragas_judge_identity_effective` (provider, model, endpoint,
+    and client mode), or a sorted list when the arms disagree. A difference
+    here also **withholds ranks**, with the reason "the arms were scored by
+    different RAGAS judges" in `shared_context.warnings`: scores from two
+    judges are not on one scale. The endpoint is compared as written, so the
+    same server spelled two ways (for example with and without a trailing
+    slash) also withholds. Arms with no identity (`null`, no judge ran) are
+    left to the judge-pressure check, and result files written before the
+    field existed still rank.
 - `ragas_effective_settings` — on each run record, the judge `timeout` and
   `max_workers` the run actually used, or `null` when no judge ran. That is
   the case when `RAGAS` was not among the run's `modes`, and also when it was
@@ -554,6 +565,8 @@ There is no way to give this provider a credential: the client is built through 
         evaluator_ollama_url: http://host.containers.internal:7870
         evaluator_provider_mode: ollama
 ```
+
+Each run record carries `ragas_judge_identity_effective`: the `provider`, `model`, `base_url`, and `mode` of the judge the run actually built, or `null` when no judge scored the arm. The endpoint is the one the client received, with the defaults filled in (`OLLAMA_HOST` or `http://127.0.0.1:11434` for an Ollama-mode judge with no URL, the local provider's OpenAI-compatible default for an `openai_compat` judge with no URL). In a sweep, arms scored by different judges are not ranked: every `rank` in the leaderboard is `null` and the difference is listed under `judge_identity` in `shared_context.warnings`. Result files written before this field existed still rank.
 
 #### Tool calling and structured output on `huit_bedrock`
 
