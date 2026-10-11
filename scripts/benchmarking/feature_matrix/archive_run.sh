@@ -211,6 +211,8 @@ if "embedding_tags_unchanged_at_endpoints" in arm and arm["embedding_tags_unchan
 pin_file, run = os.environ["FM_PIN_FILE"], int(os.environ["FM_RUN"])
 previous_pin = None
 new_pin = None
+if os.path.isdir(pin_file):
+    print(f"REFUSED: the corpus pin path {pin_file} is a directory; remove it so the pin can be written there", file=sys.stderr); sys.exit(2)
 if os.path.exists(pin_file):
     pin = open(pin_file).read().strip()
     # A version change is a re-pin: it takes the closing-baseline path below, like a new corpus.
