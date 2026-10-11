@@ -8,4 +8,4 @@
 
 ## 3. Verify, push, and open the PR
 
-- [ ] 3.1 Run `bash scripts/gate.sh` on the branch tip and confirm it is green. Run `grep -n 'open(pin_file, "w")' scripts/benchmarking/feature_matrix/archive_run.sh` (expect no output). Run `openspec validate fix-issue-574-pin-after-ledger --strict`. Push with `git push -u origin fix/issue-574-pin-after-ledger`. Open the PR with `gh pr create --repo fasrc/archi --base dev`, with `closes #574` in the PR **body** (not the title). No `Co-Authored-By` trailer. Do not merge.
+- [x] 3.1 Run `bash scripts/gate.sh` on the branch tip and confirm it is green. Run `grep -n 'open(pin_file, "w")' scripts/benchmarking/feature_matrix/archive_run.sh` (expect no output). Run `openspec validate fix-issue-574-pin-after-ledger --strict`. Push with `git push -u origin fix/issue-574-pin-after-ledger`. Open the PR with `gh pr create --repo fasrc/archi --base dev`, with `closes #574` in the PR **body** (not the title). No `Co-Authored-By` trailer. Do not merge.
