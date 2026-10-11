@@ -17,4 +17,4 @@ runs `git init`/`add`/`commit` deletes all inherited `GIT_*` variables first (de
 
 ## 3. Publish
 
-- [ ] 3.1 Push the branch (`git push -u origin fix/issue-623-git-env`) and open the PR: `gh pr create --repo fasrc/archi --base dev --head fix/issue-623-git-env`, title `fix(cli): ignore inherited GIT_DIR in deploy git provenance`, body with `Closes #623` on its own line, a summary of the four call sites, and a note that `resolve_source_commit` and `get_git_version` are beyond the issue's named functions but inside its title scope.
+- [x] 3.1 Push the branch (`git push -u origin fix/issue-623-git-env`) and open the PR: `gh pr create --repo fasrc/archi --base dev --head fix/issue-623-git-env`, title `fix(cli): ignore inherited GIT_DIR in deploy git provenance`, body with `Closes #623` on its own line, a summary of the four call sites, and a note that `resolve_source_commit` and `get_git_version` are beyond the issue's named functions but inside its title scope.
