@@ -174,6 +174,93 @@ def ragas_judge_identity(config: Dict[str, Any]) -> Tuple[str, Optional[str]]:
     return str(provider).lower(), model
 
 
+def ragas_judge_effective_identity(config: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """Return the effective RAGAS judge identity the evaluator builder will use.
+
+    Returns ``{"provider", "model", "base_url", "mode"}`` where:
+    - ``base_url`` is the configured endpoint, or ``None`` for providers that use
+      library defaults (openai, anthropic, and the unknown fallback).
+    - ``mode`` is the resolved local-provider mode for ``provider == "local"``,
+      else ``None``.
+
+    The values are the same as those ``get_ragas_llm_evaluator`` computes, so
+    storing this dict on the benchmarker and reading from it in the builder
+    guarantees the recorded identity equals the identity that selected the client.
+    """
+    provider, model = ragas_judge_identity(config)
+    benchmark_cfg = (config.get("services") or {}).get("benchmarking") or {}
+    ragas_configs = (benchmark_cfg.get("mode_settings") or {}).get(
+        "ragas_settings"
+    ) or {}
+
+    ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get(
+        "ollama_url"
+    )
+
+    match provider:
+        case "openai":
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": None,
+                "mode": None,
+            }
+        case "ollama":
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": ollama_url,
+                "mode": None,
+            }
+        case "local":
+            evaluator_mode = ragas_configs.get("evaluator_provider_mode")
+            explicit_mode = (
+                evaluator_mode
+                if evaluator_mode not in (None, "")
+                else benchmark_cfg.get("provider_mode")
+            )
+            mode = resolve_local_mode(ollama_url, explicit_mode)
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": ollama_url,
+                "mode": mode,
+            }
+        case "huggingface":
+            base_url = ollama_url or "http://localhost:8000/v1"
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": base_url,
+                "mode": None,
+            }
+        case "anthropic":
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": None,
+                "mode": None,
+            }
+        case "huit_bedrock":
+            base_url = (
+                benchmark_cfg.get("base_url")
+                or "https://go.apis.huit.harvard.edu/ais-bedrock-llm/v2"
+            )
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": base_url,
+                "mode": None,
+            }
+        case _:
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": None,
+                "mode": None,
+            }
+
+
 class ResultHandler:
     results = []  # store the results for each config
     # Parallel to `results`: each arm's end-reading category-map records, or None
