@@ -206,10 +206,13 @@ def ragas_judge_effective_identity(config: Dict[str, Any]) -> Dict[str, Optional
                 "mode": None,
             }
         case "ollama":
+            resolved_url = (
+                ollama_url or os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
+            )
             return {
                 "provider": provider,
                 "model": model,
-                "base_url": ollama_url,
+                "base_url": resolved_url,
                 "mode": None,
             }
         case "local":
@@ -222,6 +225,8 @@ def ragas_judge_effective_identity(config: Dict[str, Any]) -> Dict[str, Optional
             mode = resolve_local_mode(ollama_url, explicit_mode)
             if not ollama_url and mode == "openai_compat":
                 base_url = LocalProvider.DEFAULT_OPENAI_COMPAT_BASE_URL
+            elif not ollama_url:
+                base_url = os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
             else:
                 base_url = ollama_url
             return {

@@ -71,6 +71,26 @@ def test_ollama_falls_back_to_ollama_url():
     }
 
 
+def test_ollama_no_url_with_ollama_host_env(monkeypatch):
+    monkeypatch.setenv("OLLAMA_HOST", "http://x:11434")
+    cfg = _cfg({"provider": "ollama", "model": "llama3"})
+    assert ragas_judge_effective_identity(cfg)["base_url"] == "http://x:11434"
+
+
+def test_ollama_no_url_no_env_uses_default(monkeypatch):
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    cfg = _cfg({"provider": "ollama", "model": "llama3"})
+    assert ragas_judge_effective_identity(cfg)["base_url"] == "http://127.0.0.1:11434"
+
+
+def test_ollama_explicit_url_wins_over_ollama_host(monkeypatch):
+    monkeypatch.setenv("OLLAMA_HOST", "http://x:11434")
+    cfg = _cfg(
+        {"provider": "ollama", "model": "llama3", "ollama_url": "http://explicit:11434"}
+    )
+    assert ragas_judge_effective_identity(cfg)["base_url"] == "http://explicit:11434"
+
+
 # ---------------------------------------------------------------------------
 # local — mode resolution
 # ---------------------------------------------------------------------------
@@ -132,6 +152,22 @@ def test_local_openai_compat_no_url_uses_default_base_url():
     result = ragas_judge_effective_identity(cfg)
     assert result["base_url"] == LocalProvider.DEFAULT_OPENAI_COMPAT_BASE_URL
     assert result["mode"] == "openai_compat"
+
+
+def test_local_ollama_mode_no_url_with_ollama_host_env(monkeypatch):
+    monkeypatch.setenv("OLLAMA_HOST", "http://x:11434")
+    cfg = _cfg({"provider": "local", "model": "qwen-x"})
+    result = ragas_judge_effective_identity(cfg)
+    assert result["base_url"] == "http://x:11434"
+    assert result["mode"] == "ollama"
+
+
+def test_local_ollama_mode_no_url_no_env_uses_default(monkeypatch):
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    cfg = _cfg({"provider": "local", "model": "qwen-x"})
+    result = ragas_judge_effective_identity(cfg)
+    assert result["base_url"] == "http://127.0.0.1:11434"
+    assert result["mode"] == "ollama"
 
 
 # ---------------------------------------------------------------------------
