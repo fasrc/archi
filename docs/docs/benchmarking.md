@@ -394,9 +394,11 @@ The dump JSON gains a `leaderboard` key:
     `judge_identity` records which RAGAS judge scored the arms: the JSON form
     of each arm's `ragas_judge_identity_effective` (provider, model, endpoint,
     and client mode), or a sorted list when the arms disagree. A difference
-    here also **withholds ranks**, with the reason "the arms were scored by
-    different RAGAS judges" in `shared_context.warnings`: scores from two
-    judges are not on one scale. The endpoint is compared as written, so the
+    here also **withholds ranks**, and `shared_context.warnings` gets an
+    entry that starts `judge_identity differs across swept configs:` and
+    lists the identities. Scores from two judges are not on one scale. The
+    pairwise A/B winners are withheld too, and the log line names the reason
+    "the arms were scored by different RAGAS judges". The endpoint is compared as written, so the
     same server spelled two ways (for example with and without a trailing
     slash) also withholds. Arms with no identity (`null`, no judge ran) are
     left to the judge-pressure check, and result files written before the
