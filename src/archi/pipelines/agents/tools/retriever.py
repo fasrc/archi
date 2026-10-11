@@ -137,7 +137,8 @@ def _format_documents_for_llm(
         bodies.append(_matched_text(doc).strip())
 
     limit = max_chars
-    if max_result_chars is not None and heads:
+    # A ceiling <= 0 means "no ceiling", as in ``clamp_result``.
+    if max_result_chars is not None and max_result_chars > 0 and heads:
         overhead = (
             sum(len(head) for head in heads)
             + len(_SNIPPET_SEPARATOR) * (len(heads) - 1)

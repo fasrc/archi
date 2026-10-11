@@ -33,6 +33,9 @@
 - [x] 2.4 `tools/local_files.py:484` comment and `tests/unit/test_context_budget.py`
       `_retrieval_result` fixture → 5 documents × 1200 chars (confirm the margin test still passes;
       if it does not, stop and revisit design D3)
+- [x] 2.5 Review follow-up: a ceiling <= 0 sizes nothing, matching `clamp_result` (red first:
+      `test_a_non_positive_ceiling_sizes_nothing`); `docs/docs/rag_architecture.md` top-k row;
+      design risks record the stemming limitation and the no-redistribution trade-off
 
 ## 3. Verification
 
@@ -40,7 +43,7 @@
       tests/unit/test_retriever_llm_context_format.py tests/unit/test_retriever_score_from_metadata.py
       tests/unit/test_retriever_tool_budget.py tests/unit/test_context_budget.py
       tests/unit/test_react_agent_tool_budget.py` green
-- [ ] 3.2 `bash scripts/gate.sh` green (black/isort, full unit suite, diff-cover ≥ 80 % vs origin/dev)
+- [x] 3.2 `bash scripts/gate.sh` green (black/isort, full unit suite, diff-cover ≥ 80 % vs origin/dev)
 - [x] 3.3 Read-only check on the running dev stack, no redeploy: run the worktree's
       `_format_documents_for_llm` over documents from the live retriever (the live retriever
       lacks the span until deployed, so compute the span in the check script the same way 2.1

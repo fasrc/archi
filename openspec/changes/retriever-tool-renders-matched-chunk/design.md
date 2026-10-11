@@ -82,6 +82,8 @@ The clamp is not raised. Raising it would break the ceiling relationship that `t
 - [Golden-set comparability] → agent behaviour changes, so runs after this land are a new era; note it in the report.
 - [#498 (top N 5 → 8) adopted later] → the tool renders all eight at ≈ 850 characters each with no change here. Shorter bodies per document is the trade #498's golden-set run should measure.
 - [The per-document limit now depends on header lengths] → it is deterministic for a given result; unit tests pin the 5- and 8-document cases and the floor.
+- [With `data_manager.stemming.enabled: true` no span is found] → ingest stores child texts stemmed (`manager.py:1026-1028`) but `parent_text` unstemmed (`:1051`), so `str.find` misses and every result falls back to today's parent-opening rendering. Stemming is off by default (`manager.py:193`) and on dev (`{"enabled": false}` in the live config), which is why all 7105 spans were found. Supporting stemmed indexes would need the unstemmed child text or offsets stored at ingest; out of scope.
+- [Unused room is not redistributed] → the share divides the ceiling evenly, so a short body leaves its unused share idle while longer bodies stay capped at the share. At today's top 5 the share (~1450) already exceeds `max_chars`, so nothing is lost. At top 8 a short result costs the others up to its unused share. A water-filling pass is a possible follow-up if #498's run shows truncated bodies matter.
 
 ## Migration Plan
 

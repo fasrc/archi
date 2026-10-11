@@ -82,7 +82,7 @@ mutable). See `fasrc_archi.md` for the model-server ops.
 | splitter | `manager.py` (hardcoded `CharacterTextSplitter`) | — |
 | embedding model | `data_manager.embedding_name` (dim fixed at deploy) | MiniLM-L6 384-d |
 | hybrid weights | `data_manager.retrievers.hybrid_retriever` | 0.4 / 0.6 |
-| top-k | retriever / agent | 5 (tool returns 4, 800 chars each) |
+| top-k | retriever / agent | 5 (tool renders all, each the matched passage, ≤1200 chars or a fair share of the 8000-char result) |
 | metadata filter | `hybrid_search(filter=...)` | unused by default |
 | forced retrieval | `services.chat_app.force_initial_retrieval` | on |
 | search budget | `tool_budgets.search_vectorstore_hybrid` | 2/turn |

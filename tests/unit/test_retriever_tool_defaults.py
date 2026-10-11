@@ -88,3 +88,17 @@ def test_pathological_metadata_floors_bodies_and_the_ceiling_still_holds():
     # ...and the whole-result clamp still bounds and marks the output (#235).
     assert len(out) <= DEFAULT_RETRIEVER_RESULT_CHARS
     assert TRUNCATION_MARKER in out
+
+
+def test_a_non_positive_ceiling_sizes_nothing():
+    """``clamp_result`` reads a ceiling <= 0 as "no ceiling"; so does the share."""
+    tool = create_retriever_tool(
+        _FixedRetriever(_docs(5)),
+        name="search_vectorstore_hybrid",
+        max_result_chars=0,
+    )
+
+    out = tool.invoke({"query": "q"})
+
+    assert ("a" * 1200 + "...") in out
+    assert "a" * 1201 not in out
