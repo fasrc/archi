@@ -51,3 +51,20 @@ def test_service_mattermost_main_sets_up_factory_before_mattermost(monkeypatch):
         ("set", "F"),
         "mattermost",
     ]
+
+
+def test_mattermost_config_reads_services_block(monkeypatch):
+    from src.interfaces import mattermost
+
+    monkeypatch.setattr(mattermost, "DataManager", mock.Mock())
+    monkeypatch.setattr(mattermost, "archi", mock.Mock())
+    monkeypatch.setattr(
+        mattermost,
+        "get_full_config",
+        lambda: {"services": {"mattermost": {"update_time": 60}}},
+    )
+    monkeypatch.setattr(mattermost, "read_secret", lambda name: f"<{name}>")
+
+    instance = mattermost.Mattermost()
+
+    assert instance.mattermost_config["update_time"] == 60

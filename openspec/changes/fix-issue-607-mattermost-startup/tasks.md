@@ -6,7 +6,7 @@ Each task writes its failing test, watches it fail, writes the minimum fix, runs
 
 ## 2. Config location and agent construction
 
-- [ ] 2.1 Add `test_mattermost_config_reads_services_block` (full config `{"services": {"mattermost": {"update_time": 60}}}` → `Mattermost().mattermost_config["update_time"] == 60`). Watch it fail. Change `src/interfaces/mattermost.py:54` to read `services.mattermost`. Gate, commit.
+- [x] 2.1 Add `test_mattermost_config_reads_services_block` (full config `{"services": {"mattermost": {"update_time": 60}}}` → `Mattermost().mattermost_config["update_time"] == 60`). Watch it fail. Change `src/interfaces/mattermost.py:54` to read `services.mattermost`. Gate, commit.
 - [ ] 2.2 Add `test_mattermost_wrapper_default_pipeline`, `test_mattermost_wrapper_configured_pipeline` (`agent_class: "CMSCompOpsAgent"`), and `test_mattermost_wrapper_calls_agent_with_history` (wrapper called with `{"message": "hello"}` → agent called with `history=[("User", "hello")]`, returns `(answer, "hello")`). Watch them fail. Rewrite `MattermostAIWrapper.__init__` and `__call__` as `PiazzaAIWrapper` does (`src/interfaces/piazza.py:21-50`: `agent_class` default `"QAPipeline"`, `agents_dir` with fallback to `services.chat_app.agents_dir` through `select_agent_spec`, `AgentSpecError` → warning, `default_provider`, `default_model`, `prompt_overrides`), with `services.mattermost` in place of `services.piazza`. Gate, commit.
 
 ## 3. Secret-free logging
