@@ -84,6 +84,7 @@ if [ "${1:-}" = --sweep ]; then
   export PG_PASSWORD_FILE="$STACK_DIR/secrets/pg_password.txt"
   export HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}"
   export OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1
+  fm_arm_page_on_failure "stack $STACK arm $STEM"
   "$FM_ARCHI" eval qa run "$OUT_DIR" --agent-config "$AGENT_CFG" --agent-spec "$SPEC" --attempts 1 --run-workers 1
   "$FM_ARCHI" eval qa score "$OUT_DIR" --evaluator-profile "$PROFILE" --score-workers "${FM_SCORE_WORKERS:-4}"
   MAP_END="$(fm_category_map_digest "$STACK")"

@@ -81,6 +81,9 @@
 #   76. an integral float judge timeout locks as the int (600.0 -> 600)
 #   77. an oversized max_workers is kept, as _positive_int keeps it
 #   78. a fingerprint-read failure after eval qa in qa_arm.sh arm mode pages once and exits non-zero
+#   79. a fingerprint-read failure after eval qa in qa_arm.sh --sweep pages exactly once
+#   80. an eval-qa-score failure in qa_arm.sh --sweep exits non-zero and pages exactly once
+#   81. with FM_PAGE_MAIL_TO empty the eval-qa-score failure sends no mail and exits with the same status
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -127,6 +130,8 @@ prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && [ -f "$T/qa-identit
 [ "\$1 \$2" = "eval qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
 # touch fp-broken after eval qa when fp-fail-after-qa exists, so fm_fingerprint fails
 [ "\$1 \$2" = "eval qa" ] && [ -f "$T/fp-fail-after-qa" ] && touch "$T/fp-broken"
+# exit 1 on eval qa score when qa-score-fail exists
+[ "\$1 \$2 \$3" = "eval qa score" ] && [ -f "$T/qa-score-fail" ] && exit 1
 exit 0
 EOF
 cat > "$T/bin/git" <<EOF
@@ -920,6 +925,35 @@ if [ "$RC" != 0 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
    && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00" "$T/mail.calls" \
    && [ "$(ledger_rows)" = "$BEFORE" ]; then
   ok "a fingerprint-read failure after eval qa in arm mode pages once and exits non-zero"; else notok "qa_arm arm trap on fingerprint fail (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 79: a fingerprint-read failure after eval qa in qa_arm.sh --sweep pages exactly once
+touch "$T/fp-fail-after-qa"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl
+rm -f "$T/fp-fail-after-qa" "$T/fp-broken"
+if [ "$RC" != 0 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack r0 arm fasrc-docs-r0b-icl" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a fingerprint-read failure in qa_arm.sh --sweep pages exactly once"; else notok "qa_arm sweep trap on fingerprint fail (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 80: an eval-qa-score failure in qa_arm.sh --sweep exits non-zero and pages exactly once
+touch "$T/qa-score-fail"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl
+STATUS80=$RC; rm -f "$T/qa-score-fail"
+if [ "$STATUS80" != 0 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack r0 arm fasrc-docs-r0b-icl" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "an eval-qa-score failure in qa_arm.sh --sweep exits non-zero and pages exactly once"; else notok "qa_arm sweep trap on score fail (rc=$STATUS80: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 81: with FM_PAGE_MAIL_TO empty the same score failure sends no mail and exits with the same status
+touch "$T/qa-score-fail"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+run bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl
+STATUS81=$RC; rm -f "$T/qa-score-fail"
+if [ "$STATUS81" = "$STATUS80" ] && [ ! -s "$T/mail.calls" ] \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "with FM_PAGE_MAIL_TO empty the score failure sends no mail and exits with the same status"; else notok "qa_arm sweep trap on score fail no-page (rc=$STATUS81 vs $STATUS80: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
