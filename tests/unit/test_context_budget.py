@@ -677,8 +677,8 @@ class TestTheMarginCoversTheApproximation:
     counter over-estimates them and errs safe. It does **not** hold for a
     retrieval result: every snippet header carries a URL, a 32-hex resource
     hash, a path and a float score, and those tokenize densely. A real result
-    (4 documents at the tool's 800-char cap, plus headers) measures 1.14x more
-    tokens than the counter reports.
+    (measured at the tool's former shape, 4 documents at an 800-char cap plus
+    headers) runs 1.14x more tokens than the counter reports.
 
     A margin that does not cover that gap makes the entire budget a number the
     provider disagrees with — the trigger is met, the request goes out, and it
@@ -711,19 +711,20 @@ class TestTheMarginCoversTheApproximation:
     def _retrieval_result(cls, seed: int) -> str:
         """One tool result in the retriever's real serialized shape.
 
-        Four documents at the tool's 800-character cap, each behind a header
-        carrying the path, title, URL, resource hash and score — which is where
-        the token density that defeats a 4-chars-per-token estimate lives.
+        Five documents (the default retriever's top 5) at the tool's
+        1200-character body cap, each behind a header carrying the path, title,
+        URL, resource hash and score — which is where the token density that
+        defeats a 4-chars-per-token estimate lives.
         """
         docs = []
-        for i in range(4):  # the retriever's max_documents
-            offset = ((seed * 4 + i) * 137) % len(cls.PROSE)
+        for i in range(5):  # the default retriever's top 5, all rendered
+            offset = ((seed * 5 + i) * 137) % len(cls.PROSE)
             rotated = cls.PROSE[offset:] + cls.PROSE[:offset]  # vary per document
             docs.append(
                 f"Source: fasrc-docs/page_{seed}_{i}.md | Title: Running Jobs "
                 f"| URL: https://docs.rc.fas.harvard.edu/kb/running-jobs-{seed}{i}/ "
                 f"| Hash: 9f2b7c1e4a8d3f6b0c5e2a9d7b4f1c{i:02x}\nScore: 0.8123\n"
-                + rotated[:800]  # the retriever's max_chars per document
+                + rotated[:1200]  # the retriever tool's max_chars per document
             )
         return "\n\n".join(docs)
 

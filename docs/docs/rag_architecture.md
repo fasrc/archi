@@ -67,8 +67,10 @@ MCP/MONIT). Two behaviors matter for RAG experiments:
   One deployment seeds one value, so a prompt-only vs retrieval A/B needs one
   deployment per value.
 - **Per-turn search budget** (`services.chat_app.tool_budgets`, default
-  `search_vectorstore_hybrid: 2`): caps searches/turn; over-budget returns a
-  synthetic "reuse prior results" message.
+  `search_vectorstore_hybrid: 2`): caps the model's own searches per turn;
+  over-budget returns a synthetic "reuse prior results" message. The forced
+  initial round is not counted, so a default turn holds the forced round plus up
+  to two model searches.
 
 LLM: vLLM serving `palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4` at `localhost:8001/v1`.
 Agent behavior (tool list, citation rules, first-action) is declared in a
@@ -84,7 +86,7 @@ mutable). See `fasrc_archi.md` for the model-server ops.
 | splitter | `manager.py` (hardcoded `CharacterTextSplitter`) | — |
 | embedding model | `data_manager.embedding_name` (dim fixed at deploy) | MiniLM-L6 384-d |
 | hybrid weights | `data_manager.retrievers.hybrid_retriever` | 0.4 / 0.6 |
-| top-k | retriever / agent | 5 (tool returns 4, 800 chars each) |
+| top-k | retriever / agent | 5 (tool renders all, each the matched passage, ≤1200 chars or a fair share of the 8000-char result) |
 | metadata filter | `hybrid_search(filter=...)` | unused by default |
 | forced retrieval | `services.chat_app.force_initial_retrieval` | on |
 | search budget | `services.chat_app.tool_budgets.search_vectorstore_hybrid` | 2/turn |
@@ -238,7 +240,10 @@ Ordering runs both ways and for the same reason. Exempt results are the
 **earliest**, and the ones shed first are the **newest of those**: once the
 per-turn search budget is spent the retrieval tool returns a synthetic refusal
 under the same tool name, so the earliest results are the evidence and the later
-ones trend toward refusals — the cheapest thing to give up.
+ones trend toward refusals — the cheapest thing to give up. The forced initial
+round is not counted against the budget, so a turn can hold one more successful
+result than the budget allows: the exemption covers the earliest *budget* results
+(the forced round first), and the model's last successful search stays clearable.
 
 ### When it cannot fit
 
