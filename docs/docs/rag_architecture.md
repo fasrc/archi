@@ -61,12 +61,14 @@ semantic-only (with a structured warning). No re-ranking stage exists.
 Tools: `search_vectorstore_hybrid`, `search_metadata_index`,
 `list_metadata_schema`, `search_local_files`, `fetch_catalog_document` (+ optional
 MCP/MONIT). Two behaviors matter for RAG experiments:
-- **Forced initial retrieval** (`force_initial_retrieval`, default on): a
-  `search_vectorstore_hybrid` round is prefilled before the model's first turn,
-  so retrieval always happens even if the model wouldn't call it. Toggle for
-  prompt-only vs retrieval A/B.
-- **Per-turn search budget** (default `search_vectorstore_hybrid: 2`): caps
-  searches/turn; over-budget returns a synthetic "reuse prior results" message.
+- **Forced initial retrieval** (`services.chat_app.force_initial_retrieval`,
+  default on): a `search_vectorstore_hybrid` round is prefilled before the model's
+  first turn, so retrieval always happens even if the model wouldn't call it.
+  One deployment seeds one value, so a prompt-only vs retrieval A/B needs one
+  deployment per value.
+- **Per-turn search budget** (`services.chat_app.tool_budgets`, default
+  `search_vectorstore_hybrid: 2`): caps searches/turn; over-budget returns a
+  synthetic "reuse prior results" message.
 
 LLM: vLLM serving `palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4` at `localhost:8001/v1`.
 Agent behavior (tool list, citation rules, first-action) is declared in a
@@ -85,7 +87,7 @@ mutable). See `fasrc_archi.md` for the model-server ops.
 | top-k | retriever / agent | 5 (tool returns 4, 800 chars each) |
 | metadata filter | `hybrid_search(filter=...)` | unused by default |
 | forced retrieval | `services.chat_app.force_initial_retrieval` | on |
-| search budget | `tool_budgets.search_vectorstore_hybrid` | 2/turn |
+| search budget | `services.chat_app.tool_budgets.search_vectorstore_hybrid` | 2/turn |
 | in-loop context bound | `services.chat_app.context_editing` | on (see below) |
 
 ## In-loop context budget
@@ -170,8 +172,10 @@ Two consequences are worth knowing before you set `context_window`:
 
 ### Settings
 
-Under `services.chat_app.context_editing`, overridable per pipeline via
-`pipeline_config.context_editing` — the same three-layer lookup as `tool_budgets`.
+Under `services.chat_app.context_editing`. The code also reads a per-pipeline
+override, `pipeline_config.context_editing` (the same three-layer lookup as
+`tool_budgets`), but the config template does not render `archi.pipeline_map`, so
+no deployment config can set that layer.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
@@ -221,7 +225,8 @@ absolute, and it holds only while it is provably cheap.
 The static guard sizes what the clearing pass cannot touch — the exempt results
 *and* the `keep` preserved ones — against `exemption_fraction` of the budget. If
 it exceeds that, the exemption is **dropped with a warning**. Raising
-`tool_budgets.search_vectorstore_hybrid` far enough switches it off on its own.
+`services.chat_app.tool_budgets.search_vectorstore_hybrid` far enough switches it
+off on its own.
 
 At runtime the exemption also yields under pressure. With the shipped call
 budget of 2 and `keep` of 3, an ordinary five-result turn makes the exempt set
