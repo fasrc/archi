@@ -16,10 +16,17 @@ from src.cli.managers.source_version import resolve_source_commit
 from src.cli.managers.templates_manager import get_git_information, get_git_version
 
 
+def _clean_env():
+    """Drop inherited GIT_* variables and ignore global and system git config."""
+    clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    clean["GIT_CONFIG_GLOBAL"] = os.devnull
+    clean["GIT_CONFIG_NOSYSTEM"] = "1"
+    return clean
+
+
 def _git(args, *, cwd):
     """Run git without inheriting any GIT_* variables (design D3)."""
-    clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    subprocess.check_call(["git"] + args, cwd=str(cwd), env=clean)
+    subprocess.check_call(["git"] + args, cwd=str(cwd), env=_clean_env())
 
 
 @pytest.fixture
@@ -47,7 +54,7 @@ def poisoned_repos(tmp_path, monkeypatch):
     _git(["commit", "-m", "init A"], cwd=repo_a)
     (repo_a / "readme.txt").write_text("modified by A\n")
 
-    clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    clean = _clean_env()
     a_head = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=str(repo_a), encoding="UTF-8", env=clean
     ).strip()
@@ -86,7 +93,7 @@ def test_capture_git_diff_reads_wd_not_env(poisoned_repos):
 
 def test_resolve_source_commit_reads_repo_root_not_env(poisoned_repos):
     repo_a, _a_head = poisoned_repos
-    clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    clean = _clean_env()
     a_short = subprocess.check_output(
         ["git", "rev-parse", "--short", "HEAD"],
         cwd=str(repo_a),
@@ -101,7 +108,7 @@ def test_resolve_source_commit_reads_repo_root_not_env(poisoned_repos):
     # commit the pending change; result must then be the bare short sha
     _git(["add", "readme.txt"], cwd=repo_a)
     _git(["commit", "-m", "second A"], cwd=repo_a)
-    clean2 = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    clean2 = _clean_env()
     a_short2 = subprocess.check_output(
         ["git", "rev-parse", "--short", "HEAD"],
         cwd=str(repo_a),
@@ -110,6 +117,28 @@ def test_resolve_source_commit_reads_repo_root_not_env(poisoned_repos):
     ).strip()
     result2 = resolve_source_commit(repo_a)
     assert result2 == a_short2, f"expected {a_short2}, got {result2!r}"
+
+
+def test_git_helper_ignores_global_config(tmp_path, monkeypatch):
+    """A global commit.gpgSign=true must not break the fixture commits."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".gitconfig").write_text(
+        "[commit]\n\tgpgSign = true\n[gpg]\n\tprogram = false\n"
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for cmd in [
+        ["init", "-b", "main"],
+        ["config", "user.email", "c@test.com"],
+        ["config", "user.name", "C"],
+    ]:
+        _git(cmd, cwd=repo)
+    (repo / "f.txt").write_text("x\n")
+    _git(["add", "f.txt"], cwd=repo)
+    _git(["commit", "-m", "init"], cwd=repo)
 
 
 def test_get_git_version_passes_clean_env(monkeypatch):
