@@ -359,6 +359,10 @@ class ResultHandler:
         # judged. Only a wholly ABSENT key is skipped, and only because it
         # predates the field.
         judge_pressures = set()
+        # Which judge scored the arm (provider, model, endpoint, client mode).
+        # A None identity is skipped: an unjudged arm already fails the
+        # pressure check above, so counting it here adds nothing.
+        judge_identities = set()
         for record in records:
             stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is not _NOT_RECORDED and stability is not True:
@@ -373,6 +377,9 @@ class ResultHandler:
             fingerprint = record.get("corpus_fingerprint")
             if fingerprint is not None:
                 fingerprints.add(fingerprint)
+            identity = record.get("ragas_judge_identity_effective")
+            if identity is not None:
+                judge_identities.add(tuple(sorted(identity.items())))
             pressure = record.get("ragas_effective_settings", _NOT_RECORDED)
             if pressure is _NOT_RECORDED:
                 continue
@@ -386,6 +393,12 @@ class ResultHandler:
                 "the arms were scored under different judge pressure "
                 "(concurrency, per-row budget, or one arm was not judged), "
                 "so their scored denominators are not comparable"
+            )
+        if len(judge_identities) > 1:
+            return (
+                "the arms were scored by different RAGAS judges (provider, "
+                "model, endpoint, or client mode), so their scores are not "
+                "comparable"
             )
         if len(fingerprints) > 1:
             return (
@@ -1278,6 +1291,7 @@ class ResultHandler:
             # cannot drop it: `None` is filtered before comparison, which is how
             # a mixed sweep passed as "shared".
             "judge_participation": set(),
+            "judge_identity": set(),
             "queries_path": set(),
             "corpus_fingerprint": set(),
         }
@@ -1417,6 +1431,11 @@ class ResultHandler:
             ctx_fields["judge_participation"].add(
                 "none" if judge_pressure is None else "judged"
             )
+            judge_identity = record.get("ragas_judge_identity_effective")
+            if judge_identity is not None:
+                ctx_fields["judge_identity"].add(
+                    json.dumps(judge_identity, sort_keys=True)
+                )
             ctx_fields["queries_path"].add(bench.get("queries_path"))
             # The corpus is a swept-context field like any other: ranking arms
             # scored against different documents asserts controlled conditions
