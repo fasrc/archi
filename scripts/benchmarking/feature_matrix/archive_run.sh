@@ -277,7 +277,10 @@ else
 fi
 fm_ledger_append "$ENTRY"
 if [ -n "$NEW_PIN" ]; then
-  printf '%s\n' "$NEW_PIN" > "$PIN_FILE.tmp.$$" && mv -f "$PIN_FILE.tmp.$$" "$PIN_FILE"
+  # Two standalone commands: set -e ignores a failure on the left of `&&`, so a failed
+  # temp write would skip the mv and still log success with no pin.
+  printf '%s\n' "$NEW_PIN" > "$PIN_FILE.tmp.$$"
+  mv -f "$PIN_FILE.tmp.$$" "$PIN_FILE"
 fi
 fm_log "archived arm $ARM run $RUN: $ARTIFACT"
 FM_ENTRY="$ENTRY" "$FM_PYTHON" - <<'EOF'

@@ -83,6 +83,8 @@
 #   78. a forced ledger-append failure on a first-pin arm-mode archive writes no pin file
 #   79. the same forced ledger-append failure on a closing-baseline --new-corpus re-pin
 #       leaves the pin at its previous value
+#   80. a pin-file write that fails after the ledger append succeeds fails the archive
+#       (no success line, non-zero exit) instead of reporting success with no pin
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -960,6 +962,38 @@ run bash "$HERE/archive_run.sh" 00 "$NEXT" "$T/arms/00-baseline.yaml" --new-corp
 FM_PYTHON="$REAL_PY"
 if [ "$RC" != 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-00")" = "$PIN_BEFORE" ]; then
   ok "a failed ledger append on a closing-baseline re-pin leaves the old pin in place"; else notok "re-pin ledger-fail guard (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 80: the ledger append succeeds, then the pin write fails. The shim runs the real ledger
+# append and then puts a regular file where $FM_OUT was, so the pin's temp-file redirect
+# fails with "Not a directory" (root too). The archive must fail, not report success.
+cat > "$T/bin/python-pin-fail" <<SHIM
+#!/usr/bin/env bash
+if [ "\$1" = "-" ]; then
+  shift
+  tmp="\$(mktemp)"
+  cat > "\$tmp"
+  "$REAL_PY" "\$tmp" "\$@"
+  rc=\$?
+  if [ "\$rc" = 0 ] && grep -q 'rows.append(entry)' "\$tmp"; then
+    mv "$FM_OUT" "$FM_OUT.moved"
+    : > "$FM_OUT"
+  fi
+  rm -f "\$tmp"
+  exit "\$rc"
+else
+  exec "$REAL_PY" "\$@"
+fi
+SHIM
+chmod +x "$T/bin/python-pin-fail"
+mkdir -p "$ARCHI_DIR/archi-fm-pin80"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-pin80
+artifact "$FM_OUT/benchmarking-fm-pin80-20260903_000023.json" '[]' pin80 5
+FM_PYTHON="$T/bin/python-pin-fail"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin80
+FM_PYTHON="$REAL_PY"
+if [ -f "$FM_OUT" ]; then rm -f "$FM_OUT"; mv "$FM_OUT.moved" "$FM_OUT"; fi
+if [ "$RC" != 0 ] && ! grep -q 'archived arm' "$T/stdout" && [ ! -e "$FM_OUT/corpus-pin-fm-pin80" ]; then
+  ok "a failed pin write after the ledger append fails the archive"; else notok "pin-write failure guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
