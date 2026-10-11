@@ -1876,17 +1876,10 @@ class Benchmarker:
         return results
 
     def get_ragas_llm_evaluator(self):
-        ragas_configs = self.config["services"]["benchmarking"]["mode_settings"][
-            "ragas_settings"
-        ]
-        benchmark_cfg = self.config.get("services", {}).get("benchmarking", {})
-        # Judge/SUT config split: when ragas_settings.evaluator_* is set, the RAGAS judge
-        # uses an independent model from the system under test. Falls back to the SUT
-        # provider/model when the evaluator_* keys are absent.
-        provider_key, model_name = ragas_judge_identity(self.config)
-        ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get(
-            "ollama_url"
-        )
+        identity = ragas_judge_effective_identity(self.config)
+        self._ragas_judge_identity = identity
+        provider_key = identity["provider"]
+        model_name = identity["model"]
 
         match provider_key:
             case "openai":
@@ -1894,10 +1887,9 @@ class Benchmarker:
             case "ollama":
                 from langchain_ollama import ChatOllama
 
-                base_url = ollama_url
                 return ChatOllama(
                     model=model_name,
-                    base_url=base_url,
+                    base_url=identity["base_url"],
                     num_predict=-2,
                     model_kwargs={"format": "json"},
                 )
@@ -1907,21 +1899,7 @@ class Benchmarker:
                 # ChatOllama (which 404s against /v1). An explicit provider_mode
                 # (judge-specific or inherited from the SUT) overrides the
                 # /v1 auto-detection.
-                #
-                # Selected by presence, not by truthiness: YAML decodes
-                # `evaluator_provider_mode: false` to False and `: 0` to 0, and an
-                # `or` here discarded both in favour of the SUT's mode — so the
-                # judge scored in a dialect nobody configured and
-                # `resolve_local_mode`'s refusal of a non-string never fired on
-                # this path. The empty string stays the one "not configured"
-                # spelling that still inherits.
-                evaluator_mode = ragas_configs.get("evaluator_provider_mode")
-                explicit_mode = (
-                    evaluator_mode
-                    if evaluator_mode not in (None, "")
-                    else benchmark_cfg.get("provider_mode")
-                )
-                if resolve_local_mode(ollama_url, explicit_mode) == "openai_compat":
+                if identity["mode"] == "openai_compat":
                     # base_url twice: see the huggingface arm below — in openai_compat
                     # mode LocalProvider now honors the configured base_url instead of
                     # OLLAMA_HOST, so the keyword agrees with the config copy instead
@@ -1930,26 +1908,25 @@ class Benchmarker:
                     # default and send the judge to the public OpenAI endpoint. An
                     # override with nothing to override with is not an override.
                     override = (
-                        {"base_url": normalize_base_url(ollama_url)}
-                        if ollama_url
+                        {"base_url": normalize_base_url(identity["base_url"])}
+                        if identity["base_url"]
                         else {}
                     )
                     return get_model(
                         "local",
                         model_name,
-                        {"base_url": ollama_url, "mode": "openai_compat"},
+                        {"base_url": identity["base_url"], "mode": "openai_compat"},
                         **override,
                     )
                 from langchain_ollama import ChatOllama
 
                 return ChatOllama(
                     model=model_name,
-                    base_url=ollama_url,
+                    base_url=identity["base_url"],
                     num_predict=-2,
                     model_kwargs={"format": "json"},
                 )
             case "huggingface":
-                base_url = ollama_url or "http://localhost:8000/v1"
                 # base_url twice, on purpose. load_new_configuration exports the SUT
                 # url as OLLAMA_HOST, but in openai_compat mode LocalProvider now
                 # honors the configured base_url instead of OLLAMA_HOST, so the
@@ -1957,19 +1934,17 @@ class Benchmarker:
                 return get_model(
                     "local",
                     model_name,
-                    {"base_url": base_url, "mode": "openai_compat"},
-                    base_url=normalize_base_url(base_url),
+                    {"base_url": identity["base_url"], "mode": "openai_compat"},
+                    base_url=normalize_base_url(identity["base_url"]),
                 )
             case "anthropic":
                 from langchain_anthropic import ChatAnthropic
 
                 return ChatAnthropic(model=model_name)
             case "huit_bedrock":
-                base_url = (
-                    benchmark_cfg.get("base_url")
-                    or "https://go.apis.huit.harvard.edu/ais-bedrock-llm/v2"
+                return get_model(
+                    "huit_bedrock", model_name, {"base_url": identity["base_url"]}
                 )
-                return get_model("huit_bedrock", model_name, {"base_url": base_url})
             case _:
                 return ChatOpenAI(model=model_name)
 
