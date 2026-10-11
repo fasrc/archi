@@ -2,7 +2,7 @@ Each task writes its failing test, watches it fail, writes the minimum fix, runs
 
 ## 1. Start-up order
 
-- [ ] 1.1 Add `test_service_mattermost_main_sets_up_factory_before_mattermost`, modelled on `tests/unit/test_slack_bot.py::test_service_slack_main_sets_up_config_then_runs`: record the call order of `PostgresServiceFactory.from_env`, `set_instance`, and `mattermost.Mattermost`; stub `time.sleep` and make `process_posts` raise a sentinel exception to leave the `while True` loop. Watch it fail. Then in `src/bin/service_mattermost.py` import `PostgresServiceFactory` from `src.utils.postgres_service_factory` and call `from_env(password_override=read_secret("PG_PASSWORD"))` + `set_instance(factory)` before `mattermost.Mattermost()` (copy `src/bin/service_chat.py:25-28`). Gate, commit.
+- [x] 1.1 Add `test_service_mattermost_main_sets_up_factory_before_mattermost`, modelled on `tests/unit/test_slack_bot.py::test_service_slack_main_sets_up_config_then_runs`: record the call order of `PostgresServiceFactory.from_env`, `set_instance`, and `mattermost.Mattermost`; stub `time.sleep` and make `process_posts` raise a sentinel exception to leave the `while True` loop. Watch it fail. Then in `src/bin/service_mattermost.py` import `PostgresServiceFactory` from `src.utils.postgres_service_factory` and call `from_env(password_override=read_secret("PG_PASSWORD"))` + `set_instance(factory)` before `mattermost.Mattermost()` (copy `src/bin/service_chat.py:25-28`). Gate, commit.
 
 ## 2. Config location and agent construction
 
