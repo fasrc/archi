@@ -180,6 +180,16 @@ services:
     # needs no change here.
     context_editing: {{ services.chat_app.context_editing | tojson }}
     {% endif %}
+    {#- Agent knobs (#670): emitted only when declared, so the defaults stay in the
+        agents (forced retrieval on; DEFAULT_TOOL_BUDGETS). A null counts as
+        undeclared: rendered, it would reach .get("force_initial_retrieval", True)
+        as None and turn forced retrieval off. tojson keeps false a boolean. #}
+    {% if services.chat_app.force_initial_retrieval is defined and services.chat_app.force_initial_retrieval is not none %}
+    force_initial_retrieval: {{ services.chat_app.force_initial_retrieval | tojson }}
+    {% endif %}
+    {% if services.chat_app.tool_budgets is defined and services.chat_app.tool_budgets is not none %}
+    tool_budgets: {{ services.chat_app.tool_budgets | tojson }}
+    {% endif %}
     default_provider: {{ services.chat_app.default_provider | default("local", true) }}
     default_model: {{ services.chat_app.default_model | default("llama3.2", true) }}
     skills_dir: "{{ services.chat_app.skills_dir | default('', true) }}"
