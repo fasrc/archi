@@ -80,6 +80,7 @@
 #   75. an oversized judge timeout locks as the 180 default instead of aborting the lock
 #   76. an integral float judge timeout locks as the int (600.0 -> 600)
 #   77. an oversized max_workers is kept, as _positive_int keeps it
+#   78. a fingerprint-read failure after eval qa in qa_arm.sh arm mode pages once and exits non-zero
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -108,7 +109,7 @@ case "\$1" in
   exec)    sql="\$*"
            case "\$sql" in
              *container_category_map_digest*) cat "$T/mapfp" ;;
-             *benchmark_provenance*) cat "$T/fp" ;;
+             *benchmark_provenance*) [ -f "$T/fp-broken" ] && exit 1; cat "$T/fp" ;;
              *document_chunks*)  [ -f "$T/nocounts" ] || echo 6096 ;;
              *documents*)        [ -f "$T/nocounts" ] || echo 1132 ;;
            esac ;;
@@ -124,6 +125,8 @@ prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && mkdir -p "\$a"; pre
 prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$a/manifest.json"; prev="\$a"; done
 # a corpus that drifts WHILE the QA run is in flight
 [ "\$1 \$2" = "eval qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
+# touch fp-broken after eval qa when fp-fail-after-qa exists, so fm_fingerprint fails
+[ "\$1 \$2" = "eval qa" ] && [ -f "$T/fp-fail-after-qa" ] && touch "$T/fp-broken"
 exit 0
 EOF
 cat > "$T/bin/git" <<EOF
@@ -907,6 +910,16 @@ run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-tags
 if [ "$RC" = 0 ] && [ "$(cat "$FM_OUT/corpus-pin-fm-tags" 2>/dev/null)" = sha256:def ] \
    && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['stack']=='fm-tags' and e['kind']=='ragas' else 1)"; then
   ok "archive accepts an artifact whose embedding model tags did not change"; else notok "archive tag pass (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 78: a fingerprint-read failure after eval qa in arm mode pages once and exits non-zero
+touch "$T/fp-fail-after-qa"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/fp-fail-after-qa" "$T/fp-broken"
+if [ "$RC" != 0 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a fingerprint-read failure after eval qa in arm mode pages once and exits non-zero"; else notok "qa_arm arm trap on fingerprint fail (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

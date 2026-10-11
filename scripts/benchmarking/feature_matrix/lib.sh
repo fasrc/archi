@@ -26,6 +26,7 @@ FM_GIT="${FM_GIT:-git}"
 FM_PAGE_MAIL_TO="${FM_PAGE_MAIL_TO:-}"
 FM_MAIL="${FM_MAIL:-mail}"
 FM_MAIL_TIMEOUT="${FM_MAIL_TIMEOUT:-60}"
+FM_PAGED=0
 
 fm_require_run_number() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] || fm_die "run number must be a positive integer, got '${1:-}'"; }
 
@@ -41,6 +42,7 @@ fm_log() { printf '==> %s\n' "$*"; }
 # from its refusal exit. On a host without `timeout` the page is still sent, unbounded (a
 # missing bound must not drop the page).
 fm_page() { # $1 = subject (the "feature_matrix: " prefix is added here), $2 = body
+  FM_PAGED=1
   [ -n "$FM_PAGE_MAIL_TO" ] || return 0
   local bound=() secs="$FM_MAIL_TIMEOUT"
   # `timeout 0` disables the bound and a non-duration makes `timeout` fail, so anything but
@@ -58,6 +60,31 @@ fm_page() { # $1 = subject (the "feature_matrix: " prefix is added here), $2 = b
 fm_die_paged() { # $1 = subject context (e.g. "stack fm-01 arm 01"), $2 = message, [$3 = body, default $2]
   fm_page "$1: $2" "${3:-$2}"
   fm_die "$2"
+}
+
+# Arm a page-on-failure trap for a wrapper that has just started long work. Call this
+# directly before the long-running command. The EXIT trap pages once on any non-zero exit
+# that did not already page (FM_PAGED=1); HUP/INT/TERM each page and re-exit with the
+# conventional status (129/130/143). set -E makes the ERR trap fire inside functions so
+# the failed command and line are recorded for the page body.
+fm_arm_page_on_failure() { # $1 = subject context, e.g. "stack fm-00 arm 00"
+  FM_PAGE_CONTEXT="$1"
+  set -E
+  trap 'fm__failed_cmd="$BASH_COMMAND"; fm__failed_line="$LINENO"' ERR
+  trap 'fm__page_on_exit $?' EXIT
+  trap 'fm__page_on_signal 129' HUP
+  trap 'fm__page_on_signal 130' INT
+  trap 'fm__page_on_signal 143' TERM
+}
+fm__page_on_signal() { # $1 = 128 + the signal number
+  fm__page_on_exit "$1"
+  trap - EXIT
+  exit "$1"
+}
+fm__page_on_exit() { # $1 = the exit status
+  [ "$1" != 0 ] && [ "$FM_PAGED" != 1 ] || return 0
+  fm_page "$FM_PAGE_CONTEXT: failed after long work (exit $1)" \
+    "$(basename "$0") exited $1 at line ${fm__failed_line:-?}: ${fm__failed_cmd:-unknown}"
 }
 
 # Arm labels are two digits with an optional letter: 00, 05a. Anything else is refused

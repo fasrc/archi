@@ -152,6 +152,7 @@ fm_log "QA run for arm $ARM on $STACK → $OUT_DIR"
 # The category map is read around the QA run too (#538 rule 1): compare_runs joins a QA
 # run to a digest-bearing arm only when both readings equal the arm's end digest.
 MAP_START="$(fm_category_map_digest "$STACK")"
+fm_arm_page_on_failure "stack $STACK arm $ARM"
 PG_PASSWORD_FILE="$STACK_DIR/secrets/pg_password.txt" \
 HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}" \
 OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
