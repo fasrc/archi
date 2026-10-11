@@ -4,7 +4,7 @@
 
 ## 2. Sweep mode: write the pins after the ledger replace
 
-- [ ] 2.1 Test first, then implement, in ONE commit. In `tests/unit/test_sweep_tools.py`, add a test: a run-1 `archive()` with the ledger write forced to fail (monkeypatch `st.os.replace` to raise `OSError` when its destination is the ledger path) raises, and neither `out/corpus-pin-r0` nor `out/category-map-pin-r0` exists. Use a test name that does not exist in the file yet. Watch it fail with `pytest tests/unit/test_sweep_tools.py`. Then in `scripts/benchmarking/feature_matrix/sweep_tools.py` `archive()`, move the `if run == 1:` pin block below `os.replace(tmp, ledger)` and write each pin through a sibling temp file plus `os.replace`. Re-run the test file (all pass, including `test_run_one_archives_every_arm_and_writes_both_pins`), run `bash scripts/gate.sh` and commit.
+- [x] 2.1 Test first, then implement, in ONE commit. In `tests/unit/test_sweep_tools.py`, add a test: a run-1 `archive()` with the ledger write forced to fail (monkeypatch `st.os.replace` to raise `OSError` when its destination is the ledger path) raises, and neither `out/corpus-pin-r0` nor `out/category-map-pin-r0` exists. Use a test name that does not exist in the file yet. Watch it fail with `pytest tests/unit/test_sweep_tools.py`. Then in `scripts/benchmarking/feature_matrix/sweep_tools.py` `archive()`, move the `if run == 1:` pin block below `os.replace(tmp, ledger)` and write each pin through a sibling temp file plus `os.replace`. Re-run the test file (all pass, including `test_run_one_archives_every_arm_and_writes_both_pins`), run `bash scripts/gate.sh` and commit.
 
 ## 3. Verify, push, and open the PR
 
