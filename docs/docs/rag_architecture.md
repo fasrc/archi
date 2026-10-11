@@ -65,8 +65,10 @@ MCP/MONIT). Two behaviors matter for RAG experiments:
   `search_vectorstore_hybrid` round is prefilled before the model's first turn,
   so retrieval always happens even if the model wouldn't call it. Toggle for
   prompt-only vs retrieval A/B.
-- **Per-turn search budget** (default `search_vectorstore_hybrid: 2`): caps
-  searches/turn; over-budget returns a synthetic "reuse prior results" message.
+- **Per-turn search budget** (default `search_vectorstore_hybrid: 2`): caps the
+  model's own searches per turn; over-budget returns a synthetic "reuse prior
+  results" message. The forced initial round is not counted, so a default turn
+  holds the forced round plus up to two model searches.
 
 LLM: vLLM serving `palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4` at `localhost:8001/v1`.
 Agent behavior (tool list, citation rules, first-action) is declared in a
@@ -233,7 +235,10 @@ Ordering runs both ways and for the same reason. Exempt results are the
 **earliest**, and the ones shed first are the **newest of those**: once the
 per-turn search budget is spent the retrieval tool returns a synthetic refusal
 under the same tool name, so the earliest results are the evidence and the later
-ones trend toward refusals — the cheapest thing to give up.
+ones trend toward refusals — the cheapest thing to give up. The forced initial
+round is not counted against the budget, so a turn can hold one more successful
+result than the budget allows: the exemption covers the earliest *budget* results
+(the forced round first), and the model's last successful search stays clearable.
 
 ### When it cannot fit
 
