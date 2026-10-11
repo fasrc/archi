@@ -625,6 +625,7 @@ class ResultHandler:
         retrieval_identity: Optional[Dict[str, Any]] = None,
         judge_usage: Optional[Dict[str, Any]] = None,
         ragas_scored: Optional[bool] = None,
+        judge_identity: Optional[Dict[str, Any]] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -811,6 +812,12 @@ class ResultHandler:
             # no judge ran; always present on new artifacts so old/new are
             # distinguishable by key presence only.
             "judge_usage": judge_usage if ragas_ran else None,
+            # The effective judge identity (provider, model, endpoint, mode) for
+            # this arm (#618). Null mirrors ragas_effective_settings: no judge ran,
+            # or every answer failed so the judge never started.
+            "ragas_judge_identity_effective": (
+                judge_identity if ragas_ran and ragas_scored is not False else None
+            ),
             # The digest is the identity of the settings the run EFFECTIVELY had,
             # so the judge knobs are normalized in the BASIS while `configuration`
             # above keeps the file verbatim. Recording the effective values in a
@@ -2515,6 +2522,7 @@ class Benchmarker:
             corpus_before = ResultHandler.get_corpus_fingerprint(arm_config)
             _, category_map_before = ResultHandler.get_category_map(arm_config)
             self._judge_usage = None
+            self._ragas_judge_identity = None
             self._ragas_scored = None
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
@@ -2542,6 +2550,7 @@ class Benchmarker:
                 retrieval_identity=arm_identity,
                 judge_usage=getattr(self, "_judge_usage", None),
                 ragas_scored=getattr(self, "_ragas_scored", None),
+                judge_identity=getattr(self, "_ragas_judge_identity", None),
             )
             self.load_new_configuration()
 
