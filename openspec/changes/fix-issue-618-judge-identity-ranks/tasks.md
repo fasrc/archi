@@ -23,4 +23,4 @@
 
 ## 6. Verify, push, and open the PR
 
-- [ ] 6.1 Run `bash scripts/gate.sh` on the branch tip and confirm it is green with patch coverage at or above 80%. Push with `git push -u origin fix/issue-618-judge-identity-ranks`. Open the PR with `gh pr create --repo fasrc/archi --base dev`. Put `Closes #618` in the PR **body** (not the title). The body must state the behavior change: a sweep whose arms used different RAGAS judges (provider, model, endpoint, or client mode) now withholds its ranks. No `Co-Authored-By` trailer. Do not merge.
+- [x] 6.1 Run `bash scripts/gate.sh` on the branch tip and confirm it is green with patch coverage at or above 80%. Push with `git push -u origin fix/issue-618-judge-identity-ranks`. Open the PR with `gh pr create --repo fasrc/archi --base dev`. Put `Closes #618` in the PR **body** (not the title). The body must state the behavior change: a sweep whose arms used different RAGAS judges (provider, model, endpoint, or client mode) now withholds its ranks. No `Co-Authored-By` trailer. Do not merge.
