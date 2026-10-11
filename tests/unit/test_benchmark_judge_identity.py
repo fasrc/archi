@@ -449,3 +449,155 @@ def test_huit_bedrock_without_base_url_endpoint_agrees_with_identity():
         bench.get_ragas_llm_evaluator()
     identity = bench._ragas_judge_identity
     assert mock_gm.call_args.args[2]["base_url"] == identity["base_url"]
+
+
+# ---------------------------------------------------------------------------
+# Task 3.1c — sentinel tests: arms read from the identity dict, not re-compute
+#
+# These tests patch ragas_judge_effective_identity to return a fixed sentinel
+# and assert that the arm passes the sentinel endpoint/mode to the client.
+# Unlike the *_agrees_with_identity tests above, the sentinel decouples the
+# assertion from the function under test so a mis-wired arm actually fails.
+# ---------------------------------------------------------------------------
+
+_SENTINEL_OLLAMA_URL = "http://sentinel-ollama:11434"
+# Intentionally no /v1 suffix: proves local/openai_compat reads mode from
+# identity, not by re-detecting /v1 in the URL.
+_SENTINEL_COMPAT_URL = "http://sentinel-compat:8001"
+_SENTINEL_HF_URL = "http://sentinel-hf:9001/v1"
+_SENTINEL_BEDROCK_URL = "https://sentinel-bedrock.edu/v2"
+
+
+def test_ollama_arm_reads_base_url_from_identity(monkeypatch):
+    """ChatOllama receives the sentinel URL, not one re-derived from config."""
+    sentinel = {
+        "provider": "ollama",
+        "model": "llama3",
+        "base_url": _SENTINEL_OLLAMA_URL,
+        "mode": None,
+    }
+    monkeypatch.setattr(
+        "src.bin.service_benchmark.ragas_judge_effective_identity", lambda _: sentinel
+    )
+    bench = _make_bench({"provider": "ollama", "model": "llama3"})
+    with unittest.mock.patch("langchain_ollama.ChatOllama") as mock_co:
+        bench.get_ragas_llm_evaluator()
+    assert mock_co.call_args.kwargs["base_url"] == _SENTINEL_OLLAMA_URL
+
+
+def test_local_openai_compat_arm_reads_mode_and_url_from_identity(monkeypatch):
+    """Arm selects get_model from sentinel mode even when URL has no /v1 suffix.
+
+    If the arm re-computed mode from the URL it would see no /v1 and call
+    ChatOllama.  Reading mode from identity it correctly calls get_model.
+    """
+    sentinel = {
+        "provider": "local",
+        "model": "qwen-x",
+        "base_url": _SENTINEL_COMPAT_URL,
+        "mode": "openai_compat",
+    }
+    monkeypatch.setattr(
+        "src.bin.service_benchmark.ragas_judge_effective_identity", lambda _: sentinel
+    )
+    bench = _make_bench({"provider": "local", "model": "qwen-x"})
+    with (
+        unittest.mock.patch("src.bin.service_benchmark.get_model") as mock_gm,
+        unittest.mock.patch("langchain_ollama.ChatOllama") as mock_co,
+    ):
+        bench.get_ragas_llm_evaluator()
+    assert mock_gm.called, "expected get_model for openai_compat, got ChatOllama"
+    assert not mock_co.called
+    assert mock_gm.call_args.kwargs["base_url"] == normalize_base_url(
+        _SENTINEL_COMPAT_URL
+    )
+
+
+def test_local_ollama_arm_reads_base_url_from_identity(monkeypatch):
+    """ChatOllama receives the sentinel URL for local/ollama mode."""
+    sentinel = {
+        "provider": "local",
+        "model": "qwen-x",
+        "base_url": _SENTINEL_OLLAMA_URL,
+        "mode": "ollama",
+    }
+    monkeypatch.setattr(
+        "src.bin.service_benchmark.ragas_judge_effective_identity", lambda _: sentinel
+    )
+    bench = _make_bench({"provider": "local", "model": "qwen-x"})
+    with (
+        unittest.mock.patch("langchain_ollama.ChatOllama") as mock_co,
+        unittest.mock.patch("src.bin.service_benchmark.get_model") as mock_gm,
+    ):
+        bench.get_ragas_llm_evaluator()
+    assert mock_co.called
+    assert not mock_gm.called
+    assert mock_co.call_args.kwargs["base_url"] == _SENTINEL_OLLAMA_URL
+
+
+def test_huggingface_arm_reads_base_url_from_identity(monkeypatch):
+    """get_model receives the sentinel URL for huggingface (URL present)."""
+    sentinel = {
+        "provider": "huggingface",
+        "model": "judge-x",
+        "base_url": _SENTINEL_HF_URL,
+        "mode": None,
+    }
+    monkeypatch.setattr(
+        "src.bin.service_benchmark.ragas_judge_effective_identity", lambda _: sentinel
+    )
+    bench = _make_bench({"model": "sut-model"})
+    with unittest.mock.patch("src.bin.service_benchmark.get_model") as mock_gm:
+        bench.get_ragas_llm_evaluator()
+    assert mock_gm.call_args.kwargs["base_url"] == normalize_base_url(_SENTINEL_HF_URL)
+
+
+def test_huggingface_arm_passes_none_url_from_identity(monkeypatch):
+    """Arm passes None to get_model when sentinel has no URL (not its own default)."""
+    sentinel = {
+        "provider": "huggingface",
+        "model": "judge-x",
+        "base_url": None,
+        "mode": None,
+    }
+    monkeypatch.setattr(
+        "src.bin.service_benchmark.ragas_judge_effective_identity", lambda _: sentinel
+    )
+    bench = _make_bench({"model": "sut-model"})
+    with unittest.mock.patch("src.bin.service_benchmark.get_model") as mock_gm:
+        bench.get_ragas_llm_evaluator()
+    assert mock_gm.call_args.kwargs["base_url"] is None
+
+
+def test_huit_bedrock_arm_reads_base_url_from_identity(monkeypatch):
+    """get_model receives the sentinel URL for huit_bedrock (URL present)."""
+    sentinel = {
+        "provider": "huit_bedrock",
+        "model": "anthropic.claude-x",
+        "base_url": _SENTINEL_BEDROCK_URL,
+        "mode": None,
+    }
+    monkeypatch.setattr(
+        "src.bin.service_benchmark.ragas_judge_effective_identity", lambda _: sentinel
+    )
+    bench = _make_bench({"model": "sut-model"})
+    with unittest.mock.patch("src.bin.service_benchmark.get_model") as mock_gm:
+        bench.get_ragas_llm_evaluator()
+    assert mock_gm.call_args.args[2]["base_url"] == _SENTINEL_BEDROCK_URL
+
+
+def test_huit_bedrock_arm_passes_none_url_from_identity(monkeypatch):
+    """Arm passes None to get_model when sentinel has no URL (not its own default)."""
+    sentinel = {
+        "provider": "huit_bedrock",
+        "model": "anthropic.claude-x",
+        "base_url": None,
+        "mode": None,
+    }
+    monkeypatch.setattr(
+        "src.bin.service_benchmark.ragas_judge_effective_identity", lambda _: sentinel
+    )
+    bench = _make_bench({"model": "sut-model"})
+    with unittest.mock.patch("src.bin.service_benchmark.get_model") as mock_gm:
+        bench.get_ragas_llm_evaluator()
+    assert mock_gm.call_args.args[2]["base_url"] is None
