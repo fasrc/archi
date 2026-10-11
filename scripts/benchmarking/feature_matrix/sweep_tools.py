@@ -491,13 +491,16 @@ def archive(
                 artifact.parent / entry["category_map_file"],
                 Path(dest) / entry["category_map_file"],
             )
-    if run == 1:
-        corpus_pin.write_text(fingerprint + "\n")
-        map_pin.write_text(str(map_digest) + "\n")
     Path(ledger).parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(ledger).with_suffix(".json.tmp")
     tmp.write_text(json.dumps(rows + out_rows, indent=1))
     os.replace(tmp, ledger)
+    # The pins move only after the ledger row that records them is durable (#574).
+    if run == 1:
+        for pin, value in ((corpus_pin, fingerprint), (map_pin, map_digest)):
+            pin_tmp = pin.with_name(pin.name + ".tmp")
+            pin_tmp.write_text(f"{value}\n")
+            os.replace(pin_tmp, pin)
     return out_rows
 
 
