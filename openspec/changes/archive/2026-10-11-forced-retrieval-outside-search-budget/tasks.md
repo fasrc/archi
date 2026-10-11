@@ -37,6 +37,8 @@
 - [x] 3.1 `python -m pytest tests/unit/test_forced_retrieval.py tests/unit/test_react_agent_tool_budget.py
       tests/unit/test_retriever_tool_budget.py tests/unit/test_active_memory_contextvar.py` green
 - [x] 3.2 `bash scripts/gate.sh` green (black/isort, full unit suite, diff-cover ≥ 80 % vs origin/dev)
-- [ ] 3.3 After the dev redeploy: Phoenix shows forced + two model `LlamaIndexHierarchicalRetriever`
+- [x] 3.3 After the dev redeploy: Phoenix shows forced + two model `LlamaIndexHierarchicalRetriever`
       spans before any "Search budget exhausted" output; `agent_traces` `tool_start` args equal
-      the retriever spans' `input.value`
+      the retriever spans' `input.value` (dev, 2026-10-11, conversation 65: forced round + two
+      model searches, no refusal; each `tool_start` query equals its own span's `input.value`;
+      recorded on PR #669)

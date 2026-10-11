@@ -49,5 +49,8 @@
       lacks the span until deployed, so compute the span in the check script the same way 2.1
       does) for "How do I transfer large data to FASSE?" → output contains
       "Large Data Transfer with Globus", 5 headers, ≤ 8000 chars
-- [ ] 3.4 After the dev redeploy (not in this change's session): the same query through the deployed
-      tool shows the Globus section; note the new golden-set era in the report
+- [x] 3.4 After the dev redeploy: the same query through the deployed tool shows the Globus section
+      (dev, 2026-10-11, conversation 66: forced round 6724 chars, 5 snippets, "Large Data Transfer
+      with Globus" present; recorded on PR #673)
+- [ ] 3.5 Note the new golden-set comparison era (this change and #669 alter what the model reads)
+      in the golden-set report at the next golden-set run
