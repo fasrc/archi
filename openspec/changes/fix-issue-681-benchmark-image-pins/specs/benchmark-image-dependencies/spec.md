@@ -22,8 +22,11 @@ mentions `pip`, or unbalanced shell quoting.
 `src/cli/templates/dockerfiles/benchmark-constraints.txt` SHALL contain only comments, blank
 lines and exact `name==version` requirements, read the way pip reads them. A range, an unpinned
 name, a URL or path requirement, an environment variable, or an include directive (`-r`, `-c`,
-`-e`) SHALL fail the guard. The file SHALL live under `src/`, because the deployment build
-context receives only `src/` (as `archi_code/`), `pyproject.toml` and `LICENSE`.
+`-e`) SHALL fail the guard. Each name SHALL appear on one line only, with no environment
+marker and no extras: pip combines duplicate constraints, so two versions abort the build; a
+marker makes the pin conditional; and pip rejects extras in a constraints file. The file SHALL
+live under `src/`, because the deployment build context receives only `src/` (as
+`archi_code/`), `pyproject.toml` and `LICENSE`.
 
 #### Scenario: A range in the constraints file is rejected
 - **WHEN** the constraints file contains `datasets>=5.0`
@@ -32,6 +35,11 @@ context receives only `src/` (as `archi_code/`), `pyproject.toml` and `LICENSE`.
 #### Scenario: An include directive is rejected
 - **WHEN** the constraints file contains `-r other.txt`
 - **THEN** the guard fails instead of skipping the line
+
+#### Scenario: A duplicated name is rejected
+- **WHEN** the constraints file pins `pyarrow==25.0.1` and also `pyarrow==26.0.0`
+- **THEN** the guard fails and names `pyarrow` as a duplicate, even though both readers keep
+  only one value per name
 
 ### Requirement: The known breakage points are pinned
 The constraints file SHALL pin `datasets`, `huggingface-hub`, `pyarrow`, `instructor`, `ragas`

@@ -39,6 +39,8 @@ from tests.unit.test_base_image_dependency_compatibility import (
     _opaque_requirements,
     _parse_pins,
     _parse_requirements,
+    _read,
+    _requirement_lines,
     _satisfies,
 )
 
@@ -211,6 +213,11 @@ def constraints_problems(text: str) -> list:
     Read with the base-image guard's pip-faithful reader. Any option line fails,
     including ``-r``/``-c``/``-e`` includes: they would pull in content this module
     cannot read.
+
+    The two readers return dicts, so each line is also checked on its own. A name
+    pinned twice fails even at the same version, because pip combines duplicate
+    constraints and two versions abort the build. A marker makes the pin
+    conditional, and pip rejects extras in a constraints file.
     """
     problems = []
     for joined_line in _joined_lines(text):
@@ -224,6 +231,21 @@ def constraints_problems(text: str) -> list:
     for name, spec in _parse_requirements(text).items():
         if name not in pins:
             problems.append(f"not an exact pin: {name}{spec}")
+    seen = {}
+    for line in _requirement_lines(text):
+        name, req, reported = _read(line)
+        if reported or req is None:
+            continue
+        seen[name] = seen.get(name, 0) + 1
+        if line.partition(";")[2].strip():
+            problems.append(f"conditional pin (environment marker): {line}")
+        if req.extras:
+            problems.append(f"extras in a constraint: {line}")
+    problems += [
+        f"duplicate pin: {name} appears {count} times"
+        for name, count in sorted(seen.items())
+        if count > 1
+    ]
     return problems
 
 
@@ -395,6 +417,15 @@ def test_steps_before_the_package_install_are_not_benchmark_steps():
         ("--index-url https://example.invalid/simple", "option or include line"),
         ("https://example.invalid/datasets-5.0.1.whl", "unreadable requirement"),
         ("${DATASETS}", "unreadable requirement"),
+        # Review on #682: both readers collapse to a dict, so a second line for the
+        # same name vanished. pip combines duplicate constraints instead, and two
+        # different versions abort the build with ResolutionImpossible.
+        ("pyarrow==26.0.0", "duplicate pin: pyarrow"),
+        ("PyArrow==25.0.1", "duplicate pin: pyarrow"),
+        # A marker makes the pin conditional, so on some platforms nothing is pinned.
+        ('datasets==5.0.1; python_version < "3.12"', "environment marker"),
+        # pip rejects extras in a constraints file.
+        ("datasets[streaming]==5.0.1", "extras"),
     ],
 )
 def test_non_pin_constraint_lines_are_reported(line, expected):
