@@ -1,6 +1,6 @@
 ## 1. Link destinations round-trip (red tests and fix in one task)
 
-- [ ] 1.1 In `tests/unit/test_html_to_markdown_processor.py`, add exact-string tests next
+- [x] 1.1 In `tests/unit/test_html_to_markdown_processor.py`, add exact-string tests next
       to the link tests (after `test_hoist_two_blocks_then_text_give_no_extra_link`, NOT
       after the last line of the file), one test per scenario in
       `specs/ingest-processing/spec.md`: unmatched `)`, unmatched `(`, a space, `<` and
