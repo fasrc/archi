@@ -467,6 +467,15 @@ def validate_port_config(
     return port_to_services, errors
 
 
+def _unlink_quietly(paths) -> None:
+    """Remove each path that exists; a failure to remove one is ignored."""
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 class TemplateManager:
     """Manages template rendering and file preparation using service registry"""
 
@@ -1300,35 +1309,30 @@ class TemplateManager:
             # deployment was torn down (fasrc/archi#287). Staging already
             # tolerates a missing input list by warning and skipping, and a path
             # that is not a regular file is no more usable than an absent one.
+            dest = weblists_path / os.path.basename(input_list)
+            # A skipped list also removes dest, so a copy staged by an earlier
+            # deployment is not ingested in its place -- unless dest IS the
+            # configured list (PR #689 review).
+            stale = [] if Path(input_list).resolve() == dest.resolve() else [dest]
             if os.path.isfile(input_list):
                 # Copy to a side file and rename it into place, so a copy that
                 # fails part-way never leaves a truncated list for the runtime.
                 # The side file's name is random, so it cannot be another
                 # configured list's name or an existing entry in weblists, and
                 # short, so a long list name cannot push it past NAME_MAX.
-                dest = weblists_path / os.path.basename(input_list)
                 partial = weblists_path / f".{os.urandom(8).hex()}.partial"
                 try:
                     shutil.copyfile(input_list, partial)
                     os.replace(partial, dest)
                 except OSError as exc:
-                    # Remove dest too, so a copy staged by an earlier deployment is
-                    # not ingested in place of a list this run skipped -- unless
-                    # dest IS the configured list (PR #689 review).
-                    leftovers = [partial]
-                    if Path(input_list).resolve() != dest.resolve():
-                        leftovers.append(dest)
-                    for leftover in leftovers:
-                        try:
-                            leftover.unlink(missing_ok=True)
-                        except OSError:
-                            pass
+                    _unlink_quietly([partial, *stale])
                     logger.warning(
                         f"Input list {input_list} could not be copied, skipping: {exc}"
                     )
                     continue
                 logger.debug(f"Copied input list {input_list}")
             else:
+                _unlink_quietly(stale)
                 logger.warning(
                     f"Configured input list {input_list} is not a readable file; "
                     f"skipping"

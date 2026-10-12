@@ -242,6 +242,23 @@ def test_staging_failed_winner_never_stages_the_loser(tmp_path, monkeypatch):
     assert list((base_dir / "weblists").iterdir()) == []
 
 
+def test_staging_missing_winner_removes_a_stale_copy(tmp_path):
+    """An earlier deployment's copy is not left staged when the list that now
+    owns its name is missing, as on the copy-error path (PR #689 review)."""
+    base_dir = tmp_path / "deploy"
+    weblists = base_dir / "weblists"
+    weblists.mkdir(parents=True)
+    (weblists / "urls.txt").write_text("https://old.example\n")
+    first = tmp_path / "a" / "urls.txt"
+    first.parent.mkdir()
+    first.write_text("https://example.org\n")
+    missing = tmp_path / "b" / "urls.txt"
+
+    _stage(base_dir, [first, missing])
+
+    assert list(weblists.iterdir()) == []
+
+
 @pytest.fixture
 def make_manager(tmp_path, monkeypatch):
     """ScraperManager factory with a stubbed global config (DATA_PATH → tmp_path)."""
