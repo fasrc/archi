@@ -34,7 +34,8 @@ Add `_link_destination(href: str) -> str` at module level, next to `_URI_SCHEME`
 returns `href` unchanged when the bare form is valid. Else it wraps `href` in `<...>`
 after four steps, in this order: double every `\`, backslash-escape `<` and `>`,
 backslash-escape an `&` that leads a character reference, and write a NUL as `%00`
-(a CommonMark reader replaces a literal NUL with U+FFFD before it parses; PR #686
+(a CommonMark reader replaces a literal NUL with U+FFFD before it parses, and the
+percent-encoded form parses as the text `%00`, so a NUL does not round-trip exactly; PR #686
 review).
 
 The bare form is valid when the `href` has no whitespace character (`str.isspace`

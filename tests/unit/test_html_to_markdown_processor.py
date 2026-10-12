@@ -1093,7 +1093,7 @@ def test_link_destination_helper_plain_ampersand_unchanged_when_wrapped():
 
 def test_link_destination_helper_nul_is_percent_encoded():
     # CommonMark replaces a literal U+0000 with U+FFFD before it parses, so a
-    # copied NUL would change the target; ``%00`` is what a reader resolves it to.
+    # copied NUL would become U+FFFD; the percent-encoded form parses as ``%00``.
     assert _link_destination("https://x/a\x00b") == "<https://x/a%00b>"
 
 
