@@ -261,7 +261,10 @@ class ScraperManager:
         # over-cap SitemapExpansionError is intentionally NOT caught here: it
         # propagates out and fails the ingest rather than shipping a bad corpus.
         if not sitemap_urls:
-            self._sitemap_lastmod_map: Dict[str, str] = {}
+            # Guarded on a COMPLETE read, as in schedule_collect_links: an
+            # unreadable list can hide every sitemap source (PR #689 review).
+            if getattr(self, "_input_lists_complete", True):
+                self._sitemap_lastmod_map: Dict[str, str] = {}
         else:
             # The refresh replaces the map itself, or keeps the previous one when it
             # is incomplete, so it is not cleared here first (PR #689 review).

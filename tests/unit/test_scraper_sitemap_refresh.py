@@ -1258,6 +1258,31 @@ class TestMissingInputListDoesNotClearTheMap:
 
         assert manager._sitemap_lastmod_map == good_map
 
+    def test_unreadable_only_sitemap_list_keeps_the_map_on_full_ingest(
+        self, refresh_harness, monkeypatch
+    ):
+        """When the unreadable list held every sitemap source, a second full
+        ingest sees none, but must not clear the map: the read was incomplete,
+        as in the scheduled path (PR #689 review)."""
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        manager.collect_all_from_config(persistence)
+        good_map = dict(manager._sitemap_lastmod_map)
+        assert len(good_map) == 2, "precondition: map populated"
+
+        def _lists_without_sitemaps(_lists):
+            manager._input_lists_complete = False
+            return (["https://x.example.edu/hand/"], [], [], [], [], [])
+
+        monkeypatch.setattr(
+            manager, "_collect_urls_from_lists_by_type", _lists_without_sitemaps
+        )
+
+        manager.collect_all_from_config(persistence)
+
+        assert manager._sitemap_lastmod_map == good_map
+
     def test_partly_unreadable_lists_do_not_latch_a_first_map(
         self, refresh_harness, monkeypatch
     ):

@@ -1286,7 +1286,14 @@ class TemplateManager:
         if not input_lists:
             return
 
+        # A later list with the same basename wins its name in weblists (source
+        # inference treats it as the staged one), so an earlier one is never
+        # copied: a failed winner then cannot leave the loser staged (PR #689 review).
+        winners = {os.path.basename(p): p for p in input_lists}
         for input_list in input_lists:
+            if winners[os.path.basename(input_list)] != input_list:
+                logger.debug(f"Input list {input_list} is overridden by a later list")
+                continue
             # isfile, not exists: a directory satisfies exists() and then makes
             # shutil.copyfile raise IsADirectoryError here — inside
             # prepare_deployment_files(), so under --force after the existing
@@ -1297,17 +1304,21 @@ class TemplateManager:
                 # Copy to a side file and rename it into place, so a copy that
                 # fails part-way never leaves a truncated list for the runtime.
                 # The side file's name is random, so it cannot be another
-                # configured list's name or an existing entry in weblists.
+                # configured list's name or an existing entry in weblists, and
+                # short, so a long list name cannot push it past NAME_MAX.
                 dest = weblists_path / os.path.basename(input_list)
-                partial = dest.with_name(f".{dest.name}.{os.urandom(8).hex()}.partial")
+                partial = weblists_path / f".{os.urandom(8).hex()}.partial"
                 try:
                     shutil.copyfile(input_list, partial)
                     os.replace(partial, dest)
                 except OSError as exc:
-                    # Remove dest too: an earlier list with the same basename may
-                    # have filled it, and this list (the lexically later one) is
-                    # the one source inference treats as staged.
-                    for leftover in (partial, dest):
+                    # Remove dest too, so a copy staged by an earlier deployment is
+                    # not ingested in place of a list this run skipped -- unless
+                    # dest IS the configured list (PR #689 review).
+                    leftovers = [partial]
+                    if Path(input_list).resolve() != dest.resolve():
+                        leftovers.append(dest)
+                    for leftover in leftovers:
                         try:
                             leftover.unlink(missing_ok=True)
                         except OSError:

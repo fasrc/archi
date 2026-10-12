@@ -36,8 +36,8 @@ scrape. Archi logs a WARNING that names the list, skips that list, and continues
 with the other lists. A successful deploy therefore does not prove that every
 configured list was ingested: look for `could not be copied`, `could not be read`,
 `not a readable file`, or `not found` in the deploy and data-manager logs. While a list is
-skipped, a scheduled refresh keeps the sitemap pages it already knows instead of
-treating them as removed.
+skipped, a scheduled refresh or a later full ingest keeps the sitemap `<lastmod>`
+timestamps it already has instead of discarding them.
 
 ### Customizing the Scraper
 

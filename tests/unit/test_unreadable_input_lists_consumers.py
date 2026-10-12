@@ -182,6 +182,66 @@ def test_staging_cleanup_failure_still_skips(tmp_path, monkeypatch, caplog):
     assert str(broken) in caplog.text
 
 
+def test_staging_long_basename_is_staged(tmp_path):
+    """A list whose basename is near the 255-byte component limit is staged: the
+    side file's name must not grow with the list's name (PR #689 review)."""
+    base_dir = tmp_path / "deploy"
+    base_dir.mkdir()
+    long_list = tmp_path / ("u" * 246 + ".txt")
+    long_list.write_text("https://example.org\n")
+
+    _stage(base_dir, [long_list])
+
+    assert [p.name for p in (base_dir / "weblists").iterdir()] == [long_list.name]
+
+
+def test_staging_failure_never_deletes_the_configured_source(tmp_path, monkeypatch):
+    """A configured list that is its own staged copy (a restart whose config
+    points into the deployment's weblists) survives a failed copy (PR #689 review)."""
+    base_dir = tmp_path / "deploy"
+    weblists = base_dir / "weblists"
+    weblists.mkdir(parents=True)
+    source = weblists / "urls.txt"
+    source.write_text("https://example.org\n")
+
+    def _copyfile(src, dst):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(tm_module.shutil, "copyfile", _copyfile)
+    _stage(base_dir, [source])
+
+    assert source.read_text() == "https://example.org\n"
+
+
+def test_staging_failed_winner_never_stages_the_loser(tmp_path, monkeypatch):
+    """When the later of two same-named lists fails and the cleanup cannot
+    remove files either, the earlier list is not left staged in its place: it
+    was never copied, because the later list wins its name (PR #689 review)."""
+    base_dir = tmp_path / "deploy"
+    base_dir.mkdir()
+    first = tmp_path / "a" / "urls.txt"
+    first.parent.mkdir()
+    first.write_text("git-https://example.org/repo\n")
+    winner = tmp_path / "b" / "urls.txt"
+    winner.parent.mkdir()
+    winner.write_text("https://example.org\n")
+    real_copyfile = tm_module.shutil.copyfile
+
+    def _copyfile(src, dst):
+        if Path(src) == winner:
+            raise OSError(5, "Input/output error")
+        return real_copyfile(src, dst)
+
+    def _unlink(self, missing_ok=False):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(tm_module.shutil, "copyfile", _copyfile)
+    monkeypatch.setattr(Path, "unlink", _unlink)
+    _stage(base_dir, [first, winner])
+
+    assert list((base_dir / "weblists").iterdir()) == []
+
+
 @pytest.fixture
 def make_manager(tmp_path, monkeypatch):
     """ScraperManager factory with a stubbed global config (DATA_PATH → tmp_path)."""
