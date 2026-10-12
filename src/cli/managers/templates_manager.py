@@ -1296,13 +1296,18 @@ class TemplateManager:
             if os.path.isfile(input_list):
                 # Copy to a side file and rename it into place, so a copy that
                 # fails part-way never leaves a truncated list for the runtime.
+                # The side file's name is random, so it cannot be another
+                # configured list's name or an existing entry in weblists.
                 dest = weblists_path / os.path.basename(input_list)
-                partial = dest.with_name(f".{dest.name}.partial")
+                partial = dest.with_name(f".{dest.name}.{os.urandom(8).hex()}.partial")
                 try:
                     shutil.copyfile(input_list, partial)
                     os.replace(partial, dest)
                 except OSError as exc:
-                    partial.unlink(missing_ok=True)
+                    try:
+                        partial.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                     logger.warning(
                         f"Input list {input_list} could not be copied, skipping: {exc}"
                     )

@@ -89,6 +89,65 @@ def test_staging_removes_a_partial_copy(tmp_path, monkeypatch, caplog):
     assert str(broken) in caplog.text
 
 
+def _stage(base_dir, paths):
+    class _CM:
+        config = {}
+
+        def get_input_lists(self):
+            return [str(p) for p in paths]
+
+    mgr = object.__new__(TemplateManager)
+    mgr._copy_web_input_lists(SimpleNamespace(config_manager=_CM(), base_dir=base_dir))
+
+
+def test_staging_side_file_cannot_clobber_a_configured_list(tmp_path):
+    """A configured list whose name looks like another list's side file is
+    staged intact (PR #689 adversarial review)."""
+    base_dir = tmp_path / "deploy"
+    base_dir.mkdir()
+    lookalike = tmp_path / ".urls.txt.partial"
+    lookalike.write_text("https://example.org/lookalike\n")
+    readable = tmp_path / "urls.txt"
+    readable.write_text("https://example.org\n")
+
+    _stage(base_dir, [lookalike, readable])
+
+    weblists = base_dir / "weblists"
+    assert sorted(p.name for p in weblists.iterdir()) == [
+        ".urls.txt.partial",
+        "urls.txt",
+    ]
+    assert (
+        weblists / ".urls.txt.partial"
+    ).read_text() == "https://example.org/lookalike\n"
+
+
+def test_staging_cleanup_failure_still_skips(tmp_path, monkeypatch, caplog):
+    base_dir = tmp_path / "deploy"
+    base_dir.mkdir()
+    broken = tmp_path / "broken.list"
+    broken.write_text("https://example.org/one\n")
+    readable = tmp_path / "urls.txt"
+    readable.write_text("https://example.org\n")
+    real_copyfile = tm_module.shutil.copyfile
+
+    def _copyfile(src, dst):
+        if Path(src) == broken:
+            raise OSError(5, "Input/output error")
+        return real_copyfile(src, dst)
+
+    def _unlink(self, missing_ok=False):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr(tm_module.shutil, "copyfile", _copyfile)
+    monkeypatch.setattr(Path, "unlink", _unlink)
+    with caplog.at_level(logging.WARNING):
+        _stage(base_dir, [broken, readable])
+
+    assert (base_dir / "weblists" / "urls.txt").exists()
+    assert str(broken) in caplog.text
+
+
 @pytest.fixture
 def make_manager(tmp_path, monkeypatch):
     """ScraperManager factory with a stubbed global config (DATA_PATH → tmp_path)."""
