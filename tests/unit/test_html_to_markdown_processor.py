@@ -1051,6 +1051,54 @@ def test_link_destination_helper_empty_string_stays_bare():
     assert _link_destination("") == ""
 
 
+def test_link_destination_helper_leading_angle_bracket_escapes():
+    assert _link_destination("<foo") == "<\\<foo>"
+
+
+def test_link_destination_helper_literal_backslash_doubles():
+    assert _link_destination("/a b\\)c") == "</a b\\\\)c>"
+
+
+def test_link_destination_helper_entity_leading_ampersand_escapes():
+    assert _link_destination("/a b&amp;") == "</a b\\&amp;>"
+
+
+def test_link_destination_helper_plain_ampersand_unchanged_when_wrapped():
+    assert _link_destination("/a b&c") == "</a b&c>"
+
+
+def test_link_destination_control_char_autolink_becomes_explicit_link():
+    assert (
+        html_to_markdown('<p><a href="/a\x01b">/a\x01b</a></p>')
+        == "[/a\x01b](</a\x01b>)"
+    )
+
+
+def test_link_destination_leading_angle_bracket_becomes_explicit_link():
+    assert html_to_markdown('<p><a href="&lt;foo">Docs</a></p>') == "[Docs](<\\<foo>)"
+
+
+def test_link_destination_nested_image_same_href_escapes_outer_link():
+    assert (
+        html_to_markdown('<p><a href="/a b"><img src="/a b" alt="pic"></a></p>')
+        == "[![pic](/a b)](</a b>)"
+    )
+
+
+def test_link_destination_autolink_label_escapes_unmatched_bracket():
+    assert (
+        html_to_markdown('<p><a href="https://x/a ] b">https://x/a ] b</a></p>')
+        == "[https://x/a \\] b](<https://x/a ] b>)"
+    )
+
+
+def test_link_destination_noformat_context_left_untouched():
+    assert (
+        html_to_markdown('<pre><a href="https://x/a b">&lt;https://x/a b&gt;</a></pre>')
+        == "```\n<https://x/a b>\n```"
+    )
+
+
 def test_renders_link_text_stops_at_first_text(monkeypatch):
     """The check runs once per block on the head half, which still holds every
     earlier block; collecting all of its text makes the hoist quadratic."""

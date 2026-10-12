@@ -304,18 +304,27 @@ _KEPT_LINK_ATTR = "data-archi-kept-link"
 # a later block that empties the head half does not add a second link.
 _LINK_SHOWN_ATTR = "data-archi-link-shown"
 _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+# Matches an ``&`` that a CommonMark reader would decode as the start of a
+# character reference (issue #605 review): ``&name;``, ``&#NNN;``, ``&#xHHH;``.
+_ENTITY_LEAD = re.compile(r"&(?=#[0-9]+;|#[xX][0-9A-Fa-f]+;|[A-Za-z][A-Za-z0-9]*;)")
 
 
 def _link_destination(href: str) -> str:
     """Return ``href`` as a CommonMark 0.31 link destination (issue #605).
 
-    A bare destination cannot hold whitespace or a control character, and its
-    unescaped parentheses must balance; a ``\\``-escaped paren does not count
-    toward that balance, since CommonMark treats it as literal. When ``href``
-    violates either rule, wrap it in angle brackets and backslash-escape any
-    ``<`` or ``>`` inside, since an angle-bracket destination forbids both.
+    A bare destination cannot start with ``<``, hold whitespace or a control
+    character, or have unescaped parentheses that don't balance; a ``\\``-escaped
+    paren does not count toward that balance, since CommonMark treats it as
+    literal. When ``href`` violates any of these rules, wrap it in angle
+    brackets: double every literal backslash first (so a reader's own
+    backslash-unescaping recovers it rather than consuming the character after
+    it), then backslash-escape ``<`` and ``>`` (forbidden bare inside an
+    angle-bracket destination) and any ``&`` that leads a character reference
+    (CommonMark decodes entity and numeric references inside a destination).
     """
-    bare_ok = not any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in href)
+    bare_ok = not href.startswith("<") and not any(
+        ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in href
+    )
     if bare_ok:
         depth = 0
         escaped = False
@@ -334,7 +343,27 @@ def _link_destination(href: str) -> str:
         bare_ok = bare_ok and depth == 0
     if bare_ok:
         return href
-    return "<" + href.replace("<", "\\<").replace(">", "\\>") + ">"
+    wrapped = href.replace("\\", "\\\\")
+    wrapped = wrapped.replace("<", "\\<").replace(">", "\\>")
+    wrapped = _ENTITY_LEAD.sub(lambda m: "\\" + m.group(0), wrapped)
+    return "<" + wrapped + ">"
+
+
+def _escape_link_label(label: str) -> str:
+    """Escape ``label`` for use as literal CommonMark link text (issue #605 review).
+
+    An unescaped ``\\``, ``[``, or ``]`` would either alter the parsed text or
+    end the label early, so this is only safe for text written byte-for-byte
+    from a non-Markdown source such as an ``href``.
+    """
+    return label.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+
+def _autolink_needs_explicit_form(href: str) -> bool:
+    """True when ``href`` cannot sit inside CommonMark's ``<href>`` autolink form."""
+    return any(
+        ch.isspace() or ch in "<>" or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in href
+    )
 
 
 def _edge_text(br, *, forward: bool, stop_at) -> NavigableString | None:
@@ -731,24 +760,32 @@ class _ArchiMarkdownConverter(MarkdownConverter):
         tag. Only the link that ``_hoist_out_of_inline`` keeps is changed here;
         other self-links convert as markdownify writes them (issue #604). Every
         link destination is then escaped so it round-trips through CommonMark
-        0.31 when its ``href`` has whitespace or unbalanced parentheses (issue
-        #605).
+        0.31 when its ``href`` has whitespace, a control character, or
+        unbalanced parentheses (issue #605). A literal, non-Markdown ``href``
+        used as link text has its brackets escaped so it can't end the label
+        early, and a ``_noformat`` context (inside a code span or block) is left
+        untouched, matching the base converter's own early return.
         """
         out = super().convert_a(el, text, parent_tags)
+        if "_noformat" in parent_tags:
+            return out
         href = el.get("href") or ""
         if (
             el.has_attr(_KEPT_LINK_ATTR)
             and out == f"<{href}>"
             and not _URI_SCHEME.match(href)
         ):
-            out = f"[{href}]({href})"
+            out = f"[{_escape_link_label(href)}]({href})"
         if out == f"<{href}>":
-            if any(ch.isspace() or ch in "<>" for ch in href):
-                return f"[{href}]({_link_destination(href)})"
+            if _autolink_needs_explicit_form(href):
+                return f"[{_escape_link_label(href)}]({_link_destination(href)})"
             return out
         dest = _link_destination(href)
         if dest != href:
-            out = out.replace("](" + href, "](" + dest, 1)
+            marker = "](" + href
+            idx = out.rfind(marker)
+            if idx != -1:
+                out = out[:idx] + "](" + dest + out[idx + len(marker) :]
         return out
 
     def convert_list(self, el, text, parent_tags):
