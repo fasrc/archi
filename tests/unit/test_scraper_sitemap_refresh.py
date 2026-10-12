@@ -1206,6 +1206,61 @@ class TestMissingInputListDoesNotClearTheMap:
             f"of every sitemap source; got {manager._sitemap_lastmod_map!r}"
         )
 
+    def test_partly_unreadable_lists_preserve_the_map(
+        self, refresh_harness, monkeypatch
+    ):
+        """A readable list still yields sitemap sources while another list is
+        unreadable: the map built from the readable lists alone is truncated,
+        so it must not replace the good one (PR #689 review)."""
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        manager.collect_all_from_config(persistence)
+        good_map = dict(manager._sitemap_lastmod_map)
+        assert len(good_map) == 2, "precondition: map populated"
+
+        # Only the readable list's sitemap expands; the other list's is unseen.
+        refresh_harness["set_expand_pairs"]([("https://x.example.edu/a", "2024-03-01")])
+        monkeypatch.setattr(manager, "_input_lists_complete", False, raising=False)
+        monkeypatch.setattr(
+            manager,
+            "_collect_urls_from_lists_by_type",
+            lambda _lists: (
+                ["https://x.example.edu/hand/"],
+                [],
+                [],
+                [],
+                [],
+                ["sitemap-https://x.example.edu/sitemap.xml"],
+            ),
+        )
+
+        manager.schedule_collect_links(persistence)
+
+        assert manager._sitemap_lastmod_map == good_map
+
+    def test_partly_unreadable_lists_do_not_latch_a_first_map(
+        self, refresh_harness, monkeypatch
+    ):
+        manager = refresh_harness["manager"]
+        manager._input_lists_complete = False
+        monkeypatch.setattr(
+            manager,
+            "_collect_urls_from_lists_by_type",
+            lambda _lists: (
+                [],
+                [],
+                [],
+                [],
+                [],
+                ["sitemap-https://x.example.edu/sitemap.xml"],
+            ),
+        )
+
+        manager.schedule_collect_links(refresh_harness["persistence"])
+
+        assert getattr(manager, "_sitemap_map_valid", False) is False
+
     def test_missing_file_marks_the_read_incomplete(self, make_manager, tmp_path):
         """The flag the guard above depends on is really set by the read path."""
         manager = make_manager({})

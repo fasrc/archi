@@ -1304,10 +1304,14 @@ class TemplateManager:
                     shutil.copyfile(input_list, partial)
                     os.replace(partial, dest)
                 except OSError as exc:
-                    try:
-                        partial.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                    # Remove dest too: an earlier list with the same basename may
+                    # have filled it, and this list (the lexically later one) is
+                    # the one source inference treats as staged.
+                    for leftover in (partial, dest):
+                        try:
+                            leftover.unlink(missing_ok=True)
+                        except OSError:
+                            pass
                     logger.warning(
                         f"Input list {input_list} could not be copied, skipping: {exc}"
                     )

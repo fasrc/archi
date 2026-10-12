@@ -821,7 +821,12 @@ class ScraperManager:
                 new_urls.append(url)
                 if lastmod is not None:
                     new_map[url] = lastmod
-        incomplete = getattr(self, "_sitemap_expansion_incomplete", False)
+        # An unreadable input list hides its sitemap sources, so a map built from
+        # the readable lists alone is truncated in the same way (PR #689 review).
+        lists_complete = getattr(self, "_input_lists_complete", True)
+        incomplete = (
+            getattr(self, "_sitemap_expansion_incomplete", False) or not lists_complete
+        )
         # Keyed on PROVENANCE (did a complete refresh ever publish?), never on the
         # map's contents. A fully successful expansion publishes {} when every page
         # omits the optional <lastmod>, so `if previous:` would read a valid empty
@@ -831,9 +836,10 @@ class ScraperManager:
             previous = getattr(self, "_sitemap_lastmod_map", {})
             logger.warning(
                 "sitemap expansion was incomplete (%d document(s) failed to fetch or "
-                "parse); retaining the previous lastmod map of %d entry(ies) rather "
+                "parse%s); retaining the previous lastmod map of %d entry(ies) rather "
                 "than publishing a truncated one of %d",
                 len(getattr(self, "_sitemap_expansion_failures", ()) or ()),
+                "" if lists_complete else ", and an input list could not be read",
                 len(previous),
                 len(new_map),
             )

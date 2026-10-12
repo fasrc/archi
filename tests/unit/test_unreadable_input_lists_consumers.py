@@ -89,6 +89,40 @@ def test_staging_removes_a_partial_copy(tmp_path, monkeypatch, caplog):
     assert str(broken) in caplog.text
 
 
+def test_staging_failed_winner_removes_the_earlier_copy(tmp_path, monkeypatch):
+    """When the lexically later of two same-named lists fails to copy, the
+    earlier list's copy must not stay staged in its place: source inference
+    treats the later list as the only one staged (PR #689 review)."""
+    base_dir = tmp_path / "deploy"
+    base_dir.mkdir()
+    first = tmp_path / "a" / "urls.txt"
+    first.parent.mkdir()
+    first.write_text("git-https://example.org/repo\n")
+    winner = tmp_path / "b" / "urls.txt"
+    winner.parent.mkdir()
+    winner.write_text("https://example.org\n")
+    real_copyfile = tm_module.shutil.copyfile
+
+    def _copyfile(src, dst):
+        if Path(src) == winner:
+            raise OSError(5, "Input/output error")
+        return real_copyfile(src, dst)
+
+    monkeypatch.setattr(tm_module.shutil, "copyfile", _copyfile)
+
+    class _CM:
+        config = {}
+
+        def get_input_lists(self):
+            return [str(first), str(winner)]
+
+    context = SimpleNamespace(config_manager=_CM(), base_dir=base_dir)
+    mgr = object.__new__(TemplateManager)
+    mgr._copy_web_input_lists(context)
+
+    assert list((base_dir / "weblists").iterdir()) == []
+
+
 def _stage(base_dir, paths):
     class _CM:
         config = {}
