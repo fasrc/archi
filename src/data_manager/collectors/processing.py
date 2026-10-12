@@ -307,6 +307,8 @@ _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 # Matches an ``&`` that a CommonMark reader would decode as the start of a
 # character reference (issue #605 review): ``&name;``, ``&#NNN;``, ``&#xHHH;``.
 _ENTITY_LEAD = re.compile(r"&(?=#[0-9]+;|#[xX][0-9A-Fa-f]+;|[A-Za-z][A-Za-z0-9]*;)")
+# A backslash that a CommonMark reader would consume as an escape (issue #605 review).
+_ESCAPED_PUNCT = re.compile(r"\\[!-/:-@\[-`{-~]")
 # Characters that are active inside CommonMark link text (issue #605 review).
 _LABEL_ACTIVE = re.compile(r"[\\\[\]<>`*_]")
 
@@ -315,27 +317,26 @@ def _link_destination(href: str) -> str:
     """Return ``href`` as a CommonMark 0.31 link destination (issue #605).
 
     A bare destination cannot start with ``<``, hold whitespace or a control
-    character, or have unescaped parentheses that don't balance; a ``\\``-escaped
-    paren does not count toward that balance, since CommonMark treats it as
-    literal. When ``href`` violates any of these rules, wrap it in angle
-    brackets: double every literal backslash first (so a reader's own
-    backslash-unescaping recovers it rather than consuming the character after
-    it), then backslash-escape ``<`` and ``>`` (forbidden bare inside an
-    angle-bracket destination) and any ``&`` that leads a character reference
-    (CommonMark decodes entity and numeric references inside a destination).
+    character, or have parentheses that don't balance. A DOM ``href`` has no
+    escapes of its own, so a bare destination also cannot hold a ``\\`` before
+    ASCII punctuation or a ``&`` that leads a character reference: a CommonMark
+    reader would consume the backslash or decode the reference. When ``href``
+    violates any of these rules, wrap it in angle brackets: double every literal
+    backslash first (so a reader's own backslash-unescaping recovers it rather
+    than consuming the character after it), then backslash-escape ``<`` and
+    ``>`` (forbidden bare inside an angle-bracket destination) and any ``&``
+    that leads a character reference.
     """
-    bare_ok = not href.startswith("<") and not any(
-        ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in href
+    bare_ok = (
+        not href.startswith("<")
+        and not any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in href)
+        and not _ESCAPED_PUNCT.search(href)
+        and not _ENTITY_LEAD.search(href)
     )
     if bare_ok:
         depth = 0
-        escaped = False
         for ch in href:
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == "(":
+            if ch == "(":
                 depth += 1
             elif ch == ")":
                 depth -= 1

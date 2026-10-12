@@ -1044,8 +1044,22 @@ def test_link_destination_helper_unbalanced_paren_escapes():
     assert _link_destination("/docs/foo)bar") == "</docs/foo)bar>"
 
 
-def test_link_destination_helper_backslash_escaped_paren_stays_bare():
-    assert _link_destination("/a\\)b") == "/a\\)b"
+def test_link_destination_helper_backslash_before_punctuation_escapes():
+    # A DOM href has no backslash escapes, so ``\)`` is two literal characters;
+    # bare, a CommonMark reader would consume the backslash and read ``/a)b``.
+    assert _link_destination("/a\\)b") == "</a\\\\)b>"
+
+
+def test_link_destination_helper_backslash_before_letter_stays_bare():
+    assert _link_destination("/a\\b") == "/a\\b"
+
+
+def test_link_destination_helper_entity_lead_forces_angle_form():
+    assert _link_destination("/a&amp;b") == "</a\\&amp;b>"
+
+
+def test_link_destination_backslash_paren_href_becomes_angle_form():
+    assert html_to_markdown('<p><a href="/a\\)b">Docs</a></p>') == "[Docs](</a\\\\)b>)"
 
 
 def test_link_destination_helper_empty_string_stays_bare():

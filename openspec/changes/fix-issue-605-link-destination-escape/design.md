@@ -36,8 +36,10 @@ returns `href` unchanged when the bare form is valid. Else it returns
 
 The bare form is valid when the `href` has no whitespace character (`str.isspace`
 on each character, or an ASCII control character, code below 0x20 or 0x7F), and a scan of
-its parentheses never goes below depth 0 and ends at depth 0. A `(` or `)` after a
-backslash does not count, because CommonMark treats it as escaped.
+its parentheses never goes below depth 0 and ends at depth 0. A DOM `href` has no
+escapes of its own, so a `\` before ASCII punctuation or an `&` that leads a character
+reference also makes the bare form invalid: a reader would consume or decode it (PR #686
+review; this replaces the first draft, which counted `\)` as an escaped paren).
 
 A pure helper is easy to test with exact strings and keeps `convert_a` small.
 

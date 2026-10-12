@@ -1,9 +1,9 @@
 ## ADDED Requirements
 
 ### Requirement: Link destinations round-trip through CommonMark
-The HTML-to-Markdown conversion SHALL write each link destination in a form that CommonMark 0.31 parses back to the original `href`, and it SHALL write a link whose `href` has no whitespace and only balanced parentheses byte-for-byte as before.
+The HTML-to-Markdown conversion SHALL write each link destination in a form that CommonMark 0.31 parses back to the original `href`, and it SHALL write a link whose `href` has no whitespace, no control character, no backslash before ASCII punctuation, no `&` that leads a character reference, and only balanced parentheses byte-for-byte as before.
 
-When the bare destination is not valid (the `href` starts with `<`, has whitespace or a control character, or its unescaped parentheses are not balanced), the conversion writes the destination in angle brackets: it doubles each literal `\` first, then puts a backslash before each `<` and `>`, and before each `&` that leads a character reference (`&name;`, `&#NNN;`, `&#xHHH;`), in the `href`. When the conversion writes an autolink and the `href` has whitespace, a control character, `<`, or `>`, it writes an explicit link with the `href` as the text instead, escaping any `\`, `[`, or `]` in that text so it cannot end the link label early. The link that the hoist keeps (issue #430) obeys the same rule. When a link's destination has already been written once inside its own text (for example, an image whose `src` matches the link's `href`), the escaping targets the link's own, outermost destination, not the first matching occurrence. A link inside a `_noformat` context (a code span or block) is left exactly as the base converter renders it.
+When the bare destination is not valid (the `href` starts with `<`, has whitespace or a control character, has a `\` before ASCII punctuation or an `&` that leads a character reference, or its parentheses are not balanced), the conversion writes the destination in angle brackets: it doubles each literal `\` first, then puts a backslash before each `<` and `>`, and before each `&` that leads a character reference (`&name;`, `&#NNN;`, `&#xHHH;`), in the `href`. When the conversion writes an autolink and the `href` has whitespace, a control character, `<`, or `>`, it writes an explicit link with the `href` as the text instead, escaping any `\`, `[`, `]`, `<`, `>`, backtick, `*`, `_`, and any `&` that leads a character reference in that text so the text reads back literally. The link that the hoist keeps (issue #430) obeys the same rule. When a link's destination has already been written once inside its own text (for example, an image whose `src` matches the link's `href`), the escaping targets the link's own, outermost destination, not the first matching occurrence. A link inside a `_noformat` context (a code span or block) is left exactly as the base converter renders it.
 
 #### Scenario: An unmatched closing parenthesis
 - **WHEN** `html_to_markdown('<p><a href="/docs/foo)bar">Docs</a></p>')` runs
@@ -76,3 +76,7 @@ When the bare destination is not valid (the `href` starts with `<`, has whitespa
 #### Scenario: An autolink label with Markdown syntax
 - **WHEN** `html_to_markdown('<p><a href="https://x/a `c` b">https://x/a `c` b</a></p>')` runs
 - **THEN** the result is ``[https://x/a \`c\` b](<https://x/a `c` b>)``
+
+#### Scenario: A literal backslash before punctuation
+- **WHEN** `html_to_markdown('<p><a href="/a\\)b">Docs</a></p>')` runs
+- **THEN** the result is `[Docs](</a\\)b>)`
