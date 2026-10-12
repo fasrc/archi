@@ -31,15 +31,20 @@ ending and no unescaped `<` or `>`. A backslash escapes `<` and `>`.
 ### D1: A pure helper decides the destination form
 
 Add `_link_destination(href: str) -> str` at module level, next to `_URI_SCHEME`. It
-returns `href` unchanged when the bare form is valid. Else it returns
-`"<" + href.replace("<", "\\<").replace(">", "\\>") + ">"`.
+returns `href` unchanged when the bare form is valid. Else it wraps `href` in `<...>`
+after four steps, in this order: double every `\`, backslash-escape `<` and `>`,
+backslash-escape an `&` that leads a character reference, and write a NUL as `%00`
+(a CommonMark reader replaces a literal NUL with U+FFFD before it parses; PR #686
+review).
 
 The bare form is valid when the `href` has no whitespace character (`str.isspace`
 on each character, or an ASCII control character, code below 0x20 or 0x7F), and a scan of
 its parentheses never goes below depth 0 and ends at depth 0. A DOM `href` has no
 escapes of its own, so a `\` before ASCII punctuation or an `&` that leads a character
 reference also makes the bare form invalid: a reader would consume or decode it (PR #686
-review; this replaces the first draft, which counted `\)` as an escaped paren).
+review; this replaces the first draft, which counted `\)` as an escaped paren). A
+leading `<` or a trailing `\` (which would escape the link's closing `)`) also makes it
+invalid.
 
 A pure helper is easy to test with exact strings and keeps `convert_a` small.
 
@@ -47,12 +52,19 @@ Alternative: escape each unmatched parenthesis with a backslash. Rejected: the
 angle-bracket form is one rule for spaces and parentheses, and the issue's acceptance
 criteria use it.
 
-### D2: Rewrite the explicit-link output in place
+### D2: Rewrite the outer destination of the explicit-link output in place
 
-When `_link_destination(href) != href`, the explicit-link output contains
-`](` + `href` exactly once at the destination position. Replace that first occurrence of
-`"](" + href` with `"](" + _link_destination(href)`. The title part and the
-prefix and suffix whitespace stay as they are.
+When `_link_destination(href) != href`, find the outer destination by the complete
+marker `"](" + href + title_part + ")"`, where `title_part` is `' "title"'` (with `"`
+escaped as markdownify writes it) or empty. Search for the marker with `rfind`, from the
+end of the output, and replace only its `href` with `_link_destination(href)`. The
+title part and the prefix and suffix whitespace stay as they are.
+
+A plain first-occurrence replace of `"](" + href` is wrong: the same sequence can occur
+earlier, in the rendered link text. PR #686 review found two cases: an image inside the
+link whose `src` equals the `href`, and a title that repeats `](href`. The outer
+destination is the only occurrence that the title part and the closing `)` follow, and
+it is the last one in the output.
 
 Do not rebuild the link from parts. `markdownify` computes the text, title, prefix,
 and suffix, and a rebuild would copy that logic.
@@ -61,8 +73,11 @@ and suffix, and a rebuild would copy that logic.
 
 CommonMark forbids whitespace, `<`, and `>` in an autolink. When `super().convert_a`
 returns `"<" + href + ">"` and the `href` has whitespace, `<`, or `>`, return
-`"[" + href + "](" + _link_destination(href) + ")"`. The text is the `href`, as in the
-autolink. Parentheses alone do not trigger this rule, because an autolink can hold them.
+`"[" + _escape_link_label(href) + "](" + _link_destination(href) + ")"`. The text is
+the `href`, as in the autolink, with its Markdown-active characters (`\`, `[`, `]`,
+`<`, `>`, `` ` ``, `*`, `_`, and an `&` that leads a character reference)
+backslash-escaped, because this branch writes the `href` as link text byte-for-byte.
+Parentheses alone do not trigger this rule, because an autolink can hold them.
 
 ### D4: The kept link uses the same helper
 
@@ -80,7 +95,10 @@ in the spec delta.
 - [A pinned test output changes] → Run the full converter test file. Record any changed
   pinned output in the PR body. No existing test is expected to change, because no
   existing test `href` has a space or unbalanced parentheses.
-- [The first `](href` occurrence is in the link text, not the destination] → The text
-  comes before `](`, and the text cannot contain `](` + `href` followed by the
-  destination, because `markdownify` escapes `]` in the text. A test with an `href`
-  that also appears in the text covers this.
+- [The `](href` sequence also occurs in the link text] → D2 matches the complete outer
+  marker from the end, so an earlier occurrence in the text is never rewritten. Tests
+  cover an image `src` equal to the `href` and a title that repeats `](href`.
+- [`markdownify` does not escape an unbalanced `]` in link text] → A link whose text has
+  an unbalanced `]` does not parse as a link. This is true for every link on `dev`,
+  not only for the links that this change rewrites, and is out of scope here (the
+  link text is a non-goal). The follow-up issue tracks it.

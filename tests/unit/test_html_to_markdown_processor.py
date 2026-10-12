@@ -1091,6 +1091,12 @@ def test_link_destination_helper_plain_ampersand_unchanged_when_wrapped():
     assert _link_destination("/a b&c") == "</a b&c>"
 
 
+def test_link_destination_helper_nul_is_percent_encoded():
+    # CommonMark replaces a literal U+0000 with U+FFFD before it parses, so a
+    # copied NUL would change the target; ``%00`` is what a reader resolves it to.
+    assert _link_destination("https://x/a\x00b") == "<https://x/a%00b>"
+
+
 def test_link_destination_control_char_autolink_becomes_explicit_link():
     assert (
         html_to_markdown('<p><a href="/a\x01b">/a\x01b</a></p>')

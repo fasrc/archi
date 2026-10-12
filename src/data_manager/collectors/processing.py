@@ -352,6 +352,8 @@ def _link_destination(href: str) -> str:
     wrapped = href.replace("\\", "\\\\")
     wrapped = wrapped.replace("<", "\\<").replace(">", "\\>")
     wrapped = _ENTITY_LEAD.sub(lambda m: "\\" + m.group(0), wrapped)
+    # A reader replaces a literal NUL with U+FFFD before it parses (PR #686 review).
+    wrapped = wrapped.replace("\x00", "%00")
     return "<" + wrapped + ">"
 
 
