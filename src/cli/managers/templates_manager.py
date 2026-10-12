@@ -476,6 +476,17 @@ def _unlink_quietly(paths) -> None:
             pass
 
 
+def _warn_if_left(stale) -> None:
+    """Name each stale copy that cleanup could not remove: the runtime ingests
+    it in place of the skipped list (PR #689 review)."""
+    for path in stale:
+        if path.exists():
+            logger.warning(
+                f"stale copy {path} could not be removed; the runtime will "
+                f"ingest it in place of the skipped list"
+            )
+
+
 class TemplateManager:
     """Manages template rendering and file preparation using service registry"""
 
@@ -1301,6 +1312,7 @@ class TemplateManager:
         # winner cannot leave a loser staged, and a later missing path cannot
         # remove the winner's copy (PR #689 review).
         winners = {os.path.basename(p): p for p in input_lists if os.path.isfile(p)}
+        configured = {Path(p).resolve() for p in input_lists}
         for input_list in input_lists:
             winner = winners.get(os.path.basename(input_list), input_list)
             if winner != input_list:
@@ -1314,9 +1326,9 @@ class TemplateManager:
             # that is not a regular file is no more usable than an absent one.
             dest = weblists_path / os.path.basename(input_list)
             # A skipped list also removes dest, so a copy staged by an earlier
-            # deployment is not ingested in its place -- unless dest IS the
-            # configured list (PR #689 review).
-            stale = [] if Path(input_list).resolve() == dest.resolve() else [dest]
+            # deployment is not ingested in its place -- unless dest IS a
+            # configured list, the winner or a loser (PR #689 review).
+            stale = [] if dest.resolve() in configured else [dest]
             if os.path.isfile(input_list):
                 # Copy to a side file and rename it into place, so a copy that
                 # fails part-way never leaves a truncated list for the runtime.
@@ -1332,6 +1344,7 @@ class TemplateManager:
                     logger.warning(
                         f"Input list {input_list} could not be copied, skipping: {exc}"
                     )
+                    _warn_if_left(stale)
                     continue
                 logger.debug(f"Copied input list {input_list}")
             else:
@@ -1340,6 +1353,7 @@ class TemplateManager:
                     f"Configured input list {input_list} is not a readable file; "
                     f"skipping"
                 )
+                _warn_if_left(stale)
 
     def copy_source_code(self, base_dir: Path) -> None:
         # Locate the tree this deployment ships. The checkout `setup.py` recorded at

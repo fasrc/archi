@@ -276,6 +276,60 @@ def test_staging_winner_is_the_last_regular_file(tmp_path, later_kind):
     assert staged.read_text() == "https://example.org\n"
 
 
+def test_staging_failed_winner_never_deletes_a_losing_configured_list(
+    tmp_path, monkeypatch
+):
+    """A losing configured list that is the deployment's own staged copy
+    survives when the winner of its name fails to copy (PR #689 review)."""
+    base_dir = tmp_path / "deploy"
+    weblists = base_dir / "weblists"
+    weblists.mkdir(parents=True)
+    live = weblists / "urls.txt"
+    live.write_text("https://live.example\n")
+    winner = tmp_path / "b" / "urls.txt"
+    winner.parent.mkdir()
+    winner.write_text("https://example.org\n")
+
+    def _copyfile(src, dst):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(tm_module.shutil, "copyfile", _copyfile)
+    _stage(base_dir, [live, winner])
+
+    assert live.read_text() == "https://live.example\n"
+
+
+@pytest.mark.parametrize("winner_kind", ["unreadable", "missing"])
+def test_staging_names_a_stale_copy_it_cannot_remove(
+    tmp_path, monkeypatch, caplog, winner_kind
+):
+    """When a skipped list's stale copy from an earlier deployment cannot be
+    removed, the warning names that copy instead of claiming the list was
+    skipped (PR #689 review)."""
+    base_dir = tmp_path / "deploy"
+    weblists = base_dir / "weblists"
+    weblists.mkdir(parents=True)
+    stale = weblists / "urls.txt"
+    stale.write_text("https://old.example\n")
+    winner = tmp_path / "b" / "urls.txt"
+    if winner_kind == "unreadable":
+        winner.parent.mkdir()
+        winner.write_text("https://example.org\n")
+
+    def _copyfile(src, dst):
+        raise PermissionError(13, "Permission denied")
+
+    def _unlink(self, missing_ok=False):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(tm_module.shutil, "copyfile", _copyfile)
+    monkeypatch.setattr(Path, "unlink", _unlink)
+    with caplog.at_level(logging.WARNING):
+        _stage(base_dir, [winner])
+
+    assert f"stale copy {stale} could not be removed" in caplog.text
+
+
 @pytest.fixture
 def make_manager(tmp_path, monkeypatch):
     """ScraperManager factory with a stubbed global config (DATA_PATH → tmp_path)."""

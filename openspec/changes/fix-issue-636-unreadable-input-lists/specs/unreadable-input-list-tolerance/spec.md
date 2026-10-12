@@ -23,6 +23,14 @@
 - **WHEN** a configured list is the file `<base_dir>/weblists/<name>` and copying it raises `OSError`
 - **THEN** the configured file still exists with its content
 
+#### Scenario: A losing same-named list is the staged copy
+- **WHEN** one configured list is the file `<base_dir>/weblists/<name>`, a later configured list with the same basename wins that name, and copying the winner raises `OSError`
+- **THEN** the losing configured file still exists with its content, because no configured path is removed as a stale copy
+
+#### Scenario: A stale copy that cleanup cannot remove
+- **WHEN** a skipped list's name has a copy in `<base_dir>/weblists` from an earlier deployment, and removing that copy fails
+- **THEN** a WARNING record names the stale copy's path, because the runtime ingests that copy in place of the skipped list
+
 #### Scenario: A stale copy under a missing list's name
 - **WHEN** `<base_dir>/weblists/urls.txt` is left from an earlier deployment, and the only configured list named `urls.txt` is missing
 - **THEN** no file named `urls.txt` is present in `<base_dir>/weblists`, as on the copy-error path
