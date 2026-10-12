@@ -253,6 +253,8 @@ def _build_request_local_pipeline(
         view._vector_tools = None
     if hasattr(view, "_vector_retrievers"):
         view._vector_retrievers = None
+    if hasattr(view, "_forced_vector_tool"):
+        view._forced_vector_tool = None
     view.refresh_agent(force=True)
     return view
 

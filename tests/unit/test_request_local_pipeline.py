@@ -43,6 +43,7 @@ class _StaticToolPipeline(BaseReActAgent):
         # Sentinel per-run collaborators a view must reset rather than inherit.
         self._vector_tools = ["shared-vector-tool"]
         self._vector_retrievers = ["shared-retriever"]
+        self._forced_vector_tool = "shared-forced-vector-tool"
 
     def _create_agent(self, tools, middleware):
         # Per-build sentinel instead of a real LangGraph agent, closing over the
@@ -146,6 +147,7 @@ def test_view_resets_per_run_state():
     assert view._active_memory is None
     assert view._vector_tools is None
     assert view._vector_retrievers is None
+    assert view._forced_vector_tool is None
     # ...while the source's own per-run state is untouched.
     assert source._active_memory is not None
 
