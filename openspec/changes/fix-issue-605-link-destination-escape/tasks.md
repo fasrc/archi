@@ -20,7 +20,7 @@
 
 ## 2. Docs
 
-- [ ] 2.1 In `docs/docs/configuration.md`, add one bullet after the "A promoted block
+- [x] 2.1 In `docs/docs/configuration.md`, add one bullet after the "A promoted block
       leaves its inline ancestors." bullet: a link whose target has a space or an
       unbalanced parenthesis is written as `[text](<target>)` so the target survives
       (issue #605); other links convert as before; like every item in this list, it
