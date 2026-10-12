@@ -58,9 +58,18 @@ return 0
   runs at once and kills that `sleep`. Without this, a stopped watchdog leaves a `sleep`
   that holds the caller's stderr open (a `$( … 2>&1 )` caller then blocks for the full
   `FM_MAIL_TIMEOUT`).
-- `fm_page` stops the watchdog only after `wait "$mpid"` returns, so the watchdog never
-  signals a reused pid while fm_page is alive; after the mail pid is reaped, the watchdog
-  is already stopped.
+- `fm_page` stops the watchdog right after `wait "$mpid"` returns. Between those two
+  builtins the mail pid is reaped while the watchdog still runs, so a watchdog that fires
+  in that window signals a pid that is free. The kernel hands out pids in sequence
+  (Linux, macOS), so a reuse there needs the pid counter to wrap in the microseconds
+  between two builtins, at one of the two moments the watchdog signals. The risk is
+  accepted (PR #687 review); removing it needs the watchdog to be the mail command's
+  parent, which needs `wait -n` (bash 4.3+, not the macOS bash 3.2 this path serves).
+- PR #687 review changes to the code above: the watchdog exits 3 once it has signalled
+  the mail command, and `fm_page` logs `page failed` on that status even when the mail
+  command exits 0; its TERM trap runs `kill $(jobs -p)` so a TERM that lands between
+  `sleep &` and `$!` leaves no `sleep`; its `wait`s are guarded (`|| true`); and a
+  fractional deadline is rounded up to whole seconds for a POSIX `sleep`.
 - A killed mail command gives `wait` a status above 128 → `page failed`.
 - `wait` and `kill` are bash builtins. Use local variable names that do not collide with
   the caller (`local` for all new names).

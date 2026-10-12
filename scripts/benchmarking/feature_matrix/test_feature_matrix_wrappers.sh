@@ -888,6 +888,26 @@ elapsed=$((SECONDS - T0))
 PATH="$T/notimeout-sleep" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-fail" FM_MAIL_TIMEOUT=20 "$(command -v bash)" -c 'set -euo pipefail; source "$1"; fm_page "probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
 [ "$RC" = 0 ] && grep -q "page failed" "$T/stderr" && ok "watchdog without timeout reports page failed on mail exit 1" || notok "watchdog no-timeout mail-fail (rc=$RC: $(cat "$T/stderr"))"
 
+# 87: notimeout+sleep PATH, hung mail that exits 0 on SIGTERM → still page failed (the deadline fired)
+cat > "$T/bin/mail-term-ok" <<'EOF2'
+#!/usr/bin/env bash
+sleep 30 & s=$!
+trap 'kill "$s"; exit 0' TERM
+wait "$s"
+EOF2
+chmod +x "$T/bin/mail-term-ok"
+T0=$SECONDS
+PATH="$T/notimeout-sleep" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-term-ok" FM_MAIL_TIMEOUT=1 "$(command -v bash)" -c 'set -euo pipefail; source "$1"; fm_page "probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
+[ "$RC" = 0 ] && [ $((SECONDS - T0)) -lt 15 ] && grep -q "page failed" "$T/stderr" && ok "watchdog reports a timed-out mail that exits 0 on SIGTERM" || notok "watchdog term-ok mail (rc=$RC after $((SECONDS - T0))s: $(cat "$T/stderr"))"
+
+# 88: notimeout PATH with an integer-only sleep (POSIX), fractional FM_MAIL_TIMEOUT, hung mail → bounded
+mkdir -p "$T/notimeout-intsleep"; for c in env bash cat; do ln -sf "$(command -v "$c")" "$T/notimeout-intsleep/$c"; done
+printf '#!%s\n[[ "$1" =~ ^[0-9]+$ ]] || exit 1\nexec %s "$1"\n' "$(command -v bash)" "$(command -v sleep)" > "$T/notimeout-intsleep/sleep"
+chmod +x "$T/notimeout-intsleep/sleep"
+T0=$SECONDS
+PATH="$T/notimeout-intsleep" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-hang" FM_MAIL_TIMEOUT=1.5 "$(command -v bash)" -c 'set -euo pipefail; source "$1"; fm_page "probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
+[ "$RC" = 0 ] && [ $((SECONDS - T0)) -lt 15 ] && grep -q "page failed" "$T/stderr" && ok "watchdog bounds a fractional timeout with an integer-only sleep" || notok "watchdog int-sleep fractional (rc=$RC after $((SECONDS - T0))s: $(cat "$T/stderr"))"
+
 # 63: a corpus drift during qa_arm.sh (reuse the drift-after-qa mechanism of case 42) pages once
 : > "$T/mail.calls"
 printf 'sha256:def\n' > "$T/fp"; printf 'sha256:def\n' > "$FM_OUT/corpus-pin-fm-00"; touch "$T/drift-after-qa"

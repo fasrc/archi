@@ -51,18 +51,25 @@ fm_page() { # $1 = subject (the "feature_matrix: " prefix is added here), $2 = b
     printf '%s\n' "$2" | timeout -k 5 "$secs" "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" \
       || printf 'feature_matrix: page failed\n' >&2
   elif command -v sleep >/dev/null 2>&1; then
-    local mpid wpid rc=0
+    # POSIX `sleep` takes whole seconds only, so a fractional deadline is rounded up.
+    local isecs="${secs%%.*}" mpid wpid rc=0 wrc=0
+    isecs=$((10#${isecs:-0}))
+    [[ "$secs" != *.*[1-9]* ]] || isecs=$((isecs + 1))
     printf '%s\n' "$2" | "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" &
     mpid=$!
-    ( spid=; trap 'kill "$spid" 2>/dev/null || true; exit 0' TERM
-      sleep "$secs" & spid=$!; wait "$spid"
-      kill -TERM "$mpid" 2>/dev/null || true
-      sleep 5 & spid=$!; wait "$spid"
-      kill -KILL "$mpid" 2>/dev/null || true ) &
+    # The watchdog exits 3 once it has signalled the mail command, so a mail command that
+    # handles SIGTERM and exits 0 still counts as a failure. Its TERM trap kills every
+    # child it has started (`jobs -p`), so a TERM that lands between `sleep &` and
+    # `wait` still leaves no `sleep` behind.
+    ( fired=0; trap 'kill $(jobs -p) 2>/dev/null || true; exit "$fired"' TERM
+      sleep "$isecs" & wait $! || true
+      fired=3; kill -TERM "$mpid" 2>/dev/null || true
+      sleep 5 & wait $! || true
+      kill -KILL "$mpid" 2>/dev/null || true; exit 3 ) &
     wpid=$!
     wait "$mpid" || rc=$?
-    kill -TERM "$wpid" 2>/dev/null || true; wait "$wpid" 2>/dev/null || true
-    [ "$rc" = 0 ] || printf 'feature_matrix: page failed\n' >&2
+    kill -TERM "$wpid" 2>/dev/null || true; wait "$wpid" 2>/dev/null || wrc=$?
+    [ "$rc" = 0 ] && [ "$wrc" != 3 ] || printf 'feature_matrix: page failed\n' >&2
   else
     printf '%s\n' "$2" | "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" \
       || printf 'feature_matrix: page failed\n' >&2
