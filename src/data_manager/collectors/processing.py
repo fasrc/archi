@@ -327,7 +327,11 @@ def _link_destination(href: str) -> str:
     than consuming the character after it), then backslash-escape ``<`` and
     ``>`` (forbidden bare inside an angle-bracket destination) and any ``&``
     that leads a character reference.
+    An ``href`` with a line ending is returned unchanged: no destination form
+    can hold one (design Non-Goals), so the angle-bracket form would not help.
     """
+    if "\n" in href or "\r" in href:
+        return href
     bare_ok = (
         not href.startswith("<")
         and not any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in href)
@@ -372,7 +376,13 @@ def _escape_link_label(label: str) -> str:
 
 
 def _autolink_needs_explicit_form(href: str) -> bool:
-    """True when ``href`` cannot sit inside CommonMark's ``<href>`` autolink form."""
+    """True when ``href`` cannot sit inside CommonMark's ``<href>`` autolink form.
+
+    False for a line ending: no link form can hold one, so the autolink stays as
+    markdownify writes it (design Non-Goals).
+    """
+    if "\n" in href or "\r" in href:
+        return False
     return any(
         ch.isspace() or ch in "<>" or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in href
     )

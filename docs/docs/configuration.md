@@ -797,7 +797,8 @@ data_manager:
   `[text](<target>)` so the target survives (issue #605) when its target has any of
   these: whitespace or a control character, an unbalanced parenthesis, a leading `<`,
   a `\` before punctuation or at the end, or an `&` that starts a character reference
-  (such as `&amp;`). Inside the angle brackets, `\`, `<`, `>`, and that `&` are
+  (such as `&amp;`). A target with a line ending is left as before, because no
+  Markdown link form can hold one. Inside the angle brackets, `\`, `<`, `>`, and that `&` are
   backslash-escaped, and a NUL is written as `%00`. A self-link (text equal to the
   target) that cannot be an autolink (whitespace, `<`, `>`, or a control character)
   becomes an explicit link whose text is the target with its Markdown characters

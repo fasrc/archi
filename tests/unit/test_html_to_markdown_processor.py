@@ -1097,6 +1097,18 @@ def test_link_destination_helper_nul_is_percent_encoded():
     assert _link_destination("https://x/a\x00b") == "<https://x/a%00b>"
 
 
+@pytest.mark.parametrize("eol", ["\n", "\r", "\r\n"])
+def test_link_destination_line_ending_href_left_as_markdownify_writes_it(eol):
+    # No CommonMark destination form can hold a line ending (design Non-Goals),
+    # so the angle-bracket form would not help; the output stays unchanged.
+    href = f"/a{eol}b"
+    assert _link_destination(href) == href
+    assert html_to_markdown(f'<p><a href="{href}">Docs</a></p>') == f"[Docs]({href})"
+    url = f"https://x/a{eol}b"
+    self_link = f'<p><a href="{url}">{url}</a></p>'
+    assert html_to_markdown(self_link) == library_markdownify(self_link).strip()
+
+
 def test_link_destination_control_char_autolink_becomes_explicit_link():
     assert (
         html_to_markdown('<p><a href="/a\x01b">/a\x01b</a></p>')
