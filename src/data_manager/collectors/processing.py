@@ -319,8 +319,9 @@ def _link_destination(href: str) -> str:
     A bare destination cannot start with ``<``, hold whitespace or a control
     character, or have parentheses that don't balance. A DOM ``href`` has no
     escapes of its own, so a bare destination also cannot hold a ``\\`` before
-    ASCII punctuation or a ``&`` that leads a character reference: a CommonMark
-    reader would consume the backslash or decode the reference. When ``href``
+    ASCII punctuation or at its end (where it would escape the link's closing
+    ``)``), or a ``&`` that leads a character reference: a CommonMark reader
+    would consume the backslash or decode the reference. When ``href``
     violates any of these rules, wrap it in angle brackets: double every literal
     backslash first (so a reader's own backslash-unescaping recovers it rather
     than consuming the character after it), then backslash-escape ``<`` and
@@ -332,6 +333,8 @@ def _link_destination(href: str) -> str:
         and not any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in href)
         and not _ESCAPED_PUNCT.search(href)
         and not _ENTITY_LEAD.search(href)
+        # A trailing backslash would escape the link's closing ``)``.
+        and not href.endswith("\\")
     )
     if bare_ok:
         depth = 0

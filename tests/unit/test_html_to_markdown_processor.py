@@ -1054,6 +1054,15 @@ def test_link_destination_helper_backslash_before_letter_stays_bare():
     assert _link_destination("/a\\b") == "/a\\b"
 
 
+def test_link_destination_helper_trailing_backslash_forces_angle_form():
+    # Bare, the trailing backslash would escape the closing ``)`` of the link.
+    assert _link_destination("/x\\") == "</x\\\\>"
+
+
+def test_link_destination_trailing_backslash_href_becomes_angle_form():
+    assert html_to_markdown('<p><a href="/x\\">Docs</a></p>') == "[Docs](</x\\\\>)"
+
+
 def test_link_destination_helper_entity_lead_forces_angle_form():
     assert _link_destination("/a&amp;b") == "</a\\&amp;b>"
 
