@@ -1294,9 +1294,15 @@ class TemplateManager:
             # tolerates a missing input list by warning and skipping, and a path
             # that is not a regular file is no more usable than an absent one.
             if os.path.isfile(input_list):
-                shutil.copyfile(
-                    input_list, weblists_path / os.path.basename(input_list)
-                )
+                try:
+                    shutil.copyfile(
+                        input_list, weblists_path / os.path.basename(input_list)
+                    )
+                except OSError as exc:
+                    logger.warning(
+                        f"Input list {input_list} could not be copied, skipping: {exc}"
+                    )
+                    continue
                 logger.debug(f"Copied input list {input_list}")
             else:
                 logger.warning(
