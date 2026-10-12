@@ -249,14 +249,31 @@ def test_staging_missing_winner_removes_a_stale_copy(tmp_path):
     weblists = base_dir / "weblists"
     weblists.mkdir(parents=True)
     (weblists / "urls.txt").write_text("https://old.example\n")
+    missing = tmp_path / "b" / "urls.txt"
+
+    _stage(base_dir, [missing])
+
+    assert list(weblists.iterdir()) == []
+
+
+@pytest.mark.parametrize("later_kind", ["missing", "directory"])
+def test_staging_winner_is_the_last_regular_file(tmp_path, later_kind):
+    """A later same-named path that is not a regular file does not win the
+    name: source inference (``ConfigurationManager._staged_input_lists``)
+    picks the last regular file, so staging must stage it (PR #689 review)."""
+    base_dir = tmp_path / "deploy"
+    base_dir.mkdir()
     first = tmp_path / "a" / "urls.txt"
     first.parent.mkdir()
     first.write_text("https://example.org\n")
-    missing = tmp_path / "b" / "urls.txt"
+    later = tmp_path / "b" / "urls.txt"
+    if later_kind == "directory":
+        later.mkdir(parents=True)
 
-    _stage(base_dir, [first, missing])
+    _stage(base_dir, [first, later])
 
-    assert list(weblists.iterdir()) == []
+    staged = base_dir / "weblists" / "urls.txt"
+    assert staged.read_text() == "https://example.org\n"
 
 
 @pytest.fixture

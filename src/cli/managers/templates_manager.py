@@ -1295,13 +1295,16 @@ class TemplateManager:
         if not input_lists:
             return
 
-        # A later list with the same basename wins its name in weblists (source
-        # inference treats it as the staged one), so an earlier one is never
-        # copied: a failed winner then cannot leave the loser staged (PR #689 review).
-        winners = {os.path.basename(p): p for p in input_lists}
+        # The last regular file with a given basename wins its name in weblists,
+        # as in source inference (ConfigurationManager._staged_input_lists), so
+        # any other same-named path is never copied and never cleans up: a failed
+        # winner cannot leave a loser staged, and a later missing path cannot
+        # remove the winner's copy (PR #689 review).
+        winners = {os.path.basename(p): p for p in input_lists if os.path.isfile(p)}
         for input_list in input_lists:
-            if winners[os.path.basename(input_list)] != input_list:
-                logger.debug(f"Input list {input_list} is overridden by a later list")
+            winner = winners.get(os.path.basename(input_list), input_list)
+            if winner != input_list:
+                logger.debug(f"Input list {input_list} is overridden by {winner}")
                 continue
             # isfile, not exists: a directory satisfies exists() and then makes
             # shutil.copyfile raise IsADirectoryError here — inside

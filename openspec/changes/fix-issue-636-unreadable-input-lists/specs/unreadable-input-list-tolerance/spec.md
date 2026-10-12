@@ -24,8 +24,12 @@
 - **THEN** the configured file still exists with its content
 
 #### Scenario: A stale copy under a missing list's name
-- **WHEN** `<base_dir>/weblists/urls.txt` is left from an earlier deployment, and the configured list that owns the name `urls.txt` is missing
+- **WHEN** `<base_dir>/weblists/urls.txt` is left from an earlier deployment, and the only configured list named `urls.txt` is missing
 - **THEN** no file named `urls.txt` is present in `<base_dir>/weblists`, as on the copy-error path
+
+#### Scenario: A later same-named path is not a regular file
+- **WHEN** two configured lists share a basename, the lexically earlier one is a readable file, and the later one is missing or a directory
+- **THEN** the earlier list is staged under that basename, because source inference (`ConfigurationManager._staged_input_lists`) picks the last regular file
 
 ### Requirement: The runtime reader skips an input list it cannot read
 `ScraperManager._collect_urls_from_lists` SHALL log a WARNING that contains the staged path, set `_input_lists_complete` to `False`, and continue with the next list when reading a staged input list raises `OSError` or `UnicodeDecodeError`; it SHALL NOT raise.
