@@ -167,6 +167,7 @@ classification, only one live robustness gate was left, too thin for its own rel
 | [#371](https://github.com/fasrc/archi/issues/371) guarantee the evaluations `agent_config_path` exists in the container at create time | Gates #320 alongside #326/#327/#330. An accepted `agent_config_path` is validated on the host and never proven present inside the chatbot container, so an enabled console registers and then fails every run on a missing file. #81's fourth non-negotiable is an automated eval gate, and this is its operator surface | M |
 | [#389](https://github.com/fasrc/archi/issues/389) refuse a deployment whose service templates pin the same base at different references | `base_reference` (`base_image_preflight.py:123-135`) returns the **first** matching reference and stops, so two templates naming one `a2rchi-*-base` at different refs let the preflight probe whichever sorts first and report the deployment ready — before `archi create --force` tears anything down. PR #391 is open, not merged: the guard is not on `dev` | M |
 | [#347](https://github.com/fasrc/archi/issues/347) literal `</think>` in an answer truncates it (UX) | Enters by the UX override, not this track. Moved from `v2026.09.0` by operator decision (2026-10-09) so that release can ship. `base_react.py:292-301` keys the orphan-tag rule on literal characters, so an answer that quotes the tag is truncated to what follows it, on every provider; the balanced-pair pass (`:281-286`) also deletes a quoted `<think>…</think>` pair. Measured on `origin/dev` `9cb61f0c`. The issue's second shape (a mid-stream leak from the #122 gate's latch) needs `enable_thinking: true`, which no deployment sets. Loop 1 first needs two decisions recorded on the issue: split the second shape out, and whether the #84 "no tag in visible content" requirement can be narrowed to "outside a closed code span or fence" | M |
+| [#671](https://github.com/fasrc/archi/issues/671) build the rebuilt knowledge base in new tables, then cut over (UX) | Enters by operator decision (2026-10-12) under the UX override: "silently stale knowledge base" is a named override, and this is a silently partial one. `reset_collection` defaults to `true` (`base-config.yaml:359`). Each full rebuild runs `TRUNCATE TABLE document_chunks CASCADE` (`manager.py:241`), then `VACUUM FULL` (`:263`), which also blocks chat reads. The rebuild commits every 25 files (`:581`), so chat answers from a corpus that grows from 0 to full, with no notice. Measured on dev: about 65 min for 1174 documents and 7105 chunks after every redeploy. A change of embedding dimension has no safe path except `nuke.sh`. This is the full-rebuild path, not the incremental re-ingest that Method excludes. The approved design is [the cutover spec](https://github.com/fasrc/archi/blob/dev/docs/superpowers/specs/2026-10-10-vector-store-rebuild-cutover-design.md). November, not October, by operator choice: the work is L, and October has 19 days and 5 open gates | L |
 
 ---
 
@@ -373,6 +374,15 @@ measurable difference rather than a direction. It is blocked by #279 and #213,
 both `v2026.09.0`: invalid JSON artifacts with inflated scored counts, and an
 unlocked bank drifting under a multi-day campaign, each turn a cross-arm
 comparison into a confident wrong answer.
+
+**2026-10-12:** #671 entered `v2026.11.0` by operator decision, with an approved
+design ([cutover spec](https://github.com/fasrc/archi/blob/dev/docs/superpowers/specs/2026-10-10-vector-store-rebuild-cutover-design.md)).
+Before this decision, #671 had no milestone and no `parked` label, so it was one of the
+issues outside the invariant below. The design builds each full rebuild into new tables while
+chat reads the old tables. A gate (dimension, chunk ratio, failure ratio) then
+approves the new set, and one rename transaction makes it live. The chat read
+path does not change. Option (c) of #671, a retriever notice during a rebuild, is
+not necessary, because chat always reads a complete corpus.
 
 **The invariant:** every open issue carries exactly one of {a milestone, the `parked`
 label, the `evidence-trial` label}, so
