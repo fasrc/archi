@@ -1,0 +1,84 @@
+## Context
+
+`_ArchiMarkdownConverter.convert_a` (`src/data_manager/collectors/processing.py`) calls
+`super().convert_a`, which returns one of two shapes:
+
+- an autolink `<href>`, when the link text equals the `href` and there is no title;
+- an explicit link `prefix[text](href "title")suffix` for every other link.
+
+For the link that `_hoist_out_of_inline` keeps (attribute `_KEPT_LINK_ATTR`), the method
+already rewrites an autolink with no URI scheme to `[href](href)` (issue #430 and #604).
+
+CommonMark 0.31, section 6.3 ("link destination"): a bare destination has no ASCII
+space or control character, and its unescaped parentheses must be balanced. A
+destination in angle brackets `<...>` can hold spaces and any parentheses, but no line
+ending and no unescaped `<` or `>`. A backslash escapes `<` and `>`.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Every link that `html_to_markdown` writes parses back to its original `href`.
+- No change to the output for an `href` with no whitespace and balanced parentheses.
+
+**Non-Goals:**
+- No change to the link text or to the title part.
+- No re-conversion of documents already on disk.
+- No change for a line ending inside an `href`. HTML parsers keep it rarely, and no
+  CommonMark destination form can hold it. The output stays as `markdownify` writes it.
+
+## Decisions
+
+### D1: A pure helper decides the destination form
+
+Add `_link_destination(href: str) -> str` at module level, next to `_URI_SCHEME`. It
+returns `href` unchanged when the bare form is valid. Else it returns
+`"<" + href.replace("<", "\\<").replace(">", "\\>") + ">"`.
+
+The bare form is valid when the `href` has no whitespace character (`str.isspace`
+on each character, or an ASCII control character, code below 0x20 or 0x7F), and a scan of
+its parentheses never goes below depth 0 and ends at depth 0. A `(` or `)` after a
+backslash does not count, because CommonMark treats it as escaped.
+
+A pure helper is easy to test with exact strings and keeps `convert_a` small.
+
+Alternative: escape each unmatched parenthesis with a backslash. Rejected: the
+angle-bracket form is one rule for spaces and parentheses, and the issue's acceptance
+criteria use it.
+
+### D2: Rewrite the explicit-link output in place
+
+When `_link_destination(href) != href`, the explicit-link output contains
+`](` + `href` exactly once at the destination position. Replace that first occurrence of
+`"](" + href` with `"](" + _link_destination(href)`. The title part and the
+prefix and suffix whitespace stay as they are.
+
+Do not rebuild the link from parts. `markdownify` computes the text, title, prefix,
+and suffix, and a rebuild would copy that logic.
+
+### D3: An autolink that cannot hold its href becomes an explicit link
+
+CommonMark forbids whitespace, `<`, and `>` in an autolink. When `super().convert_a`
+returns `"<" + href + ">"` and the `href` has whitespace, `<`, or `>`, return
+`"[" + href + "](" + _link_destination(href) + ")"`. The text is the `href`, as in the
+autolink. Parentheses alone do not trigger this rule, because an autolink can hold them.
+
+### D4: The kept link uses the same helper
+
+Apply D2 and D3 to the result of the existing kept-link logic, at the end of
+`convert_a`. The kept link `[href](href)` is an explicit link, so D2 rewrites it, and
+`[/docs/foo)bar](</docs/foo)bar>)` is the result for the issue's fourth example. A
+prototype of D1 to D4 on `origin/dev` `0ed50a23` gave the exact output of every scenario
+in the spec delta.
+
+## Risks / Trade-offs
+
+- [Open PR #664 also edits `convert_a`] → The second PR to merge rebases. The two
+  changes touch different lines: #664 changes which autolinks become explicit links, and
+  this change changes how the destination is written.
+- [A pinned test output changes] → Run the full converter test file. Record any changed
+  pinned output in the PR body. No existing test is expected to change, because no
+  existing test `href` has a space or unbalanced parentheses.
+- [The first `](href` occurrence is in the link text, not the destination] → The text
+  comes before `](`, and the text cannot contain `](` + `href` followed by the
+  destination, because `markdownify` escapes `]` in the text. A test with an `href`
+  that also appears in the text covers this.
