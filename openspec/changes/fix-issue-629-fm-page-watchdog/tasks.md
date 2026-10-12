@@ -17,7 +17,7 @@
 
 ## 2. Publish
 
-- [ ] 2.1 Push the branch: `git push -u origin fix/issue-629-fm-page-watchdog`. Open the
+- [x] 2.1 Push the branch: `git push -u origin fix/issue-629-fm-page-watchdog`. Open the
       PR: `gh pr create --repo fasrc/archi --base dev` with `Closes #629` in the BODY (not
       the title). In the body, give the self-test pass count and the elapsed time of
       cases 83 and 84 before and after the fix. STOP at the open PR — do not merge.
