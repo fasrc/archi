@@ -87,6 +87,10 @@
 #       (no success line, non-zero exit) instead of reporting success with no pin
 #   81. a directory already at the pin path is refused by name before the ledger append
 #   82. the same directory, created after the ledger append, still fails the archive
+#   83. without `timeout`, watchdog cuts off a hung mail binary and reports "page failed"
+#   84. without `timeout`, watchdog kills a SIGTERM-immune hung mail binary and reports "page failed"
+#   85. without `timeout`, a fast mail command completes quickly with no leaked watchdog sleep
+#   86. without `timeout`, a mail binary that exits non-zero reports "page failed"
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -860,6 +864,29 @@ mkdir -p "$T/notimeout"; for c in env bash cat; do ln -sf "$(command -v "$c")" "
 : > "$T/mail.calls"
 PATH="$T/notimeout" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail" "$(command -v bash)" -c 'source "$1"; fm_page "stack fm-00 arm 00: probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
 [ "$RC" = 0 ] && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: probe ops@example.org" "$T/mail.calls" && ! grep -q "page failed" "$T/stderr" && ok "without timeout on PATH the page is still sent" || notok "no-timeout page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"
+
+# 83: notimeout+sleep PATH, hung mail → rc 0, page failed, under 15 s
+mkdir -p "$T/notimeout-sleep"; for c in env bash cat sleep; do ln -sf "$(command -v "$c")" "$T/notimeout-sleep/$c"; done
+: > "$T/mail.calls"
+T0=$SECONDS
+PATH="$T/notimeout-sleep" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-hang" FM_MAIL_TIMEOUT=1 "$(command -v bash)" -c 'set -euo pipefail; source "$1"; fm_page "probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
+[ "$RC" = 0 ] && [ $((SECONDS - T0)) -lt 15 ] && grep -q "page failed" "$T/stderr" && ok "watchdog without timeout cuts off hung mail" || notok "watchdog no-timeout hang (rc=$RC after $((SECONDS - T0))s: $(cat "$T/stderr"))"
+
+# 84: notimeout+sleep PATH, hung noterm mail → rc 0, page failed, under 15 s
+T0=$SECONDS
+PATH="$T/notimeout-sleep" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-hang-noterm" FM_MAIL_TIMEOUT=1 "$(command -v bash)" -c 'set -euo pipefail; source "$1"; fm_page "probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
+[ "$RC" = 0 ] && [ $((SECONDS - T0)) -lt 15 ] && grep -q "page failed" "$T/stderr" && ok "watchdog without timeout kills SIGTERM-immune mail" || notok "watchdog no-timeout hang-noterm (rc=$RC after $((SECONDS - T0))s: $(cat "$T/stderr"))"
+
+# 85: notimeout+sleep PATH, fast mail via pipe capture → rc 0, page sent, no page failed, under 10 s
+: > "$T/mail.calls"
+T0=$SECONDS
+out="$(PATH="$T/notimeout-sleep" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail" FM_MAIL_TIMEOUT=20 "$(command -v bash)" -c 'set -euo pipefail; source "$1"; fm_page "probe" "probe body"' _ "$HERE/lib.sh" 2>&1)" && RC=0 || RC=$?
+elapsed=$((SECONDS - T0))
+[ "$RC" = 0 ] && [ "$elapsed" -lt 10 ] && grep -q "ARGS: -s feature_matrix: probe" "$T/mail.calls" && ! printf '%s\n' "$out" | grep -q "page failed" && ok "watchdog no-timeout fast mail completes quickly (${elapsed}s)" || notok "watchdog no-timeout fast-mail (rc=$RC after ${elapsed}s: $out)"
+
+# 86: notimeout+sleep PATH, failing mail → rc 0, page failed on stderr
+PATH="$T/notimeout-sleep" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-fail" FM_MAIL_TIMEOUT=20 "$(command -v bash)" -c 'set -euo pipefail; source "$1"; fm_page "probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
+[ "$RC" = 0 ] && grep -q "page failed" "$T/stderr" && ok "watchdog without timeout reports page failed on mail exit 1" || notok "watchdog no-timeout mail-fail (rc=$RC: $(cat "$T/stderr"))"
 
 # 63: a corpus drift during qa_arm.sh (reuse the drift-after-qa mechanism of case 42) pages once
 : > "$T/mail.calls"

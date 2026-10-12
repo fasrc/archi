@@ -1,6 +1,6 @@
 ## 1. Watchdog bound without timeout (red tests and fix in one task)
 
-- [ ] 1.1 In `scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh`, add
+- [x] 1.1 In `scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh`, add
       cases 83, 84, 85 and 86 from design D3 directly AFTER case 70 (the
       "without timeout on PATH the page is still sent" block) and BEFORE case 63, NOT at
       the end of the file. Build `$T/notimeout-sleep` with symlinks to `env`, `bash`,

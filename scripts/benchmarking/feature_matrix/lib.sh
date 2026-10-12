@@ -38,17 +38,35 @@ fm_log() { printf '==> %s\n' "$*"; }
 # so it cannot trip `set -e`/`pipefail` in the wrapper that called it. A FM_MAIL that does
 # not return in FM_MAIL_TIMEOUT seconds gets SIGTERM, then SIGKILL 5 seconds later if it
 # ignores SIGTERM, and counts as a failure, so a hung MTA cannot keep an unattended wrapper
-# from its refusal exit. On a host without `timeout` the page is still sent, unbounded (a
-# missing bound must not drop the page).
+# from its refusal exit. On a host without `timeout` but with `sleep`, a watchdog process
+# provides the same deadline. When neither `timeout` nor `sleep` is available, the page is
+# sent unbounded (a missing bound must not drop the page).
 fm_page() { # $1 = subject (the "feature_matrix: " prefix is added here), $2 = body
   [ -n "$FM_PAGE_MAIL_TO" ] || return 0
-  local bound=() secs="$FM_MAIL_TIMEOUT"
+  local secs="$FM_MAIL_TIMEOUT"
   # `timeout 0` disables the bound and a non-duration makes `timeout` fail, so anything but
   # a positive number of seconds falls back to the default.
   [[ "$secs" =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)$ && "$secs" =~ [1-9] ]] || secs=60
-  command -v timeout >/dev/null 2>&1 && bound=(timeout -k 5 "$secs")
-  printf '%s\n' "$2" | ${bound[@]+"${bound[@]}"} "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" \
-    || printf 'feature_matrix: page failed\n' >&2
+  if command -v timeout >/dev/null 2>&1; then
+    printf '%s\n' "$2" | timeout -k 5 "$secs" "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" \
+      || printf 'feature_matrix: page failed\n' >&2
+  elif command -v sleep >/dev/null 2>&1; then
+    local mpid wpid rc=0
+    printf '%s\n' "$2" | "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" &
+    mpid=$!
+    ( spid=; trap 'kill "$spid" 2>/dev/null || true; exit 0' TERM
+      sleep "$secs" & spid=$!; wait "$spid"
+      kill -TERM "$mpid" 2>/dev/null || true
+      sleep 5 & spid=$!; wait "$spid"
+      kill -KILL "$mpid" 2>/dev/null || true ) &
+    wpid=$!
+    wait "$mpid" || rc=$?
+    kill -TERM "$wpid" 2>/dev/null || true; wait "$wpid" 2>/dev/null || true
+    [ "$rc" = 0 ] || printf 'feature_matrix: page failed\n' >&2
+  else
+    printf '%s\n' "$2" | "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" \
+      || printf 'feature_matrix: page failed\n' >&2
+  fi
   return 0
 }
 
