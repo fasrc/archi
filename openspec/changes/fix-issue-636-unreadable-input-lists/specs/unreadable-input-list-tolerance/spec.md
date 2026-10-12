@@ -33,6 +33,10 @@
 - **WHEN** a valid map exists, one configured list cannot be read, and a scheduled refresh expands the sitemap from the readable list
 - **THEN** the previous map is kept unchanged
 
+#### Scenario: A second full ingest with one list unreadable
+- **WHEN** `collect_all_from_config` built a valid map, one configured list cannot be read, and `collect_all_from_config` runs again on the same manager
+- **THEN** the previous map is kept unchanged, because the full ingest does not clear the map before the refresh when sitemap sources are present
+
 #### Scenario: No valid map yet
 - **WHEN** no valid map exists and a refresh runs with `_input_lists_complete` set to `False`
 - **THEN** `_sitemap_map_valid` stays `False`

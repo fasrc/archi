@@ -260,8 +260,11 @@ class ScraperManager:
         # order-preserving) before standard link collection. A below-floor /
         # over-cap SitemapExpansionError is intentionally NOT caught here: it
         # propagates out and fails the ingest rather than shipping a bad corpus.
-        self._sitemap_lastmod_map: Dict[str, str] = {}
-        if sitemap_urls:
+        if not sitemap_urls:
+            self._sitemap_lastmod_map: Dict[str, str] = {}
+        else:
+            # The refresh replaces the map itself, or keeps the previous one when it
+            # is incomplete, so it is not cleared here first (PR #689 review).
             # Dedup expanded pages against the NORMALIZED hand-list keys, not the
             # raw strings, so a hand-listed `/x/` and a sitemap-derived `/x` are the
             # same page. LinkScraper does not dedup across seeds, so without this a

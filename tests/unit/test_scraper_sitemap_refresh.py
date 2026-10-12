@@ -1239,6 +1239,25 @@ class TestMissingInputListDoesNotClearTheMap:
 
         assert manager._sitemap_lastmod_map == good_map
 
+    def test_partly_unreadable_lists_preserve_the_map_on_full_ingest(
+        self, refresh_harness, monkeypatch
+    ):
+        """The same holds when a second full ingest runs on the same manager:
+        it must not clear the map before the refresh decides to retain it."""
+        manager = refresh_harness["manager"]
+        persistence = refresh_harness["persistence"]
+
+        manager.collect_all_from_config(persistence)
+        good_map = dict(manager._sitemap_lastmod_map)
+        assert len(good_map) == 2, "precondition: map populated"
+
+        refresh_harness["set_expand_pairs"]([("https://x.example.edu/a", "2024-03-01")])
+        monkeypatch.setattr(manager, "_input_lists_complete", False, raising=False)
+
+        manager.collect_all_from_config(persistence)
+
+        assert manager._sitemap_lastmod_map == good_map
+
     def test_partly_unreadable_lists_do_not_latch_a_first_map(
         self, refresh_harness, monkeypatch
     ):
