@@ -41,11 +41,11 @@
 
 ## 4. Gate and PR
 
-- [ ] 4.1 Run `bash scripts/gate.sh` green (black, isort, `pytest tests/unit`, diff-cover ≥ 80 %),
+- [x] 4.1 Run `bash scripts/gate.sh` green (black, isort, `pytest tests/unit`, diff-cover ≥ 80 %),
       then commit with a short lowercase message and no attribution trailers.
-- [ ] 4.2 Push, open the PR against `fasrc/archi` `dev` with `Closes #681`, and include the
+- [x] 4.2 Push, open the PR against `fasrc/archi` `dev` with `Closes #681`, and include the
       reproduction, the build verification and the completeness diff. Post `@codex review`.
-- [ ] 4.3 Answer review findings in-thread; verify each against the code before acting.
+- [x] 4.3 Answer review findings in-thread; verify each against the code before acting.
 
 ## 5. Follow-ups (operator approval before filing)
 
