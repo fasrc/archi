@@ -306,6 +306,37 @@ _LINK_SHOWN_ATTR = "data-archi-link-shown"
 _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
+def _link_destination(href: str) -> str:
+    """Return ``href`` as a CommonMark 0.31 link destination (issue #605).
+
+    A bare destination cannot hold whitespace or a control character, and its
+    unescaped parentheses must balance; a ``\\``-escaped paren does not count
+    toward that balance, since CommonMark treats it as literal. When ``href``
+    violates either rule, wrap it in angle brackets and backslash-escape any
+    ``<`` or ``>`` inside, since an angle-bracket destination forbids both.
+    """
+    bare_ok = not any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in href)
+    if bare_ok:
+        depth = 0
+        escaped = False
+        for ch in href:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth < 0:
+                    bare_ok = False
+                    break
+        bare_ok = bare_ok and depth == 0
+    if bare_ok:
+        return href
+    return "<" + href.replace("<", "\\<").replace(">", "\\>") + ">"
+
+
 def _edge_text(br, *, forward: bool, stop_at) -> NavigableString | None:
     """Return the text node that logically neighbours ``br`` on one side (issue #408).
 
@@ -698,13 +729,26 @@ class _ArchiMarkdownConverter(MarkdownConverter):
         markdownify writes ``<href>`` when the text equals the ``href``, but a
         CommonMark autolink needs a URI scheme: ``</docs>`` reads as an HTML end
         tag. Only the link that ``_hoist_out_of_inline`` keeps is changed here;
-        other self-links convert as markdownify writes them (issue #604).
+        other self-links convert as markdownify writes them (issue #604). Every
+        link destination is then escaped so it round-trips through CommonMark
+        0.31 when its ``href`` has whitespace or unbalanced parentheses (issue
+        #605).
         """
         out = super().convert_a(el, text, parent_tags)
         href = el.get("href") or ""
-        if el.has_attr(_KEPT_LINK_ATTR) and out == f"<{href}>":
-            if not _URI_SCHEME.match(href):
-                return f"[{href}]({href})"
+        if (
+            el.has_attr(_KEPT_LINK_ATTR)
+            and out == f"<{href}>"
+            and not _URI_SCHEME.match(href)
+        ):
+            out = f"[{href}]({href})"
+        if out == f"<{href}>":
+            if any(ch.isspace() or ch in "<>" for ch in href):
+                return f"[{href}]({_link_destination(href)})"
+            return out
+        dest = _link_destination(href)
+        if dest != href:
+            out = out.replace("](" + href, "](" + dest, 1)
         return out
 
     def convert_list(self, el, text, parent_tags):

@@ -18,6 +18,7 @@ from src.data_manager.collectors.processing import (
     ResourcePipeline,
     _ArchiMarkdownConverter,
     _fence_language,
+    _link_destination,
     _markdownify,
     _nested_list_needs_break,
     _next_content_sibling,
@@ -962,6 +963,92 @@ def test_hoist_two_blocks_then_text_give_no_extra_link():
         )
         == "```\na\nb\n```\n\n```\nc\nd\n```\n\n[now](http://x)"
     )
+
+
+def test_link_destination_unmatched_close_paren_escapes():
+    assert (
+        html_to_markdown('<p><a href="/docs/foo)bar">Docs</a></p>')
+        == "[Docs](</docs/foo)bar>)"
+    )
+
+
+def test_link_destination_unmatched_open_paren_escapes():
+    assert (
+        html_to_markdown('<p><a href="/docs/foo(bar">Docs</a></p>')
+        == "[Docs](</docs/foo(bar>)"
+    )
+
+
+def test_link_destination_space_escapes():
+    assert (
+        html_to_markdown('<p><a href="https://x/a b">Docs</a></p>')
+        == "[Docs](<https://x/a b>)"
+    )
+
+
+def test_link_destination_angle_brackets_escape_inside_angle_destination():
+    assert (
+        html_to_markdown('<p><a href="/a b<c>">Docs</a></p>') == "[Docs](</a b\\<c\\>>)"
+    )
+
+
+def test_link_destination_title_kept_with_escaped_destination():
+    assert (
+        html_to_markdown('<p><a href="/a(b" title="T">Docs</a></p>')
+        == '[Docs](</a(b> "T")'
+    )
+
+
+def test_link_destination_autolink_with_space_becomes_explicit_link():
+    assert (
+        html_to_markdown('<p><a href="https://x/a b">https://x/a b</a></p>')
+        == "[https://x/a b](<https://x/a b>)"
+    )
+
+
+def test_link_destination_kept_link_around_hoisted_code_escapes():
+    assert (
+        html_to_markdown('<p><a href="/docs/foo)bar"><code>a<br>b</code></a></p>')
+        == "[/docs/foo)bar](</docs/foo)bar>)\n\n```\na\nb\n```"
+    )
+
+
+def test_link_destination_balanced_parens_guard_unchanged():
+    assert (
+        html_to_markdown('<p><a href="/w/Foo_(bar)">Foo</a></p>')
+        == "[Foo](/w/Foo_(bar))"
+    )
+
+
+def test_link_destination_plain_url_guard_unchanged():
+    assert (
+        html_to_markdown('<p><a href="https://x/y">Docs</a></p>')
+        == "[Docs](https://x/y)"
+    )
+
+
+def test_link_destination_helper_bare_valid_url_unchanged():
+    assert _link_destination("https://x/y") == "https://x/y"
+
+
+def test_link_destination_helper_space_escapes():
+    assert _link_destination("https://x/a b") == "<https://x/a b>"
+
+
+def test_link_destination_helper_tab_escapes():
+    assert _link_destination("https://x/a\tb") == "<https://x/a\tb>"
+
+
+def test_link_destination_helper_unbalanced_paren_escapes():
+    assert _link_destination("/docs/foo)bar") == "</docs/foo)bar>"
+
+
+def test_link_destination_helper_backslash_escaped_paren_stays_bare():
+    assert _link_destination("/a\\)b") == "/a\\)b"
+
+
+def test_link_destination_helper_empty_string_stays_bare():
+    assert _link_destination("") == ""
 
 
 def test_renders_link_text_stops_at_first_text(monkeypatch):
