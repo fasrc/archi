@@ -908,6 +908,13 @@ T0=$SECONDS
 PATH="$T/notimeout-intsleep" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-hang" FM_MAIL_TIMEOUT=1.5 "$(command -v bash)" -c 'set -euo pipefail; source "$1"; fm_page "probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
 [ "$RC" = 0 ] && [ $((SECONDS - T0)) -lt 15 ] && grep -q "page failed" "$T/stderr" && ok "watchdog bounds a fractional timeout with an integer-only sleep" || notok "watchdog int-sleep fractional (rc=$RC after $((SECONDS - T0))s: $(cat "$T/stderr"))"
 
+# 89: notimeout+sleep PATH, an FM_MAIL_TIMEOUT too large for bash arithmetic does not fire the watchdog at once
+printf '#!/usr/bin/env bash\nsleep 2\nexec "%s" "$@"\n' "$T/bin/mail" > "$T/bin/mail-slow"
+chmod +x "$T/bin/mail-slow"
+: > "$T/mail.calls"
+PATH="$T/notimeout-sleep" FM_PAGE_MAIL_TO=ops@example.org FM_MAIL="$T/bin/mail-slow" FM_MAIL_TIMEOUT=9223372036854775808 "$(command -v bash)" -c 'set -euo pipefail; source "$1"; fm_page "probe" "probe body"' _ "$HERE/lib.sh" 2>"$T/stderr" && RC=0 || RC=$?
+[ "$RC" = 0 ] && grep -q "ARGS: -s feature_matrix: probe" "$T/mail.calls" && ! grep -q "page failed" "$T/stderr" && ok "watchdog keeps an oversized FM_MAIL_TIMEOUT as a long deadline" || notok "watchdog oversized timeout (rc=$RC: $(cat "$T/stderr"))"
+
 # 63: a corpus drift during qa_arm.sh (reuse the drift-after-qa mechanism of case 42) pages once
 : > "$T/mail.calls"
 printf 'sha256:def\n' > "$T/fp"; printf 'sha256:def\n' > "$FM_OUT/corpus-pin-fm-00"; touch "$T/drift-after-qa"

@@ -69,7 +69,9 @@ return 0
   the mail command, and `fm_page` logs `page failed` on that status even when the mail
   command exits 0; its TERM trap runs `kill $(jobs -p)` so a TERM that lands between
   `sleep &` and `$!` leaves no `sleep`; its `wait`s are guarded (`|| true`); and a
-  fractional deadline is rounded up to whole seconds for a POSIX `sleep`.
+  fractional deadline is rounded up to whole seconds for a POSIX `sleep`. A deadline of
+  more than 9 integer digits is capped at 999999999 s, so bash arithmetic cannot wrap it
+  negative and fire the watchdog at once.
 - A killed mail command gives `wait` a status above 128 → `page failed`.
 - `wait` and `kill` are bash builtins. Use local variable names that do not collide with
   the caller (`local` for all new names).

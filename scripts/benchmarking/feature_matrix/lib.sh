@@ -51,9 +51,10 @@ fm_page() { # $1 = subject (the "feature_matrix: " prefix is added here), $2 = b
     printf '%s\n' "$2" | timeout -k 5 "$secs" "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" \
       || printf 'feature_matrix: page failed\n' >&2
   elif command -v sleep >/dev/null 2>&1; then
-    # POSIX `sleep` takes whole seconds only, so a fractional deadline is rounded up.
+    # POSIX `sleep` takes whole seconds only, so a fractional deadline is rounded up. More
+    # than 9 digits (over 31 years) is capped, so bash arithmetic cannot wrap it negative.
     local isecs="${secs%%.*}" mpid wpid rc=0 wrc=0
-    isecs=$((10#${isecs:-0}))
+    if [[ "$isecs" =~ ^0*([0-9]{0,9})$ ]]; then isecs=$((10#${BASH_REMATCH[1]:-0})); else isecs=999999999; fi
     [[ "$secs" != *.*[1-9]* ]] || isecs=$((isecs + 1))
     printf '%s\n' "$2" | "$FM_MAIL" -s "feature_matrix: $1" "$FM_PAGE_MAIL_TO" &
     mpid=$!
