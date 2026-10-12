@@ -307,6 +307,8 @@ _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 # Matches an ``&`` that a CommonMark reader would decode as the start of a
 # character reference (issue #605 review): ``&name;``, ``&#NNN;``, ``&#xHHH;``.
 _ENTITY_LEAD = re.compile(r"&(?=#[0-9]+;|#[xX][0-9A-Fa-f]+;|[A-Za-z][A-Za-z0-9]*;)")
+# Characters that are active inside CommonMark link text (issue #605 review).
+_LABEL_ACTIVE = re.compile(r"[\\\[\]<>`*_]")
 
 
 def _link_destination(href: str) -> str:
@@ -352,11 +354,15 @@ def _link_destination(href: str) -> str:
 def _escape_link_label(label: str) -> str:
     """Escape ``label`` for use as literal CommonMark link text (issue #605 review).
 
-    An unescaped ``\\``, ``[``, or ``]`` would either alter the parsed text or
-    end the label early, so this is only safe for text written byte-for-byte
-    from a non-Markdown source such as an ``href``.
+    A backslash, bracket, angle bracket, backtick, ``*``, ``_``, or a ``&`` that
+    leads a character reference would alter the parsed text (escape, end the
+    label, inline HTML, code span, emphasis, entity), so each is escaped. This is
+    only safe for text written byte-for-byte from a non-Markdown source such as
+    an ``href``.
     """
-    return label.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+    return _ENTITY_LEAD.sub(
+        lambda m: "\\" + m.group(0), _LABEL_ACTIVE.sub(r"\\\g<0>", label)
+    )
 
 
 def _autolink_needs_explicit_form(href: str) -> bool:
@@ -782,10 +788,15 @@ class _ArchiMarkdownConverter(MarkdownConverter):
             return out
         dest = _link_destination(href)
         if dest != href:
-            marker = "](" + href
+            # The outer destination is the one followed by the base converter's
+            # title part and the closing paren, so a link text or title that
+            # repeats ``](href`` is not mistaken for it.
+            title = el.get("title")
+            title_part = ' "%s"' % title.replace('"', r"\"") if title else ""
+            marker = "](" + href + title_part + ")"
             idx = out.rfind(marker)
             if idx != -1:
-                out = out[:idx] + "](" + dest + out[idx + len(marker) :]
+                out = out[:idx] + "](" + dest + out[idx + 2 + len(href) :]
         return out
 
     def convert_list(self, el, text, parent_tags):

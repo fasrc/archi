@@ -68,3 +68,11 @@ When the bare destination is not valid (the `href` starts with `<`, has whitespa
 #### Scenario: A link inside a code block is left untouched
 - **WHEN** `html_to_markdown('<pre><a href="https://x/a b">&lt;https://x/a b&gt;</a></pre>')` runs
 - **THEN** the result is the fenced block containing `<https://x/a b>`
+
+#### Scenario: A title that repeats the href
+- **WHEN** `html_to_markdown('<p><a href="/a b" title="x](/a b">Docs</a></p>')` runs
+- **THEN** the result is `[Docs](</a b> "x](/a b")`
+
+#### Scenario: An autolink label with Markdown syntax
+- **WHEN** `html_to_markdown('<p><a href="https://x/a `c` b">https://x/a `c` b</a></p>')` runs
+- **THEN** the result is ``[https://x/a \`c\` b](<https://x/a `c` b>)``

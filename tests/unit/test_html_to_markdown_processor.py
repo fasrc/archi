@@ -17,6 +17,7 @@ from src.data_manager.collectors.processing import (
     HtmlToMarkdownProcessor,
     ResourcePipeline,
     _ArchiMarkdownConverter,
+    _escape_link_label,
     _fence_language,
     _link_destination,
     _markdownify,
@@ -1097,6 +1098,38 @@ def test_link_destination_noformat_context_left_untouched():
         html_to_markdown('<pre><a href="https://x/a b">&lt;https://x/a b&gt;</a></pre>')
         == "```\n<https://x/a b>\n```"
     )
+
+
+def test_link_destination_title_repeating_href_escapes_outer_destination():
+    assert (
+        html_to_markdown('<p><a href="/a b" title="x](/a b">Docs</a></p>')
+        == '[Docs](</a b> "x](/a b")'
+    )
+
+
+def test_link_destination_autolink_label_escapes_inline_html():
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/a &lt;em&gt;x&lt;/em&gt; b">'
+            "https://x/a &lt;em&gt;x&lt;/em&gt; b</a></p>"
+        )
+        == "[https://x/a \\<em\\>x\\</em\\> b](<https://x/a \\<em\\>x\\</em\\> b>)"
+    )
+
+
+def test_link_destination_autolink_label_escapes_code_and_emphasis():
+    assert (
+        html_to_markdown('<p><a href="https://x/a `c` b">https://x/a `c` b</a></p>')
+        == "[https://x/a \\`c\\` b](<https://x/a `c` b>)"
+    )
+    assert (
+        html_to_markdown('<p><a href="https://x/a _u_ b">https://x/a _u_ b</a></p>')
+        == "[https://x/a \\_u\\_ b](<https://x/a _u_ b>)"
+    )
+
+
+def test_link_label_helper_escapes_entity_lead_only():
+    assert _escape_link_label("a &amp; b & c*") == "a \\&amp; b & c\\*"
 
 
 def test_renders_link_text_stops_at_first_text(monkeypatch):
