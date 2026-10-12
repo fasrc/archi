@@ -679,7 +679,14 @@ class ScraperManager:
                 self._input_lists_complete = False
                 continue
 
-            urls.extend(self._extract_urls_from_file(list_path))
+            try:
+                urls.extend(self._extract_urls_from_file(list_path))
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.warning(
+                    f"Input list {list_path} could not be read, skipping: {exc}"
+                )
+                self._input_lists_complete = False
+                continue
 
         return urls
 

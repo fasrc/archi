@@ -30,6 +30,15 @@ https://example.com/page1
 https://example.com/page2
 ```
 
+A list that is missing, is not a regular file, or cannot be read (for example,
+permission denied, or bytes that are not UTF-8) does not stop `archi create` or a
+scrape. Archi logs a WARNING that names the list, skips that list, and continues
+with the other lists. A successful deploy therefore does not prove that every
+configured list was ingested: look for `could not be copied`, `could not be read`,
+`not a readable file`, or `not found` in the deploy and data-manager logs. While a list is
+skipped, a scheduled refresh keeps the sitemap pages it already knows instead of
+treating them as removed.
+
 ### Customizing the Scraper
 
 You can tune HTTP scraping behaviour:

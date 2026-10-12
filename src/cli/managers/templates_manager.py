@@ -1294,11 +1294,15 @@ class TemplateManager:
             # tolerates a missing input list by warning and skipping, and a path
             # that is not a regular file is no more usable than an absent one.
             if os.path.isfile(input_list):
+                # Copy to a side file and rename it into place, so a copy that
+                # fails part-way never leaves a truncated list for the runtime.
+                dest = weblists_path / os.path.basename(input_list)
+                partial = dest.with_name(f".{dest.name}.partial")
                 try:
-                    shutil.copyfile(
-                        input_list, weblists_path / os.path.basename(input_list)
-                    )
+                    shutil.copyfile(input_list, partial)
+                    os.replace(partial, dest)
                 except OSError as exc:
+                    partial.unlink(missing_ok=True)
                     logger.warning(
                         f"Input list {input_list} could not be copied, skipping: {exc}"
                     )
