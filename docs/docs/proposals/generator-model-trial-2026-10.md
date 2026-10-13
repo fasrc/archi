@@ -64,7 +64,7 @@ The further candidates screened in §3 are 15–18 GB each.
 | Released | 2024-12-06 (still Meta's newest 70B; Llama 4 has no dense 70B) | 2026-04-02 | 2024-08 |
 | Shape | dense, 70B, 128k context | dense, 30.7B, text + image, 256k context | dense, 104B, 128k context |
 | Cache per token (Qwen3.6 ≈ 20 KiB) | 320 KiB | ~80 KiB on 10 full layers (40 KiB if keys and values are stored once) + ~0.8 GiB fixed per request for the 1,024-token sliding layers | 256 KiB |
-| 4-bit checkpoint | `clowman/Llama-3.3-70B-Instruct-GPTQ-Int4` or `shuyuej/Llama-3.3-70B-Instruct-GPTQ`, 39.8 GB, GPTQ with act-order | `google/gemma-4-31B-it-qat-w4a16-ct`, 23.3 GB, compressed-tensors (Google's own quantization-aware release) | `nejumi/c4ai-command-r-plus-08-2024-GPTQ-Int4-calib-ja-1k`, 58.6 GB (calibrated on Japanese text) |
+| 4-bit checkpoint | `RedHatAI/Llama-3.3-70B-Instruct-quantized.w4a16` — Red Hat (US), compressed-tensors, symmetric, group 128, ~39.5 GB (verified 2026-10-13); community GPTQ alternatives `clowman/…-GPTQ-Int4`, `shuyuej/…-GPTQ`, 39.8 GB | `google/gemma-4-31B-it-qat-w4a16-ct`, 23.3 GB, compressed-tensors (Google's own quantization-aware release) | `nejumi/c4ai-command-r-plus-08-2024-GPTQ-Int4-calib-ja-1k`, 58.6 GB (calibrated on Japanese text) |
 | Runs on the current image | **yes** — model code and head size 128 supported | **no** — no model code; head size 512 not supported by the V100 flash-attention backend | model code yes; **does not fit two GPUs** |
 | Tool parser in the image | `llama3_json` (no parallel calls; vLLM warns of malformed arguments). Its recommended chat template is not in the image — bind `examples/tool_chat_template_llama3.1_json.jinja` from the vLLM repo. | `gemma4` | none for this model's format |
 
@@ -152,7 +152,7 @@ per candidate, so only the two best candidates out of Phase 1 reach it.
 
 | # | Check | Pass |
 |---|---|---|
-| 0.1 | Weights downloaded to the HF cache | `quantization_config.quant_method` in `config.json` read *before* download and is one the image runs on V100 (`gptq`, `awq`, `compressed-tensors`); size recorded; `df -h /scratch` ≥ 10 GB left |
+| 0.1 | Weights downloaded to the HF cache | provenance chosen per §9 item 6 and recorded; `quantization_config.quant_method` in `config.json` read *before* download and is one the image runs on V100 (`gptq`, `awq`, `compressed-tensors`); size recorded; `df -h /scratch` ≥ 10 GB left |
 | 0.2 | Server starts at the 0.88 memory cap | `/v1/models` lists the model with `max_model_len` 32768 |
 | 0.3 | Every checkpoint weight loaded | `grep -c "not found in params_dict, skip loading"` = 0 (the Qwen3.8 silent-garbage tell) |
 | 0.4 | Memory headroom at idle | ≥ 4 GiB free per GPU in `nvidia-smi` (the margin that fixed the June OOM) |
@@ -168,11 +168,12 @@ per candidate, so only the two best candidates out of Phase 1 reach it.
 | 1.1 | `chat_template_kwargs: {enable_thinking: false}` | accepted (no HTTP 400), no thinking text in the reply |
 | 1.2 | Forced first search: archi pre-fills a `search_vectorstore_hybrid` call and its result into the history | the model's chat template renders the tool-call and tool-result messages; the reply cites the result |
 | 1.3 | Model-initiated search, streamed | the tool parser returns a well-formed call in streaming mode |
-| 1.4 | 30-question pilot: a fixed 30-row copy of the bank (set by `queries_path` in a copy of the arm config) through the benchmark container — the same 30 for every candidate and for Qwen3.6 | clears the §6 floor on speed, give-ups (scaled: ≤ 3 of 30) and malformed searches, with some margin. **Cut:** if more than two candidates pass, only the two with the best `answer_correctness` on these 30 go to Phase 2 (~$10 and ~1 h per pilot) |
+| 1.4 | 30-question pilot (bring up the Phase 2 stack first — the pilot runs in its benchmark container and shares its corpus): a fixed 30-row copy of the bank (set by `queries_path` in a copy of the arm config) through the benchmark container — the same 30 for every candidate and for Qwen3.6 | clears the §6 floor on speed, give-ups (scaled: ≤ 3 of 30) and malformed searches, with some margin. **Cut:** if more than two candidates pass, only the two with the best `answer_correctness` on these 30 go to Phase 2 (~$10 and ~1 h per pilot) |
 
 ### Phase 2 — same-corpus golden-set A/B
 
-Reuse the Qwen3.8 runner verbatim (`/scratch/a2rchi/bench-runs/ragas-qwen38/driver.sh`):
+Adapt the Qwen3.8 runner (`/scratch/a2rchi/bench-runs/ragas-qwen38/driver.sh`; its run
+order, stack path and arm YAML names are hard-coded):
 one benchmark stack whose data manager never restarts, the benchmark container recreated
 per run with `docker compose … up --no-deps`, so every run sees one corpus.
 
@@ -181,8 +182,8 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
   its config, or pay one fresh ~83-minute ingest. Record the corpus fingerprint and chunk
   count before the first run and after the last; a mismatch voids the comparison.
 - **Order: Qwen3.6, A, A, B, B, Qwen3.6** (A and B are the two candidates out of
-  Phase 1; with one, Qwen3.6, A, A, Qwen3.6). Each finalist is served on its own, the way
-  it would be deployed, so the server is swapped once between A and B. Fresh Qwen3.6 runs at both ends show
+  Phase 1; with one, Qwen3.6, A, A, Qwen3.6). Each finalist is served the way it would be
+  deployed; if A and B cannot both be up at once, the server is swapped between them. Fresh Qwen3.6 runs at both ends show
   drift in corpus, judge or live load as a gap between them instead of letting it hide in
   the comparison. (The Qwen3.8 runs reused Qwen3.6 runs from earlier that day and had to
   list that as a weakness.)
@@ -295,3 +296,12 @@ and is billed per token, so it is a decision, not a default.
    Community License are routine; the NVIDIA Nemotron Open Model License (Nemotron 3
    Nano) adds an attribution notice and terminates if the user brings an IP suit against
    NVIDIA.
+6. **Who made the 4-bit weights.** The policy is about who made the model, and a 4-bit
+   checkpoint is the developer's weights re-packaged by whoever quantized them. Every
+   checkpoint in §3 except Google's and Red Hat's comes from an individual Hugging Face
+   account. Production's Qwen3.6 file (`palmfuture/…`) is one too, so this is not a new
+   exposure, but it should be a decision. Options per candidate: a vendor-published 4-bit
+   where one exists (Red Hat's Llama 3.3); otherwise quantize in-house from the developer's
+   official repo with llm-compressor or GPTQModel on GPUs 0–1 (estimate: hours for a
+   24–32B model, longer for 70B); or accept the community checkpoint. Record the choice in
+   the ledger.
