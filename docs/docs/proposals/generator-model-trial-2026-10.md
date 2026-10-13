@@ -1,32 +1,38 @@
-# Answering-model replacement trial: Qwen3.6 → Llama 3.3 70B / Gemma 4 31B / Command R+ (2026-10)
+# Answering-model replacement: moving archi off Qwen3.6 (2026-10)
 
-**Status:** draft for operator review, 2026-10-13. Nothing has run. The thresholds in
-[§6](#6-decision-rule-fixed-before-the-first-phase-2-run) are proposals; they are frozen
-into a timestamped pre-registration before the first Phase 2 run, as the Qwen3.8
-comparison did (`/scratch/a2rchi/bench-runs/ragas-qwen38/PREREGISTRATION.md`).
+**Status:** draft for operator review, 2026-10-13. Nothing has run. The decision rule is
+set (§6); its usability-floor numbers are proposals until the operator confirms them, and
+are then frozen into a timestamped pre-registration before the first Phase 2 run, as the
+Qwen3.8 comparison did (`/scratch/a2rchi/bench-runs/ragas-qwen38/PREREGISTRATION.md`).
 
 **Feature under test:** the answering model,
 `services.chat_app.providers.*.default_model` / `services.benchmarking.model`:
-`palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4` → one of the three candidates below.
+`palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4` → the best allowed candidate (§3).
 Everything else — code, prompt, corpus, judge, sampling, context window — is held fixed.
 
-## 1. The question, and the bar a candidate must clear
+## 1. The question, and how the winner is chosen
 
-**Question.** Can a model from a US or Canadian developer replace Qwen3.6 as archi's
-answering model on the V100 host without making answers measurably worse, too slow for
-chat, or less reliable at calling the search tool?
+**Policy (operator, 2026-10-13):** archi must move off Qwen, and the replacement **cannot
+be a Chinese-developed model.** Qwen3.6 leaves whatever it scores, so the question is not
+"is a candidate as good as Qwen3.6" but:
 
-**Assumed motive: provenance, not quality.** The three candidates are grouped by country
-of origin, so this plan assumes the goal is to stop running a Chinese-developed model.
-That sets a **non-inferiority** bar: a candidate passes if it is *not measurably worse*.
-If the goal is instead *better answers*, the bar becomes **superiority** (the candidate
-must be measurably better), which needs a different primary test — both are written out
-in §6, and the operator picks one before Phase 2.
+**Which allowed open-weights model is the best answering model archi can run on the V100
+host?** — the best of what is allowed, as long as it is good enough to ship.
 
-**Precedent.** The 2026-10-12 Qwen3.8 comparison set the pattern this plan follows and
-the outcome it must beat: same quality, about 2× slower (p90 3–4×), 3× as many give-up
-answers → **no switch**. A candidate that only matches Qwen3.6 on quality needs to stay
-close on speed and reliability too.
+That gives a two-part rule (§6):
+
+1. **Usability floor.** A candidate must be fast and reliable enough for chat — absolute
+   numbers, not "within X of Qwen3.6", because the move is not optional.
+2. **Ranking.** Among candidates that clear the floor, the one with the best answers wins.
+
+**Qwen3.6 stays in the benchmark as a reference, not a gate.** It is the only yardstick on
+the same document set and it detects drift between runs. Each candidate's score minus
+Qwen3.6's is reported as **the cost of the policy**: how much answer quality the move
+gives up, if any.
+
+**Precedent.** The 2026-10-12 Qwen3.8 comparison supplies the method this plan reuses
+(same document set, two runs per model, a plan fixed before the first run). Qwen3.8 itself
+is out under the policy.
 
 ## 2. What the candidate descriptions get wrong on this host
 
@@ -46,9 +52,9 @@ transformers 4.57.6). That image is a hand-built Volta port with no build recipe
 | Command R+ as a current model | The newest version is 08-2024, superseded by Command A (03-2025, 111B, same license) and Command A+ (05-2026, Apache 2.0, but ~132 GB at 4-bit, more than all four cards). Its license is CC-BY-NC 4.0, a "research release": internal university use is plausibly non-commercial, but that needs a legal reading. | Cohere model cards |
 | "AWQ or GPTQ" | Both run on V100 in this fork (GPTQ from compute capability 6.0; AWQ from 7.0 through a fork-specific kernel). Marlin kernels (7.5+) and MXFP4 (8.0+) do not. Repo names are unreliable: several "AWQ"/"GPTQ" repos are really compressed-tensors, so read `quantization_config.quant_method` in `config.json` before downloading. | `get_min_capability()` in the image's quantization modules |
 
-Disk: `/scratch` has 34 GB free. A 4-bit Llama 3.3 70B is ~40 GB; deleting the Qwen3.8
-weights (20 GB, `models--palmfuture--Qwen3.8-27B-GPTQ-Int4`) brings that to ~54 GB. A
-4-bit Command R+ (~58 GB) does not fit even then.
+Disk: the Qwen3.8 weights (20 GB) were deleted on 2026-10-13, leaving 54 GB free on
+`/scratch` — room for a 4-bit Llama 3.3 70B (~40 GB) but not a 4-bit Command R+ (~58 GB).
+Each further candidate needs its predecessor's weights deleted first unless it is small.
 
 ## 3. Candidates and order
 
@@ -62,20 +68,41 @@ weights (20 GB, `models--palmfuture--Qwen3.8-27B-GPTQ-Int4`) brings that to ~54 
 | Runs on the current image | **yes** — model code and head size 128 supported | **no** — no model code; head size 512 not supported by the V100 flash-attention backend | model code yes; **does not fit two GPUs** |
 | Tool parser in the image | `llama3_json` (no parallel calls; vLLM warns of malformed arguments). Its recommended chat template is not in the image — bind `examples/tool_chat_template_llama3.1_json.jinja` from the vLLM repo. | `gemma4` | none for this model's format |
 
-**Order:** Llama 3.3 70B goes first — it is the only candidate that runs on the existing
-image and fits the two free GPUs. Gemma 4 and Command R+ each need an operator decision
-before Phase 0 can start (§9).
+**Order:** Llama 3.3 70B goes first — of the three, it is the only one that runs on the
+existing image and fits the two free GPUs. Gemma 4 and Command R+ each need an operator
+decision before Phase 0 can start (§9).
 
 **Worth adding if Gemma 4 is ported:** `google/gemma-4-26B-A4B-it` — Google, Apache 2.0,
 a mixture-of-experts model with 128 experts, 8 used per token (~4B parameters per token,
 like Qwen3.6). It is the only US-developed option here likely to match Qwen3.6's speed,
 and it shares the 31B's attention layout (head size 512 included), so one port covers most of both; its mixture-of-experts layers are additional work.
 
+### Screening queue — verification pending
+
+"Best allowed" means the original three are a starting list, not the field. The image
+has model code for these allowed families too. **Model code alone does not make a
+candidate** (the image ships a Gemma 4 tool parser and still cannot run Gemma 4), so
+each enters the table above only after the same checks: exists at this size, license,
+a 4-bit checkpoint in a format V100 loads (`quant_method`, not the repo name), a tool
+parser in the image, attention head size ≤ 256, fits GPUs 0–1 at the 0.88 cap.
+
+| Model | Developer | Why it is in the queue |
+|---|---|---|
+| IBM Granite 4.0 H-Small | IBM (US) | mixture-of-experts, ~9B parameters per token; `GraniteMoeHybridForCausalLM` and the `granite4` parser are in the image; its Mamba layers are unverified on V100 |
+| NVIDIA Nemotron 3 Nano 30B-A3B | NVIDIA (US) | mixture-of-experts, ~3B parameters per token — the closest speed match to Qwen3.6; `NemotronHForCausalLM` is in the image, no Nemotron-named parser is |
+| AI2 OLMo 3 32B Instruct | AI2 (US) | dense, Apache 2.0, fully open; `Olmo3ForCausalLM` and the `olmo3` parser are in the image |
+| Mistral Small 3.2 24B Instruct | Mistral AI (France) | dense 24B; Mistral code and the `mistral` parser are in the image |
+| OpenAI gpt-oss-20b | OpenAI (US) | ~3.6B parameters per token, but ships as MXFP4, which V100 cannot run; stays only if a V100-loadable version exists and the image's attention handles its attention sinks |
+
+Not queued: Microsoft Phi-4 (14B; weak at tool calling for its size), Llama 4 Scout (109B;
+~58 GB at 4-bit, the same fit problem as Command R+). Excluded by policy although the image
+supports them: DeepSeek, GLM, Kimi, MiniMax, ERNIE, Seed.
+
 ## 4. Test bed
 
 | Factor | Value |
 |---|---|
-| Candidate server | GPUs 0–1, port **8002**, `--tensor-parallel-size 2` (Gemma 4: 1 GPU). Replaces `vllm-qwen38.service`; the operator approved stopping Qwen3.8 on 2026-10-13. |
+| Candidate server | GPUs 0–1, port **8002**, `--tensor-parallel-size 2` (Gemma 4: 1 GPU). Replaces `vllm-qwen38.service`, stopped and disabled on 2026-10-13 (its weights deleted). One candidate is served at a time. |
 | Production | Qwen3.6 stays on GPUs 2–3, port 8001, serving live chat throughout (Command R+ excepted, §9). |
 | Launcher | Copy `config/scripts/vllm_qwen38_volta_serve.sh`; drop the `qwen3_5.py` patch bind; set `--model`, `--tool-call-parser` (Llama: `llama3_json`, plus `--chat-template` bound from the vLLM repo's `examples/`, pinned by commit), `--gpu-memory-utilization 0.88`, `--max-model-len 32768`. `config/` is git-ignored (#286): back the launcher up outside the repo. |
 | archi wiring | The `openai` provider slot already points at `:8002` (`config/environments/dev.yaml:128`, in the archi-config checkout), so no code change. The benchmark arm config differs from the Qwen3.6 config in exactly the keys the Qwen3.8 arm changed — `benchmarking.model`, the provider's `base_url` / `default_model` — **plus** a `context_editing.context_windows` entry for the candidate's exact model id. Without that entry the run has no context limit and long questions come back degraded (6 of 109 the last time). |
@@ -87,8 +114,8 @@ and it shares the 31B's attention layout (head size 512 included), so one port c
 ## 5. Phases
 
 A candidate moves to the next phase only when every check in the current one passes.
-Phases 0–1 are hours; Phase 2 is a day of GPU time and ~$150 of judge spend per
-candidate, so it runs only for a candidate that has already shown it can work.
+Phases 0–1 are hours; Phase 2 costs most of a day of GPU time and ~$100–120 of judge spend
+per candidate, so only the two best candidates out of Phase 1 reach it.
 
 ### Phase 0 — load and fit (per candidate, pass/fail)
 
@@ -110,7 +137,7 @@ candidate, so it runs only for a candidate that has already shown it can work.
 | 1.1 | `chat_template_kwargs: {enable_thinking: false}` | accepted (no HTTP 400), no thinking text in the reply |
 | 1.2 | Forced first search: archi pre-fills a `search_vectorstore_hybrid` call and its result into the history | the model's chat template renders the tool-call and tool-result messages; the reply cites the result |
 | 1.3 | Model-initiated search, streamed | the tool parser returns a well-formed call in streaming mode |
-| 1.4 | 10-question pilot: the first 10 bank questions (a 10-row copy of the bank, set by `queries_path` in a copy of the arm config) through the benchmark container, against Qwen3.6 on the same 10 | malformed searches (`No query found.`) ≤ 2× Qwen3.6's; ≤ 2 give-ups; **mean time per question ≤ 2× Qwen3.6's** — 10 questions are noisy, so this is looser than §6's 1.5×, but a pilot above 2× will not pass it: stop here |
+| 1.4 | 30-question pilot: a fixed 30-row copy of the bank (set by `queries_path` in a copy of the arm config) through the benchmark container — the same 30 for every candidate and for Qwen3.6 | clears the §6 floor on speed, give-ups (scaled: ≤ 3 of 30) and malformed searches, with some margin. **Cut:** if more than two candidates pass, only the two with the best `answer_correctness` on these 30 go to Phase 2 (~$10 and ~1 h per pilot) |
 
 ### Phase 2 — same-corpus golden-set A/B
 
@@ -122,10 +149,12 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
   2026-10-12, volumes kept) with `data_manager.reset_collection: false` in a *copy* of
   its config, or pay one fresh ~83-minute ingest. Record the corpus fingerprint and chunk
   count before the first run and after the last; a mismatch voids the comparison.
-- **Order: Qwen3.6, candidate, candidate, Qwen3.6.** Fresh Qwen3.6 runs bracket the
-  candidate, so a drift in corpus, judge or live load shows up as a gap between the two
-  Qwen3.6 runs instead of hiding in the comparison. (The Qwen3.8 runs reused Qwen3.6 runs
-  from earlier that day and had to list that as a weakness.)
+- **Order: Qwen3.6, A, A, B, B, Qwen3.6** (A and B are the two candidates out of
+  Phase 1; with one, Qwen3.6, A, A, Qwen3.6). Only one candidate fits GPUs 0–1 at a time,
+  so the server is swapped once between A and B. Fresh Qwen3.6 runs at both ends show
+  drift in corpus, judge or live load as a gap between them instead of letting it hide in
+  the comparison. (The Qwen3.8 runs reused Qwen3.6 runs from earlier that day and had to
+  list that as a weakness.)
 - **Load asymmetry.** Qwen3.6 on `:8001` also serves live chat; the candidate on `:8002`
   has no other traffic. Run overnight, and count live chat turns during each run window
   from Postgres.
@@ -155,45 +184,47 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
 
 Scored on the 104 bank questions (anchors excluded, as in the Qwen3.8 comparison). Each
 question's score is the mean of that model's two runs; differences are paired by
-question over questions scored in all four runs.
+question over questions scored in every run being compared.
 
-**Quality — non-inferiority (default).** The candidate passes when, for both
-`answer_correctness` and `faithfulness`, the mean paired difference minus 2 standard
-errors is above **−0.05**; and, for source accuracy, questions newly answered with the
-wrong source minus questions newly fixed is ≤ 3 in each replicate. The 0.05 margin is
-the size of the October retrieval fix (+0.053 correctness, #669/#673): a model swap must
-not give back what that change bought.
+**1. Usability floor — every candidate run must clear every row.** Absolute numbers,
+because the move is mandatory: the question is "what is the slowest, least reliable chat
+we would ship?", not "how close to Qwen3.6". The proposals below are about the worst
+Qwen3.6 has done plus a margin; Qwen3.8's numbers are shown for scale.
 
-**Quality — superiority (if the motive is better answers).** `compare_runs.py` clears its
-gate (effect above 2·SE and 2·σ) on `answer_correctness` or `faithfulness` in both
-replicates, and the other metric passes the non-inferiority test above.
+| Measure | Qwen3.6 (2026-10-12) | Qwen3.8 (2026-10-12) | Proposed floor |
+|---|---|---|---|
+| Mean seconds per question | 29.9 / 34.6 | 71.8 / 63.4 | ≤ 60 |
+| p90 seconds per question | 48.2 / 70.8 | 253.4 / 188.4 | ≤ 150 |
+| Give-up answers (counted as in `model_subsets.py`) | 4 / 5 | 16 / 12 | ≤ 8 |
+| Malformed search calls (`No query found.`) | 43 / 42 | 93 / 108 | ≤ 55 |
+| Degraded answers (context overflow) | 0 / 0 | 0 / 0 | 0 |
+| Identifier probe (`kempner_rtx`), wrong spellings | 0 / 200 | — | ≤ 2 / 200 |
+| Capacity probe, p90 seconds with 8 questions at once | measured in Phase 2 | — | ≤ 180 |
 
-**Reported, not gated:** `answer_relevancy`, `context_precision`, `context_recall` (the
-model writes the search queries, so retrieval can move), judge cost per run.
+**2. Ranking — among candidates that clear the floor.** Primary: `answer_correctness`,
+candidate against candidate. A difference counts only if `compare_runs.py` clears its
+gate on it (above 2·SE and 2·σ). Inside that noise, the tie is broken in order by
+`faithfulness`, mean seconds per question, give-up answers, then the simpler operation
+(fewer GPUs, no image patches). With a single candidate in Phase 2, there is nothing to
+rank: it is adopted if it clears the floor.
 
-**Behaviour — every candidate run must pass every row, under either bar.** References
-are the Qwen3.6 runs of 2026-10-12; the bracketing Qwen3.6 runs of this trial replace
-them.
+**3. Cost of the policy — reported, not gated.** Each candidate minus Qwen3.6 on every
+RAGAS metric, source accuracy, speed and judge cost per run, so the operator can say what
+the move cost. `context_precision` and `context_recall` can move too: the model writes
+the search queries.
 
-| Measure | Qwen3.6 reference | Gate |
-|---|---|---|
-| Mean seconds per question | 29.9 / 34.6 | ≤ 1.5× the bracketing Qwen3.6 mean |
-| p90 seconds per question | 48.2 / 70.8 | ≤ 2× |
-| Give-up answers (counted as in `model_subsets.py`) | 4 / 5 | ≤ 8 |
-| Malformed search calls (`No query found.`) | 43 / 42 | ≤ 1.25× |
-| Degraded answers (context overflow) | 0 / 0 | 0 |
-| Identifier probe, wrong spellings | 0 / 200 | ≤ 2 / 200 |
-| Capacity probe, p90 at 8 at once | measured in Phase 2 | ≤ 2× |
+**If no candidate clears the floor:** the operator chooses between relaxing the floor;
+the Gemma 4 port (§9); and the Anthropic standby already configured in `dev.yaml`
+(`default_provider: anthropic`, US-developed) — which sends every question off the host
+and is billed per token, so it is a decision, not a default.
 
-Qwen3.8 would have failed three of these rows (mean, p90, give-ups) — that is the intent.
-
-## 7. Cost and time (Llama 3.3 70B)
+## 7. Cost and time (Llama 3.3 70B; other candidates similar or less)
 
 | Phase | GPU / wall time | Judge spend |
 |---|---|---|
 | 0 | download ~40 GB + ~2 h of checks | — |
 | 1 | ~2 h | ~$3 |
-| 2 | ingest 0–1.5 h; 2 Qwen3.6 runs ~2 h each; 2 candidate runs est. 4–6 h each (Qwen3.8 took ~3 h); probes ~1 h | ~$28 per Qwen3.6 run, est. $45–60 per candidate run: **~$150–180** |
+| 2 | ingest 0–1.5 h; 2 Qwen3.6 runs ~2 h each; 2 candidate runs est. 4–6 h each (Qwen3.8 took ~3 h); probes ~1 h | ~$28 per Qwen3.6 run, est. $45–60 per candidate run: **~$150–180** for one candidate, ~$100–120 more for a second |
 | 3 | one redeploy (~1 h re-index) | — |
 
 ## 8. Ledger
@@ -203,18 +234,25 @@ Qwen3.8 would have failed three of these rows (mean, p90, give-ups) — that is 
 | Llama 3.3 70B Instruct | — | — | — | — |
 | Gemma 4 31B IT | blocked before Phase 0 | no model code in the image; head size 512 not supported by its V100 flash-attention backend | 2026-10-13 | §2 |
 | Command R+ 08-2024 | blocked before Phase 0 | no vLLM tool parser for its format; needs all four GPUs and more disk; non-commercial license | 2026-10-13 | §2 |
+| Screening queue (§3) | verification pending | — | — | — |
 
-## 9. Decisions needed from the operator
+## 9. Decisions
 
-1. **Bar:** non-inferiority (provenance is the motive) or superiority (§1, §6).
-2. **Thresholds** in §6 — confirm or change before pre-registration.
-3. **Gemma 4:** fund a separate spike — port the Gemma 4 architecture into the Volta
-   fork and (most likely) extend its attention kernel to head size 512, with its own estimate and the
-   rebuild risk of #286 (the image has no build recipe) — covering both 31B and 26B-A4B;
-   or drop Gemma 4.
-4. **Command R+: recommend dropping.** Trialling it needs all of: a tool parser written
+**Made (operator, 2026-10-13):**
+- The move off Qwen is policy; candidates cannot be Chinese-developed. The winner is the
+  best allowed model that clears the usability floor (§1, §6).
+- Qwen3.8 stopped and disabled; its weights deleted.
+
+**Open:**
+1. **The usability floor** in §6 — confirm or change the numbers before pre-registration:
+   what is the slowest, least reliable chat you would ship?
+2. **Gemma 4:** fund a separate spike — port the Gemma 4 architecture into the Volta
+   fork and (most likely) extend its attention kernel to head size 512, with its own
+   estimate and the rebuild risk of #286 (the image has no build recipe) — covering both
+   31B and 26B-A4B; or drop Gemma 4.
+3. **Command R+: recommend dropping.** Trialling it needs all of: a tool parser written
    for its output format, a trial window with production failed over to the Anthropic
    standby (it needs all four GPUs), deleting more of the model cache, and a legal
    reading of CC-BY-NC for institutional use — for a model two generations old.
-5. **Qwen3.8:** stop and disable `vllm-qwen38` (needs `sudo`; disable too, or a reboot
-   restarts it onto the candidate's GPUs) and delete its 20 GB of weights.
+4. **Fallback** if nothing clears the floor (§6): relax the floor, fund the Gemma 4 port,
+   or accept the off-host Anthropic standby.
