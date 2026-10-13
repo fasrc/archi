@@ -29,6 +29,7 @@ INGEST_CONFIG_KEYS = (
     "effective_chunking",
     "embedding_model",
     "embedding_dimensions",
+    "embedding_dimensions_explicit",
     "chunk_size",
     "chunk_overlap",
     "distance_metric",
@@ -180,6 +181,7 @@ def build_ingest_config_snapshot(data_manager_config: Any) -> Dict[str, Any]:
                 embedding_model, _DEFAULT_EMBEDDING_DIMENSIONS
             ),
         ),
+        "embedding_dimensions_explicit": "dimensions" in embedding_entry,
         "chunk_size": dm.get("chunk_size", _DEFAULT_CHUNK_SIZE),
         "chunk_overlap": dm.get("chunk_overlap", _DEFAULT_CHUNK_OVERLAP),
         "distance_metric": dm.get("distance_metric", _DEFAULT_DISTANCE_METRIC),
@@ -214,15 +216,21 @@ def compare_ingest_config(
     for key in keys:
         now = live.get(key)
         then = recorded.get(key)
+        # The marker is provenance metadata, not a user-visible config flag; a
+        # change in whether dimensions were explicit does not change the vectors
+        # when the dimension value is unchanged — and when it does change the
+        # dimension value, the embedding_dimensions entry already reports it.
+        if key == "embedding_dimensions_explicit":
+            continue
         if now == then:
             continue
-        # Skip false drift introduced by task 1.1: rows recorded before the
-        # per-model default table existed stored 384 for every model.  If the
-        # model is unchanged and the stored value is the old flat default while
-        # the current value is exactly the model's new default, the mismatch is
-        # an artefact of the old default, not a real configuration change.
+        # Skip false drift for snapshots without embedding_dimensions_explicit:
+        # rows recorded before that marker existed stored 384 for every model.
+        # For a row without the marker, a change from 384 to the model's new
+        # default is an artefact of the old default, not a real config change.
         if (
             key == "embedding_dimensions"
+            and "embedding_dimensions_explicit" not in recorded
             and then == _DEFAULT_EMBEDDING_DIMENSIONS
             and live.get("embedding_model") == recorded.get("embedding_model")
             and now
