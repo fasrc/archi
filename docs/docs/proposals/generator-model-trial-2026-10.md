@@ -37,7 +37,7 @@ transformers 4.57.6). That image is a hand-built Volta port with no build recipe
 
 | Claim in the candidate list | Finding | Evidence |
 |---|---|---|
-| Gemma 4 31B "fits on one V100 … maximum generation speed" | **Cannot be served on this image.** Two independent gaps. (1) No Gemma 4 model code: upstream support arrived in vLLM 0.19.1 with transformers ≥ 5.5, and the image has neither, so vLLM's generic transformers fallback is out too. (2) The V100 attention kernel handles head sizes 64, 128 and 256 only; Gemma 4's 10 full-attention layers use 512. Serving it means porting the architecture into the Volta fork *and* extending the kernel. Only the Gemma 4 tool parser ships in the image. | image `registry.py` lists Gemma 1–3/3n only; `transformers.models.gemma4` absent; `flash_attn_v100.py:970` `get_supported_head_sizes() → [64, 128, 256]`; HF `config.json` `global_head_dim: 512` |
+| Gemma 4 31B "fits on one V100 … maximum generation speed" | **Cannot be served on this image.** Two independent gaps. (1) No Gemma 4 model code: upstream support arrived in vLLM 0.19.1 with transformers ≥ 5.5, and the image has neither, so vLLM's generic transformers fallback is out too. (2) The image's V100 flash-attention backend handles head sizes 64, 128 and 256 only; Gemma 4's 10 full-attention layers use 512, and no other backend in the image was verified to cover it. Serving it means porting the architecture into the Volta fork and, most likely, extending the kernel. Only the Gemma 4 tool parser ships in the image. | image `registry.py` lists Gemma 1–3/3n only; `transformers.models.gemma4` absent; `flash_attn_v100.py:970` `get_supported_head_sizes() → [64, 128, 256]`; HF `config.json` `global_head_dim: 512` |
 | Gemma 4 31B: faster than today | **Wrong comparison.** Qwen3.6 is a mixture-of-experts model that reads ~3B parameters per generated token; dense Gemma 4 31B reads all 31B. Dropping tensor parallelism removes the PCIe sync cost but not the ~10× more weight traffic. The nearest measured case, dense Qwen3.8-27B on this host, was 2× slower on average and 3–4× slower at p90. | Qwen3.6 config: 256 experts, 8 active; Qwen3.8 COMPARISON.md |
 | Gemma 4 31B "8-bit or 4-bit fits on a 32 GB V100" | 4-bit only: the 8-bit checkpoint is 35.1 GB, more than the card. Gemma 4 was trained in bf16, which V100 lacks; fp16 overflow is confirmed in its vision encoder and documented for Gemma 3 text, unverified for Gemma 4 text. | `cyankiwi/gemma-4-31B-it-AWQ-8bit`; vLLM #40290 |
 | Llama 3.3 70B 4-bit "~40 GB across two V100s … plenty of VRAM for RAG context" | Fits, but context memory is tight compared with today. Llama 3.3 70B keeps 320 KiB of cache per token; Qwen3.6 keeps ~20 KiB (only 10 of its 40 layers use full attention). Two cards at the 0.88 memory cap leave roughly 50k tokens of cache after weights: under two full 32k-token conversations at once. | Qwen3.6 `config.json`; Llama 3.3: 80 layers × 8 KV heads × 128 dim × 2 × 2 bytes |
@@ -59,7 +59,7 @@ weights (20 GB, `models--palmfuture--Qwen3.8-27B-GPTQ-Int4`) brings that to ~54 
 | Shape | dense, 70B, 128k context | dense, 30.7B, text + image, 256k context | dense, 104B, 128k context |
 | Cache per token (Qwen3.6 ≈ 20 KiB) | 320 KiB | ~80 KiB on 10 full layers (40 KiB if keys and values are stored once) + ~0.8 GiB fixed per request for the 1,024-token sliding layers | 256 KiB |
 | 4-bit checkpoint | `clowman/Llama-3.3-70B-Instruct-GPTQ-Int4` or `shuyuej/Llama-3.3-70B-Instruct-GPTQ`, 39.8 GB, GPTQ with act-order | `google/gemma-4-31B-it-qat-w4a16-ct`, 23.3 GB, compressed-tensors (Google's own quantization-aware release) | `nejumi/c4ai-command-r-plus-08-2024-GPTQ-Int4-calib-ja-1k`, 58.6 GB (calibrated on Japanese text) |
-| Runs on the current image | **yes** — model code and head size 128 supported | **no** — no model code; head size 512 unsupported | model code yes; **does not fit two GPUs** |
+| Runs on the current image | **yes** — model code and head size 128 supported | **no** — no model code; head size 512 not supported by the V100 flash-attention backend | model code yes; **does not fit two GPUs** |
 | Tool parser in the image | `llama3_json` (no parallel calls; vLLM warns of malformed arguments). Its recommended chat template is not in the image — bind `examples/tool_chat_template_llama3.1_json.jinja` from the vLLM repo. | `gemma4` | none for this model's format |
 
 **Order:** Llama 3.3 70B goes first — it is the only candidate that runs on the existing
@@ -69,7 +69,7 @@ before Phase 0 can start (§9).
 **Worth adding if Gemma 4 is ported:** `google/gemma-4-26B-A4B-it` — Google, Apache 2.0,
 a mixture-of-experts model with 128 experts, 8 used per token (~4B parameters per token,
 like Qwen3.6). It is the only US-developed option here likely to match Qwen3.6's speed,
-and one port covers both Gemma 4 models (same attention layout, head size 512 included).
+and it shares the 31B's attention layout (head size 512 included), so one port covers most of both; its mixture-of-experts layers are additional work.
 
 ## 4. Test bed
 
@@ -98,7 +98,7 @@ candidate, so it runs only for a candidate that has already shown it can work.
 | 0.2 | Server starts at the 0.88 memory cap | `/v1/models` lists the model with `max_model_len` 32768 |
 | 0.3 | Every checkpoint weight loaded | `grep -c "not found in params_dict, skip loading"` = 0 (the Qwen3.8 silent-garbage tell) |
 | 0.4 | Memory headroom at idle | ≥ 4 GiB free per GPU in `nvidia-smi` (the margin that fixed the June OOM) |
-| 0.5 | Context-cache pool | vLLM's startup line `GPU KV cache size: N tokens` ≥ 65 536 (two full-length requests at once); record N |
+| 0.5 | Context-cache pool | vLLM's startup line `GPU KV cache size: N tokens` ≥ 32 768 (one full-length request; the benchmark asks one question at a time); record N — concurrency is the capacity probe's job (§6) |
 | 0.6 | fp16 sanity — V100 has no bf16, and these models ship as bf16 | five fixed prompts give coherent text: no `!!!!`, no empty replies, no NaN in logprobs (this also catches a GPTQ act-order checkpoint the fork mis-loads) |
 | 0.7 | Longest prompt | a 30 000-token prompt completes with no out-of-memory error |
 | 0.8 | Generation speed | tokens/s for one stream and for 4 at once, measured the same way on `:8001` off-peak for comparison |
@@ -201,7 +201,7 @@ Qwen3.8 would have failed three of these rows (mean, p90, give-ups) — that is 
 | Candidate | Phase reached | Result | Date | Evidence |
 |---|---|---|---|---|
 | Llama 3.3 70B Instruct | — | — | — | — |
-| Gemma 4 31B IT | blocked before Phase 0 | no model code and no head-size-512 attention kernel in the image | 2026-10-13 | §2 |
+| Gemma 4 31B IT | blocked before Phase 0 | no model code in the image; head size 512 not supported by its V100 flash-attention backend | 2026-10-13 | §2 |
 | Command R+ 08-2024 | blocked before Phase 0 | no vLLM tool parser for its format; needs all four GPUs and more disk; non-commercial license | 2026-10-13 | §2 |
 
 ## 9. Decisions needed from the operator
@@ -209,7 +209,7 @@ Qwen3.8 would have failed three of these rows (mean, p90, give-ups) — that is 
 1. **Bar:** non-inferiority (provenance is the motive) or superiority (§1, §6).
 2. **Thresholds** in §6 — confirm or change before pre-registration.
 3. **Gemma 4:** fund a separate spike — port the Gemma 4 architecture into the Volta
-   fork and extend its attention kernel to head size 512, with its own estimate and the
+   fork and (most likely) extend its attention kernel to head size 512, with its own estimate and the
    rebuild risk of #286 (the image has no build recipe) — covering both 31B and 26B-A4B;
    or drop Gemma 4.
 4. **Command R+: recommend dropping.** Trialling it needs all of: a tool parser written
