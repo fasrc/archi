@@ -85,7 +85,7 @@
 #       leaves the pin at its previous value
 #   80. a pin-file write that fails after the ledger append succeeds fails the archive
 #       (no success line, non-zero exit) instead of reporting success with no pin
-#   81. a directory already at the pin path is refused by name before the ledger append
+#   81. a directory already at the pin path is refused by name before the ledger append; ledger is unchanged
 #   82. the same directory, created after the ledger append, still fails the archive
 #   83. without `timeout`, watchdog cuts off a hung mail binary and reports "page failed"
 #   84. without `timeout`, watchdog kills a SIGTERM-immune hung mail binary and reports "page failed"
@@ -1057,10 +1057,13 @@ mkdir -p "$ARCHI_DIR/archi-fm-pin81"
 run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-pin81
 artifact "$FM_OUT/benchmarking-fm-pin81-20260903_000024.json" '[]' pin81 5
 mkdir -p "$FM_OUT/corpus-pin-fm-pin81"
+ROWS_BEFORE="$(ledger_rows)"
 run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin81
+ROWS_AFTER="$(ledger_rows)"
 if [ "$RC" != 0 ] && grep -q 'REFUSED: the corpus pin path .* is a directory' "$T/stderr" && ! grep -q 'archived arm' "$T/stdout" \
-   && [ -z "$(ls -A "$FM_OUT/corpus-pin-fm-pin81")" ]; then
-  ok "a directory already at the pin path is refused before the ledger append"; else notok "pin-directory guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+   && [ -z "$(ls -A "$FM_OUT/corpus-pin-fm-pin81")" ] && [ "$ROWS_BEFORE" = "$ROWS_AFTER" ] \
+   && ! compgen -G "$FM_OUT/corpus-pin-fm-pin81.tmp.*" >/dev/null; then
+  ok "a directory already at the pin path is refused before the ledger append; ledger is unchanged"; else notok "pin-directory guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
 rm -rf "$FM_OUT/corpus-pin-fm-pin81"
 
 # 82: the same directory, created after the validation read the pin path and the ledger
