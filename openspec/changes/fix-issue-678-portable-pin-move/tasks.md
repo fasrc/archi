@@ -4,7 +4,7 @@
 
 ## 2. Portable pin move
 
-- [ ] 2.1 In ONE commit. In `scripts/benchmarking/feature_matrix/archive_run.sh` (about line 286), replace `mv -fT "$PIN_FILE.tmp.$$" "$PIN_FILE"` with the `"$FM_PYTHON" -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' ...` line from `design.md` and rewrite the `-T` comment above it to explain the `os.replace` directory refusal. Run the wrapper suite and confirm `N passed, 0 failed` (self-tests 6, 13, 59, 80, 81 and 82 cover the pin). Then prove 82 still guards: temporarily change the move to `mv -f "$PIN_FILE.tmp.$$" "$PIN_FILE"`, run the suite, confirm 82 fails, and restore the `os.replace` line. Confirm `grep -c "mv -fT" scripts/benchmarking/feature_matrix/archive_run.sh` prints `0`. Run `bash scripts/gate.sh` and commit. Put the 82 mutation result in the commit message body.
+- [x] 2.1 In ONE commit. In `scripts/benchmarking/feature_matrix/archive_run.sh` (about line 286), replace `mv -fT "$PIN_FILE.tmp.$$" "$PIN_FILE"` with the `"$FM_PYTHON" -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' ...` line from `design.md` and rewrite the `-T` comment above it to explain the `os.replace` directory refusal. Run the wrapper suite and confirm `N passed, 0 failed` (self-tests 6, 13, 59, 80, 81 and 82 cover the pin). Then prove 82 still guards: temporarily change the move to `mv -f "$PIN_FILE.tmp.$$" "$PIN_FILE"`, run the suite, confirm 82 fails, and restore the `os.replace` line. Confirm `grep -c "mv -fT" scripts/benchmarking/feature_matrix/archive_run.sh` prints `0`. Run `bash scripts/gate.sh` and commit. Put the 82 mutation result in the commit message body.
 
 ## 3. Verify, push, and open the PR
 
