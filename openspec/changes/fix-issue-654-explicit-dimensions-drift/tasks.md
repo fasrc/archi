@@ -36,7 +36,7 @@
 
 ## 1. Record the explicit marker and gate the legacy skip on it
 
-- [ ] 1.1 In `tests/unit/test_ingest_provenance.py`, add tests, then implement design
+- [x] 1.1 In `tests/unit/test_ingest_provenance.py`, add tests, then implement design
       D1–D3 in `src/utils/ingest_provenance.py`, one commit
       (`fix: report drift when an explicit embedding dimension is removed`). New tests:
       (a) the issue's repro: `at_ingest = build_ingest_config_snapshot({"embedding_name":
