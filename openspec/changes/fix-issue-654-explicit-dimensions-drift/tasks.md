@@ -90,7 +90,7 @@
 
 ## 3. Post-PR verification fix
 
-- [ ] 3.1 In `tests/unit/test_ingest_provenance.py`, add
+- [x] 3.1 In `tests/unit/test_ingest_provenance.py`, add
       `at_ingest.pop("embedding_dimensions_explicit")` to
       `test_compare_embedding_dimensions_drift_when_current_is_not_model_default` and
       `test_compare_embedding_dimensions_drift_when_model_changed`, so both reach the

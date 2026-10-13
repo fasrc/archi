@@ -476,6 +476,7 @@ def test_compare_embedding_dimensions_drift_when_current_is_not_model_default():
     """If current dimensions differ from the model default, it is real drift."""
     at_ingest = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
     at_ingest = dict(at_ingest, embedding_dimensions=384)
+    at_ingest.pop("embedding_dimensions_explicit")
     current = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
     current = dict(current, embedding_dimensions=768)
 
@@ -487,6 +488,7 @@ def test_compare_embedding_dimensions_drift_when_current_is_not_model_default():
 def test_compare_embedding_dimensions_drift_when_model_changed():
     """A model change means both embedding_model and embedding_dimensions drift."""
     at_ingest = build_ingest_config_snapshot({})  # HuggingFaceEmbeddings, 384
+    at_ingest.pop("embedding_dimensions_explicit")
     current = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
 
     drift = compare_ingest_config(current, at_ingest)
