@@ -461,6 +461,7 @@ def _non_streaming_response(request_id, model, stream_kwargs):
     source_documents = []
     source_scores = []
     append_citations = False
+    archi_message_id = None
 
     try:
         for event in _chat_wrapper.stream(**stream_kwargs):
@@ -486,6 +487,9 @@ def _non_streaming_response(request_id, model, stream_kwargs):
                 if docs:
                     source_documents = docs
                     source_scores = scores_list
+                raw_id = event.get("message_id")
+                if isinstance(raw_id, int) and not isinstance(raw_id, bool):
+                    archi_message_id = raw_id
 
             elif event_type == "error":
                 error_msg = event.get("message", "Unknown error")
@@ -523,6 +527,7 @@ def _non_streaming_response(request_id, model, stream_kwargs):
                 "completion_tokens": 0,
                 "total_tokens": 0,
             },
+            "archi_message_id": archi_message_id,
         }
     )
 
