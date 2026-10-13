@@ -952,3 +952,111 @@ def test_service_slack_main_sets_up_config_then_runs(monkeypatch):
 def test_service_slack_has_no_startup_sleep():
     source = (REPO_ROOT / "src/bin/service_slack.py").read_text()
     assert "sleep" not in source
+
+
+# ---------------------------------------------------------------------------
+# Feedback prompt (task 4.1)
+# ---------------------------------------------------------------------------
+
+
+def test_answer_posts_feedback_prompt_when_message_id_is_set():
+    from src.interfaces.slack_feedback import (
+        FEEDBACK_PROMPT_TEXT,
+        HELPFUL_ACTION_ID,
+        NOT_HELPFUL_ACTION_ID,
+    )
+
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    body = {**_completion("**ok**"), "archi_message_id": 42}
+    bot.session.post.return_value = _response(payload=body)
+    bot.answer(_channel_mention(), "T1")
+
+    update_kwargs = bot.web.chat_update.call_args.kwargs
+    assert update_kwargs["text"] == "*ok*"
+    assert "blocks" not in update_kwargs
+
+    assert bot.web.chat_postMessage.call_count == 2
+    prompt_kwargs = bot.web.chat_postMessage.call_args.kwargs
+    assert prompt_kwargs["text"] == FEEDBACK_PROMPT_TEXT
+    assert prompt_kwargs["channel"] == "C1"
+    assert prompt_kwargs["thread_ts"] == "10.0"
+    blocks = prompt_kwargs["blocks"]
+    action_ids = {e["action_id"] for e in blocks[1]["elements"]}
+    assert action_ids == {HELPFUL_ACTION_ID, NOT_HELPFUL_ACTION_ID}
+    values = {e["value"] for e in blocks[1]["elements"]}
+    assert values == {"42"}
+
+
+def test_answer_skips_feedback_prompt_when_message_id_is_none():
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    # Default session returns no archi_message_id → message_id is None
+    bot.answer(_channel_mention(), "T1")
+    assert bot.web.chat_postMessage.call_count == 1
+    assert "blocks" not in bot.web.chat_postMessage.call_args.kwargs
+
+
+def test_answer_skips_feedback_prompt_on_api_error():
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    bot.session.post.return_value = _response(500, {"error": {"message": "boom"}})
+    bot.answer(_channel_mention(), "T1")
+    for call in bot.web.chat_postMessage.call_args_list:
+        assert "blocks" not in call.kwargs
+
+
+def test_answer_skips_feedback_prompt_when_feedback_store_is_none():
+    bot = _bot()  # feedback_store defaults to None
+    body = {**_completion("**ok**"), "archi_message_id": 42}
+    bot.session.post.return_value = _response(payload=body)
+    bot.answer(_channel_mention(), "T1")
+    assert bot.web.chat_postMessage.call_count == 1
+
+
+def test_answer_does_not_raise_when_feedback_prompt_posting_fails():
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    body = {**_completion("**ok**"), "archi_message_id": 42}
+    bot.session.post.return_value = _response(payload=body)
+    bot.web.chat_postMessage.side_effect = [{"ts": "99.0"}, RuntimeError("rate limit")]
+    bot.answer(_channel_mention(), "T1")  # must not raise
+    last_update = bot.web.chat_update.call_args
+    assert last_update.kwargs["text"] == "*ok*"
+
+
+def test_answer_skips_feedback_prompt_when_delivery_fails():
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    body = {**_completion("**ok**"), "archi_message_id": 42}
+    bot.session.post.return_value = _response(payload=body)
+    bot.web.chat_update.side_effect = TimeoutError("read timed out")
+    bot.answer(_channel_mention(), "T1")  # must not raise
+    assert bot.web.chat_postMessage.call_count == 1
+
+
+def test_answer_delivers_answer_when_store_raises_on_insert():
+    store = mock.Mock()
+    store.insert.side_effect = RuntimeError("store down")
+    bot = _bot(feedback_store=store)
+    body = {**_completion("**ok**"), "archi_message_id": 42}
+    bot.session.post.return_value = _response(payload=body)
+    bot.answer(_channel_mention(), "T1")
+    last_update = bot.web.chat_update.call_args
+    assert last_update.kwargs["text"] == "*ok*"
+
+
+def test_build_messages_drops_feedback_prompt_text():
+    from src.interfaces.slack_feedback import FEEDBACK_PROMPT_TEXT as PROMPT
+
+    replies = [
+        _reply("1.0", "<@UBOT> first"),
+        _reply("2.0", PROMPT, user=BOT),
+        _reply("3.0", "real answer", user=BOT),
+    ]
+    out = build_messages(replies, BOT, "q", before_ts="4.0", limit=20)
+    assert out == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "real answer"},
+        {"role": "user", "content": "q"},
+    ]

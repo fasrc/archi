@@ -17,6 +17,7 @@ from slack_sdk import WebClient
 from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.response import SocketModeResponse
 
+from src.interfaces.slack_feedback import FEEDBACK_PROMPT_TEXT, build_feedback_blocks
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
 
@@ -32,7 +33,7 @@ ERROR_TEXT = (
     "An operator can find the reason in the slack service log."
 )
 
-_STATUS_TEXTS = frozenset({PLACEHOLDER_TEXT, ERROR_TEXT})
+_STATUS_TEXTS = frozenset({PLACEHOLDER_TEXT, ERROR_TEXT, FEEDBACK_PROMPT_TEXT})
 
 DEFAULT_CHAT_URL = "http://chatbot:7861"
 DEFAULT_TIMEOUT_SECONDS = 600
@@ -261,6 +262,7 @@ class SlackBot:
         executor=None,
         startup_attempts=30,
         startup_delay=10,
+        feedback_store=None,
     ):
         self.web = web_client
         self.socket = socket_client
@@ -275,6 +277,7 @@ class SlackBot:
         )
         self.startup_attempts = startup_attempts
         self.startup_delay = startup_delay
+        self.feedback_store = feedback_store
         self.model = None
         self._deduper = EventDeduper()
         # One FIFO queue per Slack thread with work pending; a thread is drained by
@@ -445,7 +448,24 @@ class SlackBot:
             except Exception:
                 logger.exception(f"slack bot: failed to report the error in {channel}")
             return
-        self._deliver_answer(channel, placeholder_ts, final_text)
+        delivered = self._deliver_answer(channel, placeholder_ts, final_text)
+        if (
+            delivered
+            and self.feedback_store is not None
+            and result.message_id is not None
+            and result.message_id > 0
+        ):
+            try:
+                self.web.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text=FEEDBACK_PROMPT_TEXT,
+                    blocks=build_feedback_blocks(result.message_id),
+                )
+            except Exception:
+                logger.exception(
+                    f"slack bot: failed to post feedback prompt in {channel}"
+                )
 
     def _deliver_answer(self, channel, placeholder_ts, text):
         """Put the answer in the placeholder; retry the same text once on failure.
@@ -453,16 +473,18 @@ class SlackBot:
         Slack can apply an update and still time out to the client, so a failed
         delivery never falls back to the error line: that could replace a real answer.
         Updating the placeholder with the same text twice is safe.
+        Returns True if delivery succeeded, False if both attempts failed.
         """
         for attempt in (1, 2):
             try:
                 self.web.chat_update(channel=channel, ts=placeholder_ts, text=text)
-                return
+                return True
             except Exception:
                 logger.exception(
                     f"slack bot: failed to deliver the answer in {channel} "
                     f"(attempt {attempt}/2)"
                 )
+        return False
 
     def _post_final(self, channel, thread_ts, placeholder_ts, text):
         if placeholder_ts:
