@@ -87,3 +87,13 @@
       `gh pr create --repo fasrc/archi --base dev --head fix/issue-654-explicit-dimensions-drift --title "status board: report drift when an explicit embedding dimension is removed" --body-file /tmp/pr-654.md`.
       This task changes only this checkbox; it is complete when
       `gh pr view --repo fasrc/archi fix/issue-654-explicit-dimensions-drift` prints the PR.
+
+## 3. Post-PR verification fix
+
+- [ ] 3.1 In `tests/unit/test_ingest_provenance.py`, add
+      `at_ingest.pop("embedding_dimensions_explicit")` to
+      `test_compare_embedding_dimensions_drift_when_current_is_not_model_default` and
+      `test_compare_embedding_dimensions_drift_when_model_changed`, so both reach the
+      legacy-skip branch and pin its `model unchanged` and `now == model default` terms.
+      Run `bash scripts/gate.sh`, tick this box, one commit
+      (`test: pin the legacy dimension skip terms`), and push to the PR branch.
