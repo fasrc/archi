@@ -20,6 +20,7 @@ with _patch(
 ):
     from src.data_manager.collectors.scrapers.integrations.git_scraper import GitScraper
 
+from src.data_manager.collectors.scrapers.scraped_resource import ScrapedResource
 from src.data_manager.collectors.scrapers.scraper_manager import ScraperManager
 from src.data_manager.collectors.utils.catalog_reconcile import CollectionPass
 
@@ -260,3 +261,76 @@ def test_collect_git_resources_forwards_none_scope_as_failed_type(tmp_path):
 
     assert "git" in cp.failed_types
     assert cp.failed_types["git"] == "bad url"
+
+
+# ---------------------------------------------------------------------------
+# collect() level: a harvest failure in one repository must not abort the
+# remaining repositories (issue #635).
+# ---------------------------------------------------------------------------
+
+
+def test_harvest_failure_is_isolated_per_repository(tmp_path, monkeypatch, caplog):
+    """A harvest OSError for repo A does not prevent repo B from being collected."""
+    scraper = _make_git_scraper(tmp_path)
+
+    repo_a_path = tmp_path / "clone-a"
+    repo_a_path.mkdir()
+    repo_b_path = tmp_path / "clone-b"
+    repo_b_path.mkdir()
+
+    good_resource = ScrapedResource(
+        url="https://github.com/org/repo-b/blob/main/README.md",
+        content="hello",
+        suffix="md",
+        source_type="git",
+        file_name="README.md",
+    )
+
+    def _fake_prepare_repository(self, url):
+        if "repo-a" in url:
+            return _fake_repo_info(repo_a_path, "repo-a")
+        return _fake_repo_info(repo_b_path, "repo-b")
+
+    def _fake_harvest_repository(self, repo_info):
+        if repo_info["repo_name"] == "repo-a":
+            raise OSError("boom")
+        return [good_resource]
+
+    monkeypatch.setattr(GitScraper, "_prepare_repository", _fake_prepare_repository)
+    monkeypatch.setattr(GitScraper, "_harvest_repository", _fake_harvest_repository)
+
+    url_a = "https://github.com/org/repo-a"
+    url_b = "https://github.com/org/repo-b"
+
+    with caplog.at_level(logging.ERROR):
+        resources = scraper.collect([url_a, url_b])
+
+    assert resources == [good_resource]
+    assert any(url_a in r.getMessage() for r in caplog.records)
+    assert scraper.last_failures == [("repo-a", "boom")]
+    assert not repo_a_path.exists()
+    assert not repo_b_path.exists()
+
+
+def test_harvest_keyboard_interrupt_still_propagates_and_cleans_up(
+    tmp_path, monkeypatch
+):
+    """A KeyboardInterrupt from _harvest_repository exits collect() but still cleans up."""
+    scraper = _make_git_scraper(tmp_path)
+
+    repo_a_path = tmp_path / "clone-a"
+    repo_a_path.mkdir()
+
+    def _fake_prepare_repository(self, url):
+        return _fake_repo_info(repo_a_path, "repo-a")
+
+    def _fake_harvest_repository(self, repo_info):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(GitScraper, "_prepare_repository", _fake_prepare_repository)
+    monkeypatch.setattr(GitScraper, "_harvest_repository", _fake_harvest_repository)
+
+    with pytest.raises(KeyboardInterrupt):
+        scraper.collect(["https://github.com/org/repo-a"])
+
+    assert not repo_a_path.exists()
