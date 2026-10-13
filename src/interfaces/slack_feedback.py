@@ -157,6 +157,37 @@ def parse_feedback_submission(view):
     )
 
 
+def ephemeral_thanks_kwargs(payload, text):
+    """Return chat_postEphemeral kwargs that keep the thanks in the prompt's thread (D7)."""
+    kwargs = {
+        "channel": (payload.get("channel") or {}).get("id"),
+        "user": (payload.get("user") or {}).get("id"),
+        "text": text,
+    }
+    thread_ts = (payload.get("container") or {}).get("thread_ts")
+    if thread_ts:
+        kwargs["thread_ts"] = thread_ts
+    return kwargs
+
+
+def interaction_key(payload):
+    """Return a dedup key that a retried envelope repeats, or None if there is none.
+
+    A click is keyed by its user and ``action_ts``; a form submission by its view
+    ID, because Slack closes a view once it is submitted.
+    """
+    if payload.get("type") == "block_actions":
+        action_ts = ((payload.get("actions") or [{}])[0]).get("action_ts")
+        if action_ts:
+            user_id = (payload.get("user") or {}).get("id")
+            return (f"block_actions:{user_id}", action_ts)
+    elif payload.get("type") == "view_submission":
+        view_id = (payload.get("view") or {}).get("id")
+        if view_id:
+            return ("view_submission", view_id)
+    return None
+
+
 def like_record(message_id):
     """Return a FeedbackRecord for a Helpful click (design D4)."""
     return FeedbackRecord(
@@ -169,14 +200,20 @@ def like_record(message_id):
     )
 
 
+# ConnectionPool keeps up to min_conn (5) idle connections, and after a Postgres
+# restart each one can be dead; the pool drops a broken connection when it gets it
+# back, so the sixth checkout opens a fresh connection (design D8).
+MAX_INSERT_ATTEMPTS = 6
+
+
 class SlackFeedbackStore:
-    """Insert feedback rows into Postgres; retries once on connection errors (design D8)."""
+    """Insert feedback rows into Postgres; retries on connection errors (design D8)."""
 
     def __init__(self, pool):
         self._pool = pool
 
     def insert(self, record, now=None):
-        """Insert one feedback row, retrying once on OperationalError/InterfaceError."""
+        """Insert one feedback row, retrying on OperationalError/InterfaceError."""
         if now is None:
             now = datetime.now(timezone.utc)
         params = (
@@ -189,7 +226,7 @@ class SlackFeedbackStore:
             record.inappropriate,
         )
         last_exc = None
-        for _ in range(2):
+        for _ in range(MAX_INSERT_ATTEMPTS):
             try:
                 with self._pool.get_connection() as conn:
                     with conn.cursor() as cur:

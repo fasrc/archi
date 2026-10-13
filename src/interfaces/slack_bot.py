@@ -25,6 +25,8 @@ from src.interfaces.slack_feedback import (
     SlackFeedbackStore,
     build_feedback_blocks,
     build_feedback_modal,
+    ephemeral_thanks_kwargs,
+    interaction_key,
     like_record,
     parse_feedback_submission,
     parse_message_id,
@@ -397,6 +399,8 @@ class SlackBot:
                 message_id = parse_message_id(action.get("value"))
                 if message_id is None:
                     return
+                if not self._first_interaction(payload):
+                    return
                 if action_id == HELPFUL_ACTION_ID:
                     try:
                         self.feedback_store.insert(like_record(message_id))
@@ -405,9 +409,7 @@ class SlackBot:
                         return
                     try:
                         self.web.chat_postEphemeral(
-                            channel=(payload.get("channel") or {}).get("id"),
-                            user=(payload.get("user") or {}).get("id"),
-                            text=FEEDBACK_THANKS_TEXT,
+                            **ephemeral_thanks_kwargs(payload, FEEDBACK_THANKS_TEXT)
                         )
                     except Exception:
                         logger.exception(
@@ -426,12 +428,21 @@ class SlackBot:
                 record = parse_feedback_submission(view)
                 if record is None:
                     return
+                if not self._first_interaction(payload):
+                    return
                 try:
                     self.feedback_store.insert(record)
                 except Exception:
                     logger.exception("slack bot: failed to store dislike feedback")
         except Exception:
             logger.exception("slack bot: failed to handle interactive payload")
+
+    def _first_interaction(self, payload):
+        """False for a retried interactive envelope already handled; True otherwise."""
+        key = interaction_key(payload)
+        if key is None:
+            return True
+        return self._deduper.first_time(*key)
 
     def _enqueue(self, key, event, team_id):
         with self._queues_lock:

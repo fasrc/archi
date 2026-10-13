@@ -398,11 +398,11 @@ settings:
 
 ### Answer feedback
 
-After each answer the bot posts **Helpful** and **Not helpful** buttons in the same thread. Clicking either records one row in the `feedback` table. When **Not helpful** is clicked, a modal opens for the user to flag the answer as incorrect, unhelpful, or inappropriate, and to leave an optional comment.
+After each stored answer the bot posts **Helpful** and **Not helpful** buttons in the same thread. A **Helpful** click records one row in the `feedback` table. A **Not helpful** click opens a modal where the user can flag the answer as incorrect, unhelpful, or inappropriate, and leave an optional comment; the row is recorded when the user submits the form. A cancelled form records nothing.
 
 The app needs **Interactivity & Shortcuts** turned on in the Slack app settings (already included in the manifest above). No Request URL is required — the bot uses Socket Mode, so all interactive payloads arrive over the same outbound websocket. No new OAuth scope is needed beyond `chat:write`.
 
-Each click appends one row to the `feedback` table; there is no per-user deduplication column. To filter Slack ratings, join `feedback` to `conversations` on `message_id`, then join `conversations` to `conversation_metadata` on `conversation_id`, and match `external_chat_id` against the Slack thread key format `slack:<team_id>:<channel>:<thread_ts>` (see `thread_key()` in `src/interfaces/slack_bot.py`).
+Each **Helpful** click and each submitted **Not helpful** form appends one row to the `feedback` table; there is no per-user deduplication column. To filter Slack ratings, join `feedback` to `conversations` on `message_id`, then join `conversations` to `conversation_metadata` on `conversation_id`, and match `external_chat_id` against the Slack thread key format `slack:<team_id>:<channel>:<thread_ts>` (see `thread_key()` in `src/interfaces/slack_bot.py`).
 
 ### Configuration
 

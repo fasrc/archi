@@ -106,7 +106,6 @@ Send a chat completion request. Supports both streaming and non-streaming modes.
 ```
 
 `archi_message_id` is the integer primary key of the stored conversation message for this answer. It is `null` when the chat app did not store a message (for example, if the database insert failed). Standard OpenAI clients ignore this field. The Slack bot uses it to link feedback button clicks back to the answer row.
-```
 
 **Streaming response:**
 

@@ -298,16 +298,6 @@ def test_store_retries_once_on_operational_error():
     conn2.commit.assert_called_once()
 
 
-def test_store_raises_after_two_failures():
-    conn1, cur1 = _fake_conn()
-    cur1.execute.side_effect = psycopg2.OperationalError("dead 1")
-    conn2, cur2 = _fake_conn()
-    cur2.execute.side_effect = psycopg2.OperationalError("dead 2")
-    store = SlackFeedbackStore(_fake_pool([conn1, conn2]))
-    with pytest.raises(psycopg2.OperationalError):
-        store.insert(like_record(42), now=_NOW)
-
-
 def test_store_insert_uses_utc_now_when_no_now_given():
     conn, cur = _fake_conn()
     store = SlackFeedbackStore(_fake_pool([conn]))
@@ -315,3 +305,29 @@ def test_store_insert_uses_utc_now_when_no_now_given():
     _, params = cur.execute.call_args[0]
     ts = params[1]
     assert ts.tzinfo is not None
+
+
+def test_store_drains_every_stale_idle_connection_after_a_restart():
+    # The pool keeps up to min_conn (5) idle connections; after a Postgres restart
+    # all of them can be dead, and only a sixth checkout opens a fresh one.
+    stale = []
+    for i in range(5):
+        conn, cur = _fake_conn()
+        cur.execute.side_effect = psycopg2.OperationalError(f"dead {i}")
+        stale.append(conn)
+    fresh, fresh_cur = _fake_conn()
+    store = SlackFeedbackStore(_fake_pool(stale + [fresh]))
+    store.insert(like_record(42), now=_NOW)
+    assert fresh_cur.execute.call_count == 1
+    fresh.commit.assert_called_once()
+
+
+def test_store_raises_when_every_attempt_fails():
+    conns = []
+    for i in range(10):
+        conn, cur = _fake_conn()
+        cur.execute.side_effect = psycopg2.InterfaceError(f"dead {i}")
+        conns.append(conn)
+    store = SlackFeedbackStore(_fake_pool(conns))
+    with pytest.raises(psycopg2.InterfaceError):
+        store.insert(like_record(42), now=_NOW)

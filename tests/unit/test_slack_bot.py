@@ -1279,3 +1279,59 @@ def test_handle_interactive_unknown_action_id_does_nothing():
     bot.handle_request(mock.Mock(), _interactive_req(payload))
     store.insert.assert_not_called()
     bot.web.chat_postEphemeral.assert_not_called()
+
+
+def test_handle_interactive_helpful_ephemeral_stays_in_the_thread():
+    from src.interfaces.slack_feedback import HELPFUL_ACTION_ID
+
+    bot = _bot(feedback_store=mock.Mock())
+    payload = _block_action_payload(HELPFUL_ACTION_ID, "42")
+    payload["container"] = {"type": "message", "thread_ts": "1700.0001"}
+    bot.handle_request(mock.Mock(), _interactive_req(payload))
+    kw = bot.web.chat_postEphemeral.call_args.kwargs
+    assert kw["thread_ts"] == "1700.0001"
+
+
+def test_handle_interactive_helpful_ephemeral_without_thread_omits_thread_ts():
+    from src.interfaces.slack_feedback import HELPFUL_ACTION_ID
+
+    bot = _bot(feedback_store=mock.Mock())
+    payload = _block_action_payload(HELPFUL_ACTION_ID, "42")
+    bot.handle_request(mock.Mock(), _interactive_req(payload))
+    assert "thread_ts" not in bot.web.chat_postEphemeral.call_args.kwargs
+
+
+def test_handle_interactive_retried_click_inserts_once():
+    from src.interfaces.slack_feedback import HELPFUL_ACTION_ID
+
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    payload = _block_action_payload(HELPFUL_ACTION_ID, "42")
+    payload["actions"][0]["action_ts"] = "1700.0002"
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1"))
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1-retry"))
+    assert store.insert.call_count == 1
+
+
+def test_handle_interactive_retried_submission_inserts_once():
+    from src.interfaces.slack_feedback import FEEDBACK_FORM_CALLBACK_ID
+
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    payload = _view_sub_payload(FEEDBACK_FORM_CALLBACK_ID, "42", flags=("incorrect",))
+    payload["view"]["id"] = "V1"
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1"))
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1-retry"))
+    assert store.insert.call_count == 1
+
+
+def test_handle_interactive_distinct_clicks_by_one_user_both_insert():
+    from src.interfaces.slack_feedback import HELPFUL_ACTION_ID
+
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    for action_ts in ("1700.0003", "1700.0004"):
+        payload = _block_action_payload(HELPFUL_ACTION_ID, "42")
+        payload["actions"][0]["action_ts"] = action_ts
+        bot.handle_request(mock.Mock(), _interactive_req(payload))
+    assert store.insert.call_count == 2
