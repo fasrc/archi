@@ -54,7 +54,7 @@ transformers 4.57.6). That image is a hand-built Volta port with no build recipe
 
 Disk: the Qwen3.8 weights (20 GB) were deleted on 2026-10-13, leaving 54 GB free on
 `/scratch` — room for a 4-bit Llama 3.3 70B (~40 GB) but not a 4-bit Command R+ (~58 GB).
-Each further candidate needs its predecessor's weights deleted first unless it is small.
+The further candidates screened in §3 are 15–18 GB each.
 
 ## 3. Candidates and order
 
@@ -68,45 +68,76 @@ Each further candidate needs its predecessor's weights deleted first unless it i
 | Runs on the current image | **yes** — model code and head size 128 supported | **no** — no model code; head size 512 not supported by the V100 flash-attention backend | model code yes; **does not fit two GPUs** |
 | Tool parser in the image | `llama3_json` (no parallel calls; vLLM warns of malformed arguments). Its recommended chat template is not in the image — bind `examples/tool_chat_template_llama3.1_json.jinja` from the vLLM repo. | `gemma4` | none for this model's format |
 
-**Order:** Llama 3.3 70B goes first — of the three, it is the only one that runs on the
-existing image and fits the two free GPUs. Gemma 4 and Command R+ each need an operator
-decision before Phase 0 can start (§9).
+These three were the starting list. Because the move is mandatory, the field is every
+allowed model the host can run, so a second screen (2026-10-13) checked the other allowed
+families the image has code for, with the same tests: exists at this size, license, a
+4-bit checkpoint whose `quant_method` V100 loads, a tool parser in the image, attention
+head size ≤ 256, and fit on GPUs 0–1. Image-side facts were checked inside
+`vllm_volta.sif`; the rest comes from each model's `config.json` and model card.
+
+| | NVIDIA Nemotron 3 Nano 30B-A3B | NVIDIA Nemotron 3.5 Lightning 30B-A3B | IBM Granite 4.1 30B | Mistral Small 3.2 24B Instruct (2506) |
+|---|---|---|---|---|
+| Developer, license | NVIDIA (US); NVIDIA Nemotron Open Model License — commercial use allowed, requires an attribution notice, ends if the user sues NVIDIA over IP | NVIDIA (US); OpenMDW-1.1 (permissive, Linux Foundation) | IBM (US); Apache 2.0 | Mistral AI (France); Apache 2.0 |
+| Released | 2025-12-15 | 2026-08-11 | 2026-04-29 | 2025-06 |
+| Shape | hybrid mixture-of-experts: 31.6B total, **3.5B per token**; 52 layers = 23 Mamba2 + 23 expert + 6 attention | same as Nemotron 3 Nano | dense, 30B | dense, 24B |
+| Cache per token (Qwen3.6 ≈ 20 KiB) | **6 KiB** | **6 KiB** | 256 KiB | 160 KiB |
+| 4-bit checkpoint | `stelterlab/NVIDIA-Nemotron-3-Nano-30B-A3B-AWQ` — compressed-tensors despite the name, 17.8 GB (a GPTQ one exists but quantizes unusual layers) | `SergiioB/Nemotron-3.5-Lightning-30B-A3B-GPTQ-INT4-G64-sym` — real GPTQ, 18.1 GB | `drawais/Granite-4.1-30B-AWQ-INT4` — compressed-tensors despite the name, 15.5 GB | `gratex/mistral-small-3.2-24b-Instruct-GPTQ-W4A16` — real GPTQ, 15.1 GB |
+| Tool parser | `qwen3_coder` — the parser production uses today | `qwen3_coder` | `hermes` or `granite4` (IBM names none for 4.1; both in the image) | `mistral` (its `mistral_common` dependency is in the image) |
+| Image check | model code with expert layers present | model code present, but it reads the older `hybrid_override_pattern` config key and Lightning's config uses `layers_block_type`: expect a loader patch | `GraniteForCausalLM` present | Mistral model code present |
+| Open risk (Phase 0 decides) | Mamba2 kernels on V100; 4-bit expert layers in compressed-tensors format on V100 (the image has a V100-specific path, untested here); fp16 | as Nemotron 3 Nano, plus the loader patch | fp16; dense-30B speed (dense Qwen3.8-27B was 2× slower) | fp16; weakest published tool calling of the four |
+| Published scores (self-reported) | BFCL v4 tool calling 53.8 vs 46.4 for Qwen3-30B-A3B-Thinking | **against Qwen3.6-35B-A3B itself:** long-document reasoning (AA-LCR) 52.0 vs 61.1; instruction following (IFBench) 71.9 vs 63.7 | BFCL v3 73.7 vs 65.1 for Qwen3-30B-A3B-Instruct | BFCL v4 37.2 vs 41.4 for Qwen3-30B-A3B-Instruct |
+
+Publisher scores are leads, not evidence: they set the testing order and nothing else.
+Only NVIDIA's Lightning table compares against Qwen3.6 directly, and it shows a real gap
+on long-document reasoning, the closest public proxy for this job — an early estimate of
+the cost of the policy.
+
+**Ruled out:**
+- OpenAI gpt-oss-20b — fp16 overflow is documented in its expert layers, its native
+  4-bit format (MXFP4) needs newer GPUs, and the only V100-loadable conversion is of
+  unknown origin.
+- Microsoft Phi-4 — 16,384-token context, below the 32,768 archi needs.
+- Llama 4 Scout — 62.7–64.9 GB at 4-bit: over both the memory cap and the free disk.
+- Excluded by policy although the image supports them: DeepSeek, GLM, Kimi, MiniMax,
+  ERNIE, Seed.
+
+**Reserves** (tested only if the candidates below fail): IBM Granite 4.0 H-Small
+(superseded by Granite 4.1 on tool calling; carries the Mamba and expert-layer risks with
+no GPTQ checkpoint) and AI2 OLMo 3.1 32B Instruct (weakest tool calling of the set; its
+sliding-window layers fall off the image's fast V100 attention path).
+
+**Order.** Phase 0 is hours per model, so every candidate gets it, most promising and
+smallest first; the 30-question pilot (Phase 1.4) then picks two for Phase 2.
+
+1. **Nemotron 3 Nano** — Qwen3.6's speed class, production's own tool parser, a tiny
+   context cache.
+2. **Mistral Small 3.2** — the lowest kernel risk: real GPTQ, plain dense model.
+3. **Granite 4.1 30B** — the strongest published tool-calling score; dense, so slower.
+4. **Nemotron 3.5 Lightning** — after a loader patch; the newest, and per NVIDIA the
+   closest to Qwen3.6.
+5. **Llama 3.3 70B** — last: its 40 GB of weights need the others' deleted first, and it
+   is the most likely to miss the speed floor.
+
+The first three fit on disk together (~48 GB of the 54 GB free). Each is under 20 GB,
+small enough for one GPU, so during Phases 0–1 two can run side by side (one per GPU,
+ports 8002 and 8003); Phase 2 serves the finalists the way they would be deployed.
+Gemma 4 and Command R+ each need an operator decision before Phase 0 (§9).
 
 **Worth adding if Gemma 4 is ported:** `google/gemma-4-26B-A4B-it` — Google, Apache 2.0,
 a mixture-of-experts model with 128 experts, 8 used per token (~4B parameters per token,
-like Qwen3.6). It is the only US-developed option here likely to match Qwen3.6's speed,
-and it shares the 31B's attention layout (head size 512 included), so one port covers most of both; its mixture-of-experts layers are additional work.
-
-### Screening queue — verification pending
-
-"Best allowed" means the original three are a starting list, not the field. The image
-has model code for these allowed families too. **Model code alone does not make a
-candidate** (the image ships a Gemma 4 tool parser and still cannot run Gemma 4), so
-each enters the table above only after the same checks: exists at this size, license,
-a 4-bit checkpoint in a format V100 loads (`quant_method`, not the repo name), a tool
-parser in the image, attention head size ≤ 256, fits GPUs 0–1 at the 0.88 cap.
-
-| Model | Developer | Why it is in the queue |
-|---|---|---|
-| IBM Granite 4.0 H-Small | IBM (US) | mixture-of-experts, ~9B parameters per token; `GraniteMoeHybridForCausalLM` and the `granite4` parser are in the image; its Mamba layers are unverified on V100 |
-| NVIDIA Nemotron 3 Nano 30B-A3B | NVIDIA (US) | mixture-of-experts, ~3B parameters per token — the closest speed match to Qwen3.6; `NemotronHForCausalLM` is in the image, no Nemotron-named parser is |
-| AI2 OLMo 3 32B Instruct | AI2 (US) | dense, Apache 2.0, fully open; `Olmo3ForCausalLM` and the `olmo3` parser are in the image |
-| Mistral Small 3.2 24B Instruct | Mistral AI (France) | dense 24B; Mistral code and the `mistral` parser are in the image |
-| OpenAI gpt-oss-20b | OpenAI (US) | ~3.6B parameters per token, but ships as MXFP4, which V100 cannot run; stays only if a V100-loadable version exists and the image's attention handles its attention sinks |
-
-Not queued: Microsoft Phi-4 (14B; weak at tool calling for its size), Llama 4 Scout (109B;
-~58 GB at 4-bit, the same fit problem as Command R+). Excluded by policy although the image
-supports them: DeepSeek, GLM, Kimi, MiniMax, ERNIE, Seed.
+like Qwen3.6 and the Nemotron models). It shares the 31B's attention layout (head size
+512 included), so one port covers most of both; its mixture-of-experts layers are
+additional work.
 
 ## 4. Test bed
 
 | Factor | Value |
 |---|---|
-| Candidate server | GPUs 0–1, port **8002**, `--tensor-parallel-size 2` (Gemma 4: 1 GPU). Replaces `vllm-qwen38.service`, stopped and disabled on 2026-10-13 (its weights deleted). One candidate is served at a time. |
+| Candidate server | GPUs 0–1, which `vllm-qwen38.service` held until it was stopped and disabled on 2026-10-13 (its weights deleted). Phases 0–1: a candidate under 20 GB runs on one GPU, so two can run side by side (ports 8002 and 8003); Llama 3.3 needs both (`--tensor-parallel-size 2`, port 8002). Phase 2: one finalist at a time, served the way it would be deployed. |
 | Production | Qwen3.6 stays on GPUs 2–3, port 8001, serving live chat throughout (Command R+ excepted, §9). |
-| Launcher | Copy `config/scripts/vllm_qwen38_volta_serve.sh`; drop the `qwen3_5.py` patch bind; set `--model`, `--tool-call-parser` (Llama: `llama3_json`, plus `--chat-template` bound from the vLLM repo's `examples/`, pinned by commit), `--gpu-memory-utilization 0.88`, `--max-model-len 32768`. `config/` is git-ignored (#286): back the launcher up outside the repo. |
+| Launcher | Copy `config/scripts/vllm_qwen38_volta_serve.sh`; drop the `qwen3_5.py` patch bind; set `--model`, `--tool-call-parser` (Nemotron: `qwen3_coder`; Mistral: `mistral` plus `--tokenizer-mode mistral`; Granite 4.1: `hermes` or `granite4`, chosen in Phase 1.3; Llama: `llama3_json` plus `--chat-template` bound from the vLLM repo's `examples/`, pinned by commit), `--gpu-memory-utilization 0.88`, `--max-model-len 32768`. `config/` is git-ignored (#286): back the launcher up outside the repo. |
 | archi wiring | The `openai` provider slot already points at `:8002` (`config/environments/dev.yaml:128`, in the archi-config checkout), so no code change. The benchmark arm config differs from the Qwen3.6 config in exactly the keys the Qwen3.8 arm changed — `benchmarking.model`, the provider's `base_url` / `default_model` — **plus** a `context_editing.context_windows` entry for the candidate's exact model id. Without that entry the run has no context limit and long questions come back degraded (6 of 109 the last time). |
-| Context window | 32 768 for every model, enforced by `--max-model-len`. Llama 3.3 and Command R+ support 128k; holding 32k keeps the comparison fair and the cache budget in §2 valid. |
+| Context window | 32 768 for every model, enforced by `--max-model-len`. Every candidate supports more (128k–256k); holding 32k keeps the comparison fair and the cache budgets in §2–§3 valid. |
 | Sampling | `temperature: 0.3` (the benchmark's value, #701), thinking off. archi sends nothing else, so vLLM fills `top_p`/`top_k` from each model's `generation_config.json`; record the effective values per model in the ledger. |
 | Prompt | `fasrc-docs.md`, unchanged. It was written against Qwen models, which may handicap a candidate; a prompt-retune arm is out of scope unless a candidate misses the bar narrowly. |
 | Judge | Bedrock Claude Sonnet 4.5, 600 s, 6 workers — as in the Qwen3.8 runs. |
@@ -150,8 +181,8 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
   its config, or pay one fresh ~83-minute ingest. Record the corpus fingerprint and chunk
   count before the first run and after the last; a mismatch voids the comparison.
 - **Order: Qwen3.6, A, A, B, B, Qwen3.6** (A and B are the two candidates out of
-  Phase 1; with one, Qwen3.6, A, A, Qwen3.6). Only one candidate fits GPUs 0–1 at a time,
-  so the server is swapped once between A and B. Fresh Qwen3.6 runs at both ends show
+  Phase 1; with one, Qwen3.6, A, A, Qwen3.6). Each finalist is served on its own, the way
+  it would be deployed, so the server is swapped once between A and B. Fresh Qwen3.6 runs at both ends show
   drift in corpus, judge or live load as a gap between them instead of letting it hide in
   the comparison. (The Qwen3.8 runs reused Qwen3.6 runs from earlier that day and had to
   list that as a weakness.)
@@ -218,12 +249,12 @@ the Gemma 4 port (§9); and the Anthropic standby already configured in `dev.yam
 (`default_provider: anthropic`, US-developed) — which sends every question off the host
 and is billed per token, so it is a decision, not a default.
 
-## 7. Cost and time (Llama 3.3 70B; other candidates similar or less)
+## 7. Cost and time (Phase 2 figures assume a dense-model finalist; an A3B finalist is faster)
 
 | Phase | GPU / wall time | Judge spend |
 |---|---|---|
-| 0 | download ~40 GB + ~2 h of checks | — |
-| 1 | ~2 h | ~$3 |
+| 0 | per candidate: download 15–40 GB + ~2 h of checks | — |
+| 1 | per candidate: ~1 h of checks + the 30-question pilot (~1 h) | ~$10 |
 | 2 | ingest 0–1.5 h; 2 Qwen3.6 runs ~2 h each; 2 candidate runs est. 4–6 h each (Qwen3.8 took ~3 h); probes ~1 h | ~$28 per Qwen3.6 run, est. $45–60 per candidate run: **~$150–180** for one candidate, ~$100–120 more for a second |
 | 3 | one redeploy (~1 h re-index) | — |
 
@@ -231,10 +262,14 @@ and is billed per token, so it is a decision, not a default.
 
 | Candidate | Phase reached | Result | Date | Evidence |
 |---|---|---|---|---|
-| Llama 3.3 70B Instruct | — | — | — | — |
+| Llama 3.3 70B Instruct | — (Phase 0, last) | — | — | — |
 | Gemma 4 31B IT | blocked before Phase 0 | no model code in the image; head size 512 not supported by its V100 flash-attention backend | 2026-10-13 | §2 |
 | Command R+ 08-2024 | blocked before Phase 0 | no vLLM tool parser for its format; needs all four GPUs and more disk; non-commercial license | 2026-10-13 | §2 |
-| Screening queue (§3) | verification pending | — | — | — |
+| Nemotron 3 Nano 30B-A3B | — (Phase 0, first) | — | — | — |
+| Mistral Small 3.2 24B | — | — | — | — |
+| Granite 4.1 30B | — | — | — | — |
+| Nemotron 3.5 Lightning 30B-A3B | — (needs a loader patch first) | — | — | — |
+| gpt-oss-20b, Phi-4, Llama 4 Scout | ruled out at screening | fp16 overflow / 16k context / too large | 2026-10-13 | §3 |
 
 ## 9. Decisions
 
@@ -256,3 +291,7 @@ and is billed per token, so it is a decision, not a default.
    reading of CC-BY-NC for institutional use — for a model two generations old.
 4. **Fallback** if nothing clears the floor (§6): relax the floor, fund the Gemma 4 port,
    or accept the off-host Anthropic standby.
+5. **License sign-off for the winner.** Apache 2.0, OpenMDW-1.1 and the Llama 3.3
+   Community License are routine; the NVIDIA Nemotron Open Model License (Nemotron 3
+   Nano) adds an attribution notice and terminates if the user brings an IP suit against
+   NVIDIA.
