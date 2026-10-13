@@ -735,13 +735,13 @@ Get current schedule status.
            "last_run": "2026-10-13T03:04:12+00:00", "state": "idle"}]}
 ```
 
-`state` is the last state that the scheduled refresh of that source recorded:
+`state` is the last state recorded for that source. A scheduled refresh writes it, and so does a manual ingest through the uploader (Git, Jira, local files, web): the last writer wins.
 
 | `state` | Meaning |
 |---|---|
-| `idle` | The last refresh completed. `last_run` is its completion time. This is also the value for a source that has not run; then `last_run` is `null`. |
+| `idle` | The last scheduled refresh or manual ingest completed. `last_run` is its completion time. This is also the value for a source that has not run; then `last_run` is `null`. |
 | `running` | A refresh is in progress. |
-| `error` | The last refresh failed. `last_run` keeps the time of the last successful refresh. The next scheduled run tries again. |
+| `error` | The last scheduled refresh failed. `last_run` keeps the time of the last success. The next scheduled run tries again. A later successful manual ingest of the same source sets `idle` again. |
 
 The cause of a failure is in the data-manager log and in `GET /api/ingestion/status`.
 
