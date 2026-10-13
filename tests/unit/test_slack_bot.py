@@ -1060,3 +1060,192 @@ def test_build_messages_drops_feedback_prompt_text():
         {"role": "assistant", "content": "real answer"},
         {"role": "user", "content": "q"},
     ]
+
+
+# ---------------------------------------------------------------------------
+# Interactive requests (task 5.1)
+# ---------------------------------------------------------------------------
+
+
+def _interactive_req(payload, envelope="E1"):
+    return SimpleNamespace(type="interactive", envelope_id=envelope, payload=payload)
+
+
+def _block_action_payload(
+    action_id, value, user_id="U1", channel_id="C1", trigger_id="T1"
+):
+    return {
+        "type": "block_actions",
+        "trigger_id": trigger_id,
+        "channel": {"id": channel_id},
+        "user": {"id": user_id},
+        "actions": [{"action_id": action_id, "value": value}],
+    }
+
+
+def _view_sub_payload(callback_id, private_metadata, flags=(), comment=None):
+    return {
+        "type": "view_submission",
+        "user": {"id": "U1"},
+        "view": {
+            "callback_id": callback_id,
+            "private_metadata": private_metadata,
+            "state": {
+                "values": {
+                    "archi_feedback_flags": {
+                        "archi_feedback_flags_action": {
+                            "selected_options": [{"value": f} for f in flags],
+                        }
+                    },
+                    "archi_feedback_comment": {
+                        "archi_feedback_comment_action": {
+                            "type": "plain_text_input",
+                            "value": comment,
+                        }
+                    },
+                }
+            },
+        },
+    }
+
+
+def test_handle_interactive_helpful_inserts_like_and_posts_ephemeral():
+    from src.interfaces.slack_feedback import FEEDBACK_THANKS_TEXT, HELPFUL_ACTION_ID
+
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    payload = _block_action_payload(
+        HELPFUL_ACTION_ID, "42", user_id="U1", channel_id="C1"
+    )
+    bot.handle_request(mock.Mock(), _interactive_req(payload))
+
+    store.insert.assert_called_once()
+    record = store.insert.call_args.args[0]
+    assert record.message_id == 42
+    assert record.feedback == "like"
+    bot.web.chat_postEphemeral.assert_called_once()
+    kw = bot.web.chat_postEphemeral.call_args.kwargs
+    assert kw["channel"] == "C1"
+    assert kw["user"] == "U1"
+    assert kw["text"] == FEEDBACK_THANKS_TEXT
+
+
+def test_handle_interactive_two_helpful_clicks_two_inserts_no_delete():
+    from src.interfaces.slack_feedback import HELPFUL_ACTION_ID
+
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    bot.handle_request(
+        mock.Mock(),
+        _interactive_req(_block_action_payload(HELPFUL_ACTION_ID, "42", user_id="U1")),
+    )
+    bot.handle_request(
+        mock.Mock(),
+        _interactive_req(
+            _block_action_payload(HELPFUL_ACTION_ID, "42", user_id="U2"), envelope="E2"
+        ),
+    )
+    assert store.insert.call_count == 2
+    store.delete.assert_not_called()
+
+
+def test_handle_interactive_not_helpful_opens_modal_no_insert():
+    from src.interfaces.slack_feedback import NOT_HELPFUL_ACTION_ID
+
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    payload = _block_action_payload(NOT_HELPFUL_ACTION_ID, "42", trigger_id="T1")
+    bot.handle_request(mock.Mock(), _interactive_req(payload))
+
+    bot.web.views_open.assert_called_once()
+    kw = bot.web.views_open.call_args.kwargs
+    assert kw["trigger_id"] == "T1"
+    assert kw["view"]["private_metadata"] == "42"
+    store.insert.assert_not_called()
+
+
+def test_handle_interactive_view_submission_inserts_dislike():
+    from src.interfaces.slack_feedback import FEEDBACK_FORM_CALLBACK_ID
+
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    payload = _view_sub_payload(
+        FEEDBACK_FORM_CALLBACK_ID,
+        "42",
+        flags=("incorrect", "inappropriate"),
+        comment="wrong partition",
+    )
+    bot.handle_request(mock.Mock(), _interactive_req(payload))
+
+    store.insert.assert_called_once()
+    r = store.insert.call_args.args[0]
+    assert r.message_id == 42
+    assert r.feedback == "dislike"
+    assert r.feedback_msg == "wrong partition"
+    assert r.incorrect is True
+    assert r.unhelpful is False
+    assert r.inappropriate is True
+
+
+def test_handle_interactive_invalid_ids_no_insert_no_exception():
+    from src.interfaces.slack_feedback import (
+        FEEDBACK_FORM_CALLBACK_ID,
+        HELPFUL_ACTION_ID,
+    )
+
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    bot.handle_request(
+        mock.Mock(),
+        _interactive_req(_block_action_payload(HELPFUL_ACTION_ID, "abc")),
+    )
+    bot.handle_request(
+        mock.Mock(),
+        _interactive_req(
+            _view_sub_payload(FEEDBACK_FORM_CALLBACK_ID, "-1"), envelope="E2"
+        ),
+    )
+    store.insert.assert_not_called()
+
+
+def test_handle_interactive_store_raises_no_exception_no_ephemeral():
+    from src.interfaces.slack_feedback import HELPFUL_ACTION_ID
+
+    store = mock.Mock()
+    store.insert.side_effect = RuntimeError("db down")
+    bot = _bot(feedback_store=store)
+    payload = _block_action_payload(HELPFUL_ACTION_ID, "42")
+    bot.handle_request(mock.Mock(), _interactive_req(payload))  # must not raise
+    bot.web.chat_postEphemeral.assert_not_called()
+
+
+def test_handle_interactive_views_open_raises_no_exception():
+    from src.interfaces.slack_feedback import NOT_HELPFUL_ACTION_ID
+
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    bot.web.views_open.side_effect = RuntimeError("slack down")
+    payload = _block_action_payload(NOT_HELPFUL_ACTION_ID, "42", trigger_id="T1")
+    bot.handle_request(mock.Mock(), _interactive_req(payload))  # must not raise
+
+
+def test_handle_interactive_events_api_path_unchanged():
+    bot = _bot()
+    bot.handle_request(mock.Mock(), _req(_channel_mention()))
+    assert bot.session.post.call_count == 1
+
+
+def test_handle_interactive_unknown_req_type_does_nothing():
+    bot = _bot()
+    req = SimpleNamespace(type="unknown_type", envelope_id="E", payload={})
+    bot.handle_request(mock.Mock(), req)  # must not raise
+    bot.session.post.assert_not_called()
+
+
+def test_handle_interactive_unknown_action_id_does_nothing():
+    store = mock.Mock()
+    bot = _bot(feedback_store=store)
+    payload = _block_action_payload("some_other_action_id", "42")
+    bot.handle_request(mock.Mock(), _interactive_req(payload))
+    store.insert.assert_not_called()
+    bot.web.chat_postEphemeral.assert_not_called()

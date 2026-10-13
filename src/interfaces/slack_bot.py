@@ -17,7 +17,17 @@ from slack_sdk import WebClient
 from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.response import SocketModeResponse
 
-from src.interfaces.slack_feedback import FEEDBACK_PROMPT_TEXT, build_feedback_blocks
+from src.interfaces.slack_feedback import (
+    FEEDBACK_PROMPT_TEXT,
+    FEEDBACK_THANKS_TEXT,
+    HELPFUL_ACTION_ID,
+    NOT_HELPFUL_ACTION_ID,
+    build_feedback_blocks,
+    build_feedback_modal,
+    like_record,
+    parse_feedback_submission,
+    parse_message_id,
+)
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
 
@@ -348,21 +358,73 @@ class SlackBot:
         except Exception:
             logger.exception("slack bot: failed to acknowledge a Socket Mode request")
         try:
-            if req.type != "events_api":
-                return
-            payload = req.payload or {}
-            event = payload.get("event") or {}
-            if not should_answer(event, self.bot_user_id):
-                return
-            if not self._deduper.first_time(event.get("channel"), event.get("ts")):
-                return
-            team_id = payload.get("team_id")
-            key = thread_key(
-                team_id, event.get("channel"), event.get("thread_ts") or event.get("ts")
-            )
-            self._enqueue(key, event, team_id)
+            if req.type == "events_api":
+                payload = req.payload or {}
+                event = payload.get("event") or {}
+                if not should_answer(event, self.bot_user_id):
+                    return
+                if not self._deduper.first_time(event.get("channel"), event.get("ts")):
+                    return
+                team_id = payload.get("team_id")
+                key = thread_key(
+                    team_id,
+                    event.get("channel"),
+                    event.get("thread_ts") or event.get("ts"),
+                )
+                self._enqueue(key, event, team_id)
+            elif req.type == "interactive":
+                self.handle_interactive(req.payload or {})
         except Exception:
             logger.exception("slack bot: failed to dispatch a Slack event")
+
+    def handle_interactive(self, payload):
+        """Handle block_actions and view_submission payloads; never raises (design D6-D7)."""
+        try:
+            payload_type = payload.get("type")
+            if payload_type == "block_actions":
+                actions = payload.get("actions") or []
+                if not actions:
+                    return
+                action = actions[0]
+                action_id = action.get("action_id")
+                message_id = parse_message_id(action.get("value"))
+                if message_id is None:
+                    return
+                if action_id == HELPFUL_ACTION_ID:
+                    try:
+                        self.feedback_store.insert(like_record(message_id))
+                    except Exception:
+                        logger.exception("slack bot: failed to store helpful feedback")
+                        return
+                    try:
+                        self.web.chat_postEphemeral(
+                            channel=(payload.get("channel") or {}).get("id"),
+                            user=(payload.get("user") or {}).get("id"),
+                            text=FEEDBACK_THANKS_TEXT,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "slack bot: failed to post ephemeral feedback thanks"
+                        )
+                elif action_id == NOT_HELPFUL_ACTION_ID:
+                    try:
+                        self.web.views_open(
+                            trigger_id=payload.get("trigger_id"),
+                            view=build_feedback_modal(message_id),
+                        )
+                    except Exception:
+                        logger.exception("slack bot: failed to open feedback modal")
+            elif payload_type == "view_submission":
+                view = payload.get("view") or {}
+                record = parse_feedback_submission(view)
+                if record is None:
+                    return
+                try:
+                    self.feedback_store.insert(record)
+                except Exception:
+                    logger.exception("slack bot: failed to store dislike feedback")
+        except Exception:
+            logger.exception("slack bot: failed to handle interactive payload")
 
     def _enqueue(self, key, event, team_id):
         with self._queues_lock:
