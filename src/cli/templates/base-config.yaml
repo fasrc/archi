@@ -150,6 +150,11 @@ services:
     max_workers: {{ v_slack_workers if v_slack_workers is defined and v_slack_workers is not none else 4 }}
     {%- set v_slack_history = services.slack.history_limit %}
     history_limit: {{ v_slack_history if v_slack_history is defined and v_slack_history is not none else 20 }}
+    internal_users_only: {{ 'true' if services.slack.internal_users_only else 'false' }}
+    allowed_channels: {{ (services.slack.allowed_channels or []) | tojson }}
+    {#- Keep the default equal to DEFAULT_EXTERNAL_USER_TEXT in src/interfaces/slack_bot.py. -#}
+    {%- set v_slack_notice = services.slack.external_user_text or "This assistant is available only to internal users. Guests and users from other organizations cannot use it." %}
+    external_user_text: {{ v_slack_notice | tojson }}
   redmine_mailbox:
     agent_class: {{ services.redmine_mailbox.agent_class | default('CMSCompOpsAgent', true) }}
     agents_dir: "{{ services.redmine_mailbox.agents_dir | default('', true) }}"
