@@ -8,4 +8,4 @@
 
 ## 3. Verify, push, and open the PR
 
-- [ ] 3.1 Run `bash scripts/gate.sh` on the branch tip and confirm it is green. Run `openspec validate fix-issue-678-portable-pin-move --strict`. Push with `git push -u origin fix/issue-678-portable-pin-move`. Open the PR with `gh pr create --repo fasrc/archi --base dev` and a real title and body: put `Closes #678` in the PR **body** (not the title), and record both mutation results (81 goes red when the refusal moves after `fm_ledger_append`; 82 goes red when the move loses its directory guard). No `Co-Authored-By` trailer. Do not merge.
+- [x] 3.1 Run `bash scripts/gate.sh` on the branch tip and confirm it is green. Run `openspec validate fix-issue-678-portable-pin-move --strict`. Push with `git push -u origin fix/issue-678-portable-pin-move`. Open the PR with `gh pr create --repo fasrc/archi --base dev` and a real title and body: put `Closes #678` in the PR **body** (not the title), and record both mutation results (81 goes red when the refusal moves after `fm_ledger_append`; 82 goes red when the move loses its directory guard). No `Co-Authored-By` trailer. Do not merge.
