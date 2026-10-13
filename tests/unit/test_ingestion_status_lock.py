@@ -788,3 +788,76 @@ def test_a_run_joining_during_lock_release_clears_completed():
     assert at_release[0]["state"] == "running"
     assert at_release[0]["step"] == "upload"
     assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_run_source_refresh_sets_error_when_func_raises():
+    """A collector failure leaves the source at error, never running (issue #650)."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    calls = []
+    update_calls = []
+
+    def func():
+        raise RuntimeError("collect down")
+
+    def fake_update_vectorstore(**kwargs):
+        update_calls.append(kwargs)
+
+    def fake_set_source_status(source, **kwargs):
+        calls.append((source, kwargs))
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    with pytest.raises(RuntimeError, match="collect down"):
+        helpers["run_source_refresh"](
+            "git", func, fake_update_vectorstore, fake_set_source_status
+        )
+
+    assert calls == [("git", {"state": "running"}), ("git", {"state": "error"})]
+    assert update_calls == []
+    status = helpers["get_ingestion_status"]()
+    assert status["state"] == "error"
+    assert status["error"] == "collect down"
+
+
+def test_run_source_refresh_sets_error_when_update_vectorstore_returns_failed():
+    """A sync that returns "failed" also leaves the source entry at error."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    calls = []
+
+    def fake_update_vectorstore(**kwargs):
+        return "failed"
+
+    def fake_set_source_status(source, **kwargs):
+        calls.append((source, kwargs))
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    with pytest.raises(RuntimeError):
+        helpers["run_source_refresh"](
+            "git", lambda: None, fake_update_vectorstore, fake_set_source_status
+        )
+
+    assert calls[-1] == ("git", {"state": "error"})
+    assert not any(kwargs.get("state") == "idle" for _, kwargs in calls)
+    assert not any("last_run" in kwargs for _, kwargs in calls)
+
+
+def test_run_source_refresh_error_write_failure_does_not_mask_the_original_exception():
+    """A set_source_status failure while recording error must not hide the cause."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    def func():
+        raise RuntimeError("collect down")
+
+    def fake_update_vectorstore(**kwargs):
+        return None
+
+    def fake_set_source_status(source, **kwargs):
+        if kwargs.get("state") == "error":
+            raise OSError("disk full")
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    with pytest.raises(RuntimeError, match="collect down"):
+        helpers["run_source_refresh"](
+            "git", func, fake_update_vectorstore, fake_set_source_status
+        )

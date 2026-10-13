@@ -36,7 +36,7 @@
 
 ## 1. `run_source_refresh` writes a terminal error status
 
-- [ ] 1.1 In `tests/unit/test_ingestion_status_lock.py`, add tests, then implement design
+- [x] 1.1 In `tests/unit/test_ingestion_status_lock.py`, add tests, then implement design
       D1–D4 in `src/utils/ingestion_status.py` (`run_source_refresh` only), one commit
       (`fix: a failed scheduled refresh leaves its source at error`). Use a recording
       `set_source_status(source, **kwargs)` fake and the
