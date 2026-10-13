@@ -16,7 +16,7 @@
 
 ## 3. The slack_feedback module
 
-- [ ] 3.1 Create `tests/unit/test_slack_feedback.py` and `src/interfaces/slack_feedback.py` test-first, with only pure helpers and the store (no SlackBot change yet). Cover:
+- [x] 3.1 Create `tests/unit/test_slack_feedback.py` and `src/interfaces/slack_feedback.py` test-first, with only pure helpers and the store (no SlackBot change yet). Cover:
   - `parse_message_id(value)`: `"42"` → `42`; `""`, `"0"`, `"-1"`, `"1.5"`, `"abc"`, `" 42"`, `"４２"` (non-ASCII digits), `None`, `42` (non-string) → `None` (design D5).
   - Constants `HELPFUL_ACTION_ID = "archi_feedback_helpful"`, `NOT_HELPFUL_ACTION_ID = "archi_feedback_not_helpful"`, `FEEDBACK_FORM_CALLBACK_ID = "archi_feedback_form"`, `FEEDBACK_PROMPT_TEXT`, `FEEDBACK_THANKS_TEXT = "Thanks for the feedback."`, `MAX_FEEDBACK_COMMENT_CHARS = 2000`.
   - `build_feedback_blocks(message_id)`: a `section` with `FEEDBACK_PROMPT_TEXT`, then an `actions` block with two buttons, the two action IDs, each `value == str(message_id)`.

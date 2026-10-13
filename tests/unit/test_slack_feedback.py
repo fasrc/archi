@@ -306,3 +306,12 @@ def test_store_raises_after_two_failures():
     store = SlackFeedbackStore(_fake_pool([conn1, conn2]))
     with pytest.raises(psycopg2.OperationalError):
         store.insert(like_record(42), now=_NOW)
+
+
+def test_store_insert_uses_utc_now_when_no_now_given():
+    conn, cur = _fake_conn()
+    store = SlackFeedbackStore(_fake_pool([conn]))
+    store.insert(like_record(42))
+    _, params = cur.execute.call_args[0]
+    ts = params[1]
+    assert ts.tzinfo is not None
