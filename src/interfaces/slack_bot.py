@@ -10,6 +10,7 @@ import threading
 import time
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
+from typing import NamedTuple, Optional
 
 import requests
 from slack_sdk import WebClient
@@ -48,6 +49,11 @@ _MENTION_RE = re.compile(r"[ \t]*<@[A-Z0-9]+>[ \t]*")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.*)$")
+
+
+class AskResult(NamedTuple):
+    text: str
+    message_id: Optional[int]
 
 
 def thread_key(team_id, channel, thread_ts):
@@ -193,9 +199,15 @@ def ask_archi(
             f"/v1/chat/completions returned HTTP {resp.status_code}{suffix}"
         )
     try:
-        return resp.json()["choices"][0]["message"]["content"]
+        body = resp.json()
+        content = body["choices"][0]["message"]["content"]
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         raise ArchiApiError("/v1/chat/completions returned an unexpected body") from exc
+    raw_id = body.get("archi_message_id")
+    message_id = (
+        raw_id if isinstance(raw_id, int) and not isinstance(raw_id, bool) else None
+    )
+    return AskResult(text=content, message_id=message_id)
 
 
 def wait_for_model(
@@ -416,7 +428,7 @@ class SlackBot:
                 f"slack bot: question from {event.get('user')} in {channel} "
                 f"thread {thread_ts} ({len(messages) - 1} earlier turns)"
             )
-            answer = ask_archi(
+            result = ask_archi(
                 self.session,
                 self.chat_url,
                 self.model,
@@ -425,7 +437,7 @@ class SlackBot:
                 token=self.api_token,
                 timeout=self.timeout_seconds,
             )
-            final_text = to_mrkdwn(answer)
+            final_text = to_mrkdwn(result.text)
         except Exception:
             logger.exception(f"slack bot: failed to answer {channel} {ts}")
             try:

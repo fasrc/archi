@@ -19,6 +19,7 @@ from src.interfaces.slack_bot import (
     ERROR_TEXT,
     PLACEHOLDER_TEXT,
     ArchiApiError,
+    AskResult,
     EventDeduper,
     SlackBot,
     ask_archi,
@@ -373,7 +374,8 @@ def test_ask_archi_posts_and_returns_content():
     out = ask_archi(
         session, "http://chatbot:7861/", "m", msgs, "slack:T:C:1", timeout=30
     )
-    assert out == "hi"
+    assert out.text == "hi"
+    assert out.message_id is None
     args, kwargs = session.post.call_args
     assert args[0] == "http://chatbot:7861/v1/chat/completions"
     assert kwargs["json"] == {"model": "m", "messages": msgs, "stream": False}
@@ -410,6 +412,47 @@ def test_ask_archi_raises_on_malformed_body():
     session.post.return_value = _response(payload={"choices": []})
     with pytest.raises(ArchiApiError, match="unexpected"):
         ask_archi(session, "http://c", "m", [], "k")
+
+
+def test_ask_archi_returns_integer_message_id():
+    session = mock.Mock()
+    body = {**_completion("answer"), "archi_message_id": 42}
+    session.post.return_value = _response(payload=body)
+    out = ask_archi(session, "http://c", "m", [], "k")
+    assert isinstance(out, AskResult)
+    assert out.text == "answer"
+    assert out.message_id == 42
+
+
+def test_ask_archi_returns_none_for_missing_message_id():
+    session = mock.Mock()
+    session.post.return_value = _response(payload=_completion("answer"))
+    out = ask_archi(session, "http://c", "m", [], "k")
+    assert out.message_id is None
+
+
+def test_ask_archi_returns_none_for_null_message_id():
+    session = mock.Mock()
+    body = {**_completion("answer"), "archi_message_id": None}
+    session.post.return_value = _response(payload=body)
+    out = ask_archi(session, "http://c", "m", [], "k")
+    assert out.message_id is None
+
+
+def test_ask_archi_returns_none_for_bool_message_id():
+    session = mock.Mock()
+    body = {**_completion("answer"), "archi_message_id": True}
+    session.post.return_value = _response(payload=body)
+    out = ask_archi(session, "http://c", "m", [], "k")
+    assert out.message_id is None
+
+
+def test_ask_archi_returns_none_for_string_message_id():
+    session = mock.Mock()
+    body = {**_completion("answer"), "archi_message_id": "42"}
+    session.post.return_value = _response(payload=body)
+    out = ask_archi(session, "http://c", "m", [], "k")
+    assert out.message_id is None
 
 
 def test_wait_for_model_retries_then_returns_first_id():

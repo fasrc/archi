@@ -12,7 +12,7 @@
 
 ## 2. ask_archi returns the message ID
 
-- [ ] 2.1 In `tests/unit/test_slack_bot.py`, update the `ask_archi` tests and add tests: the function returns an `AskResult` with `.text` equal to the content and `.message_id` equal to the body's integer `archi_message_id`; a body without `archi_message_id`, with `null`, with a string, or with a bool gives `.message_id is None` and no error (design D10). See them fail. In `src/interfaces/slack_bot.py`, add `class AskResult(NamedTuple)` with `text` and `message_id`, and make `ask_archi()` return it. Update `SlackBot.answer()` to use `.text`, and update every other caller and test fake that returns a plain string (grep `ask_archi` in `src/` and `tests/`). Behavior of `answer()` does not change in this task. Gate green, commit.
+- [x] 2.1 In `tests/unit/test_slack_bot.py`, update the `ask_archi` tests and add tests: the function returns an `AskResult` with `.text` equal to the content and `.message_id` equal to the body's integer `archi_message_id`; a body without `archi_message_id`, with `null`, with a string, or with a bool gives `.message_id is None` and no error (design D10). See them fail. In `src/interfaces/slack_bot.py`, add `class AskResult(NamedTuple)` with `text` and `message_id`, and make `ask_archi()` return it. Update `SlackBot.answer()` to use `.text`, and update every other caller and test fake that returns a plain string (grep `ask_archi` in `src/` and `tests/`). Behavior of `answer()` does not change in this task. Gate green, commit.
 
 ## 3. The slack_feedback module
 
