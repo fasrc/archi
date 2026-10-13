@@ -1335,3 +1335,52 @@ def test_handle_interactive_distinct_clicks_by_one_user_both_insert():
         payload["actions"][0]["action_ts"] = action_ts
         bot.handle_request(mock.Mock(), _interactive_req(payload))
     assert store.insert.call_count == 2
+
+
+def test_handle_interactive_click_retry_after_failed_insert_inserts():
+    from src.interfaces.slack_feedback import HELPFUL_ACTION_ID
+
+    store = mock.Mock()
+    store.insert.side_effect = [RuntimeError("db down"), None]
+    bot = _bot(feedback_store=store)
+    payload = _block_action_payload(HELPFUL_ACTION_ID, "42")
+    payload["actions"][0]["action_ts"] = "1700.0005"
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1"))
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1-retry"))
+    assert store.insert.call_count == 2
+    bot.web.chat_postEphemeral.assert_called_once()
+
+
+def test_handle_interactive_submission_retry_after_failed_insert_inserts():
+    from src.interfaces.slack_feedback import FEEDBACK_FORM_CALLBACK_ID
+
+    store = mock.Mock()
+    store.insert.side_effect = [RuntimeError("db down"), None]
+    bot = _bot(feedback_store=store)
+    payload = _view_sub_payload(FEEDBACK_FORM_CALLBACK_ID, "42")
+    payload["view"]["id"] = "V2"
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1"))
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1-retry"))
+    assert store.insert.call_count == 2
+
+
+def test_handle_interactive_not_helpful_retry_after_failed_modal_reopens():
+    from src.interfaces.slack_feedback import NOT_HELPFUL_ACTION_ID
+
+    bot = _bot(feedback_store=mock.Mock())
+    bot.web.views_open.side_effect = [RuntimeError("slack down"), None]
+    payload = _block_action_payload(NOT_HELPFUL_ACTION_ID, "42")
+    payload["actions"][0]["action_ts"] = "1700.0006"
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1"))
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1-retry"))
+    assert bot.web.views_open.call_count == 2
+
+
+def test_event_deduper_forget_lets_a_key_through_again():
+    from src.interfaces.slack_bot import EventDeduper
+
+    deduper = EventDeduper()
+    assert deduper.first_time("C1", "1.0")
+    deduper.forget("C1", "1.0")
+    deduper.forget("C1", "missing")
+    assert deduper.first_time("C1", "1.0")

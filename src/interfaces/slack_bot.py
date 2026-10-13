@@ -174,6 +174,11 @@ class EventDeduper:
                 self._seen.popitem(last=False)
             return True
 
+    def forget(self, channel, ts):
+        """Let ``(channel, ts)`` through again, so a retry can redo a failed step."""
+        with self._lock:
+            self._seen.pop((channel, ts), None)
+
 
 class ArchiApiError(RuntimeError):
     """The chat app's /v1 API refused or failed a request."""
@@ -406,6 +411,7 @@ class SlackBot:
                         self.feedback_store.insert(like_record(message_id))
                     except Exception:
                         logger.exception("slack bot: failed to store helpful feedback")
+                        self._forget_interaction(payload)
                         return
                     try:
                         self.web.chat_postEphemeral(
@@ -423,6 +429,7 @@ class SlackBot:
                         )
                     except Exception:
                         logger.exception("slack bot: failed to open feedback modal")
+                        self._forget_interaction(payload)
             elif payload_type == "view_submission":
                 view = payload.get("view") or {}
                 record = parse_feedback_submission(view)
@@ -434,6 +441,7 @@ class SlackBot:
                     self.feedback_store.insert(record)
                 except Exception:
                     logger.exception("slack bot: failed to store dislike feedback")
+                    self._forget_interaction(payload)
         except Exception:
             logger.exception("slack bot: failed to handle interactive payload")
 
@@ -443,6 +451,12 @@ class SlackBot:
         if key is None:
             return True
         return self._deduper.first_time(*key)
+
+    def _forget_interaction(self, payload):
+        """After a failed side effect, let a Slack retry of ``payload`` run again."""
+        key = interaction_key(payload)
+        if key is not None:
+            self._deduper.forget(*key)
 
     def _enqueue(self, key, event, team_id):
         with self._queues_lock:
