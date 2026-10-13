@@ -22,6 +22,7 @@ from src.interfaces.slack_feedback import (
     FEEDBACK_THANKS_TEXT,
     HELPFUL_ACTION_ID,
     NOT_HELPFUL_ACTION_ID,
+    SlackFeedbackStore,
     build_feedback_blocks,
     build_feedback_modal,
     like_record,
@@ -30,6 +31,7 @@ from src.interfaces.slack_feedback import (
 )
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
+from src.utils.postgres_service_factory import PostgresServiceFactory
 
 logger = get_logger(__name__)
 
@@ -320,6 +322,10 @@ class SlackBot:
         if history_limit is None:
             history_limit = DEFAULT_HISTORY_LIMIT
         logger.info(f"slack bot: user {bot_user_id}, chat API {chat_url}")
+        factory = PostgresServiceFactory.get_instance()
+        feedback_store = (
+            SlackFeedbackStore(factory.connection_pool) if factory is not None else None
+        )
         return cls(
             web_client=web,
             socket_client=socket,
@@ -332,6 +338,7 @@ class SlackBot:
             ),
             history_limit=int(history_limit),
             max_workers=int(slack_cfg.get("max_workers") or DEFAULT_MAX_WORKERS),
+            feedback_store=feedback_store,
         )
 
     def run(self, stop_event=None, sleep=time.sleep):

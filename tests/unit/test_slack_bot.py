@@ -887,6 +887,36 @@ def test_from_config_requires_both_slack_tokens():
         _from_config({}, secrets={"SLACK_BOT_TOKEN": "xoxb-secret"})
 
 
+def test_from_config_wires_feedback_store_when_factory_is_set(monkeypatch):
+    from src.interfaces.slack_feedback import SlackFeedbackStore
+
+    fake_pool = mock.Mock()
+    fake_factory = mock.Mock()
+    fake_factory.connection_pool = fake_pool
+    monkeypatch.setattr(
+        slack_bot,
+        "PostgresServiceFactory",
+        mock.Mock(**{"get_instance.return_value": fake_factory}),
+    )
+
+    bot, _, _ = _from_config({"services": {}})
+    assert isinstance(bot.feedback_store, SlackFeedbackStore)
+    assert bot.feedback_store._pool is fake_pool
+    bot.executor.shutdown(wait=False)
+
+
+def test_from_config_no_feedback_store_when_factory_is_none(monkeypatch):
+    monkeypatch.setattr(
+        slack_bot,
+        "PostgresServiceFactory",
+        mock.Mock(**{"get_instance.return_value": None}),
+    )
+
+    bot, _, _ = _from_config({"services": {}})
+    assert bot.feedback_store is None
+    bot.executor.shutdown(wait=False)
+
+
 def test_run_resolves_model_registers_listener_and_connects():
     bot = _bot()
     bot.model = None
