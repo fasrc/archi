@@ -97,3 +97,4 @@
       legacy-skip branch and pin its `model unchanged` and `now == model default` terms.
       Run `bash scripts/gate.sh`, tick this box, one commit
       (`test: pin the legacy dimension skip terms`), and push to the PR branch.
+- [x] 3.2 Review fix (Codex P2, PR #695): emit `dimensions` from `src/cli/templates/base-config.yaml` for `OpenAIEmbeddings` and `HuggingFaceEmbeddings` when the source config sets it (design D6). Test: `tests/unit/test_base_config_embedding_dimensions_render.py`.

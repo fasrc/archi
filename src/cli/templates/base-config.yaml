@@ -297,6 +297,9 @@ data_manager:
       kwargs:
         model: {{ data_manager.embedding_class_map.OpenAIEmbeddings.kwargs.model | default('text-embedding-3-small', true) }}
       similarity_score_reference: {{ data_manager.embedding_class_map.OpenAIEmbeddings.similarity_score_reference | default(0.0, true) }}
+{%- if data_manager.embedding_class_map.OpenAIEmbeddings.dimensions is defined and data_manager.embedding_class_map.OpenAIEmbeddings.dimensions is not none %}
+      dimensions: {{ data_manager.embedding_class_map.OpenAIEmbeddings.dimensions | int }}
+{%- endif %}
     HuggingFaceEmbeddings:
       class: HuggingFaceEmbeddings
       kwargs:
@@ -308,6 +311,9 @@ data_manager:
           normalize_embeddings: {{ v_normalize_embeddings if v_normalize_embeddings is defined and v_normalize_embeddings is not none else true }}
       similarity_score_reference: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.similarity_score_reference | default(0.0, true) }}
       query_embedding_instructions: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.query_embedding_instructions | default("null", true) }}
+{%- if data_manager.embedding_class_map.HuggingFaceEmbeddings.dimensions is defined and data_manager.embedding_class_map.HuggingFaceEmbeddings.dimensions is not none %}
+      dimensions: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.dimensions | int }}
+{%- endif %}
   chunk_size: {{ data_manager.chunk_size | default(1000, true) }}
   chunk_overlap: {{ data_manager.chunk_overlap | default(0, true) }}
   chunking:

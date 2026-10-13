@@ -60,6 +60,8 @@ In `docs/docs/services.md` (the "Ingest configuration (as used at ingest)" bulle
 
 Reason: "this rule" in that bullet means the per-model default table from PR #646, which is older than this change. Runs recorded between #646 and this change have no marker, so the docs must tie the exception to the marker, not to #646.
 
+**D6: the runtime config carries `dimensions`.** `archi create` renders the runtime config through `src/cli/templates/base-config.yaml`, and the snapshot reads that rendered config. Before this decision the template did not emit `dimensions` for `OpenAIEmbeddings` or `HuggingFaceEmbeddings`, so the marker was always false on the standard path, while `init.sql` sized the vector column from the source config. The template now emits `dimensions` (as an integer) for each of the two entries when the source config sets it, and omits it otherwise. Test: `tests/unit/test_base_config_embedding_dimensions_render.py` renders the template and builds the snapshot from the result.
+
 ## Risks / Trade-offs
 
 - A row recorded before this change with an explicit 384 still hides the drift. Nothing in the old row can fix that; a re-ingest writes a marker. The D5 docs text ties the claim to runs that carry the marker and states the remaining gap.
