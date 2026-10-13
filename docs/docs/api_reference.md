@@ -729,6 +729,22 @@ Trigger schedule reload from database.
 
 Get current schedule status.
 
+```json
+{"jobs": [{"name": "links", "cron": "0 3 * * *",
+           "next_run": "2026-10-14T03:00:00+00:00",
+           "last_run": "2026-10-13T03:04:12+00:00", "state": "idle"}]}
+```
+
+`state` is the last state that the scheduled refresh of that source recorded:
+
+| `state` | Meaning |
+|---|---|
+| `idle` | The last refresh completed. `last_run` is its completion time. This is also the value for a source that has not run; then `last_run` is `null`. |
+| `running` | A refresh is in progress. |
+| `error` | The last refresh failed. `last_run` keeps the time of the last successful refresh. The next scheduled run tries again. |
+
+The cause of a failure is in the data-manager log and in `GET /api/ingestion/status`.
+
 ---
 
 ## Health & Info
