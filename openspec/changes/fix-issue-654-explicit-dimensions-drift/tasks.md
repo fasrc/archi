@@ -72,7 +72,7 @@
 
 ## 2. Docs and publish
 
-- [ ] 2.1 Make the design D5 edits in `docs/docs/services.md` (two sentence
+- [x] 2.1 Make the design D5 edits in `docs/docs/services.md` (two sentence
       replacements in the line-91 "Ingest configuration (as used at ingest)" bullet; no
       other line in that file changes), tick this box, one commit (`docs: explicit embedding dimensions now show drift`).
 - [ ] 2.2 Run `bash scripts/gate.sh` on the tip and confirm it exits 0. Confirm
