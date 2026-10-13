@@ -525,6 +525,58 @@ def test_run_passes_each_arms_ragas_scored_to_handle_results(monkeypatch):
     assert calls == [True, False]
 
 
+def test_run_passes_judge_identity_to_handle_results(monkeypatch):
+    """run() resets _ragas_judge_identity before each arm and passes it to handle_results."""
+    calls = []
+    _identity = {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "base_url": None,
+        "mode": "openai_compat",
+    }
+
+    class _RunStub(Benchmarker):
+        def __init__(self):
+            self.benchmarking_configs = {"modes": ["RAGAS"]}
+            self.benchmark_name = "t"
+            self.queries_to_answers = []
+            self.all_config_files = ["a.yaml"]
+            self.current_config = "a.yaml"
+            self.chain = None
+            self.config = {}
+
+        def wait_for_ingestion_completion(self):
+            return 0.0
+
+        def _merge_anchor_questions(self):
+            return None
+
+        def _process_config(self, modes_being_run):
+            assert self._ragas_judge_identity is None
+            self._ragas_judge_identity = _identity
+            return {}, {}
+
+        def load_new_configuration(self):
+            self.all_config_files.pop(0)
+
+    monkeypatch.setattr(ResultHandler, "check_collection", lambda cfg: None)
+    monkeypatch.setattr(ResultHandler, "get_corpus_fingerprint", lambda cfg: None)
+    monkeypatch.setattr(ResultHandler, "get_category_map", lambda cfg: (None, None))
+    monkeypatch.setattr(
+        ResultHandler,
+        "handle_results",
+        lambda *args, **kwargs: calls.append(kwargs.get("judge_identity", "missing")),
+    )
+    monkeypatch.setattr(ResultHandler, "add_metadata", lambda: None)
+    monkeypatch.setattr(ResultHandler, "dump_artifacts", lambda name: None)
+    monkeypatch.setattr(ResultHandler, "results", [])
+    monkeypatch.delenv("ARCHI_ARGILLA", raising=False)
+
+    _RunStub().run()
+
+    assert calls == [_identity]
+
+
 def test_process_config_skips_invalid_items():
     agent = _ConfigStub(queries=["not-a-dict", {"no_question": 1}], bundles=[])
     qwr, total = agent._process_config({"SOURCES"})

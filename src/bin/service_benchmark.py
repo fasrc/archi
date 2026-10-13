@@ -22,7 +22,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
-from src.archi.providers.local_provider import normalize_base_url
+from src.archi.providers.local_provider import LocalProvider, normalize_base_url
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
 from src.utils.benchmark_provenance import (
     asserted_config_divergence,
@@ -174,6 +174,102 @@ def ragas_judge_identity(config: Dict[str, Any]) -> Tuple[str, Optional[str]]:
     return str(provider).lower(), model
 
 
+def ragas_judge_effective_identity(config: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """Return the effective RAGAS judge identity the evaluator builder will use.
+
+    Returns ``{"provider", "model", "base_url", "mode"}`` where:
+    - ``base_url`` is the configured endpoint, or ``None`` for providers that use
+      library defaults (openai, anthropic, and the unknown fallback).
+    - ``mode`` is the resolved local-provider mode for ``provider == "local"``,
+      else ``None``.
+
+    The values are the same as those ``get_ragas_llm_evaluator`` computes, so
+    storing this dict on the benchmarker and reading from it in the builder
+    guarantees the recorded identity equals the identity that selected the client.
+    """
+    provider, model = ragas_judge_identity(config)
+    benchmark_cfg = (config.get("services") or {}).get("benchmarking") or {}
+    ragas_configs = (benchmark_cfg.get("mode_settings") or {}).get(
+        "ragas_settings"
+    ) or {}
+
+    ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get(
+        "ollama_url"
+    )
+
+    match provider:
+        case "openai":
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": None,
+                "mode": None,
+            }
+        case "ollama":
+            resolved_url = (
+                ollama_url or os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
+            )
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": resolved_url,
+                "mode": None,
+            }
+        case "local":
+            evaluator_mode = ragas_configs.get("evaluator_provider_mode")
+            explicit_mode = (
+                evaluator_mode
+                if evaluator_mode not in (None, "")
+                else benchmark_cfg.get("provider_mode")
+            )
+            mode = resolve_local_mode(ollama_url, explicit_mode)
+            if not ollama_url and mode == "openai_compat":
+                base_url = LocalProvider.DEFAULT_OPENAI_COMPAT_BASE_URL
+            elif not ollama_url:
+                base_url = os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
+            else:
+                base_url = ollama_url
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": base_url,
+                "mode": mode,
+            }
+        case "huggingface":
+            base_url = ollama_url or "http://localhost:8000/v1"
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": base_url,
+                "mode": None,
+            }
+        case "anthropic":
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": None,
+                "mode": None,
+            }
+        case "huit_bedrock":
+            base_url = (
+                benchmark_cfg.get("base_url")
+                or "https://go.apis.huit.harvard.edu/ais-bedrock-llm/v2"
+            )
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": base_url,
+                "mode": None,
+            }
+        case _:
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": None,
+                "mode": None,
+            }
+
+
 class ResultHandler:
     results = []  # store the results for each config
     # Parallel to `results`: each arm's end-reading category-map records, or None
@@ -263,6 +359,10 @@ class ResultHandler:
         # judged. Only a wholly ABSENT key is skipped, and only because it
         # predates the field.
         judge_pressures = set()
+        # Which judge scored the arm (provider, model, endpoint, client mode).
+        # A None identity is skipped: an unjudged arm already fails the
+        # pressure check above, so counting it here adds nothing.
+        judge_identities = set()
         for record in records:
             stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is not _NOT_RECORDED and stability is not True:
@@ -277,6 +377,9 @@ class ResultHandler:
             fingerprint = record.get("corpus_fingerprint")
             if fingerprint is not None:
                 fingerprints.add(fingerprint)
+            identity = record.get("ragas_judge_identity_effective")
+            if identity is not None:
+                judge_identities.add(tuple(sorted(identity.items())))
             pressure = record.get("ragas_effective_settings", _NOT_RECORDED)
             if pressure is _NOT_RECORDED:
                 continue
@@ -290,6 +393,12 @@ class ResultHandler:
                 "the arms were scored under different judge pressure "
                 "(concurrency, per-row budget, or one arm was not judged), "
                 "so their scored denominators are not comparable"
+            )
+        if len(judge_identities) > 1:
+            return (
+                "the arms were scored by different RAGAS judges (provider, "
+                "model, endpoint, or client mode), so their scores are not "
+                "comparable"
             )
         if len(fingerprints) > 1:
             return (
@@ -538,6 +647,7 @@ class ResultHandler:
         retrieval_identity: Optional[Dict[str, Any]] = None,
         judge_usage: Optional[Dict[str, Any]] = None,
         ragas_scored: Optional[bool] = None,
+        judge_identity: Optional[Dict[str, Any]] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -724,6 +834,12 @@ class ResultHandler:
             # no judge ran; always present on new artifacts so old/new are
             # distinguishable by key presence only.
             "judge_usage": judge_usage if ragas_ran else None,
+            # The effective judge identity (provider, model, endpoint, mode) for
+            # this arm (#618). Null mirrors ragas_effective_settings: no judge ran,
+            # or every answer failed so the judge never started.
+            "ragas_judge_identity_effective": (
+                judge_identity if ragas_ran and ragas_scored is not False else None
+            ),
             # The digest is the identity of the settings the run EFFECTIVELY had,
             # so the judge knobs are normalized in the BASIS while `configuration`
             # above keeps the file verbatim. Recording the effective values in a
@@ -1175,6 +1291,7 @@ class ResultHandler:
             # cannot drop it: `None` is filtered before comparison, which is how
             # a mixed sweep passed as "shared".
             "judge_participation": set(),
+            "judge_identity": set(),
             "queries_path": set(),
             "corpus_fingerprint": set(),
         }
@@ -1314,6 +1431,11 @@ class ResultHandler:
             ctx_fields["judge_participation"].add(
                 "none" if judge_pressure is None else "judged"
             )
+            judge_identity = record.get("ragas_judge_identity_effective")
+            if judge_identity is not None:
+                ctx_fields["judge_identity"].add(
+                    json.dumps(judge_identity, sort_keys=True)
+                )
             ctx_fields["queries_path"].add(bench.get("queries_path"))
             # The corpus is a swept-context field like any other: ranking arms
             # scored against different documents asserts controlled conditions
@@ -1789,17 +1911,10 @@ class Benchmarker:
         return results
 
     def get_ragas_llm_evaluator(self):
-        ragas_configs = self.config["services"]["benchmarking"]["mode_settings"][
-            "ragas_settings"
-        ]
-        benchmark_cfg = self.config.get("services", {}).get("benchmarking", {})
-        # Judge/SUT config split: when ragas_settings.evaluator_* is set, the RAGAS judge
-        # uses an independent model from the system under test. Falls back to the SUT
-        # provider/model when the evaluator_* keys are absent.
-        provider_key, model_name = ragas_judge_identity(self.config)
-        ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get(
-            "ollama_url"
-        )
+        identity = ragas_judge_effective_identity(self.config)
+        self._ragas_judge_identity = identity
+        provider_key = identity["provider"]
+        model_name = identity["model"]
 
         match provider_key:
             case "openai":
@@ -1807,10 +1922,9 @@ class Benchmarker:
             case "ollama":
                 from langchain_ollama import ChatOllama
 
-                base_url = ollama_url
                 return ChatOllama(
                     model=model_name,
-                    base_url=base_url,
+                    base_url=identity["base_url"],
                     num_predict=-2,
                     model_kwargs={"format": "json"},
                 )
@@ -1820,21 +1934,7 @@ class Benchmarker:
                 # ChatOllama (which 404s against /v1). An explicit provider_mode
                 # (judge-specific or inherited from the SUT) overrides the
                 # /v1 auto-detection.
-                #
-                # Selected by presence, not by truthiness: YAML decodes
-                # `evaluator_provider_mode: false` to False and `: 0` to 0, and an
-                # `or` here discarded both in favour of the SUT's mode — so the
-                # judge scored in a dialect nobody configured and
-                # `resolve_local_mode`'s refusal of a non-string never fired on
-                # this path. The empty string stays the one "not configured"
-                # spelling that still inherits.
-                evaluator_mode = ragas_configs.get("evaluator_provider_mode")
-                explicit_mode = (
-                    evaluator_mode
-                    if evaluator_mode not in (None, "")
-                    else benchmark_cfg.get("provider_mode")
-                )
-                if resolve_local_mode(ollama_url, explicit_mode) == "openai_compat":
+                if identity["mode"] == "openai_compat":
                     # base_url twice: see the huggingface arm below — in openai_compat
                     # mode LocalProvider now honors the configured base_url instead of
                     # OLLAMA_HOST, so the keyword agrees with the config copy instead
@@ -1843,26 +1943,25 @@ class Benchmarker:
                     # default and send the judge to the public OpenAI endpoint. An
                     # override with nothing to override with is not an override.
                     override = (
-                        {"base_url": normalize_base_url(ollama_url)}
-                        if ollama_url
+                        {"base_url": normalize_base_url(identity["base_url"])}
+                        if identity["base_url"]
                         else {}
                     )
                     return get_model(
                         "local",
                         model_name,
-                        {"base_url": ollama_url, "mode": "openai_compat"},
+                        {"base_url": identity["base_url"], "mode": "openai_compat"},
                         **override,
                     )
                 from langchain_ollama import ChatOllama
 
                 return ChatOllama(
                     model=model_name,
-                    base_url=ollama_url,
+                    base_url=identity["base_url"],
                     num_predict=-2,
                     model_kwargs={"format": "json"},
                 )
             case "huggingface":
-                base_url = ollama_url or "http://localhost:8000/v1"
                 # base_url twice, on purpose. load_new_configuration exports the SUT
                 # url as OLLAMA_HOST, but in openai_compat mode LocalProvider now
                 # honors the configured base_url instead of OLLAMA_HOST, so the
@@ -1870,19 +1969,17 @@ class Benchmarker:
                 return get_model(
                     "local",
                     model_name,
-                    {"base_url": base_url, "mode": "openai_compat"},
-                    base_url=normalize_base_url(base_url),
+                    {"base_url": identity["base_url"], "mode": "openai_compat"},
+                    base_url=normalize_base_url(identity["base_url"]),
                 )
             case "anthropic":
                 from langchain_anthropic import ChatAnthropic
 
                 return ChatAnthropic(model=model_name)
             case "huit_bedrock":
-                base_url = (
-                    benchmark_cfg.get("base_url")
-                    or "https://go.apis.huit.harvard.edu/ais-bedrock-llm/v2"
+                return get_model(
+                    "huit_bedrock", model_name, {"base_url": identity["base_url"]}
                 )
-                return get_model("huit_bedrock", model_name, {"base_url": base_url})
             case _:
                 return ChatOpenAI(model=model_name)
 
@@ -2453,6 +2550,7 @@ class Benchmarker:
             corpus_before = ResultHandler.get_corpus_fingerprint(arm_config)
             _, category_map_before = ResultHandler.get_category_map(arm_config)
             self._judge_usage = None
+            self._ragas_judge_identity = None
             self._ragas_scored = None
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
@@ -2480,6 +2578,7 @@ class Benchmarker:
                 retrieval_identity=arm_identity,
                 judge_usage=getattr(self, "_judge_usage", None),
                 ragas_scored=getattr(self, "_ragas_scored", None),
+                judge_identity=getattr(self, "_ragas_judge_identity", None),
             )
             self.load_new_configuration()
 
