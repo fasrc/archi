@@ -17,7 +17,11 @@ When `services.slack.internal_users_only` is `true`, the bot MUST look up the se
 
 #### Scenario: The lookup fails
 - **WHEN** `users.info` raises an error
-- **THEN** the bot rejects the message, and it looks up the user again for the next message
+- **THEN** the bot rejects the message with the general error text, and it looks up the user again for the next message
+
+#### Scenario: A member becomes a guest
+- **WHEN** a member asks one question, then becomes a guest and asks another
+- **THEN** the bot answers the first question and rejects the second
 
 ### Requirement: A rejected user SHALL get the configured notice
 The bot MUST send a rejected user `services.slack.external_user_text`, or the built-in text when the key is null, as one ephemeral message in the thread of the question. It MUST store no feedback click or form from a rejected user.

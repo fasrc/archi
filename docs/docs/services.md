@@ -437,9 +437,9 @@ Two keys limit who can use the bot and where. Both are off by default.
 
 - users of another workspace, for example in a Slack Connect channel or DM;
 - multi-channel guests (`is_restricted`) and single-channel guests (`is_ultra_restricted`);
-- a user that `users.info` cannot find. The bot does not keep a failed lookup, so the next message tries again.
+- a user that `users.info` cannot find. This user gets the general error reply, because the user can be internal.
 
-On Enterprise Grid, a member of another workspace in the same enterprise is internal. A rejected user gets `external_user_text` as an ephemeral reply, which only that user can see. The bot sends no question to archi for that user, and it stores no feedback click from that user.
+The bot looks up the sender for each question and keeps no result, so a member who becomes a guest loses access at the next question. On Enterprise Grid, a member of another workspace in the same enterprise is internal. A rejected user gets `external_user_text` as an ephemeral reply, which only that user can see. The bot sends no question to archi for that user, and it stores no feedback click from that user.
 
 **`allowed_channels`** is a list of channel IDs, for example `[C0C8TS7H8BV, C0BTTAFE4ET]`. The bot answers mentions only in these channels. At start-up it leaves each channel that is not on the list. When someone adds it to an unlisted channel, it leaves at once. Direct messages to the bot are not channels, so the list does not apply to them. To find a channel ID, open the channel details in Slack. The ID is at the bottom of the About tab.
 

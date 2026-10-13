@@ -12,6 +12,7 @@ import pytest
 
 from src.interfaces.slack_bot import (
     DEFAULT_EXTERNAL_USER_TEXT,
+    ERROR_TEXT,
     SlackBot,
     channel_allowed,
     is_internal_user,
@@ -239,15 +240,23 @@ def test_failed_lookup_rejects_and_is_retried_next_time():
     bot.web.users_info.side_effect = [RuntimeError("slack down"), _member()]
     bot.handle_request(mock.Mock(), _req(_mention(ts="1.0"), envelope="E1"))
     bot.session.post.assert_not_called()
+    # The sender can be internal, so the reply is the error, not the external notice.
+    assert bot.web.chat_postEphemeral.call_args.kwargs["text"] == ERROR_TEXT
     bot.handle_request(mock.Mock(), _req(_mention(ts="2.0"), envelope="E2"))
     assert bot.session.post.call_count == 1
 
 
-def test_lookup_result_is_cached_per_user():
+def test_each_question_looks_up_the_sender_again():
+    # A member who becomes a guest loses access at the next question.
     bot = _bot(internal_users_only=True)
+    bot.web.users_info.side_effect = [_member(), _member(is_restricted=True)]
     bot.handle_request(mock.Mock(), _req(_mention(ts="1.0"), envelope="E1"))
     bot.handle_request(mock.Mock(), _req(_mention(ts="2.0"), envelope="E2"))
-    bot.web.users_info.assert_called_once_with(user="U1")
+    assert bot.web.users_info.call_count == 2
+    assert bot.session.post.call_count == 1
+    assert bot.web.chat_postEphemeral.call_args.kwargs["text"] == (
+        DEFAULT_EXTERNAL_USER_TEXT
+    )
 
 
 def test_retried_envelope_posts_the_notice_once():
@@ -263,6 +272,16 @@ def test_failed_notice_never_raises():
     bot.web.users_info.return_value = _member(team_id="T999")
     bot.web.chat_postEphemeral.side_effect = RuntimeError("slack down")
     bot.handle_request(mock.Mock(), _req(_mention()))
+    bot.session.post.assert_not_called()
+
+
+def test_redelivery_after_a_failed_notice_posts_it_again():
+    bot = _bot(internal_users_only=True)
+    bot.web.users_info.return_value = _member(team_id="T999")
+    bot.web.chat_postEphemeral.side_effect = [RuntimeError("slack down"), None]
+    bot.handle_request(mock.Mock(), _req(_mention(), envelope="E1"))
+    bot.handle_request(mock.Mock(), _req(_mention(), envelope="E1-retry"))
+    assert bot.web.chat_postEphemeral.call_count == 2
     bot.session.post.assert_not_called()
 
 

@@ -362,9 +362,6 @@ class SlackBot:
         self.internal_users_only = internal_users_only
         self.external_user_text = external_user_text
         self.allowed_channels = allowed_channels
-        # users.info answers, by user ID; a failed lookup is not kept, so it is retried.
-        self._internal_users = {}
-        self._internal_lock = threading.Lock()
         self.model = None
         self._deduper = EventDeduper()
         # One FIFO queue per Slack thread with work pending; a thread is drained by
@@ -467,12 +464,17 @@ class SlackBot:
                 if not self._deduper.first_time(event.get("channel"), event.get("ts")):
                     return
                 team_id = payload.get("team_id")
-                if not self._user_allowed(event.get("user"), team_id):
-                    self._post_external_notice(
+                access = self._user_access(event.get("user"), team_id)
+                if access is not True:
+                    posted = self._post_access_notice(
+                        access,
                         event.get("channel"),
                         event.get("user"),
                         event.get("thread_ts") or event.get("ts"),
                     )
+                    if not posted:
+                        # Let a Slack redelivery of this event post the notice again.
+                        self._deduper.forget(event.get("channel"), event.get("ts"))
                     return
                 key = thread_key(
                     team_id,
@@ -491,11 +493,15 @@ class SlackBot:
             payload_type = payload.get("type")
             user_id = (payload.get("user") or {}).get("id")
             team_id = (payload.get("team") or {}).get("id")
-            if not self._user_allowed(user_id, team_id):
+            access = self._user_access(user_id, team_id)
+            if access is not True:
                 if payload_type == "block_actions":
-                    kwargs = ephemeral_thanks_kwargs(payload, self.external_user_text)
-                    self._post_external_notice(
-                        kwargs["channel"], kwargs["user"], kwargs.get("thread_ts")
+                    kwargs = ephemeral_thanks_kwargs(payload, "")
+                    self._post_access_notice(
+                        access,
+                        kwargs["channel"],
+                        kwargs["user"],
+                        kwargs.get("thread_ts"),
                     )
                 return
             if payload_type == "block_actions":
@@ -548,35 +554,41 @@ class SlackBot:
         except Exception:
             logger.exception("slack bot: failed to handle interactive payload")
 
-    def _user_allowed(self, user_id, payload_team_id):
-        """True when ``internal_users_only`` is off or the user is internal."""
+    def _user_access(self, user_id, payload_team_id):
+        """True to serve the user, False for an external user, None if unknown.
+
+        The lookup runs for each request and is not cached, so a member who becomes
+        a guest or leaves the workspace loses access at the next question.
+        """
         if not self.internal_users_only:
             return True
-        with self._internal_lock:
-            if user_id in self._internal_users:
-                return self._internal_users[user_id]
         team_id = self.team_id or payload_team_id
         try:
             user = self.web.users_info(user=user_id)["user"]
         except Exception:
-            # Fail closed: an unknown user gets no answer. The next message retries.
+            # Fail closed: an unknown user gets no answer.
             logger.exception(f"slack bot: users.info failed for {user_id}")
-            return False
+            return None
         internal = is_internal_user(user, team_id, self.enterprise_id)
-        with self._internal_lock:
-            self._internal_users[user_id] = internal
         if not internal:
             logger.info(f"slack bot: rejected external or guest user {user_id}")
         return internal
 
-    def _post_external_notice(self, channel, user_id, thread_ts):
-        kwargs = {"channel": channel, "user": user_id, "text": self.external_user_text}
+    def _post_access_notice(self, access, channel, user_id, thread_ts):
+        """Tell a rejected user why; return False if Slack refused the post.
+
+        A failed lookup gets the error text, because the sender can be internal.
+        """
+        text = self.external_user_text if access is False else ERROR_TEXT
+        kwargs = {"channel": channel, "user": user_id, "text": text}
         if thread_ts:
             kwargs["thread_ts"] = thread_ts
         try:
             self.web.chat_postEphemeral(**kwargs)
+            return True
         except Exception:
             logger.exception(f"slack bot: failed to post the notice in {channel}")
+            return False
 
     def _on_member_joined(self, event):
         if event.get("user") != self.bot_user_id or not self.allowed_channels:

@@ -8,13 +8,13 @@ The bot receives Slack events over Socket Mode in `SlackBot.handle_request()`. I
 
 `is_internal_user()` reads one `users.info` user. A user is internal when the user is not a guest (`is_restricted`, `is_ultra_restricted`), is not a stranger (`is_stranger`), and has the `team_id` of the bot's workspace. On Enterprise Grid, a user of another workspace with the same `enterprise_id` is internal. The workspace comes from `auth.test` at start-up. If `auth.test` gives no `team_id`, the event's `team_id` is the fallback.
 
-### D2. Fail closed, but do not remember a failure
+### D2. Look up each question, and fail closed
 
-If `users.info` fails, the bot rejects the message. The bot keeps only successful lookups, so the next message from that user tries again. The cache has no expiry: a guest that becomes a full member is accepted after the service restarts.
+The bot calls `users.info` for each question and each feedback click, and keeps no result. A cache would let a member who became a guest keep access until a restart. One lookup is small next to one answer. If `users.info` fails, the bot rejects the message and posts the general error text, not the external notice, because the sender can be internal.
 
 ### D3. The notice is ephemeral and is posted once
 
-The bot sends `external_user_text` with `chat.postEphemeral` in the thread of the question, so only the sender sees it. The check runs after deduplication, so a retried envelope does not post the notice twice. The bot sends no question to `/v1` for a rejected user.
+The bot sends `external_user_text` with `chat.postEphemeral` in the thread of the question, so only the sender sees it. The check runs after deduplication, so a retried envelope does not post the notice twice. If the post fails, the bot forgets the event, so a Slack redelivery can post the notice again. The bot sends no question to `/v1` for a rejected user.
 
 ### D4. Channel limit: ignore, then leave
 
