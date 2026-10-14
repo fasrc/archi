@@ -283,3 +283,22 @@ def test_archi_api_token_required_for_slack_when_chat_auth_is_on(tmp_path):
 def test_archi_api_token_not_required_otherwise(tmp_path, configs, services):
     manager = _secrets_manager(tmp_path, configs)
     assert "ARCHI_API_TOKEN" not in manager.get_required_secrets_for_services(services)
+
+
+@pytest.mark.parametrize(
+    "key, value",
+    [
+        ("internal_users_only", "false"),
+        ("internal_users_only", 0),
+        ("internal_users_only", {}),
+        ("allowed_channels", ""),
+        ("allowed_channels", False),
+        ("allowed_channels", 0),
+        ("allowed_channels", {}),
+    ],
+)
+def test_config_slack_access_keys_pass_through_unconverted(key, value):
+    # The template must not turn a malformed value into a valid policy; the bot
+    # validates the raw value at start-up (follow-up to #702).
+    rendered = _render_config(services={"slack": {key: value}})["slack"]
+    assert rendered[key] == value

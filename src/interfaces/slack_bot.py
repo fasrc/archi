@@ -138,6 +138,22 @@ def parse_allowed_channels(value):
     return channels
 
 
+def parse_internal_users_only(value):
+    """Return the ``services.slack.internal_users_only`` config value as a bool.
+
+    Only ``true``, ``false`` or ``null`` is accepted. A quoted ``"false"`` is a
+    non-empty string, so coercing it would turn the limit on by mistake, and a
+    ``0`` or ``{}`` would turn it off.
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    raise ValueError(
+        f"services.slack.internal_users_only must be true or false, not {value!r}."
+    )
+
+
 def is_internal_user(user, team_id, enterprise_id=None):
     """Return True when a ``users.info`` user is a full member of the bot's organization.
 
@@ -148,7 +164,8 @@ def is_internal_user(user, team_id, enterprise_id=None):
     if not user or not team_id:
         return False
     if (
-        user.get("is_restricted")
+        user.get("deleted")
+        or user.get("is_restricted")
         or user.get("is_ultra_restricted")
         or user.get("is_stranger")
     ):
@@ -403,7 +420,9 @@ class SlackBot:
         if history_limit is None:
             history_limit = DEFAULT_HISTORY_LIMIT
         allowed_channels = parse_allowed_channels(slack_cfg.get("allowed_channels"))
-        internal_users_only = bool(slack_cfg.get("internal_users_only"))
+        internal_users_only = parse_internal_users_only(
+            slack_cfg.get("internal_users_only")
+        )
         logger.info(
             f"slack bot: user {bot_user_id}, chat API {chat_url}, "
             f"internal users only {internal_users_only}, "
@@ -468,6 +487,9 @@ class SlackBot:
                 if not should_answer(event, self.bot_user_id):
                     return
                 if not channel_allowed(event, self.allowed_channels):
+                    # Slack does not tell a bot about its own join into a channel it
+                    # was not in, so a mention here is the first sign: leave now.
+                    self._leave(event.get("channel"))
                     return
                 if not self._deduper.first_time(event.get("channel"), event.get("ts")):
                     return

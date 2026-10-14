@@ -715,3 +715,55 @@ def test_retried_rejected_form_looks_up_once():
         )
     bot.web.users_info.assert_called_once()
     store.insert.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Review round 3 (follow-up to #702)
+# ---------------------------------------------------------------------------
+
+
+def test_deactivated_member_is_external():
+    assert not is_internal_user({"team_id": TEAM, "deleted": True}, TEAM)
+
+
+def test_deactivated_member_of_the_enterprise_is_external():
+    user = {
+        "team_id": "T2",
+        "deleted": True,
+        "enterprise_user": {"enterprise_id": "E1"},
+    }
+    assert not is_internal_user(user, TEAM, enterprise_id="E1")
+
+
+def test_mention_in_an_unlisted_channel_makes_the_bot_leave():
+    # Slack does not send the bot member_joined_channel for its own join into a
+    # channel it was not in, but a mention there proves it is a member.
+    bot = _bot(allowed_channels=frozenset({"C1"}))
+    bot.handle_request(mock.Mock(), _req(_mention(channel="C9")))
+    bot.web.conversations_leave.assert_called_once_with(channel="C9")
+    bot.session.post.assert_not_called()
+
+
+def test_mention_in_a_listed_channel_does_not_leave():
+    bot = _bot(allowed_channels=frozenset({"C1"}))
+    bot.handle_request(mock.Mock(), _req(_mention(channel="C1")))
+    bot.web.conversations_leave.assert_not_called()
+
+
+def test_direct_message_never_leaves():
+    bot = _bot(allowed_channels=frozenset({"C1"}))
+    bot.handle_request(mock.Mock(), _req(_dm()))
+    bot.web.conversations_leave.assert_not_called()
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, {}, []])
+def test_from_config_rejects_a_non_boolean_switch(value):
+    with pytest.raises(ValueError, match="internal_users_only"):
+        _from_config({"internal_users_only": value})
+
+
+@pytest.mark.parametrize(
+    "value, expected", [(None, False), (False, False), (True, True)]
+)
+def test_from_config_accepts_a_boolean_switch(value, expected):
+    assert _from_config({"internal_users_only": value}).internal_users_only is expected
