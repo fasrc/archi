@@ -308,6 +308,89 @@ _PROMOTED_ATTR = "data-archi-promoted"
 # a later block that empties the head half does not add a second link.
 _LINK_SHOWN_ATTR = "data-archi-link-shown"
 _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+# Matches an ``&`` that a CommonMark reader would decode as the start of a
+# character reference (issue #605 review): ``&name;``, ``&#NNN;``, ``&#xHHH;``.
+_ENTITY_LEAD = re.compile(r"&(?=#[0-9]+;|#[xX][0-9A-Fa-f]+;|[A-Za-z][A-Za-z0-9]*;)")
+# A backslash that a CommonMark reader would consume as an escape (issue #605 review).
+_ESCAPED_PUNCT = re.compile(r"\\[!-/:-@\[-`{-~]")
+# Characters that are active inside CommonMark link text (issue #605 review).
+_LABEL_ACTIVE = re.compile(r"[\\\[\]<>`*_]")
+
+
+def _link_destination(href: str) -> str:
+    """Return ``href`` as a CommonMark 0.31 link destination (issue #605).
+
+    A bare destination cannot start with ``<``, hold whitespace or a control
+    character, or have parentheses that don't balance. A DOM ``href`` has no
+    escapes of its own, so a bare destination also cannot hold a ``\\`` before
+    ASCII punctuation or at its end (where it would escape the link's closing
+    ``)``), or a ``&`` that leads a character reference: a CommonMark reader
+    would consume the backslash or decode the reference. When ``href``
+    violates any of these rules, wrap it in angle brackets: double every literal
+    backslash first (so a reader's own backslash-unescaping recovers it rather
+    than consuming the character after it), then backslash-escape ``<`` and
+    ``>`` (forbidden bare inside an angle-bracket destination) and any ``&``
+    that leads a character reference.
+    An ``href`` with a line ending is returned unchanged: no destination form
+    can hold one (design Non-Goals), so the angle-bracket form would not help.
+    """
+    if "\n" in href or "\r" in href:
+        return href
+    bare_ok = (
+        not href.startswith("<")
+        and not any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in href)
+        and not _ESCAPED_PUNCT.search(href)
+        and not _ENTITY_LEAD.search(href)
+        # A trailing backslash would escape the link's closing ``)``.
+        and not href.endswith("\\")
+    )
+    if bare_ok:
+        depth = 0
+        for ch in href:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth < 0:
+                    bare_ok = False
+                    break
+        bare_ok = bare_ok and depth == 0
+    if bare_ok:
+        return href
+    wrapped = href.replace("\\", "\\\\")
+    wrapped = wrapped.replace("<", "\\<").replace(">", "\\>")
+    wrapped = _ENTITY_LEAD.sub(lambda m: "\\" + m.group(0), wrapped)
+    # A reader replaces a literal NUL with U+FFFD before it parses, so write the
+    # percent-encoded form instead; it parses as the text ``%00`` (PR #686 review).
+    wrapped = wrapped.replace("\x00", "%00")
+    return "<" + wrapped + ">"
+
+
+def _escape_link_label(label: str) -> str:
+    """Escape ``label`` for use as literal CommonMark link text (issue #605 review).
+
+    A backslash, bracket, angle bracket, backtick, ``*``, ``_``, or a ``&`` that
+    leads a character reference would alter the parsed text (escape, end the
+    label, inline HTML, code span, emphasis, entity), so each is escaped. This is
+    only safe for text written byte-for-byte from a non-Markdown source such as
+    an ``href``.
+    """
+    return _ENTITY_LEAD.sub(
+        lambda m: "\\" + m.group(0), _LABEL_ACTIVE.sub(r"\\\g<0>", label)
+    )
+
+
+def _autolink_needs_explicit_form(href: str) -> bool:
+    """True when ``href`` cannot sit inside CommonMark's ``<href>`` autolink form.
+
+    False for a line ending: no link form can hold one, so the autolink stays as
+    markdownify writes it (design Non-Goals).
+    """
+    if "\n" in href or "\r" in href:
+        return False
+    return any(
+        ch.isspace() or ch in "<>" or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in href
+    )
 
 
 def _edge_text(br, *, forward: bool, stop_at) -> NavigableString | None:
@@ -702,18 +785,35 @@ class _ArchiMarkdownConverter(MarkdownConverter):
         markdownify writes ``<href>`` when the text equals the ``href``, but a
         CommonMark autolink needs a URI scheme: ``</docs>`` reads as an HTML end
         tag. An ``href`` with a URI scheme keeps the ``<href>`` autolink (issues
-        #430 and #604).
+        #430 and #604) unless the autolink form cannot hold it. Every link
+        destination is then escaped so it round-trips through CommonMark 0.31
+        when its ``href`` has whitespace, a control character, or unbalanced
+        parentheses (issue #605). A literal, non-Markdown ``href`` used as link
+        text has its brackets escaped so it can't end the label early, and a
+        ``_noformat`` context (inside a code span or block) is left untouched,
+        matching the base converter's own early return.
         """
         out = super().convert_a(el, text, parent_tags)
+        if "_noformat" in parent_tags:
+            return out
         href = el.get("href") or ""
-        if (
-            "_noformat" not in parent_tags
-            and href
-            and out == f"<{href}>"
-            and not _URI_SCHEME.match(href)
-        ):
-            prefix, suffix, text = chomp(text)
-            return f"{prefix}[{text}]({href}){suffix}"
+        if href and out == f"<{href}>":
+            if not _URI_SCHEME.match(href) or _autolink_needs_explicit_form(href):
+                prefix, suffix, _ = chomp(text)
+                label = _escape_link_label(href)
+                return f"{prefix}[{label}]({_link_destination(href)}){suffix}"
+            return out
+        dest = _link_destination(href)
+        if dest != href:
+            # The outer destination is the one followed by the base converter's
+            # title part and the closing paren, so a link text or title that
+            # repeats ``](href`` is not mistaken for it.
+            title = el.get("title")
+            title_part = ' "%s"' % title.replace('"', r"\"") if title else ""
+            marker = "](" + href + title_part + ")"
+            idx = out.rfind(marker)
+            if idx != -1:
+                out = out[:idx] + "](" + dest + out[idx + 2 + len(href) :]
         return out
 
     def convert_list(self, el, text, parent_tags):

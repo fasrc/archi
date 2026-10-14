@@ -17,7 +17,9 @@ from src.data_manager.collectors.processing import (
     HtmlToMarkdownProcessor,
     ResourcePipeline,
     _ArchiMarkdownConverter,
+    _escape_link_label,
     _fence_language,
+    _link_destination,
     _markdownify,
     _nested_list_needs_break,
     _next_content_sibling,
@@ -962,6 +964,213 @@ def test_hoist_two_blocks_then_text_give_no_extra_link():
         )
         == "```\na\nb\n```\n\n```\nc\nd\n```\n\n[now](http://x)"
     )
+
+
+def test_link_destination_unmatched_close_paren_escapes():
+    assert (
+        html_to_markdown('<p><a href="/docs/foo)bar">Docs</a></p>')
+        == "[Docs](</docs/foo)bar>)"
+    )
+
+
+def test_link_destination_unmatched_open_paren_escapes():
+    assert (
+        html_to_markdown('<p><a href="/docs/foo(bar">Docs</a></p>')
+        == "[Docs](</docs/foo(bar>)"
+    )
+
+
+def test_link_destination_space_escapes():
+    assert (
+        html_to_markdown('<p><a href="https://x/a b">Docs</a></p>')
+        == "[Docs](<https://x/a b>)"
+    )
+
+
+def test_link_destination_angle_brackets_escape_inside_angle_destination():
+    assert (
+        html_to_markdown('<p><a href="/a b<c>">Docs</a></p>') == "[Docs](</a b\\<c\\>>)"
+    )
+
+
+def test_link_destination_title_kept_with_escaped_destination():
+    assert (
+        html_to_markdown('<p><a href="/a(b" title="T">Docs</a></p>')
+        == '[Docs](</a(b> "T")'
+    )
+
+
+def test_link_destination_autolink_with_space_becomes_explicit_link():
+    assert (
+        html_to_markdown('<p><a href="https://x/a b">https://x/a b</a></p>')
+        == "[https://x/a b](<https://x/a b>)"
+    )
+
+
+def test_link_destination_kept_link_around_hoisted_code_escapes():
+    assert (
+        html_to_markdown('<p><a href="/docs/foo)bar"><code>a<br>b</code></a></p>')
+        == "[/docs/foo)bar](</docs/foo)bar>)\n\n```\na\nb\n```"
+    )
+
+
+def test_link_destination_balanced_parens_guard_unchanged():
+    assert (
+        html_to_markdown('<p><a href="/w/Foo_(bar)">Foo</a></p>')
+        == "[Foo](/w/Foo_(bar))"
+    )
+
+
+def test_link_destination_plain_url_guard_unchanged():
+    assert (
+        html_to_markdown('<p><a href="https://x/y">Docs</a></p>')
+        == "[Docs](https://x/y)"
+    )
+
+
+def test_link_destination_helper_bare_valid_url_unchanged():
+    assert _link_destination("https://x/y") == "https://x/y"
+
+
+def test_link_destination_helper_space_escapes():
+    assert _link_destination("https://x/a b") == "<https://x/a b>"
+
+
+def test_link_destination_helper_tab_escapes():
+    assert _link_destination("https://x/a\tb") == "<https://x/a\tb>"
+
+
+def test_link_destination_helper_unbalanced_paren_escapes():
+    assert _link_destination("/docs/foo)bar") == "</docs/foo)bar>"
+
+
+def test_link_destination_helper_backslash_before_punctuation_escapes():
+    # A DOM href has no backslash escapes, so ``\)`` is two literal characters;
+    # bare, a CommonMark reader would consume the backslash and read ``/a)b``.
+    assert _link_destination("/a\\)b") == "</a\\\\)b>"
+
+
+def test_link_destination_helper_backslash_before_letter_stays_bare():
+    assert _link_destination("/a\\b") == "/a\\b"
+
+
+def test_link_destination_helper_trailing_backslash_forces_angle_form():
+    # Bare, the trailing backslash would escape the closing ``)`` of the link.
+    assert _link_destination("/x\\") == "</x\\\\>"
+
+
+def test_link_destination_trailing_backslash_href_becomes_angle_form():
+    assert html_to_markdown('<p><a href="/x\\">Docs</a></p>') == "[Docs](</x\\\\>)"
+
+
+def test_link_destination_helper_entity_lead_forces_angle_form():
+    assert _link_destination("/a&amp;b") == "</a\\&amp;b>"
+
+
+def test_link_destination_backslash_paren_href_becomes_angle_form():
+    assert html_to_markdown('<p><a href="/a\\)b">Docs</a></p>') == "[Docs](</a\\\\)b>)"
+
+
+def test_link_destination_helper_empty_string_stays_bare():
+    assert _link_destination("") == ""
+
+
+def test_link_destination_helper_leading_angle_bracket_escapes():
+    assert _link_destination("<foo") == "<\\<foo>"
+
+
+def test_link_destination_helper_literal_backslash_doubles():
+    assert _link_destination("/a b\\)c") == "</a b\\\\)c>"
+
+
+def test_link_destination_helper_entity_leading_ampersand_escapes():
+    assert _link_destination("/a b&amp;") == "</a b\\&amp;>"
+
+
+def test_link_destination_helper_plain_ampersand_unchanged_when_wrapped():
+    assert _link_destination("/a b&c") == "</a b&c>"
+
+
+def test_link_destination_helper_nul_is_percent_encoded():
+    # CommonMark replaces a literal U+0000 with U+FFFD before it parses, so a
+    # copied NUL would become U+FFFD; the percent-encoded form parses as ``%00``.
+    assert _link_destination("https://x/a\x00b") == "<https://x/a%00b>"
+
+
+@pytest.mark.parametrize("eol", ["\n", "\r", "\r\n"])
+def test_link_destination_line_ending_href_left_as_markdownify_writes_it(eol):
+    # No CommonMark destination form can hold a line ending (design Non-Goals),
+    # so the angle-bracket form would not help; the output stays unchanged.
+    href = f"/a{eol}b"
+    assert _link_destination(href) == href
+    assert html_to_markdown(f'<p><a href="{href}">Docs</a></p>') == f"[Docs]({href})"
+    url = f"https://x/a{eol}b"
+    self_link = f'<p><a href="{url}">{url}</a></p>'
+    assert html_to_markdown(self_link) == library_markdownify(self_link).strip()
+
+
+def test_link_destination_control_char_autolink_becomes_explicit_link():
+    assert (
+        html_to_markdown('<p><a href="/a\x01b">/a\x01b</a></p>')
+        == "[/a\x01b](</a\x01b>)"
+    )
+
+
+def test_link_destination_leading_angle_bracket_becomes_explicit_link():
+    assert html_to_markdown('<p><a href="&lt;foo">Docs</a></p>') == "[Docs](<\\<foo>)"
+
+
+def test_link_destination_nested_image_same_href_escapes_outer_link():
+    assert (
+        html_to_markdown('<p><a href="/a b"><img src="/a b" alt="pic"></a></p>')
+        == "[![pic](/a b)](</a b>)"
+    )
+
+
+def test_link_destination_autolink_label_escapes_unmatched_bracket():
+    assert (
+        html_to_markdown('<p><a href="https://x/a ] b">https://x/a ] b</a></p>')
+        == "[https://x/a \\] b](<https://x/a ] b>)"
+    )
+
+
+def test_link_destination_noformat_context_left_untouched():
+    assert (
+        html_to_markdown('<pre><a href="https://x/a b">&lt;https://x/a b&gt;</a></pre>')
+        == "```\n<https://x/a b>\n```"
+    )
+
+
+def test_link_destination_title_repeating_href_escapes_outer_destination():
+    assert (
+        html_to_markdown('<p><a href="/a b" title="x](/a b">Docs</a></p>')
+        == '[Docs](</a b> "x](/a b")'
+    )
+
+
+def test_link_destination_autolink_label_escapes_inline_html():
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/a &lt;em&gt;x&lt;/em&gt; b">'
+            "https://x/a &lt;em&gt;x&lt;/em&gt; b</a></p>"
+        )
+        == "[https://x/a \\<em\\>x\\</em\\> b](<https://x/a \\<em\\>x\\</em\\> b>)"
+    )
+
+
+def test_link_destination_autolink_label_escapes_code_and_emphasis():
+    assert (
+        html_to_markdown('<p><a href="https://x/a `c` b">https://x/a `c` b</a></p>')
+        == "[https://x/a \\`c\\` b](<https://x/a `c` b>)"
+    )
+    assert (
+        html_to_markdown('<p><a href="https://x/a _u_ b">https://x/a _u_ b</a></p>')
+        == "[https://x/a \\_u\\_ b](<https://x/a _u_ b>)"
+    )
+
+
+def test_link_label_helper_escapes_entity_lead_only():
+    assert _escape_link_label("a &amp; b & c*") == "a \\&amp; b & c\\*"
 
 
 def test_renders_link_text_stops_at_first_text(monkeypatch):

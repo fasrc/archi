@@ -793,6 +793,18 @@ data_manager:
   so no line beside the fence begins or ends with a stray space. The shape is rare in the
   FASRC KB (0 of 25 sampled multi-line code elements) and, like every item in this list,
   it reaches disk only for new or force-overwritten documents.
+- **A link target that Markdown would misread is escaped.** A link is written as
+  `[text](<target>)` so the target survives (issue #605) when its target has any of
+  these: whitespace or a control character, an unbalanced parenthesis, a leading `<`,
+  a `\` before punctuation or at the end, or an `&` that starts a character reference
+  (such as `&amp;`). A target with a line ending is left as before, because no
+  Markdown link form can hold one. Inside the angle brackets, `\`, `<`, `>`, and that `&` are
+  backslash-escaped, and a NUL is written as `%00`. A self-link (text equal to the
+  target) that cannot be an autolink (whitespace, `<`, `>`, or a control character)
+  becomes an explicit link whose text is the target with its Markdown characters
+  escaped. Other links convert
+  as before; like every item in this list, it reaches disk only for new or
+  force-overwritten documents.
 - **Content after a nested list starts on its own line.** `markdownify` drops the newline
   after a list nested inside a list item, so the text, inline element, or sibling item
   that followed it was glued onto the nested list's last line — onto a closing code fence
