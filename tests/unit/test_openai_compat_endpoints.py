@@ -785,3 +785,160 @@ class TestSingleSourceList:
         assert resp.status_code == 200
         content = resp.get_json()["choices"][0]["message"]["content"]
         assert content == response_text
+
+
+# ---------------------------------------------------------------------------
+# archi_message_id in non-streaming response (design D9)
+# ---------------------------------------------------------------------------
+
+
+class TestArchMessageId:
+
+    def test_integer_message_id_returned(self, app_no_auth):
+        app, chat_wrapper = app_no_auth
+        chat_wrapper.stream.return_value = iter(
+            [
+                {"type": "chunk", "content": "Answer text"},
+                {
+                    "type": "final",
+                    "answer": "Answer text",
+                    "response": "Answer text",
+                    "source_documents": [],
+                    "retriever_scores": [],
+                    "message_id": 42,
+                },
+            ]
+        )
+
+        client = app.test_client()
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["archi_message_id"] == 42
+
+    def test_missing_message_id_returns_null(self, app_no_auth):
+        app, chat_wrapper = app_no_auth
+        chat_wrapper.stream.return_value = iter(
+            [
+                {"type": "chunk", "content": "Answer"},
+                {
+                    "type": "final",
+                    "answer": "Answer",
+                    "response": "Answer",
+                    "source_documents": [],
+                    "retriever_scores": [],
+                },
+            ]
+        )
+
+        client = app.test_client()
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["archi_message_id"] is None
+
+    def test_none_message_id_returns_null(self, app_no_auth):
+        app, chat_wrapper = app_no_auth
+        chat_wrapper.stream.return_value = iter(
+            [
+                {"type": "chunk", "content": "Answer"},
+                {
+                    "type": "final",
+                    "answer": "Answer",
+                    "response": "Answer",
+                    "source_documents": [],
+                    "retriever_scores": [],
+                    "message_id": None,
+                },
+            ]
+        )
+
+        client = app.test_client()
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["archi_message_id"] is None
+
+    def test_bool_true_message_id_returns_null(self, app_no_auth):
+        app, chat_wrapper = app_no_auth
+        chat_wrapper.stream.return_value = iter(
+            [
+                {"type": "chunk", "content": "Answer"},
+                {
+                    "type": "final",
+                    "answer": "Answer",
+                    "response": "Answer",
+                    "source_documents": [],
+                    "retriever_scores": [],
+                    "message_id": True,
+                },
+            ]
+        )
+
+        client = app.test_client()
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["archi_message_id"] is None
+
+    def test_string_message_id_returns_null(self, app_no_auth):
+        app, chat_wrapper = app_no_auth
+        chat_wrapper.stream.return_value = iter(
+            [
+                {"type": "chunk", "content": "Answer"},
+                {
+                    "type": "final",
+                    "answer": "Answer",
+                    "response": "Answer",
+                    "source_documents": [],
+                    "retriever_scores": [],
+                    "message_id": "42",
+                },
+            ]
+        )
+
+        client = app.test_client()
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["archi_message_id"] is None

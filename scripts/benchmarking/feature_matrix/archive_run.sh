@@ -280,10 +280,12 @@ fi
 fm_ledger_append "$ENTRY"
 if [ -n "$NEW_PIN" ]; then
   # Two standalone commands: set -e ignores a failure on the left of `&&`, so a failed
-  # temp write would skip the mv and still log success with no pin.
-  # -T: a plain `mv -f` onto a directory moves the pin inside it and exits 0.
+  # temp write would skip the move and still log success with no pin.
+  # os.replace is an atomic rename on POSIX and raises IsADirectoryError when the target
+  # is a directory; a plain mv -f moves the pin inside the directory and exits 0.
+  # set -e makes the failed call fail the archive before fm_log "archived arm ...".
   printf '%s\n' "$NEW_PIN" > "$PIN_FILE.tmp.$$"
-  mv -fT "$PIN_FILE.tmp.$$" "$PIN_FILE"
+  "$FM_PYTHON" -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' "$PIN_FILE.tmp.$$" "$PIN_FILE"
 fi
 fm_log "archived arm $ARM run $RUN: $ARTIFACT"
 FM_ENTRY="$ENTRY" "$FM_PYTHON" - <<'EOF'

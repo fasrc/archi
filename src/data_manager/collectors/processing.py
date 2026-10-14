@@ -30,7 +30,14 @@ from typing import (
 )
 
 from bs4 import BeautifulSoup, Comment, Doctype, NavigableString, Tag
-from markdownify import STRIP, STRIP_ONE, MarkdownConverter, strip1_pre, strip_pre
+from markdownify import (
+    STRIP,
+    STRIP_ONE,
+    MarkdownConverter,
+    chomp,
+    strip1_pre,
+    strip_pre,
+)
 
 from src.data_manager.collectors.resource_base import BaseResource
 from src.utils.local_mode import LOCAL_PROVIDER_KEY, apply_local_mode
@@ -297,9 +304,6 @@ _BR_LEADING_WS = re.compile(r"^(?:[ \t]*\r?\n)+")
 # converting byte-identically to the output before #399. Only promoted blocks are ours
 # to label.
 _PROMOTED_ATTR = "data-archi-promoted"
-# Marks the link that ``_hoist_out_of_inline`` keeps for an emptied anchor (issue
-# #430), so ``_ArchiMarkdownConverter.convert_a`` can give it explicit link syntax.
-_KEPT_LINK_ATTR = "data-archi-kept-link"
 # Marks the head half of an anchor whose split-off tail already shows the link, so
 # a later block that empties the head half does not add a second link.
 _LINK_SHOWN_ATTR = "data-archi-link-shown"
@@ -555,7 +559,7 @@ def _hoist_out_of_inline(pre, soup) -> None:
             and not parent.has_attr(_LINK_SHOWN_ATTR)
             and not _renders_link_text(parent)
         ):
-            link = soup.new_tag("a", href=parent["href"], attrs={_KEPT_LINK_ATTR: ""})
+            link = soup.new_tag("a", href=parent["href"])
             link.string = (parent.get("title") or "").strip() or parent["href"]
             parent.replace_with(link)
             continue
@@ -744,8 +748,8 @@ class _ArchiMarkdownConverter(MarkdownConverter):
     This is the one place project-specific ``MarkdownConverter`` overrides live.
     ``convert_pre`` sizes the fence delimiter past any backtick run inside the
     block (issue #407); ``convert_list`` keeps a newline after a nested list
-    (issue #410); ``convert_a`` gives a kept link with a relative target explicit
-    link syntax (issue #430).
+    (issue #410); ``convert_a`` gives every self-link without a URI scheme
+    explicit link syntax (issues #430 and #604).
 
     markdownify binds ``convert_ul`` and ``convert_ol`` to the base
     ``convert_list`` at class-definition time, so overriding ``convert_list``
@@ -776,32 +780,28 @@ class _ArchiMarkdownConverter(MarkdownConverter):
         return "\n\n%s%s\n%s\n%s\n\n" % (fence, code_language, text, fence)
 
     def convert_a(self, el, text, parent_tags):
-        """Give a kept link with a relative or fragment target explicit link syntax.
+        """Give every scheme-less self-link explicit link syntax.
 
         markdownify writes ``<href>`` when the text equals the ``href``, but a
         CommonMark autolink needs a URI scheme: ``</docs>`` reads as an HTML end
-        tag. Only the link that ``_hoist_out_of_inline`` keeps is changed here;
-        other self-links convert as markdownify writes them (issue #604). Every
-        link destination is then escaped so it round-trips through CommonMark
-        0.31 when its ``href`` has whitespace, a control character, or
-        unbalanced parentheses (issue #605). A literal, non-Markdown ``href``
-        used as link text has its brackets escaped so it can't end the label
-        early, and a ``_noformat`` context (inside a code span or block) is left
-        untouched, matching the base converter's own early return.
+        tag. An ``href`` with a URI scheme keeps the ``<href>`` autolink (issues
+        #430 and #604) unless the autolink form cannot hold it. Every link
+        destination is then escaped so it round-trips through CommonMark 0.31
+        when its ``href`` has whitespace, a control character, or unbalanced
+        parentheses (issue #605). A literal, non-Markdown ``href`` used as link
+        text has its brackets escaped so it can't end the label early, and a
+        ``_noformat`` context (inside a code span or block) is left untouched,
+        matching the base converter's own early return.
         """
         out = super().convert_a(el, text, parent_tags)
         if "_noformat" in parent_tags:
             return out
         href = el.get("href") or ""
-        if (
-            el.has_attr(_KEPT_LINK_ATTR)
-            and out == f"<{href}>"
-            and not _URI_SCHEME.match(href)
-        ):
-            out = f"[{_escape_link_label(href)}]({href})"
-        if out == f"<{href}>":
-            if _autolink_needs_explicit_form(href):
-                return f"[{_escape_link_label(href)}]({_link_destination(href)})"
+        if href and out == f"<{href}>":
+            if not _URI_SCHEME.match(href) or _autolink_needs_explicit_form(href):
+                prefix, suffix, _ = chomp(text)
+                label = _escape_link_label(href)
+                return f"{prefix}[{label}]({_link_destination(href)}){suffix}"
             return out
         dest = _link_destination(href)
         if dest != href:

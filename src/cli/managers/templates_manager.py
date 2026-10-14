@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from jinja2 import Environment
 
 from src.cli.managers.git_diff_capture import capture_git_diff
+from src.cli.managers.git_env import git_env
 from src.cli.managers.source_version import write_source_commit
 from src.cli.service_registry import service_registry
 from src.cli.utils.grafana_styling import assign_feedback_palette
@@ -155,6 +156,7 @@ def get_git_information(wd: Optional[Path] = None) -> Dict[str, str]:
             cwd=wd,
             stderr=subprocess.STDOUT,
             stdout=open(os.devnull, "w"),
+            env=git_env(),
         )
         != 0
     ):
@@ -164,7 +166,7 @@ def get_git_information(wd: Optional[Path] = None) -> Dict[str, str]:
         }
     else:
         meta_data["last_commit"] = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=wd, encoding="UTF-8"
+            ["git", "rev-parse", "HEAD"], cwd=wd, encoding="UTF-8", env=git_env()
         )
         meta_data.update(capture_git_diff(wd))
     meta_data["host"] = collect_host_information()
@@ -180,6 +182,7 @@ def get_git_version() -> str:
                 ["git", "describe", "--tags", "--always", "--dirty"],
                 stderr=subprocess.DEVNULL,
                 cwd=Path(__file__).parent,
+                env=git_env(),
             )
             .strip()
             .decode("utf-8")
@@ -465,6 +468,26 @@ def validate_port_config(
             errors.append(f"Port {port} is assigned to multiple services: {details}")
 
     return port_to_services, errors
+
+
+def _unlink_quietly(paths) -> None:
+    """Remove each path that exists; a failure to remove one is ignored."""
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _warn_if_left(stale) -> None:
+    """Name each stale copy that cleanup could not remove: the runtime ingests
+    it in place of the skipped list (PR #689 review)."""
+    for path in stale:
+        if path.exists():
+            logger.warning(
+                f"stale copy {path} could not be removed; the runtime will "
+                f"ingest it in place of the skipped list"
+            )
 
 
 class TemplateManager:
@@ -1286,23 +1309,54 @@ class TemplateManager:
         if not input_lists:
             return
 
+        # The last regular file with a given basename wins its name in weblists,
+        # as in source inference (ConfigurationManager._staged_input_lists), so
+        # any other same-named path is never copied and never cleans up: a failed
+        # winner cannot leave a loser staged, and a later missing path cannot
+        # remove the winner's copy (PR #689 review).
+        winners = {os.path.basename(p): p for p in input_lists if os.path.isfile(p)}
+        configured = {Path(p).resolve() for p in input_lists}
         for input_list in input_lists:
+            winner = winners.get(os.path.basename(input_list), input_list)
+            if winner != input_list:
+                logger.debug(f"Input list {input_list} is overridden by {winner}")
+                continue
             # isfile, not exists: a directory satisfies exists() and then makes
             # shutil.copyfile raise IsADirectoryError here — inside
             # prepare_deployment_files(), so under --force after the existing
             # deployment was torn down (fasrc/archi#287). Staging already
             # tolerates a missing input list by warning and skipping, and a path
             # that is not a regular file is no more usable than an absent one.
+            dest = weblists_path / os.path.basename(input_list)
+            # A skipped list also removes dest, so a copy staged by an earlier
+            # deployment is not ingested in its place -- unless dest IS a
+            # configured list, the winner or a loser (PR #689 review).
+            stale = [] if dest.resolve() in configured else [dest]
             if os.path.isfile(input_list):
-                shutil.copyfile(
-                    input_list, weblists_path / os.path.basename(input_list)
-                )
+                # Copy to a side file and rename it into place, so a copy that
+                # fails part-way never leaves a truncated list for the runtime.
+                # The side file's name is random, so it cannot be another
+                # configured list's name or an existing entry in weblists, and
+                # short, so a long list name cannot push it past NAME_MAX.
+                partial = weblists_path / f".{os.urandom(8).hex()}.partial"
+                try:
+                    shutil.copyfile(input_list, partial)
+                    os.replace(partial, dest)
+                except OSError as exc:
+                    _unlink_quietly([partial, *stale])
+                    logger.warning(
+                        f"Input list {input_list} could not be copied, skipping: {exc}"
+                    )
+                    _warn_if_left(stale)
+                    continue
                 logger.debug(f"Copied input list {input_list}")
             else:
+                _unlink_quietly(stale)
                 logger.warning(
                     f"Configured input list {input_list} is not a readable file; "
                     f"skipping"
                 )
+                _warn_if_left(stale)
 
     def copy_source_code(self, base_dir: Path) -> None:
         # Locate the tree this deployment ships. The checkout `setup.py` recorded at

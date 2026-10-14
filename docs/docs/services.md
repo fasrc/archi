@@ -88,7 +88,7 @@ If no record exists, the panel says "Deployment provenance unavailable — recor
 - **Last ingest** — start time, end time (UTC), and duration of that run.
 - **Documents** — embedded, failed, and pending counts at the end of that run.
 - **Chunks** — the chunk count for the active collection only (chunks tagged with that collection, plus untagged chunks). Rows recorded before this rule counted chunks from every collection.
-- **Ingest configuration (as used at ingest)** — the ingest settings saved with that run, such as chunking, embedding model, and **embedding dimensions**. With no `dimensions` set in `embedding_class_map`, the recorded dimension is the model's default (1536 for `OpenAIEmbeddings`, 384 for `HuggingFaceEmbeddings` and unknown models). Rows recorded before this rule stored 384 for every model; for those rows a change from 384 to the model's default is not reported as drift. An explicit `dimensions: 384` cannot yet be told apart from that old default (follow-up [#654](https://github.com/fasrc/archi/issues/654)).
+- **Ingest configuration (as used at ingest)** — the ingest settings saved with that run, such as chunking, embedding model, and **embedding dimensions**. With no `dimensions` set in `embedding_class_map`, the recorded dimension is the model's default (1536 for `OpenAIEmbeddings`, 384 for `HuggingFaceEmbeddings` and unknown models). Rows recorded before this rule stored 384 for every model. For a row without `embedding_dimensions_explicit`, a change from 384 to the model's default is not reported as drift. Runs recorded after [#654](https://github.com/fasrc/archi/issues/654) also save `embedding_dimensions_explicit`, which says whether `dimensions` was set; for those runs every change of the dimension is reported as drift. On a run without that field, an explicit `dimensions: 384` that was later removed still does not show as drift until the next ingest.
 - **⚠ configuration changed after this ingest** — the running config differs from the saved one. Each changed setting is listed with its value now and at ingest.
 
 Unknown and failure states:
@@ -382,6 +382,8 @@ settings:
     bot_events:
       - app_mention
       - message.im
+  interactivity:
+    is_enabled: true
   socket_mode_enabled: true
   org_deploy_enabled: false
   is_hosted: false
@@ -393,6 +395,14 @@ settings:
 
 !!! note "Who can ask"
     Every member of the workspace who can message the bot can query the knowledge base. The Slack workspace is the access boundary. All Slack questions use one archi identity; the bot log records the Slack user ID of each question.
+
+### Answer feedback
+
+After each stored answer the bot posts **Helpful** and **Not helpful** buttons in the same thread. A **Helpful** click records one row in the `feedback` table. A **Not helpful** click opens a modal where the user can flag the answer as incorrect, unhelpful, or inappropriate, and leave an optional comment; the row is recorded when the user submits the form. A cancelled form records nothing.
+
+The app needs **Interactivity & Shortcuts** turned on in the Slack app settings (already included in the manifest above). No Request URL is required — the bot uses Socket Mode, so all interactive payloads arrive over the same outbound websocket. No new OAuth scope is needed beyond `chat:write`.
+
+Each **Helpful** click and each submitted **Not helpful** form appends one row to the `feedback` table; there is no per-user deduplication column. To filter Slack ratings, join `feedback` to `conversations` on `message_id`, then join `conversations` to `conversation_metadata` on `conversation_id`, and match `external_chat_id` against the Slack thread key format `slack:<team_id>:<channel>:<thread_ts>` (see `thread_key()` in `src/interfaces/slack_bot.py`).
 
 ### Configuration
 

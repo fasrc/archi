@@ -10,14 +10,30 @@ import threading
 import time
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
+from typing import NamedTuple, Optional
 
 import requests
 from slack_sdk import WebClient
 from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.response import SocketModeResponse
 
+from src.interfaces.slack_feedback import (
+    FEEDBACK_PROMPT_TEXT,
+    FEEDBACK_THANKS_TEXT,
+    HELPFUL_ACTION_ID,
+    NOT_HELPFUL_ACTION_ID,
+    SlackFeedbackStore,
+    build_feedback_blocks,
+    build_feedback_modal,
+    ephemeral_thanks_kwargs,
+    interaction_key,
+    like_record,
+    parse_feedback_submission,
+    parse_message_id,
+)
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
+from src.utils.postgres_service_factory import PostgresServiceFactory
 
 logger = get_logger(__name__)
 
@@ -31,7 +47,7 @@ ERROR_TEXT = (
     "An operator can find the reason in the slack service log."
 )
 
-_STATUS_TEXTS = frozenset({PLACEHOLDER_TEXT, ERROR_TEXT})
+_STATUS_TEXTS = frozenset({PLACEHOLDER_TEXT, ERROR_TEXT, FEEDBACK_PROMPT_TEXT})
 
 DEFAULT_CHAT_URL = "http://chatbot:7861"
 DEFAULT_TIMEOUT_SECONDS = 600
@@ -48,6 +64,11 @@ _MENTION_RE = re.compile(r"[ \t]*<@[A-Z0-9]+>[ \t]*")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.*)$")
+
+
+class AskResult(NamedTuple):
+    text: str
+    message_id: Optional[int]
 
 
 def thread_key(team_id, channel, thread_ts):
@@ -153,6 +174,11 @@ class EventDeduper:
                 self._seen.popitem(last=False)
             return True
 
+    def forget(self, channel, ts):
+        """Let ``(channel, ts)`` through again, so a retry can redo a failed step."""
+        with self._lock:
+            self._seen.pop((channel, ts), None)
+
 
 class ArchiApiError(RuntimeError):
     """The chat app's /v1 API refused or failed a request."""
@@ -193,9 +219,15 @@ def ask_archi(
             f"/v1/chat/completions returned HTTP {resp.status_code}{suffix}"
         )
     try:
-        return resp.json()["choices"][0]["message"]["content"]
+        body = resp.json()
+        content = body["choices"][0]["message"]["content"]
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         raise ArchiApiError("/v1/chat/completions returned an unexpected body") from exc
+    raw_id = body.get("archi_message_id")
+    message_id = (
+        raw_id if isinstance(raw_id, int) and not isinstance(raw_id, bool) else None
+    )
+    return AskResult(text=content, message_id=message_id)
 
 
 def wait_for_model(
@@ -249,6 +281,7 @@ class SlackBot:
         executor=None,
         startup_attempts=30,
         startup_delay=10,
+        feedback_store=None,
     ):
         self.web = web_client
         self.socket = socket_client
@@ -263,6 +296,7 @@ class SlackBot:
         )
         self.startup_attempts = startup_attempts
         self.startup_delay = startup_delay
+        self.feedback_store = feedback_store
         self.model = None
         self._deduper = EventDeduper()
         # One FIFO queue per Slack thread with work pending; a thread is drained by
@@ -295,6 +329,10 @@ class SlackBot:
         if history_limit is None:
             history_limit = DEFAULT_HISTORY_LIMIT
         logger.info(f"slack bot: user {bot_user_id}, chat API {chat_url}")
+        factory = PostgresServiceFactory.get_instance()
+        feedback_store = (
+            SlackFeedbackStore(factory.connection_pool) if factory is not None else None
+        )
         return cls(
             web_client=web,
             socket_client=socket,
@@ -307,6 +345,7 @@ class SlackBot:
             ),
             history_limit=int(history_limit),
             max_workers=int(slack_cfg.get("max_workers") or DEFAULT_MAX_WORKERS),
+            feedback_store=feedback_store,
         )
 
     def run(self, stop_event=None, sleep=time.sleep):
@@ -333,21 +372,91 @@ class SlackBot:
         except Exception:
             logger.exception("slack bot: failed to acknowledge a Socket Mode request")
         try:
-            if req.type != "events_api":
-                return
-            payload = req.payload or {}
-            event = payload.get("event") or {}
-            if not should_answer(event, self.bot_user_id):
-                return
-            if not self._deduper.first_time(event.get("channel"), event.get("ts")):
-                return
-            team_id = payload.get("team_id")
-            key = thread_key(
-                team_id, event.get("channel"), event.get("thread_ts") or event.get("ts")
-            )
-            self._enqueue(key, event, team_id)
+            if req.type == "events_api":
+                payload = req.payload or {}
+                event = payload.get("event") or {}
+                if not should_answer(event, self.bot_user_id):
+                    return
+                if not self._deduper.first_time(event.get("channel"), event.get("ts")):
+                    return
+                team_id = payload.get("team_id")
+                key = thread_key(
+                    team_id,
+                    event.get("channel"),
+                    event.get("thread_ts") or event.get("ts"),
+                )
+                self._enqueue(key, event, team_id)
+            elif req.type == "interactive":
+                self.handle_interactive(req.payload or {})
         except Exception:
             logger.exception("slack bot: failed to dispatch a Slack event")
+
+    def handle_interactive(self, payload):
+        """Handle block_actions and view_submission payloads; never raises (design D6-D7)."""
+        try:
+            payload_type = payload.get("type")
+            if payload_type == "block_actions":
+                actions = payload.get("actions") or []
+                if not actions:
+                    return
+                action = actions[0]
+                action_id = action.get("action_id")
+                message_id = parse_message_id(action.get("value"))
+                if message_id is None:
+                    return
+                if not self._first_interaction(payload):
+                    return
+                if action_id == HELPFUL_ACTION_ID:
+                    try:
+                        self.feedback_store.insert(like_record(message_id))
+                    except Exception:
+                        logger.exception("slack bot: failed to store helpful feedback")
+                        self._forget_interaction(payload)
+                        return
+                    try:
+                        self.web.chat_postEphemeral(
+                            **ephemeral_thanks_kwargs(payload, FEEDBACK_THANKS_TEXT)
+                        )
+                    except Exception:
+                        logger.exception(
+                            "slack bot: failed to post ephemeral feedback thanks"
+                        )
+                elif action_id == NOT_HELPFUL_ACTION_ID:
+                    try:
+                        self.web.views_open(
+                            trigger_id=payload.get("trigger_id"),
+                            view=build_feedback_modal(message_id),
+                        )
+                    except Exception:
+                        logger.exception("slack bot: failed to open feedback modal")
+                        self._forget_interaction(payload)
+            elif payload_type == "view_submission":
+                view = payload.get("view") or {}
+                record = parse_feedback_submission(view)
+                if record is None:
+                    return
+                if not self._first_interaction(payload):
+                    return
+                try:
+                    self.feedback_store.insert(record)
+                except Exception:
+                    logger.exception("slack bot: failed to store dislike feedback")
+                    self._forget_interaction(payload)
+        except Exception:
+            logger.exception("slack bot: failed to handle interactive payload")
+
+    def _first_interaction(self, payload):
+        """False for a retried interactive envelope already handled; True otherwise."""
+        key = interaction_key(payload)
+        if key is None:
+            return True
+        return self._deduper.first_time(*key)
+
+    def _forget_interaction(self, payload):
+        """After a failed side effect, let a Slack retry of ``payload`` run again."""
+        key = interaction_key(payload)
+        if key is not None:
+            self._deduper.forget(*key)
 
     def _enqueue(self, key, event, team_id):
         with self._queues_lock:
@@ -416,7 +525,7 @@ class SlackBot:
                 f"slack bot: question from {event.get('user')} in {channel} "
                 f"thread {thread_ts} ({len(messages) - 1} earlier turns)"
             )
-            answer = ask_archi(
+            result = ask_archi(
                 self.session,
                 self.chat_url,
                 self.model,
@@ -425,7 +534,7 @@ class SlackBot:
                 token=self.api_token,
                 timeout=self.timeout_seconds,
             )
-            final_text = to_mrkdwn(answer)
+            final_text = to_mrkdwn(result.text)
         except Exception:
             logger.exception(f"slack bot: failed to answer {channel} {ts}")
             try:
@@ -433,7 +542,24 @@ class SlackBot:
             except Exception:
                 logger.exception(f"slack bot: failed to report the error in {channel}")
             return
-        self._deliver_answer(channel, placeholder_ts, final_text)
+        delivered = self._deliver_answer(channel, placeholder_ts, final_text)
+        if (
+            delivered
+            and self.feedback_store is not None
+            and result.message_id is not None
+            and result.message_id > 0
+        ):
+            try:
+                self.web.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text=FEEDBACK_PROMPT_TEXT,
+                    blocks=build_feedback_blocks(result.message_id),
+                )
+            except Exception:
+                logger.exception(
+                    f"slack bot: failed to post feedback prompt in {channel}"
+                )
 
     def _deliver_answer(self, channel, placeholder_ts, text):
         """Put the answer in the placeholder; retry the same text once on failure.
@@ -441,16 +567,18 @@ class SlackBot:
         Slack can apply an update and still time out to the client, so a failed
         delivery never falls back to the error line: that could replace a real answer.
         Updating the placeholder with the same text twice is safe.
+        Returns True if delivery succeeded, False if both attempts failed.
         """
         for attempt in (1, 2):
             try:
                 self.web.chat_update(channel=channel, ts=placeholder_ts, text=text)
-                return
+                return True
             except Exception:
                 logger.exception(
                     f"slack bot: failed to deliver the answer in {channel} "
                     f"(attempt {attempt}/2)"
                 )
+        return False
 
     def _post_final(self, channel, thread_ts, placeholder_ts, text):
         if placeholder_ts:

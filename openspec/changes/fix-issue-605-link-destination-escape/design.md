@@ -6,8 +6,8 @@
 - an autolink `<href>`, when the link text equals the `href` and there is no title;
 - an explicit link `prefix[text](href "title")suffix` for every other link.
 
-For the link that `_hoist_out_of_inline` keeps (attribute `_KEPT_LINK_ATTR`), the method
-already rewrites an autolink with no URI scheme to `[href](href)` (issue #430 and #604).
+The method already rewrites every autolink with no URI scheme (including the link that
+`_hoist_out_of_inline` keeps) to `prefix[href](href)suffix` (issues #430 and #604).
 
 CommonMark 0.31, section 6.3 ("link destination"): a bare destination has no ASCII
 space or control character, and its unescaped parentheses must be balanced. A
@@ -82,8 +82,9 @@ Parentheses alone do not trigger this rule, because an autolink can hold them.
 
 ### D4: The kept link uses the same helper
 
-Apply D2 and D3 to the result of the existing kept-link logic, at the end of
-`convert_a`. The kept link `[href](href)` is an explicit link, so D2 rewrites it, and
+The scheme-less self-link rewrite of issue #604 (which covers the kept link) uses the
+same label escape and destination helper as D3, so the kept link `[href](href)` gets
+its destination escaped, and
 `[/docs/foo)bar](</docs/foo)bar>)` is the result for the issue's fourth example. A
 prototype of D1 to D4 on `origin/dev` `0ed50a23` gave the exact output of every scenario
 in the spec delta.

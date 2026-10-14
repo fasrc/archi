@@ -182,7 +182,9 @@ a missing file, a dirty checkout) fail before any long work starts and never pag
 failing mail binary prints `feature_matrix: page failed` and does not change the exit.
 A mail binary that does not return in `FM_MAIL_TIMEOUT` seconds (default 60; a zero or
 non-numeric value also gives 60, because `timeout 0` means no bound) is stopped
-and counts as a failure. On a host without `timeout`, the page is still sent, with no bound.
+and counts as a failure. On a host without `timeout` but with `sleep`, a watchdog gives the
+same bound (a fractional value is rounded up to whole seconds). On a host with neither, the
+page is still sent, with no bound.
 
 ### 5.1 Ingest arm (00, 02, 03, 04, 06, 07)
 
