@@ -195,14 +195,21 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
 - **Order: Qwen3.6, A, B, B, A, Qwen3.6** (A and B are the two candidates out of
   Phase 1; with one, Qwen3.6, A, A, Qwen3.6). The finalists are counterbalanced so that
   drift in the judge, live load or the host over the sequence falls on both equally
-  instead of deciding between them. Each finalist is served the way it would be deployed;
-  if A and B cannot both be up at once (a two-GPU finalist), the server is swapped at each
-  change, a few minutes each. Fresh Qwen3.6 runs at both ends show net drift as a gap
+  instead of deciding between them. Each finalist is served the way it would be deployed.
+- **Cold start for every candidate run.** Restart the candidate's server before each of
+  its runs (a few minutes each), whatever the order. The launchers keep
+  `--enable-prefix-caching`, so without a restart a second consecutive run could reuse the
+  first run's cached prompts and look faster. Qwen3.6 is production and is not restarted;
+  its two runs are many hours apart, but its cache state cannot be controlled — a known
+  asymmetry that can only flatter Qwen3.6's speed, which is reported, not gated. Fresh Qwen3.6 runs at both ends show net drift as a gap
   between them instead of letting it hide in the comparison. (The Qwen3.8 runs reused Qwen3.6 runs from earlier that day and had to
   list that as a weakness.)
-- **Load asymmetry.** Qwen3.6 on `:8001` also serves live chat; the candidate on `:8002`
-  has no other traffic. Run overnight, and count live chat turns during each run window
-  from Postgres.
+- **Load asymmetry.** Qwen3.6 on `:8001` also serves live chat; the candidates have no
+  other traffic. Run overnight. Any question in a Qwen3.6 run that overlapped a live chat
+  turn (the benchmark container's timestamped log against Postgres turn times) is dropped
+  from the speed figures, on both sides of each Qwen3.6 comparison; the number dropped is
+  reported. Answer-quality scores are kept. The candidates' ranking is unaffected: no
+  finalist shares its server with live traffic.
 - **Identifier probe.** Replay the 2026-10-13 `kempner_rtx` prompt
   (`/scratch/a2rchi/bench-runs/qwen36-name-slip/replay.py`, pointed at `:8002`): 200
   draws, 8 identical requests at once, temperature 0.3. Qwen3.6 gave 0 / 200 wrong.
@@ -216,20 +223,29 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
 
 1. Commit the launcher and a systemd unit to version control first (#286) — production
    must be restorable from git.
-2. Serve the winner on GPUs 2–3 / `:8001` and stop Qwen3.6; or keep it on `:8002`
-   and switch `default_provider` — either way, keep Qwen3.6 weights and its unit file
-   until one clean week.
-3. `dev.yaml`: model id, `models:` list, the `context_windows` entry, and the same pinned
-   sampling the benchmark used (§4, #701);
-   redeploy with `deploy/scripts/redeploy.sh` (editing `dev.yaml` and restarting is a
-   no-op — config is re-seeded into Postgres at deploy).
+2. **Keep the winner where Phase 2 measured it:** a one-GPU finalist on GPU 0 / `:8002`
+   (`--tensor-parallel-size 1`), Llama 3.3 on GPUs 0–1 / `:8002` (`--tensor-parallel-size
+   2`), under its own enabled systemd unit. Production latency and capacity are then what
+   the trial measured. Moving it later (for example to GPUs 2–3 / `:8001`) is a separate
+   change that repeats the capacity probe and one full run on the new layout.
+3. **Cut over with no gap.** Qwen3.6 keeps serving `:8001` while `dev.yaml` is pointed at
+   the winner: the `local` provider's `base_url` → `:8002`, `default_model` and `models:`
+   → the winner's id, its `context_windows` entry, and the same pinned sampling the
+   benchmark used (§4, #701); remove the Qwen3.8 entry from the `openai` slot. Redeploy
+   with `deploy/scripts/redeploy.sh` (editing `dev.yaml` and restarting is a no-op —
+   config is re-seeded into Postgres at deploy). At no point does the running config name
+   a model that no server is serving.
 4. Verify end to end on the running deployment before calling adoption done: a live,
    streamed chat turn that triggers the search tool, and one Slack bot turn. For each,
    confirm in the Phoenix trace that the request reached the new model id and carries the
    tool call and its retrieval results, and in Postgres that the turn's persisted trace
    (`agent_traces.events`) holds the same tool call and result. An HTTP 200 alone is not
    evidence: a malformed streamed tool call can still return 200.
-5. Open a new golden-set era in `bench_out/banks/golden/report/goldenset_timeline.yaml`:
+5. **Only after step 4 passes,** retire Qwen3.6 with `sudo systemctl disable --now
+   vllm-qwen36` — disable, not just stop, so a reboot cannot bring it back. Keep its unit
+   file and weights for one clean week. Rollback: point `dev.yaml` back at `:8001`,
+   `sudo systemctl enable --now vllm-qwen36`, redeploy.
+6. Open a new golden-set era in `bench_out/banks/golden/report/goldenset_timeline.yaml`:
    numbers before and after a model change are not comparable history.
 
 ## 6. Decision rule (frozen before the first pilot)

@@ -445,8 +445,10 @@ accepts *only* fp16 — `--dtype float32` is rejected outright).
 ## Running two models in archi (provider slots)
 
 > Since 2026-10-13 nothing serves port 8002, so picking Qwen 3.8 in the dev chat
-> dropdown fails until a trial candidate takes the `openai` slot. The mechanics
-> below are unchanged and are what the trial uses.
+> dropdown fails — and keeps failing even once a trial candidate serves `:8002`,
+> because the `openai` slot names Qwen 3.8's model id. Removing the entry needs a
+> `dev.yaml` change and a redeploy. The mechanics below are unchanged and are what
+> the trial uses.
 
 archi's providers are a **closed enum** — `openai`, `anthropic`, `gemini`,
 `openrouter`, `local`, `cern_litellm`, `huit_bedrock`. Provider config is read by
