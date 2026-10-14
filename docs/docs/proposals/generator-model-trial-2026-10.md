@@ -145,8 +145,9 @@ additional work.
 ## 5. Phases
 
 A candidate moves to the next phase only when every check in the current one passes.
-Phases 0–1 are hours; Phase 2 costs most of a day of GPU time and ~$100–120 of judge spend
-per candidate, so only the two best candidates out of Phase 1 reach it.
+Phases 0–1 are hours and about $10 of judge spend per candidate; Phase 2 costs ~5–9 h of
+GPU time and $56–94 of judge spend per candidate (§7), so only the two best candidates out
+of Phase 1 reach it.
 
 ### Phase 0 — load and fit (per candidate, pass/fail)
 
@@ -250,14 +251,48 @@ the Gemma 4 port (§9); and the Anthropic standby already configured in `dev.yam
 (`default_provider: anthropic`, US-developed) — which sends every question off the host
 and is billed per token, so it is a decision, not a default.
 
-## 7. Cost and time (Phase 2 figures assume a dense-model finalist; an A3B finalist is faster)
+## 7. Cost and time per run
 
-| Phase | GPU / wall time | Judge spend |
-|---|---|---|
-| 0 | per candidate: download 15–40 GB + ~2 h of checks | — |
-| 1 | per candidate: ~1 h of checks + the 30-question pilot (~1 h) | ~$10 |
-| 2 | ingest 0–1.5 h; 2 Qwen3.6 runs ~2 h each; 2 candidate runs est. 4–6 h each (Qwen3.8 took ~3 h); probes ~1 h | ~$28 per Qwen3.6 run, est. $45–60 per candidate run: **~$150–180** for one candidate, ~$100–120 more for a second |
-| 3 | one redeploy (~1 h re-index) | — |
+**What costs money.** Only the judge — the Bedrock Claude Sonnet 4.5 model that grades
+each answer. GPU time is on-prem and carries no per-run charge; downloads are free.
+Judge prices are Bedrock list ($3.30 / $16.50 per million input / output tokens); HUIT
+billing may differ.
+
+**Measured anchors (2026-10-12, 109 questions, same stack and judge):**
+
+| Model | Wall time per run | Judge calls | Judge cost per run | Per question |
+|---|---|---|---|---|
+| Qwen3.6-35B-A3B | 1 h 58 min – 3 h 05 min | 1,697 / 1,729 | $27.48 / $27.85 | ~$0.25 |
+| Qwen3.8-27B (dense) | 3 h 05 min – 3 h 19 min | 2,647 / 2,735 | $45.88 / $47.31 | ~$0.43 |
+
+Judge cost tracks how much the answers say (more statements to check, more judge calls),
+so a candidate's cost is unknown until it runs; the two measured models bracket it at
+$0.25–0.43 per question. Wall time is the model's answering time (109 × seconds per
+question) plus judging and start-up, which took 55–131 min in the four measured runs. A
+finalist that meets the §6 speed floor (mean ≤ 60 s) answers in under 1 h 50 min, so
+**no Phase 2 candidate run should exceed ~4 h.**
+
+| Run | Questions | Wall time (est.) | Judge cost (est.) |
+|---|---|---|---|
+| Phase 0, load and fit — per candidate | — | ~2 h, plus the download (15–40 GB) | $0 |
+| Phase 1.1–1.3, functional checks — per candidate | a handful | ~1 h | < $1 |
+| Phase 1.4 pilot — Qwen3.6 reference (once) | 30 | ~30–50 min | ~$8 |
+| Phase 1.4 pilot — Nemotron 3 Nano or 3.5 Lightning | 30 | ~30–55 min | $8–13 |
+| Phase 1.4 pilot — Mistral Small 3.2 or Granite 4.1 | 30 | ~50–70 min | $8–13 |
+| Phase 1.4 pilot — Llama 3.3 70B | 30 | ~1.25–2 h | $8–13 |
+| Phase 2 ingest (only if the old document set cannot be recovered) | — | ~1.5 h | $0 |
+| Phase 2 full run — Qwen3.6 (×2, the brackets) | 109 | 2–3 h each | ~$28 each |
+| Phase 2 full run — a Nemotron finalist | 109 | ~2–3 h | $28–47 |
+| Phase 2 full run — a Mistral or Granite finalist | 109 | ~3–4 h (dense Qwen3.8-27B took 3 h 05–3 h 19) | $28–47 |
+| Phase 2 full run — Llama 3.3 70B (if it reaches Phase 2) | 109 | ≤ 4 h if it meets the floor; at its likely speed (est. 5–7 h) the pilot cuts it first | $28–47 |
+| Identifier and capacity probes — per model | 200 draws / 40 questions | ~1 h | $0 (no judge) |
+| In-house 4-bit quantization (§9 item 6, if chosen) — per candidate | — | est. a few hours for 24–32B, longer for 70B | $0 |
+| Phase 3 redeploy | — | ~1 h (re-index) | $0 |
+
+**Whole trial, five candidates screened and two finalists:** pilots ~$50–75 (Qwen3.6
+plus five candidates); Phase 2 ~$170–245 (two Qwen3.6 runs plus four finalist runs);
+**about $220–320 in judge spend**, and roughly 15–27 hours of GPU time for Phase 2 (six
+runs back to back plus probes), most of it unattended overnight.
 
 ## 8. Ledger
 
