@@ -1384,3 +1384,105 @@ def test_event_deduper_forget_lets_a_key_through_again():
     deduper.forget("C1", "1.0")
     deduper.forget("C1", "missing")
     assert deduper.first_time("C1", "1.0")
+
+
+# ---------------------------------------------------------------------------
+# AC 2: view_submission idempotency across ambiguous commit (task 2.1)
+# ---------------------------------------------------------------------------
+
+
+def _pk_pool(conn_specs):
+    """Primary-key-aware fake pool (copy of test_slack_feedback._pk_pool).
+
+    conn_specs: list of "working" | "ambiguous" | "down".
+    Returns (pool, rows) where rows is keyed by (message_id, feedback_ts).
+    """
+    from contextlib import contextmanager
+
+    import psycopg2
+    import psycopg2.errors
+
+    rows = {}
+    connections = []
+
+    for spec in conn_specs:
+        pending = {}
+        cur = mock.Mock()
+        cur.__enter__ = mock.Mock(return_value=cur)
+        cur.__exit__ = mock.Mock(return_value=False)
+
+        if spec == "down":
+            cur.execute.side_effect = psycopg2.OperationalError("down")
+        else:
+
+            def _make_execute(_pending=pending):
+                def _execute(sql, params):
+                    key = (params[0], params[1])
+                    if key in rows:
+                        raise psycopg2.errors.UniqueViolation("duplicate key")
+                    _pending[key] = params
+
+                return _execute
+
+            cur.execute.side_effect = _make_execute()
+
+        conn = mock.Mock()
+        conn.closed = 0
+        conn.cursor.return_value = cur
+        conn.rollback.return_value = None
+
+        if spec == "ambiguous":
+
+            def _make_commit(_pending=pending):
+                def _commit():
+                    rows.update(_pending)
+                    _pending.clear()
+                    raise psycopg2.OperationalError("connection lost after commit")
+
+                return _commit
+
+            conn.commit.side_effect = _make_commit()
+        else:
+
+            def _make_commit(_pending=pending):
+                def _commit():
+                    rows.update(_pending)
+                    _pending.clear()
+
+                return _commit
+
+            conn.commit.side_effect = _make_commit()
+
+        connections.append(conn)
+
+    state = {"idx": 0}
+    pool = mock.Mock()
+
+    @contextmanager
+    def get_connection():
+        conn = connections[state["idx"]]
+        state["idx"] += 1
+        yield conn
+
+    pool.get_connection = get_connection
+    return pool, rows
+
+
+def test_handle_interactive_view_submission_idempotent_across_ambiguous_commit():
+    from src.interfaces.slack_feedback import (
+        FEEDBACK_FORM_CALLBACK_ID,
+        SlackFeedbackStore,
+    )
+
+    pool, rows = _pk_pool(["ambiguous"] + ["down"] * 5 + ["working"])
+    store = SlackFeedbackStore(pool)
+    bot = _bot(feedback_store=store)
+    payload = _view_sub_payload(
+        FEEDBACK_FORM_CALLBACK_ID, "42:1700000000.123456", flags=("incorrect",)
+    )
+    payload["view"]["id"] = "V1"
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1"))
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1-retry"))
+    assert len(rows) == 1
+    row = next(iter(rows.values()))
+    assert row[2] == "dislike"

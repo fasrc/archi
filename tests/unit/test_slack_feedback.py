@@ -581,3 +581,73 @@ def test_store_insert_idempotent_across_ambiguous_commit():
     pool, rows = _pk_pool(["ambiguous", "working"])
     SlackFeedbackStore(pool).insert(like_record(42, ts))
     assert len(rows) == 1
+
+
+# ---------------------------------------------------------------------------
+# build_feedback_modal with action_ts (task 2.1 E5)
+# ---------------------------------------------------------------------------
+
+
+def test_build_feedback_modal_with_valid_action_ts_embeds_ts_in_metadata():
+    modal = build_feedback_modal(42, "1700000000.123456")
+    assert modal["private_metadata"] == "42:1700000000.123456"
+
+
+def test_build_feedback_modal_without_action_ts_arg_gives_plain_message_id():
+    modal = build_feedback_modal(42)
+    assert modal["private_metadata"] == "42"
+
+
+def test_build_feedback_modal_with_invalid_action_ts_gives_plain_message_id():
+    modal = build_feedback_modal(42, "abc")
+    assert modal["private_metadata"] == "42"
+
+
+# ---------------------------------------------------------------------------
+# parse_feedback_submission with feedback_ts (task 2.1 E5)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_feedback_submission_with_ts_in_metadata_gives_correct_feedback_ts():
+    view = _view(private_metadata="42:1700000000.123456")
+    r = parse_feedback_submission(view)
+    assert r is not None
+    assert r.message_id == 42
+    assert r.feedback_ts == datetime(
+        2023, 11, 14, 22, 13, 20, 123456, tzinfo=timezone.utc
+    )
+
+
+def test_parse_feedback_submission_plain_metadata_gives_none_feedback_ts():
+    view = _view(private_metadata="42")
+    r = parse_feedback_submission(view)
+    assert r is not None
+    assert r.message_id == 42
+    assert r.feedback_ts is None
+
+
+def test_parse_feedback_submission_invalid_ts_part_gives_none_feedback_ts():
+    view = _view(private_metadata="42:abc")
+    r = parse_feedback_submission(view)
+    assert r is not None
+    assert r.message_id == 42
+    assert r.feedback_ts is None
+
+
+def test_parse_feedback_submission_empty_ts_part_gives_none_feedback_ts():
+    view = _view(private_metadata="42:")
+    r = parse_feedback_submission(view)
+    assert r is not None
+    assert r.message_id == 42
+    assert r.feedback_ts is None
+
+
+@pytest.mark.parametrize(
+    "private_metadata",
+    ["abc:1700000000.0", ":1700000000.0", "0:1700000000.0"],
+)
+def test_parse_feedback_submission_invalid_message_id_with_ts_returns_none(
+    private_metadata,
+):
+    view = _view(private_metadata=private_metadata)
+    assert parse_feedback_submission(view) is None

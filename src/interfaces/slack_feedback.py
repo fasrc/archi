@@ -99,12 +99,16 @@ def build_feedback_blocks(message_id):
     ]
 
 
-def build_feedback_modal(message_id):
-    """Return a Slack modal for the Not helpful flow (design D7)."""
+def build_feedback_modal(message_id, action_ts=None):
+    """Return a Slack modal for the Not helpful flow (design D7, E5)."""
+    if parse_action_ts(action_ts) is not None:
+        private_metadata = f"{message_id}:{action_ts}"
+    else:
+        private_metadata = str(message_id)
     return {
         "type": "modal",
         "callback_id": FEEDBACK_FORM_CALLBACK_ID,
-        "private_metadata": str(message_id),
+        "private_metadata": private_metadata,
         "title": {"type": "plain_text", "text": "Feedback"},
         "submit": {"type": "plain_text", "text": "Submit"},
         "close": {"type": "plain_text", "text": "Cancel"},
@@ -152,7 +156,14 @@ def parse_feedback_submission(view):
     """Parse a view_submission and return a FeedbackRecord, or None on failure."""
     if view.get("callback_id") != FEEDBACK_FORM_CALLBACK_ID:
         return None
-    message_id = parse_message_id(view.get("private_metadata"))
+    raw_metadata = view.get("private_metadata")
+    if isinstance(raw_metadata, str) and ":" in raw_metadata:
+        meta_left, meta_right = raw_metadata.split(":", 1)
+        feedback_ts = parse_action_ts(meta_right)
+    else:
+        meta_left = raw_metadata
+        feedback_ts = None
+    message_id = parse_message_id(meta_left)
     if message_id is None:
         return None
 
@@ -181,6 +192,7 @@ def parse_feedback_submission(view):
         incorrect=incorrect,
         unhelpful=unhelpful,
         inappropriate=inappropriate,
+        feedback_ts=feedback_ts,
     )
 
 
