@@ -355,7 +355,7 @@ A Slack bot that answers `@archi` mentions in channels and direct messages, in t
 
 ### Slack app manifest
 
-The bot needs `app_mentions:read` and `message.im` to receive questions, `chat:write` to answer, and the three `*:history` scopes to read the earlier messages of a thread. The [access limits](#access-limits) use `users:read` to find guests and external users, and `channels:read`, `groups:read`, `mpim:read`, `channels:manage`, `groups:write` and `mpim:write` to list and leave channels and group DMs outside `allowed_channels`. After you add scopes to an installed app, reinstall it in the workspace.
+The bot needs `app_mentions:read` and `message.im` to receive questions, `chat:write` to answer, and the four `*:history` scopes to read the earlier messages of a thread (`mpim:history` covers threads in group DMs). The [access limits](#access-limits) use `users:read` to find guests and external users, and `channels:read`, `groups:read`, `mpim:read`, `channels:manage`, `groups:write` and `mpim:write` to list and leave channels and group DMs outside `allowed_channels`. After you add scopes to an installed app, reinstall it in the workspace.
 
 ```yaml
 _metadata:
@@ -377,6 +377,7 @@ oauth_config:
       - channels:history
       - groups:history
       - im:history
+      - mpim:history
       - users:read
       - channels:read
       - groups:read
@@ -441,9 +442,9 @@ Two keys limit who can use the bot and where. Both are off by default.
 - multi-channel guests (`is_restricted`) and single-channel guests (`is_ultra_restricted`);
 - a user that `users.info` cannot find. This user gets the general error reply, because the user can be internal.
 
-The bot looks up the sender for each question and keeps no result, so a member who becomes a guest loses access at the next question. On Enterprise Grid, a member of another workspace in the same enterprise is internal. A rejected user gets `external_user_text` as an ephemeral reply, which only that user can see. The reply goes in the thread of the question if the question is in a thread, else in the channel or DM: Slack does not show an ephemeral reply that starts a new thread. The bot sends no question to archi for that user, and it stores no feedback click from that user.
+The bot looks up the sender for each question and keeps no result, so a member who becomes a guest loses access at the next question. On Enterprise Grid, a member of another workspace in the same enterprise is internal. A rejected user gets `external_user_text` as an ephemeral reply, which only that user can see. The reply goes in the thread of the question if the question is in a thread, else in the channel or DM: Slack does not show an ephemeral reply that starts a new thread. The bot sends no question to archi for that user, and it stores no feedback click from that user. When an internal user asks in a thread, the bot also drops the earlier thread messages of rejected users, so their words do not reach archi as context.
 
-**`allowed_channels`** is a list of channel IDs, for example `[C0C8TS7H8BV, C0BTTAFE4ET]`. The bot answers mentions only in these channels. At start-up it leaves each channel that is not on the list. When someone adds it to an unlisted channel, it leaves at once. Group DMs obey the list. Direct messages to the bot are not channels, so the list does not apply to them. Only `[]` or `null` turns the limit off. A value with no channel IDs in it, such as a blank string, stops the bot at start-up with an error. To find a channel ID, open the channel details in Slack. The ID is at the bottom of the About tab.
+**`allowed_channels`** is a list of channel IDs, for example `[C0C8TS7H8BV, C0BTTAFE4ET]`. The bot answers mentions only in these channels. At start-up it leaves each channel that is not on the list. When someone adds it to an unlisted channel, it leaves at once. Slack does not let a bot leave the workspace's general channel. If the bot is in that channel and the channel is not on the list, the bot stays a member, logs the `cant_leave_general` error, and still answers no mention there. Group DMs obey the list. Direct messages to the bot are not channels, so the list does not apply to them. Only `[]` or `null` turns the limit off. A value with no channel IDs in it, such as a blank string, stops the bot at start-up with an error. To find a channel ID, open the channel details in Slack. The ID is at the bottom of the About tab.
 
 ```yaml
 services:

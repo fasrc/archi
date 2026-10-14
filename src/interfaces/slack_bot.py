@@ -485,19 +485,6 @@ class SlackBot:
         """Handle block_actions and view_submission payloads; never raises (design D6-D7)."""
         try:
             payload_type = payload.get("type")
-            user_id = (payload.get("user") or {}).get("id")
-            team_id = (payload.get("team") or {}).get("id")
-            access = self._user_access(user_id, team_id)
-            if access is not True:
-                if payload_type == "block_actions":
-                    kwargs = ephemeral_thanks_kwargs(payload, "")
-                    self._post_access_notice(
-                        access,
-                        kwargs["channel"],
-                        kwargs["user"],
-                        kwargs.get("thread_ts"),
-                    )
-                return
             if payload_type == "block_actions":
                 actions = payload.get("actions") or []
                 if not actions:
@@ -508,6 +495,8 @@ class SlackBot:
                 if message_id is None:
                     return
                 if not self._first_interaction(payload):
+                    return
+                if self._interaction_rejected(payload, notify=True):
                     return
                 if action_id == HELPFUL_ACTION_ID:
                     try:
@@ -540,6 +529,8 @@ class SlackBot:
                     return
                 if not self._first_interaction(payload):
                     return
+                if self._interaction_rejected(payload, notify=False):
+                    return
                 try:
                     self.feedback_store.insert(record)
                 except Exception:
@@ -547,6 +538,46 @@ class SlackBot:
                     self._forget_interaction(payload)
         except Exception:
             logger.exception("slack bot: failed to handle interactive payload")
+
+    def _interaction_rejected(self, payload, notify):
+        """True when ``internal_users_only`` rejects the user of an interactive payload.
+
+        Runs after the interaction dedup, so a retried envelope repeats neither the
+        lookup nor the notice.
+        """
+        user_id = (payload.get("user") or {}).get("id")
+        team_id = (payload.get("team") or {}).get("id")
+        access = self._user_access(user_id, team_id)
+        if access is True:
+            return False
+        if notify:
+            kwargs = ephemeral_thanks_kwargs(payload, "")
+            self._post_access_notice(
+                access, kwargs["channel"], kwargs["user"], kwargs.get("thread_ts")
+            )
+        return True
+
+    def _authorized_replies(self, replies, team_id, asker):
+        """Drop thread messages whose author ``internal_users_only`` rejects.
+
+        Earlier thread messages go to /v1 as context, so a guest or external user
+        could reach archi through a thread that an internal user continues. Each
+        author is looked up once per question. Messages with no user (this bot's
+        answers carry its user ID; integrations carry only ``bot_id``) are kept.
+        """
+        if not self.internal_users_only:
+            return replies
+        allowed = {asker: True, self.bot_user_id: True}
+        kept = []
+        for message in replies:
+            author = message.get("user")
+            if author:
+                if author not in allowed:
+                    allowed[author] = self._user_access(author, team_id) is True
+                if not allowed[author]:
+                    continue
+            kept.append(message)
+        return kept
 
     def _user_access(self, user_id, payload_team_id):
         """True to serve the user, False for an external user, None if unknown.
@@ -707,7 +738,11 @@ class SlackBot:
             placeholder_ts = placeholder["ts"]
             replies = []
             if event.get("thread_ts"):
-                replies = self._thread_replies(channel, thread_ts)
+                replies = self._authorized_replies(
+                    self._thread_replies(channel, thread_ts),
+                    team_id,
+                    event.get("user"),
+                )
             messages = build_messages(
                 replies,
                 self.bot_user_id,

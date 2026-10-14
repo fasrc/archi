@@ -34,6 +34,10 @@ The bot MUST send a rejected user `services.slack.external_user_text`, or the bu
 - **WHEN** a guest clicks Helpful
 - **THEN** the bot inserts no feedback row
 
+#### Scenario: A rejected user in a thread
+- **WHEN** a guest writes in a thread, and an internal user then asks the bot in that thread
+- **THEN** the guest's message is not in the `messages` that the bot sends to `/v1`
+
 ### Requirement: The Slack bot SHALL stay only in allowed channels
 When `services.slack.allowed_channels` lists channel IDs, the bot MUST NOT answer a mention in another channel. It MUST leave each unlisted channel at start-up and when it joins an unlisted channel. A direct message MUST stay allowed. When the list is `[]` or absent, the bot MUST NOT limit channels. A configured value with no channel IDs MUST stop the bot at start-up.
 

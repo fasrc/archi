@@ -20,9 +20,17 @@ The bot sends `external_user_text` with `chat.postEphemeral`, so only the sender
 
 The Socket Mode client runs listeners in a thread pool. A `users.info` call in the listener could let a later question in a thread reach the queue first. So the listener only filters, deduplicates, and queues. `answer()`, which runs the questions of one thread in order, does the access check first.
 
+### D3b. Thread history obeys the same rule
+
+`answer()` sends the earlier messages of a thread to `/v1` as context. Without a filter, a guest could write in a thread and reach archi when an internal user asks there. With `internal_users_only`, `_authorized_replies()` checks each author of the thread once per question and drops the messages of rejected authors. The asker and the bot are known to be allowed. Integration messages with only a `bot_id` stay, as before.
+
+### D3c. Feedback is deduplicated before the check
+
+A rejected feedback click is checked after `_first_interaction()`, so a retried envelope repeats neither the `users.info` call nor the notice.
+
 ### D4. Channel limit: ignore, then leave
 
-A mention in an unlisted channel gets no answer and no notice. The bot also leaves unlisted channels. At start-up, `leave_unlisted_channels()` reads `users.conversations` one type at a time (public, private, and group DMs) and leaves each unlisted channel. Each type needs its own read scope, so a missing scope for one type does not stop the others. While the bot runs, a `member_joined_channel` event for the bot in an unlisted channel causes `conversations.leave`. DMs stay allowed, because the request was about channels. A failed leave is logged and never stops the bot.
+A mention in an unlisted channel gets no answer and no notice. The bot also leaves unlisted channels. At start-up, `leave_unlisted_channels()` reads `users.conversations` one type at a time (public, private, and group DMs) and leaves each unlisted channel. Each type needs its own read scope, so a missing scope for one type does not stop the others. While the bot runs, a `member_joined_channel` event for the bot in an unlisted channel causes `conversations.leave`. DMs stay allowed, because the request was about channels. A failed leave is logged and never stops the bot. Slack refuses to let a bot leave the general channel (`cant_leave_general`). The limit still holds there, because the bot answers no mention in an unlisted channel, so the bot logs the error and stays.
 
 ### D5. Config keys, not constants
 
