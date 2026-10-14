@@ -1,9 +1,11 @@
 # Answering-model replacement: moving archi off Qwen3.6 (2026-10)
 
 **Status:** draft for operator review, 2026-10-13. Nothing has run. The decision rule is
-set (§6); its usability-floor numbers are proposals until the operator confirms them, and
-are then frozen into a timestamped pre-registration before the first Phase 2 run, as the
-Qwen3.8 comparison did (`/scratch/a2rchi/bench-runs/ragas-qwen38/PREREGISTRATION.md`).
+set (§6); its usability-floor numbers are proposals until the operator confirms them. The
+whole rule — floor, pilot cut and ranking — is then frozen into a timestamped
+pre-registration **before the first Phase 1.4 pilot**, because the pilot already applies
+the floor and the cut, as the Qwen3.8 comparison did
+(`/scratch/a2rchi/bench-runs/ragas-qwen38/PREREGISTRATION.md`).
 
 **Feature under test:** the answering model,
 `services.chat_app.providers.*.default_model` / `services.benchmarking.model`:
@@ -136,9 +138,9 @@ additional work.
 | Candidate server | GPUs 0–1, which `vllm-qwen38.service` held until it was stopped and disabled on 2026-10-13 (its weights deleted). Phases 0–1: a candidate under 20 GB runs on one GPU, so two can run side by side (ports 8002 and 8003); Llama 3.3 needs both (`--tensor-parallel-size 2`, port 8002). Phase 2: one finalist at a time, served the way it would be deployed. |
 | Production | Qwen3.6 stays on GPUs 2–3, port 8001, serving live chat throughout (Command R+ excepted, §9). |
 | Launcher | Copy `config/scripts/vllm_qwen38_volta_serve.sh`; drop the `qwen3_5.py` patch bind; set `--model`, `--tool-call-parser` (Nemotron: `qwen3_coder`; Mistral: `mistral` plus `--tokenizer-mode mistral`; Granite 4.1: `hermes` or `granite4`, chosen in Phase 1.3; Llama: `llama3_json` plus `--chat-template` bound from the vLLM repo's `examples/`, pinned by commit), `--gpu-memory-utilization 0.88`, `--max-model-len 32768`. `config/` is git-ignored (#286): back the launcher up outside the repo. |
-| archi wiring | The `openai` provider slot already points at `:8002` (`config/environments/dev.yaml:128`, in the archi-config checkout), so no code change. The benchmark arm config differs from the Qwen3.6 config in exactly the keys the Qwen3.8 arm changed — `benchmarking.model`, the provider's `base_url` / `default_model` — **plus** a `context_editing.context_windows` entry for the candidate's exact model id. Without that entry the run has no context limit and long questions come back degraded (6 of 109 the last time). |
+| archi wiring | The `openai` provider slot already points at `:8002` (`config/environments/dev.yaml:128`, in the archi-config checkout), so no code change. The benchmark arm config differs from the Qwen3.6 config in exactly the keys the Qwen3.8 arm changed — `benchmarking.model`, the provider's `base_url` / `default_model` — **plus** a `context_editing.context_windows` entry for the candidate's exact model id (as `/v1/models` reports it). Every arm, Qwen3.6 included, carries the **same** map — every model id the trial will test, each at 32 768, fixed before the first pilot — because `compare_runs.py` refuses arms whose `context_editing` differs (gate G10); the Qwen3.8 arms already carried both ids this way. Without its entry a run has no context limit and long questions come back degraded (6 of 109 the last time). |
 | Context window | 32 768 for every model, enforced by `--max-model-len`. Every candidate supports more (128k–256k); holding 32k keeps the comparison fair and the cache budgets in §2–§3 valid. |
-| Sampling | `temperature: 0.3` (the benchmark's value, #701), thinking off. archi sends nothing else, so vLLM fills `top_p`/`top_k` from each model's `generation_config.json`; record the effective values per model in the ledger. |
+| Sampling | Pinned identically in every arm, Qwen3.6 included: `temperature: 0.3` (the benchmark's value, #701), `top_p: 0.95`, `top_k: 20`, `min_p: 0`, `repetition_penalty: 1.0`, thinking off. These are exactly what Qwen3.6 ran with on 2026-10-12 (0.3 from the config, the rest from its `generation_config.json`), so the reference stays comparable to those runs. They must be sent explicitly: whatever archi does not send, vLLM fills from each model's own `generation_config.json`, and the arms would decode differently. `temperature` and `top_p` go under the provider's `extra_kwargs`, the other three under its `extra_body`. Vendors recommend other settings (Mistral: temperature 0.15); a vendor-settings run is a possible follow-up for the winner, not part of the ranking. |
 | Prompt | `fasrc-docs.md`, unchanged. It was written against Qwen models, which may handicap a candidate; a prompt-retune arm is out of scope unless a candidate misses the bar narrowly. |
 | Judge | Bedrock Claude Sonnet 4.5, 600 s, 6 workers — as in the Qwen3.8 runs. |
 
@@ -163,6 +165,11 @@ of Phase 1 reach it.
 | 0.8 | Generation speed | tokens/s for one stream and for 4 at once, measured the same way on `:8001` off-peak for comparison |
 
 ### Phase 1 — through archi (functional)
+
+**Before the first pilot (1.4):** copy the Qwen3.8 PREREGISTRATION.md, fill in the whole
+§6 rule as signed off — the floor, the pilot cut and the ranking — and timestamp it.
+Nothing in §6 changes once a pilot has run; a change after that point is recorded as a
+deviation, with the reason.
 
 | # | Check | Pass |
 |---|---|---|
@@ -197,8 +204,8 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
 - **Capacity probe.** 8 bank questions sent at once, 5 rounds, on each server; record p90
   time per question. Production sees several chats at once; a smaller cache pool (§2)
   shows up here, not in the one-at-a-time benchmark.
-- **Pre-registration.** Copy the Qwen3.8 PREREGISTRATION.md, fill in §6 as signed off,
-  timestamp it, before the first candidate run.
+- **Pre-registration** was frozen before the first pilot (Phase 1); Phase 2 runs under it
+  unchanged.
 
 ### Phase 3 — adoption (only after a pass and a recorded decision)
 
@@ -207,13 +214,20 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
 2. Serve the winner on GPUs 2–3 / `:8001` and stop Qwen3.6; or keep it on `:8002`
    and switch `default_provider` — either way, keep Qwen3.6 weights and its unit file
    until one clean week.
-3. `dev.yaml`: model id, `models:` list, the `context_windows` entry, sampling (#701);
+3. `dev.yaml`: model id, `models:` list, the `context_windows` entry, and the same pinned
+   sampling the benchmark used (§4, #701);
    redeploy with `deploy/scripts/redeploy.sh` (editing `dev.yaml` and restarting is a
-   no-op — config is re-seeded into Postgres at deploy); verify with a live chat turn.
-4. Open a new golden-set era in `bench_out/banks/golden/report/goldenset_timeline.yaml`:
+   no-op — config is re-seeded into Postgres at deploy).
+4. Verify end to end on the running deployment before calling adoption done: a live,
+   streamed chat turn that triggers the search tool, and one Slack bot turn. For each,
+   confirm in the Phoenix trace that the request reached the new model id and carries the
+   tool call and its retrieval results, and in Postgres that the turn's persisted trace
+   (`agent_traces.events`) holds the same tool call and result. An HTTP 200 alone is not
+   evidence: a malformed streamed tool call can still return 200.
+5. Open a new golden-set era in `bench_out/banks/golden/report/goldenset_timeline.yaml`:
    numbers before and after a model change are not comparable history.
 
-## 6. Decision rule (fixed before the first Phase 2 run)
+## 6. Decision rule (frozen before the first pilot)
 
 Scored on the 104 bank questions (anchors excluded, as in the Qwen3.8 comparison). Each
 question's score is the mean of that model's two runs; differences are paired by
@@ -233,6 +247,7 @@ Qwen3.6 has done plus a margin; Qwen3.8's numbers are shown for scale.
 | Degraded answers (context overflow) | 0 / 0 | 0 / 0 | 0 |
 | Identifier probe (`kempner_rtx`), wrong spellings | 0 / 200 | — | ≤ 2 / 200 |
 | Capacity probe, p90 seconds with 8 questions at once | measured in Phase 2 | — | ≤ 180 |
+| Anchors: the `should_refuse` anchor refused, every `easy_retrieve` anchor cites its expected source | checked on the bracketing runs | — | all hold, in every run |
 
 **2. Ranking — among candidates that clear the floor.** Primary: `answer_correctness`,
 candidate against candidate. A difference counts only if `compare_runs.py` clears its
@@ -240,6 +255,15 @@ gate on it (above 2·SE and 2·σ). Inside that noise, the tie is broken in orde
 `faithfulness`, mean seconds per question, give-up answers, then the simpler operation
 (fewer GPUs, no image patches). With a single candidate in Phase 2, there is nothing to
 rank: it is adopted if it clears the floor.
+
+`compare_runs.py`'s G8 row (anchors, plus "no other metric regressed past one noise
+unit") is reported for the finalist pair, with the runner-up as baseline. If the
+correctness winner shows a G8 regression on another metric, the choice goes to the
+operator with both rows in front of them, recorded in the ledger — it is not automatic
+either way. G8 is not a hard gate here because on 2026-10-12 it raised an alarm on
+Qwen3.6 against its own second run (easy-anchor scores, and `answer_correctness` against
+a two-run noise estimate of 0.0025). Against Qwen3.6, G8 is reported as part of the cost
+of the policy.
 
 **3. Cost of the policy — reported, not gated.** Each candidate minus Qwen3.6 on every
 RAGAS metric, source accuracy, speed and judge cost per run, so the operator can say what
@@ -315,8 +339,8 @@ runs back to back plus probes), most of it unattended overnight.
 - Qwen3.8 stopped and disabled; its weights deleted.
 
 **Open:**
-1. **The usability floor** in §6 — confirm or change the numbers before pre-registration:
-   what is the slowest, least reliable chat you would ship?
+1. **The usability floor** in §6 — confirm or change the numbers before the first pilot,
+   when the rule is frozen: what is the slowest, least reliable chat you would ship?
 2. **Gemma 4:** fund a separate spike — port the Gemma 4 architecture into the Volta
    fork and (most likely) extend its attention kernel to head size 512, with its own
    estimate and the rebuild risk of #286 (the image has no build recipe) — covering both
