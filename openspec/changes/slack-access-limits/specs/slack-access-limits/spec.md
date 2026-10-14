@@ -24,7 +24,7 @@ When `services.slack.internal_users_only` is `true`, the bot MUST look up the se
 - **THEN** the bot answers the first question and rejects the second
 
 ### Requirement: A rejected user SHALL get the configured notice
-The bot MUST send a rejected user `services.slack.external_user_text`, or the built-in text when the key is null, as one ephemeral message in the thread of the question. It MUST store no feedback click or form from a rejected user.
+The bot MUST send a rejected user `services.slack.external_user_text`, or the built-in text when the key is null, as one ephemeral message, in the thread of the question if the question is in a thread, else in the channel or DM. It MUST store no feedback click or form from a rejected user.
 
 #### Scenario: The notice
 - **WHEN** a guest mentions the bot in thread `5.0` of channel `C1`
@@ -35,7 +35,7 @@ The bot MUST send a rejected user `services.slack.external_user_text`, or the bu
 - **THEN** the bot inserts no feedback row
 
 ### Requirement: The Slack bot SHALL stay only in allowed channels
-When `services.slack.allowed_channels` lists channel IDs, the bot MUST NOT answer a mention in another channel. It MUST leave each unlisted channel at start-up and when it joins an unlisted channel. A direct message MUST stay allowed. When the list is empty or absent, the bot MUST NOT limit channels.
+When `services.slack.allowed_channels` lists channel IDs, the bot MUST NOT answer a mention in another channel. It MUST leave each unlisted channel at start-up and when it joins an unlisted channel. A direct message MUST stay allowed. When the list is `[]` or absent, the bot MUST NOT limit channels. A configured value with no channel IDs MUST stop the bot at start-up.
 
 #### Scenario: An unlisted channel
 - **WHEN** a user mentions the bot in a channel that is not on the list

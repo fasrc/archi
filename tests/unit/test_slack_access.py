@@ -173,7 +173,9 @@ def test_parse_allowed_channels(value, expected):
     assert parse_allowed_channels(value) == expected
 
 
-@pytest.mark.parametrize("value", [42, {"C1": True}, ["C1", 7]])
+@pytest.mark.parametrize(
+    "value", [42, {"C1": True}, ["C1", 7], "", "   ", ["", " "]]
+)
 def test_parse_allowed_channels_rejects_bad_values(value):
     with pytest.raises(ValueError, match="allowed_channels"):
         parse_allowed_channels(value)
@@ -224,8 +226,16 @@ def test_external_user_in_a_dm_gets_the_notice():
     bot.handle_request(mock.Mock(), _req(_dm()))
     bot.session.post.assert_not_called()
     bot.web.chat_postEphemeral.assert_called_once_with(
-        channel="D1", user="U1", text=DEFAULT_EXTERNAL_USER_TEXT, thread_ts="11.0"
+        channel="D1", user="U1", text=DEFAULT_EXTERNAL_USER_TEXT
     )
+
+
+def test_notice_for_a_top_level_mention_starts_no_thread():
+    # Slack shows an ephemeral thread reply only in a thread that already exists.
+    bot = _bot(internal_users_only=True)
+    bot.web.users_info.return_value = _member(team_id="T999")
+    bot.handle_request(mock.Mock(), _req(_mention()))
+    assert "thread_ts" not in bot.web.chat_postEphemeral.call_args.kwargs
 
 
 def test_notice_text_comes_from_config():
@@ -275,14 +285,55 @@ def test_failed_notice_never_raises():
     bot.session.post.assert_not_called()
 
 
-def test_redelivery_after_a_failed_notice_posts_it_again():
+def test_a_failed_notice_is_retried_once():
     bot = _bot(internal_users_only=True)
     bot.web.users_info.return_value = _member(team_id="T999")
     bot.web.chat_postEphemeral.side_effect = [RuntimeError("slack down"), None]
-    bot.handle_request(mock.Mock(), _req(_mention(), envelope="E1"))
-    bot.handle_request(mock.Mock(), _req(_mention(), envelope="E1-retry"))
+    bot.handle_request(mock.Mock(), _req(_mention()))
     assert bot.web.chat_postEphemeral.call_count == 2
     bot.session.post.assert_not_called()
+
+
+def test_a_notice_that_fails_twice_is_given_up():
+    bot = _bot(internal_users_only=True)
+    bot.web.users_info.return_value = _member(team_id="T999")
+    bot.web.chat_postEphemeral.side_effect = RuntimeError("slack down")
+    bot.handle_request(mock.Mock(), _req(_mention()))
+    assert bot.web.chat_postEphemeral.call_count == 2
+
+
+class _DeferredExecutor:
+    def __init__(self):
+        self.tasks = []
+
+    def submit(self, fn, *args, **kwargs):
+        self.tasks.append((fn, args, kwargs))
+
+    def run_all(self):
+        while self.tasks:
+            fn, args, kwargs = self.tasks.pop(0)
+            fn(*args, **kwargs)
+
+
+def test_access_check_runs_in_the_thread_worker_not_the_listener():
+    # The listener runs in a thread pool. A slow lookup there could let a later
+    # question in the same thread overtake an earlier one.
+    executor = _DeferredExecutor()
+    bot = _bot(internal_users_only=True, executor=executor)
+    bot.handle_request(mock.Mock(), _req(_mention(ts="1.0"), envelope="E1"))
+    bot.handle_request(
+        mock.Mock(), _req(_mention(ts="2.0", thread_ts="1.0"), envelope="E2")
+    )
+    bot.web.users_info.assert_not_called()
+    executor.run_all()
+    assert bot.web.users_info.call_count == 2
+    questions = [
+        c.kwargs["json"]["messages"][-1]["content"]
+        for c in bot.session.post.call_args_list
+    ]
+    assert questions == ["quota?", "quota?"]
+    first, second = bot.web.chat_postMessage.call_args_list
+    assert (first.kwargs["thread_ts"], second.kwargs["thread_ts"]) == ("1.0", "1.0")
 
 
 def test_workspace_falls_back_to_the_payload_team():
@@ -410,25 +461,54 @@ def test_failed_leave_never_raises():
 # ---------------------------------------------------------------------------
 
 
-def test_leave_unlisted_channels_follows_pagination():
+def _conversations(pages):
+    def users_conversations(types, limit, cursor=None):
+        return pages[(types, cursor)]
+
+    return users_conversations
+
+
+def test_leave_unlisted_channels_lists_each_type_and_follows_pagination():
     bot = _bot(allowed_channels=frozenset({"C1"}))
-    bot.web.users_conversations.side_effect = [
+    bot.web.users_conversations.side_effect = _conversations(
         {
-            "channels": [{"id": "C1"}, {"id": "C9"}],
-            "response_metadata": {"next_cursor": "next"},
-        },
-        {"channels": [{"id": "G8"}], "response_metadata": {"next_cursor": ""}},
-    ]
+            ("public_channel", None): {
+                "channels": [{"id": "C1"}, {"id": "C9"}],
+                "response_metadata": {"next_cursor": "next"},
+            },
+            ("public_channel", "next"): {"channels": [{"id": "C8"}]},
+            ("private_channel", None): {"channels": [{"id": "G7"}]},
+            ("mpim", None): {"channels": [{"id": "G6"}]},
+        }
+    )
     bot.leave_unlisted_channels()
-    first, second = bot.web.users_conversations.call_args_list
-    assert first.kwargs == {
-        "types": "public_channel,private_channel,mpim",
-        "limit": 200,
-    }
-    assert second.kwargs["cursor"] == "next"
+    assert [c.kwargs["types"] for c in bot.web.users_conversations.call_args_list] == [
+        "public_channel",
+        "public_channel",
+        "private_channel",
+        "mpim",
+    ]
     assert bot.web.conversations_leave.call_args_list == [
         mock.call(channel="C9"),
-        mock.call(channel="G8"),
+        mock.call(channel="C8"),
+        mock.call(channel="G7"),
+        mock.call(channel="G6"),
+    ]
+
+
+def test_a_missing_scope_for_one_type_does_not_stop_the_others():
+    bot = _bot(allowed_channels=frozenset({"C1"}))
+
+    def users_conversations(types, limit, cursor=None):
+        if types == "mpim":
+            raise RuntimeError("missing_scope")
+        return {"channels": [{"id": f"X-{types}"}]}
+
+    bot.web.users_conversations.side_effect = users_conversations
+    bot.leave_unlisted_channels()
+    assert bot.web.conversations_leave.call_args_list == [
+        mock.call(channel="X-public_channel"),
+        mock.call(channel="X-private_channel"),
     ]
 
 
@@ -442,6 +522,7 @@ def test_leave_unlisted_channels_never_raises():
     bot = _bot(allowed_channels=frozenset({"C1"}))
     bot.web.users_conversations.side_effect = RuntimeError("missing_scope")
     bot.leave_unlisted_channels()
+    assert bot.web.users_conversations.call_count == 3
     bot.web.conversations_leave.assert_not_called()
 
 
@@ -459,7 +540,7 @@ def test_run_leaves_unlisted_channels_before_it_connects():
     bot.socket.connect.side_effect = lambda: order.append("connect")
     stop = mock.Mock()
     bot.run(stop_event=stop)
-    assert order == ["list", "connect"]
+    assert order == ["list", "list", "list", "connect"]
 
 
 # ---------------------------------------------------------------------------

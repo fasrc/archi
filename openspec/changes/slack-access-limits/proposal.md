@@ -8,7 +8,7 @@ The Slack bot answers every user who can message it. `should_answer()` (`src/int
 - New config key `services.slack.external_user_text` (default: built-in text). A rejected user gets this text as an ephemeral reply.
 - New config key `services.slack.allowed_channels` (default `[]`, no limit). The bot answers mentions only in the listed channels. It leaves an unlisted channel at start-up and when someone adds it to one. DMs are not channels, so the list does not apply to them.
 - The feedback buttons obey `internal_users_only`.
-- The app manifest gets the scopes `users:read`, `channels:read`, `groups:read`, `channels:manage`, `groups:write` and the event `member_joined_channel`.
+- The app manifest gets the scopes `users:read`, `channels:read`, `groups:read`, `mpim:read`, `channels:manage`, `groups:write`, `mpim:write` and the event `member_joined_channel`.
 
 ## Capabilities
 

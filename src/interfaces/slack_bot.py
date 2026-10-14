@@ -115,19 +115,25 @@ def channel_allowed(event, allowed_channels):
 
 
 def parse_allowed_channels(value):
-    """Return the ``services.slack.allowed_channels`` config value as a frozenset."""
-    if value is None:
+    """Return the ``services.slack.allowed_channels`` config value as a frozenset.
+
+    Only ``null`` or an empty list means "no limit". A value with no channel IDs in
+    it, such as a blank string, is an error: a config mistake must not remove the
+    limit.
+    """
+    if value is None or (isinstance(value, (list, tuple)) and not value):
         return frozenset()
     if isinstance(value, str):
         value = [value]
-    if not isinstance(value, (list, tuple)) or not all(
-        isinstance(item, str) for item in value
-    ):
+    channels = None
+    if isinstance(value, (list, tuple)) and all(isinstance(i, str) for i in value):
+        channels = frozenset(item.strip() for item in value if item.strip())
+    if not channels:
         raise ValueError(
             "services.slack.allowed_channels must be a list of Slack channel IDs, "
             f"not {value!r}."
         )
-    return frozenset(item.strip() for item in value if item.strip())
+    return channels
 
 
 def is_internal_user(user, team_id, enterprise_id=None):
@@ -464,18 +470,6 @@ class SlackBot:
                 if not self._deduper.first_time(event.get("channel"), event.get("ts")):
                     return
                 team_id = payload.get("team_id")
-                access = self._user_access(event.get("user"), team_id)
-                if access is not True:
-                    posted = self._post_access_notice(
-                        access,
-                        event.get("channel"),
-                        event.get("user"),
-                        event.get("thread_ts") or event.get("ts"),
-                    )
-                    if not posted:
-                        # Let a Slack redelivery of this event post the notice again.
-                        self._deduper.forget(event.get("channel"), event.get("ts"))
-                    return
                 key = thread_key(
                     team_id,
                     event.get("channel"),
@@ -575,20 +569,25 @@ class SlackBot:
         return internal
 
     def _post_access_notice(self, access, channel, user_id, thread_ts):
-        """Tell a rejected user why; return False if Slack refused the post.
+        """Tell a rejected user why, with one retry; never raises.
 
         A failed lookup gets the error text, because the sender can be internal.
+        The bot acknowledged the event before this point, so Slack sends it no
+        second time: the retry here is the only one.
         """
         text = self.external_user_text if access is False else ERROR_TEXT
         kwargs = {"channel": channel, "user": user_id, "text": text}
         if thread_ts:
             kwargs["thread_ts"] = thread_ts
-        try:
-            self.web.chat_postEphemeral(**kwargs)
-            return True
-        except Exception:
-            logger.exception(f"slack bot: failed to post the notice in {channel}")
-            return False
+        for attempt in (1, 2):
+            try:
+                self.web.chat_postEphemeral(**kwargs)
+                return
+            except Exception:
+                logger.exception(
+                    f"slack bot: failed to post the notice in {channel} "
+                    f"(attempt {attempt}/2)"
+                )
 
     def _on_member_joined(self, event):
         if event.get("user") != self.bot_user_id or not self.allowed_channels:
@@ -608,21 +607,27 @@ class SlackBot:
         """Leave each channel that ``allowed_channels`` omits; never raises."""
         if not self.allowed_channels:
             return
-        try:
-            cursor = None
-            while True:
-                kwargs = {"types": "public_channel,private_channel,mpim", "limit": 200}
-                if cursor:
-                    kwargs["cursor"] = cursor
-                page = self.web.users_conversations(**kwargs)
-                for channel in page.get("channels") or []:
-                    if channel.get("id") not in self.allowed_channels:
-                        self._leave(channel.get("id"))
-                cursor = (page.get("response_metadata") or {}).get("next_cursor")
-                if not cursor:
-                    return
-        except Exception:
-            logger.exception("slack bot: failed to list the bot's channels")
+        # One listing per type: each type needs its own read scope, and a missing
+        # scope for one type must not stop the bot from leaving the others.
+        for conversation_type in ("public_channel", "private_channel", "mpim"):
+            try:
+                cursor = None
+                while True:
+                    kwargs = {"types": conversation_type, "limit": 200}
+                    if cursor:
+                        kwargs["cursor"] = cursor
+                    page = self.web.users_conversations(**kwargs)
+                    for channel in page.get("channels") or []:
+                        if channel.get("id") not in self.allowed_channels:
+                            self._leave(channel.get("id"))
+                    cursor = (page.get("response_metadata") or {}).get("next_cursor")
+                    if not cursor:
+                        break
+            except Exception:
+                logger.exception(
+                    f"slack bot: failed to list the bot's {conversation_type} "
+                    "conversations"
+                )
 
     def _first_interaction(self, payload):
         """False for a retried interactive envelope already handled; True otherwise."""
@@ -684,6 +689,16 @@ class SlackBot:
         channel = event.get("channel")
         ts = event.get("ts")
         thread_ts = event.get("thread_ts") or ts
+        # The access check runs here, in the thread's ordered worker, not in the
+        # Socket Mode listener: a slow lookup there could reorder a thread.
+        access = self._user_access(event.get("user"), team_id)
+        if access is not True:
+            # Only a question already in a thread gets the notice in that thread:
+            # Slack does not show an ephemeral reply that would start a thread.
+            self._post_access_notice(
+                access, channel, event.get("user"), event.get("thread_ts")
+            )
+            return
         placeholder_ts = None
         try:
             placeholder = self.web.chat_postMessage(
