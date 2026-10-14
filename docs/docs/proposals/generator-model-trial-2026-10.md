@@ -141,7 +141,7 @@ additional work.
 | Candidate server | GPUs 0–1, which `vllm-qwen38.service` held until it was stopped and disabled on 2026-10-13 (its weights deleted). Phases 0–1: a candidate under 20 GB runs on one GPU, so two can run side by side (ports 8002 and 8003); Llama 3.3 needs both (`--tensor-parallel-size 2`, port 8002). Phase 2: one finalist at a time, served the way it would be deployed. |
 | Production | Qwen3.6 stays on GPUs 2–3, port 8001, serving live chat throughout (Command R+ excepted, §9). |
 | Launcher | Copy `config/scripts/vllm_qwen38_volta_serve.sh` once per slot. The copy pins GPUs 0,1, `--tensor-parallel-size 2` and port 8002, so change all three: **GPU 0 slot** `CUDA_VISIBLE_DEVICES=0`, `--tensor-parallel-size 1`, `--port 8002`; **GPU 1 slot** `CUDA_VISIBLE_DEVICES=1`, `--tensor-parallel-size 1`, `--port 8003`; **Llama 3.3** `CUDA_VISIBLE_DEVICES=0,1`, `--tensor-parallel-size 2`, `--port 8002`. A candidate on :8003 is reached through its arm config's `base_url`; the dev chat dropdown only reaches :8002. In each copy, drop the `qwen3_5.py` patch bind; set `--model`, `--tool-call-parser` (Nemotron: `qwen3_coder`; Mistral: `mistral` plus `--tokenizer-mode mistral`; Granite 4.1: `hermes` or `granite4`, chosen in Phase 1.3; Llama: `llama3_json` plus `--chat-template` bound from the vLLM repo's `examples/`, pinned by commit), `--gpu-memory-utilization 0.88`, `--max-model-len 32768`. `config/` is git-ignored (#286): back the launcher up outside the repo. |
-| archi wiring | The `openai` provider slot already points at `:8002` (`config/environments/dev.yaml:128`, in the archi-config checkout), so no code change. The benchmark arm config differs from the Qwen3.6 config in exactly the keys the Qwen3.8 arm changed — `benchmarking.model`, the provider's `base_url` / `default_model` — **plus** a `context_editing.context_windows` entry for the candidate's exact model id (as `/v1/models` reports it). Every arm, Qwen3.6 included, carries the **same** map — every model id the trial will test, each at 32 768, fixed before the first pilot — because `compare_runs.py` refuses arms whose `context_editing` differs (gate G10); the Qwen3.8 arms already carried both ids this way. Without its entry a run has no context limit and long questions come back degraded (6 of 109 the last time). |
+| archi wiring | The `openai` provider slot already points at `:8002` (`config/environments/dev.yaml:128`, in the archi-config checkout), so no code change. The benchmark arm config sets `services.benchmarking.provider: openai` with `ollama_url` left empty, so the run reads the `openai` provider block — exactly how the Qwen3.6 and Qwen3.8 arms ran on 2026-10-12 (Qwen3.8's run 1 logged 707 requests to `:8002`). (`provider: local` would instead take its endpoint from `ollama_url`.) Per arm it changes `benchmarking.model` and that block's `base_url` (`:8001`, `:8002` or `:8003`) and `default_model` — **plus** a `context_editing.context_windows` entry for the candidate's exact model id (as `/v1/models` reports it). Every arm, Qwen3.6 included, carries the **same** map — every model id the trial will test, each at 32 768, fixed before the first pilot — because `compare_runs.py` refuses arms whose `context_editing` differs (gate G10); the Qwen3.8 arms already carried both ids this way. Without its entry a run has no context limit and long questions come back degraded (6 of 109 the last time). |
 | Context window | 32 768 for every model, enforced by `--max-model-len`. Every candidate supports more (128k–256k); holding 32k keeps the comparison fair and the cache budgets in §2–§3 valid. |
 | Sampling | Pinned identically in every arm, Qwen3.6 included: `temperature: 0.3` (the benchmark's value, #701), `top_p: 0.95`, `top_k: 20`, `min_p: 0`, `repetition_penalty: 1.0`, thinking off. These are exactly what Qwen3.6 ran with on 2026-10-12 (0.3 from the config, the rest from its `generation_config.json`), so the reference stays comparable to those runs. They must be sent explicitly: whatever archi does not send, vLLM fills from each model's own `generation_config.json`, and the arms would decode differently. `temperature` and `top_p` go under the provider's `extra_kwargs`, the other three under its `extra_body`. Vendors recommend other settings (Mistral: temperature 0.15); a vendor-settings run is a possible follow-up for the winner, not part of the ranking. |
 | Prompt | `fasrc-docs.md`, unchanged. It was written against Qwen models, which may handicap a candidate; a prompt-retune arm is out of scope unless a candidate misses the bar narrowly. |
@@ -161,7 +161,7 @@ of Phase 1 reach it.
 | 0.1 | Weights downloaded to the HF cache | provenance chosen per §9 item 6 and recorded; `quantization_config.quant_method` in `config.json` read *before* download and is one the image runs on V100 (`gptq`, `awq`, `compressed-tensors`); size recorded; `df -h /scratch` ≥ 10 GB left |
 | 0.2 | Server starts at the 0.88 memory cap | `/v1/models` lists the model with `max_model_len` 32768 |
 | 0.3 | Every checkpoint weight loaded | `grep -c "not found in params_dict, skip loading"` = 0 (the Qwen3.8 silent-garbage tell) |
-| 0.4 | Memory headroom at idle | ≥ 4 GiB free per GPU in `nvidia-smi` (the margin that fixed the June OOM) |
+| 0.4 | Memory headroom | Record idle and peak `nvidia-smi` memory per GPU. Pass: idle free memory is no less than production Qwen3.6 shows at the same 0.88 cap (1,624 MiB per GPU on 2026-10-14), and 0.7, the Phase 1.4 pilot and the Phase 2 capacity probe finish with no out-of-memory error — the failure the June margin exists to prevent. A fixed 4 GiB would fail Qwen3.6 itself |
 | 0.5 | Context-cache pool | vLLM's startup line `GPU KV cache size: N tokens` ≥ 32 768 (one full-length request; the benchmark asks one question at a time); record N — concurrency is the capacity probe's job (§6) |
 | 0.6 | fp16 sanity — V100 has no bf16, and these models ship as bf16 | five fixed prompts give coherent text: no `!!!!`, no empty replies, no NaN in logprobs (this also catches a GPTQ act-order checkpoint the fork mis-loads) |
 | 0.7 | Longest prompt | a 30 000-token prompt completes with no out-of-memory error |
@@ -214,7 +214,8 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
   (`/scratch/a2rchi/bench-runs/qwen36-name-slip/replay.py`, pointed at `:8002`): 200
   draws, 8 identical requests at once, temperature 0.3. Qwen3.6 gave 0 / 200 wrong.
 - **Capacity probe.** 8 bank questions sent at once, 5 rounds, on each server; record p90
-  time per question. Production sees several chats at once; a smaller cache pool (§2)
+  time per question. Every one of the 40 requests must return a valid, non-empty answer:
+  an error or timeout fails the floor row instead of counting as a fast response. Production sees several chats at once; a smaller cache pool (§2)
   shows up here, not in the one-at-a-time benchmark.
 - **Pre-registration** was frozen before the first pilot (Phase 1); Phase 2 runs under it
   unchanged.
@@ -232,8 +233,11 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
    the winner: the `local` provider's `base_url` → `:8002`, `default_model` and `models:`
    → the winner's id, its `context_windows` entry, and the same pinned sampling the
    benchmark used (§4, #701); remove the Qwen3.8 entry from the `openai` slot. Redeploy
-   with `deploy/scripts/redeploy.sh` (editing `dev.yaml` and restarting is a no-op —
-   config is re-seeded into Postgres at deploy). At no point does the running config name
+   the `dev` deployment with `deploy/scripts/redeploy.sh`, which reads
+   `deploy/scripts/host.env` (`DEPLOYMENT=dev`, `CONFIG=config/environments/dev.yaml`);
+   confirm the deploy log's `config: deploying config/environments/dev.yaml` line and that
+   `chatbot-dev`, `postgres-dev` and `slack-dev` were recreated. (Editing `dev.yaml` and
+   restarting is a no-op — config is re-seeded into Postgres at deploy.) At no point does the running config name
    a model that no server is serving.
 4. Verify end to end on the running deployment before calling adoption done: a live,
    streamed chat turn that triggers the search tool, and one Slack bot turn. For each,
@@ -267,7 +271,7 @@ Qwen3.6 has done plus a margin; Qwen3.8's numbers are shown for scale.
 | Malformed search calls (`No query found.`) | 43 / 42 | 93 / 108 | ≤ 55 |
 | Degraded answers (context overflow) | 0 / 0 | 0 / 0 | 0 |
 | Identifier probe (`kempner_rtx`), wrong spellings | 0 / 200 | — | ≤ 2 / 200 |
-| Capacity probe, p90 seconds with 8 questions at once | measured in Phase 2 | — | ≤ 180 |
+| Capacity probe (8 questions at once × 5 rounds) | measured in Phase 2 | — | 40 of 40 answered, non-empty; p90 ≤ 180 s |
 | Anchors: the `should_refuse` anchor refused, every `easy_retrieve` anchor cites its expected source | checked on the bracketing runs | — | all hold, in every run |
 
 **2. Ranking — among candidates that clear the floor.** Primary: `answer_correctness`,
