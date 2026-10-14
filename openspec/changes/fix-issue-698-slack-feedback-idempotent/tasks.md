@@ -17,7 +17,7 @@
 
 ## 3. Bot wiring, acceptance tests, and docs
 
-- [ ] 3.1 In ONE commit, in `tests/unit/test_slack_bot.py` (append) and `src/interfaces/slack_bot.py`. Tests first, see them fail. Use the real `SlackFeedbackStore` over the primary-key fake pool from task 1.1 (import or copy `_pk_pool`; if you copy it, keep both copies identical) and the existing `_bot`, `_interactive_req`, `_block_action_payload`, `_view_sub_payload` helpers:
+- [x] 3.1 In ONE commit, in `tests/unit/test_slack_bot.py` (append) and `src/interfaces/slack_bot.py`. Tests first, see them fail. Use the real `SlackFeedbackStore` over the primary-key fake pool from task 1.1 (import or copy `_pk_pool`; if you copy it, keep both copies identical) and the existing `_bot`, `_interactive_req`, `_block_action_payload`, `_view_sub_payload` helpers:
   - (a) Issue AC 1, click: `action_ts` `"1700000000.123456"`; pool connections: one "ambiguous", then five "down", then working ones. Send envelope `E1`, then the same payload as `E1-retry`. Assert `len(rows) == 1` and `chat_postEphemeral` was called exactly once.
   - (b) Issue AC 2 is already covered by the submission test from task 2.1; do not add it again.
   - (c) Restart: one working pool shared by two NEW `_bot(...)` instances; send the same click (valid `action_ts`) to each. Assert `len(rows) == 1` and that both bots posted the ephemeral thanks.
