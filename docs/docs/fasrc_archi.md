@@ -8,16 +8,19 @@ that backs the chat app.
 Host: `archi.rc.fas.harvard.edu` (DNS alias for `holygpu7c0717.rc.fas.harvard.edu`),
 4× Tesla V100-PCIE-32GB.
 
-**Two vLLM servers run on this host**, one per GPU pair, both under systemd:
+**One vLLM server runs on this host** (since 2026-10-13), under systemd. GPUs 0,1
+and port 8002 are free and reserved for the
+[answering-model replacement trial](proposals/generator-model-trial-2026-10.md):
 
 | Model | Port | GPUs | systemd unit | archi provider slot |
 |-------|------|------|--------------|---------------------|
-| `palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4` | 8001 | 2,3 | `vllm-qwen36.service` | `local` (default) |
-| `palmfuture/Qwen3.8-27B-GPTQ-Int4` | 8002 | 0,1 | `vllm-qwen38.service` | `openai` (see [Running two models](#running-two-models-in-archi-provider-slots)) |
+| `palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4` | 8001 | 2,3 | `vllm-qwen36.service` (active) | `local` (default) |
+| `palmfuture/Qwen3.8-27B-GPTQ-Int4` | 8002 | 0,1 | `vllm-qwen38.service` — **stopped and disabled 2026-10-13, weights deleted** | `openai` (see [Running two models](#running-two-models-in-archi-provider-slots)) |
 
-Qwen 3.8 requires two source patches to the container's vLLM — without them it
-either crashes at load or silently emits garbage. See
-[vLLM patches](#vllm-patches-required).
+Company policy moves archi off Qwen models; Qwen 3.6 keeps serving until the trial
+picks a replacement. The Qwen 3.8 sections below are kept as the reference for serving
+a second model on GPUs 0,1 / port 8002. Qwen 3.8 itself required two source patches to
+the container's vLLM — see [vLLM patches](#vllm-patches-required).
 
 ---
 
@@ -276,6 +279,12 @@ reverse order briefly serves empty answers.
 
 ## Second model server (vLLM / Qwen 3.8)
 
+> **Status: stopped and disabled on 2026-10-13; its weights were deleted from the
+> Hugging Face cache.** Nothing serves port 8002 until the
+> [answering-model trial](proposals/generator-model-trial-2026-10.md) starts a
+> candidate there. To restore Qwen 3.8: let the first start re-download the weights
+> (~20 GB), then `sudo systemctl enable --now vllm-qwen38`.
+
 | Property | Value |
 |----------|-------|
 | Model | `palmfuture/Qwen3.8-27B-GPTQ-Int4` |
@@ -309,7 +318,7 @@ itself passes at the higher cap.
 
 ```bash
 bash config/scripts/singularity_vllm_qwen38_volta.sh   # manual (backgrounds)
-sudo systemctl status vllm-qwen38.service              # systemd (installed & active)
+sudo systemctl status vllm-qwen38.service              # systemd (installed; disabled since 2026-10-13)
 ```
 
 Install/operate exactly as for 3.6 — stop any manual instance first so the unit
@@ -434,6 +443,10 @@ accepts *only* fp16 — `--dtype float32` is rejected outright).
 ---
 
 ## Running two models in archi (provider slots)
+
+> Since 2026-10-13 nothing serves port 8002, so picking Qwen 3.8 in the dev chat
+> dropdown fails until a trial candidate takes the `openai` slot. The mechanics
+> below are unchanged and are what the trial uses.
 
 archi's providers are a **closed enum** — `openai`, `anthropic`, `gemini`,
 `openrouter`, `local`, `cern_litellm`, `huit_bedrock`. Provider config is read by
@@ -692,7 +705,7 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 | `config/scripts/vllm-qwen36.service` | systemd unit — **installed & active** at `/etc/systemd/system/vllm-qwen36.service` |
 | `config/scripts/singularity_vllm_qwen38_volta.sh` | Qwen 3.8 manual launcher (:8002, GPUs 0,1) |
 | `config/scripts/vllm_qwen38_volta_serve.sh` | Qwen 3.8 foreground launcher used by systemd; keep flags identical to the manual launcher |
-| `config/scripts/vllm-qwen38.service` | systemd unit — **installed & active** at `/etc/systemd/system/vllm-qwen38.service` |
+| `config/scripts/vllm-qwen38.service` | systemd unit — installed at `/etc/systemd/system/vllm-qwen38.service`, **stopped and disabled since 2026-10-13** |
 | `config/scripts/vllm_patch/sitecustomize.py` | prometheus/fastapi 500 compat shim (both servers) |
 | `config/scripts/vllm_patches/qwen3_5.py` | Qwen 3.8 weight-loading patches — **required**, see [vLLM patches](#vllm-patches-required) |
 | `config/scripts/vllm_patches/README.md` | Full write-up of both patches, with the ruled-out hypotheses |
