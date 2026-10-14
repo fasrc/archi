@@ -140,7 +140,7 @@ additional work.
 |---|---|
 | Candidate server | GPUs 0–1, which `vllm-qwen38.service` held until it was stopped and disabled on 2026-10-13 (its weights deleted). Phases 0–1: a candidate under 20 GB runs on one GPU, so two can run side by side (ports 8002 and 8003); Llama 3.3 needs both (`--tensor-parallel-size 2`, port 8002). Phase 2: one finalist at a time, served the way it would be deployed. |
 | Production | Qwen3.6 stays on GPUs 2–3, port 8001, serving live chat throughout (Command R+ excepted, §9). |
-| Launcher | Copy `config/scripts/vllm_qwen38_volta_serve.sh`; drop the `qwen3_5.py` patch bind; set `--model`, `--tool-call-parser` (Nemotron: `qwen3_coder`; Mistral: `mistral` plus `--tokenizer-mode mistral`; Granite 4.1: `hermes` or `granite4`, chosen in Phase 1.3; Llama: `llama3_json` plus `--chat-template` bound from the vLLM repo's `examples/`, pinned by commit), `--gpu-memory-utilization 0.88`, `--max-model-len 32768`. `config/` is git-ignored (#286): back the launcher up outside the repo. |
+| Launcher | Copy `config/scripts/vllm_qwen38_volta_serve.sh` once per slot. The copy pins GPUs 0,1, `--tensor-parallel-size 2` and port 8002, so change all three: **GPU 0 slot** `CUDA_VISIBLE_DEVICES=0`, `--tensor-parallel-size 1`, `--port 8002`; **GPU 1 slot** `CUDA_VISIBLE_DEVICES=1`, `--tensor-parallel-size 1`, `--port 8003`; **Llama 3.3** `CUDA_VISIBLE_DEVICES=0,1`, `--tensor-parallel-size 2`, `--port 8002`. A candidate on :8003 is reached through its arm config's `base_url`; the dev chat dropdown only reaches :8002. In each copy, drop the `qwen3_5.py` patch bind; set `--model`, `--tool-call-parser` (Nemotron: `qwen3_coder`; Mistral: `mistral` plus `--tokenizer-mode mistral`; Granite 4.1: `hermes` or `granite4`, chosen in Phase 1.3; Llama: `llama3_json` plus `--chat-template` bound from the vLLM repo's `examples/`, pinned by commit), `--gpu-memory-utilization 0.88`, `--max-model-len 32768`. `config/` is git-ignored (#286): back the launcher up outside the repo. |
 | archi wiring | The `openai` provider slot already points at `:8002` (`config/environments/dev.yaml:128`, in the archi-config checkout), so no code change. The benchmark arm config differs from the Qwen3.6 config in exactly the keys the Qwen3.8 arm changed — `benchmarking.model`, the provider's `base_url` / `default_model` — **plus** a `context_editing.context_windows` entry for the candidate's exact model id (as `/v1/models` reports it). Every arm, Qwen3.6 included, carries the **same** map — every model id the trial will test, each at 32 768, fixed before the first pilot — because `compare_runs.py` refuses arms whose `context_editing` differs (gate G10); the Qwen3.8 arms already carried both ids this way. Without its entry a run has no context limit and long questions come back degraded (6 of 109 the last time). |
 | Context window | 32 768 for every model, enforced by `--max-model-len`. Every candidate supports more (128k–256k); holding 32k keeps the comparison fair and the cache budgets in §2–§3 valid. |
 | Sampling | Pinned identically in every arm, Qwen3.6 included: `temperature: 0.3` (the benchmark's value, #701), `top_p: 0.95`, `top_k: 20`, `min_p: 0`, `repetition_penalty: 1.0`, thinking off. These are exactly what Qwen3.6 ran with on 2026-10-12 (0.3 from the config, the rest from its `generation_config.json`), so the reference stays comparable to those runs. They must be sent explicitly: whatever archi does not send, vLLM fills from each model's own `generation_config.json`, and the arms would decode differently. `temperature` and `top_p` go under the provider's `extra_kwargs`, the other three under its `extra_body`. Vendors recommend other settings (Mistral: temperature 0.15); a vendor-settings run is a possible follow-up for the winner, not part of the ranking. |
@@ -192,11 +192,13 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
   2026-10-12, volumes kept) with `data_manager.reset_collection: false` in a *copy* of
   its config, or pay one fresh ~83-minute ingest. Record the corpus fingerprint and chunk
   count before the first run and after the last; a mismatch voids the comparison.
-- **Order: Qwen3.6, A, A, B, B, Qwen3.6** (A and B are the two candidates out of
-  Phase 1; with one, Qwen3.6, A, A, Qwen3.6). Each finalist is served the way it would be
-  deployed; if A and B cannot both be up at once, the server is swapped between them. Fresh Qwen3.6 runs at both ends show
-  drift in corpus, judge or live load as a gap between them instead of letting it hide in
-  the comparison. (The Qwen3.8 runs reused Qwen3.6 runs from earlier that day and had to
+- **Order: Qwen3.6, A, B, B, A, Qwen3.6** (A and B are the two candidates out of
+  Phase 1; with one, Qwen3.6, A, A, Qwen3.6). The finalists are counterbalanced so that
+  drift in the judge, live load or the host over the sequence falls on both equally
+  instead of deciding between them. Each finalist is served the way it would be deployed;
+  if A and B cannot both be up at once (a two-GPU finalist), the server is swapped at each
+  change, a few minutes each. Fresh Qwen3.6 runs at both ends show net drift as a gap
+  between them instead of letting it hide in the comparison. (The Qwen3.8 runs reused Qwen3.6 runs from earlier that day and had to
   list that as a weakness.)
 - **Load asymmetry.** Qwen3.6 on `:8001` also serves live chat; the candidate on `:8002`
   has no other traffic. Run overnight, and count live chat turns during each run window
@@ -253,8 +255,21 @@ Qwen3.6 has done plus a margin; Qwen3.8's numbers are shown for scale.
 | Anchors: the `should_refuse` anchor refused, every `easy_retrieve` anchor cites its expected source | checked on the bracketing runs | — | all hold, in every run |
 
 **2. Ranking — among candidates that clear the floor.** Primary: `answer_correctness`,
-candidate against candidate. A difference counts only if `compare_runs.py` clears its
-gate on it (above 2·SE and 2·σ). Inside that noise, the tie is broken in order by
+candidate against candidate, computed as follows. `compare_runs.py` compares one run file
+against one baseline file and cannot average two runs per model, so the primary
+statistic comes from a small analysis script adapted from the Qwen3.8 comparison's
+`model_subsets.py`, frozen with the pre-registration (its file hash recorded there):
+
+- per question, each finalist's score is the mean of its two runs;
+- d = A − B per question, over the bank questions scored in all four finalist runs;
+- SE = standard deviation of d / √n; σ = the larger of the two finalists' run-to-run
+  spread (the absolute difference between a model's two run means), as in the Qwen3.8
+  comparison;
+- a difference counts only if |mean d| exceeds both 2·SE and 2·σ, **and** the per-run
+  pairs (A run 1 vs B run 1, A run 2 vs B run 2, from `compare_runs.py`) agree in sign.
+
+`compare_runs.py` still runs on every per-run pair, for its validity gates (G3–G10) and
+the G8 report below. Inside that noise, the tie is broken in order by
 `faithfulness`, mean seconds per question, give-up answers, then the simpler operation
 (fewer GPUs, no image patches). With a single candidate in Phase 2, there is nothing to
 rank: it is adopted if it clears the floor.
