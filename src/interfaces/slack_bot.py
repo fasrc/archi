@@ -31,6 +31,7 @@ from src.interfaces.slack_feedback import (
     parse_feedback_submission,
     parse_message_id,
 )
+from src.interfaces.slack_trace_tags import slack_question_span
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
 from src.utils.postgres_service_factory import PostgresServiceFactory
@@ -525,15 +526,20 @@ class SlackBot:
                 f"slack bot: question from {event.get('user')} in {channel} "
                 f"thread {thread_ts} ({len(messages) - 1} earlier turns)"
             )
-            result = ask_archi(
-                self.session,
-                self.chat_url,
-                self.model,
-                messages,
-                thread_key(team_id, channel, thread_ts),
-                token=self.api_token,
-                timeout=self.timeout_seconds,
-            )
+            chat_id = thread_key(team_id, channel, thread_ts)
+            # The root span of the Slack trace: Phoenix groups a thread's turns
+            # as one session by its session.id.
+            with slack_question_span(chat_id, messages[-1]["content"]) as span:
+                result = ask_archi(
+                    self.session,
+                    self.chat_url,
+                    self.model,
+                    messages,
+                    chat_id,
+                    token=self.api_token,
+                    timeout=self.timeout_seconds,
+                )
+                span.record_answer(result.text)
             final_text = to_mrkdwn(result.text)
         except Exception:
             logger.exception(f"slack bot: failed to answer {channel} {ts}")
