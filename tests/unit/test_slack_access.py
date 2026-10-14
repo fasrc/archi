@@ -173,9 +173,7 @@ def test_parse_allowed_channels(value, expected):
     assert parse_allowed_channels(value) == expected
 
 
-@pytest.mark.parametrize(
-    "value", [42, {"C1": True}, ["C1", 7], "", "   ", ["", " "]]
-)
+@pytest.mark.parametrize("value", [42, {"C1": True}, ["C1", 7], "", "   ", ["", " "]])
 def test_parse_allowed_channels_rejects_bad_values(value):
     with pytest.raises(ValueError, match="allowed_channels"):
         parse_allowed_channels(value)
@@ -602,3 +600,14 @@ def test_from_config_null_access_keys_fall_back():
 def test_from_config_rejects_a_bad_channel_list():
     with pytest.raises(ValueError, match="allowed_channels"):
         _from_config({"allowed_channels": 42})
+
+
+def test_click_with_no_actions_from_an_internal_user_does_nothing():
+    store = mock.Mock()
+    bot = _bot(internal_users_only=True, feedback_store=store)
+    req = _click()
+    req.payload["actions"] = []
+    bot.handle_request(mock.Mock(), req)
+    bot.web.users_info.assert_called_once_with(user="U1")
+    store.insert.assert_not_called()
+    bot.web.chat_postEphemeral.assert_not_called()
