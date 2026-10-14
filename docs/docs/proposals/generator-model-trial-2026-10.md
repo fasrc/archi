@@ -179,7 +179,7 @@ deviation, with the reason.
 | 1.1 | `chat_template_kwargs: {enable_thinking: false}` | accepted (no HTTP 400), no thinking text in the reply |
 | 1.2 | Forced first search: archi pre-fills a `search_vectorstore_hybrid` call and its result into the history | the model's chat template renders the tool-call and tool-result messages; the reply cites the result |
 | 1.3 | Model-initiated search, streamed | the tool parser returns a well-formed call in streaming mode |
-| 1.4 | 30-question pilot (bring up the Phase 2 stack first — the pilot runs in its benchmark container and shares its corpus): a fixed 30-row copy of the bank (set by `queries_path` in a copy of the arm config) through the benchmark container — the same 30 for every candidate and for Qwen3.6 | The harness also appends the anchor questions (on by default, `service_benchmark.py:2738`), so a pilot asks **35**: pick the 30 rows so none duplicates an anchor, which keeps every pilot at exactly 30 + 5. The anchors stay in — they are the §6 anchor floor, judged pass/fail on their own. Floor rates and the cut use the **30 bank rows only** (`compare_runs.py` leaves anchors out of bank aggregates by default): clears the §6 floor on speed, give-ups (scaled: ≤ 3 of 30) and malformed searches, with some margin, and every anchor holds. **Cut:** if more than two candidates pass, only the two with the best `answer_correctness` on the 30 bank rows go to Phase 2 (~$9–15 and ~1 h per pilot) |
+| 1.4 | 30-question pilot (bring up the Phase 2 stack first — the pilot runs in its benchmark container and shares its corpus): a fixed 30-row copy of the bank (set by `queries_path` in a copy of the arm config) through the benchmark container — the same 30 for every candidate and for Qwen3.6 | The harness also appends the anchor questions (on by default, `service_benchmark.py:2738`), so a pilot asks **35**: pick the 30 rows so none duplicates an anchor, which keeps every pilot at exactly 30 + 5. The anchors stay in — they are the §6 anchor floor, judged pass/fail on their own. Give-ups, malformed searches and the cut use the **30 bank rows only** (`compare_runs.py` leaves anchors out of bank aggregates by default); speed uses every question asked, anchors included, which is what `compare_runs.py`'s timing block measures. Pass, with some margin: §6's speed floor, ≤ 3 give-ups and ≤ 16 malformed searches of the 30 (§6's limits scaled from 104 rows), every bank question answered (`status: ok`), and every anchor holds. **Cut:** if more than two candidates pass, only the two with the best `answer_correctness` on the 30 bank rows go to Phase 2 (~$9–15 and ~1 h per pilot) |
 
 ### Phase 2 — same-corpus golden-set A/B
 
@@ -196,6 +196,11 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
   Phase 1; with one, Qwen3.6, A, A, Qwen3.6). The finalists are counterbalanced so that
   drift in the judge, live load or the host over the sequence falls on both equally
   instead of deciding between them. Each finalist is served the way it would be deployed.
+  If Llama 3.3 (L) is a finalist, its 39.5 GB and the other finalist's (X) checkpoint do
+  not fit together with Phase 0.1's 10 GB margin. The order is then Qwen3.6, X, L, L, X,
+  Qwen3.6: delete X after its first run, download L, delete L after its second run,
+  re-download X. That adds two downloads (time them from Phase 0's and add them to the
+  schedule), unless at least 15 GB is freed elsewhere on `/scratch` first.
 - **Cold start for every candidate run.** Restart the candidate's server before each of
   its runs (a few minutes each), whatever the order. The launchers keep
   `--enable-prefix-caching`, so without a restart a second consecutive run could reuse the
@@ -230,8 +235,9 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
    the trial measured. Moving it later (for example to GPUs 2–3 / `:8001`) is a separate
    change that repeats the capacity probe and one full run on the new layout.
 3. **Cut over with no gap.** Qwen3.6 keeps serving `:8001` while `dev.yaml` is pointed at
-   the winner: the `local` provider's `base_url` → `:8002`, `default_model` and `models:`
-   → the winner's id, its `context_windows` entry, and the same pinned sampling the
+   the winner: `services.chat_app.default_model` (which builds the default pipeline,
+   `app.py:506`) and the `local` provider's `default_model` and `models:` → the winner's
+   id, the `local` provider's `base_url` → `:8002`, its `context_windows` entry, and the same pinned sampling the
    benchmark used (§4, #701); remove the Qwen3.8 entry from the `openai` slot. Redeploy
    the `dev` deployment with `deploy/scripts/redeploy.sh`, which reads
    `deploy/scripts/host.env` (`DEPLOYMENT=dev`, `CONFIG=config/environments/dev.yaml`);
@@ -249,7 +255,9 @@ per run with `docker compose … up --no-deps`, so every run sees one corpus.
    vllm-qwen36` — disable, not just stop, so a reboot cannot bring it back. Keep its unit
    file and weights for one clean week. Rollback: point `dev.yaml` back at `:8001`,
    `sudo systemctl enable --now vllm-qwen36`, redeploy.
-6. Open a new golden-set era in `bench_out/banks/golden/report/goldenset_timeline.yaml`:
+6. Update `docs/docs/fasrc_archi.md`'s host inventory: the winner's model, port, GPUs,
+   launcher and systemd unit, and Qwen3.6 as disabled.
+7. Open a new golden-set era in `bench_out/banks/golden/report/goldenset_timeline.yaml`:
    numbers before and after a model change are not comparable history.
 
 ## 6. Decision rule (frozen before the first pilot)
@@ -261,7 +269,12 @@ question over questions scored in every run being compared.
 **1. Usability floor — every candidate run must clear every row.** Absolute numbers,
 because the move is mandatory: the question is "what is the slowest, least reliable chat
 we would ship?", not "how close to Qwen3.6". The proposals below are about the worst
-Qwen3.6 has done plus a margin; Qwen3.8's numbers are shown for scale.
+Qwen3.6 has done plus a margin; Qwen3.8's numbers are shown for scale. The speed rows
+count every question asked, anchors included (what `compare_runs.py`'s timing block
+measures); the other rows count the 104 bank rows. The harness records a question that
+raises an error as a failed row and carries on (`service_benchmark.py:2507`), and the
+paired analysis drops unscored questions, so the "answered" row is what stops a failing
+candidate from looking faster and cleaner.
 
 | Measure | Qwen3.6 (2026-10-12) | Qwen3.8 (2026-10-12) | Proposed floor |
 |---|---|---|---|
@@ -270,6 +283,7 @@ Qwen3.6 has done plus a margin; Qwen3.8's numbers are shown for scale.
 | Give-up answers (counted as in `model_subsets.py`) | 4 / 5 | 16 / 12 | ≤ 8 |
 | Malformed search calls (`No query found.`) | 43 / 42 | 93 / 108 | ≤ 55 |
 | Degraded answers (context overflow) | 0 / 0 | 0 / 0 | 0 |
+| Bank questions answered (`status: ok`) | 104 / 104 | 104 / 104 | all; a run with failed rows is rerun once, and a question that fails again fails the floor |
 | Identifier probe (`kempner_rtx`), wrong spellings | 0 / 200 | — | ≤ 2 / 200 |
 | Capacity probe (8 questions at once × 5 rounds) | measured in Phase 2 | — | 40 of 40 answered, non-empty; p90 ≤ 180 s |
 | Anchors: the `should_refuse` anchor refused, every `easy_retrieve` anchor cites its expected source | checked on the bracketing runs | — | all hold, in every run |
@@ -295,7 +309,11 @@ the G8 report below. Inside that noise, the tie is broken in order by
 rank: it is adopted if it clears the floor.
 
 `compare_runs.py`'s G8 row (anchors, plus "no other metric regressed past one noise
-unit") is reported for the finalist pair, with the runner-up as baseline. If the
+unit") is reported for the finalist pair, with the runner-up as baseline and
+`--noise-runs` set to the runner-up's two runs, so every metric has a noise floor; where
+a metric's two-run σ is 0, `--noise-floor` takes the larger of the two finalists'
+two-run spreads for it, recorded as a deviation (the Qwen3.8 comparison's procedure).
+Without a floor, G8 skips that metric and can read clean when it was never tested. If the
 correctness winner shows a G8 regression on another metric, the choice goes to the
 operator with both rows in front of them, recorded in the ledger — it is not automatic
 either way. G8 is not a hard gate here because on 2026-10-12 it raised an alarm on
