@@ -1,10 +1,12 @@
 """Unit tests for slack_feedback helpers and SlackFeedbackStore (task 3.1)."""
 
+import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from unittest import mock
 
 import psycopg2
+import psycopg2.errors
 import pytest
 
 from src.interfaces.slack_feedback import (
@@ -23,9 +25,11 @@ from src.interfaces.slack_feedback import (
     build_feedback_blocks,
     build_feedback_modal,
     like_record,
+    parse_action_ts,
     parse_feedback_submission,
     parse_message_id,
 )
+from src.utils.connection_pool import ConnectionPool
 
 # ---------------------------------------------------------------------------
 # parse_message_id
@@ -260,6 +264,80 @@ def _fake_pool(conns):
     return pool
 
 
+def _pk_pool(conn_specs):
+    """Primary-key aware fake pool. Returns (pool, rows).
+
+    conn_specs: list of "working" | "ambiguous" | "down".
+    rows is shared across all connections and keyed by (message_id, feedback_ts).
+    "ambiguous" commits the row then raises OperationalError (models network loss after commit).
+    "down" raises OperationalError from execute (models a dead pooled connection).
+    """
+    rows = {}
+    connections = []
+
+    for spec in conn_specs:
+        pending = {}
+        cur = mock.Mock()
+        cur.__enter__ = mock.Mock(return_value=cur)
+        cur.__exit__ = mock.Mock(return_value=False)
+
+        if spec == "down":
+            cur.execute.side_effect = psycopg2.OperationalError("down")
+        else:
+
+            def _make_execute(_pending=pending):
+                def _execute(sql, params):
+                    key = (params[0], params[1])
+                    if key in rows:
+                        raise psycopg2.errors.UniqueViolation("duplicate key")
+                    _pending[key] = params
+
+                return _execute
+
+            cur.execute.side_effect = _make_execute()
+
+        conn = mock.Mock()
+        conn.closed = 0
+        conn.cursor.return_value = cur
+        conn.rollback.return_value = None
+
+        if spec == "ambiguous":
+
+            def _make_commit(_pending=pending):
+                def _commit():
+                    rows.update(_pending)
+                    _pending.clear()
+                    raise psycopg2.OperationalError("connection lost after commit")
+
+                return _commit
+
+            conn.commit.side_effect = _make_commit()
+        else:
+
+            def _make_commit(_pending=pending):
+                def _commit():
+                    rows.update(_pending)
+                    _pending.clear()
+
+                return _commit
+
+            conn.commit.side_effect = _make_commit()
+
+        connections.append(conn)
+
+    state = {"idx": 0}
+    pool = mock.Mock()
+
+    @contextmanager
+    def get_connection():
+        conn = connections[state["idx"]]
+        state["idx"] += 1
+        yield conn
+
+    pool.get_connection = get_connection
+    return pool, rows
+
+
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
@@ -331,3 +409,245 @@ def test_store_raises_when_every_attempt_fails():
     store = SlackFeedbackStore(_fake_pool(conns))
     with pytest.raises(psycopg2.InterfaceError):
         store.insert(like_record(42), now=_NOW)
+
+
+# ---------------------------------------------------------------------------
+# parse_action_ts (task 1.1 a)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_action_ts_full_microseconds():
+    assert parse_action_ts("1700000000.123456") == datetime(
+        2023, 11, 14, 22, 13, 20, 123456, tzinfo=timezone.utc
+    )
+
+
+def test_parse_action_ts_integer_only_gives_zero_microseconds():
+    result = parse_action_ts("1700000000")
+    assert result is not None
+    assert result.microsecond == 0
+
+
+def test_parse_action_ts_single_fraction_digit():
+    result = parse_action_ts("1700000000.5")
+    assert result is not None
+    assert result.microsecond == 500000
+
+
+def test_parse_action_ts_seven_fraction_digits_truncated_to_six():
+    result = parse_action_ts("1700000000.1234567")
+    assert result is not None
+    assert result.microsecond == 123456
+
+
+def test_parse_action_ts_deterministic():
+    s = "1700000000.123456"
+    assert parse_action_ts(s) == parse_action_ts(s)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        1700000000.5,
+        "",
+        "abc",
+        "-1.0",
+        " 1.0",
+        "1.0 ",
+        "１.0",
+        "1.",
+        "123456789012.0",
+    ],
+)
+def test_parse_action_ts_invalid_returns_none(value):
+    assert parse_action_ts(value) is None
+
+
+# ---------------------------------------------------------------------------
+# FeedbackRecord.feedback_ts field (task 1.1 b)
+# ---------------------------------------------------------------------------
+
+
+def test_feedback_record_has_feedback_ts_as_last_field():
+    assert FeedbackRecord._fields[-1] == "feedback_ts"
+
+
+def test_feedback_record_feedback_ts_defaults_to_none():
+    r = FeedbackRecord(1, "like", None, None, None, None)
+    assert r.feedback_ts is None
+
+
+def test_like_record_without_ts_has_none_feedback_ts():
+    r = like_record(42)
+    assert r.feedback_ts is None
+
+
+def test_like_record_with_ts_sets_feedback_ts():
+    ts = datetime(2023, 11, 14, 22, 13, 20, 123456, tzinfo=timezone.utc)
+    r = like_record(42, ts)
+    assert r.feedback_ts == ts
+
+
+# ---------------------------------------------------------------------------
+# Store time selection (task 1.1 c)
+# ---------------------------------------------------------------------------
+
+
+def test_store_insert_uses_record_feedback_ts_over_now_arg():
+    conn, cur = _fake_conn()
+    ts = datetime(2023, 11, 14, 22, 13, 20, 123456, tzinfo=timezone.utc)
+    SlackFeedbackStore(_fake_pool([conn])).insert(like_record(42, ts), now=_NOW)
+    _, params = cur.execute.call_args[0]
+    assert params[1] == ts
+
+
+def test_store_insert_uses_now_arg_when_record_feedback_ts_is_none():
+    conn, cur = _fake_conn()
+    SlackFeedbackStore(_fake_pool([conn])).insert(like_record(42), now=_NOW)
+    _, params = cur.execute.call_args[0]
+    assert params[1] == _NOW
+
+
+# ---------------------------------------------------------------------------
+# UniqueViolation silenced (task 1.1 d)
+# ---------------------------------------------------------------------------
+
+
+def test_store_insert_unique_violation_returns_silently(caplog):
+    conn, cur = _fake_conn()
+    cur.execute.side_effect = psycopg2.errors.UniqueViolation("duplicate key")
+    ts = datetime(2023, 11, 14, 22, 13, 20, 123456, tzinfo=timezone.utc)
+    with caplog.at_level("DEBUG"):
+        SlackFeedbackStore(_fake_pool([conn])).insert(like_record(42, ts))
+    assert cur.execute.call_count == 1
+    conn.rollback.assert_called_once()
+    assert any(r.levelno == logging.INFO for r in caplog.records)
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# UniqueViolation through the REAL ConnectionPool (task 1.1 d2)
+# ---------------------------------------------------------------------------
+
+
+def test_store_insert_unique_violation_through_real_pool_no_error_log(caplog):
+    returned = []
+    cur_fake = mock.Mock()
+    cur_fake.execute.side_effect = psycopg2.errors.UniqueViolation("duplicate key")
+    cur_fake.__enter__ = mock.Mock(return_value=cur_fake)
+    cur_fake.__exit__ = mock.Mock(return_value=False)
+    conn_fake = mock.Mock()
+    conn_fake.closed = 0
+    conn_fake.cursor.return_value = cur_fake
+
+    fake_threaded_pool = mock.Mock()
+    fake_threaded_pool.getconn.return_value = conn_fake
+    fake_threaded_pool.putconn.side_effect = lambda c: returned.append(c)
+
+    with mock.patch(
+        "psycopg2.pool.ThreadedConnectionPool", return_value=fake_threaded_pool
+    ):
+        pool = ConnectionPool(pg_config={"host": "fake"})
+
+    ts = datetime(2023, 11, 14, 22, 13, 20, 123456, tzinfo=timezone.utc)
+    with caplog.at_level("DEBUG"):
+        SlackFeedbackStore(pool).insert(like_record(42, ts))
+
+    assert conn_fake in returned
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# ForeignKeyViolation propagates (task 1.1 e)
+# ---------------------------------------------------------------------------
+
+
+def test_store_insert_foreign_key_violation_raises_after_one_execute():
+    conn, cur = _fake_conn()
+    cur.execute.side_effect = psycopg2.errors.ForeignKeyViolation("fk")
+    with pytest.raises(psycopg2.errors.ForeignKeyViolation):
+        SlackFeedbackStore(_fake_pool([conn])).insert(like_record(42))
+    assert cur.execute.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Primary-key oracle: idempotent across ambiguous commit (task 1.1 f)
+# ---------------------------------------------------------------------------
+
+
+def test_store_insert_idempotent_across_ambiguous_commit():
+    ts = datetime(2023, 11, 14, 22, 13, 20, 123456, tzinfo=timezone.utc)
+    pool, rows = _pk_pool(["ambiguous", "working"])
+    SlackFeedbackStore(pool).insert(like_record(42, ts))
+    assert len(rows) == 1
+
+
+# ---------------------------------------------------------------------------
+# build_feedback_modal with action_ts (task 2.1 E5)
+# ---------------------------------------------------------------------------
+
+
+def test_build_feedback_modal_with_valid_action_ts_embeds_ts_in_metadata():
+    modal = build_feedback_modal(42, "1700000000.123456")
+    assert modal["private_metadata"] == "42:1700000000.123456"
+
+
+def test_build_feedback_modal_without_action_ts_arg_gives_plain_message_id():
+    modal = build_feedback_modal(42)
+    assert modal["private_metadata"] == "42"
+
+
+def test_build_feedback_modal_with_invalid_action_ts_gives_plain_message_id():
+    modal = build_feedback_modal(42, "abc")
+    assert modal["private_metadata"] == "42"
+
+
+# ---------------------------------------------------------------------------
+# parse_feedback_submission with feedback_ts (task 2.1 E5)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_feedback_submission_with_ts_in_metadata_gives_correct_feedback_ts():
+    view = _view(private_metadata="42:1700000000.123456")
+    r = parse_feedback_submission(view)
+    assert r is not None
+    assert r.message_id == 42
+    assert r.feedback_ts == datetime(
+        2023, 11, 14, 22, 13, 20, 123456, tzinfo=timezone.utc
+    )
+
+
+def test_parse_feedback_submission_plain_metadata_gives_none_feedback_ts():
+    view = _view(private_metadata="42")
+    r = parse_feedback_submission(view)
+    assert r is not None
+    assert r.message_id == 42
+    assert r.feedback_ts is None
+
+
+def test_parse_feedback_submission_invalid_ts_part_gives_none_feedback_ts():
+    view = _view(private_metadata="42:abc")
+    r = parse_feedback_submission(view)
+    assert r is not None
+    assert r.message_id == 42
+    assert r.feedback_ts is None
+
+
+def test_parse_feedback_submission_empty_ts_part_gives_none_feedback_ts():
+    view = _view(private_metadata="42:")
+    r = parse_feedback_submission(view)
+    assert r is not None
+    assert r.message_id == 42
+    assert r.feedback_ts is None
+
+
+@pytest.mark.parametrize(
+    "private_metadata",
+    ["abc:1700000000.0", ":1700000000.0", "0:1700000000.0"],
+)
+def test_parse_feedback_submission_invalid_message_id_with_ts_returns_none(
+    private_metadata,
+):
+    view = _view(private_metadata=private_metadata)
+    assert parse_feedback_submission(view) is None

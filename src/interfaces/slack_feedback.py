@@ -1,10 +1,11 @@
 """Slack feedback helpers: blocks, modal, parsing, and store (design D1-D8)."""
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import NamedTuple, Optional
 
 import psycopg2
+import psycopg2.errors
 
 from src.utils.logging import get_logger
 from src.utils.sql import SQL_INSERT_FEEDBACK
@@ -24,6 +25,7 @@ _COMMENT_BLOCK_ID = "archi_feedback_comment"
 _COMMENT_ACTION_ID = "archi_feedback_comment_action"
 
 _ASCII_POS_INT_RE = re.compile(r"[1-9][0-9]*")
+_ACTION_TS_RE = re.compile(r"[0-9]{1,11}(\.[0-9]{1,9})?")
 
 
 def parse_message_id(value):
@@ -35,6 +37,30 @@ def parse_message_id(value):
     return int(value)
 
 
+def parse_action_ts(value):
+    """Return UTC datetime from a Slack action_ts string, or None on invalid input (design E1).
+
+    Accepts only ASCII-digit strings matching [0-9]{1,11}(\\.[0-9]{1,9})?.
+    The fractional part is truncated to 6 digits (microseconds) and right-padded with zeros.
+    Uses integer arithmetic — the same string always produces the same value.
+    """
+    if not isinstance(value, str):
+        return None
+    if not _ACTION_TS_RE.fullmatch(value):
+        return None
+    dot = value.find(".")
+    if dot == -1:
+        int_part = int(value)
+        microseconds = 0
+    else:
+        int_part = int(value[:dot])
+        frac_str = value[dot + 1 :]
+        microseconds = int(frac_str[:6].ljust(6, "0"))
+    return datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(
+        seconds=int_part, microseconds=microseconds
+    )
+
+
 class FeedbackRecord(NamedTuple):
     message_id: int
     feedback: str
@@ -42,6 +68,7 @@ class FeedbackRecord(NamedTuple):
     incorrect: Optional[bool]
     unhelpful: Optional[bool]
     inappropriate: Optional[bool]
+    feedback_ts: Optional[datetime] = None
 
 
 def build_feedback_blocks(message_id):
@@ -72,12 +99,16 @@ def build_feedback_blocks(message_id):
     ]
 
 
-def build_feedback_modal(message_id):
-    """Return a Slack modal for the Not helpful flow (design D7)."""
+def build_feedback_modal(message_id, action_ts=None):
+    """Return a Slack modal for the Not helpful flow (design D7, E5)."""
+    if parse_action_ts(action_ts) is not None:
+        private_metadata = f"{message_id}:{action_ts}"
+    else:
+        private_metadata = str(message_id)
     return {
         "type": "modal",
         "callback_id": FEEDBACK_FORM_CALLBACK_ID,
-        "private_metadata": str(message_id),
+        "private_metadata": private_metadata,
         "title": {"type": "plain_text", "text": "Feedback"},
         "submit": {"type": "plain_text", "text": "Submit"},
         "close": {"type": "plain_text", "text": "Cancel"},
@@ -125,7 +156,14 @@ def parse_feedback_submission(view):
     """Parse a view_submission and return a FeedbackRecord, or None on failure."""
     if view.get("callback_id") != FEEDBACK_FORM_CALLBACK_ID:
         return None
-    message_id = parse_message_id(view.get("private_metadata"))
+    raw_metadata = view.get("private_metadata")
+    if isinstance(raw_metadata, str) and ":" in raw_metadata:
+        meta_left, meta_right = raw_metadata.split(":", 1)
+        feedback_ts = parse_action_ts(meta_right)
+    else:
+        meta_left = raw_metadata
+        feedback_ts = None
+    message_id = parse_message_id(meta_left)
     if message_id is None:
         return None
 
@@ -154,6 +192,7 @@ def parse_feedback_submission(view):
         incorrect=incorrect,
         unhelpful=unhelpful,
         inappropriate=inappropriate,
+        feedback_ts=feedback_ts,
     )
 
 
@@ -188,8 +227,8 @@ def interaction_key(payload):
     return None
 
 
-def like_record(message_id):
-    """Return a FeedbackRecord for a Helpful click (design D4)."""
+def like_record(message_id, feedback_ts=None):
+    """Return a FeedbackRecord for a Helpful click (design D4, E2)."""
     return FeedbackRecord(
         message_id=message_id,
         feedback="like",
@@ -197,6 +236,7 @@ def like_record(message_id):
         incorrect=None,
         unhelpful=None,
         inappropriate=None,
+        feedback_ts=feedback_ts,
     )
 
 
@@ -213,12 +253,16 @@ class SlackFeedbackStore:
         self._pool = pool
 
     def insert(self, record, now=None):
-        """Insert one feedback row, retrying on OperationalError/InterfaceError."""
-        if now is None:
-            now = datetime.now(timezone.utc)
+        """Insert one feedback row, retrying on OperationalError/InterfaceError (D8, E3, E4)."""
+        if record.feedback_ts is not None:
+            ts = record.feedback_ts
+        elif now is not None:
+            ts = now
+        else:
+            ts = datetime.now(timezone.utc)
         params = (
             record.message_id,
-            now,
+            ts,
             record.feedback,
             record.feedback_msg,
             record.incorrect,
@@ -230,7 +274,16 @@ class SlackFeedbackStore:
             try:
                 with self._pool.get_connection() as conn:
                     with conn.cursor() as cur:
-                        cur.execute(SQL_INSERT_FEEDBACK, params)
+                        try:
+                            cur.execute(SQL_INSERT_FEEDBACK, params)
+                        except psycopg2.errors.UniqueViolation:
+                            conn.rollback()
+                            logger.info(
+                                "slack feedback: row for message %s at %s is already stored",
+                                record.message_id,
+                                ts,
+                            )
+                            return
                     conn.commit()
                 return
             except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
