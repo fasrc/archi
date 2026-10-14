@@ -120,9 +120,12 @@ smallest first; the 30-question pilot (Phase 1.4) then picks two for Phase 2.
 5. **Llama 3.3 70B** — last: its 40 GB of weights need the others' deleted first, and it
    is the most likely to miss the speed floor.
 
-The first three fit on disk together (~48 GB of the 54 GB free). Each is under 20 GB,
-small enough for one GPU, so during Phases 0–1 two can run side by side (one per GPU,
-ports 8002 and 8003); Phase 2 serves the finalists the way they would be deployed.
+Two fit on disk at a time with Phase 0.1's 10 GB margin (Nemotron 3 Nano + Mistral Small
+3.2 ≈ 33 GB of the 54 GB free; three would leave under 6 GB). Before each further
+download, delete the weights of a candidate whose Phase 0–1 results are recorded; a
+finalist is re-downloaded for Phase 2. Each is under 20 GB, small enough for one GPU, so
+during Phases 0–1 two can run side by side (one per GPU, ports 8002 and 8003); Phase 2
+serves the finalists the way they would be deployed.
 Gemma 4 and Command R+ each need an operator decision before Phase 0 (§9).
 
 **Worth adding if Gemma 4 is ported:** `google/gemma-4-26B-A4B-it` — Google, Apache 2.0,
@@ -147,7 +150,7 @@ additional work.
 ## 5. Phases
 
 A candidate moves to the next phase only when every check in the current one passes.
-Phases 0–1 are hours and about $10 of judge spend per candidate; Phase 2 costs ~5–9 h of
+Phases 0–1 are hours and about $10–15 of judge spend per candidate; Phase 2 costs ~5–9 h of
 GPU time and $56–94 of judge spend per candidate (§7), so only the two best candidates out
 of Phase 1 reach it.
 
@@ -176,7 +179,7 @@ deviation, with the reason.
 | 1.1 | `chat_template_kwargs: {enable_thinking: false}` | accepted (no HTTP 400), no thinking text in the reply |
 | 1.2 | Forced first search: archi pre-fills a `search_vectorstore_hybrid` call and its result into the history | the model's chat template renders the tool-call and tool-result messages; the reply cites the result |
 | 1.3 | Model-initiated search, streamed | the tool parser returns a well-formed call in streaming mode |
-| 1.4 | 30-question pilot (bring up the Phase 2 stack first — the pilot runs in its benchmark container and shares its corpus): a fixed 30-row copy of the bank (set by `queries_path` in a copy of the arm config) through the benchmark container — the same 30 for every candidate and for Qwen3.6 | clears the §6 floor on speed, give-ups (scaled: ≤ 3 of 30) and malformed searches, with some margin. **Cut:** if more than two candidates pass, only the two with the best `answer_correctness` on these 30 go to Phase 2 (~$10 and ~1 h per pilot) |
+| 1.4 | 30-question pilot (bring up the Phase 2 stack first — the pilot runs in its benchmark container and shares its corpus): a fixed 30-row copy of the bank (set by `queries_path` in a copy of the arm config) through the benchmark container — the same 30 for every candidate and for Qwen3.6 | The harness also appends the anchor questions (on by default, `service_benchmark.py:2738`), so a pilot asks **35**: pick the 30 rows so none duplicates an anchor, which keeps every pilot at exactly 30 + 5. The anchors stay in — they are the §6 anchor floor, judged pass/fail on their own. Floor rates and the cut use the **30 bank rows only** (`compare_runs.py` leaves anchors out of bank aggregates by default): clears the §6 floor on speed, give-ups (scaled: ≤ 3 of 30) and malformed searches, with some margin, and every anchor holds. **Cut:** if more than two candidates pass, only the two with the best `answer_correctness` on the 30 bank rows go to Phase 2 (~$9–15 and ~1 h per pilot) |
 
 ### Phase 2 — same-corpus golden-set A/B
 
@@ -300,10 +303,10 @@ finalist that meets the §6 speed floor (mean ≤ 60 s) answers in under 1 h 50 
 |---|---|---|---|
 | Phase 0, load and fit — per candidate | — | ~2 h, plus the download (15–40 GB) | $0 |
 | Phase 1.1–1.3, functional checks — per candidate | a handful | ~1 h | < $1 |
-| Phase 1.4 pilot — Qwen3.6 reference (once) | 30 | ~30–50 min | ~$8 |
-| Phase 1.4 pilot — Nemotron 3 Nano or 3.5 Lightning | 30 | ~30–55 min | $8–13 |
-| Phase 1.4 pilot — Mistral Small 3.2 or Granite 4.1 | 30 | ~50–70 min | $8–13 |
-| Phase 1.4 pilot — Llama 3.3 70B | 30 | ~1.25–2 h | $8–13 |
+| Phase 1.4 pilot — Qwen3.6 reference (once) | 30 + 5 anchors | ~30–50 min | ~$9 |
+| Phase 1.4 pilot — Nemotron 3 Nano or 3.5 Lightning | 30 + 5 anchors | ~30–55 min | $9–15 |
+| Phase 1.4 pilot — Mistral Small 3.2 or Granite 4.1 | 30 + 5 anchors | ~50–70 min | $9–15 |
+| Phase 1.4 pilot — Llama 3.3 70B | 30 + 5 anchors | ~1.25–2 h | $9–15 |
 | Phase 2 ingest (only if the old document set cannot be recovered) | — | ~1.5 h | $0 |
 | Phase 2 full run — Qwen3.6 (×2, the brackets) | 109 | 2–3 h each | ~$28 each |
 | Phase 2 full run — a Nemotron finalist | 109 | ~2–3 h | $28–47 |
@@ -313,9 +316,9 @@ finalist that meets the §6 speed floor (mean ≤ 60 s) answers in under 1 h 50 
 | In-house 4-bit quantization (§9 item 6, if chosen) — per candidate | — | est. a few hours for 24–32B, longer for 70B | $0 |
 | Phase 3 redeploy | — | ~1 h (re-index) | $0 |
 
-**Whole trial, five candidates screened and two finalists:** pilots ~$50–75 (Qwen3.6
+**Whole trial, five candidates screened and two finalists:** pilots ~$55–85 (Qwen3.6
 plus five candidates); Phase 2 ~$170–245 (two Qwen3.6 runs plus four finalist runs);
-**about $220–320 in judge spend**, and roughly 15–27 hours of GPU time for Phase 2 (six
+**about $225–330 in judge spend**, and roughly 15–27 hours of GPU time for Phase 2 (six
 runs back to back plus probes), most of it unattended overnight.
 
 ## 8. Ledger
