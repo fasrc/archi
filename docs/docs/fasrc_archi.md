@@ -631,8 +631,11 @@ up. Keep `device: cpu` while vLLM owns the GPUs.
 Two layers:
 
 - **Source file (edit this):** `config/environments/dev.yaml`. The active deploy
-  is the **repo-root** `./g.sh`:
-  `archi create --name archi-openai-compat --dev --config ./config/environments/dev.yaml --services chatbot,grafana --hostmode --force --env-file <path-to-secrets.env>`.
+  (verified 2026-10-14) is `deploy/scripts/redeploy.sh`, which reads
+  `deploy/scripts/host.env` (`DEPLOYMENT=dev`, `CONFIG=config/environments/dev.yaml`)
+  and runs `archi create --force` for the `dev` deployment — containers `chatbot-dev`,
+  `postgres-dev`, `data-manager-dev` and `slack-dev`. Its log names the config it
+  deployed (`config: deploying <path>`, `deploy/scripts/lib.sh`).
   The `--force` (`-f`) is **required** on a reseed: `archi create` aborts with
   `Deployment '...' already exists` otherwise (it overwrites the existing
   deployment dir; volumes are preserved). A *separate* `config/scripts/g.sh`
@@ -678,23 +681,23 @@ Two layers:
 > no such special-case guard — it does not need one, because its ordering makes
 > every required secret fail safely, not just grafana's.
 - **Authoritative running config (what archi reads):** Postgres
-  `static_config.services_config` (db `archi-db`, container
-  `postgres-archi-openai-compat`), seeded from `dev.yaml` at `archi create`.
+  `static_config.services_config` (db `archi-db`, container `postgres-dev`), seeded
+  from `dev.yaml` at `archi create`.
 
-Consequence: **editing `dev.yaml` + restarting is a no-op** — re-run `g.sh` to
-reseed Postgres. A `docker restart chatbot-archi-openai-compat` only picks up
-values already seeded into Postgres. `config/` is a checkout of the separate
+Consequence: **editing `dev.yaml` + restarting is a no-op** — re-run
+`deploy/scripts/redeploy.sh` to reseed Postgres. A `docker restart chatbot-dev` only
+picks up values already seeded into Postgres. `config/` is a checkout of the separate
 `fasrc/archi-config` repo — see the note at the end of
 [File reference](#file-reference).
 
-> **This is not the `deploy/fasrc-dev/` deployment.** That one is
-> `DEPLOYMENT="dev"` (`deploy/scripts/lib.sh:96-97`) → containers
-> `chatbot-dev` / `postgres-dev`. Since issue #363 the name `dev` is reserved for
-> the GPU host; the no-GPU workstation deploys as `claw` via its own `host.env`.
-> Both point at a remote vLLM endpoint, and both leave `GPU_IDS` off
-> (`lib.sh:113-126`). Everything on this page is the
-> `archi-openai-compat` deployment on `archi.rc.fas.harvard.edu`. The container
-> names are not interchangeable between the two.
+> **`archi-openai-compat` is no longer what runs here.** Earlier versions of this page
+> described the repo-root `g.sh` deploying `archi-openai-compat` (containers
+> `chatbot-archi-openai-compat`, `postgres-archi-openai-compat`). On 2026-10-14 the GPU
+> host runs only the `dev` containers named above; since issue #363 the name `dev` is
+> reserved for this host, and the no-GPU workstation deploys as `claw` via its own
+> `host.env`. Other mentions of `g.sh` and `chatbot-archi-openai-compat` elsewhere on
+> this page predate that switch: read them as `deploy/scripts/redeploy.sh` and
+> `chatbot-dev`.
 
 ---
 
