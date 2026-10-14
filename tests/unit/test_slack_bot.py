@@ -1486,3 +1486,114 @@ def test_handle_interactive_view_submission_idempotent_across_ambiguous_commit()
     assert len(rows) == 1
     row = next(iter(rows.values()))
     assert row[2] == "dislike"
+
+
+# ---------------------------------------------------------------------------
+# AC 1 / AC 3 / E6: click idempotency and bot wiring (task 3.1)
+# ---------------------------------------------------------------------------
+
+
+def test_handle_interactive_click_idempotent_across_ambiguous_commit():
+    from src.interfaces.slack_feedback import (
+        HELPFUL_ACTION_ID,
+        SlackFeedbackStore,
+    )
+
+    pool, rows = _pk_pool(["ambiguous"] + ["down"] * 5 + ["working"])
+    store = SlackFeedbackStore(pool)
+    bot = _bot(feedback_store=store)
+    payload = _block_action_payload(HELPFUL_ACTION_ID, "42")
+    payload["actions"][0]["action_ts"] = "1700000000.123456"
+
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1"))
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1-retry"))
+
+    assert len(rows) == 1
+    bot.web.chat_postEphemeral.assert_called_once()
+
+
+def test_handle_interactive_click_idempotent_on_restart():
+    from src.interfaces.slack_feedback import (
+        HELPFUL_ACTION_ID,
+        SlackFeedbackStore,
+    )
+
+    pool, rows = _pk_pool(["working"] * 5)
+    store = SlackFeedbackStore(pool)
+    payload = _block_action_payload(HELPFUL_ACTION_ID, "42")
+    payload["actions"][0]["action_ts"] = "1700000000.123456"
+
+    bot1 = _bot(feedback_store=store)
+    bot2 = _bot(feedback_store=store)
+
+    bot1.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1"))
+    bot2.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1"))
+
+    assert len(rows) == 1
+    bot1.web.chat_postEphemeral.assert_called_once()
+    bot2.web.chat_postEphemeral.assert_called_once()
+
+
+def test_handle_interactive_duplicate_click_no_error_posts_ephemeral(caplog):
+    import logging
+
+    from src.interfaces.slack_feedback import (
+        HELPFUL_ACTION_ID,
+        SlackFeedbackStore,
+        parse_action_ts,
+    )
+
+    pool, rows = _pk_pool(["working"])
+    ts = parse_action_ts("1700000000.123456")
+    rows[(42, ts)] = (42, ts, "like", None, None, None, None)
+
+    store = SlackFeedbackStore(pool)
+    bot = _bot(feedback_store=store)
+    payload = _block_action_payload(HELPFUL_ACTION_ID, "42")
+    payload["actions"][0]["action_ts"] = "1700000000.123456"
+
+    with caplog.at_level(logging.DEBUG):
+        bot.handle_request(mock.Mock(), _interactive_req(payload))
+
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+    bot.web.chat_postEphemeral.assert_called_once()
+
+
+def test_handle_interactive_not_helpful_passes_action_ts_to_modal():
+    from src.interfaces.slack_feedback import NOT_HELPFUL_ACTION_ID
+
+    bot = _bot(feedback_store=mock.Mock())
+    payload = _block_action_payload(NOT_HELPFUL_ACTION_ID, "42", trigger_id="T1")
+    payload["actions"][0]["action_ts"] = "1700000000.123456"
+
+    bot.handle_request(mock.Mock(), _interactive_req(payload))
+
+    kw = bot.web.views_open.call_args.kwargs
+    assert kw["view"]["private_metadata"] == "42:1700000000.123456"
+
+
+def test_handle_interactive_helpful_fallback_timestamps_are_recent():
+    from datetime import datetime, timezone
+
+    from src.interfaces.slack_feedback import (
+        HELPFUL_ACTION_ID,
+        SlackFeedbackStore,
+    )
+
+    pool, rows = _pk_pool(["working"] * 5)
+    store = SlackFeedbackStore(pool)
+    bot = _bot(feedback_store=store)
+
+    payload_no_ts = _block_action_payload(HELPFUL_ACTION_ID, "42", user_id="U1")
+    payload_bad_ts = _block_action_payload(HELPFUL_ACTION_ID, "43", user_id="U2")
+    payload_bad_ts["actions"][0]["action_ts"] = "abc"
+
+    bot.handle_request(mock.Mock(), _interactive_req(payload_no_ts, envelope="E1"))
+    bot.handle_request(mock.Mock(), _interactive_req(payload_bad_ts, envelope="E2"))
+
+    assert len(rows) == 2
+    now = datetime.now(timezone.utc)
+    for params in rows.values():
+        ts = params[1]
+        assert ts.tzinfo is not None
+        assert abs((now - ts).total_seconds()) < 60

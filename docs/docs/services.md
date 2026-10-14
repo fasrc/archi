@@ -402,7 +402,7 @@ After each stored answer the bot posts **Helpful** and **Not helpful** buttons i
 
 The app needs **Interactivity & Shortcuts** turned on in the Slack app settings (already included in the manifest above). No Request URL is required — the bot uses Socket Mode, so all interactive payloads arrive over the same outbound websocket. No new OAuth scope is needed beyond `chat:write`.
 
-Each **Helpful** click and each submitted **Not helpful** form appends one row to the `feedback` table; there is no per-user deduplication column. To filter Slack ratings, join `feedback` to `conversations` on `message_id`, then join `conversations` to `conversation_metadata` on `conversation_id`, and match `external_chat_id` against the Slack thread key format `slack:<team_id>:<channel>:<thread_ts>` (see `thread_key()` in `src/interfaces/slack_bot.py`).
+Each **Helpful** click and each submitted **Not helpful** form appends one row to the `feedback` table; there is no per-user deduplication column. To filter Slack ratings, join `feedback` to `conversations` on `message_id`, then join `conversations` to `conversation_metadata` on `conversation_id`, and match `external_chat_id` against the Slack thread key format `slack:<team_id>:<channel>:<thread_ts>` (see `thread_key()` in `src/interfaces/slack_bot.py`). A Slack retry of one click with a valid `action_ts`, or a retry of one form submission, stores one row — the duplicate is detected by primary key and silently ignored. The `feedback_ts` of a dislike row records the time of the **Not helpful** click, not the form submission. A **Helpful** click without a valid `action_ts` falls back to the server time and is not protected against a Slack retry storing a second row.
 
 ### Configuration
 

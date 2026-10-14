@@ -28,6 +28,7 @@ from src.interfaces.slack_feedback import (
     ephemeral_thanks_kwargs,
     interaction_key,
     like_record,
+    parse_action_ts,
     parse_feedback_submission,
     parse_message_id,
 )
@@ -408,7 +409,11 @@ class SlackBot:
                     return
                 if action_id == HELPFUL_ACTION_ID:
                     try:
-                        self.feedback_store.insert(like_record(message_id))
+                        self.feedback_store.insert(
+                            like_record(
+                                message_id, parse_action_ts(action.get("action_ts"))
+                            )
+                        )
                     except Exception:
                         logger.exception("slack bot: failed to store helpful feedback")
                         self._forget_interaction(payload)
@@ -425,7 +430,9 @@ class SlackBot:
                     try:
                         self.web.views_open(
                             trigger_id=payload.get("trigger_id"),
-                            view=build_feedback_modal(message_id),
+                            view=build_feedback_modal(
+                                message_id, action.get("action_ts")
+                            ),
                         )
                     except Exception:
                         logger.exception("slack bot: failed to open feedback modal")
