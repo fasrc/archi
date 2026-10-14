@@ -351,11 +351,11 @@ A Slack bot that answers `@archi` mentions in channels and direct messages, in t
 1. **Turn on the `/v1` API** in the chat app: `services.chat_app.openai_compat.enabled: true`. The Slack service checks `GET /v1/models` at start-up and stops with an error if `/v1` does not answer. On a host-mode deployment with authentication off, set `local_only: true` instead of `enabled: true`, so `/v1` answers only the bot on the same host (see [Local callers only](api-reference-v1.md#local-callers-only)).
 2. **Create the Slack app.** A Slack workspace admin creates it from the [app manifest](#slack-app-manifest) below (api.slack.com → Your Apps → Create New App → From a manifest), then installs it in the workspace.
 3. **Get the two tokens.** In the app settings, Basic Information → App-Level Tokens → create a token with the scope `connections:write`: this is `SLACK_APP_TOKEN` (`xapp-…`). OAuth & Permissions → Bot User OAuth Token: this is `SLACK_BOT_TOKEN` (`xoxb-…`).
-4. **Invite the bot** to each channel where it must answer (`/invite @archi`).
+4. **Invite the bot** to each channel where it must answer (`/invite @archi`). If you set `allowed_channels`, invite it only to the listed channels: the bot leaves every other channel (see [Access limits](#access-limits)).
 
 ### Slack app manifest
 
-The bot needs `app_mentions:read` and `message.im` to receive questions, `chat:write` to answer, and the three `*:history` scopes to read the earlier messages of a thread.
+The bot needs `app_mentions:read` and `message.im` to receive questions, `chat:write` to answer, and the four `*:history` scopes to read the earlier messages of a thread (`mpim:history` covers threads in group DMs). The [access limits](#access-limits) use `users:read` to find guests and external users, and `channels:read`, `groups:read`, `mpim:read`, `channels:manage`, `groups:write` and `mpim:write` to list and leave channels and group DMs outside `allowed_channels`. After you add scopes to an installed app, reinstall it in the workspace.
 
 ```yaml
 _metadata:
@@ -377,11 +377,20 @@ oauth_config:
       - channels:history
       - groups:history
       - im:history
+      - mpim:history
+      - users:read
+      - channels:read
+      - groups:read
+      - channels:manage
+      - groups:write
+      - mpim:read
+      - mpim:write
 settings:
   event_subscriptions:
     bot_events:
       - app_mention
       - message.im
+      - member_joined_channel
   interactivity:
     is_enabled: true
   socket_mode_enabled: true
@@ -394,7 +403,7 @@ settings:
     Do not distribute the app outside your workspace. Slack limits `conversations.replies`, which the bot uses to read a thread, to 1 request per minute for apps distributed outside the Slack Marketplace. Internal apps get Tier 3 limits.
 
 !!! note "Who can ask"
-    Every member of the workspace who can message the bot can query the knowledge base. The Slack workspace is the access boundary. All Slack questions use one archi identity; the bot log records the Slack user ID of each question.
+    By default, every user who can message the bot can query the knowledge base. This includes guests and, through Slack Connect, users from other organizations. Set `internal_users_only: true` to limit the bot to full members of your workspace (see [Access limits](#access-limits)). All Slack questions use one archi identity; the bot log records the Slack user ID of each question.
 
 ### Answer feedback
 
@@ -416,9 +425,35 @@ services:
     timeout_seconds: 600            # longest wait for one answer
     max_workers: 4                  # Slack threads answered at the same time
     history_limit: 20               # earlier thread messages sent with a question (0 = none)
+    internal_users_only: false      # true = answer full workspace members only
+    allowed_channels: []            # channel IDs the bot may stay in ([] or null = any)
+    external_user_text: null        # notice for a rejected user (null = built-in text)
 ```
 
-All four keys are optional. Questions in one thread are answered one at a time, in order; different threads run in parallel up to `max_workers`.
+All seven keys are optional. Questions in one thread are answered one at a time, in order; different threads run in parallel up to `max_workers`.
+
+### Access limits
+
+Two keys limit who can use the bot and where. Both are off by default.
+
+**`internal_users_only: true`** answers only full members of the workspace where the app is installed. The bot looks up each sender with `users.info` and rejects these users:
+
+- users of another workspace, for example in a Slack Connect channel or DM;
+- multi-channel guests (`is_restricted`) and single-channel guests (`is_ultra_restricted`);
+- a user that `users.info` cannot find. This user gets the general error reply, because the user can be internal.
+
+The bot looks up the sender for each question and keeps no result, so a member who becomes a guest loses access at the next question. On Enterprise Grid, a member of another workspace in the same enterprise is internal. A rejected user gets `external_user_text` as an ephemeral reply, which only that user can see. The reply goes in the thread of the question if the question is in a thread, else in the channel or DM: Slack does not show an ephemeral reply that starts a new thread. The bot sends no question to archi for that user, and it stores no feedback click from that user. When an internal user asks in a thread, the bot also drops the earlier thread messages of rejected users, so their words do not reach archi as context.
+
+**`allowed_channels`** is a list of channel IDs, for example `[C0C8TS7H8BV, C0BTTAFE4ET]`. The bot answers mentions only in these channels. At start-up it leaves each channel that is not on the list. When someone adds it to an unlisted channel, it leaves at once. Slack does not let a bot leave the workspace's general channel. If the bot is in that channel and the channel is not on the list, the bot stays a member, logs the `cant_leave_general` error, and still answers no mention there. Group DMs obey the list. Direct messages to the bot are not channels, so the list does not apply to them. Only `[]` or `null` turns the limit off. A value with no channel IDs in it, such as a blank string, stops the bot at start-up with an error. To find a channel ID, open the channel details in Slack. The ID is at the bottom of the About tab.
+
+```yaml
+services:
+  slack:
+    internal_users_only: true
+    allowed_channels:
+      - C0C8TS7H8BV
+      - C0BTTAFE4ET
+```
 
 ### Secrets
 

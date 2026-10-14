@@ -49,6 +49,11 @@ ERROR_TEXT = (
     "An operator can find the reason in the slack service log."
 )
 
+DEFAULT_EXTERNAL_USER_TEXT = (
+    "This assistant is available only to internal users. "
+    "Guests and users from other organizations cannot use it."
+)
+
 _STATUS_TEXTS = frozenset({PLACEHOLDER_TEXT, ERROR_TEXT, FEEDBACK_PROMPT_TEXT})
 
 DEFAULT_CHAT_URL = "http://chatbot:7861"
@@ -96,6 +101,62 @@ def should_answer(event, bot_user_id):
     elif event_type != "app_mention":
         return False
     return bool(strip_mention(event.get("text")))
+
+
+def channel_allowed(event, allowed_channels):
+    """Return True when the bot may answer in the event's channel.
+
+    An empty ``allowed_channels`` puts no limit on channels. A direct message is not a
+    channel, so it is always allowed.
+    """
+    if not allowed_channels:
+        return True
+    if event.get("type") == "message" and event.get("channel_type") == "im":
+        return True
+    return event.get("channel") in allowed_channels
+
+
+def parse_allowed_channels(value):
+    """Return the ``services.slack.allowed_channels`` config value as a frozenset.
+
+    Only ``null`` or an empty list means "no limit". A value with no channel IDs in
+    it, such as a blank string, is an error: a config mistake must not remove the
+    limit.
+    """
+    if value is None or (isinstance(value, (list, tuple)) and not value):
+        return frozenset()
+    if isinstance(value, str):
+        value = [value]
+    channels = None
+    if isinstance(value, (list, tuple)) and all(isinstance(i, str) for i in value):
+        channels = frozenset(item.strip() for item in value if item.strip())
+    if not channels:
+        raise ValueError(
+            "services.slack.allowed_channels must be a list of Slack channel IDs, "
+            f"not {value!r}."
+        )
+    return channels
+
+
+def is_internal_user(user, team_id, enterprise_id=None):
+    """Return True when a ``users.info`` user is a full member of the bot's organization.
+
+    Guests (``is_restricted``, ``is_ultra_restricted``) and users of other workspaces
+    are external. On Enterprise Grid, a member of another workspace of the same
+    enterprise is internal.
+    """
+    if not user or not team_id:
+        return False
+    if (
+        user.get("is_restricted")
+        or user.get("is_ultra_restricted")
+        or user.get("is_stranger")
+    ):
+        return False
+    if user.get("team_id") == team_id:
+        return True
+    user_enterprise = (user.get("enterprise_user") or {}).get("enterprise_id")
+    return bool(enterprise_id) and user_enterprise == enterprise_id
 
 
 def _convert_line(line):
@@ -284,6 +345,11 @@ class SlackBot:
         startup_attempts=30,
         startup_delay=10,
         feedback_store=None,
+        team_id=None,
+        enterprise_id=None,
+        internal_users_only=False,
+        external_user_text=DEFAULT_EXTERNAL_USER_TEXT,
+        allowed_channels=frozenset(),
     ):
         self.web = web_client
         self.socket = socket_client
@@ -299,6 +365,11 @@ class SlackBot:
         self.startup_attempts = startup_attempts
         self.startup_delay = startup_delay
         self.feedback_store = feedback_store
+        self.team_id = team_id
+        self.enterprise_id = enterprise_id
+        self.internal_users_only = internal_users_only
+        self.external_user_text = external_user_text
+        self.allowed_channels = allowed_channels
         self.model = None
         self._deduper = EventDeduper()
         # One FIFO queue per Slack thread with work pending; a thread is drained by
@@ -323,14 +394,21 @@ class SlackBot:
                 "The slack service needs both SLACK_BOT_TOKEN and SLACK_APP_TOKEN."
             )
         web = web_client_cls(token=bot_token)
-        bot_user_id = web.auth_test()["user_id"]
+        identity = web.auth_test()
+        bot_user_id = identity["user_id"]
         socket = socket_client_cls(app_token=app_token, web_client=web)
         chat_url = slack_cfg.get("chat_url") or DEFAULT_CHAT_URL
         # 0 is a valid history_limit (send no earlier turns); only null falls back.
         history_limit = slack_cfg.get("history_limit")
         if history_limit is None:
             history_limit = DEFAULT_HISTORY_LIMIT
-        logger.info(f"slack bot: user {bot_user_id}, chat API {chat_url}")
+        allowed_channels = parse_allowed_channels(slack_cfg.get("allowed_channels"))
+        internal_users_only = bool(slack_cfg.get("internal_users_only"))
+        logger.info(
+            f"slack bot: user {bot_user_id}, chat API {chat_url}, "
+            f"internal users only {internal_users_only}, "
+            f"allowed channels {sorted(allowed_channels) or 'all'}"
+        )
         factory = PostgresServiceFactory.get_instance()
         feedback_store = (
             SlackFeedbackStore(factory.connection_pool) if factory is not None else None
@@ -348,6 +426,12 @@ class SlackBot:
             history_limit=int(history_limit),
             max_workers=int(slack_cfg.get("max_workers") or DEFAULT_MAX_WORKERS),
             feedback_store=feedback_store,
+            team_id=identity.get("team_id"),
+            enterprise_id=identity.get("enterprise_id"),
+            internal_users_only=internal_users_only,
+            external_user_text=slack_cfg.get("external_user_text")
+            or DEFAULT_EXTERNAL_USER_TEXT,
+            allowed_channels=allowed_channels,
         )
 
     def run(self, stop_event=None, sleep=time.sleep):
@@ -360,6 +444,7 @@ class SlackBot:
             delay=self.startup_delay,
             sleep=sleep,
         )
+        self.leave_unlisted_channels()
         logger.info(f"slack bot: using model {self.model}; connecting to Slack")
         self.socket.socket_mode_request_listeners.append(self.handle_request)
         self.socket.connect()
@@ -377,7 +462,12 @@ class SlackBot:
             if req.type == "events_api":
                 payload = req.payload or {}
                 event = payload.get("event") or {}
+                if event.get("type") == "member_joined_channel":
+                    self._on_member_joined(event)
+                    return
                 if not should_answer(event, self.bot_user_id):
+                    return
+                if not channel_allowed(event, self.allowed_channels):
                     return
                 if not self._deduper.first_time(event.get("channel"), event.get("ts")):
                     return
@@ -407,6 +497,8 @@ class SlackBot:
                 if message_id is None:
                     return
                 if not self._first_interaction(payload):
+                    return
+                if self._interaction_rejected(payload, notify=True):
                     return
                 if action_id == HELPFUL_ACTION_ID:
                     try:
@@ -445,6 +537,8 @@ class SlackBot:
                     return
                 if not self._first_interaction(payload):
                     return
+                if self._interaction_rejected(payload, notify=False):
+                    return
                 try:
                     self.feedback_store.insert(record)
                 except Exception:
@@ -452,6 +546,127 @@ class SlackBot:
                     self._forget_interaction(payload)
         except Exception:
             logger.exception("slack bot: failed to handle interactive payload")
+
+    def _interaction_rejected(self, payload, notify):
+        """True when ``internal_users_only`` rejects the user of an interactive payload.
+
+        Runs after the interaction dedup, so a retried envelope repeats neither the
+        lookup nor the notice.
+        """
+        user_id = (payload.get("user") or {}).get("id")
+        team_id = (payload.get("team") or {}).get("id")
+        access = self._user_access(user_id, team_id)
+        if access is True:
+            return False
+        if notify:
+            kwargs = ephemeral_thanks_kwargs(payload, "")
+            self._post_access_notice(
+                access, kwargs["channel"], kwargs["user"], kwargs.get("thread_ts")
+            )
+        return True
+
+    def _authorized_replies(self, replies, team_id, asker):
+        """Drop thread messages whose author ``internal_users_only`` rejects.
+
+        Earlier thread messages go to /v1 as context, so a guest or external user
+        could reach archi through a thread that an internal user continues. Each
+        author is looked up once per question. Messages with no user (this bot's
+        answers carry its user ID; integrations carry only ``bot_id``) are kept.
+        """
+        if not self.internal_users_only:
+            return replies
+        allowed = {asker: True, self.bot_user_id: True}
+        kept = []
+        for message in replies:
+            author = message.get("user")
+            if author:
+                if author not in allowed:
+                    allowed[author] = self._user_access(author, team_id) is True
+                if not allowed[author]:
+                    continue
+            kept.append(message)
+        return kept
+
+    def _user_access(self, user_id, payload_team_id):
+        """True to serve the user, False for an external user, None if unknown.
+
+        The lookup runs for each request and is not cached, so a member who becomes
+        a guest or leaves the workspace loses access at the next question.
+        """
+        if not self.internal_users_only:
+            return True
+        team_id = self.team_id or payload_team_id
+        try:
+            user = self.web.users_info(user=user_id)["user"]
+        except Exception:
+            # Fail closed: an unknown user gets no answer.
+            logger.exception(f"slack bot: users.info failed for {user_id}")
+            return None
+        internal = is_internal_user(user, team_id, self.enterprise_id)
+        if not internal:
+            logger.info(f"slack bot: rejected external or guest user {user_id}")
+        return internal
+
+    def _post_access_notice(self, access, channel, user_id, thread_ts):
+        """Tell a rejected user why, with one retry; never raises.
+
+        A failed lookup gets the error text, because the sender can be internal.
+        The bot acknowledged the event before this point, so Slack sends it no
+        second time: the retry here is the only one.
+        """
+        text = self.external_user_text if access is False else ERROR_TEXT
+        kwargs = {"channel": channel, "user": user_id, "text": text}
+        if thread_ts:
+            kwargs["thread_ts"] = thread_ts
+        for attempt in (1, 2):
+            try:
+                self.web.chat_postEphemeral(**kwargs)
+                return
+            except Exception:
+                logger.exception(
+                    f"slack bot: failed to post the notice in {channel} "
+                    f"(attempt {attempt}/2)"
+                )
+
+    def _on_member_joined(self, event):
+        if event.get("user") != self.bot_user_id or not self.allowed_channels:
+            return
+        channel = event.get("channel")
+        if channel not in self.allowed_channels:
+            self._leave(channel)
+
+    def _leave(self, channel):
+        try:
+            self.web.conversations_leave(channel=channel)
+            logger.info(f"slack bot: left {channel}, which allowed_channels omits")
+        except Exception:
+            logger.exception(f"slack bot: failed to leave {channel}")
+
+    def leave_unlisted_channels(self):
+        """Leave each channel that ``allowed_channels`` omits; never raises."""
+        if not self.allowed_channels:
+            return
+        # One listing per type: each type needs its own read scope, and a missing
+        # scope for one type must not stop the bot from leaving the others.
+        for conversation_type in ("public_channel", "private_channel", "mpim"):
+            try:
+                cursor = None
+                while True:
+                    kwargs = {"types": conversation_type, "limit": 200}
+                    if cursor:
+                        kwargs["cursor"] = cursor
+                    page = self.web.users_conversations(**kwargs)
+                    for channel in page.get("channels") or []:
+                        if channel.get("id") not in self.allowed_channels:
+                            self._leave(channel.get("id"))
+                    cursor = (page.get("response_metadata") or {}).get("next_cursor")
+                    if not cursor:
+                        break
+            except Exception:
+                logger.exception(
+                    f"slack bot: failed to list the bot's {conversation_type} "
+                    "conversations"
+                )
 
     def _first_interaction(self, payload):
         """False for a retried interactive envelope already handled; True otherwise."""
@@ -513,6 +728,16 @@ class SlackBot:
         channel = event.get("channel")
         ts = event.get("ts")
         thread_ts = event.get("thread_ts") or ts
+        # The access check runs here, in the thread's ordered worker, not in the
+        # Socket Mode listener: a slow lookup there could reorder a thread.
+        access = self._user_access(event.get("user"), team_id)
+        if access is not True:
+            # Only a question already in a thread gets the notice in that thread:
+            # Slack does not show an ephemeral reply that would start a thread.
+            self._post_access_notice(
+                access, channel, event.get("user"), event.get("thread_ts")
+            )
+            return
         placeholder_ts = None
         try:
             placeholder = self.web.chat_postMessage(
@@ -521,7 +746,11 @@ class SlackBot:
             placeholder_ts = placeholder["ts"]
             replies = []
             if event.get("thread_ts"):
-                replies = self._thread_replies(channel, thread_ts)
+                replies = self._authorized_replies(
+                    self._thread_replies(channel, thread_ts),
+                    team_id,
+                    event.get("user"),
+                )
             messages = build_messages(
                 replies,
                 self.bot_user_id,
