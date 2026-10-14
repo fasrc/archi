@@ -49,6 +49,10 @@ When `services.slack.allowed_channels` lists channel IDs, the bot MUST NOT answe
 - **WHEN** the bot gets `member_joined_channel` for itself in an unlisted channel
 - **THEN** the bot calls `conversations.leave` for that channel
 
+#### Scenario: A mention in an unlisted channel
+- **WHEN** a user mentions the bot in a channel that is not on the list
+- **THEN** the bot calls `conversations.leave` for that channel and answers nothing
+
 #### Scenario: Start-up
 - **WHEN** the bot starts and is a member of an unlisted channel
 - **THEN** the bot leaves that channel before it connects to Socket Mode
