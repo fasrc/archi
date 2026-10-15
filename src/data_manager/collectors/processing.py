@@ -453,6 +453,15 @@ def _skip_space(text: str, j: int) -> int:
     return j
 
 
+def _escapes_next(text: str, j: int) -> bool:
+    """True when ``text[j]`` is a backslash that escapes the next character.
+
+    CommonMark escapes ASCII punctuation only, so a backslash before a space or
+    a line ending stays literal (PR #709 review round 5).
+    """
+    return text[j] == "\\" and j + 1 < len(text) and text[j + 1] in _ASCII_PUNCT
+
+
 def _link_tail_end(text: str, i: int) -> int:
     """End of the inline link tail ``(dest "title")`` at ``text[i]``, or -1.
 
@@ -464,7 +473,7 @@ def _link_tail_end(text: str, i: int) -> int:
     if j < n and text[j] == "<":
         j += 1
         while j < n and text[j] not in "<>\r\n":
-            j += 2 if text[j] == "\\" and j + 1 < n else 1
+            j += 2 if _escapes_next(text, j) else 1
         if j >= n or text[j] != ">":
             return -1
         j += 1
@@ -472,7 +481,7 @@ def _link_tail_end(text: str, i: int) -> int:
         depth = 0
         # A space or an ASCII control character ends a bare destination.
         while j < n and ord(text[j]) > 0x20 and text[j] != "\x7f":
-            if text[j] == "\\" and j + 1 < n:
+            if _escapes_next(text, j):
                 j += 2
                 continue
             if text[j] == "(":

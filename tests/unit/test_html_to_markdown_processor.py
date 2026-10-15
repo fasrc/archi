@@ -1202,6 +1202,27 @@ def test_escape_unbalanced_brackets_angle_destination_stops_at_carriage_return()
     assert _escape_unbalanced_brackets("![a](<b\r]>)") == "![a](<b\r\\]>)"
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # A backslash before a line ending is no escape, so the angle
+        # destination still stops at the line ending.
+        ("![a](<foo\\\n]>)", "![a](<foo\\\n\\]>)"),
+        # A backslash before a space is no escape, so the space still ends a
+        # bare destination.
+        ("![a](foo\\ ]bar)", "![a](foo\\ \\]bar)"),
+        # An escaped ``)`` stays in the bare destination, so the tail holds
+        # the ``]`` and nothing changes.
+        ("![a](foo\\)]bar)", "![a](foo\\)]bar)"),
+    ],
+)
+def test_escape_unbalanced_brackets_destination_backslash_escapes_only_punctuation(
+    text, expected
+):
+    # CommonMark escapes ASCII punctuation only (PR #709 review round 5).
+    assert _escape_unbalanced_brackets(text) == expected
+
+
 def test_comment_with_double_hyphen_skipped_as_raw_html():
     # CommonMark 0.31 dropped the rule against ``--`` in a comment body.
     s = "<!-- a--b ] -->"
