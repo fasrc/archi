@@ -384,15 +384,18 @@ def _escape_link_label(label: str) -> str:
 # CommonMark 0.31 inline constructs that bind tighter than link brackets and that
 # start at a ``<``: an autolink, then an HTML open or closing tag (PR #709 review).
 _AUTOLINK_AT = re.compile(
-    r"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\x00-\x20]*"
+    r"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\x00-\x20\x7f]*"
     r"|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>"
 )
+# Tag whitespace is only a space, tab, or line ending, not Python's ``\s``
+# (PR #709 review round 3).
 _HTML_TAG_AT = re.compile(
     r"<[A-Za-z][A-Za-z0-9-]*"
-    r"""(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*"""
-    r"\s*/?>"
-    r"|</[A-Za-z][A-Za-z0-9-]*\s*>"
+    r"(?:[ \t\r\n]+[A-Za-z_:][A-Za-z0-9_.:-]*"
+    r"""(?:[ \t\r\n]*=[ \t\r\n]*(?:[^ \t\r\n"'=<>`]+|'[^']*'|"[^"]*"))?)*"""
+    r"[ \t\r\n]*/?>"
+    r"|</[A-Za-z][A-Za-z0-9-]*[ \t\r\n]*>"
 )
 # Raw HTML forms that run to a fixed terminator: (start, terminator).
 _HTML_RUNS = (
@@ -443,7 +446,7 @@ def _raw_html_end(text: str, i: int, finder: _Finder) -> int:
 
 
 def _skip_space(text: str, j: int) -> int:
-    while j < len(text) and text[j] in " \t\n":
+    while j < len(text) and text[j] in " \t\r\n":
         j += 1
     return j
 
@@ -465,7 +468,8 @@ def _link_tail_end(text: str, i: int) -> int:
         j += 1
     else:
         depth = 0
-        while j < n and not text[j].isspace() and ord(text[j]) >= 0x20:
+        # A space or an ASCII control character ends a bare destination.
+        while j < n and ord(text[j]) > 0x20 and text[j] != "\x7f":
             if text[j] == "\\" and j + 1 < n:
                 j += 2
                 continue

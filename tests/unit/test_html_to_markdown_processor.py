@@ -1230,6 +1230,18 @@ def test_escape_unbalanced_brackets_skips_raw_html():
     assert _escape_unbalanced_brackets("a < b ]") == "a < b \\]"
 
 
+def test_escape_unbalanced_brackets_tag_whitespace_is_ascii_only():
+    # A tag and a bare destination end only at an ASCII space, tab, or line
+    # ending; other whitespace is part of the value (PR #709 review round 3).
+    assert _escape_unbalanced_brackets("<i a=v ]>") == "<i a=v ]>"
+    assert _escape_unbalanced_brackets("<i a=v\x0c]>") == "<i a=v\x0c]>"
+    assert _escape_unbalanced_brackets("<i a =v]>") == "<i a =v\\]>"
+    assert _escape_unbalanced_brackets("![a](b ]c)") == "![a](b ]c)"
+    # DEL is an ASCII control character, so no destination holds it.
+    assert _escape_unbalanced_brackets("![a](b\x7f]c)") == "![a](b\x7f\\]c)"
+    assert _escape_unbalanced_brackets("<https://a\x7f]>") == "<https://a\x7f\\]>"
+
+
 def test_escape_unbalanced_brackets_skips_autolinks():
     assert _escape_unbalanced_brackets("<https://x/a]b>") == "<https://x/a]b>"
     assert _escape_unbalanced_brackets("<https://x/a]b> ]") == "<https://x/a]b> \\]"
