@@ -1,7 +1,7 @@
 # Vector store rebuild with cutover — design
 
 - **Status:** draft, revised after review
-- **Date:** 2026-10-10. Revised 2026-10-15 for the 9 review findings on PR #692, and again for the 7 findings of the second review round.
+- **Date:** 2026-10-10. Revised 2026-10-15 for the 9 review findings on PR #692, and again for the 7 findings of the second review round. A third revision on the same day made each step a code path, with no manual or agent step.
 - **Issue:** [#671](https://github.com/fasrc/archi/issues/671) — option (b), "build into a new collection, then switch"
 - **Anchors:** all code links point at `origin/dev` @ `7406721b`
 
@@ -29,10 +29,12 @@ A change of embedding model to a new dimension has no safe path today. The only 
 
 **Goal:** A full rebuild writes into a new set of tables while chat reads the old set. When the new set is complete and passes a check, one short transaction makes the new set live.
 
+**Code only:** The data-manager code does each step of the process: it starts a build, checks it, makes it live, tries again after a lock timeout, and rolls back a bad set. No step needs a person or an agent to run a command, call an endpoint, or read a log. Tests in CI verify the process, not a manual check after a deploy.
+
 **In scope:**
 
-- Every full rebuild: a redeploy with `reset_collection: true`, a manual reset, and a change of embedding model, dimension, or chunk configuration.
-- One previous set kept for a manual rollback.
+- Every full rebuild: a redeploy with `reset_collection: true`, and a change of embedding model, dimension, or chunk configuration.
+- One previous set kept for an automatic rollback (4.6).
 
 **Out of scope:**
 
@@ -48,6 +50,7 @@ A change of embedding model to a new dimension has no safe path today. The only 
 2. The cutover blocks a chat read for a maximum of 5 s plus the time of the catalog renames (4.5). The usual block is under 100 ms.
 3. A failed or rejected build leaves the live set unchanged.
 4. A change to a new embedding dimension needs only a redeploy, with no `nuke.sh`.
+5. No step of a build, a cutover, a retry, or a rollback needs a person or an agent. The process has no manual endpoint and no manual check.
 
 ## 3. Approaches considered
 
@@ -75,7 +78,7 @@ A new migration under `src/cli/templates/migrations/` adds:
 CREATE TABLE IF NOT EXISTS index_build (
   id SERIAL PRIMARY KEY,
   status TEXT NOT NULL,            -- building | validating | live | previous | rejected | failed | superseded
-  reason TEXT,                     -- why: reset | embedding_change | manual | baseline
+  reason TEXT,                     -- why: reset | embedding_change | chunk_config_change | baseline
   embedding_model TEXT NOT NULL,   -- the model itself, as the chunk metadata 'embedding_model' tag records it
   embedding_dimensions INTEGER NOT NULL,
   collection_name TEXT NOT NULL,   -- the chunk metadata 'collection' value of this set (it names the class, not the model)
@@ -147,8 +150,8 @@ Today, `DataManager.run_ingestion` calls `delete_existing_collection_if_reset()`
    - If they match, try its cutover (4.5) again, and do not start a new build.
    - If they do not match, mark the row `superseded`, and log its build id and the cause. Then drop its tables.
 
-   `POST /api/index/rebuild` also supersedes a `validating` row, with the same log line. No other path drops a `validating` set.
-3. Keep the previous set (`*_prev`) through the build and the gate. A failed or rejected build thus does not remove the rollback target. Only a successful cutover replaces the previous set (4.5). This matters most when an operator starts a rebuild to recover from a bad cutover: the known-good copy stays until a better set replaces it.
+   The cutover retry job (4.5) applies the same rule each time it runs. No other path drops a `validating` set.
+3. Keep the previous set (`*_prev`) through the build and the gate. A failed or rejected build thus does not remove the rollback target. Only a successful cutover replaces the previous set (4.5).
 4. Insert an `index_build` row with `status = 'building'`.
 5. Create the build set from one Python DDL function, `build_set_ddl(build_id, dimensions, index_type, has_bm25)`. This function emits:
    - Both tables with the same columns, defaults, `SERIAL` keys, and foreign keys (`REFERENCES documents(id) ON DELETE CASCADE`) as
@@ -172,7 +175,7 @@ Today, `DataManager.run_ingestion` calls `delete_existing_collection_if_reset()`
    7a. Copy the extra schema of the live set. A rename (4.5) moves a name only: an index stays on its table. For this reason, read each index of the live tables from `pg_indexes`, and each constraint from `pg_constraint` with `pg_get_constraintdef`.
 
    - Skip each managed object. `build_set_ddl` keeps the list of managed names: the primary keys, the foreign keys, the `UNIQUE` constraint, each index of step 7, and each vector index name that any `vector_index_type` creates. Skip a managed object even if its definition differs from the build set. The build set has the configured version of that object, and the old version must not come back. For example, a change from HNSW to `none` must not copy the old HNSW index.
-   - Copy each other object (an index that an operator added by hand, for example) to the build table under a build-scoped name, and log it. That object thus moves to the new live set.
+   - Copy each other object (an index that a person added by hand, for example) to the build table under a build-scoped name, and log it. That object thus moves to the new live set.
 8. Run `ANALYZE` on both build tables.
 
 ### 4.4 Cutover gate
@@ -186,7 +189,12 @@ Set `status = 'validating'`. Do all of these checks and record each result in `g
 | Failed documents ÷ total documents | ≤ 0.05 | Stops an embedding-endpoint outage from making a partial corpus live. |
 | Build chunk count | > 0 | Absolute floor. |
 
-Skip the ratio check if no live set exists (first install), or if the live set has 0 chunks.
+Skip the ratio check in these conditions. The code reads each condition from the database and the config, so no person or agent has to approve a shrink:
+
+- No live set exists (first install), or the live set has 0 chunks.
+- The source configuration differs from the source configuration in the `config_snapshot` of the live row. A change of sources is an intended change of the corpus, so a smaller corpus is expected. The other checks still apply.
+
+If the source configuration did not change, a large drop in chunks is not intended, and the ratio check applies.
 
 If one or more checks fail:
 
@@ -195,7 +203,7 @@ If one or more checks fail:
 - Write a `failed` `ingest_run` row with the gate detail.
 - Leave the live set unchanged.
 
-An operator can waive the chunk-ratio check for one build with `POST /api/index/rebuild {"allow_shrink": true}`. Use this override for an intended corpus shrink. The override waives no other check: the dimension check, the floor, and the failed-document check stay mandatory for every build.
+The dimension check, the floor, and the failed-document check apply to every build. No override exists.
 
 ### 4.5 Cutover transaction
 
@@ -276,7 +284,9 @@ The code reads the index and sequence names from `pg_indexes` and from `pg_get_s
 
 `lock_timeout` limits each lock wait separately, so it cannot limit the total block. For this reason, part B uses `statement_timeout = 5s`, which limits the full `LOCK` statement: the waits for both tables together. After part B holds both locks, part C does only catalog renames, and then the transaction commits. As a result, chat waits for a maximum of 5 s plus the rename time. On a timeout, the transaction rolls back with no change.
 
-The cutover then tries again 3 times, with 10 s between attempts. After 3 failures, the build stays `validating` with its tables kept (4.3 step 2), and `POST /api/index/cutover` tries again.
+The cutover then tries again 3 times, with 10 s between attempts. After 3 failures, the build stays `validating` with its tables kept (4.3 step 2).
+
+**Cutover retry job:** The data-manager registers a job on its existing `CronScheduler` (`add_job`, cron `*/5 * * * *` by default). Each run takes the build lock, finds the `validating` row, and applies the rule of 4.3 step 2a: if the config still matches, it tries the cutover again; if not, it marks the row `superseded` and drops its tables. A run that finds no `validating` row does nothing. Each try and its result go to `index_build.gate_detail`, so the status board (4.9) shows them.
 
 **After the commit:** Release the write lock and the build lock. Then run one incremental sync (`update_vectorstore()`) on the new live set. It embeds each document that is still `pending`: an upload that a build deferred (4.3 step 1), a new document from after the build read the catalog, and a document that changed during the build.
 
@@ -284,12 +294,18 @@ Cutover renames only. It does not copy or rewrite chunk data, so its duration do
 
 ### 4.6 Previous set and rollback
 
-The previous set stays until a successful cutover replaces it (4.3 step 3). `POST /api/index/rollback` swaps the previous set and the live set with the same transaction shape as 4.5:
+The previous set stays until a successful cutover replaces it (4.3 step 3).
+
+**Post-cutover probe:** Right after each cutover commits, the data-manager runs a probe through the chat read path of 4.8. The probe sends 5 queries (configurable). Each query text is the `display_name` of a random `embedded` document. The probe fails if one or more queries raise an error, or if 3 or more queries return 0 rows. The probe catches a set that the gate cannot judge from counts: an embedder that chat cannot load, a dimension error at query time, or a broken index. The probe result goes to `index_build.gate_detail`.
+
+**Automatic rollback:** If the probe fails, the data-manager rolls back at once. It writes a `failed` `ingest_run` row with the probe detail, and it logs the build id at `ERROR`. The rolled-back build becomes `previous` with `rolled_back_at` set, and the next build supersedes it. The retry job never retries a rolled-back build. The rollback uses the same transaction shape as 4.5:
 
 - Part A saves the current per-document status into the `live` row (4.5 step 2). It writes `documents.ingestion_status` and `ingestion_error` from the `document_results` of the `previous` row. Then it swaps the two statuses: the `previous` row becomes `live`, and the `live` row becomes `previous` with `rolled_back_at = NOW()`. The partial unique indexes (4.2) check each row immediately, so the swap uses three statements: `live` → `swap`, `previous` → `live`, `swap` → `previous`. The `swap` status exists only inside this transaction. A rollback drops no table.
 - Parts B and C lock the live tables and swap the names of the two sets through a temporary name (live → `*_swap`, previous → live, `*_swap` → previous).
 
-The `previous` row owns the physical previous set (4.2, table ownership), so the rollback always restores the model and the statuses that match the tables. A second rollback swaps the sets back. For the first cutover on an upgraded volume, the baseline row (4.2) becomes the `previous` row. Readers take the embedding model from the `live` row (4.8), so a rollback also moves chat back to the previous model.
+The `previous` row owns the physical previous set (4.2, table ownership), so the rollback always restores the model and the statuses that match the tables. A rollback occurs at most one time for each cutover. For the first cutover on an upgraded volume, the baseline row (4.2) becomes the `previous` row. Readers take the embedding model from the `live` row (4.8), so a rollback also moves chat back to the previous model.
+
+If the data-manager stops after a cutover commits and before its probe ends, the next boot runs the probe for the `live` row, because that row has no probe result in `gate_detail`. A failed probe then rolls back as above.
 
 Disk cost: a maximum of 3 copies of the chunk tables during a build (live, previous, and build). The cutover drops the old previous set, so 2 copies remain after it. At 7105 chunks, one copy is small.
 
@@ -305,7 +321,11 @@ data_manager:
     min_chunk_ratio: 0.90
     max_failed_ratio: 0.05
   rebuild_cutover_lock_wait_s: 5   # statement_timeout of the cutover LOCK (4.5)
+  rebuild_cutover_retry_cron: "*/5 * * * *"   # cutover retry job (4.5)
+  rebuild_probe_queries: 5         # post-cutover probe (4.6)
 ```
+
+The thresholds are config values. No step of the process asks a person to tune them.
 
 `reset_collection: true` keeps its meaning, "do a full rebuild at boot". With `rebuild_strategy: cutover`, it no longer means "empty the live table first".
 
@@ -350,7 +370,8 @@ Other parts that do not change:
 | The data-manager crashes during a build | The live set is unchanged. The next boot drops the build set (4.3 step 2) and starts again. |
 | The embedding endpoint is down during a build | Documents fail. The gate rejects the build on `max_failed_ratio`. The live set and the previous set are unchanged. |
 | A source returns few documents | The gate rejects the build on `min_chunk_ratio`. The live set is unchanged. |
-| The cutover lock times out | Rollback with no change, then 3 more tries, then the build waits for a manual `cutover`. |
+| The cutover lock times out | Rollback with no change, then 3 more tries. Then the retry job tries again every 5 minutes, until a cutover succeeds or a config change supersedes the build. |
+| The new live set fails the post-cutover probe | Automatic rollback to the previous set. A `failed` `ingest_run` row and an `ERROR` log line record the cause. |
 | The data-manager restarts while a build waits for a cutover | The next boot keeps the `validating` build and tries its cutover again, if the config still matches (4.3 step 2a). |
 | A crash during the cutover transaction | Postgres rolls back the transaction. Either all renames apply or none apply. |
 | A user uploads a file during a build | The upload does not embed, and the document stays `pending`. The sync after the cutover embeds it. |
@@ -365,10 +386,12 @@ TDD, red first, per the project gate (`bash scripts/gate.sh`, patch coverage ≥
 
 - `build_set_ddl`: emits the configured dimension, the `chunk_tsv` column only without BM25, and build-scoped index names.
 - Copy of the extra schema (step 7a): an extra index or constraint on the live set gets a build-scoped copy. A managed object is never copied, also when its definition differs: after a change from HNSW to `none`, the build set has no HNSW index.
-- The gate: each threshold at, below, and above its value; first install; live count 0. `allow_shrink` waives the chunk ratio only: with it, a dimension error, an empty build, or a high failed ratio still rejects the build.
+- The gate: each threshold at, below, and above its value; first install; live count 0. A change of the source configuration skips the chunk ratio only: with it, a dimension error, an empty build, or a high failed ratio still rejects the build. With the same source configuration, a drop below the ratio rejects the build.
 - The cutover SQL order against a fake cursor: deletion catch-up, then the status save into the outgoing `live` row, then the status and error update, then the drop of the old previous set, then the owner-row moves (`previous` → `superseded`, `live` → `previous`, build → `live`), then `SET LOCAL statement_timeout` and one `LOCK TABLE` of both live tables, then live → previous, then build → live, all in one transaction. No data statement follows the `LOCK`.
 - Table ownership: after each cutover and each rollback, exactly one row is `live` and at most one row is `previous`. A `validating` build that is superseded between two cutovers does not change which row is `previous`.
-- Rollback: restores the statuses that the cutover saved for the `previous` row, also after an incremental sync changed a status while that set was live. The status swap does not violate a partial unique index. A second rollback swaps the sets back.
+- Rollback: restores the statuses that the cutover saved for the `previous` row, also after an incremental sync changed a status while that set was live. The status swap does not violate a partial unique index.
+- Post-cutover probe: a probe with an error, or with 3 or more empty results of 5, starts the automatic rollback. A probe with 2 empty results does not. A boot that finds a `live` row with no probe result runs the probe.
+- Cutover retry job: a run with a matching `validating` row tries the cutover; a run with a config change supersedes the row; a run with no `validating` row does nothing; a rolled-back build is never retried.
 - A rejected or failed build leaves the previous set and its row unchanged.
 - The status update writes the error of a failed document, clears the error of an embedded document, and skips a document whose `ingested_at` changed.
 - Lock-timeout retry: 3 tries, then `validating` with the tables kept.
@@ -379,7 +402,7 @@ TDD, red first, per the project gate (`bash scripts/gate.sh`, patch coverage ≥
 - The reader: it changes the embedder when the live build id changes, and it reads the child and parent rows in one transaction.
 - `_add_to_postgres` in build mode writes to the target tables and does not write `documents.ingestion_status`.
 
-**Integration test (real Postgres with pgvector, marked and skipped when no DB is available):**
+**Integration test (real Postgres with pgvector):** CI runs these tests in a job with a `pgvector/pgvector:pg17` service container, so a merge cannot skip them. On a workstation with no database, the tests are skipped.
 
 1. Seed a live set with N chunks.
 2. Start a build in a thread. In a second thread, run `similarity_search_by_vector_with_score`, `hybrid_search`, and the hierarchical retriever in a loop.
@@ -390,13 +413,15 @@ TDD, red first, per the project gate (`bash scripts/gate.sh`, patch coverage ≥
 7. Change the dimension from 384 to 768 and rebuild. Assert that the reads use the old model and return rows during the build, and use the new dimension after the cutover.
 8. During a build, call `update_vectorstore` from a second connection for a new document. Assert that it does not embed, and that the document is `embedded` after the cutover.
 9. Start from an upgraded volume that has `document_chunks` but no `document_parent_nodes`. Run the migration, then a build. Assert that reads during the build and the cutover succeed with no `undefined_table` error.
+10. Make the embedder of a new build fail at query time, then rebuild. Assert that the probe fails, that the code rolls back with no call from the test, and that the reads then return rows of the old set.
+11. In test 2, measure the longest read wait during the cutover. Assert that it is less than `rebuild_cutover_lock_wait_s` plus 1 s.
 
-**Live check on dev:** Do a redeploy with `reset_collection: true`. During the build, ask one chat question every 60 s. Each answer must cite documents from the full corpus. Record the cutover duration from the logs.
+**Records in place of a manual check:** Each build writes its gate result, each cutover try, the lock wait time, and the probe result to `index_build`. The status board (4.9) shows them. After a deploy, no person or agent has to ask chat questions or read logs to know the result.
 
 ## 7. Rollout
 
-1. Merge with `rebuild_strategy: cutover` as the default. `truncate` stays available for one release as a kill switch.
-2. Verify on dev with the live check in section 6.
+1. Merge with `rebuild_strategy: cutover` as the default. `truncate` stays available for one release as a kill switch. The CI job of section 6 must pass before the merge.
+2. Redeploy dev. The data-manager does the build, the gate, the cutover, and the probe by itself, and the status board shows the result.
 3. In the next release, remove the `truncate` branch and `VACUUM FULL`.
 
 ## 8. Related defects found during design (separate issues)
@@ -411,5 +436,7 @@ TDD, red first, per the project gate (`bash scripts/gate.sh`, patch coverage ≥
 
 ## 9. Open questions
 
-1. Is a 0.90 chunk ratio correct for dev, where the sources change little between redeploys? The proposal is to set it from the last 5 `ingest_run` chunk counts after the first month.
-2. Must `POST /api/index/rollback` also be an `archi` CLI subcommand, or is the endpoint enough for operators?
+None. The two earlier questions are closed:
+
+1. The chunk ratio is a config value (4.7) with a default of 0.90. No step asks a person to tune it.
+2. The rollback is automatic (4.6), so it needs no endpoint and no CLI subcommand.
