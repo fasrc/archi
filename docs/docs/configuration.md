@@ -805,6 +805,11 @@ data_manager:
   escaped. Other links convert
   as before; like every item in this list, it reaches disk only for new or
   force-overwritten documents.
+- **Link text with an unbalanced bracket is escaped.** Link text that contains an
+  unbalanced `[` or `]` outside a code span, and not already backslash-escaped, gets a
+  `\` inserted before that bracket so the link survives CommonMark parsing (issue #691);
+  balanced brackets and nested images are unchanged; like every item in this list, it
+  reaches disk only for new or force-overwritten documents.
 - **Content after a nested list starts on its own line.** `markdownify` drops the newline
   after a list nested inside a list item, so the text, inline element, or sibling item
   that followed it was glued onto the nested list's last line — onto a closing code fence
