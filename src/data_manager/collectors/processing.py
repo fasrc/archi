@@ -463,7 +463,7 @@ def _link_tail_end(text: str, i: int) -> int:
     j = _skip_space(text, i + 1)
     if j < n and text[j] == "<":
         j += 1
-        while j < n and text[j] not in "<>\n":
+        while j < n and text[j] not in "<>\r\n":
             j += 2 if text[j] == "\\" and j + 1 < n else 1
         if j >= n or text[j] != ">":
             return -1

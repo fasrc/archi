@@ -1196,6 +1196,12 @@ def test_escape_unbalanced_brackets_declaration_needs_ascii_letter():
     assert _escape_unbalanced_brackets("<!\u00e9 ]>") == "<!\u00e9 \\]>"
 
 
+def test_escape_unbalanced_brackets_angle_destination_stops_at_carriage_return():
+    # A CR is a line ending, which an angle-bracket destination cannot hold, so
+    # the image tail is not valid and its ``]`` counts (PR #709 review round 3).
+    assert _escape_unbalanced_brackets("![a](<b\r]>)") == "![a](<b\r\\]>)"
+
+
 def test_comment_with_double_hyphen_skipped_as_raw_html():
     # CommonMark 0.31 dropped the rule against ``--`` in a comment body.
     s = "<!-- a--b ] -->"
