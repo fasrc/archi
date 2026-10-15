@@ -1,6 +1,7 @@
 """Tests for HtmlToMarkdownProcessor (HTML->Markdown conversion at persist time)."""
 
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from src.data_manager.collectors.processing import (
     ResourcePipeline,
     _ArchiMarkdownConverter,
     _escape_link_label,
+    _escape_unbalanced_brackets,
     _fence_language,
     _link_destination,
     _markdownify,
@@ -941,7 +943,9 @@ def test_hoist_anchor_with_image_before_code_keeps_linked_image():
     ("element", "link"),
     [
         ("<hr>", "[---](https://x/y)"),
-        ('<video src="v.mp4"></video>', "[[](v.mp4)](https://x/y)"),
+        # The video's own empty link is written as text so that the outer link
+        # parses: a link may not hold a link (PR #709 review round 2).
+        ('<video src="v.mp4"></video>', "[\\[\\](v.mp4)](https://x/y)"),
     ],
 )
 def test_hoist_anchor_with_textless_rendered_element_converts_as_before(element, link):
@@ -1171,6 +1175,281 @@ def test_link_destination_autolink_label_escapes_code_and_emphasis():
 
 def test_link_label_helper_escapes_entity_lead_only():
     assert _escape_link_label("a &amp; b & c*") == "a \\&amp; b & c\\*"
+
+
+# _escape_unbalanced_brackets tests (issue #691)
+
+
+def test_escape_unbalanced_brackets_unmatched_close_escaped():
+    assert _escape_unbalanced_brackets("] [") == "\\] \\["
+
+
+def test_escape_unbalanced_brackets_balanced_unchanged():
+    result = _escape_unbalanced_brackets("[a]")
+    assert result == "[a]"
+
+
+def test_escape_unbalanced_brackets_declaration_needs_ascii_letter():
+    # CommonMark 0.31 starts a declaration with any ASCII letter, either case
+    # (PR #709 review round 3).
+    assert _escape_unbalanced_brackets("<!x ]>") == "<!x ]>"
+    assert _escape_unbalanced_brackets("<!\u00e9 ]>") == "<!\u00e9 \\]>"
+
+
+def test_escape_unbalanced_brackets_angle_destination_stops_at_carriage_return():
+    # A CR is a line ending, which an angle-bracket destination cannot hold, so
+    # the image tail is not valid and its ``]`` counts (PR #709 review round 3).
+    assert _escape_unbalanced_brackets("![a](<b\r]>)") == "![a](<b\r\\]>)"
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # A backslash before a line ending is no escape, so the angle
+        # destination still stops at the line ending.
+        ("![a](<foo\\\n]>)", "![a](<foo\\\n\\]>)"),
+        # A backslash before a space is no escape, so the space still ends a
+        # bare destination.
+        ("![a](foo\\ ]bar)", "![a](foo\\ \\]bar)"),
+        # An escaped ``)`` stays in the bare destination, so the tail holds
+        # the ``]`` and nothing changes.
+        ("![a](foo\\)]bar)", "![a](foo\\)]bar)"),
+    ],
+)
+def test_escape_unbalanced_brackets_destination_backslash_escapes_only_punctuation(
+    text, expected
+):
+    # CommonMark escapes ASCII punctuation only (PR #709 review round 5).
+    assert _escape_unbalanced_brackets(text) == expected
+
+
+def test_comment_with_double_hyphen_skipped_as_raw_html():
+    # CommonMark 0.31 dropped the rule against ``--`` in a comment body.
+    s = "<!-- a--b ] -->"
+    assert _escape_unbalanced_brackets(s) is s
+
+
+def test_escape_unbalanced_brackets_already_escaped_unchanged():
+    s = "\\]"
+    result = _escape_unbalanced_brackets(s)
+    assert result == s
+
+
+def test_escape_unbalanced_brackets_code_span_unchanged():
+    s = "`a]b`"
+    result = _escape_unbalanced_brackets(s)
+    assert result == s
+
+
+def test_escape_unbalanced_brackets_unmatched_backtick_then_close():
+    # Unmatched backtick run: the ] after it is not inside a code span
+    assert _escape_unbalanced_brackets("`]") == "`\\]"
+
+
+def test_escape_unbalanced_brackets_trailing_backslash_doubled():
+    # A lone terminal backslash would escape the label's closing ``]`` (PR #709 review).
+    assert _escape_unbalanced_brackets("a\\") == "a\\\\"
+    assert _escape_unbalanced_brackets("[\\") == "\\[\\\\"
+    assert _escape_unbalanced_brackets("a\\\\") == "a\\\\"
+
+
+def test_escape_unbalanced_brackets_skips_raw_html():
+    # Brackets in raw inline HTML do not take part in label balancing (PR #709 review).
+    assert _escape_unbalanced_brackets('<span title="[">x</span>]') == (
+        '<span title="[">x</span>\\]'
+    )
+    assert _escape_unbalanced_brackets('<span title="]">x</span>') == (
+        '<span title="]">x</span>'
+    )
+    assert _escape_unbalanced_brackets("<!-- [ -->]") == "<!-- [ -->\\]"
+    assert _escape_unbalanced_brackets("<? [ ?>]") == "<? [ ?>\\]"
+    assert _escape_unbalanced_brackets("<![CDATA[ ] ]]>") == "<![CDATA[ ] ]]>"
+    assert _escape_unbalanced_brackets("<!X [>]") == "<!X [>\\]"
+    assert _escape_unbalanced_brackets("</x>]") == "</x>\\]"
+    # A lone ``<`` that opens no HTML or autolink is plain text.
+    assert _escape_unbalanced_brackets("a < b ]") == "a < b \\]"
+
+
+def test_escape_unbalanced_brackets_tag_whitespace_is_ascii_only():
+    # A tag and a bare destination end only at an ASCII space, tab, or line
+    # ending; other whitespace is part of the value (PR #709 review round 3).
+    assert _escape_unbalanced_brackets("<i a=v ]>") == "<i a=v ]>"
+    assert _escape_unbalanced_brackets("<i a=v\x0c]>") == "<i a=v\x0c]>"
+    assert _escape_unbalanced_brackets("<i a =v]>") == "<i a =v\\]>"
+    assert _escape_unbalanced_brackets("![a](b ]c)") == "![a](b ]c)"
+    # DEL is an ASCII control character, so no destination holds it.
+    assert _escape_unbalanced_brackets("![a](b\x7f]c)") == "![a](b\x7f\\]c)"
+    assert _escape_unbalanced_brackets("<https://a\x7f]>") == "<https://a\x7f\\]>"
+
+
+def test_escape_unbalanced_brackets_skips_autolinks():
+    assert _escape_unbalanced_brackets("<https://x/a]b>") == "<https://x/a]b>"
+    assert _escape_unbalanced_brackets("<https://x/a]b> ]") == "<https://x/a]b> \\]"
+
+
+def test_escape_unbalanced_brackets_skips_nested_link_destination_and_title():
+    # A backtick in a nested destination opens no code span (PR #709 review).
+    assert _escape_unbalanced_brackets("![pic](a`) tail ] `") == (
+        "![pic](a`) tail \\] `"
+    )
+    assert _escape_unbalanced_brackets('![a](/s "t ] u")') == '![a](/s "t ] u")'
+    assert _escape_unbalanced_brackets("![a](<s ] t> 't [ u')") == (
+        "![a](<s ] t> 't [ u')"
+    )
+    assert _escape_unbalanced_brackets("![a](s(1)) [") == "![a](s(1)) \\["
+    # A bracket pair followed by text that is no link tail stays plain text.
+    assert _escape_unbalanced_brackets("[a](b c d ]") == "[a](b c d \\]"
+
+
+def test_escape_unbalanced_brackets_linear_in_backtick_runs():
+    # Each unmatched run once rescanned the whole suffix (PR #709 review).
+    label = "".join("`" * (i + 1) + "x" for i in range(1000)) + "]"
+    start = time.perf_counter()
+    assert _escape_unbalanced_brackets(label).endswith("x\\]")
+    assert time.perf_counter() - start < 2.0
+
+
+def test_escape_unbalanced_brackets_paren_title_stops_at_open_paren():
+    # An unescaped ``(`` ends a parenthesized title, so each unclosed one scans
+    # only to the next ``(`` instead of to the end of the text.
+    assert _escape_unbalanced_brackets("![a](b (c) d) [") == "![a](b (c) d) \\["
+    assert _escape_unbalanced_brackets("![a](b (c\\(d)) [") == "![a](b (c\\(d)) \\["
+    label = "[a](b (" * 20000 + "]"
+    start = time.perf_counter()
+    assert _escape_unbalanced_brackets(label).endswith("(\\]")
+    assert time.perf_counter() - start < 2.0
+
+
+def test_escape_unbalanced_brackets_destination_nesting_limit():
+    # CommonMark readers stop a destination at 32 nested ``(``, which also keeps
+    # each malformed tail scan short (PR #709 review round 2).
+    deep = "![a](" + "(" * 32 + "]" + ")" * 32 + ")"
+    assert _escape_unbalanced_brackets(deep) == deep
+    deeper = "![a](" + "(" * 33 + "]" + ")" * 33 + ")"
+    assert _escape_unbalanced_brackets(deeper) == (
+        "![a](" + "(" * 33 + "\\]" + ")" * 33 + ")"
+    )
+    label = "[" * 8000 + "](" * 8000
+    start = time.perf_counter()
+    _escape_unbalanced_brackets(label)
+    assert time.perf_counter() - start < 2.0
+
+
+def test_escape_unbalanced_brackets_neutralizes_inner_links():
+    # A link inside link text stops the outer link from parsing, so its
+    # brackets are escaped; an image may sit in a link (PR #709 review round 2).
+    assert _escape_unbalanced_brackets("[a](b) x") == "\\[a\\](b) x"
+    assert _escape_unbalanced_brackets("[a](b) ]") == "\\[a\\](b) \\]"
+    assert _escape_unbalanced_brackets("\\![i](s)") == "\\!\\[i\\](s)"
+    assert _escape_unbalanced_brackets("![a [b](c)](d)") == "![a \\[b\\](c)](d)"
+    assert _escape_unbalanced_brackets("![i](s) [a]") == "![i](s) [a]"
+
+
+def test_escape_unbalanced_brackets_empty_unchanged():
+    result = _escape_unbalanced_brackets("")
+    assert result == ""
+
+
+# html_to_markdown integration tests for bracket escaping (issue #691)
+
+
+def test_unmatched_close_bracket_in_link_text_escaped():
+    assert (
+        html_to_markdown('<p><a href="https://x/y">a ] b</a></p>')
+        == "[a \\] b](https://x/y)"
+    )
+
+
+def test_unmatched_open_bracket_in_link_text_escaped():
+    assert html_to_markdown('<p><a href="x">a [ b</a></p>') == "[a \\[ b](x)"
+
+
+def test_self_link_text_no_longer_equals_href_escaped():
+    assert (
+        html_to_markdown('<a href="https://x/a  ]b">https://x/a  ]b</a>')
+        == "[https://x/a \\]b](<https://x/a  ]b>)"
+    )
+
+
+def test_titled_self_link_bracket_escaped():
+    assert (
+        html_to_markdown('<a href="https://x/a ] b" title="T">https://x/a ] b</a>')
+        == '[https://x/a \\] b](<https://x/a ] b> "T")'
+    )
+
+
+def test_balanced_brackets_in_link_text_unchanged():
+    assert html_to_markdown('<p><a href="x">a [b] c</a></p>') == "[a [b] c](x)"
+
+
+def test_nested_image_in_link_unchanged():
+    assert (
+        html_to_markdown('<p><a href="/b"><img src="/a" alt="pic"></a></p>')
+        == "[![pic](/a)](/b)"
+    )
+
+
+def test_bracket_inside_code_span_in_link_unchanged():
+    assert html_to_markdown('<p><a href="x"><code>a]b</code></a></p>') == "[`a]b`](x)"
+
+
+def test_already_escaped_bracket_in_link_unchanged():
+    assert html_to_markdown('<p><a href="x">a \\] b</a></p>') == "[a \\] b](x)"
+
+
+def test_autolink_with_bracket_unchanged():
+    assert (
+        html_to_markdown('<p><a href="https://x/a]b">https://x/a]b</a></p>')
+        == "<https://x/a]b>"
+    )
+
+
+def test_anchor_without_href_text_unchanged():
+    # No link is written, so no escape is needed (PR #709 review).
+    assert html_to_markdown("<p><a>a ] b</a></p>") == "a ] b"
+    assert html_to_markdown('<p><a href="">a ] b</a></p>') == "a ] b"
+
+
+def test_escaped_label_equal_to_href_keeps_original_text():
+    # The escaped label equals the href, so the base converter writes an
+    # autolink; the visible text must stay the HTML text (PR #709 review).
+    assert html_to_markdown('<a href="a\\]">a]</a>') == "[a\\]](<a\\\\]>)"
+    assert (
+        html_to_markdown('<a href="https://x/a\\]">https://x/a]</a>')
+        == "[https://x/a\\]](<https://x/a\\\\]>)"
+    )
+
+
+def test_link_text_terminal_backslash_doubled():
+    assert html_to_markdown('<a href="x">[\\</a>') == "[\\[\\\\](x)"
+    assert html_to_markdown('<a href="x">a\\ </a>') == "[a\\\\](x) "
+
+
+def test_link_text_raw_html_and_autolink_brackets():
+    assert (
+        html_to_markdown('<a href="x">&lt;span title="["&gt;x&lt;/span&gt;]</a>')
+        == '[<span title="[">x</span>\\]](x)'
+    )
+    assert (
+        html_to_markdown('<a href="x">&lt;https://x/a]b&gt;</a>')
+        == "[<https://x/a]b>](x)"
+    )
+
+
+def test_link_text_literal_link_syntax_stays_inside_the_link():
+    assert html_to_markdown('<a href="u">[a](b) x</a>') == "[\\[a\\](b) x](u)"
+    assert html_to_markdown('<a href="u">[a](b) ]</a>') == "[\\[a\\](b) \\]](u)"
+
+
+def test_link_text_nested_image_destination_backtick():
+    assert (
+        html_to_markdown('<a href="x"><img src="a&#96;" alt="pic"> tail ] &#96;</a>')
+        == "[![pic](a`) tail \\] `](x)"
+    )
+    assert (
+        html_to_markdown('<a href="x"><img src="/s" title="t ] u" alt="a"></a>')
+        == '[![a](/s "t ] u")](x)'
+    )
 
 
 def test_renders_link_text_stops_at_first_text(monkeypatch):
