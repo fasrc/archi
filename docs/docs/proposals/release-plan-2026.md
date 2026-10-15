@@ -380,8 +380,9 @@ design ([cutover spec](https://github.com/fasrc/archi/blob/dev/docs/superpowers/
 Before this decision, #671 had no milestone and no `parked` label, so it was one of the
 issues outside the invariant below. The design builds each full rebuild into new tables while
 chat reads the old tables. A gate (dimension, chunk ratio, failure ratio) then
-approves the new set, and one rename transaction makes it live. The chat read
-path does not change. Option (c) of #671, a retriever notice during a rebuild, is
+approves the new set, and one rename transaction makes it live. The chat reader SQL
+does not change. Chat takes its embedding model from the live set, so it uses the old
+model until the cutover. Option (c) of #671, a retriever notice during a rebuild, is
 not necessary, because chat always reads a complete corpus.
 
 **The invariant:** every open issue carries exactly one of {a milestone, the `parked`
