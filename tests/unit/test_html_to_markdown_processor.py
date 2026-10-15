@@ -1189,6 +1189,19 @@ def test_escape_unbalanced_brackets_balanced_unchanged():
     assert result == "[a]"
 
 
+def test_escape_unbalanced_brackets_declaration_needs_ascii_letter():
+    # CommonMark 0.31 starts a declaration with any ASCII letter, either case
+    # (PR #709 review round 3).
+    assert _escape_unbalanced_brackets("<!x ]>") == "<!x ]>"
+    assert _escape_unbalanced_brackets("<!\u00e9 ]>") == "<!\u00e9 \\]>"
+
+
+def test_comment_with_double_hyphen_skipped_as_raw_html():
+    # CommonMark 0.31 dropped the rule against ``--`` in a comment body.
+    s = "<!-- a--b ] -->"
+    assert _escape_unbalanced_brackets(s) is s
+
+
 def test_escape_unbalanced_brackets_already_escaped_unchanged():
     s = "\\]"
     result = _escape_unbalanced_brackets(s)

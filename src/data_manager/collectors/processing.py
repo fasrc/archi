@@ -406,6 +406,7 @@ _HTML_RUNS = (
     ("<![CDATA[", "]]>"),
 )
 _MAX_DEST_NESTING = 32
+_ASCII_ALPHA = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
 _ASCII_PUNCT = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 
 
@@ -439,7 +440,8 @@ def _raw_html_end(text: str, i: int, finder: _Finder) -> int:
                 return i + len(lead)
             k = finder.find(close, i + len(lead))
             return -1 if k == -1 else k + len(close)
-    if text.startswith("<!", i) and i + 2 < len(text) and text[i + 2].isalpha():
+    # A declaration starts with an ASCII letter, not any Unicode letter.
+    if text.startswith("<!", i) and i + 2 < len(text) and text[i + 2] in _ASCII_ALPHA:
         k = finder.find(">", i + 2)
         return -1 if k == -1 else k + 1
     return -1

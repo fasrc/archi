@@ -18,15 +18,18 @@ already Markdown: it can hold a nested image `![alt](src)`, a code span, or an e
 **Goals**
 - Every explicit link written by `convert_a` has link text in which each bracket is
   either balanced or backslash-escaped, so CommonMark 0.31 parses the line as a link.
-- Byte-for-byte unchanged output for link text with no unbalanced bracket.
+- Byte-for-byte unchanged output for link text with no unbalanced bracket and no
+  nested inline link.
 
 **Non-Goals**
 - Turning on `escape_misc=True` (it escapes `\ & < > ` ~ = + |` and line-leading
   `-`, `#`, `1.` in ALL text; not measured, out of scope).
 - Changing destination logic (`_link_destination`) or `_escape_link_label`.
 - Changing `<href>` autolinks: an autolink has no label, and `]` is valid inside it.
-- Nested links inside link text (CommonMark forbids them; markdownify never writes one
-  from valid HTML).
+- Nested reference links (`[a][b]`, `[b][]`, `[b]`) inside link text. They are links
+  only when the document defines the label, and escaping every balanced pair would
+  break the issue #691 guard that `[a [b] c](x)` stays unchanged (PR #709 review
+  round 3; needs a human decision).
 - Text in a `_noformat` context: it is returned before any escape, as today.
 
 ## Decisions
@@ -34,14 +37,22 @@ already Markdown: it can hold a nested image `![alt](src)`, a code span, or an e
 ### D1. Helper `_escape_unbalanced_brackets(text: str) -> str`
 Add it next to `_escape_link_label`. One left-to-right scan over `text`:
 
-1. `\` followed by any character: copy both characters; the second is never counted.
-   A trailing lone `\` is copied as is.
+1. `\` followed by an ASCII punctuation character: copy both characters; the second
+   is never counted. A `\` before any other character is a literal backslash. A lone
+   `\` at the end of the text is doubled, so it cannot escape the closing `]` that the
+   converter writes after the text (PR #709 review).
 2. A backtick run of length `n`: look for the next backtick run of exactly length `n`.
    If found, copy the whole code span verbatim (its brackets are never counted). If not
    found, copy the run as literal text and continue after it (CommonMark rule).
-3. `[`: push its output position on a stack.
-4. `]`: pop the stack if it is not empty (a balanced pair); else mark this `]`.
-5. Any other character: copy it.
+3. `<`: if an autolink or raw inline HTML (CommonMark 0.31: open or closing tag,
+   comment, processing instruction, declaration starting `<!` plus an ASCII letter,
+   CDATA) starts here, copy it verbatim (PR #709 review).
+4. `[`: push its output position on a stack.
+5. `]`: pop the stack if it is not empty (a balanced pair); else mark this `]`. If the
+   pair is followed by a valid `(dest "title")` tail, it is a nested inline link or
+   image: copy an image's tail verbatim, and mark both brackets of a link, because
+   CommonMark does not let a link hold a link (PR #709 review round 2).
+6. Any other character: copy it.
 
 At the end, mark every `[` still on the stack. Return `text` with a `\` inserted before
 each marked bracket. When nothing is marked, return `text` itself (same object), so the
