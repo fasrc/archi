@@ -28,14 +28,14 @@
 
 ## 2. Docs
 
-- [ ] 2.1 In `docs/docs/configuration.md`, add the bullet of design D3 after the
+- [x] 2.1 In `docs/docs/configuration.md`, add the bullet of design D3 after the
       issue #605 bullet ("A link target that Markdown would misread is escaped.").
       Run `bash scripts/gate.sh` and commit when green (message:
       `document link text bracket escaping`).
 
 ## 3. Publish
 
-- [ ] 3.1 Push the branch: `git push -u origin fix/issue-691-link-text-brackets`.
+- [x] 3.1 Push the branch: `git push -u origin fix/issue-691-link-text-brackets`.
       Open the PR: `gh pr create --repo fasrc/archi --base dev` with `Closes #691` in
       the BODY (not the title). In the body, copy the measurement from design.md
       "## Measurement" and list any pinned test output that changed (expected: none).
