@@ -943,7 +943,9 @@ def test_hoist_anchor_with_image_before_code_keeps_linked_image():
     ("element", "link"),
     [
         ("<hr>", "[---](https://x/y)"),
-        ('<video src="v.mp4"></video>', "[[](v.mp4)](https://x/y)"),
+        # The video's own empty link is written as text so that the outer link
+        # parses: a link may not hold a link (PR #709 review round 2).
+        ('<video src="v.mp4"></video>', "[\\[\\](v.mp4)](https://x/y)"),
     ],
 )
 def test_hoist_anchor_with_textless_rendered_element_converts_as_before(element, link):
@@ -1266,6 +1268,31 @@ def test_escape_unbalanced_brackets_paren_title_stops_at_open_paren():
     assert time.perf_counter() - start < 2.0
 
 
+def test_escape_unbalanced_brackets_destination_nesting_limit():
+    # CommonMark readers stop a destination at 32 nested ``(``, which also keeps
+    # each malformed tail scan short (PR #709 review round 2).
+    deep = "![a](" + "(" * 32 + "]" + ")" * 32 + ")"
+    assert _escape_unbalanced_brackets(deep) == deep
+    deeper = "![a](" + "(" * 33 + "]" + ")" * 33 + ")"
+    assert _escape_unbalanced_brackets(deeper) == (
+        "![a](" + "(" * 33 + "\\]" + ")" * 33 + ")"
+    )
+    label = "[" * 8000 + "](" * 8000
+    start = time.perf_counter()
+    _escape_unbalanced_brackets(label)
+    assert time.perf_counter() - start < 2.0
+
+
+def test_escape_unbalanced_brackets_neutralizes_inner_links():
+    # A link inside link text stops the outer link from parsing, so its
+    # brackets are escaped; an image may sit in a link (PR #709 review round 2).
+    assert _escape_unbalanced_brackets("[a](b) x") == "\\[a\\](b) x"
+    assert _escape_unbalanced_brackets("[a](b) ]") == "\\[a\\](b) \\]"
+    assert _escape_unbalanced_brackets("\\![i](s)") == "\\!\\[i\\](s)"
+    assert _escape_unbalanced_brackets("![a [b](c)](d)") == "![a \\[b\\](c)](d)"
+    assert _escape_unbalanced_brackets("![i](s) [a]") == "![i](s) [a]"
+
+
 def test_escape_unbalanced_brackets_empty_unchanged():
     result = _escape_unbalanced_brackets("")
     assert result == ""
@@ -1355,6 +1382,11 @@ def test_link_text_raw_html_and_autolink_brackets():
         html_to_markdown('<a href="x">&lt;https://x/a]b&gt;</a>')
         == "[<https://x/a]b>](x)"
     )
+
+
+def test_link_text_literal_link_syntax_stays_inside_the_link():
+    assert html_to_markdown('<a href="u">[a](b) x</a>') == "[\\[a\\](b) x](u)"
+    assert html_to_markdown('<a href="u">[a](b) ]</a>') == "[\\[a\\](b) \\]](u)"
 
 
 def test_link_text_nested_image_destination_backtick():

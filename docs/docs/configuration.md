@@ -810,7 +810,10 @@ data_manager:
   that bracket so the link survives CommonMark parsing (issue #691). Brackets inside a
   code span, an autolink, raw inline HTML, or a nested image's destination or title do
   not count, and a lone `\` at the end of the link text is doubled so it cannot escape
-  the closing `]`. Balanced brackets and nested images are unchanged, and an `<a>`
+  the closing `]`. Link syntax inside the link text, such as `[a](b)` or the empty link
+  that `markdownify` writes for a `<video>`, has its brackets escaped, because
+  CommonMark does not let a link hold a link. Balanced brackets and nested images are
+  unchanged, and an `<a>`
   without an `href` (written as plain text) is not escaped; like every item in this
   list, it reaches disk only for new or force-overwritten documents.
 - **Content after a nested list starts on its own line.** `markdownify` drops the newline

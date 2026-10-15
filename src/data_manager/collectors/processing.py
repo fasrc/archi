@@ -402,6 +402,7 @@ _HTML_RUNS = (
     ("<?", "?>"),
     ("<![CDATA[", "]]>"),
 )
+_MAX_DEST_NESTING = 32
 _ASCII_PUNCT = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 
 
@@ -469,6 +470,10 @@ def _link_tail_end(text: str, i: int) -> int:
                 j += 2
                 continue
             if text[j] == "(":
+                # Readers stop at 32 nested ``(``; the cap also keeps each failed
+                # scan short (PR #709 review round 2).
+                if depth == _MAX_DEST_NESTING:
+                    return -1
                 depth += 1
             elif text[j] == ")":
                 if depth == 0:
@@ -498,8 +503,9 @@ def _escape_unbalanced_brackets(text: str) -> str:
 
     The text is scanned left to right as CommonMark 0.31 reads it: a backslash
     escape, a code span, an autolink, raw inline HTML, or the ``(dest "title")``
-    tail of a nested link or image is copied as it is, and each remaining ``[``
-    or ``]`` that is not paired gets a ``\\`` before it. A lone backslash at the
+    tail of a nested image is copied as it is, and each remaining ``[`` or ``]``
+    that is not paired gets a ``\\`` before it. A nested link gets both of its
+    brackets escaped, since CommonMark does not let a link hold a link. A lone backslash at the
     end of the label is doubled so it cannot escape the closing ``]`` (PR #709
     review). Returns ``text`` unchanged (same object) when nothing needs escaping.
     """
@@ -510,14 +516,16 @@ def _escape_unbalanced_brackets(text: str) -> str:
     runs: dict[int, list[int]] = {}
     for run in _BACKTICK_RUNS.finditer(text):
         runs.setdefault(run.end() - run.start(), []).append(run.start())
-    stack: list[int] = []  # positions of unmatched '['
+    stack: list[tuple[int, bool]] = []  # unmatched '[': (position, opens an image)
     mark: list[int] = []  # positions that need a '\' prepended
+    escaped_to = -1  # end of the last backslash escape
     i = 0
     while i < n:
         ch = text[i]
         if ch == "\\":
             if i + 1 < n and text[i + 1] in _ASCII_PUNCT:
                 i += 2
+                escaped_to = i
                 continue
             if i == end - 1:
                 mark.append(i)
@@ -533,21 +541,25 @@ def _escape_unbalanced_brackets(text: str) -> str:
             k = _raw_html_end(text, i, finder)
             i = k if k != -1 else i + 1
         elif ch == "[":
-            stack.append(i)
+            stack.append((i, i > 0 and text[i - 1] == "!" and escaped_to != i))
             i += 1
         elif ch == "]":
             i += 1
             if not stack:
                 mark.append(i - 1)
                 continue
-            stack.pop()
+            opener, image = stack.pop()
             if i < n and text[i] == "(":
                 k = _link_tail_end(text, i)
-                if k != -1:
+                if k != -1 and image:
                     i = k
+                elif k != -1:
+                    # Links may not hold links, so an inner link would stop the
+                    # outer one from parsing: write it as text (PR #709 review).
+                    mark.extend((opener, i - 1))
         else:
             i += 1
-    mark.extend(stack)
+    mark.extend(pos for pos, _ in stack)
     if not mark:
         return text
     out: list[str] = []
