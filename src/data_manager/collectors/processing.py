@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 import sys
 import threading
+from bisect import bisect_left
 from typing import (
     Any,
     Callable,
@@ -380,75 +381,183 @@ def _escape_link_label(label: str) -> str:
     )
 
 
+# CommonMark 0.31 inline constructs that bind tighter than link brackets and that
+# start at a ``<``: an autolink, then an HTML open or closing tag (PR #709 review).
+_AUTOLINK_AT = re.compile(
+    r"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\x00-\x20]*"
+    r"|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>"
+)
+_HTML_TAG_AT = re.compile(
+    r"<[A-Za-z][A-Za-z0-9-]*"
+    r"""(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*"""
+    r"\s*/?>"
+    r"|</[A-Za-z][A-Za-z0-9-]*\s*>"
+)
+# Raw HTML forms that run to a fixed terminator: (start, terminator).
+_HTML_RUNS = (
+    ("<!-->", ""),
+    ("<!--->", ""),
+    ("<!--", "-->"),
+    ("<?", "?>"),
+    ("<![CDATA[", "]]>"),
+)
+_ASCII_PUNCT = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+
+
+class _Finder:
+    """Find the next ``needle`` at or after a position, rescanning only on a miss.
+
+    A scanner asks for terminators at rising positions, so caching the last hit
+    (or the last miss) keeps the total work linear in the text.
+    """
+
+    def __init__(self, text: str):
+        self._text = text
+        self._hits: dict[str, int] = {}
+
+    def find(self, needle: str, start: int) -> int:
+        hit = self._hits.get(needle)
+        if hit is None or (hit != -1 and hit < start):
+            hit = self._text.find(needle, start)
+            self._hits[needle] = hit
+        return hit
+
+
+def _raw_html_end(text: str, i: int, finder: _Finder) -> int:
+    """End of the autolink or raw inline HTML that starts at ``text[i]``, or -1."""
+    m = _AUTOLINK_AT.match(text, i) or _HTML_TAG_AT.match(text, i)
+    if m:
+        return m.end()
+    for lead, close in _HTML_RUNS:
+        if text.startswith(lead, i):
+            if not close:
+                return i + len(lead)
+            k = finder.find(close, i + len(lead))
+            return -1 if k == -1 else k + len(close)
+    if text.startswith("<!", i) and i + 2 < len(text) and text[i + 2].isalpha():
+        k = finder.find(">", i + 2)
+        return -1 if k == -1 else k + 1
+    return -1
+
+
+def _skip_space(text: str, j: int) -> int:
+    while j < len(text) and text[j] in " \t\n":
+        j += 1
+    return j
+
+
+def _link_tail_end(text: str, i: int) -> int:
+    """End of the inline link tail ``(dest "title")`` at ``text[i]``, or -1.
+
+    Brackets and backticks in a destination or title take no part in label
+    balancing, so the scanner copies the tail as it is (PR #709 review).
+    """
+    n = len(text)
+    j = _skip_space(text, i + 1)
+    if j < n and text[j] == "<":
+        j += 1
+        while j < n and text[j] not in "<>\n":
+            j += 2 if text[j] == "\\" and j + 1 < n else 1
+        if j >= n or text[j] != ">":
+            return -1
+        j += 1
+    else:
+        depth = 0
+        while j < n and not text[j].isspace() and ord(text[j]) >= 0x20:
+            if text[j] == "\\" and j + 1 < n:
+                j += 2
+                continue
+            if text[j] == "(":
+                depth += 1
+            elif text[j] == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            j += 1
+        if depth:
+            return -1
+    k = _skip_space(text, j)
+    if k > j and k < n and text[k] in "\"'(":
+        close = ")" if text[k] == "(" else text[k]
+        # A parenthesized title holds no unescaped ``(``.
+        stop = close + "(" if close == ")" else close
+        k += 1
+        while k < n and text[k] not in stop:
+            k += 2 if text[k] == "\\" and k + 1 < n else 1
+        if k >= n or text[k] != close:
+            return -1
+        j = _skip_space(text, k + 1)
+    else:
+        j = k
+    return j + 1 if j < n and text[j] == ")" else -1
+
+
 def _escape_unbalanced_brackets(text: str) -> str:
     """Escape unbalanced ``[`` and ``]`` in Markdown link text (issue #691).
 
-    Each ``[`` or ``]`` that is not paired, not already backslash-escaped, and not
-    inside a code span gets a ``\\`` inserted before it.  Returns ``text`` unchanged
-    (same object) when nothing needs escaping.
+    The text is scanned left to right as CommonMark 0.31 reads it: a backslash
+    escape, a code span, an autolink, raw inline HTML, or the ``(dest "title")``
+    tail of a nested link or image is copied as it is, and each remaining ``[``
+    or ``]`` that is not paired gets a ``\\`` before it. A lone backslash at the
+    end of the label is doubled so it cannot escape the closing ``]`` (PR #709
+    review). Returns ``text`` unchanged (same object) when nothing needs escaping.
     """
-    out: list[str] = []
-    stack: list[int] = []  # output positions of unmatched '['
-    mark: set[int] = set()  # output positions that need a '\' prepended
-    i = 0
     n = len(text)
+    end = len(text.rstrip())
+    finder = _Finder(text)
+    # Start positions of each backtick run, by run length, for closer lookup.
+    runs: dict[int, list[int]] = {}
+    for run in _BACKTICK_RUNS.finditer(text):
+        runs.setdefault(run.end() - run.start(), []).append(run.start())
+    stack: list[int] = []  # positions of unmatched '['
+    mark: list[int] = []  # positions that need a '\' prepended
+    i = 0
     while i < n:
         ch = text[i]
-        if ch == "\\" and i + 1 < n:
-            out.append(ch)
-            out.append(text[i + 1])
-            i += 2
-            continue
-        if ch == "`":
-            # Measure the backtick run length.
+        if ch == "\\":
+            if i + 1 < n and text[i + 1] in _ASCII_PUNCT:
+                i += 2
+                continue
+            if i == end - 1:
+                mark.append(i)
+            i += 1
+        elif ch == "`":
             j = i
             while j < n and text[j] == "`":
                 j += 1
-            run_len = j - i
-            # Search for a closing run of exactly the same length.
-            k = j
-            while k < n:
-                if text[k] == "`":
-                    m = k
-                    while m < n and text[m] == "`":
-                        m += 1
-                    if m - k == run_len:
-                        # Found matching close — copy the whole code span verbatim.
-                        out.append(text[i:m])
-                        i = m
-                        break
-                    k = m
-                else:
-                    k += 1
-            else:
-                # No matching close: copy the run as literal text, continue after.
-                out.append(text[i:j])
-                i = j
-            continue
-        if ch == "[":
-            stack.append(len(out))
-            out.append(ch)
+            starts = runs.get(j - i, [])
+            k = bisect_left(starts, j)
+            i = starts[k] + (j - i) if k < len(starts) else j
+        elif ch == "<":
+            k = _raw_html_end(text, i, finder)
+            i = k if k != -1 else i + 1
+        elif ch == "[":
+            stack.append(i)
             i += 1
-            continue
-        if ch == "]":
-            if stack:
-                stack.pop()
-            else:
-                mark.add(len(out))
-            out.append(ch)
+        elif ch == "]":
             i += 1
-            continue
-        out.append(ch)
-        i += 1
-    mark.update(stack)
+            if not stack:
+                mark.append(i - 1)
+                continue
+            stack.pop()
+            if i < n and text[i] == "(":
+                k = _link_tail_end(text, i)
+                if k != -1:
+                    i = k
+        else:
+            i += 1
+    mark.extend(stack)
     if not mark:
         return text
-    result: list[str] = []
-    for pos, ch in enumerate(out):
-        if pos in mark:
-            result.append("\\")
-        result.append(ch)
-    return "".join(result)
+    out: list[str] = []
+    last = 0
+    for pos in sorted(mark):
+        out.append(text[last:pos])
+        out.append("\\")
+        last = pos
+    out.append(text[last:])
+    return "".join(out)
 
 
 def _autolink_needs_explicit_form(href: str) -> bool:
@@ -870,7 +979,10 @@ class _ArchiMarkdownConverter(MarkdownConverter):
         if "_noformat" in parent_tags:
             return out
         href = el.get("href") or ""
-        if href and out == f"<{href}>":
+        if not href:
+            # The base converter writes no link, so its text needs no label escape.
+            return out
+        if out == f"<{href}>":
             if not _URI_SCHEME.match(href) or _autolink_needs_explicit_form(href):
                 prefix, suffix, _ = chomp(text)
                 label = _escape_link_label(href)
@@ -879,13 +991,11 @@ class _ArchiMarkdownConverter(MarkdownConverter):
         safe = _escape_unbalanced_brackets(text)
         if safe is not text:
             out = super().convert_a(el, safe, parent_tags)
-            # Edge case: re-render produced an autolink (href itself contains \] or \[).
-            if href and out == f"<{href}>":
-                if not _URI_SCHEME.match(href) or _autolink_needs_explicit_form(href):
-                    prefix, suffix, _ = chomp(safe)
-                    label = _escape_link_label(href)
-                    return f"{prefix}[{label}]({_link_destination(href)}){suffix}"
-                return out
+            if out == f"<{href}>":
+                # The escaped label equals the href, so the base converter wrote an
+                # autolink, which would show the escapes as text (PR #709 review).
+                prefix, suffix, label = chomp(safe)
+                return f"{prefix}[{label}]({_link_destination(href)}){suffix}"
         dest = _link_destination(href)
         if dest != href:
             # The outer destination is the one followed by the base converter's

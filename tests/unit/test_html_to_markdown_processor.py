@@ -1,6 +1,7 @@
 """Tests for HtmlToMarkdownProcessor (HTML->Markdown conversion at persist time)."""
 
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -1203,10 +1204,66 @@ def test_escape_unbalanced_brackets_unmatched_backtick_then_close():
     assert _escape_unbalanced_brackets("`]") == "`\\]"
 
 
-def test_escape_unbalanced_brackets_trailing_backslash_unchanged():
-    s = "a\\"
-    result = _escape_unbalanced_brackets(s)
-    assert result == s
+def test_escape_unbalanced_brackets_trailing_backslash_doubled():
+    # A lone terminal backslash would escape the label's closing ``]`` (PR #709 review).
+    assert _escape_unbalanced_brackets("a\\") == "a\\\\"
+    assert _escape_unbalanced_brackets("[\\") == "\\[\\\\"
+    assert _escape_unbalanced_brackets("a\\\\") == "a\\\\"
+
+
+def test_escape_unbalanced_brackets_skips_raw_html():
+    # Brackets in raw inline HTML do not take part in label balancing (PR #709 review).
+    assert _escape_unbalanced_brackets('<span title="[">x</span>]') == (
+        '<span title="[">x</span>\\]'
+    )
+    assert _escape_unbalanced_brackets('<span title="]">x</span>') == (
+        '<span title="]">x</span>'
+    )
+    assert _escape_unbalanced_brackets("<!-- [ -->]") == "<!-- [ -->\\]"
+    assert _escape_unbalanced_brackets("<? [ ?>]") == "<? [ ?>\\]"
+    assert _escape_unbalanced_brackets("<![CDATA[ ] ]]>") == "<![CDATA[ ] ]]>"
+    assert _escape_unbalanced_brackets("<!X [>]") == "<!X [>\\]"
+    assert _escape_unbalanced_brackets("</x>]") == "</x>\\]"
+    # A lone ``<`` that opens no HTML or autolink is plain text.
+    assert _escape_unbalanced_brackets("a < b ]") == "a < b \\]"
+
+
+def test_escape_unbalanced_brackets_skips_autolinks():
+    assert _escape_unbalanced_brackets("<https://x/a]b>") == "<https://x/a]b>"
+    assert _escape_unbalanced_brackets("<https://x/a]b> ]") == "<https://x/a]b> \\]"
+
+
+def test_escape_unbalanced_brackets_skips_nested_link_destination_and_title():
+    # A backtick in a nested destination opens no code span (PR #709 review).
+    assert _escape_unbalanced_brackets("![pic](a`) tail ] `") == (
+        "![pic](a`) tail \\] `"
+    )
+    assert _escape_unbalanced_brackets('![a](/s "t ] u")') == '![a](/s "t ] u")'
+    assert _escape_unbalanced_brackets("![a](<s ] t> 't [ u')") == (
+        "![a](<s ] t> 't [ u')"
+    )
+    assert _escape_unbalanced_brackets("![a](s(1)) [") == "![a](s(1)) \\["
+    # A bracket pair followed by text that is no link tail stays plain text.
+    assert _escape_unbalanced_brackets("[a](b c d ]") == "[a](b c d \\]"
+
+
+def test_escape_unbalanced_brackets_linear_in_backtick_runs():
+    # Each unmatched run once rescanned the whole suffix (PR #709 review).
+    label = "".join("`" * (i + 1) + "x" for i in range(1000)) + "]"
+    start = time.perf_counter()
+    assert _escape_unbalanced_brackets(label).endswith("x\\]")
+    assert time.perf_counter() - start < 2.0
+
+
+def test_escape_unbalanced_brackets_paren_title_stops_at_open_paren():
+    # An unescaped ``(`` ends a parenthesized title, so each unclosed one scans
+    # only to the next ``(`` instead of to the end of the text.
+    assert _escape_unbalanced_brackets("![a](b (c) d) [") == "![a](b (c) d) \\["
+    assert _escape_unbalanced_brackets("![a](b (c\\(d)) [") == "![a](b (c\\(d)) \\["
+    label = "[a](b (" * 20000 + "]"
+    start = time.perf_counter()
+    assert _escape_unbalanced_brackets(label).endswith("(\\]")
+    assert time.perf_counter() - start < 2.0
 
 
 def test_escape_unbalanced_brackets_empty_unchanged():
@@ -1265,6 +1322,49 @@ def test_autolink_with_bracket_unchanged():
     assert (
         html_to_markdown('<p><a href="https://x/a]b">https://x/a]b</a></p>')
         == "<https://x/a]b>"
+    )
+
+
+def test_anchor_without_href_text_unchanged():
+    # No link is written, so no escape is needed (PR #709 review).
+    assert html_to_markdown("<p><a>a ] b</a></p>") == "a ] b"
+    assert html_to_markdown('<p><a href="">a ] b</a></p>') == "a ] b"
+
+
+def test_escaped_label_equal_to_href_keeps_original_text():
+    # The escaped label equals the href, so the base converter writes an
+    # autolink; the visible text must stay the HTML text (PR #709 review).
+    assert html_to_markdown('<a href="a\\]">a]</a>') == "[a\\]](<a\\\\]>)"
+    assert (
+        html_to_markdown('<a href="https://x/a\\]">https://x/a]</a>')
+        == "[https://x/a\\]](<https://x/a\\\\]>)"
+    )
+
+
+def test_link_text_terminal_backslash_doubled():
+    assert html_to_markdown('<a href="x">[\\</a>') == "[\\[\\\\](x)"
+    assert html_to_markdown('<a href="x">a\\ </a>') == "[a\\\\](x) "
+
+
+def test_link_text_raw_html_and_autolink_brackets():
+    assert (
+        html_to_markdown('<a href="x">&lt;span title="["&gt;x&lt;/span&gt;]</a>')
+        == '[<span title="[">x</span>\\]](x)'
+    )
+    assert (
+        html_to_markdown('<a href="x">&lt;https://x/a]b&gt;</a>')
+        == "[<https://x/a]b>](x)"
+    )
+
+
+def test_link_text_nested_image_destination_backtick():
+    assert (
+        html_to_markdown('<a href="x"><img src="a&#96;" alt="pic"> tail ] &#96;</a>')
+        == "[![pic](a`) tail \\] `](x)"
+    )
+    assert (
+        html_to_markdown('<a href="x"><img src="/s" title="t ] u" alt="a"></a>')
+        == '[![a](/s "t ] u")](x)'
     )
 
 
