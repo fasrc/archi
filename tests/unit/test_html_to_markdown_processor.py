@@ -18,6 +18,7 @@ from src.data_manager.collectors.processing import (
     ResourcePipeline,
     _ArchiMarkdownConverter,
     _escape_link_label,
+    _escape_unbalanced_brackets,
     _fence_language,
     _link_destination,
     _markdownify,
@@ -1171,6 +1172,100 @@ def test_link_destination_autolink_label_escapes_code_and_emphasis():
 
 def test_link_label_helper_escapes_entity_lead_only():
     assert _escape_link_label("a &amp; b & c*") == "a \\&amp; b & c\\*"
+
+
+# _escape_unbalanced_brackets tests (issue #691)
+
+
+def test_escape_unbalanced_brackets_unmatched_close_escaped():
+    assert _escape_unbalanced_brackets("] [") == "\\] \\["
+
+
+def test_escape_unbalanced_brackets_balanced_unchanged():
+    result = _escape_unbalanced_brackets("[a]")
+    assert result == "[a]"
+
+
+def test_escape_unbalanced_brackets_already_escaped_unchanged():
+    s = "\\]"
+    result = _escape_unbalanced_brackets(s)
+    assert result == s
+
+
+def test_escape_unbalanced_brackets_code_span_unchanged():
+    s = "`a]b`"
+    result = _escape_unbalanced_brackets(s)
+    assert result == s
+
+
+def test_escape_unbalanced_brackets_unmatched_backtick_then_close():
+    # Unmatched backtick run: the ] after it is not inside a code span
+    assert _escape_unbalanced_brackets("`]") == "`\\]"
+
+
+def test_escape_unbalanced_brackets_trailing_backslash_unchanged():
+    s = "a\\"
+    result = _escape_unbalanced_brackets(s)
+    assert result == s
+
+
+def test_escape_unbalanced_brackets_empty_unchanged():
+    result = _escape_unbalanced_brackets("")
+    assert result == ""
+
+
+# html_to_markdown integration tests for bracket escaping (issue #691)
+
+
+def test_unmatched_close_bracket_in_link_text_escaped():
+    assert (
+        html_to_markdown('<p><a href="https://x/y">a ] b</a></p>')
+        == "[a \\] b](https://x/y)"
+    )
+
+
+def test_unmatched_open_bracket_in_link_text_escaped():
+    assert html_to_markdown('<p><a href="x">a [ b</a></p>') == "[a \\[ b](x)"
+
+
+def test_self_link_text_no_longer_equals_href_escaped():
+    assert (
+        html_to_markdown('<a href="https://x/a  ]b">https://x/a  ]b</a>')
+        == "[https://x/a \\]b](<https://x/a  ]b>)"
+    )
+
+
+def test_titled_self_link_bracket_escaped():
+    assert (
+        html_to_markdown('<a href="https://x/a ] b" title="T">https://x/a ] b</a>')
+        == '[https://x/a \\] b](<https://x/a ] b> "T")'
+    )
+
+
+def test_balanced_brackets_in_link_text_unchanged():
+    assert html_to_markdown('<p><a href="x">a [b] c</a></p>') == "[a [b] c](x)"
+
+
+def test_nested_image_in_link_unchanged():
+    assert (
+        html_to_markdown('<p><a href="/b"><img src="/a" alt="pic"></a></p>')
+        == "[![pic](/a)](/b)"
+    )
+
+
+def test_bracket_inside_code_span_in_link_unchanged():
+    assert html_to_markdown('<p><a href="x"><code>a]b</code></a></p>') == "[`a]b`](x)"
+
+
+def test_already_escaped_bracket_in_link_unchanged():
+    assert html_to_markdown('<p><a href="x">a \\] b</a></p>') == "[a \\] b](x)"
+
+
+def test_autolink_with_bracket_unchanged():
+    assert (
+        html_to_markdown('<p><a href="https://x/a]b">https://x/a]b</a></p>')
+        == "<https://x/a]b>"
+    )
 
 
 def test_renders_link_text_stops_at_first_text(monkeypatch):

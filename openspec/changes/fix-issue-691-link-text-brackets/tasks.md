@@ -1,6 +1,6 @@
 ## 1. Unbalanced brackets in link text (measure, red tests, and fix in one task)
 
-- [ ] 1.1 Measure first. Run the converter over the HTML test fixtures in `tests/` (and
+- [x] 1.1 Measure first. Run the converter over the HTML test fixtures in `tests/` (and
       any local KB HTML you can read without network or secrets; skip it if there is
       none) and count `<a>` elements whose rendered link text has an unbalanced `[` or
       `]` outside a code span. Write the sample, the link count, and the unbalanced

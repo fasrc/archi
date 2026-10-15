@@ -380,6 +380,77 @@ def _escape_link_label(label: str) -> str:
     )
 
 
+def _escape_unbalanced_brackets(text: str) -> str:
+    """Escape unbalanced ``[`` and ``]`` in Markdown link text (issue #691).
+
+    Each ``[`` or ``]`` that is not paired, not already backslash-escaped, and not
+    inside a code span gets a ``\\`` inserted before it.  Returns ``text`` unchanged
+    (same object) when nothing needs escaping.
+    """
+    out: list[str] = []
+    stack: list[int] = []  # output positions of unmatched '['
+    mark: set[int] = set()  # output positions that need a '\' prepended
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\" and i + 1 < n:
+            out.append(ch)
+            out.append(text[i + 1])
+            i += 2
+            continue
+        if ch == "`":
+            # Measure the backtick run length.
+            j = i
+            while j < n and text[j] == "`":
+                j += 1
+            run_len = j - i
+            # Search for a closing run of exactly the same length.
+            k = j
+            while k < n:
+                if text[k] == "`":
+                    m = k
+                    while m < n and text[m] == "`":
+                        m += 1
+                    if m - k == run_len:
+                        # Found matching close — copy the whole code span verbatim.
+                        out.append(text[i:m])
+                        i = m
+                        break
+                    k = m
+                else:
+                    k += 1
+            else:
+                # No matching close: copy the run as literal text, continue after.
+                out.append(text[i:j])
+                i = j
+            continue
+        if ch == "[":
+            stack.append(len(out))
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "]":
+            if stack:
+                stack.pop()
+            else:
+                mark.add(len(out))
+            out.append(ch)
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    mark.update(stack)
+    if not mark:
+        return text
+    result: list[str] = []
+    for pos, ch in enumerate(out):
+        if pos in mark:
+            result.append("\\")
+        result.append(ch)
+    return "".join(result)
+
+
 def _autolink_needs_explicit_form(href: str) -> bool:
     """True when ``href`` cannot sit inside CommonMark's ``<href>`` autolink form.
 
@@ -788,10 +859,12 @@ class _ArchiMarkdownConverter(MarkdownConverter):
         #430 and #604) unless the autolink form cannot hold it. Every link
         destination is then escaped so it round-trips through CommonMark 0.31
         when its ``href`` has whitespace, a control character, or unbalanced
-        parentheses (issue #605). A literal, non-Markdown ``href`` used as link
-        text has its brackets escaped so it can't end the label early, and a
-        ``_noformat`` context (inside a code span or block) is left untouched,
-        matching the base converter's own early return.
+        parentheses (issue #605). Unbalanced brackets in explicit link text are
+        backslash-escaped so CommonMark 0.31 parses the link correctly (issue
+        #691). A literal, non-Markdown ``href`` used as link text has its
+        brackets escaped so it can't end the label early, and a ``_noformat``
+        context (inside a code span or block) is left untouched, matching the
+        base converter's own early return.
         """
         out = super().convert_a(el, text, parent_tags)
         if "_noformat" in parent_tags:
@@ -803,6 +876,16 @@ class _ArchiMarkdownConverter(MarkdownConverter):
                 label = _escape_link_label(href)
                 return f"{prefix}[{label}]({_link_destination(href)}){suffix}"
             return out
+        safe = _escape_unbalanced_brackets(text)
+        if safe is not text:
+            out = super().convert_a(el, safe, parent_tags)
+            # Edge case: re-render produced an autolink (href itself contains \] or \[).
+            if href and out == f"<{href}>":
+                if not _URI_SCHEME.match(href) or _autolink_needs_explicit_form(href):
+                    prefix, suffix, _ = chomp(safe)
+                    label = _escape_link_label(href)
+                    return f"{prefix}[{label}]({_link_destination(href)}){suffix}"
+                return out
         dest = _link_destination(href)
         if dest != href:
             # The outer destination is the one followed by the base converter's

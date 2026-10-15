@@ -90,5 +90,12 @@ or force-overwritten documents.
 
 ## Measurement
 
-(Task 1.1 fills this in: the sample, the number of links, and the number with an
-unbalanced bracket in their text.)
+Scanned `tests/unit/test_html_to_markdown_processor.py` — the only source of HTML
+fixtures in this repo (no local KB HTML is accessible without secrets).
+
+- Total `<a>` elements found in HTML strings passed to `html_to_markdown`: **57**
+- Links whose `get_text()` contains an unbalanced bracket: **1**
+  - Sample: `'https://x/a ] b'` — an existing self-link test fixture that already
+    exercises the titled self-link scenario.
+
+No test output changed as a result of implementing the fix.
