@@ -1,6 +1,6 @@
 ## 1. Tags that write link text with no text in them (red tests and fix in one task)
 
-- [ ] 1.1 In `tests/unit/test_html_to_markdown_processor.py`, add exact-string tests for
+- [x] 1.1 In `tests/unit/test_html_to_markdown_processor.py`, add exact-string tests for
       every scenario of the requirement "A hoisted anchor keeps one link when a tag
       writes link text with no text in it" in
       `openspec/changes/fix-issue-713-hoist-q-and-source-marker/specs/ingest-processing/spec.md`.
@@ -23,7 +23,7 @@
 
 ## 2. Source marker attributes (red tests and fix in one task)
 
-- [ ] 2.1 In the same test file, add exact-string tests for every scenario of the
+- [x] 2.1 In the same test file, add exact-string tests for every scenario of the
       requirement "The hoist ignores its marker attributes in the source HTML", right
       AFTER the tests of task 1.1 and BEFORE
       `test_link_destination_unmatched_close_paren_escapes`. Use new, unique test
