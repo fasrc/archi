@@ -46,7 +46,7 @@
 
 ## 4. Publish
 
-- [ ] 4.1 Push the branch:
+- [x] 4.1 Push the branch:
       `git push -u origin fix/issue-713-hoist-q-and-source-marker`. Open the PR:
       `gh pr create --repo fasrc/archi --base dev --head fix/issue-713-hoist-q-and-source-marker`
       with the title `fix(ingest): one link for a hoisted anchor with an empty q, and
