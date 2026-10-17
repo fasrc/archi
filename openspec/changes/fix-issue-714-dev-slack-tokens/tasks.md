@@ -1,6 +1,6 @@
 ## 1. Deploy README: the services list and the dev Slack tokens (red check and fix in one task)
 
-- [ ] 1.1 Run the three `grep` commands of design D3 against `deploy/scripts/README.md`
+- [x] 1.1 Run the three `grep` commands of design D3 against `deploy/scripts/README.md`
       and confirm that each prints NOTHING (the red check; no commit for this step).
       Then, in the same task, edit `deploy/scripts/README.md` only:
       (a) insert the "Services" bullet of design D1 in the "## Notes" list, directly
