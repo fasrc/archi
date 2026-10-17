@@ -19,7 +19,7 @@
 
 ## 2. Publish
 
-- [ ] 2.1 Push the branch:
+- [x] 2.1 Push the branch:
       `git push -u origin fix/issue-714-dev-slack-tokens`. Open the PR:
       `gh pr create --repo fasrc/archi --base dev --head fix/issue-714-dev-slack-tokens`
       with the title `docs(deploy): name the dev slack tokens and the services list` and
