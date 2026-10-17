@@ -970,6 +970,118 @@ def test_hoist_two_blocks_then_text_give_no_extra_link():
     )
 
 
+# --- hoisted anchor with a tag that writes link text with no text (issue #713) ---
+
+_A = "```\na\nb\n```"
+_C = "```\nc\nd\n```"
+
+
+def test_hoist_empty_q_after_two_blocks_gives_one_link():
+    """An empty <q> is link text (markdownify writes '""'), so the head half must
+    not add a second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<q></q></a></p>"
+        )
+        == _A + "\n\n" + _C + '\n\n[""](https://x/y)'
+    )
+
+
+def test_hoist_empty_q_issue_first_probe_gives_one_link():
+    """The first probe from issue #713 (no wrapping <p>) gives exactly one link."""
+    result = html_to_markdown(
+        '<a href="https://x/y"><code>a<br>b</code><code>c<br>d</code><q></q></a>'
+    )
+    assert result == _A + "\n\n" + _C + '\n\n[""](https://x/y)'
+    assert result.count("https://x/y") == 1
+
+
+def test_hoist_empty_q_before_block_keeps_link():
+    """An empty <q> before the block is the link text for the head half (issue #713)."""
+    assert (
+        html_to_markdown('<p><a href="https://x/y"><q></q><code>a<br>b</code></a></p>')
+        == '[""](https://x/y)\n\n' + _A
+    )
+
+
+@pytest.mark.parametrize(
+    ("tag", "hashes"),
+    [
+        ("h1", "#"),
+        ("h2", "##"),
+        ("h3", "###"),
+        ("h4", "####"),
+        ("h5", "#####"),
+        ("h6", "######"),
+    ],
+)
+def test_hoist_empty_heading_after_two_blocks_gives_one_link(tag, hashes):
+    """An empty heading writes ATX hashes as link text, so the head half must not
+    add a second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            f'<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            f"<{tag}></{tag}></a></p>"
+        )
+        == _A + "\n\n" + _C + f"\n\n[{hashes}](https://x/y)"
+    )
+
+
+def test_hoist_empty_heading_before_block_keeps_link():
+    """An empty <h1> before the block is the link text for the head half (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><h1></h1><code>a<br>b</code></a></p>'
+        )
+        == "[#](https://x/y)\n\n" + _A
+    )
+
+
+@pytest.mark.parametrize("tag", ["td", "th"])
+def test_hoist_empty_table_cell_after_two_blocks_gives_one_link(tag):
+    """An empty <td> or <th> writes a pipe character as link text, so the head half
+    must not add a second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            f'<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            f"<{tag}></{tag}></a></p>"
+        )
+        == _A + "\n\n" + _C + "\n\n [|](https://x/y)"
+    )
+
+
+def test_hoist_empty_table_row_after_two_blocks_gives_one_link():
+    """An empty <tr> writes a pipe row as link text, so the head half must not add
+    a second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<tr></tr></a></p>"
+        )
+        == _A + "\n\n" + _C + "\n\n[|\n|  |](https://x/y)"
+    )
+
+
+def test_hoist_empty_span_after_two_blocks_is_not_link_text():
+    """Guard: an empty <span> is still not link text; output unchanged (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<span></span></a></p>"
+        )
+        == "<https://x/y>\n\n" + _A + "\n\n" + _C
+    )
+
+
+def test_hoist_lone_block_in_link_is_unchanged():
+    """Guard: a lone block with no other content is unchanged (issue #713)."""
+    assert (
+        html_to_markdown('<p><a href="https://x/y"><code>a<br>b</code></a></p>')
+        == "<https://x/y>\n\n" + _A
+    )
+
+
 def test_link_destination_unmatched_close_paren_escapes():
     assert (
         html_to_markdown('<p><a href="/docs/foo)bar">Docs</a></p>')

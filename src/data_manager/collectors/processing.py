@@ -668,13 +668,16 @@ def _has_content(tag) -> bool:
     return False
 
 
-# The tags that ``markdownify`` converts to output that has no text in it.
-_RENDERS_WITHOUT_TEXT: frozenset = frozenset({"img", "hr", "video"})
+# Tags that markdownify writes characters for even when they hold no text
+# (issue #713: q, h1–h6, td, th, tr added; img, hr, video were already here).
+_RENDERS_WITHOUT_TEXT: frozenset = frozenset(
+    {"h1", "h2", "h3", "h4", "h5", "h6", "hr", "img", "q", "td", "th", "tr", "video"}
+)
 
 
 def _renders_link_text(tag) -> bool:
     """True when *tag* gives ``markdownify`` link text: visible text, or a tag in
-    ``_RENDERS_WITHOUT_TEXT``.
+    ``_RENDERS_WITHOUT_TEXT`` (issue #430, #713).
 
     ``_has_content`` counts any child tag, but an empty ``<span>`` or a ``<br>``
     renders no text, and ``markdownify`` drops an anchor with no text (issue #430).
