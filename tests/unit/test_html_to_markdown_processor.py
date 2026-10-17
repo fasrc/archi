@@ -1082,6 +1082,113 @@ def test_hoist_lone_block_in_link_is_unchanged():
     )
 
 
+# --- a newly counted tag counts only where the link shows its href (PR #716) ---
+
+
+@pytest.mark.parametrize("wrap", ["kbd", "samp"])
+@pytest.mark.parametrize("tag", ["q", "h1", "h6", "td", "th", "tr"])
+def test_hoist_new_tag_under_noformat_keeps_target(wrap, tag):
+    """Under <kbd> or <samp> markdownify writes the link text but never the href, so
+    an empty newly counted tag must not hide the target; the output is the same as
+    before issue #713 (Codex review on PR #716)."""
+    assert (
+        html_to_markdown(
+            f'<{wrap}><a href="https://x/y"><code>a<br>b</code>'
+            f"<{tag}></{tag}></a></{wrap}>"
+        )
+        == "`https://x/y`\n\n" + _A
+    )
+
+
+def test_hoist_empty_q_before_block_under_kbd_keeps_target():
+    """The head half under <kbd> does not count an empty <q> either (PR #716)."""
+    assert (
+        html_to_markdown(
+            '<p><kbd><a href="https://x/y"><q></q><code>a<br>b</code></a></kbd></p>'
+        )
+        == "`https://x/y`\n\n" + _A
+    )
+
+
+def test_hoist_two_blocks_and_empty_q_under_kbd_keep_target():
+    """Two blocks and an empty <q> under <kbd> keep the target, as before #713."""
+    assert (
+        html_to_markdown(
+            '<p><kbd><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<q></q></a></kbd></p>"
+        )
+        == "`https://x/y`\n\n" + _A + "\n\n" + _C + '\n\n`""`'
+    )
+
+
+@pytest.mark.parametrize("wrap", ["td", "th"])
+@pytest.mark.parametrize("tag", ["h1", "h6"])
+def test_hoist_empty_heading_in_cell_keeps_target(wrap, tag):
+    """markdownify writes no hashes for a heading inside a table cell, so an empty
+    heading there is not link text (Codex review on PR #716)."""
+    assert (
+        html_to_markdown(
+            f'<{wrap}><a href="https://x/y"><code>a<br>b</code>'
+            f"<{tag}></{tag}></a></{wrap}>"
+        )
+        == " <https://x/y>  ``` a b ``` |"
+    )
+
+
+def test_hoist_empty_heading_in_heading_keeps_target():
+    """A heading inside a heading gets no hashes either (PR #716)."""
+    assert (
+        html_to_markdown(
+            '<h2><a href="https://x/y"><code>a<br>b</code><h1></h1></a></h2>'
+        )
+        == "## <https://x/y> ``` a b ```"
+    )
+
+
+def test_hoist_empty_heading_before_block_in_table_keeps_target():
+    """The head half in a table cell does not count an empty heading (PR #716)."""
+    assert (
+        html_to_markdown(
+            '<table><tr><td><a href="https://x/y"><h1></h1><code>a<br>b</code></a>'
+            "</td></tr></table>"
+        )
+        == "|  |\n| --- |\n| <https://x/y>  ``` a b ``` |"
+    )
+
+
+def test_hoist_two_blocks_and_empty_q_in_cell_give_one_link():
+    """Guard: markdownify writes '""' for a <q> in a cell too, so it still counts
+    there and the head half adds no second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<td><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<q></q></a></td>"
+        )
+        == ' ``` a b ```  ``` c d ```  [""](https://x/y) |'
+    )
+
+
+def test_hoist_empty_cell_in_cell_is_link_text():
+    """Guard: markdownify writes a pipe for a cell in a cell, so it still counts."""
+    assert (
+        html_to_markdown(
+            '<td><a href="https://x/y"><code>a<br>b</code><td></td></a></td>'
+        )
+        == " ``` a b ```   [|](https://x/y) |"
+    )
+
+
+def test_hoist_kbd_inside_link_does_not_stop_the_count():
+    """Guard: only the ancestors of the link decide; a <kbd> inside the link still
+    shows the href, so the empty <q> in it counts (PR #716)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><kbd><q></q></kbd></a></p>'
+        )
+        == _A + '\n\n[`""`](https://x/y)'
+    )
+
+
 # --- hoist marker attributes in source HTML are ignored (issue #713) ----------
 
 

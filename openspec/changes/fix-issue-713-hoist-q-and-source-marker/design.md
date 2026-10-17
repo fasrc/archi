@@ -121,6 +121,22 @@ after "(issue #430)". At the end of the same bullet's link sentences (after "bec
 `data-archi-promoted` attribute in the page HTML (issue #713): these names are its own
 markers." Do not change any other text in the file.
 
+### D4. Count the new tags only where the link shows its href (PR #716 review)
+
+markdownify's `convert_a` writes only the link text, never the `href`, under a `pre`,
+`code`, `kbd`, or `samp` ancestor (its `_noformat` context), and `convert_hN` writes no
+hashes under a heading, `td`, or `th` ancestor (its `_inline` context). Counting a D1 tag
+in those places hides the synthesized target and gains nothing: on the D1-only code,
+`<kbd><a href="https://x/y"><code>a<br>b</code><q></q></a></kbd>` gives the fence and
+`` `""` `` with no `https://x/y`, and `<td><a href="https://x/y"><code>a<br>b</code><h1></h1></a></td>`
+gives the cell with no `https://x/y`. Before D1 both kept the target.
+
+`_link_text_tags(anchor)` reads the anchor's ancestors and returns the counted set: only
+`img`, `hr`, `video` under a no-format ancestor, all D1 tags except the headings under a
+heading or cell, and the full set elsewhere. The hoist splits only inline markup, so both
+halves keep the ancestors it reads. `img`, `hr`, and `video` keep their old behavior in
+every context (the Goals ask for no change to anchors without a D1 tag).
+
 ## Measurement
 
 Prototype on `82850b3b`: the D1 set and the D2 strip applied at run time (no file
@@ -135,7 +151,8 @@ edit). Results:
 ## Risks / Trade-offs
 
 - An empty heading or cell inside a link now renders as `[#](href)` or ` [|](href)`
-  instead of a synthesized `<href>`. Both keep the target once. The text is markdownify's
-  own rendering of the tag.
+  instead of a synthesized `<href>` where markdownify writes those characters. Both keep
+  the target once. The text is markdownify's own rendering of the tag. Elsewhere D4
+  keeps the synthesized target.
 - One more pass over all tags per converted page. The conversion already walks the tree
   several times; the cost is linear.

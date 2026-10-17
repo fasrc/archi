@@ -674,10 +674,36 @@ _RENDERS_WITHOUT_TEXT: frozenset = frozenset(
     {"h1", "h2", "h3", "h4", "h5", "h6", "hr", "img", "q", "td", "th", "tr", "video"}
 )
 
+_HEADING_TAGS: frozenset = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 
-def _renders_link_text(tag) -> bool:
+# The ancestors that set markdownify's ``_noformat`` context, where an anchor writes
+# its text but no href, and its ``_inline`` context, where a heading writes no hashes.
+_NOFORMAT_TAGS: frozenset = frozenset({"pre", "code", "kbd", "samp"})
+_INLINE_CONTEXT_TAGS: frozenset = _HEADING_TAGS | {"td", "th"}
+
+# The issue #713 tags count only where they make the anchor show its href, so they
+# do not hide the synthesized target anywhere else (Codex review on PR #716).
+_LINK_TEXT_TAGS_NOFORMAT: frozenset = frozenset({"hr", "img", "video"})
+_LINK_TEXT_TAGS_INLINE: frozenset = _RENDERS_WITHOUT_TEXT - _HEADING_TAGS
+
+
+def _link_text_tags(anchor) -> frozenset:
+    """Return the tags that give *anchor* link text with no text in them (PR #716).
+
+    The ancestors of *anchor* set the context. The hoist splits only inline markup,
+    so both halves keep these ancestors.
+    """
+    context = {tag.name for tag in anchor.parents}
+    if context & _NOFORMAT_TAGS:
+        return _LINK_TEXT_TAGS_NOFORMAT
+    if context & _INLINE_CONTEXT_TAGS:
+        return _LINK_TEXT_TAGS_INLINE
+    return _RENDERS_WITHOUT_TEXT
+
+
+def _renders_link_text(tag, counted: frozenset = _RENDERS_WITHOUT_TEXT) -> bool:
     """True when *tag* gives ``markdownify`` link text: visible text, or a tag in
-    ``_RENDERS_WITHOUT_TEXT`` (issue #430, #713).
+    *counted* (issue #430, #713).
 
     ``_has_content`` counts any child tag, but an empty ``<span>`` or a ``<br>``
     renders no text, and ``markdownify`` drops an anchor with no text (issue #430).
@@ -687,7 +713,7 @@ def _renders_link_text(tag) -> bool:
     """
     for node in tag.descendants:
         if isinstance(node, Tag):
-            if node.name in _RENDERS_WITHOUT_TEXT:
+            if node.name in counted:
                 return True
         elif type(node) is NavigableString and node.strip():
             return True
@@ -762,12 +788,13 @@ def _hoist_out_of_inline(pre, soup) -> None:
         _trim_cut_whitespace(parent, trailing=True)
         _trim_cut_whitespace(tail, trailing=False)
         is_link = parent.name == "a" and bool(parent.get("href"))
-        tail_has_text = is_link and _renders_link_text(tail)
+        counted = _link_text_tags(parent) if is_link else _RENDERS_WITHOUT_TEXT
+        tail_has_text = is_link and _renders_link_text(tail, counted)
         if (
             is_link
             and not tail_has_text
             and not parent.has_attr(_LINK_SHOWN_ATTR)
-            and not _renders_link_text(parent)
+            and not _renders_link_text(parent, counted)
         ):
             link = soup.new_tag("a", href=parent["href"])
             link.string = (parent.get("title") or "").strip() or parent["href"]

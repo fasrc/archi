@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: A hoisted anchor keeps one link when a tag writes link text with no text in it
-When the hoist of a promoted code block splits an `a` ancestor with a non-empty `href`, the HTML-to-Markdown conversion SHALL count a `<q>`, `<h1>`–`<h6>`, `<td>`, `<th>`, or `<tr>` descendant as link text even when it holds no text, as it already counts `<img>`, `<hr>`, and `<video>`, so that the anchor renders exactly one link to its `href`, and it SHALL NOT change the output for an anchor that holds none of these newly counted tags.
+When the hoist of a promoted code block splits an `a` ancestor with a non-empty `href`, the HTML-to-Markdown conversion SHALL count a `<q>`, `<h1>`–`<h6>`, `<td>`, `<th>`, or `<tr>` descendant as link text even when it holds no text, as it already counts `<img>`, `<hr>`, and `<video>`, so that the anchor renders exactly one link to its `href`, except that it SHALL NOT count these newly counted tags when the anchor is inside a `<pre>`, `<code>`, `<kbd>`, or `<samp>` and SHALL NOT count a heading when the anchor is inside a heading, `<td>`, or `<th>`, and it SHALL NOT change the output for an anchor that holds none of these newly counted tags.
 
 markdownify 1.2.2 writes characters for each of these tags when the tag is empty (`""`, one to six `#`, `|`), so a half that holds one renders a link. In the scenarios below, `A` is the Python string ``'```\na\nb\n```'`` and `C` is the Python string ``'```\nc\nd\n```'``.
 
@@ -40,6 +40,18 @@ markdownify 1.2.2 writes characters for each of these tags when the tag is empty
 #### Scenario: A lone block in a link is unchanged
 - **WHEN** `html_to_markdown('<p><a href="https://x/y"><code>a<br>b</code></a></p>')` runs
 - **THEN** the result is `"<https://x/y>\n\n" + A`, the same as before this change
+
+#### Scenario: An empty quotation under a keyboard tag keeps the target
+- **WHEN** `html_to_markdown('<kbd><a href="https://x/y"><code>a<br>b</code><q></q></a></kbd>')` runs
+- **THEN** the result is ``"`https://x/y`\n\n" + A``, the same as before this change, and `<samp>` or any other newly counted tag in place of `<q>` gives the same result
+
+#### Scenario: An empty heading in a table cell keeps the target
+- **WHEN** `html_to_markdown('<td><a href="https://x/y"><code>a<br>b</code><h1></h1></a></td>')` runs
+- **THEN** the result is ``" <https://x/y>  ``` a b ``` |"``, the same as before this change, and `<th>` or `<h2>` in place of `<td>` gives the same link
+
+#### Scenario: An empty quotation in a table cell gives one link
+- **WHEN** `html_to_markdown('<td><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code><q></q></a></td>')` runs
+- **THEN** the result is ``' ``` a b ```  ``` c d ```  [""](https://x/y) |'``
 
 ### Requirement: The hoist ignores its marker attributes in the source HTML
 The HTML-to-Markdown conversion SHALL remove the `data-archi-link-shown` and `data-archi-promoted` attributes from every tag of the source HTML before it promotes or hoists any code block, so that only the conversion itself sets them, and it SHALL still mark each block that it promotes with `data-archi-promoted`.

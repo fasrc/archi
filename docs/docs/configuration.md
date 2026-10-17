@@ -789,7 +789,10 @@ data_manager:
   (issue #713): it is replaced by one link before the
   fence, whose text is the link's `title` or, if there is none, its `href` — so
   `<a href="https://x/y">` around a lone block becomes `<https://x/y>` above the fence and
-  the target stays in the knowledge base. A relative or fragment target, such as `/docs`,
+  the target stays in the knowledge base. A quotation, heading, or table cell does not
+  count when the link is inside `<kbd>`, `<samp>`, `<code>`, or `<pre>`, where the link
+  shows no target, and a heading does not count inside a heading or table cell, where it
+  shows no `#` (PR #716 review). A relative or fragment target, such as `/docs`,
   becomes `[/docs](/docs)`. The conversion ignores a `data-archi-link-shown` or
   `data-archi-promoted` attribute in the page HTML (issue #713): these names are its own
   markers. Whitespace that touches the cut is removed,
