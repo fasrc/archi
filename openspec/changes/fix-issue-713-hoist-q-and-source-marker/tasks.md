@@ -39,7 +39,7 @@
 
 ## 3. Docs
 
-- [ ] 3.1 In `docs/docs/configuration.md`, make the two edits of design D3 in the bullet
+- [x] 3.1 In `docs/docs/configuration.md`, make the two edits of design D3 in the bullet
       "A promoted block leaves its inline ancestors." and change nothing else. Run
       `bash scripts/gate.sh` and commit when green (message: `document the hoist link
       text tags and source markers`).
