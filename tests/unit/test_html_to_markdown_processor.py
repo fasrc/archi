@@ -970,6 +970,292 @@ def test_hoist_two_blocks_then_text_give_no_extra_link():
     )
 
 
+# --- hoisted anchor with a tag that writes link text with no text (issue #713) ---
+
+_A = "```\na\nb\n```"
+_C = "```\nc\nd\n```"
+
+
+def test_hoist_empty_q_after_two_blocks_gives_one_link():
+    """An empty <q> is link text (markdownify writes '""'), so the head half must
+    not add a second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<q></q></a></p>"
+        )
+        == _A + "\n\n" + _C + '\n\n[""](https://x/y)'
+    )
+
+
+def test_hoist_empty_q_issue_first_probe_gives_one_link():
+    """The first probe from issue #713 (no wrapping <p>) gives exactly one link."""
+    result = html_to_markdown(
+        '<a href="https://x/y"><code>a<br>b</code><code>c<br>d</code><q></q></a>'
+    )
+    assert result == _A + "\n\n" + _C + '\n\n[""](https://x/y)'
+    assert result.count("https://x/y") == 1
+
+
+def test_hoist_empty_q_before_block_keeps_link():
+    """An empty <q> before the block is the link text for the head half (issue #713)."""
+    assert (
+        html_to_markdown('<p><a href="https://x/y"><q></q><code>a<br>b</code></a></p>')
+        == '[""](https://x/y)\n\n' + _A
+    )
+
+
+@pytest.mark.parametrize(
+    ("tag", "hashes"),
+    [
+        ("h1", "#"),
+        ("h2", "##"),
+        ("h3", "###"),
+        ("h4", "####"),
+        ("h5", "#####"),
+        ("h6", "######"),
+    ],
+)
+def test_hoist_empty_heading_after_two_blocks_gives_one_link(tag, hashes):
+    """An empty heading writes ATX hashes as link text, so the head half must not
+    add a second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            f'<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            f"<{tag}></{tag}></a></p>"
+        )
+        == _A + "\n\n" + _C + f"\n\n[{hashes}](https://x/y)"
+    )
+
+
+def test_hoist_empty_heading_before_block_keeps_link():
+    """An empty <h1> before the block is the link text for the head half (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><h1></h1><code>a<br>b</code></a></p>'
+        )
+        == "[#](https://x/y)\n\n" + _A
+    )
+
+
+@pytest.mark.parametrize("tag", ["td", "th"])
+def test_hoist_empty_table_cell_after_two_blocks_gives_one_link(tag):
+    """An empty <td> or <th> writes a pipe character as link text, so the head half
+    must not add a second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            f'<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            f"<{tag}></{tag}></a></p>"
+        )
+        == _A + "\n\n" + _C + "\n\n [|](https://x/y)"
+    )
+
+
+def test_hoist_empty_table_row_after_two_blocks_gives_one_link():
+    """An empty <tr> writes a pipe row as link text, so the head half must not add
+    a second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<tr></tr></a></p>"
+        )
+        == _A + "\n\n" + _C + "\n\n[|\n|  |](https://x/y)"
+    )
+
+
+def test_hoist_empty_span_after_two_blocks_is_not_link_text():
+    """Guard: an empty <span> is still not link text; output unchanged (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<span></span></a></p>"
+        )
+        == "<https://x/y>\n\n" + _A + "\n\n" + _C
+    )
+
+
+def test_hoist_lone_block_in_link_is_unchanged():
+    """Guard: a lone block with no other content is unchanged (issue #713)."""
+    assert (
+        html_to_markdown('<p><a href="https://x/y"><code>a<br>b</code></a></p>')
+        == "<https://x/y>\n\n" + _A
+    )
+
+
+# --- a newly counted tag counts only where the link shows its href (PR #716) ---
+
+
+@pytest.mark.parametrize("wrap", ["kbd", "samp"])
+@pytest.mark.parametrize("tag", ["q", "h1", "h6", "td", "th", "tr"])
+def test_hoist_new_tag_under_noformat_keeps_target(wrap, tag):
+    """Under <kbd> or <samp> markdownify writes the link text but never the href, so
+    an empty newly counted tag must not hide the target; the output is the same as
+    before issue #713 (Codex review on PR #716)."""
+    assert (
+        html_to_markdown(
+            f'<{wrap}><a href="https://x/y"><code>a<br>b</code>'
+            f"<{tag}></{tag}></a></{wrap}>"
+        )
+        == "`https://x/y`\n\n" + _A
+    )
+
+
+def test_hoist_empty_q_before_block_under_kbd_keeps_target():
+    """The head half under <kbd> does not count an empty <q> either (PR #716)."""
+    assert (
+        html_to_markdown(
+            '<p><kbd><a href="https://x/y"><q></q><code>a<br>b</code></a></kbd></p>'
+        )
+        == "`https://x/y`\n\n" + _A
+    )
+
+
+def test_hoist_two_blocks_and_empty_q_under_kbd_keep_target():
+    """Two blocks and an empty <q> under <kbd> keep the target, as before #713."""
+    assert (
+        html_to_markdown(
+            '<p><kbd><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<q></q></a></kbd></p>"
+        )
+        == "`https://x/y`\n\n" + _A + "\n\n" + _C + '\n\n`""`'
+    )
+
+
+@pytest.mark.parametrize("wrap", ["td", "th"])
+@pytest.mark.parametrize("tag", ["h1", "h6"])
+def test_hoist_empty_heading_in_cell_keeps_target(wrap, tag):
+    """markdownify writes no hashes for a heading inside a table cell, so an empty
+    heading there is not link text (Codex review on PR #716)."""
+    assert (
+        html_to_markdown(
+            f'<{wrap}><a href="https://x/y"><code>a<br>b</code>'
+            f"<{tag}></{tag}></a></{wrap}>"
+        )
+        == " <https://x/y>  ``` a b ``` |"
+    )
+
+
+def test_hoist_empty_heading_in_heading_keeps_target():
+    """A heading inside a heading gets no hashes either (PR #716)."""
+    assert (
+        html_to_markdown(
+            '<h2><a href="https://x/y"><code>a<br>b</code><h1></h1></a></h2>'
+        )
+        == "## <https://x/y> ``` a b ```"
+    )
+
+
+def test_hoist_empty_heading_before_block_in_table_keeps_target():
+    """The head half in a table cell does not count an empty heading (PR #716)."""
+    assert (
+        html_to_markdown(
+            '<table><tr><td><a href="https://x/y"><h1></h1><code>a<br>b</code></a>'
+            "</td></tr></table>"
+        )
+        == "|  |\n| --- |\n| <https://x/y>  ``` a b ``` |"
+    )
+
+
+def test_hoist_two_blocks_and_empty_q_in_cell_give_one_link():
+    """Guard: markdownify writes '""' for a <q> in a cell too, so it still counts
+    there and the head half adds no second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<td><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<q></q></a></td>"
+        )
+        == ' ``` a b ```  ``` c d ```  [""](https://x/y) |'
+    )
+
+
+def test_hoist_empty_cell_in_cell_is_link_text():
+    """Guard: markdownify writes a pipe for a cell in a cell, so it still counts."""
+    assert (
+        html_to_markdown(
+            '<td><a href="https://x/y"><code>a<br>b</code><td></td></a></td>'
+        )
+        == " ``` a b ```   [|](https://x/y) |"
+    )
+
+
+def test_hoist_kbd_inside_link_does_not_stop_the_count():
+    """Guard: only the ancestors of the link decide; a <kbd> inside the link still
+    shows the href, so the empty <q> in it counts (PR #716)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><kbd><q></q></kbd></a></p>'
+        )
+        == _A + '\n\n[`""`](https://x/y)'
+    )
+
+
+# --- hoist marker attributes in source HTML are ignored (issue #713) ----------
+
+
+def test_source_link_shown_attr_does_not_hide_link_target():
+    """data-archi-link-shown on a source anchor must be stripped before the hoist
+    reads it, so the anchor is not already 'shown' and the link appears (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a data-archi-link-shown href="https://x/y">'
+            "<code>a<br>b</code></a></p>"
+        )
+        == "<https://x/y>\n\n" + _A
+    )
+
+
+def test_source_link_shown_issue_second_probe_keeps_link():
+    """The second probe from issue #713 (no wrapping <p>) keeps the link target."""
+    assert (
+        html_to_markdown(
+            '<a data-archi-link-shown href="https://x/y"><code>a<br>b</code></a>'
+        )
+        == "<https://x/y>\n\n" + _A
+    )
+
+
+def test_source_link_shown_upper_case_attr_is_removed():
+    """html.parser lowercases attribute names, so DATA-ARCHI-LINK-SHOWN is also
+    removed (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a DATA-ARCHI-LINK-SHOWN href="https://x/y">'
+            "<code>a<br>b</code></a></p>"
+        )
+        == "<https://x/y>\n\n" + _A
+    )
+
+
+def test_source_promoted_attr_does_not_label_native_block():
+    """data-archi-promoted on a native <pre> must be stripped before the fence
+    language reader sees it, so the block is not treated as promoted (issue #713)."""
+    assert (
+        html_to_markdown('<pre data-archi-promoted class="bash">ls</pre>')
+        == "```\nls\n```"
+    )
+
+
+def test_promote_step_drops_both_source_markers():
+    """_promote_block_code removes data-archi-link-shown and data-archi-promoted
+    from source HTML before doing its own work (issue #713)."""
+    assert (
+        _promote_block_code(
+            '<p><a data-archi-link-shown="" href="x">t</a>'
+            '<pre data-archi-promoted class="bash">ls</pre></p>'
+        )
+        == '<p><a href="x">t</a><pre class="bash">ls</pre></p>'
+    )
+
+
+def test_promoted_block_still_carries_marker():
+    """Guard: _promote_block_code still sets data-archi-promoted on the blocks it
+    promotes (issue #713)."""
+    assert (
+        _promote_block_code('<p><code class="bash">a<br>b</code></p>')
+        == '<p><pre class="bash" data-archi-promoted=""><code class="bash">a\nb</code></pre></p>'
+    )
+
+
 def test_link_destination_unmatched_close_paren_escapes():
     assert (
         html_to_markdown('<p><a href="/docs/foo)bar">Docs</a></p>')
