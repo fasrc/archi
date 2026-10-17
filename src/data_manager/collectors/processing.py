@@ -783,6 +783,22 @@ def _hoist_out_of_inline(pre, soup) -> None:
             parent.decompose()
 
 
+# The attributes that only this module may set (issue #713).
+_HOIST_MARKER_ATTRS: tuple = (_PROMOTED_ATTR, _LINK_SHOWN_ATTR)
+
+
+def _drop_source_markers(soup) -> None:
+    """Remove the hoist's marker attributes from every tag of the source HTML.
+
+    ``_promoted_fence_language`` and ``_hoist_out_of_inline`` read the markers as
+    their own state, so a marker in the scraped HTML would label a native ``<pre>``
+    or hide a link target (issue #713).
+    """
+    for tag in soup.find_all(True):
+        for name in _HOIST_MARKER_ATTRS:
+            tag.attrs.pop(name, None)
+
+
 def _promote_block_code(html: str) -> str:
     """Promote bare multi-line ``<code>`` elements to ``<pre><code>`` blocks (issue #399).
 
@@ -794,8 +810,11 @@ def _promote_block_code(html: str) -> str:
     ``class`` attribute of the ``<code>`` (if present) so that downstream language
     detection by ``_fence_language`` can fire on the ``<pre>``. The new ``<pre>`` is
     marked with ``_PROMOTED_ATTR`` so ``_promoted_fence_language`` labels only it.
+    Source marker attributes are stripped before promotion so that only this module
+    sets them (issue #713).
     """
     soup = BeautifulSoup(html, "html.parser")
+    _drop_source_markers(soup)
     promoted = []
     for code in soup.find_all("code"):
         if code.find_parent("pre") is not None:

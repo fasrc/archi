@@ -1082,6 +1082,73 @@ def test_hoist_lone_block_in_link_is_unchanged():
     )
 
 
+# --- hoist marker attributes in source HTML are ignored (issue #713) ----------
+
+
+def test_source_link_shown_attr_does_not_hide_link_target():
+    """data-archi-link-shown on a source anchor must be stripped before the hoist
+    reads it, so the anchor is not already 'shown' and the link appears (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a data-archi-link-shown href="https://x/y">'
+            "<code>a<br>b</code></a></p>"
+        )
+        == "<https://x/y>\n\n" + _A
+    )
+
+
+def test_source_link_shown_issue_second_probe_keeps_link():
+    """The second probe from issue #713 (no wrapping <p>) keeps the link target."""
+    assert (
+        html_to_markdown(
+            '<a data-archi-link-shown href="https://x/y"><code>a<br>b</code></a>'
+        )
+        == "<https://x/y>\n\n" + _A
+    )
+
+
+def test_source_link_shown_upper_case_attr_is_removed():
+    """html.parser lowercases attribute names, so DATA-ARCHI-LINK-SHOWN is also
+    removed (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a DATA-ARCHI-LINK-SHOWN href="https://x/y">'
+            "<code>a<br>b</code></a></p>"
+        )
+        == "<https://x/y>\n\n" + _A
+    )
+
+
+def test_source_promoted_attr_does_not_label_native_block():
+    """data-archi-promoted on a native <pre> must be stripped before the fence
+    language reader sees it, so the block is not treated as promoted (issue #713)."""
+    assert (
+        html_to_markdown('<pre data-archi-promoted class="bash">ls</pre>')
+        == "```\nls\n```"
+    )
+
+
+def test_promote_step_drops_both_source_markers():
+    """_promote_block_code removes data-archi-link-shown and data-archi-promoted
+    from source HTML before doing its own work (issue #713)."""
+    assert (
+        _promote_block_code(
+            '<p><a data-archi-link-shown="" href="x">t</a>'
+            '<pre data-archi-promoted class="bash">ls</pre></p>'
+        )
+        == '<p><a href="x">t</a><pre class="bash">ls</pre></p>'
+    )
+
+
+def test_promoted_block_still_carries_marker():
+    """Guard: _promote_block_code still sets data-archi-promoted on the blocks it
+    promotes (issue #713)."""
+    assert (
+        _promote_block_code('<p><code class="bash">a<br>b</code></p>')
+        == '<p><pre class="bash" data-archi-promoted=""><code class="bash">a\nb</code></pre></p>'
+    )
+
+
 def test_link_destination_unmatched_close_paren_escapes():
     assert (
         html_to_markdown('<p><a href="/docs/foo)bar">Docs</a></p>')
