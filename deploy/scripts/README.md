@@ -195,10 +195,11 @@ deploy/scripts/firewall.sh --list      # show archi rules in place
   paths, etc. Paths here are repo-relative, not relative to this directory: these scripts
   are host-neutral and no longer sit beside any one host's config.
 - Services: each deployment runs a fixed services list, set by the `SERVICES` case
-  block in `lib.sh` (one row per deployment name) and passed to `archi create --services`.
-  Today `dev` runs `chatbot,slack`; every other name runs `chatbot`. The list is not read
-  from the environment or `host.env`, so a change to one host's services is a reviewed
-  change to `lib.sh`. Pinned by `tests/unit/test_deploy_services_per_deployment.py`.
+  block in `lib.sh` and passed to `archi create --services`. The block has a `dev` row
+  and a `*` row for every other name: today `dev` runs `chatbot,slack` and every other
+  name runs `chatbot`. The list is not read from the environment or `host.env`, so a
+  change to one host's services is a reviewed change to `lib.sh`. Pinned by
+  `tests/unit/test_deploy_services_per_deployment.py`.
 - Secrets: an env file with `PG_PASSWORD` (required) plus `HUIT_API_KEY` /
   `ANTHROPIC_API_KEY` as needed. Defaults to `~/.secrets/archi-secrets.env`;
   override with the `ARCHI_ENV_FILE` env var. Resolved in `lib.sh` — never commit it.

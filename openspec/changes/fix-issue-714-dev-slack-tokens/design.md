@@ -42,10 +42,11 @@ bullet), so that the Secrets bullet can point back to it:
 
 ```markdown
 - Services: each deployment runs a fixed services list, set by the `SERVICES` case
-  block in `lib.sh` (one row per deployment name) and passed to `archi create --services`.
-  Today `dev` runs `chatbot,slack`; every other name runs `chatbot`. The list is not read
-  from the environment or `host.env`, so a change to one host's services is a reviewed
-  change to `lib.sh`. Pinned by `tests/unit/test_deploy_services_per_deployment.py`.
+  block in `lib.sh` and passed to `archi create --services`. The block has a `dev` row
+  and a `*` row for every other name: today `dev` runs `chatbot,slack` and every other
+  name runs `chatbot`. The list is not read from the environment or `host.env`, so a
+  change to one host's services is a reviewed change to `lib.sh`. Pinned by
+  `tests/unit/test_deploy_services_per_deployment.py`.
 ```
 
 Name the variable and the file. Do not write a `lib.sh` line number (the issue's plan
