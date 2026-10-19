@@ -18,6 +18,7 @@ from src.cli.managers.source_version import write_source_commit
 from src.cli.service_registry import service_registry
 from src.cli.utils.grafana_styling import assign_feedback_palette
 from src.cli.utils.service_builder import DeploymentPlan
+from src.cli.utils.torch_threads import resolve_torch_threads
 from src.utils.benchmark_schema import (
     anchor_container_path,
     anchor_source_path,
@@ -1213,6 +1214,9 @@ class TemplateManager:
             .get("port", 5432),
         )
         template_vars.setdefault("verbosity", self.global_verbosity)
+        template_vars["torch_threads"] = resolve_torch_threads(
+            context.config_manager.config
+        )
 
         template_vars["app_version"] = get_git_version()
 

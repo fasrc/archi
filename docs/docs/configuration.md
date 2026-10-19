@@ -540,6 +540,7 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 | `scrape_per_host_workers` | int | `4` | Cap on concurrent in-flight requests to any single host |
 | `reset_collection` | bool | `true` | Wipe collection on startup |
 | `distance_metric` | string | `cosine` | Similarity metric: `cosine`, `l2`, `ip` |
+| `torch_threads` | int | `8` | CPU threads torch uses in the data-manager and chatbot containers, rendered into both as `OMP_NUM_THREADS`. Unset, torch starts one thread per host core; on a shared 32-core host that made each embedding call ~3 s instead of ~16 ms ([#721](https://github.com/fasrc/archi/issues/721)). Must be a positive integer; anything else fails `archi create` |
 
 > **Note:** `scrape_workers` and `scrape_per_host_workers` control the **scrape
 > phase** only and are independent of `parallel_workers`, which governs the

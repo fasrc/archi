@@ -51,6 +51,12 @@ services:
       PGUSER: archi
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
+      {% if torch_threads -%}
+      # Unset, torch starts one thread per host core; on a shared host each
+      # embedding call then takes ~3 s instead of ~16 ms (fasrc/archi#721).
+      # Set from data_manager.torch_threads (src/cli/utils/torch_threads.py).
+      OMP_NUM_THREADS: "{{ torch_threads }}"
+      {% endif %}
       {% if gpu_ids -%}
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
@@ -241,6 +247,10 @@ services:
       PGUSER: archi
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
+      {% if torch_threads -%}
+      # Query embedding runs torch here too; see the data-manager block.
+      OMP_NUM_THREADS: "{{ torch_threads }}"
+      {% endif %}
       # Allow overriding Ollama host via env so containers can reach host daemon
       OLLAMA_HOST: ${OLLAMA_HOST:-}
       {{ dev_env() }}

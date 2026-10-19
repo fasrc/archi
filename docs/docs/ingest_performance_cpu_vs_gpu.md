@@ -3,6 +3,14 @@
 Measured on fasrc-dev (`holygpu7c0717.rc.fas.harvard.edu`) on 2026-08-06.
 Tracking issue: fasrc/archi#215.
 
+> **Update 2026-10-19 ([#721](https://github.com/fasrc/archi/issues/721)):** most of
+> the CPU-to-GPU gap below came from torch's CPU thread count, not from the GPU.
+> The CPU baseline ran torch at its default of 32 threads (one per host core), and on
+> this shared host each embedding call then waited ~3 s on its slowest thread. With
+> `OMP_NUM_THREADS=8` the CPU embed stage of a full ingest took 2.1 min (1,162 files),
+> against 1.1 min on a V100. archi now renders that cap by default
+> (`data_manager.torch_threads`, see [configuration](configuration.md)).
+
 ## Hardware
 
 | | |
