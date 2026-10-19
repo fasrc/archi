@@ -12,4 +12,4 @@
 ## 3. Verify
 
 - [x] 3.1 `bash scripts/gate.sh` green
-- [ ] 3.2 Redeploy dev; both containers report `torch.get_num_threads() == 8`; chat retrieval spans drop from the 8.78 s baseline; chat smoke test returns HTTP 200
+- [x] 3.2 Redeploy dev; both containers report `torch.get_num_threads() == 8`; chat retrieval spans drop from the 8.78 s baseline; chat smoke test returns HTTP 200
