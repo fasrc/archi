@@ -12,6 +12,48 @@ from src.utils.postgres_service_factory import PostgresServiceFactory
 from src.utils.telemetry import instrument_flask_app
 
 
+def build_gunicorn_options(chat_config):
+    """Return the five gunicorn option keys for the chat service."""
+    raw = chat_config.get("wsgi_threads")
+    if raw is None:
+        threads = 16
+    else:
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+            raise ValueError(
+                "services.chat_app.wsgi_threads must be an int >= 1, got {!r}".format(
+                    raw
+                )
+            )
+        threads = raw
+    return {
+        "bind": f"{chat_config['host']}:{chat_config['port']}",
+        "workers": 1,
+        "worker_class": "gthread",
+        "threads": threads,
+        "preload_app": False,
+    }
+
+
+def make_gunicorn_application(app_factory, options):
+    """Build a gunicorn BaseApplication that serves app_factory()."""
+    from gunicorn.app.base import BaseApplication
+
+    class ChatApplication(BaseApplication):
+        def __init__(self):
+            self.app_factory = app_factory
+            self.options = dict(options)
+            super().__init__()
+
+        def load_config(self):
+            for key, value in self.options.items():
+                self.cfg.set(key, value)
+
+        def load(self):
+            return self.app_factory()
+
+    return ChatApplication()
+
+
 def main():
 
     setup_logging()
