@@ -32,4 +32,6 @@ Live chat retrieval (`search_vectorstore_hybrid`) at the default measured a medi
 
 - [8 is too few on a big, idle machine] → `data_manager.torch_threads` raises it; the cost at 8 is small (one passage in 16 ms).
 - [A rendered file that predates this change stays uncapped until the next `archi create`] → the dev redeploy re-renders it; other teams get it on their next create.
-- [The cap also limits other OpenMP code in those containers] → nothing else there is compute-bound; the 32 ingest chunking workers are processes, not OpenMP threads.
+- [The cap also limits other OpenMP code in those containers] → nothing else there is compute-bound. The 32 ingest chunking workers are Python threads (`ThreadPoolExecutor` in `VectorStoreManager`) that split text without calling torch, and chunking time was unchanged (0.5 min either way).
+- [Concurrent embedding calls stack] → OpenMP gives each calling thread its own team of 8, so N simultaneous chat searches use up to 8N threads. Ingest embeds one file at a time, so it uses one team. Measured with 1, 2 and 4 concurrent callers: +8 threads per caller, and 100, 120 and 162 ms per batch, so load degrades gradually with no cliff.
+- [The Hugging Face tokenizer has its own thread pool] → its Rust (rayon) pool is sized to the host's cores (32) and ignores `OMP_NUM_THREADS`. Capping it as well (`RAYON_NUM_THREADS=8` or `TOKENIZERS_PARALLELISM=false`) made no measurable difference (14–16 ms per passage either way), so it is left alone.
