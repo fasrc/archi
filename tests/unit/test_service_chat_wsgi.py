@@ -9,6 +9,8 @@ import types
 from pathlib import Path
 
 import pytest
+import yaml
+from jinja2 import ChainableUndefined, Environment, PackageLoader, select_autoescape
 
 from src.bin import service_chat
 
@@ -540,3 +542,49 @@ def test_gunicorn_pin_in_pyproject_toml():
         assert (
             "gunicorn" not in pkg.lower()
         ), f"gunicorn in requirements-base.txt: {line!r}"
+
+
+# ---------------------------------------------------------------------------
+# Config template render tests (design E6)
+# ---------------------------------------------------------------------------
+
+
+def _render_base_config(**kwargs):
+    env = Environment(
+        loader=PackageLoader("src.cli"),
+        autoescape=select_autoescape(),
+        undefined=ChainableUndefined,
+    )
+    template = env.get_template("base-config.yaml")
+    rendered = template.render(verbosity=0, **kwargs)
+    return yaml.safe_load(rendered)
+
+
+def test_wsgi_threads_default_is_16():
+    cfg = _render_base_config()
+    assert cfg["services"]["chat_app"]["wsgi_threads"] == 16
+
+
+def test_flask_debug_mode_default_is_false():
+    cfg = _render_base_config()
+    assert cfg["services"]["chat_app"]["flask_debug_mode"] is False
+
+
+def test_wsgi_threads_explicit_8():
+    cfg = _render_base_config(services={"chat_app": {"wsgi_threads": 8}})
+    assert cfg["services"]["chat_app"]["wsgi_threads"] == 8
+
+
+def test_wsgi_threads_none_gives_16():
+    cfg = _render_base_config(services={"chat_app": {"wsgi_threads": None}})
+    assert cfg["services"]["chat_app"]["wsgi_threads"] == 16
+
+
+def test_flask_debug_mode_true_renders_true():
+    cfg = _render_base_config(services={"chat_app": {"flask_debug_mode": True}})
+    assert cfg["services"]["chat_app"]["flask_debug_mode"] is True
+
+
+def test_flask_debug_mode_none_renders_false():
+    cfg = _render_base_config(services={"chat_app": {"flask_debug_mode": None}})
+    assert cfg["services"]["chat_app"]["flask_debug_mode"] is False
