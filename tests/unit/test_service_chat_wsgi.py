@@ -1,7 +1,10 @@
 """Tests for gunicorn options, application construction, and entry point."""
 
 import ast
+import os
+import re
 import sys
+import tomllib
 import types
 from pathlib import Path
 
@@ -236,3 +239,304 @@ def test_make_gunicorn_application_real_gunicorn():
     result = app.wsgi()
     assert result is sentinel
     assert len(factory_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Helpers for create_app / main tests
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_factory():
+    """Return (FakeFactoryClass, log_dict).
+
+    log['from_env'] — FakeFactory instances returned by from_env.
+    log['set_instance'] — each value passed to set_instance.
+    Each instance has ._closed set to True by close().
+    """
+    log = {"from_env": [], "set_instance": []}
+
+    class FakeFactory:
+        def __init__(self):
+            self._closed = False
+
+        @classmethod
+        def from_env(cls, **kwargs):
+            inst = cls()
+            log["from_env"].append(inst)
+            return inst
+
+        @classmethod
+        def set_instance(cls, value):
+            log["set_instance"].append(value)
+
+        def close(self):
+            self._closed = True
+
+    return FakeFactory, log
+
+
+def _make_chat_config(tmp_path, extra=None):
+    template_dir = tmp_path / "templates"
+    static_dir = tmp_path / "static"
+    template_dir.mkdir(exist_ok=True)
+    static_dir.mkdir(exist_ok=True)
+    cfg = {
+        "host": "0.0.0.0",
+        "port": 7861,
+        "hostname": "chat.example.com",
+        "external_port": 443,
+        "template_folder": str(template_dir),
+        "static_folder": str(static_dir),
+    }
+    if extra:
+        cfg.update(extra)
+    return cfg
+
+
+# ---------------------------------------------------------------------------
+# create_app
+# ---------------------------------------------------------------------------
+
+
+def test_create_app_returns_flask_debug_false(monkeypatch, tmp_path):
+    import flask
+
+    FakeFactory, log = _make_fake_factory()
+    chat_config = {
+        "template_folder": str(tmp_path / "templates"),
+        "static_folder": str(tmp_path / "static"),
+    }
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "static").mkdir()
+
+    generate_calls = []
+    instrument_calls = []
+    wrapper_calls = []
+
+    monkeypatch.setattr(service_chat, "PostgresServiceFactory", FakeFactory)
+    monkeypatch.setattr(
+        service_chat,
+        "get_full_config",
+        lambda: {"services": {"chat_app": chat_config}},
+    )
+    monkeypatch.setattr(service_chat, "read_secret", lambda k: f"secret-{k}")
+    monkeypatch.setattr(
+        service_chat, "generate_script", lambda cfg: generate_calls.append(cfg)
+    )
+    monkeypatch.setattr(
+        service_chat,
+        "instrument_flask_app",
+        lambda app: instrument_calls.append(app),
+    )
+    monkeypatch.setattr(
+        service_chat, "FlaskAppWrapper", lambda app: wrapper_calls.append(app)
+    )
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "HUGGING_FACE_HUB_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+
+    result = service_chat.create_app()
+
+    assert isinstance(result, flask.Flask)
+    assert result.debug is False
+    assert len(log["from_env"]) == 1
+    assert log["set_instance"] == [log["from_env"][0]]
+    assert generate_calls == [chat_config]
+    assert len(instrument_calls) == 1
+    assert instrument_calls[0] is result
+    assert len(wrapper_calls) == 1
+    assert wrapper_calls[0] is result
+    assert os.environ.get("ANTHROPIC_API_KEY") == "secret-ANTHROPIC_API_KEY"
+    assert os.environ.get("OPENAI_API_KEY") == "secret-OPENAI_API_KEY"
+    assert os.environ.get("HUGGING_FACE_HUB_TOKEN") == "secret-HUGGING_FACE_HUB_TOKEN"
+
+
+def test_create_app_debug_false_with_flask_debug_env(monkeypatch, tmp_path):
+    """FLASK_DEBUG=1 in environment does not make app.debug True."""
+    FakeFactory, _ = _make_fake_factory()
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "static").mkdir()
+    chat_config = {
+        "template_folder": str(tmp_path / "templates"),
+        "static_folder": str(tmp_path / "static"),
+    }
+
+    monkeypatch.setattr(service_chat, "PostgresServiceFactory", FakeFactory)
+    monkeypatch.setattr(
+        service_chat,
+        "get_full_config",
+        lambda: {"services": {"chat_app": chat_config}},
+    )
+    monkeypatch.setattr(service_chat, "read_secret", lambda k: f"secret-{k}")
+    monkeypatch.setattr(service_chat, "generate_script", lambda cfg: None)
+    monkeypatch.setattr(service_chat, "instrument_flask_app", lambda app: None)
+    monkeypatch.setattr(service_chat, "FlaskAppWrapper", lambda app: None)
+    monkeypatch.setenv("FLASK_DEBUG", "1")
+
+    result = service_chat.create_app()
+    assert result.debug is False
+
+
+def test_create_app_debug_false_with_flask_debug_mode_config(monkeypatch, tmp_path):
+    """flask_debug_mode: True in config does not make app.debug True."""
+    FakeFactory, _ = _make_fake_factory()
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "static").mkdir()
+    chat_config = {
+        "template_folder": str(tmp_path / "templates"),
+        "static_folder": str(tmp_path / "static"),
+        "flask_debug_mode": True,
+    }
+
+    monkeypatch.setattr(service_chat, "PostgresServiceFactory", FakeFactory)
+    monkeypatch.setattr(
+        service_chat,
+        "get_full_config",
+        lambda: {"services": {"chat_app": chat_config}},
+    )
+    monkeypatch.setattr(service_chat, "read_secret", lambda k: f"secret-{k}")
+    monkeypatch.setattr(service_chat, "generate_script", lambda cfg: None)
+    monkeypatch.setattr(service_chat, "instrument_flask_app", lambda app: None)
+    monkeypatch.setattr(service_chat, "FlaskAppWrapper", lambda app: None)
+
+    result = service_chat.create_app()
+    assert result.debug is False
+
+
+# ---------------------------------------------------------------------------
+# main()
+# ---------------------------------------------------------------------------
+
+
+def test_main_run_called_factory_closed_set_instance_none(
+    gunicorn_stub, monkeypatch, tmp_path
+):
+    """main() closes factory and clears singleton before server.run(); run() called once."""
+    FakeFactory, log = _make_fake_factory()
+    chat_config = _make_chat_config(tmp_path)
+
+    create_app_calls = []
+    monkeypatch.setattr(
+        service_chat, "create_app", lambda: create_app_calls.append(1) or object()
+    )
+    monkeypatch.setattr(service_chat, "PostgresServiceFactory", FakeFactory)
+    monkeypatch.setattr(
+        service_chat,
+        "get_full_config",
+        lambda: {"services": {"chat_app": chat_config}},
+    )
+    monkeypatch.setattr(service_chat, "read_secret", lambda k: f"secret-{k}")
+    monkeypatch.setattr(service_chat, "setup_logging", lambda: None)
+
+    run_count = [0]
+    run_states = {}
+
+    def _capturing_run(self):
+        run_count[0] += 1
+        run_states["factory_closed"] = log["from_env"][0]._closed
+        run_states["last_set_instance"] = log["set_instance"][-1]
+        run_states["app_factory"] = self.app_factory
+        run_states["cfg_values"] = dict(self.cfg._values)
+        self._run_called = True
+
+    monkeypatch.setattr(_StubBaseApplication, "run", _capturing_run)
+
+    service_chat.main()
+
+    assert run_count[0] == 1
+    assert run_states["factory_closed"] is True
+    assert run_states["last_set_instance"] is None
+    assert run_states["app_factory"] is service_chat.create_app
+    assert create_app_calls == []
+    expected_opts = service_chat.build_gunicorn_options(chat_config)
+    assert run_states["cfg_values"] == expected_opts
+
+
+def test_main_get_full_config_raises_closes_factory(gunicorn_stub, monkeypatch):
+    """get_full_config raising RuntimeError closes factory and does not call run()."""
+    FakeFactory, log = _make_fake_factory()
+
+    def _raise():
+        raise RuntimeError("config unavailable")
+
+    run_called = [False]
+
+    def _run(self):
+        run_called[0] = True
+
+    monkeypatch.setattr(_StubBaseApplication, "run", _run)
+    monkeypatch.setattr(service_chat, "PostgresServiceFactory", FakeFactory)
+    monkeypatch.setattr(service_chat, "get_full_config", _raise)
+    monkeypatch.setattr(service_chat, "read_secret", lambda k: f"secret-{k}")
+    monkeypatch.setattr(service_chat, "setup_logging", lambda: None)
+
+    with pytest.raises(RuntimeError):
+        service_chat.main()
+
+    assert log["from_env"][0]._closed is True
+    assert not run_called[0]
+
+
+def test_main_bad_wsgi_threads_raises_no_run(gunicorn_stub, monkeypatch, tmp_path):
+    """wsgi_threads: 0 causes ValueError before run() is called."""
+    FakeFactory, _ = _make_fake_factory()
+    chat_config = _make_chat_config(tmp_path, extra={"wsgi_threads": 0})
+
+    run_called = [False]
+
+    def _run(self):
+        run_called[0] = True
+
+    monkeypatch.setattr(_StubBaseApplication, "run", _run)
+    monkeypatch.setattr(service_chat, "PostgresServiceFactory", FakeFactory)
+    monkeypatch.setattr(
+        service_chat,
+        "get_full_config",
+        lambda: {"services": {"chat_app": chat_config}},
+    )
+    monkeypatch.setattr(service_chat, "read_secret", lambda k: f"secret-{k}")
+    monkeypatch.setattr(service_chat, "setup_logging", lambda: None)
+
+    with pytest.raises(ValueError):
+        service_chat.main()
+
+    assert not run_called[0]
+
+
+# ---------------------------------------------------------------------------
+# Source-level check
+# ---------------------------------------------------------------------------
+
+
+def test_no_debug_or_app_run_in_service_chat():
+    source = Path(__file__).parent.parent.parent / "src" / "bin" / "service_chat.py"
+    assert re.search(r"debug=True|app\.run\(", source.read_text()) is None
+
+
+# ---------------------------------------------------------------------------
+# Dependency pin
+# ---------------------------------------------------------------------------
+
+
+def test_gunicorn_pin_in_pyproject_toml():
+    from packaging.requirements import Requirement
+
+    pyproject = Path(__file__).parent.parent.parent / "pyproject.toml"
+    with open(pyproject, "rb") as fh:
+        data = tomllib.load(fh)
+
+    deps = data["project"]["dependencies"]
+    gunicorn_entries = [d for d in deps if Requirement(d).name == "gunicorn"]
+    assert (
+        len(gunicorn_entries) == 1
+    ), f"Expected one gunicorn dep, got {gunicorn_entries}"
+    spec = str(Requirement(gunicorn_entries[0]).specifier)
+    assert spec == "==26.2.0", f"Expected ==26.2.0, got {spec!r}"
+
+    req_base = (
+        Path(__file__).parent.parent.parent / "requirements" / "requirements-base.txt"
+    )
+    for line in req_base.read_text().splitlines():
+        pkg = line.split("#")[0].strip()
+        assert (
+            "gunicorn" not in pkg.lower()
+        ), f"gunicorn in requirements-base.txt: {line!r}"
