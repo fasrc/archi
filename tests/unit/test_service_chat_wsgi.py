@@ -588,3 +588,59 @@ def test_flask_debug_mode_true_renders_true():
 def test_flask_debug_mode_none_renders_false():
     cfg = _render_base_config(services={"chat_app": {"flask_debug_mode": None}})
     assert cfg["services"]["chat_app"]["flask_debug_mode"] is False
+
+
+# ---------------------------------------------------------------------------
+# Configuration reference (design E9)
+# ---------------------------------------------------------------------------
+
+_CONFIGURATION_DOC = (
+    Path(__file__).resolve().parents[2] / "docs" / "docs" / "configuration.md"
+)
+
+
+def _doc_section(heading):
+    """The text under heading, up to the next heading of any depth."""
+    text = _CONFIGURATION_DOC.read_text(encoding="utf-8")
+    assert heading in text, f"configuration.md has no {heading!r} section"
+    rest = text[text.index(heading) + len(heading) :]
+    nxt = re.search(r"^#{1,6} ", rest, re.MULTILINE)
+    return rest[: nxt.start()] if nxt else rest
+
+
+def _doc_table_row(section, key):
+    """The cells of the table row whose first cell is `key`, or None."""
+    for line in section.splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if cells and cells[0] == f"`{key}`":
+            return cells
+    return None
+
+
+def test_chat_app_doc_row_for_wsgi_threads_matches_code_default():
+    row = _doc_table_row(_doc_section("### `services.chat_app`"), "wsgi_threads")
+    assert row is not None, "services.chat_app table has no wsgi_threads row"
+    threads = service_chat.build_gunicorn_options({"host": "h", "port": 1})["threads"]
+    rendered = _render_base_config()["services"]["chat_app"]["wsgi_threads"]
+    assert row[2] == f"`{threads}`" == f"`{rendered}`", row
+
+
+def test_chat_app_doc_row_for_flask_debug_mode_matches_template_default():
+    row = _doc_table_row(_doc_section("### `services.chat_app`"), "flask_debug_mode")
+    assert row is not None, "services.chat_app table has no flask_debug_mode row"
+    rendered = _render_base_config()["services"]["chat_app"]["flask_debug_mode"]
+    assert row[2] == f"`{str(rendered).lower()}`", row
+
+
+def test_chat_app_doc_names_the_gunicorn_worker_model():
+    section = _doc_section("### `services.chat_app`")
+    options = service_chat.build_gunicorn_options({"host": "h", "port": 1})
+    assert "gunicorn" in section
+    assert f"`{options['worker_class']}`" in section
+    assert options["workers"] == 1 and "one worker process" in section
+
+
+def test_chat_flask_debug_mode_listed_as_not_acted_on():
+    section = _doc_section("### Flags that render but are not yet acted on")
+    row = _doc_table_row(section, "services.chat_app.flask_debug_mode")
+    assert row is not None, "chat flask_debug_mode missing from the not-acted-on table"

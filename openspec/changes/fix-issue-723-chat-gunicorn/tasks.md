@@ -33,7 +33,7 @@
 
 ## 3. Docs
 
-- [ ] 3.1 In ONE commit, change `docs/docs/configuration.md` as design E9 says: a `wsgi_threads` row after `host` in the `### services.chat_app` table, and a short paragraph under the table (gunicorn, one worker process, `gthread`; the Flask debugger never runs; `flask_debug_mode`, default `false`, has no effect on the chat service). If `mkdocs` is installed, run `mkdocs build --config-file docs/mkdocs.yml --strict --site-dir /tmp/mkdocs-723` and confirm it has no WARNING; if it is not installed, say so in the commit body. Gate green, commit.
+- [x] 3.1 In ONE commit, change `docs/docs/configuration.md` as design E9 says: a `wsgi_threads` row after `host` in the `### services.chat_app` table, and a short paragraph under the table (gunicorn, one worker process, `gthread`; the Flask debugger never runs; `flask_debug_mode`, default `false`, has no effect on the chat service). If `mkdocs` is installed, run `mkdocs build --config-file docs/mkdocs.yml --strict --site-dir /tmp/mkdocs-723` and confirm it has no WARNING; if it is not installed, say so in the commit body. Gate green, commit.
 
 ## 4. Verify, push, and open the PR
 
