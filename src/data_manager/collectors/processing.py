@@ -668,13 +668,42 @@ def _has_content(tag) -> bool:
     return False
 
 
-# The tags that ``markdownify`` converts to output that has no text in it.
-_RENDERS_WITHOUT_TEXT: frozenset = frozenset({"img", "hr", "video"})
+# Tags that markdownify writes characters for even when they hold no text
+# (issue #713: q, h1–h6, td, th, tr added; img, hr, video were already here).
+_RENDERS_WITHOUT_TEXT: frozenset = frozenset(
+    {"h1", "h2", "h3", "h4", "h5", "h6", "hr", "img", "q", "td", "th", "tr", "video"}
+)
+
+_HEADING_TAGS: frozenset = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+
+# The ancestors that set markdownify's ``_noformat`` context, where an anchor writes
+# its text but no href, and its ``_inline`` context, where a heading writes no hashes.
+_NOFORMAT_TAGS: frozenset = frozenset({"pre", "code", "kbd", "samp"})
+_INLINE_CONTEXT_TAGS: frozenset = _HEADING_TAGS | {"td", "th"}
+
+# The issue #713 tags count only where they make the anchor show its href, so they
+# do not hide the synthesized target anywhere else (Codex review on PR #716).
+_LINK_TEXT_TAGS_NOFORMAT: frozenset = frozenset({"hr", "img", "video"})
+_LINK_TEXT_TAGS_INLINE: frozenset = _RENDERS_WITHOUT_TEXT - _HEADING_TAGS
 
 
-def _renders_link_text(tag) -> bool:
+def _link_text_tags(anchor) -> frozenset:
+    """Return the tags that give *anchor* link text with no text in them (PR #716).
+
+    The ancestors of *anchor* set the context. The hoist splits only inline markup,
+    so both halves keep these ancestors.
+    """
+    context = {tag.name for tag in anchor.parents}
+    if context & _NOFORMAT_TAGS:
+        return _LINK_TEXT_TAGS_NOFORMAT
+    if context & _INLINE_CONTEXT_TAGS:
+        return _LINK_TEXT_TAGS_INLINE
+    return _RENDERS_WITHOUT_TEXT
+
+
+def _renders_link_text(tag, counted: frozenset = _RENDERS_WITHOUT_TEXT) -> bool:
     """True when *tag* gives ``markdownify`` link text: visible text, or a tag in
-    ``_RENDERS_WITHOUT_TEXT``.
+    *counted* (issue #430, #713).
 
     ``_has_content`` counts any child tag, but an empty ``<span>`` or a ``<br>``
     renders no text, and ``markdownify`` drops an anchor with no text (issue #430).
@@ -684,7 +713,7 @@ def _renders_link_text(tag) -> bool:
     """
     for node in tag.descendants:
         if isinstance(node, Tag):
-            if node.name in _RENDERS_WITHOUT_TEXT:
+            if node.name in counted:
                 return True
         elif type(node) is NavigableString and node.strip():
             return True
@@ -759,12 +788,13 @@ def _hoist_out_of_inline(pre, soup) -> None:
         _trim_cut_whitespace(parent, trailing=True)
         _trim_cut_whitespace(tail, trailing=False)
         is_link = parent.name == "a" and bool(parent.get("href"))
-        tail_has_text = is_link and _renders_link_text(tail)
+        counted = _link_text_tags(parent) if is_link else _RENDERS_WITHOUT_TEXT
+        tail_has_text = is_link and _renders_link_text(tail, counted)
         if (
             is_link
             and not tail_has_text
             and not parent.has_attr(_LINK_SHOWN_ATTR)
-            and not _renders_link_text(parent)
+            and not _renders_link_text(parent, counted)
         ):
             link = soup.new_tag("a", href=parent["href"])
             link.string = (parent.get("title") or "").strip() or parent["href"]
@@ -780,6 +810,22 @@ def _hoist_out_of_inline(pre, soup) -> None:
             parent.decompose()
 
 
+# The attributes that only this module may set (issue #713).
+_HOIST_MARKER_ATTRS: tuple = (_PROMOTED_ATTR, _LINK_SHOWN_ATTR)
+
+
+def _drop_source_markers(soup) -> None:
+    """Remove the hoist's marker attributes from every tag of the source HTML.
+
+    ``_promoted_fence_language`` and ``_hoist_out_of_inline`` read the markers as
+    their own state, so a marker in the scraped HTML would label a native ``<pre>``
+    or hide a link target (issue #713).
+    """
+    for tag in soup.find_all(True):
+        for name in _HOIST_MARKER_ATTRS:
+            tag.attrs.pop(name, None)
+
+
 def _promote_block_code(html: str) -> str:
     """Promote bare multi-line ``<code>`` elements to ``<pre><code>`` blocks (issue #399).
 
@@ -791,8 +837,11 @@ def _promote_block_code(html: str) -> str:
     ``class`` attribute of the ``<code>`` (if present) so that downstream language
     detection by ``_fence_language`` can fire on the ``<pre>``. The new ``<pre>`` is
     marked with ``_PROMOTED_ATTR`` so ``_promoted_fence_language`` labels only it.
+    Source marker attributes are stripped before promotion so that only this module
+    sets them (issue #713).
     """
     soup = BeautifulSoup(html, "html.parser")
+    _drop_source_markers(soup)
     promoted = []
     for code in soup.find_all("code"):
         if code.find_parent("pre") is not None:
