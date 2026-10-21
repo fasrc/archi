@@ -1,6 +1,11 @@
 ## Context
 
-Anchors are at origin/dev `e58a7ada`.
+Anchors are at origin/dev `e58a7ada`. The implementation issues (fasrc/archi#730–#733, parent #729) carry anchors re-verified at `7c7d7450`.
+
+**Amendments (operator decisions, 2026-10-20):**
+- The two new comparison gates are **G11** (judged) and **G12** (one judge). `compare_runs.py` already uses G8 for the anchors gate and G9 for the category-map gate.
+- `judge_identity` (D10) is not a new result key. Each arm stores it under the existing key `ragas_judge_identity_effective` (#618), extended with the D10 fields.
+- Inside one result, arms with different identities keep #618's rule: the leaderboard and the A/B comparisons withhold ranks and winners. The merge does not drop RAGAS metrics and does not record `cross_arm_ragas`. G12 is the refusal across result files.
 
 - `archi evaluate` starts postgres, data-manager and benchmark on the dev host (`src/cli/cli_main.py:776`, `:855`). The benchmark imports the archi pipeline in-process.
 - `Benchmarker._process_config` (`src/bin/service_benchmark.py:2022`) has two steps:
@@ -174,12 +179,12 @@ It then skips the `(key, metric)` pairs that are already recorded. The final agg
 2. reads the pending result JSON from `<queue>/results/`;
 3. checks each bundle digest against the digest recorded in its pending arm;
 4. writes every arm's per-row scores and `total_results` aggregates;
-5. **checks that every arm has the same `judge_identity`** (the G9 rule, D9) before it computes anything across arms. If the identities are equal, it rebuilds the leaderboard and the A/B comparisons with the existing `ResultHandler` code. If they differ, it leaves out every RAGAS metric from the leaderboard and the A/B comparisons, and it records `cross_arm_ragas: refused` with the fields that differ. The per-arm scores stay, each with its own identity. A judged file therefore never holds a cross-arm RAGAS comparison that G9 would refuse;
-6. writes `<basename>.judged.json` in `<queue>/results/`, with `judge_status: scored` and, for each arm, `judge_identity` and `judge_execution` (D10).
+5. rebuilds the leaderboard and the A/B comparisons with the existing `ResultHandler` code. When the arms' identities differ, that code withholds ranks and winners (#618), and the per-arm scores stay, each with its own identity;
+6. writes `<basename>.judged.json` in `<queue>/results/`, with `judge_status: scored` and, for each arm, `ragas_effective_settings`, the extended `ragas_judge_identity_effective` (the `judge_identity` of D10) and `judge_execution`. A pending arm has #518's `null` judge fields, and the merge fills them, so the reused code does not treat the arm as not judged.
 
 A judged file is therefore written once, from the complete set of arms, and a later merge never needs to change it.
 
-It does not change the pending file. Output is canonical JSON (sorted keys, `allow_nan=False`, the same writer as `dump`), so a second run gives identical bytes.
+It does not change the pending file. Output uses the `dump` format (`json_safe`, `indent=4`, `allow_nan=False`) plus `sort_keys=True`, so a second run gives identical bytes. (`dump` itself does not sort keys.)
 
 The merge is safe when two merges run at the same time (the afterok job and a manual run) and when a merge is killed while it writes:
 - It writes a unique temporary file in the same folder, calls `fsync`, validates the file by loading it again, and publishes it with the `link` primitive (D3). `link` fails if the judged file exists, so a second merge can never replace the first.
@@ -197,7 +202,7 @@ Each sweep config loads its own benchmarking settings (`load_new_configuration`,
 
 The design keeps three records separate:
 
-- **`judge_identity`** decides comparability, and G9 compares it field by field:
+- **`judge_identity`** decides comparability, and G12 compares it field by field. Each arm stores it under the existing key `ragas_judge_identity_effective` (#618: provider, model, base_url, mode), extended with these fields:
   - the model id and HF revision SHA;
   - the weight precision (`bf16`, `fp8`, and so on);
   - the vLLM image digest, and the server settings that change output (`--max-model-len`, `--dtype`, the quantization, the chat template);
@@ -227,22 +232,22 @@ The inline path records the same `judge_identity` shape: provider `huit_bedrock`
 
 ### D9. Two new gates in compare_runs.py
 
-- **G8, judged.** Refuse any arm with `judge_status: pending`.
-- **G9, one judge.** Refuse a RAGAS comparison when the arms' `judge_identity` (D10) differ in any field, and name the fields that differ. An old inline artifact with no `judge_identity` gets `(evaluator_provider, evaluator_model)` from its recorded settings. It is then comparable only with other old inline artifacts that have the same pair, because a missing digest never equals a recorded one.
+- **G11, judged.** Refuse any arm with `judge_status: pending`.
+- **G12, one judge.** Refuse a RAGAS comparison when the arms' `judge_identity` (D10) differ in any field, and name the fields that differ. An old inline artifact with no `judge_identity` gets `(evaluator_provider, evaluator_model)` from its recorded settings. It is then comparable only with other old inline artifacts that have the same pair, because a missing digest never equals a recorded one.
 
 There is no override flag, because the result of a mixed comparison has no meaning.
 
-**The campaign archiver obeys G8 and G9 too.** `scripts/benchmarking/feature_matrix/archive_run.sh` takes the newest `benchmarking-<stack>-*.json` (`:91`), never runs `compare_runs.py`, and writes the arm's aggregates into the campaign ledger (`:212-239`). A pending artifact would therefore enter the ledger with no RAGAS metrics. The archiver refuses an artifact with `judge_status: pending`, and names the judged file to wait for. It accepts the judged file (`judge_status: scored`) when the publish timer has copied it into the output folder. The G8 check is one shared function that `compare_runs.py` and the archiver both call.
+**The campaign archiver obeys G11 and G12 too.** `scripts/benchmarking/feature_matrix/archive_run.sh` takes the newest `benchmarking-<stack>-*.json` (`:91`), never runs `compare_runs.py`, and writes the arm's aggregates into the campaign ledger (`:212-239`). A pending artifact would therefore enter the ledger with no RAGAS metrics. The archiver refuses an artifact with `judge_status: pending`, and names the judged file to wait for. It accepts the judged file (`judge_status: scored`) when the publish timer has copied it into the output folder. The G11 check is one shared function that `compare_runs.py` and the archiver both call.
 
-The archiver also applies G9 across runs, because separately archived runs are compared through the ledger, not through `compare_runs.py`. It writes each arm's `judge_identity` into its ledger row (the row has none today, `archive_run.sh:221-235`). It refuses an archive whose `judge_identity` differs from the identity of the campaign's earlier RAGAS rows, and it names the fields that differ. An earlier row with no identity never equals a recorded one (the D9 rule), so the first judged run of a campaign that has only older rows is refused, and the operator starts a new campaign for the new judge.
+The archiver also applies G12 across runs, because separately archived runs are compared through the ledger, not through `compare_runs.py`. It writes each arm's `judge_identity` into its ledger row (the row has none today, `archive_run.sh:221-235`). It refuses an archive whose `judge_identity` differs from the identity of the campaign's earlier RAGAS rows, and it names the fields that differ. An earlier row with no identity never equals a recorded one (the D9 rule), so the first judged run of a campaign that has only older rows is refused, and the operator starts a new campaign for the new judge.
 
 ## Risks / Trade-offs
 
-- [The new judge disagrees with Sonnet, or gives more NaN rows] → Before the switch, score one fm-00 bundle with each candidate and with inline Sonnet. Compare row-level rank agreement and NaN counts for each metric. Choose with those numbers. G9 prevents a silent mix.
+- [The new judge disagrees with Sonnet, or gives more NaN rows] → Before the switch, score one fm-00 bundle with each candidate and with inline Sonnet. Compare row-level rank agreement and NaN counts for each metric. Choose with those numbers. G12 prevents a silent mix.
 - [vLLM output at temperature 0 changes a little with the other requests in the same batch] → Record the job id and the list of claimed bundles in each `judge_execution` (not in `judge_identity`, so it does not block comparison). The effect is expected to be far below run-to-run noise, and the record makes it possible to check later.
 - [Queue wait on `gpu_h200` is long] → Claim-at-start makes a long wait add more bundles to the job. The operator can switch the sbatch partition to `gpu_requeue` (D7 makes that safe) or to 1 × H200 with FP8. Precision is part of `judge_identity`.
 - [A lost scrontab entry or a crashed submitter leaves bundles READY with no job] → The submitter logs each tick. A READY bundle older than 24 hours is reported by `judge_submit.sh --status`.
-- [Many parallel ragas requests over a small chunk give less throughput] → `max_workers`, `batch_size` and the chunk size are manifest settings, and they are part of `judge_identity`. Measure rows per minute in the first job and choose them once. A later change starts a new baseline, and G9 shows it.
+- [Many parallel ragas requests over a small chunk give less throughput] → `max_workers`, `batch_size` and the chunk size are manifest settings, and they are part of `judge_identity`. Measure rows per minute in the first job and choose them once. A later change starts a new baseline, and G12 shows it.
 - [The scorer's Python environment differs from the benchmark image, so the ragas or langchain versions drift] → Run the scorer in an Apptainer image built from the benchmark image. The scorer identity (D10) pins the code, the image digest and the package digest, and any mismatch fails closed, with no override.
 - [A job ends without a requeue and leaves its claim] → Stale-claim recovery (D5a).
 - [A time-limited job scores some arms of a result and leaves the others] → The merge waits for all arms of the result (D8), and the next job claims the rest.
@@ -255,7 +260,7 @@ The archiver also applies G9 across runs, because separately archived runs are c
 1. PR 1: extract the scoring (D2), with no change in behavior. The existing tests pass unchanged.
 2. PR 2: `judge_mode: deferred`, the bundle writer, the publish step, and `judge_status`. Default `inline`. A deferred run can be made and published, but nothing scores it yet.
 3. PR 3: the offline scorer (claim, budget, checkpoints, stub-judge tests) and the merge.
-4. PR 4: the Slurm scripts (submitter, judge job, merge job) with `--dry-run`, the G8 and G9 gates, and docs in `docs/docs/benchmarking.md`.
+4. PR 4: the Slurm scripts (submitter, judge job, merge job) with `--dry-run`, the G11 and G12 gates, and docs in `docs/docs/benchmarking.md`.
 5. Operator: pull the vLLM image and the judge weights to shared storage, build the scorer image, install the `scrontab` entry and the `archi-judge-publish.timer` units (in `fasrc/archi-config`), and run the judge comparison.
 6. Switch the golden-set config in `fasrc/archi-config` to `judge_mode: deferred`.
 

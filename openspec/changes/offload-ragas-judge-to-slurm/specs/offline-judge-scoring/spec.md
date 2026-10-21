@@ -207,7 +207,7 @@ The offline scorer and the inline benchmark path SHALL call one shared scoring f
 - **THEN** both paths give equal aggregates and scored counts
 
 ### Requirement: The judge identity excludes per-job values
-Each judged arm SHALL record a `judge_identity` with the model id and revision, the weight precision, the vLLM image digest, the output-relevant server settings, the decoding settings, the resolved ragas call settings (`timeout`, `max_workers`, `batch_size`, and the scorer's chunk size), the embedding (provider class, the model name that the built embedding object reports, and its revision where the provider gives one), and the scorer identity (the code digest of the scorer's `src`, scorer image digest, package digest, ragas version, metric settings). It SHALL record the job id, node, times, claimed bundles and requeue count in a separate `judge_execution` record.
+Each judged arm SHALL record a `judge_identity`, stored under the existing per-arm key `ragas_judge_identity_effective` and not under a new key, with the model id and revision, the weight precision, the vLLM image digest, the output-relevant server settings, the decoding settings, the resolved ragas call settings (`timeout`, `max_workers`, `batch_size`, and the scorer's chunk size), the embedding (provider class, the model name that the built embedding object reports, and its revision where the provider gives one), and the scorer identity (the code digest of the scorer's `src`, scorer image digest, package digest, ragas version, metric settings). It SHALL record the job id, node, times, claimed bundles and requeue count in a separate `judge_execution` record.
 
 #### Scenario: Embedding differs
 - **WHEN** two arms have the same judge model and settings, but one was scored with the OpenAI embedding and the other with the HuggingFace embedding
@@ -226,7 +226,7 @@ Each judged arm SHALL record a `judge_identity` with the model id and revision, 
 - **THEN** their `judge_identity` records differ in the precision field
 
 ### Requirement: The merge writes a judged result and never edits the pending one
-The merge step SHALL write one new judged result JSON beside the pending one in the queue's results folder, from all arms of that result together, and only when every arm's bundle is `SCORED` and the pending result JSON is in that folder. The merge SHALL compute cross-arm RAGAS outputs (leaderboard and A/B metrics) only when every arm has the same `judge_identity`; otherwise it SHALL omit them and record `cross_arm_ragas: refused` with the fields that differ. The judged result SHALL have every arm's per-row metric scores and recomputed `total_results` RAGAS aggregates, the leaderboard and the A/B comparisons, `judge_status: scored`, and each arm's `judge_identity`, `judge_execution` and bundle SHA-256. The merge SHALL NOT change the pending file. Running the merge again on the same scores SHALL give an identical file. The merge SHALL write through a temporary file that it validates and then publishes with an atomic, no-replace `link`, and it SHALL write `MERGED` only after the judged file exists. It SHALL NOT replace an existing judged file, and it SHALL exit non-zero when an existing judged file has different bytes.
+The merge step SHALL write one new judged result JSON beside the pending one in the queue's results folder, from all arms of that result together, and only when every arm's bundle is `SCORED` and the pending result JSON is in that folder. The merge SHALL build the leaderboard and the A/B comparisons with the existing result-handler code, which withholds ranks and winners when arms differ in judge identity. The judged result SHALL have every arm's per-row metric scores and recomputed `total_results` RAGAS aggregates, the leaderboard and the A/B comparisons, `judge_status: scored`, and each arm's `ragas_effective_settings`, `judge_identity` (as `ragas_judge_identity_effective`), `judge_execution` and bundle SHA-256. The merge SHALL NOT change the pending file. Running the merge again on the same scores SHALL give an identical file. The merge SHALL write through a temporary file that it validates and then publishes with an atomic, no-replace `link`, and it SHALL write `MERGED` only after the judged file exists. It SHALL NOT replace an existing judged file, and it SHALL exit non-zero when an existing judged file has different bytes.
 
 #### Scenario: One arm still pending
 - **WHEN** a result has two arms, arm 0's bundle is `SCORED`, and arm 1's bundle is still READY
@@ -239,7 +239,7 @@ The merge step SHALL write one new judged result JSON beside the pending one in 
 
 #### Scenario: Arms scored by different judge identities
 - **WHEN** arm 0 was scored with `bf16` weights and arm 1 with `fp8` weights, and both are `SCORED`
-- **THEN** the judged file has each arm's scores and identity, no RAGAS metric in the leaderboard or the A/B comparisons, and `cross_arm_ragas: refused` naming the precision field
+- **THEN** the judged file has each arm's scores and identity, and the leaderboard and the A/B comparisons withhold ranks and winners
 
 #### Scenario: One arm failed
 - **WHEN** one arm's bundle of a result is `FAILED`
