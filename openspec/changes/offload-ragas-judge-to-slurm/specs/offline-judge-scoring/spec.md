@@ -166,7 +166,7 @@ The scorer SHALL NOT score a bundle when the manifest's code digest (`code_versi
 - **THEN** the scorer scores the bundle
 
 ### Requirement: The judge job saves each row's score and resumes after a requeue
-The judge job SHALL append each scored `(key, metric)` result, as one newline-terminated line and as soon as it is available, to the bundle's checkpoint file for its own `judge_identity` (`scores.<identity digest>.partial.jsonl`). It SHALL NOT read or use a checkpoint file of a different identity. After a restart, it SHALL truncate a torn last line (no final newline, or not valid JSON), mark the bundle `FAILED` for an invalid line that is not the last line, use the first record of a repeated pair, and skip the pairs that are already recorded.
+The judge job SHALL append each scored `(key, metric)` result, as one newline-terminated line and as soon as it is available, to the bundle's checkpoint file for its own `ragas_judge_identity_effective` (`scores.<identity digest>.partial.jsonl`). It SHALL NOT read or use a checkpoint file of a different identity. After a restart, it SHALL truncate a torn last line (no final newline, or not valid JSON), mark the bundle `FAILED` for an invalid line that is not the last line, use the first record of a repeated pair, and skip the pairs that are already recorded.
 
 #### Scenario: Kill during an append
 - **WHEN** a job is killed while it writes a record, and its checkpoint file ends with half a JSON line
@@ -211,22 +211,22 @@ Each judged arm SHALL record a `judge_identity`, stored under the existing per-a
 
 #### Scenario: Embedding differs
 - **WHEN** two arms have the same judge model and settings, but one was scored with the OpenAI embedding and the other with the HuggingFace embedding
-- **THEN** their `judge_identity` records differ in the embedding fields
+- **THEN** their `ragas_judge_identity_effective` records differ in the embedding fields
 
 #### Scenario: Judge pressure differs
 - **WHEN** two arms have the same judge model and settings, but one ran with `max_workers: 6` and the other with the default
-- **THEN** their `judge_identity` records differ in `max_workers`
+- **THEN** their `ragas_judge_identity_effective` records differ in `max_workers`
 
 #### Scenario: Same settings, different jobs
 - **WHEN** two arms were scored by two different jobs with identical model, precision, image, server, decoding and scorer settings
-- **THEN** their `judge_identity` records are equal, and their `judge_execution` records differ
+- **THEN** their `ragas_judge_identity_effective` records are equal, and their `judge_execution` records differ
 
 #### Scenario: Precision differs
 - **WHEN** one arm was scored with `bf16` weights and the other with `fp8` weights of the same model revision
-- **THEN** their `judge_identity` records differ in the precision field
+- **THEN** their `ragas_judge_identity_effective` records differ in the precision field
 
 #### Scenario: Nested identity values
-- **WHEN** two arms' `judge_identity` records hold nested values, such as the metric list and the per-metric settings
+- **WHEN** two arms' `ragas_judge_identity_effective` records hold nested values, such as the metric list and the per-metric settings
 - **THEN** the in-run comparability check and the merge's leaderboard rebuild compare them by canonical JSON without error, and equal nested values compare equal
 
 ### Requirement: The merge writes a judged result and never edits the pending one
@@ -275,7 +275,7 @@ The merge step SHALL write one new judged result JSON beside the pending one in 
 - **THEN** the merge exits non-zero and writes no judged file
 
 ### Requirement: Comparison refuses pending runs and mixed judges
-`compare_runs.py` and the campaign archiver (`scripts/benchmarking/feature_matrix/archive_run.sh`) SHALL refuse a run whose judge status is `pending`, through one shared check. The campaign archiver SHALL write each arm's `judge_identity` into its ledger row, and SHALL refuse an archive whose `judge_identity` differs from that of the campaign's earlier RAGAS rows. `compare_runs.py` SHALL also refuse to compare RAGAS metrics across arms whose `judge_identity` differs in any field, naming the fields that differ. An artifact with no `judge_identity` SHALL get `(evaluator_provider, evaluator_model)` from its recorded settings, and a missing field SHALL never equal a recorded one.
+`compare_runs.py` and the campaign archiver (`scripts/benchmarking/feature_matrix/archive_run.sh`) SHALL refuse a run whose judge status is `pending`, through one shared check. The campaign archiver SHALL write each arm's `ragas_judge_identity_effective` into its ledger row, and SHALL refuse an archive whose `ragas_judge_identity_effective` differs from that of the campaign's earlier RAGAS rows. `compare_runs.py` SHALL also refuse to compare RAGAS metrics across arms whose `ragas_judge_identity_effective` differs in any field, naming the fields that differ. An artifact with no `ragas_judge_identity_effective` key SHALL get `(evaluator_provider, evaluator_model)` from its recorded settings; this fallback SHALL apply only when the key is absent, and a missing field SHALL never equal a recorded one.
 
 #### Scenario: Campaign archiver and a different judge
 - **WHEN** the campaign ledger has RAGAS rows with a `bf16` judge identity, and `archive_run.sh` selects a scored artifact with an `fp8` identity
@@ -294,7 +294,7 @@ The merge step SHALL write one new judged result JSON beside the pending one in 
 - **THEN** `compare_runs.py` refuses the RAGAS comparison and names both judges
 
 #### Scenario: Same judge across separate jobs
-- **WHEN** two offline arms have equal `judge_identity` and different `judge_execution`
+- **WHEN** two offline arms have equal `ragas_judge_identity_effective` and different `judge_execution`
 - **THEN** `compare_runs.py` compares them
 
 #### Scenario: Two old inline artifacts

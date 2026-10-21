@@ -55,11 +55,11 @@ Rules for every task:
   - a file that ends with half a JSON line (a kill inside the write) is truncated to the last complete line, and the pair in the half line is scored again;
   - an invalid line that is not the last line makes the bundle `FAILED` with the line number;
   - a repeated `(key, metric)` pair uses its first record;
-  - a job with a different `judge_identity` (for example `fp8` after `bf16`) does not read the other identity's file, and its final scores come only from its own file.
+  - a job with a different `ragas_judge_identity_effective` (for example `fp8` after `bf16`) does not read the other identity's file, and its final scores come only from its own file.
 - [ ] 3.4 Add a test: a bundle whose digest does not match becomes `FAILED` with a reason, and the other bundles become `SCORED`.
 - [ ] 3.5 Add a test: offline aggregates equal inline aggregates for the same rows and the same stub judge.
 - [ ] 3.6 Write the scorer (`src/evaluation/judge/` or `src/utils/judge_scorer.py`) and its CLI entry `scripts/benchmarking/judge/score.py`.
-- [ ] 3.6a Add tests for `judge_identity` and `judge_execution` (design D10):
+- [ ] 3.6a Add tests for `ragas_judge_identity_effective` and `judge_execution` (design D10):
   - two jobs with the same settings give equal identities and different execution records;
   - a precision change (`bf16` against `fp8`) changes the identity;
   - an embedding change (OpenAI against HuggingFace, or a different model name reported by the built object) changes the identity;
@@ -71,7 +71,7 @@ Rules for every task:
   - the merge groups bundles by result file, and writes nothing while any arm is not `SCORED` (it names the pending arms and exits 0); after the last arm is `SCORED`, one judged file holds all arms;
   - a `FAILED` arm makes the merge write nothing for that result and exit non-zero;
   - a result whose pending JSON is not yet in `<queue>/results/` gets nothing, and the merge exits 0;
-  - arms with different `judge_identity` values keep their per-arm scores, and the leaderboard and A/B comparisons withhold ranks and winners, as #618 does in-run;
+  - arms with different `ragas_judge_identity_effective` values keep their per-arm scores, and the leaderboard and A/B comparisons withhold ranks and winners, as #618 does in-run;
   - the judged file has every arm's per-row scores and aggregates, the leaderboard, A/B, `judge_status: scored`, and each arm's `ragas_effective_settings`, `ragas_judge_identity_effective` (the extended `judge_identity`) and `judge_execution`;
   - the pending file is unchanged, and a second merge gives identical bytes;
   - a digest mismatch exits non-zero;
@@ -85,12 +85,14 @@ Rules for every task:
 - [ ] 4.1 Add tests for `scripts/benchmarking/slurm/judge_submit.sh`, with `squeue` and `sbatch` replaced by stubs on `PATH`. It submits nothing if a job exists or no bundle is available, nothing if the only READY bundles do not match the configured judge or scorer (3.0), and exactly one job if a matching bundle is READY and no job exists. Every `sbatch` of `archi-judge` has `--dependency=singleton`. For a result whose arms are all `SCORED` with no `MERGED` and no merge job, it submits one `archi-judge-merge` job. `--status` lists READY bundles older than 24 hours, bundles that do not match with the reason, `SCORER_STALE` and `INCOMPATIBLE` records, and stale claims.
 - [ ] 4.2 Write `scripts/benchmarking/slurm/archi_judge.sbatch`. It has `#SBATCH -J archi-judge --requeue --open-mode=append`, and the partition, GPU count and `-t` are settings at the top of the script. It checks the live scorer identity against the sidecar and counts its available bundles first, and exits without starting vLLM when the sidecar is stale or no bundle is available. It starts vLLM in Apptainer on a Unix socket (`--uds`) in a `0700` folder under the job's private temporary folder, with no TCP listener, and with a random key in `VLLM_API_KEY` (never on the command line). It waits for `/v1/models` through the socket, runs the scorer, and stops vLLM through a `trap`. It then submits the merge job with `--dependency=afterok:$SLURM_JOB_ID`. It must have a `--dry-run` that prints the resolved commands, with a test for it.
 - [ ] 4.3 Write `scripts/benchmarking/slurm/judge_merge.sbatch` (CPU only), with a `--dry-run` test.
-- [ ] 4.4 Add tests for G11 as one shared check, used by `scripts/benchmarking/compare_runs.py` and `scripts/benchmarking/feature_matrix/archive_run.sh`: a pending arm exits non-zero and is named; the archiver appends nothing to the ledger for a pending artifact and names the judged file to wait for; it archives a `judge_status: scored` judged file, with each arm's `judge_identity` in the ledger row; it refuses a scored artifact whose identity differs from the campaign's earlier RAGAS rows, and names the fields. Then write the gate.
+- [ ] 4.4 Add tests for G11 as one shared check, used by `scripts/benchmarking/compare_runs.py` and `scripts/benchmarking/feature_matrix/archive_run.sh`: a pending arm exits non-zero and is named; the archiver appends nothing to the ledger for a pending artifact and names the judged file to wait for; it archives a `judge_status: scored` judged file, with each arm's `ragas_judge_identity_effective` in the ledger row; it refuses a scored artifact whose identity differs from the campaign's earlier RAGAS rows, and names the fields. Then write the gate.
 - [ ] 4.5 Add tests for G12, then write the gate. The tests check that:
-  - arms whose `judge_identity` differs are refused, and the differing fields are named (inline Sonnet against offline Llama; `bf16` against `fp8`);
+  - arms whose `ragas_judge_identity_effective` differs are refused, and the differing fields are named (inline Sonnet against offline Llama; `bf16` against `fp8`);
   - two offline arms with equal identity from separate jobs compare;
   - two older inline artifacts with the same judge still compare;
-  - an old artifact never matches a new one that records a digest.
+  - an old artifact never matches a new one that records a digest;
+  - the `(evaluator_provider, evaluator_model)` fallback is used only when `ragas_judge_identity_effective` is absent: two new artifacts with the same provider and model but different precision are refused;
+  - two 4-field artifacts from #618 with equal fields compare, and a 4-field artifact never matches an extended one.
 - [ ] 4.6 Document the operator steps in `docs/docs/benchmarking.md`: image and weights download, the `scrontab` entry, `judge_mode: deferred`, how to read the queue, and how to copy judged files into `bench_out/`.
 
 ## 5. Operator (after PR 4 merges, not automated)
