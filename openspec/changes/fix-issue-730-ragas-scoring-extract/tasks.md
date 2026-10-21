@@ -74,7 +74,7 @@ Rules for every task:
 
 ## 4. Correct the parent change
 
-- [ ] 4.1 In `openspec/changes/offload-ragas-judge-to-slurm/design.md`, append one short
+- [x] 4.1 In `openspec/changes/offload-ragas-judge-to-slurm/design.md`, append one short
       paragraph to D2. Say that PR 1 (#730) moved only the evaluate, judge and embedding
       wiring, that the pure helpers stay in `src/utils/benchmark_schema.py`, that the
       `Benchmarker` wrappers keep `_judge_usage`, `_ragas_scored` and
@@ -87,7 +87,7 @@ Rules for every task:
 
 ## 5. Publish
 
-- [ ] 5.1 Run `bash scripts/gate.sh` once more on the branch tip and confirm it exits 0.
+- [x] 5.1 Run `bash scripts/gate.sh` once more on the branch tip and confirm it exits 0.
       Confirm each acceptance criterion of issue #730 against the tree. Push the branch:
       `git push -u origin fix/issue-730-ragas-scoring-extract`. Open the PR:
       `gh pr create --repo fasrc/archi --base dev --head fix/issue-730-ragas-scoring-extract`
