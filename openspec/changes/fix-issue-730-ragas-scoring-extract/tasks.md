@@ -61,7 +61,7 @@ Rules for every task:
 
 ## 3. Unix-socket judge builder (parent task 1.4)
 
-- [ ] 3.1 In `tests/unit/test_ragas_scoring.py`, add the two socket tests of design D6
+- [x] 3.1 In `tests/unit/test_ragas_scoring.py`, add the two socket tests of design D6
       (key present: one `POST /v1/chat/completions` with `Authorization: Bearer k-test`;
       key unset or empty: `ValueError` that names the variable, and no request). Use a
       socket under `tempfile.mkdtemp(prefix="rj")`, a client `timeout` of 10 seconds,
