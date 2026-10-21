@@ -119,12 +119,15 @@ def build_uds_judge_llm(
     async_transport = httpx.AsyncHTTPTransport(uds=socket_path)
     http_async_client = httpx.AsyncClient(transport=async_transport, timeout=timeout)
 
+    # ChatOpenAI gives the openai client its own request timeout (None when unset),
+    # which outranks the timeout of the httpx clients, so pass it here as well.
     return chat_openai(
         model=model_name,
         api_key=api_key,
         base_url="http://localhost/v1",
         http_client=http_client,
         http_async_client=http_async_client,
+        timeout=timeout,
         max_retries=max_retries,
     )
 

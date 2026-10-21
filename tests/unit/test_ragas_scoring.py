@@ -307,14 +307,18 @@ def test_build_uds_judge_llm_key_unset_raises_value_error():
 
 
 @contextlib.contextmanager
-def _unix_chat_server():
-    """Serve a canned chat.completion on a Unix socket; yield (path, requests seen)."""
+def _unix_chat_server(delay=0.0):
+    """Serve a canned chat.completion on a Unix socket; yield (path, requests seen).
+
+    Each answer waits ``delay`` seconds first.
+    """
     import http.server
     import os
     import shutil
     import socketserver
     import tempfile
     import threading
+    import time
 
     tmpdir = tempfile.mkdtemp(prefix="rj")
     sock_path = os.path.join(tmpdir, "vllm.sock")
@@ -330,6 +334,7 @@ def _unix_chat_server():
                 }
             )
             self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            time.sleep(delay)
             body = (
                 b'{"id":"chatcmpl-1","object":"chat.completion","created":1000000000,'
                 b'"model":"llama","choices":[{"index":0,"message":{"role":"assistant",'
@@ -354,6 +359,9 @@ def _unix_chat_server():
         def get_request(self):
             req, _ = super().get_request()
             return req, ["unix", 0]
+
+        def handle_error(self, request, client_address):
+            pass  # a client that timed out closed the socket before the answer
 
     server = UnixHTTPServer(sock_path, Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -433,3 +441,24 @@ def test_build_uds_judge_llm_names_the_missing_named_variable(monkeypatch, value
         )
 
     stub_chat_openai.assert_not_called()
+
+
+def test_build_uds_judge_llm_applies_the_timeout_to_each_request(monkeypatch):
+    """ChatOpenAI gives the openai client its own request timeout, which outranks
+    the httpx client timeout, so the builder must pass the timeout to it too."""
+    import asyncio
+    import time
+
+    import openai
+
+    monkeypatch.setenv("VLLM_API_KEY", "k-test")
+    with _unix_chat_server(delay=3.0) as (sock_path, _):
+        llm = build_uds_judge_llm("llama", sock_path, timeout=0.5, max_retries=0)
+        started = time.monotonic()
+        with pytest.raises(openai.APITimeoutError):
+            llm.invoke("ping")
+        with pytest.raises(openai.APITimeoutError):
+            asyncio.run(asyncio.wait_for(llm.ainvoke("ping"), timeout=10))
+        elapsed = time.monotonic() - started
+
+    assert elapsed < 2.5
