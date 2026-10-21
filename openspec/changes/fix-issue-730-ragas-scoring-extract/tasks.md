@@ -23,7 +23,7 @@ Rules for every task:
       `bash scripts/gate.sh` and commit when green (message: `record the black-seam check
       for service_benchmark`).
 
-- [ ] 1.2 Create `tests/unit/test_ragas_scoring_characterization.py` with the two cases
+- [x] 1.2 Create `tests/unit/test_ragas_scoring_characterization.py` with the two cases
       of design D5, and nothing that imports `src.utils.ragas_scoring`. Run
       `python -m pytest -q tests/unit/test_ragas_scoring_characterization.py` and confirm
       both tests PASS on today's code. Then prove that the test pins the side effects:

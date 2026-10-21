@@ -9,7 +9,7 @@ Rules for every task:
 ## 1. PR 1: extract the RAGAS scoring (mechanical, no change in behavior)
 
 - [x] 1.1 Run the black-seam check on `src/bin/service_benchmark.py`. Record whether an in-place edit reflows the file. black 24.10.0 and isort 6.0.1 report the file clean, so an in-place edit does not reflow it.
-- [ ] 1.2 Add a test: a stub judge scores fixed rows through `Benchmarker.get_ragas_results`, and the test records the aggregates and scored counts.
+- [x] 1.2 Add a test: a stub judge scores fixed rows through `Benchmarker.get_ragas_results`, and the test records the aggregates and scored counts.
 - [ ] 1.3 Move the scoring (`get_ragas_results`, the judge factory and the `RunConfig` assembly) into `src/utils/ragas_scoring.py`. The module takes rows, keys, settings and a judge factory, and `Benchmarker` keeps thin wrappers. The 1.2 test must pass unchanged.
 - [ ] 1.4 Add a test that the judge factory can build a client whose requests go through a Unix socket and carry a key read from the environment.
 
