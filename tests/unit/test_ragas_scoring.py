@@ -3,13 +3,20 @@
 One test per branch of build_ragas_judge_llm (openai, ollama, local-openai-compat,
 local-ollama, huggingface, anthropic, huit_bedrock, default) and per branch of
 build_ragas_embeddings (openai, huggingface, default), each using stub constructors.
+Two socket tests for build_uds_judge_llm (design D6).
 """
 
 from __future__ import annotations
 
 import unittest.mock as mock
 
-from src.utils.ragas_scoring import build_ragas_embeddings, build_ragas_judge_llm
+import pytest
+
+from src.utils.ragas_scoring import (
+    build_ragas_embeddings,
+    build_ragas_judge_llm,
+    build_uds_judge_llm,
+)
 
 # ── build_ragas_judge_llm branches ────────────────────────────────────────────
 
@@ -190,3 +197,109 @@ def test_build_ragas_embeddings_default_branch():
     )
     stub_openai.assert_called_once_with()
     assert not stub_hf.called
+
+
+# ── build_uds_judge_llm socket tests (design D6) ─────────────────────────────
+
+
+def test_build_uds_judge_llm_key_present_sends_auth_via_socket():
+    import http.server
+    import os
+    import socketserver
+    import tempfile
+    import threading
+
+    import openai
+
+    tmpdir = tempfile.mkdtemp(prefix="rj")
+    sock_path = os.path.join(tmpdir, "vllm.sock")
+    captured = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            captured["request_line"] = self.requestline
+            captured["auth"] = self.headers.get("Authorization", "")
+            length = int(self.headers.get("Content-Length", 0))
+            self.rfile.read(length)
+            body = (
+                b'{"id":"chatcmpl-1","object":"chat.completion","created":1000000000,'
+                b'"model":"llama","choices":[{"index":0,"message":{"role":"assistant",'
+                b'"content":"ok"},"finish_reason":"stop","logprobs":null}],'
+                b'"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}'
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def address_string(self):
+            return "unix"
+
+        def log_message(self, *args):
+            pass
+
+    class UnixHTTPServer(socketserver.UnixStreamServer):
+        def get_request(self):
+            req, addr = super().get_request()
+            return req, ["unix", 0]
+
+    server = UnixHTTPServer(sock_path, Handler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+
+    try:
+
+        def stub_chat_openai(**kwargs):
+            return openai.OpenAI(
+                api_key=kwargs["api_key"],
+                base_url=kwargs["base_url"],
+                http_client=kwargs["http_client"],
+                max_retries=kwargs.get("max_retries", 0),
+            )
+
+        with mock.patch.dict(os.environ, {"VLLM_API_KEY": "k-test"}):
+            llm = build_uds_judge_llm(
+                sock_path,
+                "llama",
+                chat_openai=stub_chat_openai,
+                timeout=10,
+                max_retries=0,
+            )
+            llm.chat.completions.create(
+                model="llama",
+                messages=[{"role": "user", "content": "ping"}],
+            )
+    finally:
+        server.shutdown()
+        t.join(timeout=5)
+
+    assert captured.get("auth") == "Bearer k-test", repr(captured.get("auth"))
+    assert "POST" in captured.get("request_line", ""), repr(
+        captured.get("request_line")
+    )
+    assert "/v1/chat/completions" in captured.get("request_line", ""), repr(
+        captured.get("request_line")
+    )
+
+
+def test_build_uds_judge_llm_key_unset_raises_value_error():
+    import os
+    import tempfile
+
+    tmpdir = tempfile.mkdtemp(prefix="rj")
+    sock_path = os.path.join(tmpdir, "vllm.sock")
+    stub_chat_openai = mock.MagicMock()
+
+    env_without_key = {k: v for k, v in os.environ.items() if k != "VLLM_API_KEY"}
+    with mock.patch.dict(os.environ, env_without_key, clear=True):
+        with pytest.raises(ValueError, match="VLLM_API_KEY"):
+            build_uds_judge_llm(
+                sock_path,
+                "llama",
+                chat_openai=stub_chat_openai,
+                timeout=10,
+                max_retries=0,
+            )
+
+    stub_chat_openai.assert_not_called()
