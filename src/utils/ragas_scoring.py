@@ -91,20 +91,26 @@ def build_ragas_judge_llm(identity, *, chat_openai, get_model):
 
 
 def build_uds_judge_llm(
-    model_name, socket_path, *, chat_openai=ChatOpenAI, timeout=10, max_retries=0
+    model_name,
+    socket_path,
+    *,
+    api_key_env="VLLM_API_KEY",
+    chat_openai=ChatOpenAI,
+    timeout=10,
+    max_retries=0,
 ):
     """Build a RAGAS judge LLM whose HTTP transport connects to a Unix domain socket.
 
-    Reads VLLM_API_KEY from the environment; raises ValueError naming the variable
-    if it is absent or empty, and makes no request in that case (design D6).
+    Reads the key from the api_key_env variable; raises ValueError naming the
+    variable if it is absent or empty, and makes no request in that case (design D6).
     """
     import os
 
     import httpx
 
-    api_key = os.environ.get("VLLM_API_KEY", "")
+    api_key = os.environ.get(api_key_env, "")
     if not api_key:
-        raise ValueError("VLLM_API_KEY environment variable is not set or empty")
+        raise ValueError(f"{api_key_env} environment variable is not set or empty")
 
     transport = httpx.HTTPTransport(uds=socket_path)
     http_client = httpx.Client(transport=transport, timeout=timeout)

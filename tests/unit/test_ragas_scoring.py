@@ -399,3 +399,37 @@ def test_build_uds_judge_llm_sends_async_calls_through_the_socket(monkeypatch):
     assert requests == [
         {"method": "POST", "path": "/v1/chat/completions", "auth": "Bearer k-test"}
     ]
+
+
+def test_build_uds_judge_llm_reads_the_key_from_the_named_variable(monkeypatch):
+    monkeypatch.delenv("VLLM_API_KEY", raising=False)
+    monkeypatch.setenv("JUDGE_KEY", "k-named")
+    with _unix_chat_server() as (sock_path, requests):
+        llm = build_uds_judge_llm(
+            "llama", sock_path, api_key_env="JUDGE_KEY", max_retries=0
+        )
+        llm.invoke("ping")
+
+    assert requests == [
+        {"method": "POST", "path": "/v1/chat/completions", "auth": "Bearer k-named"}
+    ]
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_build_uds_judge_llm_names_the_missing_named_variable(monkeypatch, value):
+    monkeypatch.setenv("VLLM_API_KEY", "k-test")
+    if value is None:
+        monkeypatch.delenv("JUDGE_KEY", raising=False)
+    else:
+        monkeypatch.setenv("JUDGE_KEY", value)
+    stub_chat_openai = mock.MagicMock()
+
+    with pytest.raises(ValueError, match="JUDGE_KEY"):
+        build_uds_judge_llm(
+            "llama",
+            "/nonexistent/vllm.sock",
+            api_key_env="JUDGE_KEY",
+            chat_openai=stub_chat_openai,
+        )
+
+    stub_chat_openai.assert_not_called()
