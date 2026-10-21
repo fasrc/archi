@@ -108,12 +108,17 @@ def build_uds_judge_llm(
 
     transport = httpx.HTTPTransport(uds=socket_path)
     http_client = httpx.Client(transport=transport, timeout=timeout)
+    # RAGAS calls the judge with ainvoke, which uses only the async client. Without
+    # it, the async client connects over TCP to the localhost placeholder in base_url.
+    async_transport = httpx.AsyncHTTPTransport(uds=socket_path)
+    http_async_client = httpx.AsyncClient(transport=async_transport, timeout=timeout)
 
     return chat_openai(
         model=model_name,
         api_key=api_key,
         base_url="http://localhost/v1",
         http_client=http_client,
+        http_async_client=http_async_client,
         max_retries=max_retries,
     )
 

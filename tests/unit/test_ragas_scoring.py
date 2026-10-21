@@ -384,3 +384,18 @@ def test_build_uds_judge_llm_takes_model_then_socket_and_builds_a_chat_openai(
     assert requests == [
         {"method": "POST", "path": "/v1/chat/completions", "auth": "Bearer k-test"}
     ]
+
+
+def test_build_uds_judge_llm_sends_async_calls_through_the_socket(monkeypatch):
+    """RAGAS calls the judge with ainvoke: the async client must use the socket too."""
+    import asyncio
+
+    monkeypatch.setenv("VLLM_API_KEY", "k-test")
+    with _unix_chat_server() as (sock_path, requests):
+        llm = build_uds_judge_llm("llama", sock_path, max_retries=0)
+        reply = asyncio.run(asyncio.wait_for(llm.ainvoke("ping"), timeout=10))
+
+    assert reply.content == "ok"
+    assert requests == [
+        {"method": "POST", "path": "/v1/chat/completions", "auth": "Bearer k-test"}
+    ]
