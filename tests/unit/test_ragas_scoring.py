@@ -8,6 +8,7 @@ Two socket tests for build_uds_judge_llm (design D6).
 
 from __future__ import annotations
 
+import contextlib
 import unittest.mock as mock
 
 import pytest
@@ -260,8 +261,8 @@ def test_build_uds_judge_llm_key_present_sends_auth_via_socket():
 
         with mock.patch.dict(os.environ, {"VLLM_API_KEY": "k-test"}):
             llm = build_uds_judge_llm(
-                sock_path,
                 "llama",
+                sock_path,
                 chat_openai=stub_chat_openai,
                 timeout=10,
                 max_retries=0,
@@ -295,11 +296,91 @@ def test_build_uds_judge_llm_key_unset_raises_value_error():
     with mock.patch.dict(os.environ, env_without_key, clear=True):
         with pytest.raises(ValueError, match="VLLM_API_KEY"):
             build_uds_judge_llm(
-                sock_path,
                 "llama",
+                sock_path,
                 chat_openai=stub_chat_openai,
                 timeout=10,
                 max_retries=0,
             )
 
     stub_chat_openai.assert_not_called()
+
+
+@contextlib.contextmanager
+def _unix_chat_server():
+    """Serve a canned chat.completion on a Unix socket; yield (path, requests seen)."""
+    import http.server
+    import os
+    import shutil
+    import socketserver
+    import tempfile
+    import threading
+
+    tmpdir = tempfile.mkdtemp(prefix="rj")
+    sock_path = os.path.join(tmpdir, "vllm.sock")
+    requests = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            requests.append(
+                {
+                    "method": self.command,
+                    "path": self.path,
+                    "auth": self.headers.get("Authorization", ""),
+                }
+            )
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = (
+                b'{"id":"chatcmpl-1","object":"chat.completion","created":1000000000,'
+                b'"model":"llama","choices":[{"index":0,"message":{"role":"assistant",'
+                b'"content":"ok"},"finish_reason":"stop","logprobs":null}],'
+                b'"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}'
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def address_string(self):
+            return "unix"
+
+        def log_message(self, *args):
+            pass
+
+    class UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+        daemon_threads = True
+
+        def get_request(self):
+            req, _ = super().get_request()
+            return req, ["unix", 0]
+
+    server = UnixHTTPServer(sock_path, Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield sock_path, requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_build_uds_judge_llm_takes_model_then_socket_and_builds_a_chat_openai(
+    monkeypatch,
+):
+    """D6 signature: build_uds_judge_llm(model, socket_path) with ChatOpenAI as default."""
+    from langchain_openai import ChatOpenAI
+
+    monkeypatch.setenv("VLLM_API_KEY", "k-test")
+    with _unix_chat_server() as (sock_path, requests):
+        llm = build_uds_judge_llm("llama", sock_path, max_retries=0)
+        reply = llm.invoke("ping")
+
+    assert isinstance(llm, ChatOpenAI)
+    assert llm.model_name == "llama"
+    assert reply.content == "ok"
+    assert requests == [
+        {"method": "POST", "path": "/v1/chat/completions", "auth": "Bearer k-test"}
+    ]

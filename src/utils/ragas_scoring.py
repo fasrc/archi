@@ -9,6 +9,8 @@ import importlib
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from langchain_openai import ChatOpenAI
+
 from src.archi.providers.local_provider import normalize_base_url
 from src.utils.benchmark_schema import (
     RAGAS_METRIC_NAMES,
@@ -89,7 +91,7 @@ def build_ragas_judge_llm(identity, *, chat_openai, get_model):
 
 
 def build_uds_judge_llm(
-    socket_path, model_name, *, chat_openai, timeout=10, max_retries=0
+    model_name, socket_path, *, chat_openai=ChatOpenAI, timeout=10, max_retries=0
 ):
     """Build a RAGAS judge LLM whose HTTP transport connects to a Unix domain socket.
 
