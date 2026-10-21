@@ -14,7 +14,7 @@ Rules for every task:
 
 ## 1. Pin today's behavior (parent tasks 1.1 and 1.2)
 
-- [ ] 1.1 Run `black --check src/bin/service_benchmark.py` and
+- [x] 1.1 Run `black --check src/bin/service_benchmark.py` and
       `isort --check-only src/bin/service_benchmark.py`. In
       `openspec/changes/offload-ragas-judge-to-slurm/tasks.md`, tick task 1.1 and append
       the result to its line (expected: "black 24.10.0 and isort 6.0.1 report the file
