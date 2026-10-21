@@ -1,0 +1,7 @@
+## 1. Make the test runtime-free (fasrc/archi#594)
+
+- [x] 1.1 Reproduce the red, then fix it in the same task (do not commit a red state). Build a reduced `PATH`: `mkdir -p /tmp/nodock && for b in python3 python git; do ln -sf "$(command -v $b)" /tmp/nodock/$b; done`. Run `env PATH=/tmp/nodock python3 -m pytest tests/unit/test_cli_create_dev_smoke.py -q -p no:cacheprovider` and confirm `test_force_evaluate_refuses_when_removal_silently_fails` fails with `No such file or directory: 'docker'` (inside the loop container the default `PATH` already has no runtime). Then, in that test only, import `VolumeManager` from `src.cli.managers.volume_manager`, patch `VolumeManager.create_required_volumes` with a recorder that appends to a local `volume_calls` list (the pattern at lines ~1031/1117/1497 of the same file), and add `assert len(volume_calls) == 1` with a message that includes `result.output`. Do not change `src/cli/cli_main.py`. Re-run the reduced-`PATH` command: all 41 tests pass. Run `bash scripts/gate.sh` (green) and commit.
+
+## 2. Publish
+
+- [x] 2.1 Push the branch with `git push -u origin fix/issue-594-mock-evaluate-volumes` and open the PR against `fasrc/archi:dev` with `gh pr create --repo fasrc/archi --base dev`. Put `Closes #594` in the PR **body** (not the title). In the body, give the reduced-`PATH` before and after results (1 failed / 40 passed → 41 passed). No `Co-Authored-By` trailer. Do not merge.

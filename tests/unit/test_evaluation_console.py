@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 from flask import Flask
+from werkzeug.wrappers import Response
 
 from src.interfaces.chat_app import evaluation_console
 from src.interfaces.chat_app.evaluation_console import (
@@ -21,6 +22,16 @@ def _flask_app():
     # A secret key is required before a test request context accepts session writes.
     app = Flask(__name__)
     app.secret_key = "evaluation-console-test"
+    return app
+
+
+def _flask_app_with_login():
+    app = _flask_app()
+
+    @app.route("/login")
+    def login():
+        return "login"
+
     return app
 
 
@@ -634,6 +645,123 @@ def test_authorize_request_allows_a_permitted_session():
         ctx.session["roles"] = ["admin"]
         with patch.object(evaluation_console, "has_permission", return_value=True):
             assert authorize_request(Permission.Evaluations.MANAGE) is None
+
+
+def test_authorize_request_accepts_an_sso_session_with_view():
+    authorize_request = build_authorize_request(
+        True,
+        sso_enabled=lambda: True,
+        allow_anonymous=lambda: False,
+        is_api_request=lambda: True,
+    )
+
+    with _flask_app_with_login().test_request_context(
+        "/api/evaluations/catalog"
+    ) as ctx:
+        ctx.session["logged_in"] = True
+        ctx.session["auth_method"] = "sso"
+        ctx.session["roles"] = ["viewer"]
+        with patch.object(evaluation_console, "has_permission", return_value=True):
+            assert authorize_request(Permission.Evaluations.VIEW) is None
+
+
+def test_authorize_request_redirects_an_anonymous_browser_to_login():
+    authorize_request = build_authorize_request(
+        True,
+        sso_enabled=lambda: True,
+        allow_anonymous=lambda: False,
+        is_api_request=lambda: False,
+    )
+
+    with _flask_app_with_login().test_request_context("/evaluations"):
+        result = authorize_request(Permission.Evaluations.VIEW)
+
+    assert isinstance(result, Response)
+    assert result.status_code == 302
+    assert result.location.endswith("/login")
+
+
+@pytest.mark.parametrize("sso_on", [True, False])
+def test_authorize_request_answers_an_anonymous_api_client_with_401(sso_on):
+    authorize_request = build_authorize_request(
+        True,
+        sso_enabled=lambda: sso_on,
+        allow_anonymous=lambda: False,
+        is_api_request=lambda: True,
+    )
+
+    with _flask_app_with_login().test_request_context("/api/evaluations/catalog"):
+        response, status = authorize_request(Permission.Evaluations.VIEW)
+
+    assert status == 401
+    assert response.get_json()["error"] == "Unauthorized"
+
+
+@pytest.mark.parametrize(
+    ("sso_on", "anon_ok", "expect_audit"),
+    [
+        (True, False, True),
+        (True, True, False),
+        (False, False, False),
+    ],
+)
+def test_authorize_request_audits_an_anonymous_sso_request(
+    sso_on, anon_ok, expect_audit
+):
+    authorize_request = build_authorize_request(
+        True,
+        sso_enabled=lambda: sso_on,
+        allow_anonymous=lambda: anon_ok,
+        is_api_request=lambda: True,
+    )
+
+    with patch.object(evaluation_console, "log_authentication_event") as mock_log:
+        with _flask_app_with_login().test_request_context("/evaluations"):
+            authorize_request(Permission.Evaluations.VIEW)
+
+    if expect_audit:
+        mock_log.assert_called_once()
+        kw = mock_log.call_args.kwargs
+        assert kw["user"] == "anonymous"
+        assert kw["event_type"] == "anonymous_redirect"
+        assert kw["success"] is False
+        assert kw["method"] == "web"
+        assert "/evaluations" in kw["details"]
+        assert "GET" in kw["details"]
+    else:
+        mock_log.assert_not_called()
+
+
+def test_authorize_request_without_predicates_never_redirects():
+    authorize_request = build_authorize_request(True)
+
+    with patch.object(evaluation_console, "log_authentication_event") as mock_log:
+        with _flask_app_with_login().test_request_context("/evaluations"):
+            response, status = authorize_request(Permission.Evaluations.VIEW)
+
+    assert status == 401
+    mock_log.assert_not_called()
+
+
+def test_authorize_request_rejects_an_sso_session_without_view_with_403():
+    authorize_request = build_authorize_request(
+        True,
+        sso_enabled=lambda: True,
+        allow_anonymous=lambda: False,
+        is_api_request=lambda: True,
+    )
+
+    with _flask_app_with_login().test_request_context(
+        "/api/evaluations/catalog"
+    ) as ctx:
+        ctx.session["logged_in"] = True
+        ctx.session["auth_method"] = "sso"
+        ctx.session["roles"] = ["viewer"]
+        with patch.object(evaluation_console, "has_permission", return_value=False):
+            response, status = authorize_request(Permission.Evaluations.VIEW)
+
+    assert status == 403
+    assert response.get_json()["required_permission"] == Permission.Evaluations.VIEW
 
 
 @pytest.mark.parametrize(

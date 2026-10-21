@@ -28,6 +28,26 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Display label per RAGAS metric, in report order. This CLI imports nothing from
+# src, so it keeps its own copy of benchmark_schema.RAGAS_METRIC_LABELS;
+# test_ragas_generation_metrics.py pins the two together.
+RAGAS_METRIC_LABELS = {
+    "answer_relevancy": "Answer Relevancy",
+    "faithfulness": "Faithfulness",
+    "context_precision": "Context Precision",
+    "context_recall": "Context Recall",
+    "answer_correctness": "Answer Correctness",
+    "factual_correctness_recall": "Factual Correctness (recall)",
+    "factual_correctness_precision": "Factual Correctness (precision)",
+    "noise_sensitivity": "Noise Sensitivity (lower is better)",
+    "answer_accuracy": "Answer Accuracy",
+    "response_groundedness": "Response Groundedness",
+}
+
+# Metrics where a lower score is better; the local copy of
+# benchmark_schema.LOWER_IS_BETTER_METRICS, pinned by the same test.
+LOWER_IS_BETTER_METRICS = frozenset({"noise_sensitivity"})
+
 
 def get_single_question_results(config_data):
     """Return the single question results regardless of key format."""
@@ -56,6 +76,11 @@ def load_benchmark_results(filepath):
 #: through a plain ``.get``, but they are different facts about the run and the
 #: reports say so differently.
 _INGEST_NOT_RECORDED = object()
+
+#: Sentinel for ``provenance["embedding_tags_unchanged_at_endpoints"]``: the
+#: artifact predates this field. ``None`` means the end reading failed or the
+#: search tool was absent; a bool is the comparison result.
+_TAGS_NOT_RECORDED = object()
 
 #: Sentinel for ``provenance["host"]``: the artifact predates host stamping.
 #: ``None`` means no host reached this artifact, which has FOUR causes: the
@@ -137,6 +162,9 @@ def parse_benchmark_results(results, metadata):
         "corpus_fingerprint_before": result.get("corpus_fingerprint_before"),
         "corpus_fingerprint": result.get("corpus_fingerprint"),
         "corpus_unchanged_at_endpoints": result.get("corpus_unchanged_at_endpoints"),
+        "embedding_tags_unchanged_at_endpoints": result.get(
+            "embedding_tags_unchanged_at_endpoints", _TAGS_NOT_RECORDED
+        ),
         # Identity, alongside the divergence findings above. Divergence says
         # whether this report can be trusted; the digests say whether this run is
         # the same code and settings as another one, which is the question a
@@ -222,6 +250,28 @@ def format_provenance_html(provenance):
             "</p>"
         )
 
+    tags = provenance.get("embedding_tags_unchanged_at_endpoints", _TAGS_NOT_RECORDED)
+    if tags is _TAGS_NOT_RECORDED:
+        tags_line = ""
+    elif tags is True:
+        tags_line = (
+            "<p class='provenance-ok'>The embedding model tags did not change "
+            "during the run.</p>"
+        )
+    elif tags is False:
+        tags_line = (
+            "<p class='provenance-alert'>The embedding model tags "
+            "<strong>changed</strong> while the run was in progress; some "
+            "questions searched vectors of another model or of no recorded "
+            "model.</p>"
+        )
+    else:
+        tags_line = (
+            "<p class='provenance-alert'>Embedding model tag stability is "
+            "<strong>unknown</strong>: it was not observed at the end of the "
+            "run.</p>"
+        )
+
     ingest = provenance.get("ingest_wall_seconds", _INGEST_NOT_RECORDED)
     if ingest is _INGEST_NOT_RECORDED:
         ingest_line = (
@@ -252,6 +302,7 @@ def format_provenance_html(provenance):
         "<div class='provenance'><h2>Run provenance</h2>"
         + config_line
         + corpus_line
+        + tags_line
         + ingest_line
         + format_version_html(provenance)
         + "</div>"
@@ -603,7 +654,9 @@ def format_html_output(
                     clean_name = (
                         metric.replace("aggregate_", "").replace("_", " ").title()
                     )
-                    score_class, display = _html_score_parts(value)
+                    score_class, display = _html_score_parts(
+                        value, metric.removeprefix("aggregate_")
+                    )
                     html_parts.append(
                         f"""
                     <div class="metric-item">
@@ -829,13 +882,7 @@ def format_html_output(
             html_parts.append(f"</div>")
 
         # RAGAS Metrics
-        ragas_metrics = {
-            "answer_relevancy": "Answer Relevancy",
-            "faithfulness": "Faithfulness",
-            "context_precision": "Context Precision",
-            "context_recall": "Context Recall",
-            "answer_correctness": "Answer Correctness",
-        }
+        ragas_metrics = RAGAS_METRIC_LABELS
 
         if "RAGAS" in config_data.get("services", {}).get("benchmarking", {}).get(
             "modes", []
@@ -849,7 +896,9 @@ def format_html_output(
             # unscored metric look identical to one the config never enabled.
             for metric_key, metric_name in ragas_metrics.items():
                 if metric_key in q_data:
-                    score_class, display = _html_score_parts(q_data[metric_key])
+                    score_class, display = _html_score_parts(
+                        q_data[metric_key], metric_key
+                    )
                     html_parts.append(
                         f"""
                     <div class="metric-item">
@@ -947,13 +996,26 @@ def code_span(text):
     return f"{ticks} {text} {ticks}"
 
 
-def _score_badge(value):
-    """The 0.5 / 0.7 thresholds the HTML report encodes as colors."""
-    if value < 0.5:
-        return "🔴"
-    if value < 0.7:
-        return "🟡"
-    return "🟢"
+def _score_band(value, metric=None):
+    """``"low"``, ``"medium"`` or ``"high"`` quality at the 0.5 / 0.7 thresholds.
+
+    A lower-is-better metric is graded on ``1 - value``, so a noise score of
+    0.1 is high quality and wears the same green as a faithfulness of 0.9.
+    """
+    quality = 1.0 - value if metric in LOWER_IS_BETTER_METRICS else value
+    if quality < 0.5:
+        return "low"
+    if quality < 0.7:
+        return "medium"
+    return "high"
+
+
+_BADGE_BY_BAND = {"low": "🔴", "medium": "🟡", "high": "🟢"}
+
+
+def _score_badge(value, metric=None):
+    """The badge for the band the HTML report encodes as colors."""
+    return _BADGE_BY_BAND[_score_band(value, metric)]
 
 
 def _is_scored(value):
@@ -1010,14 +1072,14 @@ def _has_source_tally(total_results, questions):
     )
 
 
-def _score_cell(value):
+def _score_cell(value, metric=None):
     """A score cell: badged when scored, plainly unscored when not."""
     if not _is_scored(value):
         return UNSCORED_CELL
-    return f"{value:.3f} {_score_badge(value)}"
+    return f"{value:.3f} {_score_badge(value, metric)}"
 
 
-def _html_score_parts(value):
+def _html_score_parts(value, metric=None):
     """``(css_class, display_text)`` for one HTML metric tile.
 
     The HTML report paints its own tiles rather than reusing ``_score_cell``'s
@@ -1026,11 +1088,7 @@ def _html_score_parts(value):
     """
     if not _is_scored(value):
         return "score-na", UNSCORED_CELL
-    if value < 0.5:
-        return "score-low", f"{value:.3f}"
-    if value < 0.7:
-        return "score-medium", f"{value:.3f}"
-    return "score-high", f"{value:.3f}"
+    return f"score-{_score_band(value, metric)}", f"{value:.3f}"
 
 
 def extract_context_text(ctx):
@@ -1185,6 +1243,23 @@ def format_provenance_markdown(provenance):
             f"and after the run ({code_span(before)} → {code_span(after)})."
         )
 
+    tags = provenance.get("embedding_tags_unchanged_at_endpoints", _TAGS_NOT_RECORDED)
+    if tags is not _TAGS_NOT_RECORDED:
+        lines.append("")
+        if tags is True:
+            lines.append("✅ The embedding model tags did not change during the run.")
+        elif tags is False:
+            lines.append(
+                "⚠️ The embedding model tags **changed** while the run was in "
+                "progress; some questions searched vectors of another model or "
+                "of no recorded model."
+            )
+        else:
+            lines.append(
+                "⚠️ Embedding model tag stability is **unknown**: it was not "
+                "observed at the end of the run."
+            )
+
     ingest = provenance.get("ingest_wall_seconds", _INGEST_NOT_RECORDED)
     lines.append("")
     if ingest is _INGEST_NOT_RECORDED:
@@ -1278,15 +1353,10 @@ def format_markdown_output(
         for metric, value in total_results.items():
             if "aggregate" in metric:
                 clean_name = metric.replace("aggregate_", "").replace("_", " ").title()
-                parts.append(f"| {md_escape(clean_name)} | {_score_cell(value)} |")
+                cell = _score_cell(value, metric.removeprefix("aggregate_"))
+                parts.append(f"| {md_escape(clean_name)} | {cell} |")
 
-    ragas_metrics = {
-        "answer_relevancy": "Answer Relevancy",
-        "faithfulness": "Faithfulness",
-        "context_precision": "Context Precision",
-        "context_recall": "Context Recall",
-        "answer_correctness": "Answer Correctness",
-    }
+    ragas_metrics = RAGAS_METRIC_LABELS
 
     for i, (qid, q_data) in enumerate(questions.items(), 1):
         parts += ["", "---", "", f"## Question {i}: {md_escape(qid)}"]
@@ -1416,7 +1486,7 @@ def format_markdown_output(
             # the run asked for the metric and the judge produced nothing, which
             # is exactly what a reader needs to see.
             score_rows = [
-                f"| {metric_name} | {_score_cell(q_data[metric_key])} |"
+                f"| {metric_name} | {_score_cell(q_data[metric_key], metric_key)} |"
                 for metric_key, metric_name in ragas_metrics.items()
                 if metric_key in q_data
             ]

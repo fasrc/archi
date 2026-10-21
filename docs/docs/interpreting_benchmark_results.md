@@ -98,9 +98,12 @@ grading** in Argilla. See [`benchmarking.md`](benchmarking.md#human-grading-via-
 
 ## 2. The metrics, in plain words
 
-Archi reports two families of scores. All are between 0 and 1, higher is better.
+Archi reports two families of scores. All are between 0 and 1. Higher is better for
+every score except `noise_sensitivity`, where **lower is better** (it is the share of
+wrong claims). The leaderboard ranks it ascending, and the reports color it on that
+reversed scale.
 
-### 2.1 The five RAGAS metrics
+### 2.1 The RAGAS metrics
 
 RAGAS is the open-source library (version 0.3.5) that computes these. Each metric
 answers a different question, and — critically — **each one looks at a different
@@ -113,6 +116,11 @@ subset of the available information.**
 | `context_precision` | Of the chunks retrieved, how many were actually useful? | chunks + reference answer |
 | `context_recall` | Did retrieval find everything the reference answer needed? | chunks + reference answer |
 | `answer_correctness` | Is the answer *correct* against the reference answer? | answer + reference answer |
+| `factual_correctness_recall` | What share of the reference answer's claims does the answer cover? | answer + reference answer |
+| `factual_correctness_precision` | What share of the answer's claims does the reference support? | answer + reference answer |
+| `noise_sensitivity` | What share of the answer's claims are *wrong*? **Lower is better.** | question + answer + chunks + reference answer |
+| `answer_accuracy` | Does the answer agree with the reference? (two judge ratings, averaged) | question + answer + reference answer |
+| `response_groundedness` | Is the answer supported by the chunks? (two judge ratings, averaged) | answer + chunks |
 
 Read that last column carefully, because it determines what each metric can
 detect.
@@ -125,21 +133,45 @@ detect.
 - **`answer_relevancy` never looks at the retrieved chunks.** An answer can be
   perfectly relevant and entirely made up.
 
-- **`answer_correctness` is the only metric that compares the answer to the
-  reference answer.** The other four grade *relevance* and *grounding*; none of
-  them can tell a right answer from a wrong one. A fluent answer, grounded in
-  correctly retrieved chunks, that still contradicts the reference scores well on
-  all four and poorly only here. It blends factual overlap with the reference
-  (weight 0.75) and embedding similarity (0.25).
+- **`answer_correctness` is the only one of the original five that compares the
+  answer to the reference answer.** The other four grade *relevance* and
+  *grounding*; none of them can tell a right answer from a wrong one. A fluent
+  answer, grounded in correctly retrieved chunks, that still contradicts the
+  reference scores well on all four and poorly only here. It is one **blended**
+  score: factual overlap with the reference (weight 0.75) plus embedding
+  similarity (0.25). Four of the generation-side metrics below also compare the
+  answer to the reference, each on one narrower question:
+  `factual_correctness_recall`, `factual_correctness_precision`,
+  `noise_sensitivity` and `answer_accuracy`. `response_groundedness` does not.
 
     This metric is **opt-in**: add it to
     `services.benchmarking.mode_settings.ragas_settings.enabled_metrics`. A run
     that omits it reports the original four, so an older run's JSON carries no
     `aggregate_answer_correctness` key at all.
 
-- **Three metrics require a non-empty reference answer** — the two `context_*`
-  metrics and `answer_correctness`. Rows without one are silently excluded from
-  those metrics only. (In code: `src/utils/benchmark_schema.py`,
+- **The generation-side metrics are opt-in too** (the last five rows). They
+  grade the answer rather than retrieval, the half a prompt edit can move:
+
+    - `factual_correctness_recall` and `factual_correctness_precision` split
+      what `answer_correctness` blends. Recall falls when the answer *leaves
+      facts out*; precision falls when it *adds claims the reference does not
+      make*. A "be thorough" prompt can raise the first and lower the second, and
+      one blended score hides that trade. Neither includes an embedding
+      similarity term.
+    - `noise_sensitivity` is the only metric where **lower is better**. It counts
+      answer claims that are incorrect given the reference, attributing them to
+      the retrieved chunks (ragas' `relevant` mode). `faithfulness` asks only
+      whether a claim is *in* the chunks, not whether it is right. The
+      leaderboard, the A/B winner and `compare_runs`' regression checks all read
+      its direction from `LOWER_IS_BETTER_METRICS` in
+      `src/utils/benchmark_schema.py`.
+    - `answer_accuracy` and `response_groundedness` are ragas' NVIDIA metrics:
+      each asks the judge twice and averages, so they are steadier on small banks
+      but give no per-claim explanation.
+
+- **Seven metrics require a non-empty reference answer** — every metric above
+  except `answer_relevancy`, `faithfulness` and `response_groundedness`. Rows
+  without one are silently excluded from those metrics only. (In code: `src/utils/benchmark_schema.py`,
   `_METRIC_REQUIRED_COLUMN`.) This is why the metrics can each be averaged over a
   *different number of questions* in the same run — see
   [Denominator drift](#34-denominator-drift-the-quiet-one).
@@ -170,13 +202,15 @@ else changed too.
 | If you change… | Expect movement in | Should barely move |
 |---|---|---|
 | chunking, reranking, retrieval weights | `context_precision`, `context_recall`, both source metrics | `answer_relevancy` |
-| the system prompt, or the SUT model | `faithfulness`, `answer_relevancy`, `answer_correctness` | the `context_*` metrics |
+| the system prompt, or the SUT model | `faithfulness`, `answer_relevancy`, `answer_correctness`, and the five generation-side metrics | the `context_*` metrics — but the agent writes its own search queries, so a prompt edit *can* move them; if it does, the prompt changed retrieval too |
 
-`answer_correctness` is the one metric that can move when nothing else does. If a
+The reference-based answer metrics (`answer_correctness`, and when enabled
+`factual_correctness_recall`, `factual_correctness_precision`,
+`noise_sensitivity` and `answer_accuracy`) can move when nothing else does. If a
 change makes the bot *right* more often without changing what it retrieved or how
-grounded it sounds, only this metric registers it. In the other direction, a
-retrieval change moves it only when retrieval was the thing standing between the
-bot and a correct answer.
+grounded it sounds, only these metrics register it; of the original five, only
+`answer_correctness` does. In the other direction, a retrieval change moves them
+only when retrieval was the thing standing between the bot and a correct answer.
 
 !!! danger "The coupling that breaks this table"
     Archi's agent decides *its own search queries* as it reasons. So changing the
@@ -305,6 +339,41 @@ Read it with three cautions:
 An arm whose corpus reading failed, or whose corpus differs from the others', is
 withheld from the leaderboard and the A/B winner rather than ranked, because
 ranking it would assert a controlled comparison that did not happen.
+
+**The embedding model tags at the end of the run.** Every chunk carries an
+`embedding_model` tag naming the model that made its vector. The start check
+refuses to run when a tag names another model. Newer RAGAS arms and QA runs also
+read the tags again at the end, and record two fields (per arm in the results
+file; in `manifest.json` and `summary.json` `provenance` for a QA run):
+
+- `embedding_tags_end` — the tags found at the end (`embedding_model_tags`) and
+  the number of chunks with no tag (`untagged_chunk_count`). A value beginning
+  `<unavailable:` means the read failed; the text after it says why.
+- `embedding_tags_unchanged_at_endpoints` — the end state compared with the
+  start:
+    - `true`: no tag other than the run's own model appeared, and the untagged
+      count did not grow. Ordinary ingestion with the same model is still `true`;
+      the corpus fingerprint reports that content change.
+    - `false`: the collection was re-embedded during the run. A tag of another
+      model appeared, or more chunks lost their tag, so some questions searched
+      vectors of another model or of no recorded model. The fingerprint cannot
+      see this, because it reads the text and not the vectors: it stays equal and
+      `corpus_unchanged_at_endpoints` stays `true`.
+    - `null`: not observed. The end read failed, or the start record was
+      missing. (A QA run whose agent had no search tool also records `null`,
+      with null corpus readings; it searched nothing, so nothing refuses it.)
+    - absent: the run predates the field. That is unknown, not unstable, and
+      nothing refuses it.
+
+A `false` or `null` value withholds the arm's rank on the leaderboard (the
+warning names the variant), puts an alert in the per-arm report, makes
+`compare_runs.py` refuse the arm, noise replicate, or QA run, and makes
+`archive_run.sh` refuse the artifact, in single-arm and `--sweep` mode. No flag
+admits it; `--corpus-differs-by-design` does not apply, because the change is a
+different model, not different content. **The remedy is to re-run the arm**:
+wait until the re-embed has finished, confirm every chunk carries the configured
+model's tag (the start check reports this), and run again. A `null` from a
+failed read also needs a re-run once the database can be read.
 
 ### 3.4 Denominator drift — the quiet one
 
@@ -576,6 +645,15 @@ files are.
   questions against two of them even when it started and finished on the same
   one. `--corpus-differs-by-design` continues and prints the Procedure B
   warning; it does not make the arms comparable.
+- **An arm, a `--noise-runs` replicate, or a `--qa-run` recorded
+  `embedding_tags_unchanged_at_endpoints: false`** — the collection was
+  re-embedded while it ran, so some questions searched vectors of another model
+  or of no recorded model. The corpus fingerprint is model-neutral and cannot
+  see this. A recorded `null` (not observed) is refused the same way; a missing
+  key (an older artifact) is not. No flag admits it, including
+  `--corpus-differs-by-design`; re-run the arm
+  ([section 3.3](#33-the-corpus-changed)). `archive_run.sh` refuses the same
+  artifact.
 - **The arms recorded different answer-path settings, or an arm recorded no
   `configuration` at all** — the bound (`services.chat_app.context_editing`)
   and the limit (`services.chat_app.recursion_limit`) decide which questions the
@@ -710,6 +788,8 @@ bench_out/benchmarking-<name>-<timestamp>.json
 ├── metadata
 │   ├── corpus_snapshot_id     # shared => ran together (see §3.3)
 │   ├── git_info.last_commit   # the DEPLOY's commit, NOT this run's code (§5.E)
+│   ├── git_info.git_diff      # uncommitted changes at DEPLOY; capped at 256 KB, top-level bench_out/ excluded
+│   ├── git_info.git_diff_stat # git diff --stat of the same changes, at most 200 files
 │   ├── code_version           # which code produced this (§5.E)
 │   ├── host                   # machine that ran the deploy (§5.E)
 │   └── config_versions[]      # one config digest per arm, in run order
@@ -754,7 +834,10 @@ fields.
 **Do not use `git_info.last_commit` for this.** `archi create` writes
 `git_info.yaml` once at deploy and then freezes it. Every run between 2026-08-11
 and 2026-08-17 reports the same commit (`0a157cdce0`) with an empty diff, because
-they shared one deployment — even though they ran different code. The field names
+they shared one deployment — even though they ran different code. Since #514 the diff
+is bounded: `git_diff` holds at most 256 KB (also once JSON-escaped in the artifact),
+`git_diff_truncated` says whether it was cut, `git_diff_original_bytes` gives the full
+size, and top-level `bench_out/` is excluded. The field names
 the deploy, not the image. It is kept, and labelled, for exactly that reason.
 `metadata.host` does not share this freeze trap: a container cannot move to another
 machine, so the host recorded at deploy is the host every run in that deployment

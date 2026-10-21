@@ -24,6 +24,7 @@ import yaml
 
 import src.bin.service_benchmark as sb
 from src.bin.service_benchmark import ResultHandler
+from src.utils.benchmark_provenance import config_version
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +56,13 @@ def _pin_corpus(monkeypatch, value):
     """
     monkeypatch.setattr(
         ResultHandler, "get_corpus_fingerprint", staticmethod(lambda _config: value)
+    )
+    monkeypatch.setattr(
+        ResultHandler,
+        "get_embedding_tag_state",
+        staticmethod(
+            lambda _config: {"embedding_model_tags": [], "untagged_chunk_count": 0}
+        ),
     )
 
 
@@ -225,6 +233,172 @@ def test_no_judge_settings_are_claimed_when_ragas_was_not_a_mode(tmp_path):
     assert record["configuration"]["services"]["benchmarking"]["mode_settings"][
         "ragas_settings"
     ] == {"timeout": 600, "max_workers": 4}
+
+
+def test_unjudged_ragas_arm_records_no_settings(tmp_path):
+    """RAGAS was a mode, but every answer failed, so the judge never scored (#518).
+
+    ``_process_config`` takes the ``build_ragas_aggregates(None, ...)`` branch for
+    an arm whose every answer failed or was degraded, and never builds a
+    ``RunConfig``. The caller reports this with ``ragas_scored=False``; the
+    record must not claim judge settings for a judge that never started.
+    """
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        ragas_scored=False,
+    )
+
+    assert ResultHandler.results[0]["ragas_effective_settings"] is None
+
+
+def test_judged_ragas_arm_records_settings_when_told_it_was_scored(tmp_path):
+    """``ragas_scored=True`` is the normal case: the judge ran, so settings are recorded."""
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        ragas_scored=True,
+    )
+
+    assert ResultHandler.results[0]["ragas_effective_settings"] == {
+        "timeout": 600,
+        "max_workers": 4,
+    }
+
+
+# --- #618: ragas_judge_identity_effective on the arm record ---
+
+_JUDGE_IDENTITY = {
+    "provider": "openai",
+    "model": "gpt-4o",
+    "base_url": None,
+    "mode": "openai_compat",
+}
+
+
+def test_judge_identity_is_recorded_when_ragas_scored(tmp_path):
+    """handle_results records judge_identity_effective when the judge ran."""
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        ragas_scored=True,
+        judge_identity=_JUDGE_IDENTITY,
+    )
+    assert ResultHandler.results[0]["ragas_judge_identity_effective"] == _JUDGE_IDENTITY
+
+
+def test_judge_identity_is_none_when_not_scored(tmp_path):
+    """When ragas_scored=False, ragas_judge_identity_effective is None."""
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        ragas_scored=False,
+        judge_identity=_JUDGE_IDENTITY,
+    )
+    assert ResultHandler.results[0]["ragas_judge_identity_effective"] is None
+
+
+def test_judge_identity_is_none_on_sources_only_run(tmp_path):
+    """A SOURCES-only run records None for ragas_judge_identity_effective."""
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(modes=("SOURCES",), timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"SOURCES"},
+        judge_identity=_JUDGE_IDENTITY,
+    )
+    assert ResultHandler.results[0]["ragas_judge_identity_effective"] is None
+
+
+def test_config_version_digest_unchanged_when_judge_identity_changes(tmp_path):
+    """judge_identity does not feed the config_version digest."""
+    identity_a = {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "base_url": None,
+        "mode": "openai_compat",
+    }
+    identity_b = {
+        "provider": "anthropic",
+        "model": "claude-3",
+        "base_url": None,
+        "mode": "openai_compat",
+    }
+    ResultHandler.handle_results(
+        _write(tmp_path / "a", _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        judge_identity=identity_a,
+    )
+    ResultHandler.handle_results(
+        _write(tmp_path / "b", _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        judge_identity=identity_b,
+    )
+    first, second = ResultHandler.results
+    assert first["config_version"]["digest"] == second["config_version"]["digest"]
+
+
+def test_omitting_ragas_scored_keeps_recording_settings(tmp_path):
+    """A caller that does not know whether the judge scored keeps today's behavior."""
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+    )
+
+    assert ResultHandler.results[0]["ragas_effective_settings"] == {
+        "timeout": 600,
+        "max_workers": 4,
+    }
+
+
+def test_unjudged_and_unspecified_ragas_arms_share_a_digest(tmp_path):
+    """``ragas_scored=False`` must not change the configuration digest (#518).
+
+    Only ``modes_executed`` feeds the digest basis (``with_effective_ragas_settings``);
+    ``ragas_scored`` only gates what ``ragas_effective_settings`` reports.
+    """
+    ResultHandler.handle_results(
+        _write(tmp_path / "a", _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        ragas_scored=False,
+    )
+    ResultHandler.handle_results(
+        _write(tmp_path / "b", _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+    )
+
+    unjudged, unspecified = ResultHandler.results
+    assert (
+        unjudged["config_version"]["digest"] == unspecified["config_version"]["digest"]
+    )
 
 
 def test_two_files_that_differ_keep_different_selected_file_digests(tmp_path):
@@ -478,6 +652,67 @@ def test_a_missing_prompt_file_is_left_as_its_path(tmp_path):
     assert recorded["services"]["benchmarking"]["prompts"]["main"]["greet"] == missing
 
 
+def _prompt_config(prompt_path):
+    return {
+        "services": {"benchmarking": {"prompts": {"main": {"greet": str(prompt_path)}}}}
+    }
+
+
+def test_selected_file_digest_differs_for_different_prompt_paths(tmp_path):
+    """Two files naming different prompt paths are different files (#521).
+
+    The digest fingerprints the file as written, so equal prompt contents
+    behind different paths must not make the two files look the same.
+    """
+    first_prompt = tmp_path / "one.txt"
+    second_prompt = tmp_path / "two.txt"
+    first_prompt.write_text("SAME BODY")
+    second_prompt.write_text("SAME BODY")
+
+    for name, prompt in (("a", first_prompt), ("b", second_prompt)):
+        config = _prompt_config(prompt)
+        ResultHandler.handle_results(
+            _write(tmp_path / name, config), {}, {}, running_config=config
+        )
+
+    first, second = ResultHandler.results
+    assert (
+        first["config_version"]["selected_file_digest"]
+        != second["config_version"]["selected_file_digest"]
+    )
+
+
+def test_selected_file_digest_ignores_prompt_file_edits(tmp_path):
+    """The same file reported twice keeps one digest when a prompt file changes."""
+    prompt = tmp_path / "p.txt"
+    prompt.write_text("FIRST BODY")
+    config = _prompt_config(prompt)
+    path = _write(tmp_path / "cfg", config)
+
+    ResultHandler.handle_results(path, {}, {}, running_config=config)
+    prompt.write_text("SECOND BODY")
+    ResultHandler.handle_results(path, {}, {}, running_config=config)
+
+    first, second = ResultHandler.results
+    assert (
+        first["config_version"]["selected_file_digest"]
+        == second["config_version"]["selected_file_digest"]
+    )
+
+
+def test_selected_file_digest_unchanged_without_prompts(tmp_path):
+    """A config with no prompts gets the same digest as before the fix."""
+    path = _write(tmp_path, FILE_CONFIG)
+
+    ResultHandler.handle_results(path, {}, {}, running_config=CHAIN_CONFIG)
+
+    expected = config_version(
+        running=CHAIN_CONFIG, selected=FILE_CONFIG, selected_file=str(path)
+    )["selected_file_digest"]
+    recorded = ResultHandler.results[0]["config_version"]["selected_file_digest"]
+    assert recorded == expected
+
+
 def test_records_ingest_wall_seconds_on_the_arm(tmp_path, monkeypatch):
     """The campaign's cost table reads this off the arm, beside the corpus id.
 
@@ -534,3 +769,59 @@ def test_ingest_wall_seconds_is_not_copied_onto_the_run_metadata(tmp_path, monke
     ResultHandler.add_metadata()
 
     assert "ingest_wall_seconds" not in ResultHandler.metadata
+
+
+# --- #582: judge_usage on the arm record ---
+
+
+def test_judge_usage_is_recorded_when_ragas_ran(tmp_path):
+    """handle_results records the judge_usage dict when RAGAS ran."""
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "calls": 2,
+        "unreported_calls": 0,
+        "by_model": [
+            {
+                "provider": "openai",
+                "model": "gpt-4o",
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "calls": 2,
+                "unreported_calls": 0,
+            }
+        ],
+    }
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(modes=("RAGAS",), timeout=60)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        judge_usage=usage,
+    )
+    record = ResultHandler.results[0]
+    assert "judge_usage" in record
+    assert record["judge_usage"] == usage
+
+
+def test_judge_usage_is_none_when_ragas_did_not_run(tmp_path):
+    """When RAGAS was not a mode, judge_usage is null regardless of the arg passed."""
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "calls": 2,
+        "unreported_calls": 0,
+        "by_model": [],
+    }
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(modes=("SOURCES",))),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"SOURCES"},
+        judge_usage=usage,
+    )
+    record = ResultHandler.results[0]
+    assert "judge_usage" in record
+    assert record["judge_usage"] is None

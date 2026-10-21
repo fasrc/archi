@@ -8,6 +8,7 @@ from src.evaluation.qa.preparation import (
     load_preparation_records,
     prepare_dataset_item,
     prepare_dataset_items,
+    preparation_record_from_dict,
 )
 from src.evaluation.qa.validation import Atom, DatasetItem
 
@@ -274,3 +275,251 @@ class TestPreparationArtifact:
         assert next(records) == second
         with pytest.raises(StopIteration):
             next(records)
+
+
+_SAMPLE_USAGE = {
+    "input_tokens": 100,
+    "output_tokens": 20,
+    "calls": 1,
+    "unreported_calls": 0,
+    "by_model": [
+        {
+            "provider": "test",
+            "model": "m",
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "calls": 1,
+            "unreported_calls": 0,
+        }
+    ],
+}
+
+
+class _ExtractorWithLastUsage:
+    last_usage = _SAMPLE_USAGE
+
+    def extract_gold(self, question, answer):
+        return {"atoms": [{"id": "A1", "text": answer, "required": True}]}
+
+
+class _FailingExtractorWithLastUsage:
+    last_usage = _SAMPLE_USAGE
+
+    def extract_gold(self, question, answer):
+        raise RuntimeError("extraction failed")
+
+
+class _FailingExtractorWithoutUsage:
+    # A recorder-backed extractor whose call failed before on_llm_end.
+    last_usage = None
+
+    def extract_gold(self, question, answer):
+        raise RuntimeError("auth failed")
+
+
+def _prepared_row(item_id="item"):
+    return {
+        "item_id": item_id,
+        "status": "prepared",
+        "category": "category",
+        "answer_mode": "direct_answer",
+        "answer_source": "source",
+        "question": f"Question {item_id}",
+        "answer": f"Answer {item_id}",
+        "time_sensitive": False,
+        "atom_source": "inferred",
+        "gold_atoms": [{"id": "A1", "text": f"Answer {item_id}", "required": True}],
+    }
+
+
+def _failed_row(item_id="item"):
+    return {
+        "item_id": item_id,
+        "status": "preparation_failed",
+        "category": "category",
+        "answer_mode": "direct_answer",
+        "answer_source": "source",
+        "error": "extraction failed",
+    }
+
+
+class TestPreparationUsage:
+    def test_inferred_usage_written_to_dict(self):
+        record = prepare_dataset_item(_item("u1"), _ExtractorWithLastUsage())
+
+        assert record.atom_source == "inferred"
+        assert record.usage == _SAMPLE_USAGE
+        row = record.to_dict()
+        assert row["usage"] == _SAMPLE_USAGE
+
+    def test_extractor_raise_writes_usage_on_failed_row(self):
+        record = prepare_dataset_item(_item("u2"), _FailingExtractorWithLastUsage())
+
+        assert record.status == "preparation_failed"
+        assert record.usage == _SAMPLE_USAGE
+        row = record.to_dict()
+        assert row["usage"] == _SAMPLE_USAGE
+
+    def test_failed_call_without_usage_writes_null_usage(self):
+        record = prepare_dataset_item(_item("u11"), _FailingExtractorWithoutUsage())
+
+        assert record.status == "preparation_failed"
+        assert record.usage is None
+        row = record.to_dict()
+        assert "usage" in row
+        assert row["usage"] is None
+
+    def test_failed_row_round_trips_null_usage(self):
+        row = _failed_row("u12")
+        row["usage"] = None
+
+        loaded = preparation_record_from_dict(row)
+
+        assert "usage" in loaded.to_dict()
+        assert loaded.to_dict()["usage"] is None
+
+    def test_failed_row_without_usage_key_stays_without(self):
+        loaded = preparation_record_from_dict(_failed_row("u13"))
+
+        assert "usage" not in loaded.to_dict()
+
+    def test_skipped_with_usage_key_raises_in_post_init(self):
+        with pytest.raises(ValueError, match="cannot contain output"):
+            PreparationRecord(
+                item_id="u14",
+                status="skipped_live",
+                category="category",
+                answer_mode="direct_answer",
+                answer_source="source",
+                usage_recorded=True,
+            )
+
+    def test_supplied_atoms_row_has_no_usage_key(self):
+        supplied_atom = Atom(id="S1", text="supplied", required=True)
+        item = _item("u3", expected_atoms=[supplied_atom])
+        record = prepare_dataset_item(item, _ExtractorWithLastUsage())
+
+        assert record.atom_source == "supplied"
+        assert record.usage is None
+        row = record.to_dict()
+        assert "usage" not in row
+
+    def test_extractor_without_last_usage_attr_no_usage_key(self):
+        record = prepare_dataset_item(_item("u4"), _Extractor())
+
+        assert record.atom_source == "inferred"
+        assert record.usage is None
+        row = record.to_dict()
+        assert "usage" not in row
+
+    def test_record_from_row_round_trips_usage_prepared(self):
+        row = _prepared_row("u5")
+        row["usage"] = _SAMPLE_USAGE
+
+        loaded = preparation_record_from_dict(row)
+
+        assert loaded.usage == _SAMPLE_USAGE
+        assert loaded.to_dict()["usage"] == _SAMPLE_USAGE
+
+    def test_record_from_row_round_trips_usage_failed(self):
+        row = _failed_row("u6")
+        row["usage"] = _SAMPLE_USAGE
+
+        loaded = preparation_record_from_dict(row)
+
+        assert loaded.usage == _SAMPLE_USAGE
+        assert loaded.to_dict()["usage"] == _SAMPLE_USAGE
+
+    def test_record_from_row_round_trips_null_usage(self):
+        row = _prepared_row("u7")
+        row["usage"] = None
+
+        loaded = preparation_record_from_dict(row)
+
+        assert loaded.usage is None
+
+    def test_record_from_row_loads_row_without_usage(self):
+        row = _prepared_row("u8")
+
+        loaded = preparation_record_from_dict(row)
+
+        assert loaded.usage is None
+        assert "usage" not in loaded.to_dict()
+
+    def test_skipped_with_usage_raises_in_post_init(self):
+        with pytest.raises(ValueError, match="cannot contain output"):
+            PreparationRecord(
+                item_id="u9",
+                status="skipped_time_sensitive",
+                category="category",
+                answer_mode="direct_answer",
+                answer_source="source",
+                usage=_SAMPLE_USAGE,
+            )
+
+    def test_non_dict_usage_raises_on_load(self):
+        row = _prepared_row("u10")
+        row["usage"] = "not-a-dict"
+
+        with pytest.raises(ValueError, match="usage must be a dict or null"):
+            preparation_record_from_dict(row)
+
+
+class TestGoldExtractionAttempts:
+    def test_prepared_and_failed_rows_round_trip_attempts(self):
+        prepared = PreparationRecord(
+            **_record_fields(_item("ga1"), prepared=True),
+            status="prepared",
+            gold_atoms=(Atom(id="A1", text="answer", required=True),),
+            atom_source="inferred",
+            gold_extraction_attempts=2,
+        )
+        prepared_row = prepared.to_dict()
+        assert prepared_row["gold_extraction_attempts"] == 2
+        assert preparation_record_from_dict(prepared_row) == prepared
+
+        failed = PreparationRecord(
+            **_record_fields(_item("ga2")),
+            status="preparation_failed",
+            error="extraction failed",
+            gold_extraction_attempts=2,
+        )
+        failed_row = failed.to_dict()
+        assert failed_row["gold_extraction_attempts"] == 2
+        assert preparation_record_from_dict(failed_row) == failed
+
+    def test_default_attempts_has_no_key_in_to_dict(self):
+        record = PreparationRecord(
+            **_record_fields(_item("ga3")),
+            status="preparation_failed",
+            error="extraction failed",
+        )
+
+        assert "gold_extraction_attempts" not in record.to_dict()
+
+    @pytest.mark.parametrize("value", [True, 0, "2"])
+    def test_rejects_invalid_attempts(self, value):
+        with pytest.raises(ValueError, match="gold_extraction_attempts"):
+            PreparationRecord(
+                **_record_fields(_item("ga4")),
+                status="preparation_failed",
+                error="extraction failed",
+                gold_extraction_attempts=value,
+            )
+
+    @pytest.mark.parametrize("status", ["skipped_live", "skipped_time_sensitive"])
+    def test_skipped_record_rejects_attempts(self, status):
+        with pytest.raises(ValueError, match="cannot contain output"):
+            PreparationRecord(
+                item_id="ga6",
+                status=status,
+                category="category",
+                answer_mode="direct_answer",
+                answer_source="source",
+                gold_extraction_attempts=2,
+            )
+
+    def test_row_without_attempts_key_still_loads(self):
+        loaded = preparation_record_from_dict(_failed_row("ga5"))
+
+        assert loaded.gold_extraction_attempts is None

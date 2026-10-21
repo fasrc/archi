@@ -170,6 +170,8 @@ class LocalProvider(BaseProvider):
             "model": model_name,
             "base_url": base_url,
             "streaming": True,
+            # ChatOpenAI streams usage by default only without a custom base_url
+            "stream_usage": True,
             # Most local servers don't require an API key, but some do
             "api_key": self._api_key or "not-needed",
             **{k: v for k, v in self.config.extra_kwargs.items() if k != "local_mode"},

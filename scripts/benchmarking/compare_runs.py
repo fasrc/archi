@@ -86,7 +86,23 @@ METRICS: Tuple[str, ...] = (
     "context_precision",
     "context_recall",
     "answer_correctness",
+    "factual_correctness_recall",
+    "factual_correctness_precision",
+    "noise_sensitivity",
+    "answer_accuracy",
+    "response_groundedness",
 )
+
+#: Metrics where a smaller score is better (benchmark_schema
+#: LOWER_IS_BETTER_METRICS; kept local so this module loads without src).
+LOWER_IS_BETTER = frozenset({"noise_sensitivity"})
+
+
+def worsening(metric: str, delta: float) -> float:
+    """How much worse a treatment-minus-baseline ``delta`` is: positive when the
+    metric got worse, whichever direction is better for it."""
+    return delta if metric in LOWER_IS_BETTER else -delta
+
 
 #: Fields the bank may slice by. Reported only when the field is present in
 #: every arm, because a slice that exists on one side is not a comparison.
@@ -132,6 +148,8 @@ _DECLINE_RE = re.compile("|".join(DECLINE_PATTERNS), re.IGNORECASE)
 #: ``src/bin/service_benchmark.py`` writes this prefix instead of a value it
 #: could not read; it is an absence, not an identity.
 UNAVAILABLE_PREFIX = "<unavailable:"
+#: The end-of-run tag comparison an arm or QA run records (#573).
+TAG_STABILITY_KEY = "embedding_tags_unchanged_at_endpoints"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ANCHORS = REPO_ROOT / "examples" / "benchmarking" / "anchor_questions.json"
@@ -213,6 +231,11 @@ class Arm:
     name: Optional[str] = None
     #: ``retrieval_identity`` as recorded (#570), or None when the arm has none.
     retrieval_identity: Optional[dict] = None
+    #: ``embedding_tags_unchanged_at_endpoints`` as recorded (#573): True/False,
+    #: or None when not observed or absent; ``embedding_tags_recorded`` tells
+    #: the two apart (absent is unknowable and passes, a recorded None is not).
+    embedding_tags_unchanged: Optional[bool] = None
+    embedding_tags_recorded: bool = False
 
     def value(self, question: str, metric: str) -> Any:
         return self.rows.get(question, {}).get(metric)
@@ -347,6 +370,12 @@ def build_arm(document: dict, index: int, path: Path, label: str) -> Arm:
             if isinstance(raw.get("retrieval_identity"), dict)
             else None
         ),
+        embedding_tags_unchanged=(
+            raw[TAG_STABILITY_KEY]
+            if isinstance(raw.get(TAG_STABILITY_KEY), bool)
+            else None
+        ),
+        embedding_tags_recorded=TAG_STABILITY_KEY in raw,
     )
 
 
@@ -711,6 +740,30 @@ def _embedding_provenance(arm: Arm) -> str:
     )
 
 
+def tags_changed_arms(arms: Sequence[Arm], name: Any = None) -> List[str]:
+    """Arms whose recorded end-of-run tag state is not certified unchanged (#573).
+
+    An absent key (an artifact that predates the reading) is unknowable, not
+    unstable, and passes; a recorded ``false`` or ``null`` does not.
+    """
+    name = name or (lambda arm: arm.label)
+    return [
+        f"{name(arm)}={json.dumps(arm.embedding_tags_unchanged)}"
+        for arm in arms
+        if arm.embedding_tags_recorded and arm.embedding_tags_unchanged is not True
+    ]
+
+
+def tags_changed_message(changed: Sequence[str]) -> str:
+    return (
+        "the embedding model tags changed, or were not observed, during "
+        + ", ".join(changed)
+        + f" ({TAG_STABILITY_KEY}): some questions may have searched vectors of "
+        "another model or of no recorded model. Re-run the arm; no flag admits "
+        "this."
+    )
+
+
 def embedding_gate(baseline: Arm, arms: Sequence[Arm]) -> dict:
     """Name ``embedding_model`` as the varied factor, or refuse (#570, D7).
 
@@ -722,6 +775,10 @@ def embedding_gate(baseline: Arm, arms: Sequence[Arm]) -> dict:
     refused and no flag admits it. An unrecorded identity with no embedding
     difference is unknowable, not unequal, and is noted.
     """
+    # #573: a tag change during an arm is refused first, with no flag.
+    changed = tags_changed_arms(arms)
+    if changed:
+        raise CompareError(tags_changed_message(changed), EXIT_GATE)
     varied: List[str] = []
     unverified: List[Arm] = []
     notes = [
@@ -1148,6 +1205,11 @@ def check_noise_replicates(
     fingerprint_version_gate(
         {arm.source: arm.corpus_fingerprint for arm in scope}, "the noise replicates"
     )
+    changed = tags_changed_arms(scope, name=lambda arm: arm.source)
+    if changed:
+        raise CompareError(
+            "noise replicates refused: " + tags_changed_message(changed), EXIT_GATE
+        )
     unstable = [arm.source for arm in scope if arm.corpus_unchanged is False]
     if unstable and not allow_corpus_differs:
         raise CompareError(
@@ -1647,13 +1709,13 @@ def anchor_block(
                         continue
                     delta = value - float(baseline.value(question, metric))
                     deltas[metric] = delta
-                    if anchor_type != "easy_retrieve" or delta >= 0:
+                    if anchor_type != "easy_retrieve" or worsening(metric, delta) <= 0:
                         continue
                     sigma = sigmas.get(metric)
                     threshold = (
                         sigma if sigma is not None else ANCHOR_DROP_WITHOUT_SIGMA
                     )
-                    if -delta > threshold:
+                    if worsening(metric, delta) > threshold:
                         alarms.append(metric)
                         thresholds[metric] = threshold
             arm_entry = {
@@ -1958,12 +2020,20 @@ def load_qa_run(directory: str) -> dict:
         # The corpus readings that bracket the QA run's answering phase (#570);
         # absent for a run that predates them, null for a run with no search.
         "corpus": {
-            key: provenance.get(key)
-            for key in (
-                "corpus_fingerprint_before",
-                "corpus_fingerprint",
-                "corpus_unchanged_at_endpoints",
-            )
+            **{
+                key: provenance.get(key)
+                for key in (
+                    "corpus_fingerprint_before",
+                    "corpus_fingerprint",
+                    "corpus_unchanged_at_endpoints",
+                )
+            },
+            # #573: copied only when recorded, so a legacy run stays absent.
+            **{
+                key: provenance[key]
+                for key in (TAG_STABILITY_KEY,)
+                if key in provenance
+            },
         },
     }
 
@@ -1984,6 +2054,10 @@ def qa_corpus_reason(arm: Arm, qa_run: dict) -> Optional[str]:
         return f"its corpus reading is unavailable (before={before!r}, after={after!r})"
     if before != after or corpus.get("corpus_unchanged_at_endpoints") is not True:
         return f"the corpus changed while it answered ({before} -> {after})"
+    if TAG_STABILITY_KEY in corpus and corpus[TAG_STABILITY_KEY] is not True:
+        if corpus[TAG_STABILITY_KEY] is False:
+            return "the embedding model tags changed while it answered"
+        return "its embedding tag reading is unavailable"
     if not _recorded(arm.corpus_fingerprint):
         return None
     if fingerprint_version(after) != fingerprint_version(arm.corpus_fingerprint):
@@ -2646,8 +2720,7 @@ def g8_gate(
         for row in paired
         if row["mean"] is not None
         and row["sigma"] is not None
-        and row["mean"] < 0
-        and -row["mean"] > row["sigma"]
+        and worsening(row["metric"], row["mean"]) > row["sigma"]
     ]
     detail = []
     if failures:
