@@ -202,7 +202,7 @@ Each sweep config loads its own benchmarking settings (`load_new_configuration`,
 
 The design keeps three records separate:
 
-- **`judge_identity`** decides comparability, and G12 compares it field by field. Each arm stores it under the existing key `ragas_judge_identity_effective` (#618: provider, model, base_url, mode), extended with these fields:
+- **`judge_identity`** decides comparability, and G12 compares it field by field. Each arm stores it under the existing key `ragas_judge_identity_effective` (#618: provider, model, base_url, mode), extended with these fields. Values can be nested (the metric list, the per-metric settings, the embedding). Today `ResultHandler.arms_incomparability_reason` adds `tuple(sorted(identity.items()))` to a set (`src/bin/service_benchmark.py:380-382`, origin/dev `7c7d7450`), which raises `TypeError` on a list or dict value. This change therefore compares identities by their canonical JSON (sorted keys), in that function and in G12:
   - the model id and HF revision SHA;
   - the weight precision (`bf16`, `fp8`, and so on);
   - the vLLM image digest, and the server settings that change output (`--max-model-len`, `--dtype`, the quantization, the chat template);

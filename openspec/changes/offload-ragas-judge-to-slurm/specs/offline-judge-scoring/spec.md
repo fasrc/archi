@@ -225,6 +225,10 @@ Each judged arm SHALL record a `judge_identity`, stored under the existing per-a
 - **WHEN** one arm was scored with `bf16` weights and the other with `fp8` weights of the same model revision
 - **THEN** their `judge_identity` records differ in the precision field
 
+#### Scenario: Nested identity values
+- **WHEN** two arms' `judge_identity` records hold nested values, such as the metric list and the per-metric settings
+- **THEN** the in-run comparability check and the merge's leaderboard rebuild compare them by canonical JSON without error, and equal nested values compare equal
+
 ### Requirement: The merge writes a judged result and never edits the pending one
 The merge step SHALL write one new judged result JSON beside the pending one in the queue's results folder, from all arms of that result together, and only when every arm's bundle is `SCORED` and the pending result JSON is in that folder. The merge SHALL build the leaderboard and the A/B comparisons with the existing result-handler code, which withholds ranks and winners when arms differ in judge identity. The judged result SHALL have every arm's per-row metric scores and recomputed `total_results` RAGAS aggregates, the leaderboard and the A/B comparisons, `judge_status: scored`, and each arm's `ragas_effective_settings`, `judge_identity` (as `ragas_judge_identity_effective`), `judge_execution` and bundle SHA-256. The merge SHALL NOT change the pending file. Running the merge again on the same scores SHALL give an identical file. The merge SHALL write through a temporary file that it validates and then publishes with an atomic, no-replace `link`, and it SHALL write `MERGED` only after the judged file exists. It SHALL NOT replace an existing judged file, and it SHALL exit non-zero when an existing judged file has different bytes.
 

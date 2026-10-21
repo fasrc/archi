@@ -65,7 +65,8 @@ Rules for every task:
   - an embedding change (OpenAI against HuggingFace, or a different model name reported by the built object) changes the identity;
   - a change of the effective `timeout`, `max_workers`, `batch_size` or chunk size changes the identity, and an explicit default equals an unset value;
   - the offline scorer passes the manifest's `batch_size` and run-config values to ragas, not its own defaults;
-  - the inline path records the same identity shape.
+  - the inline path records the same identity shape;
+  - an identity with nested values (the metric list, per-metric settings) goes through `ResultHandler.arms_incomparability_reason` and the merge's leaderboard rebuild without error, because the comparison uses canonical JSON (sorted keys) and not `tuple(sorted(identity.items()))` (`src/bin/service_benchmark.py:380-382` at `7c7d7450`); equal nested identities compare equal, and the existing 4-field identities still compare as before.
 - [ ] 3.7 Add tests for the merge, then write `scripts/benchmarking/judge/merge.py`. The tests check that:
   - the merge groups bundles by result file, and writes nothing while any arm is not `SCORED` (it names the pending arms and exits 0); after the last arm is `SCORED`, one judged file holds all arms;
   - a `FAILED` arm makes the merge write nothing for that result and exit non-zero;
