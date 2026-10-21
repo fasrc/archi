@@ -38,7 +38,7 @@ Rules for every task:
 
 ## 2. Move the scoring (parent task 1.3)
 
-- [ ] 2.1 Create `tests/unit/test_ragas_scoring.py` with the branch tests of design D7:
+- [x] 2.1 Create `tests/unit/test_ragas_scoring.py` with the branch tests of design D7:
       one test for each branch of `build_ragas_judge_llm` (`openai`, `ollama`, `local`
       in both modes, `huggingface`, `anthropic`, `huit_bedrock`, default) and of
       `build_ragas_embeddings` (`openai`, `huggingface`, default), with stub
