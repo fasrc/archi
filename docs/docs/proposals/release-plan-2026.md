@@ -137,6 +137,8 @@ also delivers those answers where users already are — a WordPress chat window 
 | [#215](https://github.com/fasrc/archi/issues/215) GPU TEI embedding | Named enabler in #216: 40 min → ~1 min re-embeds make the A/B (and adopting a winner) feasible | M |
 | [#384](https://github.com/fasrc/archi/issues/384) WordPress chat window on the FASRC site via `/v1` | Enters by operator amendment (2026-08-28), not the broken-without-it bar. The fork's `/v1` already ships bearer-auth chat completions, and inline `[title](url)` citations arrive in the answer text itself via the committed citation-guidance default (`agent_spec.py`), so a markdown-rendering widget shows them (#245 removes `/v1`'s redundant appended source block). AI Engine's free tier ships the widget with a custom OpenAI-compatible connector, so the remaining work is evaluation, config, and ops. The rtCamp `universal-openai-connector` was scouted and is a provider adapter for the WordPress AI Client, not a chat window. **Constraint:** until #81 closes, the widget stays a page-limited pilot — bearer auth on, anonymous `/v1` access off, firewall scoped to the WordPress host; public default-on exposure rides `v2026.11.0` | M |
 | [#396](https://github.com/fasrc/archi/issues/396) feature-matrix benchmark campaign | "Measurably better answers" is this release's feature, and #216 measures one axis of it. Every other retrieval and ingest toggle ships on an inherited default with no measurement behind it: `hierarchical_rerank` is default-on carrying ADR 0003's "+19% RAGAS" from the pre-sentence-chunking #32 A/B, and `categorization` is code-default `false` (`processing.py:689`) but `true` in the shipped example config ([`config.example.yaml:150` at `376b5867`](https://github.com/fasrc/archi/blob/376b586707dd3a641d21496204bd378af7313c8c/deploy/fasrc-dev/config.example.yaml#L150), the last commit before it changed) at one LLM call per document — the campaign went on to measure that arm, and [#496](https://github.com/fasrc/archi/issues/496) turned the example off on 2026-09-22 in [#532](https://github.com/fasrc/archi/pull/532), which is why this row is pinned to the commit and records the state at adoption. Claiming measured improvement while most of the retrieval config is set by unmeasured default is dishonest. Adds the Time-to-Ingest metric the rig discards today (`service_benchmark.py:2178`) | L |
+| [#729](https://github.com/fasrc/archi/issues/729) RAGAS judge offload to a FASRC Slurm GPU job (children #730–#733) | Enters by operator amendment (2026-10-20), not the broken-without-it bar. Each golden-set run grades its answers with Claude Sonnet 4.5 through HUIT Bedrock, which bills a cost center and throttles: judge timeouts lost 62 of 109 rows on 2026-09-20. The plan ([#584](https://github.com/fasrc/archi/pull/584), OpenSpec `offload-ragas-judge-to-slurm`) lets a run defer its judge and write a judge bundle, and a GPU job then grades the bundle with an open-weights judge. The bundle is also the input of #583. Four PRs, in order. The four open operator questions (judge model, partition, `sbatch` on the dev host, queue folder) block only the cluster steps | L |
+| [#583](https://github.com/fasrc/archi/issues/583) Lynx faithfulness metric (children #734, #735) | Enters by operator amendment (2026-10-20). RAGAS mean deltas stay inside the run-to-run spread, and the results that held up are binary per-row counts with a paired exact test (apology rows 6 → 0, p = 0.006). Lynx gives one PASS or FAIL verdict per row, so two arms compare row by row with an exact McNemar test. It reads #729's judge bundle, so it scores only deferred runs. Descriptive only: it gates no release | M |
 
 Parked from this track: #130 (rerank already default-on with +19% RAGAS shipped;
 residual is below judge noise and awaits a human data-egress decision), #241 (the
@@ -384,6 +386,18 @@ approves the new set, and one rename transaction makes it live. The chat reader 
 does not change. Chat takes its embedding model from the live set, so it uses the old
 model until the cutover. Option (c) of #671, a retriever notice during a rebuild, is
 not necessary, because chat always reads a complete corpus.
+
+**2026-10-20:** #583 (Lynx faithfulness metric) and the RAGAS judge offload (#729,
+plan [#584](https://github.com/fasrc/archi/pull/584)) entered `v2026.10.0` by operator
+decision, both P1. Before this decision, #583 had no milestone and no `parked` label,
+and no issue tracked the offload plan. The offload plan splits into one issue per PR
+(#730 → #731 → #732 → #733). Lynx splits into #734 (blocked by #731) and #735. #730
+is armed, and each later child is armed when its predecessor merges. Three design
+calls were recorded on #729. The new comparison gates are G11 and G12, because G8 and
+G9 already name the anchors gate and the category-map gate. The judge identity extends
+#618's per-arm key `ragas_judge_identity_effective`. #618's in-run rule for mixed
+judges (withhold ranks and winners) stays. The two items entered with 11 days left on
+the milestone.
 
 **The invariant:** every open issue carries exactly one of {a milestone, the `parked`
 label, the `evidence-trial` label}, so
