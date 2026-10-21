@@ -31,7 +31,7 @@ Rules for every task:
   - the pending result JSON is copied to `<queue>/results/` only after `<basename>.RESULT_COMPLETE` exists and the file loads with one arm for each bundle and matching digests; a half-written file is not copied;
   - a judged file with `MERGED` on all its bundles is copied back into the output folder.
   Then write the script. `run_goldenset_eval.sh` does not call it.
-- [ ] 2.7 Write the `archi-judge-publish.service` and `archi-judge-publish.timer` user units (every 5 minutes) in `fasrc/archi-config` beside the other host timers, as a separate PR in that repository. `publish.py --status` lists complete bundles that are not yet in the queue.
+- [ ] 2.7 Write the `archi-judge-publish.service` and `archi-judge-publish.timer` user units (every 5 minutes) in `fasrc/archi-config` beside the other host timers, as a separate PR in that repository. `publish.py --status` lists complete bundles that are not yet in the queue. (Operator step: tracked in fasrc/archi#737, not in the PR 2 issue.)
 
 ## 3. PR 3: offline scorer and merge
 
@@ -66,7 +66,9 @@ Rules for every task:
   - a change of the effective `timeout`, `max_workers`, `batch_size` or chunk size changes the identity, and an explicit default equals an unset value;
   - the offline scorer passes the manifest's `batch_size` and run-config values to ragas, not its own defaults;
   - the inline path records the same identity shape;
-  - an identity with nested values (the metric list, per-metric settings) goes through `ResultHandler.arms_incomparability_reason` and the merge's leaderboard rebuild without error, because the comparison uses canonical JSON (sorted keys) and not `tuple(sorted(identity.items()))` (`src/bin/service_benchmark.py:380-382` at `7c7d7450`); equal nested identities compare equal, and the existing 4-field identities still compare as before.
+  - an identity with nested values (the metric list, per-metric settings) goes through `ResultHandler.arms_incomparability_reason` and the merge's leaderboard rebuild without error, because the comparison uses canonical JSON (sorted keys) and not `tuple(sorted(identity.items()))` (`src/bin/service_benchmark.py:380-382` at `7c7d7450`); equal nested identities compare equal, and the existing 4-field identities still compare as before;
+  - when two arms differ only in a new field (for example precision, embedding or a scorer digest), the reason that `arms_incomparability_reason` returns names the fields that differ. Today it says "provider, model, endpoint, or client mode" (`src/bin/service_benchmark.py:397-401` at `7c7d7450`), which is false for those cases.
+- [ ] 3.6b Update `docs/docs/benchmarking.md` where it defines `ragas_judge_identity_effective` as only `provider`, `model`, `base_url` and `mode` (`:395`, `:571` at `7c7d7450`). Describe the extended fields, say that arms differing in any of them are not ranked, and say that older result files keep the 4-field record.
 - [ ] 3.7 Add tests for the merge, then write `scripts/benchmarking/judge/merge.py`. The tests check that:
   - the merge groups bundles by result file, and writes nothing while any arm is not `SCORED` (it names the pending arms and exits 0); after the last arm is `SCORED`, one judged file holds all arms;
   - a `FAILED` arm makes the merge write nothing for that result and exit non-zero;
@@ -96,6 +98,8 @@ Rules for every task:
 - [ ] 4.6 Document the operator steps in `docs/docs/benchmarking.md`: image and weights download, the `scrontab` entry, `judge_mode: deferred`, how to read the queue, and how to copy judged files into `bench_out/`.
 
 ## 5. Operator (after PR 4 merges, not automated)
+
+Tracked in fasrc/archi#737 (milestone `v2026.11.0`), together with task 2.7 and the open questions. The code PRs (groups 1–4) do not wait for these steps.
 
 - [ ] 5.1 Pull the vLLM image to a SIF, and the judge weights to lab or netscratch storage. Record the image tag and the model revision.
 - [ ] 5.2 Make one deferred fm-00 run and publish it. Run the judge job by hand on the chosen partition, and record the queue wait, the load time and the rows per minute.
