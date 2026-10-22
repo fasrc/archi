@@ -5,6 +5,7 @@ from src.evaluation.qa.console import EvaluationConsoleService
 from src.evaluation.qa.run_visibility import (
     VIEWER_HIDDEN_FIELDS,
     VIEWER_HIDDEN_JUDGMENT_FIELDS,
+    VIEWER_HIDDEN_LIVE_VALIDATION_FIELDS,
     VIEWER_HIDDEN_MANIFEST_FIELDS,
     redact_run_for_viewer,
 )
@@ -159,6 +160,7 @@ def test_viewer_hidden_fields_are_named_literally():
             "oracle",
             "oracle_metadata",
             "oracle_calls",
+            "error",
         ),
         "prepared_items": (
             "answer",
@@ -167,10 +169,11 @@ def test_viewer_hidden_fields_are_named_literally():
             "oracle",
             "oracle_metadata",
             "oracle_calls",
+            "error",
         ),
         "live_checks": ("answer", "answer_sha256", "metadata", "calls"),
-        "answers": ("answer",),
-        "evaluation_results": ("answer",),
+        "answers": ("answer", "error"),
+        "evaluation_results": ("answer", "error"),
     }
     assert VIEWER_HIDDEN_JUDGMENT_FIELDS == ("rationale",)
 
@@ -230,3 +233,61 @@ def test_redact_run_for_viewer_drops_manifest_artifact_digests():
 
 def test_viewer_hidden_manifest_fields_are_named_literally():
     assert VIEWER_HIDDEN_MANIFEST_FIELDS == ("artifacts",)
+
+
+def test_redact_run_for_viewer_drops_diagnostic_text():
+    validation = {
+        "phase": "pre_run",
+        "reason": "oracle_failed",
+        "detail": "oracle said: the approved answer",
+    }
+    payload = {
+        "manifest": {"status": "scored"},
+        "preparation": [
+            {
+                "item_id": "item-1",
+                "status": "preparation_failed",
+                "error": "could not parse: gold atom text",
+            }
+        ],
+        "prepared_items": [],
+        "live_checks": [
+            {"item_id": "item-2", "status": "failed", "live_validation": validation}
+        ],
+        "answers": [
+            {
+                "item_id": "item-3",
+                "status": "execution_failed",
+                "error": {"type": "ValueError", "message": "partial raw answer"},
+            }
+        ],
+        "evaluation_results": [
+            {
+                "item_id": "item-3",
+                "status": "evaluation_failed",
+                "error": "completion: rationale restating the gold atom",
+            },
+            {
+                "item_id": "item-2",
+                "status": "live_validation_failed",
+                "live_validation": dict(validation),
+            },
+        ],
+    }
+    before = copy.deepcopy(payload)
+
+    redacted = redact_run_for_viewer(payload)
+
+    assert redacted["preparation"][0] == {
+        "item_id": "item-1",
+        "status": "preparation_failed",
+    }
+    assert redacted["answers"][0] == {"item_id": "item-3", "status": "execution_failed"}
+    assert redacted["evaluation_results"][0] == {
+        "item_id": "item-3",
+        "status": "evaluation_failed",
+    }
+    for row in (redacted["live_checks"][0], redacted["evaluation_results"][1]):
+        assert row["live_validation"] == {"phase": "pre_run", "reason": "oracle_failed"}
+    assert VIEWER_HIDDEN_LIVE_VALIDATION_FIELDS == ("detail",)
+    assert payload == before

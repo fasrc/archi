@@ -6,14 +6,15 @@
 
 ```python
 VIEWER_HIDDEN_FIELDS = {
-    "preparation": ("answer", "answer_sha256", "gold_atoms", "oracle", "oracle_metadata", "oracle_calls"),
-    "prepared_items": ("answer", "answer_sha256", "gold_atoms", "oracle", "oracle_metadata", "oracle_calls"),
+    "preparation": ("answer", "answer_sha256", "gold_atoms", "oracle", "oracle_metadata", "oracle_calls", "error"),
+    "prepared_items": ("answer", "answer_sha256", "gold_atoms", "oracle", "oracle_metadata", "oracle_calls", "error"),
     "live_checks": ("answer", "answer_sha256", "metadata", "calls"),
-    "answers": ("answer",),
-    "evaluation_results": ("answer",),
+    "answers": ("answer", "error"),
+    "evaluation_results": ("answer", "error"),
 }
 VIEWER_HIDDEN_JUDGMENT_FIELDS = ("rationale",)
 VIEWER_HIDDEN_MANIFEST_FIELDS = ("artifacts",)
+VIEWER_HIDDEN_LIVE_VALIDATION_FIELDS = ("detail",)
 ```
 
 (Format the dict with black; the one-line form above is for reading.)
@@ -33,6 +34,13 @@ Why these fields, by issue term:
 field of a one-row `answers.jsonl` can hash a guessed answer and compare it with the
 file digest. The console UI never reads `manifest.artifacts`.
 
+Diagnostic text is hidden too (PR #743 review, 2026-10-22). `score_answer` stores `str(exc)`
+from a comparator call that received the gold atoms and the raw answer (`phases.py:117-140`);
+a structured-output parse failure can quote the model's completion. Preparation stores the
+extractor or oracle diagnostic (`preparation.py:352-365`), and `live_validation.detail` holds
+the oracle failure detail. Viewers keep each row's `status` and the `live_validation`
+`phase` and `reason`; the console prints an empty string for the missing text.
+
 ## D2. The function
 
 `redact_run_for_viewer(payload: Mapping[str, Any]) -> Dict[str, Any]`:
@@ -44,6 +52,8 @@ file digest. The console UI never reads `manifest.artifacts`.
    list, for each row that is a dict, `row.pop(field, None)` for each field. A missing
    section or a non-dict row is left as is (a canceled run has empty lists and no
    `live_checks`).
+   In each such row, if `live_validation` is a dict, pop each
+   `VIEWER_HIDDEN_LIVE_VALIDATION_FIELDS` name from it.
 3. For each dict row in `result.get("evaluation_results")` (if a list) whose `judgments`
    is a list, pop each `VIEWER_HIDDEN_JUDGMENT_FIELDS` name from each dict judgment.
 4. If `result.get("manifest")` is a dict, pop each `VIEWER_HIDDEN_MANIFEST_FIELDS` name

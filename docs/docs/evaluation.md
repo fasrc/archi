@@ -818,9 +818,10 @@ Authenticated deployments use:
 Run detail keeps the answer key from callers without `evaluations:manage`.
 A view-only caller still gets scores, statuses, questions, judgment outcomes,
 latency, and tool calls, but not approved answers, gold atoms, live-oracle
-evidence, raw agent answers, judgment rationales, or the manifest's artifact
-digests. A caller with `evaluations:manage` gets the full run. The run list
-and reports are the same for both.
+evidence, raw agent answers, judgment rationales, the text of error and
+live-validation diagnostics, or the manifest's artifact digests. Failed rows
+keep their status. A caller with `evaluations:manage` gets the full run. The
+run list and reports are the same for both.
 
 The wildcard administrator role grants all three. Add them explicitly to
 custom roles as needed. When authentication is disabled, evaluation routes

@@ -6,7 +6,9 @@ question they are meant to be evaluated against, so they are stripped from
 the payload unless the caller has explicitly asked for the full run. The
 manifest's ``artifacts`` digests go too: rows are written with sorted keys, so
 a viewer who sees every other field of a row can confirm a guessed answer by
-hashing it against the file digest.
+hashing it against the file digest. Diagnostic text (``error`` and
+``live_validation.detail``) goes as well: a failed comparison, extraction, or
+oracle call can quote the model output or the oracle result in its exception.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ VIEWER_HIDDEN_FIELDS = {
         "oracle",
         "oracle_metadata",
         "oracle_calls",
+        "error",
     ),
     "prepared_items": (
         "answer",
@@ -30,13 +33,15 @@ VIEWER_HIDDEN_FIELDS = {
         "oracle",
         "oracle_metadata",
         "oracle_calls",
+        "error",
     ),
     "live_checks": ("answer", "answer_sha256", "metadata", "calls"),
-    "answers": ("answer",),
-    "evaluation_results": ("answer",),
+    "answers": ("answer", "error"),
+    "evaluation_results": ("answer", "error"),
 }
 VIEWER_HIDDEN_JUDGMENT_FIELDS = ("rationale",)
 VIEWER_HIDDEN_MANIFEST_FIELDS = ("artifacts",)
+VIEWER_HIDDEN_LIVE_VALIDATION_FIELDS = ("detail",)
 
 
 def redact_run_for_viewer(payload: Mapping[str, Any]) -> Dict[str, Any]:
@@ -54,6 +59,10 @@ def redact_run_for_viewer(payload: Mapping[str, Any]) -> Dict[str, Any]:
                 continue
             for field in fields:
                 row.pop(field, None)
+            validation = row.get("live_validation")
+            if isinstance(validation, dict):
+                for field in VIEWER_HIDDEN_LIVE_VALIDATION_FIELDS:
+                    validation.pop(field, None)
     for row in result.get("evaluation_results") or []:
         if not isinstance(row, dict):
             continue
