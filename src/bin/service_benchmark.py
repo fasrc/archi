@@ -1,5 +1,4 @@
 import copy
-import importlib
 import json
 import math
 import os
@@ -22,7 +21,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
-from src.archi.providers.local_provider import LocalProvider, normalize_base_url
+from src.archi.providers.local_provider import LocalProvider
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
 from src.utils.benchmark_provenance import (
     asserted_config_divergence,
@@ -53,15 +52,11 @@ from src.utils.benchmark_schema import (
     DEFAULT_ENABLED_METRICS,
     LOWER_IS_BETTER_METRICS,
     RAGAS_METRIC_NAMES,
-    build_ragas_metric_objects,
     json_safe,
     metric_winner,
     normalize_bank,
     ragas_effective_settings,
-    ragas_result_column,
-    ragas_run_config_kwargs,
     required_fields_for_modes,
-    score_metrics_per_eligibility,
     with_effective_ragas_settings,
 )
 from src.utils.config_access import get_static_config
@@ -70,7 +65,6 @@ from src.utils.generate_benchmark_report import (
     format_markdown_output,
     parse_benchmark_results,
 )
-from src.utils.llm_usage import UsageRecorder
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
 
@@ -1911,91 +1905,28 @@ class Benchmarker:
         return results
 
     def get_ragas_llm_evaluator(self):
+        from src.utils.ragas_scoring import build_ragas_judge_llm
+
         identity = ragas_judge_effective_identity(self.config)
         self._ragas_judge_identity = identity
-        provider_key = identity["provider"]
-        model_name = identity["model"]
-
-        match provider_key:
-            case "openai":
-                return ChatOpenAI(model=model_name)
-            case "ollama":
-                from langchain_ollama import ChatOllama
-
-                return ChatOllama(
-                    model=model_name,
-                    base_url=identity["base_url"],
-                    num_predict=-2,
-                    model_kwargs={"format": "json"},
-                )
-            case "local":
-                # Mirror the SUT bridge (#73): a /v1 judge endpoint is
-                # OpenAI-compatible, so build a ChatOpenAI client instead of
-                # ChatOllama (which 404s against /v1). An explicit provider_mode
-                # (judge-specific or inherited from the SUT) overrides the
-                # /v1 auto-detection.
-                if identity["mode"] == "openai_compat":
-                    # base_url twice: see the huggingface arm below — in openai_compat
-                    # mode LocalProvider now honors the configured base_url instead of
-                    # OLLAMA_HOST, so the keyword agrees with the config copy instead
-                    # of outranking it. Only when there is one, though: the keyword
-                    # lands last, so a None would erase the provider's own local
-                    # default and send the judge to the public OpenAI endpoint. An
-                    # override with nothing to override with is not an override.
-                    override = (
-                        {"base_url": normalize_base_url(identity["base_url"])}
-                        if identity["base_url"]
-                        else {}
-                    )
-                    return get_model(
-                        "local",
-                        model_name,
-                        {"base_url": identity["base_url"], "mode": "openai_compat"},
-                        **override,
-                    )
-                from langchain_ollama import ChatOllama
-
-                return ChatOllama(
-                    model=model_name,
-                    base_url=identity["base_url"],
-                    num_predict=-2,
-                    model_kwargs={"format": "json"},
-                )
-            case "huggingface":
-                # base_url twice, on purpose. load_new_configuration exports the SUT
-                # url as OLLAMA_HOST, but in openai_compat mode LocalProvider now
-                # honors the configured base_url instead of OLLAMA_HOST, so the
-                # keyword agrees with the config copy instead of outranking it.
-                return get_model(
-                    "local",
-                    model_name,
-                    {"base_url": identity["base_url"], "mode": "openai_compat"},
-                    base_url=normalize_base_url(identity["base_url"]),
-                )
-            case "anthropic":
-                from langchain_anthropic import ChatAnthropic
-
-                return ChatAnthropic(model=model_name)
-            case "huit_bedrock":
-                return get_model(
-                    "huit_bedrock", model_name, {"base_url": identity["base_url"]}
-                )
-            case _:
-                return ChatOpenAI(model=model_name)
+        return build_ragas_judge_llm(
+            identity,
+            chat_openai=ChatOpenAI,
+            get_model=get_model,
+        )
 
     def get_ragas_embedding_model(self):
+        from src.utils.ragas_scoring import build_ragas_embeddings
+
         ragas_configs = self.config["services"]["benchmarking"]["mode_settings"][
             "ragas_settings"
         ]
         embedding_model = ragas_configs["embedding_model"]
-
-        match embedding_model.lower():
-            case "openai":
-                return OpenAIEmbeddings()
-            case "huggingface":
-                return HuggingFaceEmbeddings()
-            case _:
-                return OpenAIEmbeddings()
+        return build_ragas_embeddings(
+            embedding_model,
+            openai_embeddings=OpenAIEmbeddings,
+            huggingface_embeddings=HuggingFaceEmbeddings,
+        )
 
     def prepare_match_fields(self, question_item):
 
@@ -2214,69 +2145,37 @@ class Benchmarker:
         WARNING: mutates ``results_by_key`` in place (adds each metric's score to
         the matching question entry).
         """
-        # Lazy import: ragas (and its transitive `datasets` dep) is benchmark-only
-        # and absent from the unit-test environment. See the module-header note.
-        from ragas import EvaluationDataset, RunConfig, evaluate
-
-        # import_module, not ``from ragas import metrics``: it reads the
-        # submodule straight from sys.modules, which the unit-test stub relies on.
-        ragas_metrics = importlib.import_module("ragas.metrics")
-        from ragas.embeddings import LangchainEmbeddingsWrapper
-        from ragas.llms import LangchainLLMWrapper
+        from src.utils.ragas_scoring import RagasScoreOutcome, score_ragas
 
         enabled_metrics = self.benchmarking_configs["mode_settings"]["ragas_settings"][
             "enabled_metrics"
         ]
-        metrics = [name for name in RAGAS_METRIC_NAMES if name in enabled_metrics]
-        # Built per name with a pinned ``name``; a mode metric's scores come back
-        # under ``name(mode=...)``, which ragas_result_column resolves.
-        all_metrics = build_ragas_metric_objects(ragas_metrics, metrics)
-
         ragas_settings = self.config["services"]["benchmarking"]["mode_settings"][
             "ragas_settings"
         ]
-        # The archi config-render pipeline can strip global.verbosity; tolerate
-        # missing key (verbosity 4 enables tenacity retry logging in ragas).
         verbosity = self.config.get("global", {}).get("verbosity", 0)
-        batch_size = ragas_settings["batch_size"] or None
-        # Kwargs built by a tested helper rather than inline: `max_workers` was
-        # never passed here, so ragas' default of 16 concurrent judge calls
-        # applied unannounced. See ragas_run_config_kwargs for why raising
-        # `max_retries` is NOT the lever for judge timeouts.
-        runconfig = RunConfig(**ragas_run_config_kwargs(ragas_settings, verbosity))
-        llm = LangchainLLMWrapper(self.get_ragas_llm_evaluator())
-        embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
         judge_provider, judge_model = ragas_judge_identity(self.config)
-        recorder = UsageRecorder(judge_provider, judge_model or "")
-        # Input rows alone do not prove the judge ran: a metric with no
-        # eligible row records n/a without calling score_fn (#518).
+
+        outcome = RagasScoreOutcome()
         self._ragas_scored = False
-
-        def score_fn(metric, eligible_rows):
-            self._ragas_scored = True
-            # One metric at a time over its own eligible subset: keeps a single
-            # bad metric from failing the batch and preserves per-metric
-            # denominators (the modern EvaluationDataset replaces the legacy
-            # datasets.Dataset + column names).
-            dataset = EvaluationDataset.from_list(eligible_rows)
-            evaluation = evaluate(
-                dataset,
-                metrics=[all_metrics[metric]],
-                llm=llm,
-                embeddings=embeddings,
-                run_config=runconfig,
-                batch_size=batch_size,
-                callbacks=[recorder],
-            )
-            column = ragas_result_column(all_metrics[metric])
-            return evaluation.to_pandas()[column].tolist()
-
         try:
-            return score_metrics_per_eligibility(
-                rows, keys, metrics, results_by_key, score_fn
+            score_ragas(
+                rows,
+                keys,
+                results_by_key,
+                enabled_metrics=enabled_metrics,
+                ragas_settings=ragas_settings,
+                verbosity=verbosity,
+                judge_factory=self.get_ragas_llm_evaluator,
+                embeddings_factory=self.get_ragas_embedding_model,
+                judge_provider=judge_provider,
+                judge_model=judge_model,
+                outcome=outcome,
             )
+            return outcome.aggregates
         finally:
-            self._judge_usage = recorder.snapshot()
+            self._ragas_scored = outcome.scored
+            self._judge_usage = outcome.usage
 
     def _source_scorable_count(self) -> int:
         """The source-accuracy denominator: questions that declare expected sources.
