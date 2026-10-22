@@ -16,7 +16,7 @@
 #   10. reseed_arm.sh copies the retrieval key into the rendered config, backs the
 #       original up OUTSIDE configs/, and recreates config-seed
 #   11. qa_arm.sh overwrites chat_app's SUT fields from services.benchmarking, drops the
-#       evaluations block, and calls `archi eval qa` with one attempt and one run worker
+#       evaluations block, and calls `archi qa` with one attempt and one run worker
 #   12. qa_arm.sh refuses when the converted QA dataset is missing
 #   13. archive_run.sh refuses a later run whose fingerprint differs from the pin; --new-corpus
 #       is refused after a re-run and re-pins only after a fresh arm-00 deploy, recording the old pin
@@ -129,12 +129,12 @@ EOF
 cat > "$T/bin/archi" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$T/archi.calls"
-# like the real CLI, \`eval qa\` creates its --output-dir
+# like the real CLI, \`qa\` creates its --output-dir
 prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && mkdir -p "\$a"; prev="\$a"; done
 # the run manifest records the retrieval identity when the test provides one
 prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$a/manifest.json"; prev="\$a"; done
 # a corpus that drifts WHILE the QA run is in flight
-[ "\$1 \$2" = "eval qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
+[ "\$1" = "qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
 exit 0
 EOF
 cat > "$T/bin/git" <<EOF
@@ -376,10 +376,10 @@ run bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profi
 mkdir -p "$FM_OUT/qa"; printf '{"format":"qa-dataset-v2","items":[]}\n' > "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
 : > "$T/archi.calls"
 run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml"
-if [ "$RC" = 0 ] && grep -q -- "eval qa --dataset $FM_OUT/qa/fasrc_ragas_queries.qa-v2.json --agent-config $FM_OUT/qa/01.agent-config.yaml --agent-spec $T/cfg/spec.md --evaluator-profile $T/cfg/qa/profile.yaml --output-dir $FM_OUT/qa/fm-00-arm01-r1 --attempts 1 --run-workers 1 --score-workers 4" "$T/archi.calls" \
+if [ "$RC" = 0 ] && grep -q -- "qa --dataset $FM_OUT/qa/fasrc_ragas_queries.qa-v2.json --agent-config $FM_OUT/qa/01.agent-config.yaml --agent-spec $T/cfg/spec.md --evaluator-profile $T/cfg/qa/profile.yaml --output-dir $FM_OUT/qa/fm-00-arm01-r1 --attempts 1 --run-workers 1 --score-workers 4" "$T/archi.calls" \
    && "$FM_PYTHON" -c "import yaml,sys; c=yaml.safe_load(open('$FM_OUT/qa/01.agent-config.yaml'))['services']['chat_app']; sys.exit(0 if (c['agent_class'],c['default_provider'],c['default_model'])==('FASRCDocsAgent','openai','palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4') and 'evaluations' not in c and c['providers']['openai']['api_key']=='EMPTY' else 1)" \
    && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['kind']=='qa' and e['arm']=='01' and e['stack']=='fm-00' else 1)"; then
-  ok "qa_arm overwrites the SUT fields, drops evaluations, calls archi eval qa serially"; else notok "qa_arm agent config + call (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+  ok "qa_arm overwrites the SUT fields, drops evaluations, calls archi qa serially"; else notok "qa_arm agent config + call (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
 EXPECT_SHA="$(sha256sum "$S/configs/config.yaml" | cut -d' ' -f1)"
 if "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e.get('rendered_config_sha256')=='$EXPECT_SHA' and e.get('corpus_fingerprint')=='sha256:abc' and e.get('arm_config')=='$T/arms/01-rerank-off.yaml' else 1)"; then ok "qa_arm records the rendered config sha256, the arm config, and the corpus fingerprint"; else notok "qa_arm ledger identity fields"; fi
 
@@ -662,7 +662,7 @@ printf 'running\n' > "$T/state/postgres-r0"; printf 'running\n' > "$T/state/data
 # 48: qa_prepare prepares the gold atoms once, before the lock
 : > "$T/archi.calls"
 run bash "$HERE/qa_prepare.sh" --sweep r0 --qa-dataset "$SW/qa/dataset.json" --qa-profile "$SW/qa/profile.yaml"
-if [ "$RC" = 0 ] && grep -qx "eval qa prepare $SW/qa/dataset.json --evaluator-profile $SW/qa/profile.yaml --output-dir $FM_OUT/qa/r0-prepared" "$T/archi.calls"; then ok "qa_prepare --sweep prepares the gold atoms into the stack's prepared workspace"; else notok "qa_prepare (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+if [ "$RC" = 0 ] && grep -qx "qa prepare $SW/qa/dataset.json --evaluator-profile $SW/qa/profile.yaml --output-dir $FM_OUT/qa/r0-prepared" "$T/archi.calls"; then ok "qa_prepare --sweep prepares the gold atoms into the stack's prepared workspace"; else notok "qa_prepare (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
 printf '{"item_id": "x"}\n' > "$FM_OUT/qa/r0-prepared/preparation.jsonl"
 
 # 49: lock_campaign --sweep writes the sweep lock once; prepare is refused after it
@@ -697,8 +697,8 @@ if [ "$R1" = 2 ] && [ "$R1M" = 1 ] && [ "$R1U" = 0 ] && [ "$RC" = 0 ] && grep -q
 : > "$T/archi.calls"
 run bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl
 QA="$FM_OUT/qa/r0-fasrc-docs-r0b-icl-r1"
-if [ "$RC" = 0 ] && grep -q "eval qa run $QA --agent-config .* --agent-spec $SW/prompts/fasrc-docs-r0b-icl.md --attempts 1 --run-workers 1" "$T/archi.calls" \
-   && grep -q "eval qa score $QA --evaluator-profile $SW/qa/profile.yaml" "$T/archi.calls" \
+if [ "$RC" = 0 ] && grep -q "qa run $QA --agent-config .* --agent-spec $SW/prompts/fasrc-docs-r0b-icl.md --attempts 1 --run-workers 1" "$T/archi.calls" \
+   && grep -q "qa score $QA --evaluator-profile $SW/qa/profile.yaml" "$T/archi.calls" \
    && [ -f "$QA/preparation.jsonl" ] \
    && "$FM_PYTHON" -c "import json,sys; r=json.load(open('$QA/category_map_readings.json')); sys.exit(0 if r=={'start':'sha256:map1','end':'sha256:map1'} else 1)"; then
   ok "qa_arm --sweep runs and scores one arm on the prepared atoms and writes its map readings"; else notok "qa_arm --sweep (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi

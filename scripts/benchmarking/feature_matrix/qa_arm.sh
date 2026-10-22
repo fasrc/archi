@@ -20,7 +20,7 @@
 #    services.benchmarking.{agent_class,provider,model}. An evaluate stack renders the
 #    template defaults into chat_app (CMSCompOpsAgent / local / llama3.2); the QA CLI reads
 #    chat_app, so without this step it scores the wrong agent against a nonexistent Ollama.
-# 2. Runs `archi eval qa` against the stack's Postgres and data-manager (host network),
+# 2. Runs `archi qa` against the stack's Postgres and data-manager (host network),
 #    with the production spec, the campaign judge profile, one attempt per question, one
 #    run worker (matches the harness's sequential calls, so duration_ms ~ time_elapsed).
 # Never run concurrently with a RAGAS run on the same stack: latency would be shared.
@@ -43,7 +43,7 @@ print(json.dumps({"collection": i.get("collection"), "embedding_model": i.get("e
 
 # Sweep mode: qa_arm.sh --sweep <sweep_dir> --stack <name> --arm <prompt-stem> [--run N]
 # One arm of a locked prompt sweep, with that arm's own prompt, on a COPY of the prepared
-# gold atoms (qa_prepare.sh --sweep): `archi eval qa run` then `score`, between two corpus
+# gold atoms (qa_prepare.sh --sweep): `archi qa run` then `score`, between two corpus
 # pin checks and two category-map readings written to category_map_readings.json.
 if [ "${1:-}" = --sweep ]; then
   SWEEP_DIR="${2:?--sweep needs the sweep directory}"; shift 2
@@ -84,8 +84,8 @@ if [ "${1:-}" = --sweep ]; then
   export PG_PASSWORD_FILE="$STACK_DIR/secrets/pg_password.txt"
   export HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}"
   export OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1
-  "$FM_ARCHI" eval qa run "$OUT_DIR" --agent-config "$AGENT_CFG" --agent-spec "$SPEC" --attempts 1 --run-workers 1
-  "$FM_ARCHI" eval qa score "$OUT_DIR" --evaluator-profile "$PROFILE" --score-workers "${FM_SCORE_WORKERS:-4}"
+  "$FM_ARCHI" qa run "$OUT_DIR" --agent-config "$AGENT_CFG" --agent-spec "$SPEC" --attempts 1 --run-workers 1
+  "$FM_ARCHI" qa score "$OUT_DIR" --evaluator-profile "$PROFILE" --score-workers "${FM_SCORE_WORKERS:-4}"
   MAP_END="$(fm_category_map_digest "$STACK")"
   fm_write_map_readings "$OUT_DIR" "$MAP_START" "$MAP_END"
   AFTER="$(fm_fingerprint "$STACK")"
@@ -155,7 +155,7 @@ MAP_START="$(fm_category_map_digest "$STACK")"
 PG_PASSWORD_FILE="$STACK_DIR/secrets/pg_password.txt" \
 HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}" \
 OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
-"$FM_ARCHI" eval qa \
+"$FM_ARCHI" qa \
   --dataset "$DATASET" \
   --agent-config "$AGENT_CFG" \
   --agent-spec "$SPEC" \
