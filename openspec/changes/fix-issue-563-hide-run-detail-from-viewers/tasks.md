@@ -31,7 +31,7 @@ and a commit — no task ends red.
 
 ## 2. Wire the route
 
-- [ ] 2.1 Write the red, make it green, gate, commit — all in this one task.
+- [x] 2.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** In `tests/unit/test_evaluation_routes.py`, change `_Service.get_run`
       and the lambda in `test_run_detail_bounds_actual_serialized_response` (line 668 on
