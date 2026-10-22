@@ -8,8 +8,9 @@ import pytest
 from mcp.types import CallToolResult
 
 import src.evaluation.qa.workflow as workflow_module
-from src.evaluation.qa.artifacts import read_json
+from src.evaluation.qa.artifacts import read_json, sha256_file
 from src.evaluation.qa.history import EvaluationHistory
+from src.evaluation.qa.live_checks import iter_live_checks
 from src.evaluation.qa.oracle import OracleCallEvidence
 from src.evaluation.qa.schema import RunManifest
 from src.evaluation.qa.workflow import QAWorkflow
@@ -308,3 +309,122 @@ class TestD1RunRepause:
         for payload in captured:
             RunManifest.from_dict(payload)
         assert result["status"] == "attention_required"
+        # 4.5: re-pause publish records the live_checks.jsonl digest equal to the file on disk
+        last_payload = captured[-1]
+        assert last_payload["artifacts"]["live_checks.jsonl"] == sha256_file(
+            run_dir / "live_checks.jsonl"
+        )
+
+
+class TestD2D3StagedChecksWindow:
+    """D2+D3: staged live_checks.jsonl and its digest survive the overwrite window."""
+
+    def _raising_observe_fake(self, monkeypatch):
+        """Returns a fake observe_live_item that raises on the first call then delegates."""
+        real_observe = workflow_module.observe_live_item
+        call_count = [0]
+
+        def _fake(prepared, resolver, phase):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise RuntimeError("injected")
+            return real_observe(prepared, resolver, phase)
+
+        monkeypatch.setattr(workflow_module, "observe_live_item", _fake)
+        return call_count
+
+    def test_live_checks_preserved_on_failure(self, monkeypatch, tmp_path, runtimes):
+        """4.1: staged live_checks.jsonl survives a mid-window failure on the continue path."""
+        _workflow, run_dir = _paused_at_live_gate(monkeypatch, tmp_path)
+        original_bytes = (run_dir / "live_checks.jsonl").read_bytes()
+
+        captured = _install_manifest_recorder(monkeypatch)
+        self._raising_observe_fake(monkeypatch)
+
+        with pytest.raises(RuntimeError, match="injected"):
+            _workflow.run(
+                run_dir,
+                tmp_path / "agent.yaml",
+                tmp_path / "agent.md",
+                overwrite=True,
+                pause_on_live_mismatch=True,
+                authorize_staged_invalid=True,
+            )
+
+        assert len(captured) == 1
+        assert (run_dir / "live_checks.jsonl").read_bytes() == original_bytes
+        assert captured[0]["artifacts"]["live_checks.jsonl"] == sha256_file(
+            run_dir / "live_checks.jsonl"
+        )
+
+    def test_subsequent_continue_passes_input_verification(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        """4.2: after a failed continue the workspace loads and a fresh continue succeeds."""
+        _workflow, run_dir = _paused_at_live_gate(monkeypatch, tmp_path)
+        self._raising_observe_fake(monkeypatch)
+
+        with pytest.raises(RuntimeError):
+            _workflow.run(
+                run_dir,
+                tmp_path / "agent.yaml",
+                tmp_path / "agent.md",
+                overwrite=True,
+                pause_on_live_mismatch=True,
+                authorize_staged_invalid=True,
+            )
+
+        # call_count[0] is now >= 1, so the fake delegates on all subsequent calls
+        result = _workflow.run(
+            run_dir,
+            tmp_path / "agent.yaml",
+            tmp_path / "agent.md",
+            overwrite=True,
+            pause_on_live_mismatch=True,
+            authorize_staged_invalid=True,
+        )
+        assert result["status"] in {"run_completed", "attention_required"}
+
+    def test_plain_overwrite_removes_staged_checks(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        """4.4: --overwrite without authorize_staged_invalid still removes live_checks.jsonl."""
+        _workflow, run_dir = _paused_at_live_gate(monkeypatch, tmp_path)
+        assert (run_dir / "live_checks.jsonl").is_file()
+
+        self._raising_observe_fake(monkeypatch)
+
+        with pytest.raises(RuntimeError):
+            _workflow.run(
+                run_dir,
+                tmp_path / "agent.yaml",
+                tmp_path / "agent.md",
+                overwrite=True,
+                pause_on_live_mismatch=True,
+            )
+
+        assert not (run_dir / "live_checks.jsonl").is_file()
+        manifest = read_json(run_dir / "manifest.json")
+        assert "live_checks.jsonl" not in manifest.get("artifacts", {})
+
+    def test_normal_continue_live_checks_digest_matches(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        """4.5: a normal complete continue writes live_checks.jsonl with the correct digest."""
+        _workflow, run_dir = _paused_at_live_gate(monkeypatch, tmp_path)
+
+        result = _workflow.run(
+            run_dir,
+            tmp_path / "agent.yaml",
+            tmp_path / "agent.md",
+            overwrite=True,
+            pause_on_live_mismatch=True,
+            authorize_staged_invalid=True,
+        )
+
+        assert result["status"] in {"run_completed", "attention_required"}
+        live_checks = run_dir / "live_checks.jsonl"
+        assert live_checks.is_file()
+        assert result["artifacts"]["live_checks.jsonl"] == sha256_file(live_checks)
+        rows = list(iter_live_checks(live_checks))
+        assert len(rows) >= 1

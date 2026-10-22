@@ -370,7 +370,7 @@ class QAWorkflow:
                 manifest.pop(key, None)
             for key in corpus_provenance.TAG_KEYS:
                 manifest.pop(key, None)
-            for name in RUN_FILES | SCORE_FILES:
+            for name in owned:
                 manifest["artifacts"].pop(name, None)
             manifest["status"] = "prepared"
         write_yaml(run_dir / "agent_config.resolved.yaml", config)
@@ -425,7 +425,6 @@ class QAWorkflow:
                             "INSERT INTO authorized VALUES (?)", (prepared.item_id,)
                         )
                 authorized_connection.commit()
-                staged_checks_path.unlink()
             pre_checks_path = Path(live_staging_dir) / "pre-run.jsonl"
             try:
                 with AtomicJsonlWriter(pre_checks_path) as check_writer:
