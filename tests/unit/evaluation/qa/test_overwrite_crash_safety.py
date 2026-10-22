@@ -2,16 +2,13 @@
 
 import copy
 import json
-from collections import deque
 
 import pytest
-from mcp.types import CallToolResult
 
 import src.evaluation.qa.workflow as workflow_module
 from src.evaluation.qa.artifacts import read_json, sha256_file
 from src.evaluation.qa.history import EvaluationHistory
 from src.evaluation.qa.live_checks import iter_live_checks
-from src.evaluation.qa.oracle import OracleCallEvidence
 from src.evaluation.qa.schema import RunManifest
 from src.evaluation.qa.workflow import QAWorkflow
 from src.utils.benchmark_provenance import CollectionNotReadyError
@@ -428,3 +425,56 @@ class TestD2D3StagedChecksWindow:
         assert result["artifacts"]["live_checks.jsonl"] == sha256_file(live_checks)
         rows = list(iter_live_checks(live_checks))
         assert len(rows) >= 1
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    ["agent_config.resolved.yaml", "agent_spec.resolved.md"],
+)
+class TestD3AgentInputDigests:
+    """4a: a recovery continue must verify the frozen agent inputs it rewrote."""
+
+    def test_recovery_continue_refuses_tampered_agent_inputs(
+        self, monkeypatch, tmp_path, runtimes, artifact
+    ):
+        """4a.1: after a failed overwrite-continue, the subsequent continue detects tampering."""
+        _workflow, run_dir = _paused_at_live_gate(monkeypatch, tmp_path)
+
+        real_observe = workflow_module.observe_live_item
+        call_count = [0]
+
+        def _fake(prepared, resolver, phase):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise RuntimeError("injected")
+            return real_observe(prepared, resolver, phase)
+
+        monkeypatch.setattr(workflow_module, "observe_live_item", _fake)
+
+        with pytest.raises(RuntimeError, match="injected"):
+            _workflow.run(
+                run_dir,
+                tmp_path / "agent.yaml",
+                tmp_path / "agent.md",
+                overwrite=True,
+                pause_on_live_mismatch=True,
+                authorize_staged_invalid=True,
+            )
+
+        target = run_dir / artifact
+        target.write_text(
+            target.read_text(encoding="utf-8") + "\ntampered: true\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError) as caught:
+            _workflow.run(
+                run_dir,
+                tmp_path / "agent.yaml",
+                tmp_path / "agent.md",
+                overwrite=True,
+                pause_on_live_mismatch=True,
+                authorize_staged_invalid=True,
+            )
+
+        assert str(caught.value) == f"workspace artifact hash mismatch: {artifact}"

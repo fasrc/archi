@@ -237,7 +237,7 @@
 > Do this group only after the group 4 commit exists: before group 4, the later continue fails
 > earlier on the missing `live_checks.jsonl`, so the red test cannot show this defect.
 
-- [ ] 4a. Do steps 4a.1-4a.4 below in order, in ONE turn, ending with the gate green and ONE commit.
+- [x] 4a. Do steps 4a.1-4a.4 below in order, in ONE turn, ending with the gate green and ONE commit.
 
   - 4a.1 Write the RED test (spec scenario "An exception after the read leaves the evidence
       intact", last AND). Parametrize it over `"agent_config.resolved.yaml"` and

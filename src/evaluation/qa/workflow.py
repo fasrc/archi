@@ -377,6 +377,9 @@ class QAWorkflow:
         write_text(run_dir / "agent_spec.resolved.md", spec_text)
         config_hash = sha256_file(run_dir / "agent_config.resolved.yaml")
         spec_hash = sha256_file(run_dir / "agent_spec.resolved.md")
+        if authorize_staged_invalid:
+            manifest["artifacts"]["agent_config.resolved.yaml"] = config_hash
+            manifest["artifacts"]["agent_spec.resolved.md"] = spec_hash
         chat = config["services"]["chat_app"]
         vectorstore = (
             LazyVectorstore(config)
