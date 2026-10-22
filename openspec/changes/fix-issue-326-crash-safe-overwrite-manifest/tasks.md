@@ -220,7 +220,7 @@
       captured payload (the `:514` publish) records a `live_checks.jsonl` digest equal to
       `sha256_file` of the file on disk (the recomputation at `:486-495`). For the spec
       clause "at no point during the write does the path hold a partial file or no file",
-      cite the existing `tests/unit/evaluation/qa/test_artifacts.py::test_failure_preserves_previous_artifact`
+      cite the existing `tests/unit/evaluation/qa/test_artifacts.py::TestAtomicJsonlWriter::test_failure_preserves_previous_artifact`
       (the `AtomicJsonlWriter` contract) instead of writing a new test.
   - 4.6 Run the gate and commit.
 
@@ -296,7 +296,7 @@
 
 ## 6. Verify against the acceptance criteria and open the PR
 
-- [ ] 6. Do steps 6.1-6.3 below in order, in ONE turn: verify, push, and open the PR. STOP at the open PR.
+- [x] 6. Do steps 6.1-6.3 below in order, in ONE turn: verify, push, and open the PR. STOP at the open PR.
 
   - 6.1 Walk the issue's eight acceptance criteria BY NUMBER and name, for each, the test or
       command that covers it: (1) the 1.1 test; (2) the 2.3, 2.3a, 3.1 and 3.3 tests; (3)

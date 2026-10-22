@@ -225,7 +225,10 @@ issue does not put `console.py` or `jobs.py` in scope; a human decides on a foll
 
 - `src/evaluation/qa/workflow.py` — in `run()`: the `start_readings` call moves above the
   `if overwrite:` block (its `manifest.update` stays below it); the block gains a status
-  assignment and one conditional artifact retention; the `unlink()` at `:426` is removed. In
+  assignment and one conditional artifact retention; the `unlink()` at `:426` is removed; and
+  on the `authorize_staged_invalid` path, after the agent inputs are rewritten, the fresh
+  digests of `agent_config.resolved.yaml` and `agent_spec.resolved.md` are recorded in
+  `manifest["artifacts"]` before the first publish (group 4a). In
   `score()`: the `if overwrite:` block (`:816-820`) gains a status assignment. `schema.py`,
   `history.py`, `console.py`, `worker.py` and the terminal writes at `:514`, `:518`, `:620`,
   `:908` are **not** touched.
@@ -236,7 +239,10 @@ issue does not put `console.py` or `jobs.py` in scope; a human decides on a foll
   persisted `manifest.json` through `RunManifest.from_dict` on the continue, plain
   `--overwrite`, re-pause and re-score paths, an exception injected through
   `observe_live_item` after the former unlink point, a later continue that passes input
-  verification, a history row that is not `invalid`, and a parametrized test that pins the
-  validator's refusals of the pruned, non-demoted documents.
+  verification, a parametrized test that a recovery continue refuses a tampered agent input,
+  a history row that is not `invalid`, a counter-test that a plain `--overwrite` still
+  removes the staged checks, a parametrized test that pins the validator's refusals of the
+  pruned, non-demoted documents, and a sweep of every manifest published on the happy path
+  and the first-run pause.
 - No change to the schema, the CLI surface, the console API, dependencies, or any deployment.
   No container rebuild.
