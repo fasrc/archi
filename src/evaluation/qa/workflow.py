@@ -355,6 +355,7 @@ class QAWorkflow:
         # D1: run, continue, and retry all execute from the redacted config; write
         # the snapshot before any agent call so every phase sees identical content.
         config = redact_agent_config(config)
+        readings = corpus_provenance.start_readings(config, spec)
         if overwrite:
             owned = RUN_FILES | SCORE_FILES
             if authorize_staged_invalid:
@@ -382,7 +383,7 @@ class QAWorkflow:
             else None
         )
         # The start guard and the first corpus reading, before any question.
-        manifest.update(corpus_provenance.start_readings(config, spec))
+        manifest.update(readings)
         started_at = utc_now()
         manifest["runtime_phase"] = (
             EvaluationRuntimePhase.CHECKING_LIVE_ANSWERS.value
