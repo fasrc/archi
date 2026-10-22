@@ -186,7 +186,7 @@
 
 ## 4. D2 + D3: the staged live checks and their digest survive the window (red tests + fix, one commit)
 
-- [ ] 4. Do steps 4.1-4.6 below in order, in ONE turn, ending with the gate green and ONE commit.
+- [x] 4. Do steps 4.1-4.6 below in order, in ONE turn, ending with the gate green and ONE commit.
 
   - 4.1 Write the RED evidence test for acceptance criterion 3: from `_paused_at_live_gate`,
       record the bytes of `run_dir / "live_checks.jsonl"`, install the 2.2 recorder, and
