@@ -7,6 +7,7 @@ import pytest
 
 import src.evaluation.qa.workflow as workflow_module
 from src.evaluation.qa.artifacts import read_json, sha256_file
+from src.evaluation.qa.constants import RUN_FILES, SCORE_FILES
 from src.evaluation.qa.history import EvaluationHistory
 from src.evaluation.qa.live_checks import iter_live_checks
 from src.evaluation.qa.schema import RunManifest
@@ -478,3 +479,84 @@ class TestD3AgentInputDigests:
             )
 
         assert str(caught.value) == f"workspace artifact hash mismatch: {artifact}"
+
+
+class TestValidatorFence:
+    """5.1: Validator refuses pre-fix states; pins from_dict so widening it breaks this test."""
+
+    @pytest.mark.parametrize(
+        "prior_status", ["scored", "run_completed", "attention_required"]
+    )
+    def test_run_prune_refused_with_prior_status(
+        self, monkeypatch, tmp_path, runtimes, prior_status
+    ):
+        value = {"value": 7, "revision": "r1"}
+        run_dir, _invoker, _rt = _run(monkeypatch, tmp_path, [value] * 3, runtimes)
+        manifest = read_json(run_dir / "manifest.json")
+
+        # Apply the run() overwrite prune WITHOUT the status fix.
+        pruned = copy.deepcopy(manifest)
+        pruned["status"] = prior_status
+        pruned["phases"].pop("run", None)
+        pruned["phases"].pop("score", None)
+        pruned.pop("attempts", None)
+        pruned.pop("agent", None)
+        pruned.pop("attention_required", None)
+        for key in workflow_module.corpus_provenance.PROVENANCE_KEYS:
+            pruned.pop(key, None)
+        for key in workflow_module.corpus_provenance.TAG_KEYS:
+            pruned.pop(key, None)
+        for name in RUN_FILES | SCORE_FILES:
+            pruned["artifacts"].pop(name, None)
+
+        if prior_status in ("scored", "run_completed"):
+            expected_msg = "manifest phase state is incomplete"
+        else:
+            expected_msg = "manifest attempts must be a positive integer"
+
+        with pytest.raises(ValueError, match=expected_msg):
+            RunManifest.from_dict(pruned)
+
+        # Setting status to "prepared" makes it accepted.
+        pruned["status"] = "prepared"
+        RunManifest.from_dict(pruned)
+
+    def test_score_prune_refused_with_wrong_status(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        value = {"value": 7, "revision": "r1"}
+        run_dir, _invoker, _rt = _run(monkeypatch, tmp_path, [value] * 3, runtimes)
+        manifest = read_json(run_dir / "manifest.json")
+
+        # Apply the score() overwrite prune WITHOUT the status fix.
+        pruned = copy.deepcopy(manifest)
+        pruned["phases"].pop("score", None)
+        for name in SCORE_FILES:
+            pruned["artifacts"].pop(name, None)
+
+        with pytest.raises(ValueError, match="manifest phase state is incomplete"):
+            RunManifest.from_dict(pruned)
+
+        # Demoted to run_completed is accepted.
+        pruned["status"] = "run_completed"
+        RunManifest.from_dict(pruned)
+
+
+class TestHappyPathAuditSweep:
+    """5.2: Every manifest.json published on the happy path and first-run pause validates."""
+
+    def test_happy_path_all_manifests_valid(self, monkeypatch, tmp_path, runtimes):
+        value = {"value": 7, "revision": "r1"}
+        captured = _install_manifest_recorder(monkeypatch)
+        _run(monkeypatch, tmp_path, [value] * 3, runtimes)
+        assert len(captured) > 1
+        for payload in captured:
+            RunManifest.from_dict(payload)
+
+    def test_first_run_pause_manifest_valid(self, monkeypatch, tmp_path, runtimes):
+        captured = _install_manifest_recorder(monkeypatch)
+        _paused_at_live_gate(monkeypatch, tmp_path)
+        pause_docs = [p for p in captured if p.get("status") == "attention_required"]
+        assert pause_docs, "expected at least one attention_required manifest"
+        for payload in captured:
+            RunManifest.from_dict(payload)

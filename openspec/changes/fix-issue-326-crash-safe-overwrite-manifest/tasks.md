@@ -265,7 +265,7 @@
 
 ## 5. The validator fence, and the invariant on the paths that were never broken (regression tests, one commit)
 
-- [ ] 5. Do steps 5.1-5.4 below in order, in ONE turn, ending with the gate green and ONE commit.
+- [x] 5. Do steps 5.1-5.4 below in order, in ONE turn, ending with the gate green and ONE commit.
 
   - 5.1 Turn the 2.1 table into a permanent test (the spec scenario "The schema validator is
       not weakened", second THEN). In the new module, add a test parametrized over the prior
