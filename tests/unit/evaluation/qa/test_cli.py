@@ -1,6 +1,7 @@
 import sys
 from types import SimpleNamespace
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -241,3 +242,22 @@ def test_top_level_help_lists_qa_and_hides_eval(monkeypatch, capsys):
     assert any(line.startswith("  qa ") for line in lines)
     assert any(line.startswith("  evaluate ") for line in lines)
     assert not any(line.startswith("  eval ") for line in lines)
+
+
+def test_eval_alias_help_stdout_equals_the_qa_help():
+    root = click.Group("archi")
+    root.add_command(qa_cli)
+    root.add_command(eval_cli)
+    runner = CliRunner(mix_stderr=False)
+    for args in (
+        ["--help"],
+        ["prepare", "--help"],
+        ["run", "--help"],
+        ["score", "--help"],
+    ):
+        direct = runner.invoke(root, ["qa", *args], prog_name="archi")
+        alias = runner.invoke(root, ["eval", "qa", *args], prog_name="archi")
+
+        assert direct.exit_code == 0, direct.output
+        assert alias.exit_code == 0, alias.output
+        assert alias.stdout == direct.stdout

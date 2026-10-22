@@ -29,7 +29,17 @@ DEPRECATION_NOTICE = (
 )
 
 
+class _AliasContext(click.Context):
+    # Leave the alias name out of usage lines, so the alias's help and usage
+    # errors name 'archi qa' and its stdout matches the direct path.
+    @property
+    def command_path(self) -> str:
+        return self.parent.command_path if self.parent is not None else ""
+
+
 class _DeprecatedAliasGroup(click.Group):
+    context_class = _AliasContext
+
     def parse_args(self, ctx: click.Context, args: list) -> list:
         click.echo(DEPRECATION_NOTICE, err=True)
         return super().parse_args(ctx, args)

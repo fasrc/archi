@@ -48,6 +48,10 @@ Tests import the constant; they do not copy the string.
 **D5 — the notice goes to stderr only.** Stdout of the alias path is byte-identical to the
 `archi qa` path. Tests use `CliRunner(mix_stderr=False)` and assert on `result.stderr` and
 `result.stdout` separately.
+Help output is part of stdout, and Click builds its usage line from the context chain, so
+`archi eval qa run --help` would print `Usage: archi eval qa run`. The alias group sets
+`context_class = _AliasContext`, whose `command_path` leaves out `eval`; help and usage
+errors then name `archi qa` on both paths (PR #744 review, 2026-10-22).
 
 **D6 — existing tests move to `qa_cli`.** The five tests in
 `tests/unit/evaluation/qa/test_cli.py` invoke `eval_cli` with a leading `"qa"` argument.
