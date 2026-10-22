@@ -7,8 +7,9 @@
 
 Callers of the old spelling: `scripts/benchmarking/feature_matrix/qa_arm.sh:87,88,158`
 (`"$FM_ARCHI" eval qa …`), `qa_prepare.sh:39`, and the fake `archi` in
-`test_feature_matrix_wrappers.sh` (line 106 matches `"$1 $2" = "eval qa"`; lines 314, 578,
-613, 614 grep the recorded calls for `eval qa …`). The gate runs that harness.
+`test_feature_matrix_wrappers.sh` (line 137 matches `"$1 $2" = "eval qa"`; lines 379, 665,
+700, 701 grep the recorded calls for `eval qa …`). The gate runs that harness. Line numbers
+are measured at `1cecfe42`, the merge of `origin/dev` `e2978a1d` into this branch.
 
 ## Goals / Non-Goals
 
@@ -63,7 +64,7 @@ not tracked; use `git grep`, which skips it.
 `git grep -nE "archi eval([^u]|$)|eval qa" -- docs scripts` prints only the deprecation note
 lines in `docs/docs/cli_reference.md`. Every other mention says `archi qa`. Rename the
 heading ``### `archi eval qa` `` to ``### `archi qa` `` and change the one link to it
-(`docs/docs/evaluation.md:1282`, `cli_reference.md#archi-eval-qa`) to `#archi-qa`.
+(`docs/docs/evaluation.md:1356`, `cli_reference.md#archi-eval-qa`) to `#archi-qa`.
 
 **D9 — the composite form keeps its shape.** `archi eval qa --dataset …` becomes
 `archi qa --dataset …`; `archi eval qa prepare|run|score` becomes `archi qa

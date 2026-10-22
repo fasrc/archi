@@ -12,9 +12,18 @@
 - [x] 0.4 Every design decision is made in `design.md` (D1–D9). Follow it. Where the issue
       body and the design differ, the design wins (in particular D7/D8 replace the issue's
       literal `grep "archi eval"`, which also matches `archi evaluate`).
+- [x] 0.5 Loop 1 resumed this branch on 2026-10-22 and merged `origin/dev` `e2978a1d` into
+      it (merge commit `1cecfe42`, no conflicts). Every line number in tasks 2.1 and 3.1 is
+      measured at that tip. On that date no #434 PR existed, so the issue's order rule says
+      continue from `origin/dev`: do NOT merge `origin/fix/issue-434-qa-arm-fail-closed`.
 
 ## Rules that apply to EVERY task below
 
+- **Run the gate in the FOREGROUND and wait for it in the same turn.** Never start
+  `bash scripts/gate.sh` in the background, and never end a turn "to wait for the gate".
+  A background job dies with the turn, so the commit never happens and the loop halts as a
+  stall. This exact failure halted #434 and #458, and #563 on 2026-10-22. The gate takes
+  about 4 minutes, which fits in one turn.
 - **Red and green live in the SAME task.** `bash scripts/gate.sh` runs before every commit,
   so a task that ends with the suite red can never be committed and the loop halts there.
 - Do not touch `archi evaluate`, its options, or its docs. Every edit below is about the
@@ -90,13 +99,17 @@
         `archi qa`, `archi qa run`.
       - `scripts/benchmarking/feature_matrix/qa_prepare.sh`: line 39 → `"$FM_ARCHI" qa prepare …`;
         the line-7 comment → `archi qa`.
-      - `scripts/benchmarking/feature_matrix/lib.sh`: comments on lines 278 and 380 →
+      - `scripts/benchmarking/feature_matrix/lib.sh`: comments on lines 350 and 452 →
         `archi qa`.
       - `scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh`: first change
-        ONLY the expectations — line 106 → `[ "\$1" = "qa" ]` (keep the backslash escape,
-        it sits in an unquoted heredoc), line 101 comment → `` \`qa\` ``, line 19 comment,
-        and the call greps on lines 314, 578, 613, 614 drop the leading `eval ` (line 314's
-        `ok` message on 317 too). Run
+        ONLY the expectations — line 137 `[ "\$1 \$2" = "eval qa" ]` →
+        `[ "\$1" = "qa" ]` (keep the backslash escapes, the line sits in an unquoted
+        heredoc), the line-132 comment `` \`eval qa\` `` → `` \`qa\` ``, the line-19
+        comment, and the call greps on lines 379, 665, 700, 701 drop the leading `eval `
+        (and line 382's `ok` message says `calls archi qa serially`). Before you edit,
+        re-find every site with
+        `grep -n 'eval qa\|archi eval' scripts/benchmarking/feature_matrix/*.sh` — that
+        grep must print exactly the 17 lines named in this task. Run
         `bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh` and see
         it report `not ok` lines (red). Then edit the two wrappers as above and re-run: every
         line `ok`, exit 0.
@@ -110,12 +123,15 @@
       `archi eval qa prepare|run|score` → `archi qa prepare|run|score`;
       `archi eval qa` (composite, or the command in general) → `archi qa`; ``` ``archi eval
       qa`` ``` in Python docstrings and help strings → ``` ``archi qa`` ```.
-      Files: `docs/docs/{benchmarking,cli_reference,evaluation,interpreting_benchmark_results,user_guide}.md`,
-      `docs/docs/proposals/{categories-action-plan,feature-matrix-campaign-2026,icl-and-query-category-mapping}.md`,
-      `scripts/benchmarking/{README.md,compare_runs.py,ragas_bank_to_qa_dataset.py}`,
-      `tests/unit/test_compare_runs.py` (docstring at line 2064 only).
-      Rename the heading in `cli_reference.md` to ``### `archi qa` `` and change the link in
-      `evaluation.md` (`cli_reference.md#archi-eval-qa`) to `cli_reference.md#archi-qa`.
+      Files (mention count at `1cecfe42` in brackets):
+      `docs/docs/{benchmarking [1],cli_reference [9],evaluation [13],interpreting_benchmark_results [1],user_guide [1]}.md`,
+      `docs/docs/proposals/{categories-action-plan [4],feature-matrix-campaign-2026 [4],icl-and-query-category-mapping [2],prompt-optimization-loop [9]}.md`,
+      `scripts/benchmarking/{README.md [5],compare_runs.py [4],ragas_bank_to_qa_dataset.py [4]}`,
+      `tests/unit/test_compare_runs.py` (the docstring at line 2172 only).
+      `prompt-optimization-loop.md` is new since Loop 1 first wrote this task; sweep it too.
+      Rename the heading in `cli_reference.md` (line 217) to ``### `archi qa` `` and change
+      the link in `evaluation.md` (line 1356, `cli_reference.md#archi-eval-qa`) to
+      `cli_reference.md#archi-qa`.
       Directly under that heading, add one note:
       `> **Deprecated alias:** \`archi eval qa …\` still runs the same command for one
       release and prints a deprecation notice to stderr. Use \`archi qa\`.`
