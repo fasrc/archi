@@ -1,48 +1,99 @@
 # Design - fix-issue-326-crash-safe-overwrite-manifest
 
-Line anchors are as of `origin/dev` at `3de206bc`. Re-derive before citing any of them.
+Line anchors are as of `origin/dev` at `7145888d` (re-verified 2026-10-21, and on `e2978a1d` 2026-10-22). Re-derive before
+citing any of them.
+
+The operator decided D1–D3 on 2026-09-27 and D0 on 2026-10-19. This design records them and
+the traps an implementation must avoid; it does not reopen them.
 
 ## The shape of the defect
 
 A manifest write is a publish. Everything else in this workspace already knows that:
 `AtomicJsonlWriter` commits with `os.replace`, `write_summary` streams to a temp file, the
 digest map is rewritten in the same statement as the artifacts it describes. The overwrite
-paths break the rule in one place — they publish a document mid-edit.
+paths break the rule in two places — they delete before a step that can refuse, and they
+publish a document mid-edit.
 
-| Stage | Location | State of the on-disk manifest |
+| Stage | Location in `run()` | State of the on-disk manifest |
 |---|---|---|
-| prune phases, attempts, agent, digests | `workflow.py:352-364` | in memory only |
-| set `runtime_phase` | `:375-379` | in memory only |
-| **publish** | `:380` | **`from_dict` refuses it** |
-| pause path re-adds phase + digests | `:474-501` | in memory only |
-| publish | `:506` | valid again |
-| continue-through path re-adds | `:586-597` | in memory only |
-| publish | `:600` | valid again |
+| delete owned files | `workflow.py:362` | old manifest, digests of deleted files |
+| prune phases, attempts, agent, provenance, digests | `:363-373` | in memory only |
+| rewrite the resolved agent inputs | `:374-377` | (unchanged) |
+| start guard + first reading (can raise) | `:385` | (unchanged) — **a refusal strands it** |
+| set `runtime_phase` | `:387-391` | in memory only |
+| **publish** | `:392` | **`from_dict` refuses it** |
+| pause path re-adds phase + digests | `:478-513` | in memory only |
+| publish | `:514` | valid again |
+| continue-through path re-adds | `:590-619` | in memory only |
+| publish | `:620` | valid again |
 
-The window between `:380` and `:506`/`:600` is the attempts phase: every live pre-check, every
-agent execution, every post-run check. `score()` has the same shape between `:803` and `:881`,
+The window between `:392` and `:514`/`:620` is the attempts phase: every live pre-check, every
+agent execution, every post-run check. `score()` has the same shape between `:823` and `:908`,
 spanning the scoring phase.
 
-Two facts make this worse than a cosmetic status lie. First, the pruned digest map no longer
-records `live_checks.jsonl`, so the manifest and the disk disagree even about which files are
-real. Second, `:414` deletes the file the continue path deliberately kept. A crash in the
-window therefore loses the evidence *and* the record of it.
+Two more facts make this worse than a cosmetic status lie. First, the pruned digest map no
+longer records `live_checks.jsonl`, so the manifest and the disk disagree even about which
+files are real. Second, `:426` deletes the file the continue path deliberately kept. A crash in
+the window therefore loses the evidence *and* the record of it.
+
+## D0 — Run the start guard before the delete, but merge its readings after the prune
+
+`start_readings` (`provenance.py:78`) is the #570 start guard plus the first corpus reading. It
+raises `CollectionNotReadyError` by design and can raise a Postgres connect error. Today it is
+called at `:385`, after `_remove_owned` at `:362` has deleted the run and score files, so a
+refusal leaves the old manifest on disk naming digests of files that no longer exist.
+
+The fix moves the **call** above the `if overwrite:` block, directly after
+`config = redact_agent_config(config)` at `:357` (the guard must see the same redacted config
+it sees today), and keeps the **merge** where it is:
+
+```python
+config = redact_agent_config(config)
+readings = corpus_provenance.start_readings(config, spec)   # may raise; nothing touched yet
+if overwrite:
+    ...prune (pops PROVENANCE_KEYS and TAG_KEYS)...
+write_yaml(...)
+...
+manifest.update(readings)                                    # where :385 is today
+```
+
+**The trap.** `start_readings` returns `retrieval_identity` and `corpus_fingerprint_before`,
+both members of `corpus_provenance.PROVENANCE_KEYS`, and the prune pops every one of those keys
+(`:368-369`). Moving the whole `manifest.update(corpus_provenance.start_readings(...))` line
+above the block makes the prune erase the fresh readings on every overwrite. Nothing would
+raise: `end_readings` (`:598-605`) would read `corpus_fingerprint_before` and
+`retrieval_identity` as `None`, and the run would publish `corpus_unchanged_at_endpoints: None`
+and a lost identity. Task 1 pins this with a test that fails on the literal move.
+
+`load_agent_inputs` is already above the block (`:350-354`), so it needs no move. Nothing else
+between `:357` and `:385` can refuse: `LazyVectorstore` (`src/evaluation/qa/runtime.py:345`)
+only stores its config, and the rest is local file writes and hashing.
+
+The `start_readings` docstring says "no attempt has run, so nothing is lost". That is false on
+today's overwrite path and becomes true only because of the move, so it is corrected to state
+the contract the callers must keep: run the guard before you delete or write anything.
+
+**The red test must use a completed run, not a paused one.** On a paused run with
+`authorize_staged_invalid=True`, the only owned files that get deleted are the two resolved
+agent inputs, and `:374-375` rewrites them byte-for-byte before the guard raises. A "nothing
+changed on disk" assertion would then pass against the unfixed code. A completed (`scored`)
+run with a plain `overwrite=True` deletes `answers.jsonl` and the score files, which are not
+rewritten, so the red is real.
 
 ## D1 — Lower the status, do not relax the validator
 
 The issue's constraint is explicit: do not loosen `RunManifest.from_dict`. That is also the
-right call on the merits — the validator's three rules are each true statements about the
-pruned document. `phases["run"]` really is gone; `attempts` really is absent;
-`live_checks.jsonl` really is not in the digest map. The document is not misjudged. It is
-wrong.
+right call on the merits — the validator's rules are each true statements about the pruned
+document. `phases["run"]` really is gone; `attempts` really is absent; `live_checks.jsonl`
+really is not in the digest map. The document is not misjudged. It is wrong.
 
-`RunStatus` has exactly four values (`schema.py:14-18`) and `prepared` is the only one that is
-not terminal. The required-phases table maps it to `("prepare",)` — precisely the phase the
-prune leaves standing — and both the qa-v2 live-check rule (`:300-311`) and the scored-artifact
-rule (`:312-315`) exclude it. `attempts` is optional for `prepared` alone (`:269-273`), which
-settles the choice: the prune pops `attempts`, so no other status can accept the result.
+`RunStatus` has exactly four values (`schema.py:14-18`) and `prepared` is the only one that is not terminal. The
+required-phases table maps it to `("prepare",)` — precisely the phase the prune leaves
+standing — and both the qa-v2 live-check rule (`schema.py:300-310`) and the scored-artifact
+rule (`:311-314`) exclude it. `attempts` is optional for `prepared` alone, which settles the
+choice: the prune pops `attempts`, so no other status can accept the result.
 
-Measured on `3de206bc`, applying the `:352-364` prune to a `qa-v2` manifest:
+Measured on `3de206bc`, applying the prune to a `qa-v2` manifest:
 
 | prior status | as written today | status demoted to `prepared` |
 |---|---|---|
@@ -57,30 +108,31 @@ demoted to `run_completed` → ACCEPTED.
 
 The demotion is not a new state to reason about. It makes the overwrite path converge on the
 state a first run is already in at that line — `prepare` complete, nothing downstream claimed.
-The terminal assignments at `:500`, `:597` and `:862` are unchanged and still publish the real
+The terminal assignments at `:512`, `:617` and `:889` are unchanged and still publish the real
 outcome.
 
 ## D2 — Delete the unlink; do not add a sidecar
 
-The obvious fix for `:414` is to rename the staged file aside and delete it once the
+The obvious fix for `:426` is to rename the staged file aside and delete it once the
 replacement seals. It is also unnecessary, and the unnecessary version is expensive.
 
 `AtomicJsonlWriter.__exit__` (`artifacts.py:113-129`) commits with
-`os.replace(self._temp_name, self.path)`, and `__enter__` puts the temp file in
-`self.path.parent` — the same directory, so the rename is atomic on one filesystem. The old
-`live_checks.jsonl` is therefore already protected until the exact instant the new one becomes
-visible. Removing the `unlink()` line is the whole fix. There is no window in which neither
-file exists.
+`os.replace(self._temp_name, self.path)`, and `__enter__` creates the temp file with
+`tempfile.mkstemp(dir=str(self.path.parent))` — the same directory, so the rename is atomic on
+one filesystem. The old `live_checks.jsonl` is therefore already protected until the exact
+instant the new one becomes visible. Removing the `unlink()` line is the whole fix. There is no
+window in which neither file exists.
 
-Nothing in between reads the stale copy. Inside `run()`, `live_checks.jsonl` appears at `:394`
-(the path binding), `:463` and `:565` (the two seals), and `:480` (a digest recomputation after
-the first seal). Every in-window read is of `pre-run.jsonl` in the staging `TemporaryDirectory`.
+Nothing in between reads the stale copy. Inside `run()`, `live_checks.jsonl` appears at `:406`
+(the path binding, read once at `:416-420` before the former unlink), `:475` and `:577` (the
+two seals), and `:492` (a digest recomputation after the first seal). Every in-window read is of
+`pre-run.jsonl` in the staging `TemporaryDirectory`.
 
 A sidecar would have cost three things this does not: a new file name to add to `OWNED_FILES`
-(and so to the "artifacts already exist; use `--overwrite`" gate at `:192`/`:921`, changing an
+(and so to the "artifacts already exist; use `--overwrite`" gates at `:195`/`:948`, changing an
 unrelated refusal), a restore step at `run()` entry ahead of `verify_hashes`, and a rule for
-what `prepare(overwrite=True)`'s full reset at `:217` does with a leftover sidecar — which is
-how stale evidence from an abandoned run gets resurrected into a freshly prepared workspace.
+what `prepare(overwrite=True)`'s full reset at `:219-220` does with a leftover sidecar — which
+is how stale evidence from an abandoned run gets resurrected into a freshly prepared workspace.
 Deleting one line has none of those questions.
 
 A `TemporaryDirectory` is not a candidate either: it is cleaned up on the way out of the
@@ -89,7 +141,7 @@ exactly the failure it is meant to survive.
 
 ## D3 — Keep the digest for the file you keep
 
-`:355` already says the continue path must not delete `live_checks.jsonl`:
+`:359-361` already says the continue path must not delete `live_checks.jsonl`:
 
 ```python
 owned = RUN_FILES | SCORE_FILES
@@ -97,25 +149,29 @@ if authorize_staged_invalid:
     owned = owned - {"live_checks.jsonl"}
 ```
 
-Nine lines later the digest loop pops that same name from `manifest["artifacts"]`
-unconditionally. The two statements contradict each other, and `:380` publishes the
-contradiction.
+Twelve lines later the digest loop (`:372-373`) pops that same name from
+`manifest["artifacts"]` unconditionally. The two statements contradict each other, and `:392`
+publishes the contradiction. The smallest edit is to pop `owned` instead of
+`RUN_FILES | SCORE_FILES`, so the digests removed are exactly the files removed.
 
 D2 alone leaves the file on disk and the record of it gone, which is not recoverable: the
 continue precondition needs both. `required_inputs` adds `live_checks.jsonl` when
-`authorize_staged_invalid` (`:308-309`), and `verify_hashes(run_dir, manifest["artifacts"],
-required_inputs)` at `:315-319` reads the digest out of the map. So the artifact retention has
-to mirror the file retention, keyed off the same flag.
+`authorize_staged_invalid` (`:311-312`), and `verify_hashes(run_dir, manifest["artifacts"],
+required_inputs)` at `:323-327` reads the digest out of the map.
 
-The retained digest stays honest for the whole window, because the file it describes does not
-change until a seal — and each seal is followed by a digest recomputation (`:480`, `:586`)
-before the next publish (`:506`, `:600`). Verified against the publish sites: the only
-`write_json(run_dir / "manifest.json", ...)` calls are `:380`, `:502`, `:506`, `:600`, `:803`,
-`:881`, and none of them falls between a seal and its recomputation.
+**Where the retained digest goes stale (known gap 1, accepted).** The file does not change
+until a seal. On the pause path the seal at `:475` is followed by the recomputation at
+`:486-495` and the publish at `:514`, with no refusable call between them; a kill there still
+leaves the old digest next to the new file, the same shape as the window below. On the
+continue-through path the seal at `:577-589` is followed by `end_readings` (`:598-605`, a
+network call), then the recomputation at `:606`, then the publish at `:620`. A kill after the
+seal and before `:620` leaves the old digest next to the new file: a hash mismatch instead of a
+missing digest. The operator accepted this gap on 2026-10-19; the proposal records it and does
+not fix it.
 
 An extra entry in the digest map is not a validity risk. `from_dict` checks the shape of every
-entry (`:275-288`) and requires certain names to be present for certain statuses; it never
-forbids a name.
+entry (`schema.py:277-288`) and requires certain names for certain statuses; it never forbids
+a name.
 
 ## D4 — What the tests have to pin, and why the obvious test is too weak
 
@@ -128,14 +184,46 @@ every copy through `RunManifest.from_dict`. A deep copy is required — the work
 mutating the same dict, so a stored reference would be re-read at its final value and the test
 would pass against the unfixed code.
 
-The evidence test needs the exception injected after the former unlink point and before the
-seal at `:463`/`:565`. `observe_live_item` is the first call after it and is already faked in
-this suite, so raising from that fake is the narrowest injection available. The assertion is
-two-part, matching D3: the file is on disk **and** its digest is in the manifest that was last
-published.
+**Fixtures.** There is no paused-run fixture and no `observe_live_item` fake in
+`tests/unit/evaluation/qa/test_workflow.py`. The paused-run helper is `_paused_at_live_gate`
+(`tests/unit/evaluation/qa/test_live_workflow.py:177`); the completed-run helper is `_run`
+(`:158`); both need the `runtimes` fixture (`:135`). Put the new tests in a new module,
+`tests/unit/evaluation/qa/test_overwrite_crash_safety.py`, and import those helpers from
+`tests.unit.evaluation.qa.test_live_workflow` (precedent: `test_jobs_history_wait_budget.py:12`
+imports a sibling test module). A new module avoids reused test names and appended-test
+collisions in the two large existing files.
+
+**Paths.** The recorder runs on four overwrite paths, because each publishes a different
+document: the continue (`authorize_staged_invalid=True`, prior status `attention_required`),
+the plain `--overwrite` re-run (`src/cli/qa_eval.py:222-230`, no authorize flag, prior status
+`scored`), the continue that pauses again (the only overwrite path that publishes `:514` and
+returns `attention_required`; it needs a dataset with two live items), and the re-score. A
+test on the continue path alone passes a D1 line wrapped in `if authorize_staged_invalid:`.
+
+**Injection.** Inject the mid-window failure with
+`monkeypatch.setattr(workflow_module, "observe_live_item", raising_fake)` — the name is
+imported into the workflow module at `workflow.py:38` and called at `:440` (pre-run) and
+`:584` (post-run). Raise on the first call, which is the pre-run check: a failure after
+`answers.jsonl` is sealed hits known gap 3 (an undeclared artifact) and shows the `invalid`
+history row for a reason this change does not touch. Do **not** raise from the MCP invoker:
+`live_checks.py` catches that error and turns it into a check row, so the run would not unwind.
+For the same reason, an exhausted `SequenceInvoker` does not raise in the test: its
+`IndexError` becomes an `oracle_failed` check row, so every test passes enough values.
+
+**History row.** Select the row by `EvaluationHistory.id_for_path(run_dir)`. The `invalid`
+fallback row is named after the directory and a valid row after the run, so a selector by
+name finds a row before the fix and none after it.
+
+The evidence assertion is two-part, matching D3: the file is on disk with its original bytes
+**and** its digest is in the manifest that was last published. Two follow-on assertions cover
+the spec scenarios that had no test: removing the raising fake and calling
+`run(overwrite=True, authorize_staged_invalid=True)` again passes `verify_hashes` (it pauses or
+completes instead of raising `workspace artifact ...`), and `EvaluationHistory(runs_dir).
+list_runs()` shows the interrupted run under a real status, not the `invalid` row
+(`history.py:614`).
 
 The counter-test matters as much. A run whose live checks were never staged
-(`authorize_staged_invalid` false) must still have `live_checks.jsonl` removed by `:356`,
+(`authorize_staged_invalid` false) must still have `live_checks.jsonl` removed by `:362`,
 because a plain `--overwrite` means discard. Without that case, "never delete the staged
 checks" is an easy over-fix that silently changes what `--overwrite` means.
 
@@ -144,23 +232,30 @@ checks" is an easy over-fix that silently changes what `--overwrite` means.
 Stop and reduce the change if you find yourself editing any of these:
 
 - `src/evaluation/qa/schema.py` — the issue forbids it, and D1 explains why it is right.
-- The terminal publishes at `:502`, `:506`, `:600`, `:881` and the status assignments at
-  `:500`, `:597`, `:862` — they are already correct.
-- `_remove_owned` (`:84-97`) and `OWNED_FILES` — D2 exists to avoid touching them.
-- `history.py` and `console.py` — they are readers. History's `invalid` row (`:614`) is a
-  symptom that disappears when the writer stops publishing invalid documents; the row itself
-  stays, for manifests that really are corrupt.
-- `prepare()` (`:192-217`) — out of scope, recorded in the proposal.
+- The terminal publishes at `:514`, `:518`, `:620`, `:908` and the status assignments at
+  `:512`, `:617`, `:889` — they are already correct.
+- `_remove_owned` (`:86-100`) and `OWNED_FILES` — D2 exists to avoid touching them.
+- `history.py`, `console.py` and `evaluations.js` — they are readers. History's `invalid` row
+  (`:614`) is a symptom that disappears when the writer stops publishing invalid documents;
+  the row itself stays, for manifests that really are corrupt.
+- `prepare()` (`:181-286`) — out of scope, recorded in the proposal.
+- `provenance.py` beyond the `start_readings` docstring — the guard's behaviour is #570's and
+  is correct.
+- The `end_readings` window and the delete-to-publish window — recorded as known gaps, not
+  fixed.
 
 ## D6 — The audit sweep, and what it is allowed to conclude
 
-The issue asks for every `write_json(run_dir / "manifest.json", ...)` site to be checked
-against the same invariant. That is `:380`, `:502`, `:506`, `:600`, `:803`, `:881`. Two are
-fixed here; the other four publish a manifest whose phase set and digests were just re-added,
-so they are valid by construction.
+The issue asks for every `write_json(run_dir / "manifest.json", ...)` site in `run()` and
+`score()` to be checked against the invariant. That is `:392`, `:514`, `:518`, `:620`, `:823`,
+`:908`. Two are fixed here (`:392`, `:823`); the other four publish a manifest whose phase set
+and digests were just re-added, or (`:518`) one that `:392` already made valid, so they are
+valid by construction. The regression test in task 5 proves it for `:285`, `:392`, `:518`,
+`:620`, `:823` and `:908` and for a first-run pause at `:514`; the task 3 re-pause test proves
+it for `:514` on the overwrite path.
 
-One finding the sweep should record rather than fix: `:862` sets `status = "scored"` in memory
-and `write_report` at `:864-870` receives that manifest before `phases["score"]` exists at
-`:870`. Nothing writes it to disk, so the on-disk invariant holds. If `write_report` is ever
-changed to validate its argument, that becomes a real defect — worth a note in the PR body and
-a follow-up issue, not a change here.
+One finding the sweep should record rather than fix: `:889` sets `status = "scored"` in memory
+and `write_report` at `:891-896` receives that manifest before `phases["score"]` exists at
+`:897`. Nothing writes it to disk, so the on-disk invariant holds. If `write_report` is ever
+changed to validate its argument, that becomes a real defect — worth a note in the PR body,
+not a change here.
