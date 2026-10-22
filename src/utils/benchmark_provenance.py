@@ -928,6 +928,48 @@ def live_category_map(pool: Any, config: Any) -> Tuple[list, List[str], str]:
     return rows, records, category_map_digest(records)
 
 
+def live_embedding_tag_state(pool: Any, config: Any) -> Dict[str, Any]:
+    """The embedding tag state of the collection *config* searches, read on *pool*.
+
+    Returns ``{"embedding_model_tags": sorted(tags), "untagged_chunk_count": n}``.
+    Raises on failure, like ``live_corpus_fingerprint``.
+    """
+    _, _, untagged, tags = _read_on_pool(
+        pool, readiness_counts, _searched_collection(config)
+    )
+    return {"embedding_model_tags": sorted(tags), "untagged_chunk_count": untagged}
+
+
+def embedding_tags_unchanged(start: Any, end: Any) -> Optional[bool]:
+    """Whether the tag state at the end of an arm matches the start record.
+
+    Returns ``None`` when either record is missing required fields or is not a
+    dict. Returns ``False`` when a foreign tag appeared (D1 rule 1) or the
+    untagged count grew (D1 rule 2). Returns ``True`` otherwise.
+    """
+    if not isinstance(start, dict):
+        return None
+    embedding_model = start.get("embedding_model")
+    if not isinstance(embedding_model, str) or not embedding_model:
+        return None
+    start_untagged = start.get("untagged_chunk_count")
+    if not isinstance(start_untagged, int) or isinstance(start_untagged, bool):
+        return None
+    if not isinstance(end, dict):
+        return None
+    end_tags = end.get("embedding_model_tags")
+    end_untagged = end.get("untagged_chunk_count")
+    if not isinstance(end_tags, list):
+        return None
+    if not isinstance(end_untagged, int) or isinstance(end_untagged, bool):
+        return None
+    if any(tag != embedding_model for tag in end_tags):
+        return False
+    if end_untagged > start_untagged:
+        return False
+    return True
+
+
 def _container_factory_and_config() -> Tuple[Any, Any]:
     """Build the factory from the environment, install it, and read the config.
 

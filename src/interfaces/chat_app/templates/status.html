@@ -305,7 +305,7 @@
           <div class="prov-warn">
             <div class="prov-warn-title">⚠ live-edited config</div>
             <div>
-              {% if not dep.pin_matched %}The deployed config is not the pinned commit.{% endif %}
+              {% if dep.pin_mismatch %}The deployed config is not the pinned commit.{% endif %}
               {% if dep.dirty_path_count %}{{ dep.dirty_path_count }} tracked file{{ 's' if dep.dirty_path_count != 1 else '' }} edited on top of the pin — what is running is not the pinned config.{% endif %}
             </div>
             {% for path in dep.dirty_paths_preview %}
@@ -356,6 +356,9 @@
           </div>
           {% endif %}
 
+          {% if not kb.current_config_available %}
+          <div class="prov-unavailable">Current configuration unavailable — drift not evaluated.</div>
+          {% endif %}
           {% if kb.drift %}
           <div class="prov-warn">
             <div class="prov-warn-title">⚠ configuration changed after this ingest</div>
@@ -365,8 +368,16 @@
             {% endfor %}
           </div>
           {% endif %}
+          {% if kb.last_attempt_failed_at %}
+          <div class="prov-warn">
+            ⚠ the most recent ingest attempt failed at {{ kb.last_attempt_failed_at.strftime('%Y-%m-%d %H:%M UTC') }} — counts shown are from the last successful run; the failed attempt may have changed the live corpus
+          </div>
+          {% endif %}
         {% else %}
-          <div class="prov-unavailable">No completed ingest run recorded — recorded from the next ingest onward.</div>
+          <div class="prov-unavailable">No successful ingest run recorded —recorded from the next ingest onward.</div>
+          {% if kb and kb.last_attempt_failed_at %}
+          <div>The most recent ingest attempt failed at {{ kb.last_attempt_failed_at.strftime('%Y-%m-%d %H:%M UTC') }}; no successful run is recorded.</div>
+          {% endif %}
         {% endif %}
       </div>
 

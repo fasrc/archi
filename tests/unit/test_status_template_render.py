@@ -129,7 +129,7 @@ def test_the_page_renders_when_no_record_exists_and_alerts_survive(env):
     )
 
     assert "Deployment provenance unavailable" in html
-    assert "No completed ingest run recorded" in html
+    assert "No successful ingest run recorded" in html
     # The pre-existing sections must be untouched by this change.
     assert "Active Alerts" in html
     assert "All systems operational" in html
@@ -154,3 +154,102 @@ def test_dirty_path_overflow_is_summarised_not_dumped(env):
 
     assert "20 tracked files" in html
     assert "15 more" in html
+
+
+def test_failed_attempt_warning_renders_in_available_kb_panel(env):
+    failed = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(
+                _run_row(), {}, last_failed_at=failed
+            ),
+        },
+    )
+    assert "the most recent ingest attempt failed at" in html
+    assert "counts shown are from the last successful run" in html
+
+
+def test_failed_attempt_line_renders_in_unavailable_kb_panel(env):
+    failed = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(
+                None, {}, last_failed_at=failed
+            ),
+        },
+    )
+    assert "The most recent ingest attempt failed at" in html
+    assert "no successful run is recorded" in html
+
+
+def test_failure_only_headline_says_no_successful_run_not_no_completed_run(env):
+    failed = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(
+                None, {}, last_failed_at=failed
+            ),
+        },
+    )
+    assert "No successful ingest run recorded" in html
+    assert "No completed ingest run recorded" not in html
+
+
+def test_failed_attempt_warning_notes_possible_corpus_change(env):
+    failed = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(
+                _run_row(), {}, last_failed_at=failed
+            ),
+        },
+    )
+    assert "counts shown are from the last successful run" in html
+    assert "the failed attempt may have changed the live corpus" in html
+    assert "the corpus above is from the last successful run" not in html
+
+
+def test_unavailable_current_config_renders_text_and_no_drift_warning(env):
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(_run_row(), None),
+        },
+    )
+    assert "Current configuration unavailable" in html
+    assert "drift not evaluated" in html
+    assert "configuration changed after this ingest" not in html
+
+
+def test_unknown_pin_verdict_with_dirty_paths_does_not_say_not_pinned_commit(env):
+    row = _deploy_row(pin_matched=None, dirty_paths="M\tlists/sources.list")
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(row),
+            "knowledge_base": build_knowledge_base_panel(_run_row(), {}),
+        },
+    )
+    assert "live-edited config" in html
+    assert "not the pinned commit" not in html
+
+
+def test_confirmed_pin_mismatch_says_not_pinned_commit(env):
+    row = _deploy_row(pin_matched=False, config_head="0123456789abcdef")
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(row),
+            "knowledge_base": build_knowledge_base_panel(_run_row(), {}),
+        },
+    )
+    assert "not the pinned commit" in html

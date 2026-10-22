@@ -32,6 +32,8 @@ from xml.etree import ElementTree
 import click
 import requests
 
+from src.cli.source_registry import INPUT_LIST_PREFIXES as _INPUT_LIST_PREFIXES
+
 # Sitemap XML namespace (sitemaps.org). Documents may or may not declare it; we
 # match ``<loc>`` namespace-agnostically by stripping the namespace from tags.
 _SITEMAP_TIMEOUT = 30
@@ -40,7 +42,7 @@ _SITEMAP_TIMEOUT = 30
 # sitemap at 50 MB uncompressed, so 64 MB is generous headroom.
 _MAX_FETCH_BYTES = 64 * 1024 * 1024
 _VALID_TYPES = {"sitemap", "crawl", "literal"}
-_EXTRA_PREFIXES = ("git-", "sso-", "elog-", "indico-")
+_EXTRA_PREFIXES = tuple(_INPUT_LIST_PREFIXES)
 
 
 class ManifestError(Exception):

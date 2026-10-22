@@ -448,7 +448,11 @@ pipeline exported by `src.archi.pipelines`.
 
 The CLI accepts an existing local `.yaml` or `.yml` file through
 `--agent-config`. During the run, Archi snapshots the resolved file as
-`agent_config.resolved.yaml`.
+`agent_config.resolved.yaml`. Values under secret-named keys (API keys, tokens,
+passwords, `Authorization` headers, and the password component of a URL) are
+replaced with `[redacted]` before the write. Every phase, including continue and
+retry, runs from that redacted content. Credentials must come from the environment
+or secrets, not from inline config values.
 
 The browser Console needs no separate agent-config file. It evaluates the agent
 already defined by the running deployment's YAML—for example,
@@ -1131,7 +1135,7 @@ The current workspace schema is `qa-v2`.
 | `input.snapshot.json` or `.jsonl` | Prepare               | Exact input bytes used by the run                                                                                                                                                                    |
 | `evaluator_profile.resolved.yaml`   | Prepare               | Fixed evaluator profile                                                                                                                                                                              |
 | `preparation.jsonl`                 | Prepare               | One terminal record per input item, containing either runnable normalized data and fixed atoms, a skip, or a preparation failure                                                                     |
-| `agent_config.resolved.yaml`        | Run                   | Exact tested Archi config                                                                                                                                                                            |
+| `agent_config.resolved.yaml`        | Run                   | Exact tested Archi config with secret values redacted                                                                                                                                                |
 | `agent_spec.resolved.md`            | Run                   | Exact tested agent spec and prompt                                                                                                                                                                   |
 | `answers.jsonl`                     | Run                   | One terminal`answer_ready` or `execution_failed` row per attempt slot, including tested-agent `duration_ms` and complete ordered tool-call query/response/error records with optional duration |
 | `live_checks.jsonl`                 | Run                   | Ordered pre-run and post-run oracle observations, normalized answers, hashes, metadata, bounded call evidence, or item-scoped live failures                                                          |
@@ -1143,9 +1147,10 @@ The current workspace schema is `qa-v2`.
 
 The workspace is the reproducibility record. Keep it intact when comparing
 runs, and archive it with any external version identifiers you need. The
-current artifacts record tested-agent and tool-call latency but do not record
-source-control commits, release gates, token usage, model prompts, evaluator
-prompts, or reasoning traces. Tool queries and responses are complete.
+current artifacts record tested-agent and tool-call latency and LLM token
+usage (see [Price a run from recorded tokens](#price-a-run-from-recorded-tokens)),
+but do not record source-control commits, release gates, model prompts,
+evaluator prompts, or reasoning traces. Tool queries and responses are complete.
 
 ### Rerunning and integrity protection
 
@@ -1208,6 +1213,75 @@ Canonical answers and atoms are hidden from the tested agent, but they are
 stored in the workspace. Evaluator prompts and rationales also contain or may
 reveal them. Restrict access to datasets, the evaluation root, run artifacts,
 logs, and reports according to the sensitivity of the evaluation set.
+
+#### Price a run from recorded tokens
+
+Token records cover the QA workflow's own LLM calls (atom extraction, the tested
+agent, the comparator) and the RAGAS judge in benchmark runs. The benchmark's
+tested model (the SUT) is **not** recorded: `judge_usage` counts only the judge, so
+pricing a benchmark run from these records leaves out the SUT's tokens.
+
+**Where `usage` appears:**
+
+- `preparation.jsonl` — rows where the extractor was called (`atom_source: "inferred"`,
+  or `preparation_failed` after the extractor call) carry a `usage` key (`null` if the
+  call failed before it reported usage). Supplied-atom rows have no `usage` key.
+- `answers.jsonl` — every `answer_ready` and `execution_failed` row carries `"usage"`
+  (`null` if the runtime reported no counts).
+- `evaluation_results.jsonl` — every `scored` and `evaluation_failed` row carries `"usage"`.
+- `summary.json` → `provenance.usage` — three keys `prepare`, `run`, and `score` hold
+  the phase totals (each is `null` if no rows reported usage for that phase).
+- Benchmark arm entries → `judge_usage` — the ragas judge's token usage for that arm
+  (`null` when ragas did not run).
+
+**Shape (the same everywhere):**
+
+```json
+{
+  "input_tokens": 1234,
+  "output_tokens": 56,
+  "calls": 2,
+  "unreported_calls": 0,
+  "by_model": [
+    {
+      "provider": "huit_bedrock",
+      "model": "claude-x",
+      "input_tokens": 1234,
+      "output_tokens": 56,
+      "calls": 2,
+      "unreported_calls": 0
+    }
+  ]
+}
+```
+
+`calls` counts LLM requests. A request that returns several candidates (`n > 1`)
+counts as one call with its request-level tokens, not once for each candidate.
+
+**Calculating cost:**
+
+Sum over every entry in `by_model` using your provider's per-token rates:
+
+```
+cost = Σ (entry["input_tokens"] × rate_in + entry["output_tokens"] × rate_out)
+```
+
+where `rate_in` and `rate_out` are the per-token input and output prices for that
+`(provider, model)` pair, sourced from the provider's current pricing page.
+
+**Limits:**
+
+- `unreported_calls > 0` means that many LLM calls finished without sending token counts;
+  those tokens were consumed but are not measurable here.
+- A call that raised before it finished left no usage event and is not counted in any field.
+- `input_tokens` is one total. When a provider bills cached-read or cache-creation
+  input tokens at a different rate, that split is not kept here, so the formula
+  gives an estimate that can be higher or lower than the bill.
+- A retry run directory copies rows from its parent; those rows carry the parent run's usage,
+  so the retry totals include them.
+- `provider` is always `services.chat_app.default_provider`, also for a model that a
+  pipeline declares on another provider and for LLM calls inside tools. `model` comes
+  from the response, so check `provider` before you pick a rate (issue #597).
 
 ## Troubleshooting
 

@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Union
 
 PYTHON_BASE = "a2rchi-python-base"
 PYTORCH_BASE = "a2rchi-pytorch-base"
@@ -193,6 +193,15 @@ NON_SERVICE_TEMPLATES: dict[str, str] = {
     "Dockerfile-grafana": "builds on docker.io/grafana/grafana-enterprise:10.2.0",
     "base-python-image/Dockerfile": "defines an a2rchi base image itself",
     "base-pytorch-image/Dockerfile": "defines an a2rchi base image itself",
+}
+
+# Maps each compose service name whose Dockerfile builds FROM a third-party image to that
+# template name. Each value must also appear in NON_SERVICE_TEMPLATES (so it is excluded
+# from the service set and therefore not probed for the Python floor). A unit test pins
+# this invariant: `test_every_third_party_base_template_is_a_key_of_non_service_templates`.
+THIRD_PARTY_BASE_TEMPLATES: dict[str, str] = {
+    "postgres": "Dockerfile-postgres",
+    "grafana": "Dockerfile-grafana",
 }
 
 # Every `FROM <ref> [AS <alias>]` line. One matcher for both readers -- the coverage check
@@ -440,6 +449,7 @@ class Cause(str, Enum):
     UNAUTHORIZED = "unauthorized"
     UNKNOWN_TAG = "unknown_tag"
     UNREACHABLE = "unreachable"
+    RATE_LIMITED = "rate_limited"
     NO_DISK = "no_disk"
     LOCAL_BUILD_MISSING = "local_build_missing"
     NO_RUNTIME = "no_runtime"
@@ -473,6 +483,20 @@ class Outcome:
         return self.verdict is Verdict.UNVERIFIED
 
 
+@dataclass(frozen=True)
+class BaseReference:
+    """A reference passed to ``run_preflight``, with an optional floor-check bypass.
+
+    ``check_floor=False`` skips ``python_version`` and ``check_python_floor`` for images
+    that are not a2rchi bases and carry no Python interpreter to check (design D1, D2).
+    A plain ``str`` passed to ``run_preflight`` is normalized to ``BaseReference(image)``,
+    so ``Outcome.reference`` is always the image string and callers need no type change.
+    """
+
+    image: str
+    check_floor: bool = True
+
+
 def service_templates(template_dir: Optional[Path] = None) -> List[Path]:
     """The sorted Paths of every Dockerfile* that is a service template.
 
@@ -495,6 +519,58 @@ def stale_template_exclusions(template_dir: Optional[Path] = None) -> List[str]:
     """
     directory = template_dir or build_template_dir()
     return [name for name in NON_SERVICE_TEMPLATES if not (directory / name).exists()]
+
+
+def third_party_base_references(
+    compose_config,
+    template_dir: Optional[Path] = None,
+) -> List[str]:
+    """The FROM references for third-party base images of services planned in ``compose_config``.
+
+    For each entry in ``THIRD_PARTY_BASE_TEMPLATES`` whose service is enabled, reads the
+    final-stage FROM from the corresponding template using the existing ``_final_stage_base``
+    reader. Returns the references in map order.
+
+    ``ValueError`` from ``get_service`` is treated as "not in the plan" (same as the grader
+    lookup in ``enforce_base_images``). Other exceptions propagate.
+
+    Raises ``BaseImagePreflightError`` when a template is absent or unreadable for a service
+    that is enabled (design D3): "cannot name the image" must not silently become "nothing
+    to check".
+    """
+    directory = template_dir or build_template_dir()
+    refs = []
+    for service_name, template_name in THIRD_PARTY_BASE_TEMPLATES.items():
+        try:
+            service = compose_config.get_service(service_name)
+        except ValueError:
+            continue
+        if not service.enabled:
+            continue
+        template_path = directory / template_name
+        if not template_path.exists():
+            raise BaseImagePreflightError(
+                f"Base image check failed: service {service_name!r} is planned but its "
+                f"template {template_name!r} does not exist under {directory}.\n"
+                f"  The preflight cannot name the third-party base image without it."
+            )
+        try:
+            text = template_path.read_text()
+        except (OSError, UnicodeError) as exc:
+            raise BaseImagePreflightError(
+                f"Base image check failed: service {service_name!r} is planned but its "
+                f"template {template_name!r} under {directory} cannot be read ({exc}).\n"
+                f"  The preflight cannot name the third-party base image without it."
+            ) from exc
+        ref = _final_stage_base(text)
+        if ref is None:
+            raise BaseImagePreflightError(
+                f"Base image check failed: service {service_name!r} is planned but its "
+                f"template {template_name!r} has no readable FROM reference.\n"
+                f"  The preflight cannot name the third-party base image without it."
+            )
+        refs.append(ref)
+    return refs
 
 
 def nested_service_templates(template_dir: Optional[Path] = None) -> List[Path]:
@@ -726,11 +802,16 @@ def decide_availability(
     present_locally: bool,
     fetch_cause: Optional[Cause] = None,
     dry: bool = False,
+    check_floor: bool = True,
 ) -> Outcome:
     """Decide one reference from probe results. Pure: never shells out, never raises.
 
     ``fetch_cause`` is ``None`` when the fetch succeeded -- a pull on a real create, a
     reachability check on a dry run -- and otherwise names why it did not.
+
+    ``check_floor=False`` changes only the dry-run reachable branch: reachability is the
+    full answer for a floor-free image, so AVAILABLE is returned instead of UNVERIFIED
+    (design D2). All other branches are unchanged.
     """
     if not runtime_available:
         # A dry run is allowed to proceed without a runtime; a real create is not, because
@@ -750,8 +831,9 @@ def decide_availability(
 
     if fetch_cause is None:
         # Pulled on a real create; merely reachable on a dry run, which cannot read a version
-        # it did not fetch.
-        if dry:
+        # it did not fetch. A floor-free image has no version to read, so reachability is the
+        # full answer: return AVAILABLE rather than UNVERIFIED (design D2).
+        if dry and check_floor:
             return Outcome(reference, Verdict.UNVERIFIED, Cause.NOT_PULLED)
         return Outcome(reference, Verdict.AVAILABLE)
 
@@ -817,19 +899,42 @@ def compose_message(outcome: Outcome, container_tool: str = "docker") -> str:
     registry = reference.split("/", 1)[0] if "/" in reference else reference
 
     if outcome.cause is Cause.UNAUTHORIZED:
+        if reference.startswith("ghcr.io/fasrc/"):
+            return (
+                f"Not authorized to pull the base image {reference}.\n"
+                f"  The fasrc packages are 'internal', so a login is required:\n"
+                f"    echo $TOKEN | {container_tool} login {registry} -u <user> --password-stdin\n"
+                f"  The token MUST be a classic personal access token carrying 'read:packages'. "
+                f"A fine-grained token has no Packages permission and fails identically.\n"
+                f"  If SSO is enforced, authorize the token for the organization first."
+            )
         return (
             f"Not authorized to pull the base image {reference}.\n"
-            f"  The fasrc packages are 'internal', so a login is required:\n"
+            f"  A login may be required for {registry}:\n"
             f"    echo $TOKEN | {container_tool} login {registry} -u <user> --password-stdin\n"
-            f"  The token MUST be a classic personal access token carrying 'read:packages'. "
-            f"A fine-grained token has no Packages permission and fails identically.\n"
-            f"  If SSO is enforced, authorize the token for the organization first."
+            f"  Check the registry's authentication requirements."
         )
     if outcome.cause is Cause.UNKNOWN_TAG:
+        if not _names_placeable_base(reference):
+            # The repin script rewrites only the a2rchi bases, so it cannot repair a
+            # third-party pin such as Dockerfile-postgres or Dockerfile-grafana.
+            return (
+                f"The base image {reference} does not exist in its registry.\n"
+                f"  The pin is stale or the tag was deleted. Logging in will not help.\n"
+                f"  Edit the FROM line of the service template that names it to a tag "
+                f"that exists upstream."
+            )
         return (
             f"The base image {reference} does not exist in its registry.\n"
             f"  The pin is stale or the tag was deleted. Logging in will not help.\n"
             f"  Re-run scripts/dev/update_service_base_images.py to repin."
+        )
+    if outcome.cause is Cause.RATE_LIMITED:
+        return (
+            f"The registry refused to serve the base image {reference}: pull rate limit "
+            f"reached.\n"
+            f"  Wait for the limit to reset and retry, or log in to raise it:\n"
+            f"    {container_tool} login {registry}"
         )
     if outcome.cause is Cause.UNREACHABLE:
         return (
@@ -886,6 +991,9 @@ _ERROR_PATTERNS = (
         Cause.PROBE_UNSUPPORTED,
         ("is not a docker command", "unknown command", "unrecognized command"),
     ),
+    # Before UNAUTHORIZED: Docker Hub's pull-limit text suggests "authenticating", and a
+    # rate limit is neither a credential fault nor a network fault.
+    (Cause.RATE_LIMITED, ("toomanyrequests", "too many requests", "pull rate limit")),
     (
         Cause.UNAUTHORIZED,
         (
@@ -1016,7 +1124,7 @@ class ContainerProbe:
 
 
 def run_preflight(
-    references: Sequence[str],
+    references: Sequence[Union[str, BaseReference]],
     *,
     probe,
     floor: str,
@@ -1027,12 +1135,17 @@ def run_preflight(
     Availability first, because a version cannot be read from an image that is not there --
     attempting it would report an unreadable version where the real cause is a failed pull.
     The floor check then runs for every image that ended up present, on a real create and on
-    a dry run alike (design D5).
+    a dry run alike (design D5), unless ``check_floor`` is false on the item (design D1, D2).
+
+    A plain ``str`` item is normalized to ``BaseReference(item)``, keeping
+    ``Outcome.reference`` as the image string.
     """
     runtime = probe.runtime_available()
     outcomes: List[Outcome] = []
 
-    for reference in references:
+    for item in references:
+        ref = item if isinstance(item, BaseReference) else BaseReference(item)
+        reference = ref.image
         present = runtime and probe.image_present(reference)
         fetch_cause = None
         if runtime and not present and not reference.startswith(LOCAL_PREFIX):
@@ -1046,9 +1159,10 @@ def run_preflight(
             present_locally=present,
             fetch_cause=fetch_cause,
             dry=dry,
+            check_floor=ref.check_floor,
         )
 
-        if outcome.verdict is Verdict.AVAILABLE and present:
+        if outcome.verdict is Verdict.AVAILABLE and present and ref.check_floor:
             outcome = check_python_floor(
                 reference, probe.python_version(reference), floor
             )
@@ -1171,6 +1285,14 @@ def enforce_base_images(
             f"  The preflight cannot verify an image it cannot name, and will not proceed "
             f"as though there were nothing to check."
         )
+
+    # Append floor-free references for third-party service images (design D4).
+    # Deduplicate on the image string so a ref appearing in both sets is only probed once.
+    _seen_refs = set(references)
+    for _tp_ref in third_party_base_references(compose_config, template_dir):
+        if _tp_ref not in _seen_refs:
+            _seen_refs.add(_tp_ref)
+            references.append(BaseReference(_tp_ref, check_floor=False))
 
     # The floor must come from the same tree the Dockerfiles above came from. When the
     # caller pinned `template_dir`, it owns the tree and the pyproject default stays out

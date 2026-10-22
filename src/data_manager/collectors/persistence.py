@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogService
+from src.data_manager.collectors.utils.catalog_reconcile import CollectionPass
 from src.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -22,12 +23,23 @@ class PersistenceService:
 
         self.catalog = PostgresCatalogService(self.data_path, pg_config=self.pg_config)
 
+        self.collection_pass: Optional[CollectionPass] = None
+
         # One lock per resource hash, created on demand — see persist_resource.
         # The registry grows to at most one small lock per distinct resource the
         # process has persisted, which is strictly bounded by the corpus already
         # held on disk and in the catalog.
         self._resource_locks: Dict[str, threading.Lock] = {}
         self._resource_locks_guard = threading.Lock()
+
+    def begin_collection_pass(self) -> CollectionPass:
+        self.collection_pass = CollectionPass()
+        return self.collection_pass
+
+    def end_collection_pass(self) -> Optional[CollectionPass]:
+        cp = self.collection_pass
+        self.collection_pass = None
+        return cp
 
     def _lock_for_resource(self, resource_hash: str) -> threading.Lock:
         with self._resource_locks_guard:
@@ -107,6 +119,10 @@ class PersistenceService:
         resource_hash = resource.get_hash()
         logger.debug(f"Stored resource {resource_hash} -> {file_path}")
         self.catalog.upsert_resource(resource_hash, relative_path, metadata_dict)
+
+        cp = self.collection_pass
+        if cp is not None:
+            cp.record_collected(resource_hash, metadata_dict)
 
         return file_path
 
