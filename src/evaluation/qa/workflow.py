@@ -372,6 +372,7 @@ class QAWorkflow:
                 manifest.pop(key, None)
             for name in RUN_FILES | SCORE_FILES:
                 manifest["artifacts"].pop(name, None)
+            manifest["status"] = "prepared"
         write_yaml(run_dir / "agent_config.resolved.yaml", config)
         write_text(run_dir / "agent_spec.resolved.md", spec_text)
         config_hash = sha256_file(run_dir / "agent_config.resolved.yaml")

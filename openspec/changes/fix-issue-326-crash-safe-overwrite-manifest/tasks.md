@@ -54,7 +54,7 @@
 
 ## 1. D0: the start guard refuses before the overwrite deletes anything (red test + fix, one commit)
 
-- [ ] 1. Do steps 1.1-1.5 below in order, in ONE turn, ending with the gate green and ONE commit.
+- [x] 1. Do steps 1.1-1.5 below in order, in ONE turn, ending with the gate green and ONE commit.
 
   - 1.1 Create `tests/unit/evaluation/qa/test_overwrite_crash_safety.py` with the helper
       imports described in the header. Write the RED test for acceptance criterion 1: build a
@@ -91,7 +91,7 @@
 
 ## 2. D1 in `run()`: every published manifest is a valid document (red tests + fix, one commit)
 
-- [ ] 2. Do steps 2.1-2.6 below in order, in ONE turn, ending with the gate green and ONE commit.
+- [x] 2. Do steps 2.1-2.6 below in order, in ONE turn, ending with the gate green and ONE commit.
 
   - 2.1 Confirm the defect first, so the red you see next is the right red. From the repo
       root, build a `qa-v2` manifest with `prepare`/`run`/`score` phases `completed` and the
