@@ -154,6 +154,15 @@ Twelve lines later the digest loop (`:372-373`) pops that same name from
 publishes the contradiction. The smallest edit is to pop `owned` instead of
 `RUN_FILES | SCORE_FILES`, so the digests removed are exactly the files removed.
 
+**The agent-input digests (post-PR review, 2026-10-22).** Popping `owned` also pops the
+digests of `agent_config.resolved.yaml` and `agent_spec.resolved.md`, which the prune
+rewrites at once (`:374-377`) but records again only at the pause or completion publish. The
+resume check at `:318-322` verifies those two files only when their digest is present. Once
+D2 and D3 make a later continue possible, that continue would skip the check and re-seal an
+edit made after the failure. So on the same flag, `run()` records `config_hash` and
+`spec_hash` in `manifest["artifacts"]` right after it computes them, before the first
+publish (tasks.md group 4a). An extra entry is not a validity risk (see below).
+
 D2 alone leaves the file on disk and the record of it gone, which is not recoverable: the
 continue precondition needs both. `required_inputs` adds `live_checks.jsonl` when
 `authorize_staged_invalid` (`:311-312`), and `verify_hashes(run_dir, manifest["artifacts"],

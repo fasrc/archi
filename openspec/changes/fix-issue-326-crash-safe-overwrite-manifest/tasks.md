@@ -152,7 +152,7 @@
 
 ## 3. D1 in `score()`, and the overwrite re-pause publish (red test + fix, one commit)
 
-- [ ] 3. Do steps 3.1-3.4 below in order, in ONE turn, ending with the gate green and ONE commit.
+- [x] 3. Do steps 3.1-3.4 below in order, in ONE turn, ending with the gate green and ONE commit.
 
   - 3.1 Reuse the 2.2 recorder against `QAWorkflow().score(run_dir, overwrite=True)` on a
       completed run whose manifest status is `scored` (`_run`). Assert every captured payload
@@ -224,6 +224,45 @@
       (the `AtomicJsonlWriter` contract) instead of writing a new test.
   - 4.6 Run the gate and commit.
 
+## 4a. The recovery continue still checks the frozen agent inputs (red test + fix, one commit)
+
+> Added by the post-PR review of 2026-10-22 (3 of 3 finders, 2 of 2 verifiers, reproduced on a
+> copy of the branch with the 4.3 edit applied). Group 4 makes the later continue of 4.2
+> possible, but the prune still pops the digests of `agent_config.resolved.yaml` and
+> `agent_spec.resolved.md` (both are in `owned`), and nothing records them again before the
+> pause or completion publish. The check at `workflow.py:318-322` verifies those two files only
+> when their digest is in `manifest["artifacts"]`. So the later continue skips it, and an edit
+> made after the failure is re-sealed. That is what
+> `test_live_workflow.py::test_continue_refuses_tampered_frozen_agent_inputs` exists to stop.
+> Do this group only after the group 4 commit exists: before group 4, the later continue fails
+> earlier on the missing `live_checks.jsonl`, so the red test cannot show this defect.
+
+- [ ] 4a. Do steps 4a.1-4a.4 below in order, in ONE turn, ending with the gate green and ONE commit.
+
+  - 4a.1 Write the RED test (spec scenario "An exception after the read leaves the evidence
+      intact", last AND). Parametrize it over `"agent_config.resolved.yaml"` and
+      `"agent_spec.resolved.md"`. From `_paused_at_live_gate`, install the raising
+      `observe_live_item` fake from 2.4 (raise on the first call, delegate after that) and run
+      the continue so that it raises. Then append `"\ntampered: true\n"` to that file in
+      `run_dir`, the same tamper as `test_continue_refuses_tampered_frozen_agent_inputs`
+      (re-grep it in `test_live_workflow.py`), and call the same continue again with the same
+      arguments that test uses. Assert `str(caught.value) == f"workspace artifact hash mismatch: {artifact}"`.
+      Watch it fail: after group 4 the later continue does not raise.
+  - 4a.2 Make it green with the minimum code, inside `run()`: right after `spec_hash` is
+      computed (re-grep `spec_hash = sha256_file`), add
+      `if authorize_staged_invalid:` and record `config_hash` and `spec_hash` in
+      `manifest["artifacts"]` under `"agent_config.resolved.yaml"` and
+      `"agent_spec.resolved.md"`, so the first publish of a continue names the agent inputs
+      it rewrote. Key it off the same flag as the `live_checks.jsonl` retention (design.md D3).
+      Do not keep the paused run's old digests instead. Do not change the check at `:318-322`.
+      The 4.2 test (an untampered later continue completes) and
+      `test_continue_refuses_tampered_frozen_agent_inputs` must stay green.
+  - 4a.3 In `tests/unit/evaluation/qa/test_overwrite_crash_safety.py`, remove each of the
+      imports `deque`, `CallToolResult` and `OracleCallEvidence` that is still unused
+      (`grep -c` of the name in the file is 1). CI runs no unused-import check, so nothing
+      else catches them.
+  - 4a.4 Run the gate and commit.
+
 ## 5. The validator fence, and the invariant on the paths that were never broken (regression tests, one commit)
 
 - [ ] 5. Do steps 5.1-5.4 below in order, in ONE turn, ending with the gate green and ONE commit.
@@ -262,25 +301,28 @@
   - 6.1 Walk the issue's eight acceptance criteria BY NUMBER and name, for each, the test or
       command that covers it: (1) the 1.1 test; (2) the 2.3, 2.3a, 3.1 and 3.3 tests; (3)
       the 4.1 and 4.4 tests; (4) the returned-status assertions of 2.3, 2.3a, 3.2 and 3.3;
-      (5) the 4.2 and 2.4 tests; (6) `git diff origin/dev -- src/evaluation/qa/schema.py tests/unit/evaluation/qa/test_schema.py`
+      (5) the 4.2, 4a.1 and 2.4 tests; (6) `git diff origin/dev -- src/evaluation/qa/schema.py tests/unit/evaluation/qa/test_schema.py`
       is empty, `pytest tests/unit/evaluation/qa/test_schema.py -q` passes, and the 5.1
       validator test passes; (7) every
       checkbox in this file is `[x]` once this group is done, and
       `openspec validate fix-issue-326-crash-safe-overwrite-manifest --strict` passes;
       (8) the gate exits 0 from a clean tree. A criterion without evidence is unfinished
       work, not a judgement call. Print the list into the PR body.
-  - 6.2 Push with `git push -u origin fix/issue-326-crash-safe-overwrite-manifest`. Open the
-      PR with `gh pr create --repo fasrc/archi --base dev`. Put `Closes #326` in the PR
-      **body** - a closing keyword in the title does not link the issue. No
-      `Co-Authored-By` or session trailers.
+  - 6.2 Push with `git push -u origin fix/issue-326-crash-safe-overwrite-manifest`. PR #741
+      already exists for this branch (the loop opened it after group 1), so do NOT run
+      `gh pr create`: write the body to a file and run
+      `gh pr edit 741 --repo fasrc/archi --title "<summary>" --body-file <file>`. Put
+      `Closes #326` in the PR **body** - a closing keyword in the title does not link the
+      issue. Remove the "Not ready to merge" banner. No `Co-Authored-By` or session trailers.
   - 6.3 In the PR body, lead with the measured before/after table from 2.1 and the results of
       the 1.1 and 4.1 red tests - those are the evidence. State plainly that this is a
       behaviour change on the observability surface: history and the console now show a
       mid-overwrite run as `prepared` or `run_completed` instead of the `invalid` fallback row
-      (`history.py:614`), until the phase seals its first output file (`answers.jsonl` in
-      `run()`, `evaluation_results.jsonl` in `score()`); from that seal to the next manifest
-      write, history still shows `invalid` (known gap 3, which exists today on first runs
-      too). `progress.status` changes with it (`console.py:82` copies the manifest status),
+      (`history.py:614`). In `run()` the history list shows `invalid` again from the
+      `answers.jsonl` seal to the next manifest write. In `score()` the list row stays
+      `run_completed` until `summary.json` is written, and only the history detail view
+      (`get_run`) refuses the run from the `evaluation_results.jsonl` seal onward (known gap 3,
+      which exists today on first runs too; re-grep the `history.py` anchors). `progress.status` changes with it (`console.py:82` copies the manifest status),
       but the display does not change while a phase runs, because `evaluations.js:62-64`
       shows `runtime_phase` first. Say that `RunManifest.from_dict` is byte-identical. Name
       every known gap and the known limitation from proposal.md (the end-of-run provenance

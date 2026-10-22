@@ -120,14 +120,17 @@ not reopened here.
   prune stops popping `live_checks.jsonl` from `manifest["artifacts"]`, mirroring the
   `owned - {"live_checks.jsonl"}` exclusion three lines above it (the simplest form is to pop
   `owned` instead of `RUN_FILES | SCORE_FILES`). Without this the file survives a crash but the
-  continue still cannot verify it.
+  continue still cannot verify it. On the same path, `run()` records the fresh digests of the
+  two agent inputs it rewrites before the first publish, so the later continue still runs the
+  resume check on them (design.md D3, added by the post-PR review of 2026-10-22).
 - **`RunManifest.from_dict` is not weakened.** No line of `schema.py` changes; the existing
   schema tests stand unmodified. The writer is the thing that was wrong.
 - **Behaviour change, deliberately.** History and the console now show a mid-overwrite run as
-  `prepared` (or `run_completed`) instead of `invalid`, until the phase seals its first output
-  file (`answers.jsonl` in `run()`, `evaluation_results.jsonl` in `score()`). From that seal
-  to the next manifest write, history still lists the run as `invalid` (known gap 3 below,
-  which exists today on first runs too). `progress.status` changes with it:
+  `prepared` (or `run_completed`) instead of `invalid`. In `run()`, from the `answers.jsonl`
+  seal to the next manifest write, the history list shows the run as `invalid` again. In
+  `score()`, the list row stays `run_completed` until `summary.json` is written, and only the
+  history detail view refuses the run from the `evaluation_results.jsonl` seal onward (known
+  gap 3 below, which exists today on first runs too). `progress.status` changes with it:
   `console.py:82` copies `manifest["status"]` into `job["progress"]["status"]`. The display
   does not change while a phase runs, because `evaluations.js:62-64` shows
   `progress.runtime_phase` first and falls back to `progress.status` only when
@@ -150,8 +153,10 @@ following shapes remain. All are recorded here and none is fixed:
    the new file.
 2. **Delete-to-publish windows.** In `run()`, `_remove_owned` (`:362`) deletes files before
    the first manifest write (`:392`); in `score()`, `_remove_owned(run_dir, SCORE_FILES)`
-   (`:817`) deletes the score files before the write at `:823`. A kill (not an exception)
-   between them leaves the old manifest listing digests of deleted files. D0 takes every
+   (`:817`) deletes the score files before the write at `:823`. A kill between them, or an
+   I/O exception such as ENOSPC from the local writes (`:374-377`) or from the publish itself,
+   leaves the old manifest listing digests of deleted files (post-PR review, 2026-10-22,
+   reproduced with `write_yaml` raising `OSError(ENOSPC)`). D0 takes every
    network call out of the `run()` window; what remains there is two local file writes and
    two hashes (`:374-377`), and in `score()` nothing but the delete itself. Closing them
    means a manifest write before the delete — the operator's option (b) of 2026-09-30, which
@@ -160,10 +165,12 @@ following shapes remain. All are recorded here and none is fixed:
    sealed (the writer at `:562`) and before the manifest write at `:620`, and after
    `evaluation_results.jsonl` is sealed (the writer at `:838`) and before `:908`, the sealed
    file is on disk but not in `manifest["artifacts"]`. History refuses such a run with
-   `run contains undeclared artifact(s)` (`history.py:261-269`, reached from `list_runs`
-   through `_latency_trend`, `:456-461`) and lists it as the `invalid` row. A failure in
-   those windows, for example in the post-run live checks (`:584`), therefore still shows
-   `invalid`. This is not a manifest that `from_dict` refuses and not a digest of a deleted
+   `run contains undeclared artifact(s)` (`history.py:261-269`). For `answers.jsonl` the
+   history list reaches that check through `_latency_trend` (`:456-461`) and lists the run as
+   the `invalid` row. For `evaluation_results.jsonl` only the detail view (`get_run`) refuses;
+   the list checks `summary.json` (`:555`), so its row turns `invalid` only once
+   `summary.json` is written (post-PR review, 2026-10-22). A failure in those windows, for
+   example in the post-run live checks (`:584`), therefore still shows `invalid`. This is not a manifest that `from_dict` refuses and not a digest of a deleted
    file, so it is outside the issue's invariant. The spec scenario for a failed overwrite
    names the earlier window only.
 

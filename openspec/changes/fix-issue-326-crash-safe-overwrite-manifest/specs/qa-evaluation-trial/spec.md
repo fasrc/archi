@@ -123,6 +123,8 @@ would change the command's contract.
 - **AND** the last published manifest still records that file's digest
 - **AND** a subsequent continue passes its input verification instead of failing on a missing
   artifact
+- **AND** that continue still refuses a frozen agent input (`agent_config.resolved.yaml` or
+  `agent_spec.resolved.md`) that was changed after the failure
 
 #### Scenario: The replacement supersedes the staged copy without a gap
 
