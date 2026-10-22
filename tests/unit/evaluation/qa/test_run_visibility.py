@@ -5,6 +5,7 @@ from src.evaluation.qa.console import EvaluationConsoleService
 from src.evaluation.qa.run_visibility import (
     VIEWER_HIDDEN_FIELDS,
     VIEWER_HIDDEN_JUDGMENT_FIELDS,
+    VIEWER_HIDDEN_MANIFEST_FIELDS,
     redact_run_for_viewer,
 )
 
@@ -210,3 +211,22 @@ def test_resolved_agent_config_is_never_served():
 
     assert "agent_config.resolved.yaml" not in history_source
     assert "agent_config.resolved.yaml" not in routes_source
+
+
+def test_redact_run_for_viewer_drops_manifest_artifact_digests():
+    payload = _full_payload()
+    payload["manifest"]["artifacts"] = {
+        "preparation.jsonl": "a" * 64,
+        "answers.jsonl": "b" * 64,
+        "summary.json": "c" * 64,
+    }
+    before = copy.deepcopy(payload)
+
+    redacted = redact_run_for_viewer(payload)
+
+    assert redacted["manifest"] == {"schema_version": 3, "status": "completed"}
+    assert payload == before
+
+
+def test_viewer_hidden_manifest_fields_are_named_literally():
+    assert VIEWER_HIDDEN_MANIFEST_FIELDS == ("artifacts",)

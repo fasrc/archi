@@ -13,6 +13,7 @@ VIEWER_HIDDEN_FIELDS = {
     "evaluation_results": ("answer",),
 }
 VIEWER_HIDDEN_JUDGMENT_FIELDS = ("rationale",)
+VIEWER_HIDDEN_MANIFEST_FIELDS = ("artifacts",)
 ```
 
 (Format the dict with black; the one-line form above is for reading.)
@@ -28,6 +29,10 @@ Why these fields, by issue term:
 
 `answer_sha256` is hidden too: a short approved answer can be found from its digest.
 
+`manifest.artifacts` is hidden for the same reason (PR #743 review, 2026-10-22). `AtomicJsonlWriter` writes each row with sorted keys, so a viewer who sees every other
+field of a one-row `answers.jsonl` can hash a guessed answer and compare it with the
+file digest. The console UI never reads `manifest.artifacts`.
+
 ## D2. The function
 
 `redact_run_for_viewer(payload: Mapping[str, Any]) -> Dict[str, Any]`:
@@ -41,9 +46,11 @@ Why these fields, by issue term:
    `live_checks`).
 3. For each dict row in `result.get("evaluation_results")` (if a list) whose `judgments`
    is a list, pop each `VIEWER_HIDDEN_JUDGMENT_FIELDS` name from each dict judgment.
-4. Return `result`.
+4. If `result.get("manifest")` is a dict, pop each `VIEWER_HIDDEN_MANIFEST_FIELDS` name
+   from it.
+5. Return `result`.
 
-Kept for viewers: `id`, `manifest`, `metadata`, `capabilities`, `summary`,
+Kept for viewers: `id`, `manifest` (without `artifacts`), `metadata`, `capabilities`, `summary`,
 `report_available`, `cancellation`, and in rows `item_id`, `status`, `question`,
 `category`, attempt identity, `duration_ms`, `tool_calls`, scores, and judgment
 `atom_id`/`outcome`. The console UI (`static/evaluations.js:1432-1443`) already reads

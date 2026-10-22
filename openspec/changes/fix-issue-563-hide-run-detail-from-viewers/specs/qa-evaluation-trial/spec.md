@@ -2,12 +2,13 @@
 
 ### Requirement: Run detail SHALL hide the answer key from callers who cannot manage evaluations
 The `/api/evaluations/runs/<history_id>` response SHALL omit oracle truth, gold atoms, and raw agent answers when `_can_manage()` is false, SHALL include them when `_can_manage()` is true, and SHALL name every omitted field in one constant in `src/evaluation/qa/run_visibility.py`.
-Before this change any holder of `Permission.Evaluations.VIEW` could read the approved answers, gold atoms, live-oracle observations, and agent answers of every run, which breaks benchmark isolation. The split reuses the job-detail pattern `include_hidden=_can_manage()` and adds no permission. The omitted fields are: in `preparation` and `prepared_items` rows, `answer`, `answer_sha256`, `gold_atoms`, `oracle`, `oracle_metadata`, `oracle_calls`; in `live_checks` rows, `answer`, `answer_sha256`, `metadata`, `calls`; in `answers` and `evaluation_results` rows, `answer`; in `evaluation_results` judgments, `rationale`. The console service's `get_run` SHALL default to the viewer form.
+Before this change any holder of `Permission.Evaluations.VIEW` could read the approved answers, gold atoms, live-oracle observations, and agent answers of every run, which breaks benchmark isolation. The split reuses the job-detail pattern `include_hidden=_can_manage()` and adds no permission. The omitted fields are: in `preparation` and `prepared_items` rows, `answer`, `answer_sha256`, `gold_atoms`, `oracle`, `oracle_metadata`, `oracle_calls`; in `live_checks` rows, `answer`, `answer_sha256`, `metadata`, `calls`; in `answers` and `evaluation_results` rows, `answer`; in `evaluation_results` judgments, `rationale`; in the `manifest`, the `artifacts` digest map, because a viewer who sees every other field of a sorted-key JSONL row can confirm a guessed answer against the file digest. The console service's `get_run` SHALL default to the viewer form.
 
 #### Scenario: A VIEW-only caller gets scores without the answer key
 - **WHEN** a logged-in caller with `Permission.Evaluations.VIEW` and without `Permission.Evaluations.MANAGE` requests a scored run's detail
 - **THEN** the response keeps the manifest, metadata, summary, item IDs, statuses, questions, and judgment outcomes
 - **AND** no row in the response carries any field that the constant names
+- **AND** the manifest carries no `artifacts` digest map
 
 #### Scenario: A manager gets the full run
 - **WHEN** a logged-in caller with `Permission.Evaluations.MANAGE` requests the same run's detail

@@ -3,7 +3,10 @@
 ``answer``/``answer_sha256``, gold atoms, oracle evidence, and judgment
 ``rationale`` text all let a viewer reconstruct the approved answer to a
 question they are meant to be evaluated against, so they are stripped from
-the payload unless the caller has explicitly asked for the full run.
+the payload unless the caller has explicitly asked for the full run. The
+manifest's ``artifacts`` digests go too: rows are written with sorted keys, so
+a viewer who sees every other field of a row can confirm a guessed answer by
+hashing it against the file digest.
 """
 
 from __future__ import annotations
@@ -33,10 +36,15 @@ VIEWER_HIDDEN_FIELDS = {
     "evaluation_results": ("answer",),
 }
 VIEWER_HIDDEN_JUDGMENT_FIELDS = ("rationale",)
+VIEWER_HIDDEN_MANIFEST_FIELDS = ("artifacts",)
 
 
 def redact_run_for_viewer(payload: Mapping[str, Any]) -> Dict[str, Any]:
     result = copy.deepcopy(dict(payload))
+    manifest = result.get("manifest")
+    if isinstance(manifest, dict):
+        for field in VIEWER_HIDDEN_MANIFEST_FIELDS:
+            manifest.pop(field, None)
     for section, fields in VIEWER_HIDDEN_FIELDS.items():
         rows = result.get(section)
         if not isinstance(rows, list):
