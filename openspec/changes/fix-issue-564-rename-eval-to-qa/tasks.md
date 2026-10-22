@@ -92,7 +92,7 @@
 
 ## 2. The feature-matrix wrappers call `archi qa`
 
-- [ ] 2.1 Update the wrappers and their harness together (one commit; the harness is the
+- [x] 2.1 Update the wrappers and their harness together (one commit; the harness is the
       red for the wrappers and runs inside the gate).
       - `scripts/benchmarking/feature_matrix/qa_arm.sh`: lines 87, 88, 158 —
         `"$FM_ARCHI" eval qa …` → `"$FM_ARCHI" qa …`. Comments on lines 23 and 46 →
