@@ -18,8 +18,10 @@ from src.utils.ingest_provenance import build_ingest_config_snapshot
 from src.utils.ingest_run import collect_ingest_counts, record_ingest_run
 from src.utils.logging import get_logger
 
+from . import parent_nodes
 from .loader_utils import select_loader
 from .node_parsing import (
+    CHILD_CHUNK_OVERLAP,
     CHILD_EMBEDDING_DIM,
     DEFAULT_CHILD_CHUNK_SIZE,
     DEFAULT_PARENT_CHUNK_SIZE,
@@ -28,11 +30,22 @@ from .node_parsing import (
     build_hierarchical_nodes,
     embed_child_nodes,
     resolve_effective_strategy,
+    warm_up_sentence_tokenizer,
 )
 from .postgres_vectorstore import PostgresVectorStore
-from .schema import ensure_hierarchical_schema
+from .schema import ensure_chunks_parent_id_index, ensure_hierarchical_schema
 
 logger = get_logger(__name__)
+
+
+def _report_embedding_progress(embedding_progress, done, total):
+    if embedding_progress is None:
+        return
+    try:
+        embedding_progress(done, total)
+    except Exception:
+        logger.warning("Embedding progress callback failed", exc_info=True)
+
 
 SUPPORTED_DISTANCE_METRICS = ["l2", "cosine", "ip"]
 
@@ -60,6 +73,24 @@ def _resolve_chunking_strategy(chunking_cfg):
     hierarchical reranker cannot expand to parent context.
     """
     return chunking_cfg.get("strategy", SENTENCE_STRATEGY)
+
+
+def _resolve_chunk_overlap(chunking_cfg):
+    """Resolve ``data_manager.chunking.chunk_overlap``, defaulting to ``CHILD_CHUNK_OVERLAP``.
+
+    ``None`` (key present but empty in YAML) resolves to the default, matching the
+    absent-key behavior. Booleans, non-integers, and negative values raise
+    ``ValueError`` at construction time so the operator sees one clear error rather
+    than a per-document LlamaIndex crash during ingest.
+    """
+    value = chunking_cfg.get("chunk_overlap", CHILD_CHUNK_OVERLAP)
+    if value is None:
+        return CHILD_CHUNK_OVERLAP
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(
+            f"data_manager.chunking.chunk_overlap must be a non-negative int, got {value!r}"
+        )
+    return value
 
 
 class VectorStoreManager:
@@ -155,6 +186,7 @@ class VectorStoreManager:
         self.parent_chunk_size, self.child_chunk_size = _resolve_chunk_sizes(
             chunking_cfg
         )
+        self.child_chunk_overlap = _resolve_chunk_overlap(chunking_cfg)
 
         self.stemmer = None
         stemming_cfg = self._data_manager_config.get("stemming", {})
@@ -208,6 +240,10 @@ class VectorStoreManager:
             with conn.cursor() as cursor:
                 cursor.execute("TRUNCATE TABLE document_chunks CASCADE")
                 logger.info("Truncated document_chunks table")
+
+                if parent_nodes.parent_table_exists(cursor):
+                    parent_nodes.truncate_parent_nodes(cursor)
+                    logger.info("Truncated document_parent_nodes table")
 
                 # Reset ingestion status so all documents get re-embedded.
                 cursor.execute(
@@ -272,7 +308,7 @@ class VectorStoreManager:
         logger.info(f"N in PostgreSQL collection: {count}")
         return store
 
-    def update_vectorstore(self) -> None:
+    def update_vectorstore(self, embedding_progress=None) -> str:
         """Synchronise filesystem documents with the vectorstore.
 
         Wraps the sync so every outcome is recorded. A run that raises must not
@@ -282,13 +318,14 @@ class VectorStoreManager:
         """
         started_at = datetime.now(timezone.utc)
         try:
-            run_status = self._sync_vectorstore()
+            run_status = self._sync_vectorstore(embedding_progress=embedding_progress)
         except Exception:
             self._record_ingest_run(started_at, "failed")
             raise
         self._record_ingest_run(started_at, run_status)
+        return run_status
 
-    def _sync_vectorstore(self) -> str:
+    def _sync_vectorstore(self, embedding_progress=None) -> str:
         """Do the synchronisation; return the terminal run status."""
         store = self.fetch_collection()
 
@@ -346,7 +383,9 @@ class VectorStoreManager:
             if files_to_add:
                 logger.info(f"Adding {len(files_to_add)} new documents")
                 try:
-                    self._add_to_postgres(files_to_add)
+                    self._add_to_postgres(
+                        files_to_add, embedding_progress=embedding_progress
+                    )
                 except Exception as e:
                     logger.error(f"Files could not be added", exc_info=e)
                     # The ingest carries on (unchanged behaviour), but the run
@@ -380,7 +419,10 @@ class VectorStoreManager:
                 config_snapshot=build_ingest_config_snapshot(
                     getattr(self, "_data_manager_config", {})
                 ),
-                counts=collect_ingest_counts(conn),
+                counts=collect_ingest_counts(
+                    conn,
+                    collection_name=getattr(self, "collection_name", None),
+                ),
             )
         finally:
             conn.close()
@@ -498,6 +540,10 @@ class VectorStoreManager:
         conn = psycopg2.connect(**self._pg_config)
         try:
             with conn.cursor() as cursor:
+                table_exists = parent_nodes.parent_table_exists(cursor)
+                if table_exists:
+                    ensure_chunks_parent_id_index(cursor)
+                deleted_count = 0
                 for resource_hash in hashes_to_remove:
                     cursor.execute(
                         """
@@ -507,14 +553,28 @@ class VectorStoreManager:
                         """,
                         (resource_hash, self.collection_name),
                     )
+                    if table_exists:
+                        deleted_count += (
+                            parent_nodes.delete_unreferenced_parents_for_resource(
+                                cursor, resource_hash
+                            )
+                        )
                 conn.commit()
+                if table_exists:
+                    logger.info(
+                        "Deleted %d unreferenced parent nodes for %d removed resources",
+                        deleted_count,
+                        len(hashes_to_remove),
+                    )
                 logger.debug(
                     f"Removed {len(hashes_to_remove)} resource hashes from vectorstore"
                 )
         finally:
             conn.close()
 
-    def _add_to_postgres(self, files_to_add: Dict[str, str]) -> None:
+    def _add_to_postgres(
+        self, files_to_add: Dict[str, str], embedding_progress=None
+    ) -> None:
         """Add files to PostgreSQL vectorstore."""
         if not files_to_add:
             return
@@ -663,6 +723,16 @@ class VectorStoreManager:
         max_workers = max(1, self.parallel_workers)
         logger.info(f"Processing files with up to {max_workers} parallel workers")
 
+        if self.hierarchical_chunking:
+            # Load NLTK's stopwords here, not first in a racing worker (#119).
+            # On failure, carry on: each worker then fails its own file
+            # through the handler below instead of the batch staying
+            # 'embedding'.
+            try:
+                warm_up_sentence_tokenizer()
+            except Exception as exc:
+                logger.warning("NLTK warm-up failed; files will retry it: %s", exc)
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(process_file, filehash, file_path): filehash
@@ -697,10 +767,14 @@ class VectorStoreManager:
                 # undefined-table error. Idempotent (CREATE ... IF NOT EXISTS).
                 if self.hierarchical_chunking:
                     ensure_hierarchical_schema(cursor)
+                    ensure_chunks_parent_id_index(cursor)
                     conn.commit()
 
                 total_files = len(files_to_add_items)
                 files_since_commit = 0
+                files_committed = 0
+                deleted_parent_count = 0
+                _report_embedding_progress(embedding_progress, 0, total_files)
                 for file_idx, (filehash, file_path) in enumerate(files_to_add_items):
                     processed = processed_results.get(filehash)
                     if not processed:
@@ -726,6 +800,14 @@ class VectorStoreManager:
                             inserted = self._insert_hierarchical_file(
                                 cursor, document_id, parents
                             )
+                            if document_id is not None:
+                                deleted = parent_nodes.delete_unreferenced_parents(
+                                    cursor, document_id
+                                )
+                            else:
+                                deleted = parent_nodes.delete_unreferenced_parents_for_resource(
+                                    cursor, filehash
+                                )
                             cursor.execute(
                                 """UPDATE documents
                                    SET ingested_at = NOW(), ingestion_status = 'embedded',
@@ -734,6 +816,9 @@ class VectorStoreManager:
                                 (filehash,),
                             )
                             cursor.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                            # Count only once the savepoint holds: a rollback
+                            # above restores the deleted rows.
+                            deleted_parent_count += deleted
                             logger.debug(
                                 f"Added {inserted} child chunks for {filename} "
                                 f"(document_id={document_id})"
@@ -758,7 +843,11 @@ class VectorStoreManager:
                                 "Committed embedding progress batch (%d files)",
                                 files_since_commit,
                             )
+                            files_committed += files_since_commit
                             files_since_commit = 0
+                            _report_embedding_progress(
+                                embedding_progress, files_committed, total_files
+                            )
                         continue
 
                     filename, chunks, metadatas = processed
@@ -787,7 +876,11 @@ class VectorStoreManager:
                                 "Committed embedding progress batch (%d files)",
                                 files_since_commit,
                             )
+                            files_committed += files_since_commit
                             files_since_commit = 0
+                            _report_embedding_progress(
+                                embedding_progress, files_committed, total_files
+                            )
                         continue
 
                     logger.info(f"Finished embedding {filename}")
@@ -861,13 +954,28 @@ class VectorStoreManager:
                             "Committed embedding progress batch (%d files)",
                             files_since_commit,
                         )
+                        files_committed += files_since_commit
                         files_since_commit = 0
+                        _report_embedding_progress(
+                            embedding_progress, files_committed, total_files
+                        )
+
+                if self.hierarchical_chunking:
+                    logger.info(
+                        "Deleted %d unreferenced parent nodes after re-ingest",
+                        deleted_parent_count,
+                    )
 
                 if files_since_commit > 0:
                     conn.commit()
                     logger.info(
                         "Committed final embedding progress batch (%d files)",
                         files_since_commit,
+                    )
+                    files_committed += files_since_commit
+                    files_since_commit = 0
+                    _report_embedding_progress(
+                        embedding_progress, files_committed, total_files
                     )
         finally:
             conn.close()
@@ -910,6 +1018,7 @@ class VectorStoreManager:
                 strategy=effective_strategy,
                 parent_chunk_size=self.parent_chunk_size,
                 child_chunk_size=self.child_chunk_size,
+                child_chunk_overlap=self.child_chunk_overlap,
             ):
                 child_texts: List[str] = []
                 for child in node.child_texts:

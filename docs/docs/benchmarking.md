@@ -30,10 +30,17 @@ metrics are on by default and a fifth is opt-in:
 - **Context precision**: How relevant the retrieved documents are
 - **Context recall**: Whether retrieval found everything the reference answer needed
 - **Answer correctness** (opt-in): Whether the answer is *correct* against the
-  reference answer. The other four grade relevance and grounding, so none of them
-  can tell a right answer from a wrong one. Enable it by adding
+  reference answer, as one blended score. The other four above grade relevance
+  and grounding, so none of them can tell a right answer from a wrong one. Enable
+  it by adding
   `answer_correctness` to
   `services.benchmarking.mode_settings.ragas_settings.enabled_metrics`.
+- **Generation-side metrics** (opt-in, same list): `factual_correctness_recall`
+  (did the answer leave facts out?), `factual_correctness_precision` (did it add
+  unsupported claims?), `noise_sensitivity` (share of wrong claims; **lower is
+  better**), `answer_accuracy` and `response_groundedness` (two-rating averaged
+  variants of correctness and faithfulness). See
+  [Interpreting benchmark results §2.1](interpreting_benchmark_results.md).
 
 ---
 
@@ -68,8 +75,10 @@ read (`question`→`user_input`, `answer`→`reference`, `contexts`→`retrieved
 
 ¹ Only `user_input` is required at load (plus `sources` for SOURCES mode). An
 empty `reference` is a valid draft row: it is skipped by every metric that needs
-the ground truth (`context_precision`, `context_recall` and `answer_correctness`)
-but still scored by `answer_relevancy` and `faithfulness`.
+the ground truth (`context_precision`, `context_recall`, `answer_correctness`,
+`factual_correctness_recall`, `factual_correctness_precision`,
+`noise_sensitivity` and `answer_accuracy`) but still scored by
+`answer_relevancy`, `faithfulness` and `response_groundedness`.
 
 See `examples/benchmarking/queries.json` for a complete example.
 
@@ -108,7 +117,7 @@ services:
 | `queries_path` | — | Path to the queries JSON file (ragas modern dialect `user_input`/`reference`; legacy `question`/`answer` banks are normalized on read) |
 | `out_dir` | — | Output directory for results (must exist) |
 | `modes` | — | List of evaluation modes (`RAGAS`, `SOURCES`) |
-| `mode_settings.ragas_settings.timeout` | `180` | Max seconds per QA pair for RAGAS evaluation |
+| `mode_settings.ragas_settings.timeout` | `180` | Max seconds per QA pair for RAGAS evaluation. Must be a positive number; fractions are allowed. An invalid value (`0`, `-1`, `"many"`, NaN, infinity, an oversized integer) falls back to `180` with a warning. An integral float such as `600.0` is recorded as `600` |
 | `mode_settings.ragas_settings.max_workers` | `16` | Concurrent RAGAS judge calls. Lower it when the judge throttles: ragas wraps each row in one `timeout` budget with its retries inside, so throttling spends the budget and loses the score. Must be a positive integer; anything else falls back to the default with a warning |
 | `mode_settings.ragas_settings.batch_size` | Ragas default | Number of QA pairs to evaluate at once |
 
@@ -140,11 +149,22 @@ archi evaluate -n benchmark -c config.yaml -e .secrets.env --gpu-ids all
 
 Make sure the `out_dir` exists before running.
 
+With `-cd`, the configs in the directory are the arms of one deployment. That
+deployment seeds Postgres once, and the agent reads every setting outside
+`services.benchmarking` from that seed. So the arms must agree everywhere except
+`services.benchmarking`, `name`, and the `agents_dir`/`skills_dir` paths that the
+deploy rewrites. `archi evaluate` compares the arm files before it touches an
+existing runtime, and refuses the run with the differing paths if they disagree.
+A missing key and an empty value count as different. To A/B a setting outside
+`services.benchmarking` (for example `services.chat_app.force_initial_retrieval`
+or a chunking setting), run one deployment per value, as in
+[Hierarchical-rerank A/B](#hierarchical-rerank-ab).
+
 ### Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the ingest last reported progress. It restarts on every poll reporting work in progress (`state=running` at any step past `initializing`), so an ingest that is working is never cut off for taking a long time — only one that goes silent, or never starts, is. |
+| `BENCH_INGEST_WAIT_TIMEOUT` | `7200` | **Stall** budget: seconds allowed since the ingest last reported progress. It restarts on every poll reporting work in progress (`state=running` at any step past `initializing`), so an ingest that is working is never cut off for taking a long time — only one that goes silent, or never starts, is. When the status payload carries a `progress` counter, a `running` poll restarts the budget only if `progress.done` advanced. The counter advances once per batch of 25 files, so if one batch takes longer than this budget, raise it. |
 | `BENCH_INGEST_MAX_WAIT` | `21600` | Absolute ceiling on the whole wait, in seconds — the backstop for an ingest that reports `running` forever without finishing. `0` disables it and logs a warning; prefer a large finite value for unattended runs. |
 | `BENCH_INGEST_POLL_INTERVAL` | `5` | Seconds between ingestion-status polls. |
 
@@ -160,25 +180,36 @@ plain "give up after N seconds":
   its own error instead, since then they are all separate facts.
 - **The ingest never started.** The endpoint answers, but with `state=pending`,
   with a state the harness does not recognize, or with `state=running
-  step=initializing` — the last of which means this ingest is queued behind
-  something else holding the data-manager's ingestion lock (a scheduled source
-  refresh, or a vectorstore update triggered by an upload). None of those is
-  progress, so none restarts the stall budget, and `BENCH_INGEST_WAIT_TIMEOUT`
+  step=initializing` past the moment the ingest is due to start. None of those
+  is progress, so none restarts the stall budget, and `BENCH_INGEST_WAIT_TIMEOUT`
   ends the wait on the same schedule as a dead endpoint — naming the state and
-  step, so the queued case is obvious from the error alone.
+  step in the error. An ingest queued behind a scheduled source refresh or an
+  upload does not show `initializing`: the endpoint keeps reporting the running
+  refresh (`step=scheduled:<source>` or `step=upload`) until the ingest takes
+  the lock.
 - **The ingest is alive but stuck.** Polls keep reporting `running` and the
   state never reaches `completed`. `BENCH_INGEST_MAX_WAIT` ends that, and the
   error reports the last observed `state` and `step` rather than a connection
-  problem. Only the ceiling can catch this one: the status payload carries just
-  `state`, `step` and `error`, with no counter or timestamp, so a wedged ingest
-  is byte-for-byte indistinguishable from a working one. Tightening it needs a
-  progress signal from the data-manager itself (issue #428).
+  problem. A data manager that publishes the `progress` counter (see
+  [`GET /api/ingestion/status`](api_reference.md#get-apiingestionstatus))
+  lets the stall budget catch this case sooner: during the embedding loop, a
+  `running` poll whose `progress.done` did not advance does not restart
+  `BENCH_INGEST_WAIT_TIMEOUT`. Without the counter (an older data manager, or
+  a phase before the embedding loop starts), a wedged ingest is byte-for-byte
+  the same as a working one, and only the ceiling can catch it.
+
+Scheduled source refreshes and upload-triggered vectorstore updates also report
+through this endpoint (`step=scheduled:<source>` or `step=upload`), so a
+benchmark that starts while one runs waits for it, and the refresh's polls keep
+the stall budget alive. The endpoint reports `completed` only when no such run is
+queued. A refresh is not the corpus build, so its time is not counted in
+`ingest_wall_seconds`. This includes a refresh that runs after the ingest and
+before `completed`: the timing stops at the first poll that shows the refresh.
 
 What this wait does **not** cover: a corpus change that starts *after* the
-initial ingest reports `completed` — a scheduled source refresh, or a
-vectorstore update triggered by an upload. Those hold the same lock but never
-touch this status endpoint, so the harness cannot block on them. It detects
-them after the fact instead, by fingerprinting the corpus on both sides of each
+benchmark's wait returned. That includes the collection phase of an upload,
+which runs before its vectorstore update begins to report. The harness detects
+those changes after the fact, by fingerprinting the corpus on both sides of each
 arm and recording `corpus_unchanged_at_endpoints` in the results.
 
 A long-but-healthy ingest hits none of them. CPU-only ingest of the full FASRC
@@ -272,8 +303,10 @@ prompts:
 ```
 
 `primary_metric` is one of `answer_relevancy`, `faithfulness`,
-`context_precision`, `context_recall`, `answer_correctness` (default
-`faithfulness` — grounding is the load-bearing property for a "never guess"
+`context_precision`, `context_recall`, `answer_correctness`,
+`factual_correctness_recall`, `factual_correctness_precision`,
+`noise_sensitivity` (ranked lowest-first), `answer_accuracy`,
+`response_groundedness` (default `faithfulness` — grounding is the load-bearing property for a "never guess"
 support bot). Every enabled metric is reported per variant regardless; this only
 sets the ranking key.
 
@@ -357,16 +390,37 @@ The dump JSON gains a `leaderboard` key:
     exists because the two pressure fields are `null` when no judge ran, and
     the drift reduction ignores `null` — so without it, one judged arm beside
     an unjudged one reported that arm's worker count as shared by both.
+
+    `judge_identity` records which RAGAS judge scored the arms: the JSON form
+    of each arm's `ragas_judge_identity_effective` (provider, model, endpoint,
+    and client mode), or a sorted list when the arms disagree. A difference
+    here also **withholds ranks**, and `shared_context.warnings` gets an
+    entry that starts `judge_identity differs across swept configs:` and
+    lists the identities. Scores from two judges are not on one scale. The
+    pairwise A/B winners are withheld too, and the log line names the reason
+    "the arms were scored by different RAGAS judges". The endpoint is compared as written, so the
+    same server spelled two ways (for example with and without a trailing
+    slash) also withholds. Arms with no identity (`null`, no judge ran) are
+    left to the judge-pressure check, and result files written before the
+    field existed still rank.
 - `ragas_effective_settings` — on each run record, the judge `timeout` and
-  `max_workers` the run actually used, or `null` when `RAGAS` was not among the
-  run's `modes` and no judge ran. A rendered configuration always carries a
+  `max_workers` the run actually used, or `null` when no judge ran. That is
+  the case when `RAGAS` was not among the run's `modes`, and also when it was
+  but every answer in the arm failed or was degraded, so there was nothing to
+  score and the judge never started, or when no enabled metric had an
+  eligible row (for example, only `context_recall` with draft rows that have
+  no reference). In a sweep, such an arm beside a judged
+  one withholds the ranking ("one arm was not judged"). A rendered configuration always carries a
   `ragas_settings` block, so its presence does not mean the judge was used.
-  The configuration is also recorded verbatim as `configuration`; when an
-  invalid setting was replaced by its default the two deliberately disagree,
-  and this field is the one that describes the run. `config_version.digest`
-  covers the normalized values for the same reason, while
-  `config_version.selected_file_digest` fingerprints the file as written, so
-  two different files stay distinguishable even when they drive identical runs.
+  `configuration` holds the selected file with each prompt path replaced by
+  that file's contents. When an invalid setting was replaced by its default,
+  `configuration` and `ragas_effective_settings` deliberately disagree, and
+  `ragas_effective_settings` is the one that describes the run.
+  `config_version.digest` covers the normalized values for the same reason.
+  `config_version.selected_file_digest` is not run provenance: it is the
+  audit fingerprint of the file as written, before prompt paths are replaced
+  and with any invalid setting left as written, so two different files stay
+  distinguishable even when they drive identical runs.
 
 The pairwise `ab_comparisons` are still produced alongside the leaderboard; the
 leaderboard is computed independently from each config's aggregates.
@@ -503,6 +557,18 @@ The `huggingface` provider names an **unauthenticated** OpenAI-compatible judge 
 There is no way to give this provider a credential: the client is built through the local provider seam, which sends the placeholder token `not-needed`. An endpoint behind bearer authentication rejects every score request. Use `huit_bedrock` for an authenticated judge.
 
 `huggingface` is an evaluator-only provider name. Setting `services.benchmarking.provider: huggingface` for the system under test fails at startup, because the agent providers do not include it.
+
+`evaluator_provider_mode` sets the client dialect of a `local` judge, the way `provider_mode` does for the system under test. It is read only when the judge provider is `local`. It accepts `ollama` (ChatOllama) or `openai_compat` (ChatOpenAI); case and surrounding spaces are ignored. When the key is absent or empty, the judge inherits the system-under-test `provider_mode`; if that is also unset, the mode is auto-detected from the judge URL (`/v1` → `openai_compat`). Any other value, including `false` or `0`, is refused: the run fails with a `ValueError` when it builds the judge, instead of falling back to auto-detection.
+
+```yaml
+      ragas_settings:
+        evaluator_provider: local
+        evaluator_model: qwen3:32b
+        evaluator_ollama_url: http://host.containers.internal:7870
+        evaluator_provider_mode: ollama
+```
+
+Each run record carries `ragas_judge_identity_effective`: the `provider`, `model`, `base_url`, and `mode` of the judge the run actually built, or `null` when no judge scored the arm. The endpoint is the one the client received, with the defaults filled in (`OLLAMA_HOST` or `http://127.0.0.1:11434` for an Ollama-mode judge with no URL, the local provider's OpenAI-compatible default for an `openai_compat` judge with no URL). In a sweep, arms scored by different judges are not ranked: every `rank` in the leaderboard is `null` and the difference is listed under `judge_identity` in `shared_context.warnings`. Result files written before this field existed still rank.
 
 #### Tool calling and structured output on `huit_bedrock`
 

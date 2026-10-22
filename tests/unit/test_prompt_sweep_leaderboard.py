@@ -12,6 +12,9 @@ from typing import Optional
 import pytest
 
 from src.bin.service_benchmark import ResultHandler
+from src.utils.benchmark_schema import RAGAS_METRIC_NAMES
+
+_NOT_SET = object()
 
 
 def _make_record(
@@ -32,6 +35,7 @@ def _make_record(
     include_name=True,
     ragas_effective_settings=None,
     judge_block=None,
+    ragas_judge_identity_effective=_NOT_SET,
 ):
     """Build a ResultHandler.results record shaped like handle_results writes.
 
@@ -66,13 +70,16 @@ def _make_record(
     if include_name:
         benchmarking["name"] = name
 
-    return {
+    record = {
         "single_question_results": {f"q{i}": {} for i in range(n_questions)},
         "total_results": total_results,
         "configuration_file": f"/tmp/{name}.yaml",
         "configuration": {"services": {"benchmarking": benchmarking}},
         "ragas_effective_settings": ragas_effective_settings,
     }
+    if ragas_judge_identity_effective is not _NOT_SET:
+        record["ragas_judge_identity_effective"] = ragas_judge_identity_effective
+    return record
 
 
 @pytest.fixture(autouse=True)
@@ -108,13 +115,7 @@ def test_one_row_per_config():
     assert set(by_name) == {"v1-strict", "v2-lean", "v3-cited"}
     row = by_name["v2-lean"]
     assert row["agent_md_file"] == "config/agents/fasrc-cannon-v2-lean.md"
-    assert set(row["metrics"]) == {
-        "answer_relevancy",
-        "faithfulness",
-        "context_precision",
-        "context_recall",
-        "answer_correctness",
-    }
+    assert set(row["metrics"]) == set(RAGAS_METRIC_NAMES)
     assert row["metrics"]["faithfulness"] == pytest.approx(0.9)
 
 
@@ -143,13 +144,7 @@ def test_configured_primary_metric_reranks():
     assert lb["primary_metric"] == "answer_relevancy"
     assert lb["rows"][0]["name"] == "b"
     # every metric value still present regardless of primary
-    assert set(lb["rows"][0]["metrics"]) == {
-        "answer_relevancy",
-        "faithfulness",
-        "context_precision",
-        "context_recall",
-        "answer_correctness",
-    }
+    assert set(lb["rows"][0]["metrics"]) == set(RAGAS_METRIC_NAMES)
 
 
 def test_unknown_primary_metric_falls_back_to_faithfulness():
@@ -353,6 +348,39 @@ def test_incomparability_reason_names_the_predicate_that_failed():
     assert ResultHandler.arms_comparable([judged_16, judged_16]) is True
 
 
+# --- #573: end-of-run embedding tags ---
+
+
+def test_embedding_tag_change_is_an_incomparability_reason():
+    base = {"corpus_fingerprint": "c1", "corpus_unchanged_at_endpoints": True}
+    changed = {**base, "embedding_tags_unchanged_at_endpoints": False}
+    reason = ResultHandler.arms_incomparability_reason([base, changed])
+    assert reason is not None
+    assert "embedding" in reason
+
+
+def test_embedding_tag_null_stability_is_an_incomparability_reason():
+    base = {"corpus_fingerprint": "c1", "corpus_unchanged_at_endpoints": True}
+    unknown = {**base, "embedding_tags_unchanged_at_endpoints": None}
+    reason = ResultHandler.arms_incomparability_reason([base, unknown])
+    assert reason is not None
+    assert "embedding" in reason
+
+
+def test_absent_embedding_tag_key_is_not_an_incomparability_reason():
+    base = {"corpus_fingerprint": "c1", "corpus_unchanged_at_endpoints": True}
+    assert ResultHandler.arms_incomparability_reason([base, base]) is None
+
+
+def test_true_embedding_tag_key_is_not_an_incomparability_reason():
+    base = {
+        "corpus_fingerprint": "c1",
+        "corpus_unchanged_at_endpoints": True,
+        "embedding_tags_unchanged_at_endpoints": True,
+    }
+    assert ResultHandler.arms_incomparability_reason([base, base]) is None
+
+
 def test_rank_label_renders_a_withheld_rank_without_percent_d():
     """A withheld rank must survive the console table.
 
@@ -409,6 +437,87 @@ def test_ranks_survive_when_judge_concurrency_matches():
     assert all(row["rank"] is not None for row in lb["rows"])
 
 
+_PRESSURE = {"timeout": 600, "max_workers": 4}
+
+
+def _judge_identity(**overrides):
+    identity = {
+        "provider": "local",
+        "model": "qwen",
+        "base_url": "http://judge:11434",
+        "mode": "ollama",
+    }
+    identity.update(overrides)
+    return identity
+
+
+def _judged_record(name, identity=_NOT_SET):
+    return _make_record(
+        name,
+        f"p/{name}.md",
+        ragas_effective_settings=dict(_PRESSURE),
+        ragas_judge_identity_effective=identity,
+    )
+
+
+def test_judge_identity_mode_difference_is_incomparable():
+    records = [
+        _judged_record("a", _judge_identity(mode="ollama")),
+        _judged_record("b", _judge_identity(mode="openai_compat")),
+    ]
+    assert ResultHandler.arms_comparable(records) is False
+    assert "judge" in ResultHandler.arms_incomparability_reason(records)
+
+
+def test_judge_identity_provider_difference_is_incomparable():
+    records = [
+        _judged_record("a", _judge_identity(provider="local")),
+        _judged_record("b", _judge_identity(provider="ollama")),
+    ]
+    assert ResultHandler.arms_comparable(records) is False
+    assert "judge" in ResultHandler.arms_incomparability_reason(records)
+
+
+def test_records_without_judge_identity_stay_comparable():
+    """Old result files predate the field and still rank."""
+    records = [_judged_record("a"), _judged_record("b")]
+    assert ResultHandler.arms_comparable(records) is True
+
+
+def test_null_judge_identity_is_not_a_judge_difference():
+    """A None identity is skipped; the pressure check owns the unjudged arm."""
+    records = [
+        _judged_record("a", _judge_identity()),
+        _judged_record("b", None),
+    ]
+    reason = ResultHandler.arms_incomparability_reason(records) or ""
+    assert "different RAGAS judges" not in reason
+
+
+def test_ranks_are_withheld_when_judge_identity_differs():
+    ResultHandler.results = [
+        _judged_record("a", _judge_identity(model="qwen")),
+        _judged_record("b", _judge_identity(model="llama")),
+    ]
+    lb = ResultHandler.build_leaderboard()
+
+    assert all(row["rank"] is None for row in lb["rows"])
+    assert any(
+        w.startswith("judge_identity differs") for w in lb["shared_context"]["warnings"]
+    )
+
+
+def test_ranks_survive_when_judge_identity_matches():
+    ResultHandler.results = [
+        _judged_record("a", _judge_identity()),
+        _judged_record("b", _judge_identity()),
+    ]
+    lb = ResultHandler.build_leaderboard()
+
+    assert all(row["rank"] is not None for row in lb["rows"])
+    assert not any("judge_identity" in w for w in lb["shared_context"]["warnings"])
+
+
 def test_mixed_judge_participation_warns_and_withholds():
     """One arm judged and one not is the starkest pressure difference there is.
 
@@ -426,6 +535,28 @@ def test_mixed_judge_participation_warns_and_withholds():
 
     assert any("judge" in w for w in lb["shared_context"]["warnings"])
     assert all(row["rank"] is None for row in lb["rows"])
+
+
+def test_an_arm_the_judge_never_scored_withholds_the_ranking():
+    """Accepted behavior change of #518, pinned.
+
+    An arm whose every answer failed now records ``ragas_effective_settings:
+    null``. Beside a judged arm, that reads as different judge pressure, so
+    the sweep withholds its ranking and says one arm was not judged.
+    """
+    records = [
+        _make_record(
+            "a",
+            "p/a.md",
+            ragas_effective_settings={"timeout": 180, "max_workers": 16},
+        ),
+        _make_record("b", "p/b.md", ragas_effective_settings=None),
+    ]
+
+    reason = ResultHandler.arms_incomparability_reason(records)
+
+    assert reason is not None
+    assert "one arm was not judged" in reason
 
 
 def test_shared_context_reads_judge_pressure_from_the_record():

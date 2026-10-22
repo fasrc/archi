@@ -89,7 +89,7 @@ if [ "${1:-}" = --sweep ]; then
   MAP_END="$(fm_category_map_digest "$STACK")"
   fm_write_map_readings "$OUT_DIR" "$MAP_START" "$MAP_END"
   AFTER="$(fm_fingerprint "$STACK")"
-  [ "$AFTER" = "$FINGERPRINT" ] || fm_die "corpus changed during the QA run (pin $FINGERPRINT, now $AFTER); output kept at $OUT_DIR but NOT recorded — the run is void"
+  [ "$AFTER" = "$FINGERPRINT" ] || fm_die_paged "stack $STACK arm $STEM" "corpus changed during the QA run (pin $FINGERPRINT, now $AFTER); output kept at $OUT_DIR but NOT recorded — the run is void"
   fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","sweep":true,"stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","spec":"%s","spec_sha256":"%s","corpus_fingerprint":"%s","category_map_sha256_start":"%s","category_map_sha256_end":"%s","lock_sha256":"%s","code_sha":"%s",%s}' \
     "$STEM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$SPEC" "$(fm_sha256 "$SPEC")" "$FINGERPRINT" "$MAP_START" "$MAP_END" "$(fm_sha256 "$LOCK")" "$(fm_code_sha)" "$(qa_identity "$OUT_DIR")")"
   fm_log "done; join with: compare_runs.py <artifact> --qa-run $STEM=$OUT_DIR"
@@ -168,7 +168,7 @@ OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
 MAP_END="$(fm_category_map_digest "$STACK")"
 fm_write_map_readings "$OUT_DIR" "$MAP_START" "$MAP_END"
 AFTER="$(fm_fingerprint "$STACK")"
-[ "$AFTER" = "$FINGERPRINT" ] || fm_die "corpus changed during the QA run (pin $FINGERPRINT, now $AFTER); output kept at $OUT_DIR but NOT recorded — the run is void"
+[ "$AFTER" = "$FINGERPRINT" ] || fm_die_paged "stack $STACK arm $ARM" "corpus changed during the QA run (pin $FINGERPRINT, now $AFTER); output kept at $OUT_DIR but NOT recorded — the run is void"
 fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s","fingerprint_source":"live-stack-equals-pin","dataset_sha256":"%s","profile_sha256":"%s","spec_sha256":"%s","lock_sha256":"%s","code_sha":"%s","category_map_sha256_start":"%s","category_map_sha256_end":"%s",%s}' \
   "$ARM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$DATASET" "$PROFILE" "$SPEC" "$YAML" "$CFG_SHA" "$FINGERPRINT" \
   "$(fm_sha256 "$DATASET")" "$(fm_sha256 "$PROFILE")" "$(fm_sha256 "$SPEC")" "$(fm_lock_sha)" "$(fm_code_sha)" "$MAP_START" "$MAP_END" "$(qa_identity "$OUT_DIR")")"

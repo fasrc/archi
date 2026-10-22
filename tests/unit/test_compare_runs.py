@@ -945,6 +945,114 @@ def test_an_unrecorded_identity_without_an_embedding_difference_is_noted(
     assert "varied factor" not in out.lower()
 
 
+# --- #573: end-of-run embedding tags ---
+
+
+_TAG_KEY = "embedding_tags_unchanged_at_endpoints"
+
+
+def _with_tags(path, value):
+    """Record the end-of-run tag comparison on the single arm of an artifact."""
+    document = json.loads(path.read_text())
+    document["benchmarking_results"][0][_TAG_KEY] = value
+    path.write_text(json.dumps(document))
+    return str(path)
+
+
+@pytest.mark.parametrize("value", [False, None], ids=["changed", "not-observed"])
+@pytest.mark.parametrize("flag", [[], ["--corpus-differs-by-design"]])
+def test_an_arm_whose_embedding_tags_changed_is_refused(_artifact, capsys, value, flag):
+    # A changed tag state means vectors of another model, or of no recorded
+    # model, appeared during the arm. The fingerprint is model-neutral and
+    # cannot see it, and no flag admits it.
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)], name="base.json", fingerprint="sha256/v2:a"
+        )
+    )
+    treat = _with_tags(
+        _artifact(
+            [_row("q1", faithfulness=0.6)], name="treat.json", fingerprint="sha256/v2:a"
+        ),
+        value,
+    )
+
+    code = cr.main([base, treat, *flag])
+
+    assert code == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "embedding model tags" in err
+    assert _TAG_KEY in err
+    flagged = err.split("embedding model tags", 1)[1]
+    assert "treat" in flagged and "base" not in flagged
+
+
+@pytest.mark.parametrize("value", ["absent", True], ids=["legacy", "unchanged"])
+def test_an_arm_without_a_tag_change_compares_as_before(_artifact, value):
+    base = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"))
+    treat_path = _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:a")
+    treat = str(treat_path) if value == "absent" else _with_tags(treat_path, value)
+
+    assert cr.main([base, treat]) == cr.EXIT_OK
+
+
+@pytest.mark.parametrize("allow", [False, True])
+def test_a_noise_replicate_whose_embedding_tags_changed_is_refused(_artifact, allow):
+    # A void replicate must not widen sigma, whatever the corpus flag says.
+    baseline = cr.load_arms(
+        [str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"))]
+    )[0]
+    one = _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:a")
+    changed = _with_tags(
+        _artifact([_row("q1", faithfulness=0.7)], fingerprint="sha256/v2:a"), False
+    )
+
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.noise_floor_from_runs(
+            [str(one), changed], baseline=baseline, allow_corpus_differs=allow
+        )
+
+    assert excinfo.value.code == cr.EXIT_GATE
+    message = str(excinfo.value)
+    assert "embedding model tags" in message
+    assert changed in message
+
+
+@pytest.mark.parametrize(
+    "tags, expected",
+    [
+        (False, "embedding model tags changed while it answered"),
+        (None, "embedding tag reading is unavailable"),
+        (True, None),
+        ("absent", None),
+    ],
+    ids=["changed", "not-observed", "unchanged", "legacy"],
+)
+def test_a_qa_run_whose_embedding_tags_changed_cannot_join(
+    _artifact, tmp_path, capsys, tags, expected
+):
+    question, reference = "how do I request a GPU", "use --gres=gpu:1"
+    rows = [_row(question, reference=reference, faithfulness=0.5)]
+    base = str(_artifact(rows, fingerprint="sha256/v2:a"))
+    treat = str(_artifact(rows, fingerprint="sha256/v2:a"))
+    arms = cr.load_arms([base, treat])
+    corpus = dict(_STABLE)
+    if tags != "absent":
+        corpus[_TAG_KEY] = tags
+    run = _qa_with_corpus(
+        tmp_path / "qa", derive_item_id(question, reference), **corpus
+    )
+
+    code = cr.main([base, treat, "--qa-run", f"{arms[1].label}={run}"])
+
+    if expected is None:
+        assert code == cr.EXIT_OK
+    else:
+        assert code == cr.EXIT_GATE
+        err = capsys.readouterr().err
+        assert "cannot join" in err and expected in err
+
+
 # --- Procedure E: the divergence gate ----------------------------------------
 
 
@@ -3149,6 +3257,61 @@ def test_json_true_and_one_are_different_labels_not_the_same_one(_artifact):
     assert all(
         row["value"] == "hard" and row["n"] == 1 for row in rows
     ), f"only q2 is groupable, got {[(r['value'], r['n']) for r in rows]}"
+
+
+# --- #582: usage keys are additive ---
+
+
+def test_load_qa_run_equals_with_and_without_usage_rows(tmp_path):
+    """usage dict in answers/evaluation rows is additive — load_qa_run is unaffected."""
+    item_id = "item-001"
+    _usage = {
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "calls": 1,
+        "unreported_calls": 0,
+        "by_model": [
+            {
+                "provider": "anthropic",
+                "model": "claude-3-5-haiku-20241022",
+                "input_tokens": 120,
+                "output_tokens": 30,
+            }
+        ],
+    }
+
+    plain_dir = tmp_path / "plain"
+    _qa_run(
+        plain_dir, item_id, item_pass_rate=0.8, atom_score=0.7, durations=(1000, 2000)
+    )
+
+    with_dir = tmp_path / "with_usage"
+    _qa_run(
+        with_dir, item_id, item_pass_rate=0.8, atom_score=0.7, durations=(1000, 2000)
+    )
+    for fname in ("answers.jsonl", "evaluation_results.jsonl"):
+        fpath = with_dir / fname
+        rows = [json.loads(line) for line in fpath.read_text().splitlines() if line]
+        for row in rows:
+            row["usage"] = _usage
+        fpath.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    plain = cr.load_qa_run(str(plain_dir))
+    with_usage = cr.load_qa_run(str(with_dir))
+
+    assert with_usage["items"] == plain["items"]
+    assert with_usage["durations"] == plain["durations"]
+    assert with_usage["overall_attempt_pass_rate"] == plain["overall_attempt_pass_rate"]
+    assert with_usage["macro_mean_item_pass_rate"] == plain["macro_mean_item_pass_rate"]
+    assert (
+        with_usage["macro_mean_scored_attempt_atom_score"]
+        == plain["macro_mean_scored_attempt_atom_score"]
+    )
+    assert set(with_usage["evaluations"]) == set(plain["evaluations"])
+    for iid in plain["evaluations"]:
+        plain_scores = [r["atom_score"] for r in plain["evaluations"][iid]]
+        with_scores = [r["atom_score"] for r in with_usage["evaluations"][iid]]
+        assert with_scores == plain_scores
 
 
 # --- host provenance ---------------------------------------------------------
