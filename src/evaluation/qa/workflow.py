@@ -820,6 +820,7 @@ class QAWorkflow:
             manifest["phases"].pop("score", None)
             for name in SCORE_FILES:
                 manifest["artifacts"].pop(name, None)
+            manifest["status"] = "run_completed"
         started_at = utc_now()
         manifest["runtime_phase"] = EvaluationRuntimePhase.SCORING.value
         write_json(run_dir / "manifest.json", manifest)

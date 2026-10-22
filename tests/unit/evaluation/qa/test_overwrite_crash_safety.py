@@ -1,6 +1,7 @@
 """Tests for crash-safe overwrite: D0 start guard and related invariants (#326)."""
 
 import copy
+import json
 from collections import deque
 
 import pytest
@@ -185,3 +186,125 @@ class TestD1RunValidManifest:
         ]
         assert row["status"] == "prepared"
         assert row["valid"] is True
+
+
+def _dataset_two_live(path):
+    """Dataset with static + two live items for re-pause testing (3.3)."""
+    items = [
+        {
+            "id": "static",
+            "question": "Fixed?",
+            "answer": "fixed",
+            "time_sensitive": False,
+            "expected_atoms": [{"id": "fixed", "text": "fixed", "required": True}],
+        },
+        {
+            "id": "live",
+            "question": "Current value?",
+            "time_sensitive": True,
+            "oracle": {
+                "kind": "mcp",
+                "calls": [
+                    {
+                        "id": "lookup",
+                        "server": "read-model",
+                        "tool": "current",
+                        "arguments": {},
+                        "answer_fields": {"value": "/value"},
+                        "metadata_fields": {"revision": "/revision"},
+                    }
+                ],
+            },
+        },
+        {
+            "id": "live-b",
+            "question": "Other value?",
+            "time_sensitive": True,
+            "oracle": {
+                "kind": "mcp",
+                "calls": [
+                    {
+                        "id": "lookup",
+                        "server": "read-model",
+                        "tool": "current",
+                        "arguments": {},
+                        "answer_fields": {"value": "/value"},
+                        "metadata_fields": {"revision": "/revision"},
+                    }
+                ],
+            },
+        },
+    ]
+    path.write_text(
+        json.dumps({"schema_version": "qa-dataset-v2", "items": items}),
+        encoding="utf-8",
+    )
+
+
+class TestD1ScoreValidManifest:
+    def test_score_overwrite_all_published_manifests_are_valid(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        value = {"value": 7, "revision": "r1"}
+        run_dir, _invoker, _rt = _run(monkeypatch, tmp_path, [value] * 3, runtimes)
+
+        captured = _install_manifest_recorder(monkeypatch)
+        result = QAWorkflow().score(run_dir, overwrite=True)
+
+        assert len(captured) > 1
+        for payload in captured:
+            RunManifest.from_dict(payload)
+        assert captured[0]["status"] == "run_completed"
+        assert result["status"] == "scored"
+
+
+class TestD1RunRepause:
+    def test_repause_all_published_manifests_are_valid(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        dataset = tmp_path / "dataset.json"
+        run_dir = tmp_path / "run"
+        _dataset_two_live(dataset)
+
+        invoker = SequenceInvoker(
+            [
+                {"value": 7, "revision": "r1"},  # prepare live
+                {"value": 7, "revision": "r1"},  # prepare live-b
+                {"value": 8, "revision": "r2"},  # pre-run live (mismatch -> pause)
+                {"value": 7, "revision": "r1"},  # pre-run live-b (no mismatch)
+                {"value": 8, "revision": "r2"},  # continue's pre-run live (authorized)
+                {
+                    "value": 9,
+                    "revision": "r3",
+                },  # continue's pre-run live-b (mismatch -> re-pause)
+            ]
+        )
+        monkeypatch.setattr(
+            workflow_module.EvaluatorMCPRegistry,
+            "load",
+            classmethod(lambda cls, path=None: invoker),
+        )
+        workflow = QAWorkflow()
+        first = workflow.composite(
+            dataset,
+            tmp_path / "agent.yaml",
+            tmp_path / "agent.md",
+            run_dir,
+            pause_on_live_mismatch=True,
+        )
+        assert first["status"] == "attention_required", invoker.calls
+
+        captured = _install_manifest_recorder(monkeypatch)
+        result = workflow.run(
+            run_dir,
+            tmp_path / "agent.yaml",
+            tmp_path / "agent.md",
+            overwrite=True,
+            pause_on_live_mismatch=True,
+            authorize_staged_invalid=True,
+        )
+
+        assert len(captured) > 1
+        for payload in captured:
+            RunManifest.from_dict(payload)
+        assert result["status"] == "attention_required"
