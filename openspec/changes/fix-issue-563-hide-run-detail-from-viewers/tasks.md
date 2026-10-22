@@ -1,5 +1,7 @@
 Work order: issue #563 (milestone v2026.11.0, tier `sonnet`). Branch
-`fix/issue-563-hide-run-detail-from-viewers`, cut from `origin/dev` `26e6429e`. Read
+`fix/issue-563-hide-run-detail-from-viewers`, cut from `origin/dev` `26e6429e`; task 1.1
+landed at `24a12365`, and `origin/dev` `e2978a1d` was merged in at `ee051db6` on
+2026-10-22 (no conflicts; every anchor below re-checked on the merged tree). Read
 `proposal.md` and `design.md` in this directory first. Every task ends with a green gate
 and a commit — no task ends red.
 
@@ -32,7 +34,8 @@ and a commit — no task ends red.
 - [ ] 2.1 Write the red, make it green, gate, commit — all in this one task.
 
       **Red first.** In `tests/unit/test_evaluation_routes.py`, change `_Service.get_run`
-      and the lambda at line 669 as design D4 says, then append the route tests of design
+      and the lambda in `test_run_detail_bounds_actual_serialized_response` (line 668 on
+      the merged tree) as design D4 says, then append the route tests of design
       D4 after the last existing test (check that the last test keeps all of its
       assertions). Confirm that the new MANAGE and auth-off tests fail on their assertions:
       the route does not yet pass `include_hidden`, so the fake receives the default

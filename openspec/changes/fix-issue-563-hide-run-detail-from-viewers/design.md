@@ -62,9 +62,10 @@ forgets the flag gets the viewer form.
 `_can_manage()` is already `True` when the session is not logged in (auth-off deployments),
 so auth-off behaviour does not change.
 
-The fake service in `tests/unit/test_evaluation_routes.py:74-75` and the lambda at
-`tests/unit/test_evaluation_routes.py:669` take only `history_id`; both must accept the
-new keyword.
+The fake service in `tests/unit/test_evaluation_routes.py:74-75` and the lambda in
+`test_run_detail_bounds_actual_serialized_response` (`tests/unit/test_evaluation_routes.py:668`
+after the 2026-10-22 merge of `origin/dev` `e2978a1d`) take only `history_id`; both must
+accept the new keyword.
 
 ## D4. Tests
 
@@ -89,11 +90,13 @@ new keyword.
 - `tests/unit/test_evaluation_routes.py`: give `_Service.get_run` the signature
   `get_run(self, history_id, *, include_hidden=False)`; it records the flag and returns
   `redact_run_for_viewer(FULL)` unless `include_hidden`. Log in a session and monkeypatch
-  `evaluation_routes.has_permission` as the attention test at line 370 does:
+  `evaluation_routes.has_permission` as the attention job-detail test does (the
+  `monkeypatch.setattr(evaluation_routes, "has_permission", ...)` call near line 404 on
+  the merged tree):
   - VIEW only → the flag is `False` and the JSON has none of the hidden fields;
   - with `MANAGE` → the flag is `True` and the fields are back;
   - not logged in (auth off) → the flag is `True`.
   - The run-list and `/report` responses are equal for the VIEW and MANAGE caller.
-  - Change the lambda at line 669 to `lambda _history_id, **_kwargs: ...`.
+  - Change the lambda at line 668 to `lambda _history_id, **_kwargs: ...`.
 - The nav/route parity test (`tests/unit/test_evaluation_console.py:649`) must still pass
   unchanged.
