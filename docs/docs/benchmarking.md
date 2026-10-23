@@ -130,6 +130,33 @@ services:
 |-----|-------------|
 | `embedding_model` | `OpenAI` or `HuggingFace` |
 
+### Deferred judge (`judge_mode`)
+
+A run can skip the RAGAS judge and write each arm's judge input to disk, so that a later job scores it offline (judge offload, #729). Three optional keys in `mode_settings.ragas_settings` control this. A config that sets none of them renders and runs as before.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `judge_mode` | `inline` | `inline` scores each arm with the judge during the run. `deferred` writes a judge bundle for each arm and makes no judge call. Any other value, including `false` and `Deferred`, stops the run before the first question |
+| `judge_bundle_dir` | `judge_bundles` | Folder for the bundles, relative to `out_dir`. It must be a relative path with no `..` part, so that the bundles stay in the output folder that the container mounts |
+| `evaluator_model_revision` | — | Revision of the judge model (`evaluator_model`) that a deferred bundle asks for. Required when `judge_mode` is `deferred` |
+
+```yaml
+      ragas_settings:
+        judge_mode: deferred
+        judge_bundle_dir: judge_bundles  # the default
+        evaluator_model: <judge model id>
+        evaluator_model_revision: <judge model revision>
+```
+
+The run checks these keys once, before the ingest wait and before the first question. It stops, and the error names the configs, when:
+
+- the configs of one sweep do not all have the same `judge_mode` (an absent key counts as `inline`);
+- a deferred config has an empty `evaluator_model` or `evaluator_model_revision`;
+- the configs of a deferred sweep do not resolve to the same `judge_bundle_dir`;
+- a deferred run cannot compute its code digest or its package digest (`pip freeze`). Without them, no scorer can match the bundles.
+
+A deferred arm writes `<out_dir>/<judge_bundle_dir>/<result basename>-arm<N>/` (`N` starts at 0) with `rows.jsonl`, `manifest.json` and an empty `BUNDLE_COMPLETE`. An arm with no scorable answer still writes a bundle, with no rows. In the result JSON, the arm has `judge_status: pending`, `judge_bundle` (the folder name and the SHA-256 of `rows.jsonl`), and no RAGAS aggregates, so the leaderboard shows its metrics as missing. After the result JSON is written, the run creates `<result basename>.RESULT_COMPLETE` in `out_dir`. `python scripts/benchmarking/judge/publish.py --out-dir <out_dir> --queue <queue>` copies complete bundles and complete pending results to the queue folder. The offline scorer and the merge come with #732; until then, a deferred result has no RAGAS scores.
+
 ---
 
 ## Running
