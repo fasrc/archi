@@ -59,8 +59,8 @@
 #   57. archive_run.sh copies collection and embedding_model from the artifact's retrieval_identity
 #       into the ledger row, and writes nulls when the artifact recorded none
 #   58. qa_arm.sh copies collection and embedding_model from the QA run manifest into the ledger
-#   59. the closing baseline with --new-corpus moves a v1 pin to v2 and records the old pin
 #       row, and writes nulls when the manifest recorded none
+#   59. the closing baseline with --new-corpus moves a v1 pin to v2 and records the old pin
 #   60. a refused arm-mode archive pages once with the refusal reason in the body
 #   61. paging off sends no mail on the same refusal
 #   62. a failing mail binary still refuses and reports "page failed"
@@ -91,6 +91,11 @@
 #   84. without `timeout`, watchdog kills a SIGTERM-immune hung mail binary and reports "page failed"
 #   85. without `timeout`, a fast mail command completes quickly with no leaked watchdog sleep
 #   86. without `timeout`, a mail binary that exits non-zero reports "page failed"
+#   90. qa_arm refuses scored: 0 in summary.json (single-arm)
+#   91. qa_arm refuses when summary.json is missing (single-arm)
+#   92. qa_arm refuses when summary.json is not valid JSON (single-arm)
+#   93. qa_arm accepts scored: 3 with execution_failed: 2 (single-arm)
+#   94. qa_arm --sweep refuses scored: 0 with no ledger row, then accepts the next --run
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -130,11 +135,30 @@ cat > "$T/bin/archi" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$T/archi.calls"
 # like the real CLI, \`eval qa\` creates its --output-dir
-prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && mkdir -p "\$a"; prev="\$a"; done
+OUTDIR=""
+prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && { mkdir -p "\$a"; OUTDIR="\$a"; }; prev="\$a"; done
 # the run manifest records the retrieval identity when the test provides one
-prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$a/manifest.json"; prev="\$a"; done
+[ -n "\$OUTDIR" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$OUTDIR/manifest.json"
 # a corpus that drifts WHILE the QA run is in flight
 [ "\$1 \$2" = "eval qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
+# summary.json is written only by the scoring phase: the single-arm combined call
+# (eval qa --output-dir <dir>, no subcommand) and the sweep score call (eval qa score
+# <dir>) — never eval qa run or eval qa prepare.
+write_summary() {
+  [ -f "$T/qa-no-summary" ] && return 0
+  if [ -f "$T/qa-summary" ]; then
+    cp "$T/qa-summary" "\$1/summary.json"
+  else
+    printf '{"attempt_lifecycle_counts": {"scored": 3, "execution_failed": 0, "evaluation_failed": 0}}' > "\$1/summary.json"
+  fi
+}
+if [ "\$1 \$2" = "eval qa" ]; then
+  case "\${3:-}" in
+    run|prepare) : ;;
+    score) write_summary "\$4" ;;
+    *) [ -n "\$OUTDIR" ] && write_summary "\$OUTDIR" ;;
+  esac
+fi
 exit 0
 EOF
 cat > "$T/bin/git" <<EOF
@@ -1095,6 +1119,50 @@ FM_PYTHON="$REAL_PY"
 if [ "$RC" != 0 ] && ! grep -q 'archived arm' "$T/stdout" && [ -z "$(ls -A "$FM_OUT/corpus-pin-fm-pin82")" ]; then
   ok "a directory that appears at the pin path after the ledger append fails the archive"; else notok "late pin-directory guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
 rm -rf "$FM_OUT/corpus-pin-fm-pin82" "$FM_OUT"/corpus-pin-fm-pin82.tmp.*
+
+# 90: qa_arm refuses when summary.json records scored: 0 (single-arm)
+printf '{"attempt_lifecycle_counts": {"scored": 0, "execution_failed": 0, "evaluation_failed": 0}}' > "$T/qa-summary"
+BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/qa-summary"
+if [ "$RC" = 2 ] && grep -q 'summary.json' "$T/stderr" && grep -q 'NOT recorded' "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "qa_arm refuses when scored: 0 in summary.json"; else notok "scored-0 refusal (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 91: qa_arm refuses when summary.json is missing (single-arm)
+touch "$T/qa-no-summary"
+BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/qa-no-summary"
+if [ "$RC" = 2 ] && grep -q 'summary.json' "$T/stderr" && grep -q 'NOT recorded' "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "qa_arm refuses when summary.json is missing"; else notok "missing-summary refusal (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 92: qa_arm refuses when summary.json is not valid JSON (single-arm)
+printf 'not json{' > "$T/qa-summary"
+BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/qa-summary"
+if [ "$RC" = 2 ] && grep -q 'summary.json' "$T/stderr" && grep -q 'NOT recorded' "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "qa_arm refuses when summary.json is not valid JSON"; else notok "invalid-json refusal (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 93: qa_arm accepts scored: 3 with execution_failed: 2 (single-arm)
+printf '{"attempt_lifecycle_counts": {"scored": 3, "execution_failed": 2, "evaluation_failed": 0}}' > "$T/qa-summary"
+BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/qa-summary"
+if [ "$RC" = 0 ] && [ "$(ledger_rows)" = "$((BEFORE + 1))" ]; then
+  ok "qa_arm accepts scored: 3 with execution_failed: 2"; else notok "scored-3 accept (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 94: qa_arm --sweep refuses scored: 0 with no ledger row; then the same arm with the next
+# --run and the default summary (scored: 3) succeeds and adds one row
+printf '{"attempt_lifecycle_counts": {"scored": 0, "execution_failed": 0, "evaluation_failed": 0}}' > "$T/qa-summary"
+BEFORE="$(ledger_rows)"
+run bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl --run 7
+RC94="$RC"; STDERR94="$(cat "$T/stderr")"; ROWS94="$(ledger_rows)"
+rm -f "$T/qa-summary"
+run bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl --run 8
+if [ "$RC94" = 2 ] && printf '%s' "$STDERR94" | grep -q 'summary.json' && printf '%s' "$STDERR94" | grep -q 'NOT recorded' \
+   && [ "$ROWS94" = "$BEFORE" ] && [ "$RC" = 0 ] && [ "$(ledger_rows)" = "$((BEFORE + 1))" ]; then
+  ok "qa_arm --sweep refuses scored: 0 with no ledger row, then accepts the next run with a valid summary"; else notok "sweep scored refusal and accept (rc7=$RC94 rc8=$RC: $(cat "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
