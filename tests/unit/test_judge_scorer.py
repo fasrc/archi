@@ -885,3 +885,56 @@ def test_a_scores_file_that_does_not_load_makes_the_bundle_failed(
     (bundle / "judge_scores.json").write_text("{")
     assert score_bundle(bundle, make_ctx(tmp_path, queue, jq)) == "FAILED"
     assert "judge_scores.json does not load" in (bundle / "FAILED").read_text()
+
+
+# --- an arm the judge never scored (#518) ---------------------------------------
+
+
+def test_a_bundle_with_no_eligible_pair_records_no_judge(tmp_path, queue, jq, judge):
+    """Inline, an arm whose metrics have no eligible row never calls the judge
+    and records null settings and identity (#518); offline does the same."""
+    settings = ragas_settings(enabled_metrics=["context_recall"])
+    bundle = make_bundle(queue, count=4, drafts=(1, 2, 3, 4), settings=settings)
+    assert score_bundle(bundle, make_ctx(tmp_path, queue, jq)) == "SCORED"
+    record = judge_scores(bundle)
+    assert judge.calls == []
+    assert record["ragas_effective_settings"] is None
+    assert record["ragas_judge_identity_effective"] is None
+    assert record["aggregates"] == {
+        "aggregate_context_recall": None,
+        "context_recall_scored": "0 of 4",
+    }
+
+
+def test_a_bundle_with_no_row_gets_the_inline_all_failed_aggregates(
+    tmp_path, queue, jq, judge
+):
+    from src.utils.benchmark_resilience import build_ragas_aggregates
+    from src.utils.benchmark_schema import json_safe
+
+    bundle = make_bundle(queue, count=0, drafts=())
+    assert score_bundle(bundle, make_ctx(tmp_path, queue, jq)) == "SCORED"
+    record = judge_scores(bundle)
+    assert record["ragas_effective_settings"] is None
+    assert record["ragas_judge_identity_effective"] is None
+    assert record["aggregates"] == json_safe(
+        build_ragas_aggregates(None, enabled_metrics=METRICS)
+    )
+
+
+@pytest.mark.parametrize("judged", [True, False])
+def test_the_judge_fields_must_match_whether_the_judge_scored(
+    tmp_path, queue, jq, judge, judged
+):
+    if judged:
+        bundle = make_bundle(queue)
+    else:
+        settings = ragas_settings(enabled_metrics=["context_recall"])
+        bundle = make_bundle(queue, count=2, drafts=(1, 2), settings=settings)
+    assert score_bundle(bundle, make_ctx(tmp_path, queue, jq)) == "SCORED"
+    (bundle / "SCORED").unlink()
+    record = judge_scores(bundle)
+    record["ragas_judge_identity_effective"] = None if judged else {"provider": "x"}
+    (bundle / "judge_scores.json").write_text(json.dumps(record))
+    assert score_bundle(bundle, make_ctx(tmp_path, queue, jq)) == "FAILED"
+    assert "ragas_judge_identity_effective" in (bundle / "FAILED").read_text()

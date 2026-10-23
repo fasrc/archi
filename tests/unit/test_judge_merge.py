@@ -123,7 +123,7 @@ def pending_arm(index, folder, digest):
 class Run:
     """A deferred two-arm run: its queue, bundles and pending result."""
 
-    def __init__(self, tmp_path, jq, *, arms=2, publish=True):
+    def __init__(self, tmp_path, jq, *, arms=2, publish=True, counts=None):
         self.tmp_path = tmp_path
         self.jq = jq
         self.queue = tmp_path / "queue"
@@ -133,8 +133,9 @@ class Run:
         self.bundles = []
         records = []
         for arm in range(arms):
+            count = counts[arm] if counts else 6
             bundle = make_bundle(
-                self.queue, BASENAME, arm=arm, arm_count=arms, count=6, drafts=(3,)
+                self.queue, BASENAME, arm=arm, arm_count=arms, count=count, drafts=(3,)
             )
             digest = json.loads((bundle / "manifest.json").read_text())["rows_sha256"]
             records.append(pending_arm(arm, bundle.name, digest))
@@ -222,6 +223,23 @@ def test_arms_of_different_identities_keep_scores_and_withhold_ranks(merge, run)
     assert judged["ab_comparison"]["comparable"] is False
     assert judged["ab_comparison"]["aggregate"]["wins_a"] is None
     assert "cross_arm_ragas" not in json.dumps(judged)
+
+
+def test_an_arm_the_judge_never_scored_keeps_null_judge_fields(merge, tmp_path, jq):
+    """#518: an arm with no scorable row records no judge settings or identity, so
+    the in-run rule withholds ranks beside a judged arm, as the inline path does."""
+    run = Run(tmp_path, jq, counts=(6, 0))
+    run.score(0)
+    run.score(1)
+    assert merge.main(["--queue", str(run.queue)]) == 0
+    judged = run.judged()
+    unjudged = judged["benchmarking_results"][1]
+    assert unjudged["judge_status"] == "scored"
+    assert unjudged["ragas_effective_settings"] is None
+    assert unjudged["ragas_judge_identity_effective"] is None
+    assert judged["benchmarking_results"][0]["ragas_effective_settings"] is not None
+    assert judged["leaderboard"]["comparable"] is False
+    assert judged["ab_comparison"]["comparable"] is False
 
 
 def test_arms_of_one_identity_are_ranked(merge, run):

@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
+from src.utils.benchmark_resilience import build_ragas_aggregates
 from src.utils.benchmark_schema import (
     RAGAS_METRIC_NAMES,
     eligible_subset,
@@ -63,6 +64,8 @@ SCORES_KEYS = (
     "scores",
     "aggregates",
 )
+#: null when the judge scored no pair of the bundle, as on the inline path (#518).
+NULLABLE_SCORES_KEYS = ("ragas_judge_identity_effective", "ragas_effective_settings")
 
 
 class BundleFailed(Exception):
@@ -265,6 +268,15 @@ def _fail(bundle: Path, reason: str) -> str:
     return "FAILED"
 
 
+def _has_eligible_pair(manifest: Mapping[str, Any], rows, keys) -> bool:
+    """True when some enabled metric has an eligible row: the judge is called."""
+    return any(
+        eligible_subset(rows, keys, metric)[1]
+        for metric in RAGAS_METRIC_NAMES
+        if metric in manifest["enabled_metrics"]
+    )
+
+
 def scores_file_problem(
     path: Path,
     manifest: Mapping[str, Any],
@@ -274,16 +286,24 @@ def scores_file_problem(
     """Why ``judge_scores.json`` at *path* is not a complete result of this bundle.
 
     None when it loads, has every object the merge reads, records this bundle's
-    rows digest, and has a score (a number or null) for every eligible pair.
+    rows digest, has a score (a number or null) for every eligible pair, and has
+    judge settings and identity exactly when the bundle has an eligible pair.
     """
     try:
         record = json.loads(Path(path).read_bytes())
     except (OSError, ValueError) as exc:
         return f"{SCORES_FILE} does not load: {exc}"
+    judged = _has_eligible_pair(manifest, rows, keys)
     if not isinstance(record, dict) or any(
-        not isinstance(record.get(name), dict) for name in SCORES_KEYS
+        not isinstance(record.get(name), dict)
+        for name in SCORES_KEYS
+        if name not in NULLABLE_SCORES_KEYS
     ):
         return f"{SCORES_FILE} lacks one of {', '.join(SCORES_KEYS)}"
+    for name in NULLABLE_SCORES_KEYS:
+        if isinstance(record.get(name), dict) != judged:
+            state = "an object" if judged else "null"
+            return f"{SCORES_FILE} must hold {name} as {state} for this bundle"
     if record.get("rows_sha256") != manifest["rows_sha256"]:
         return (
             f"{SCORES_FILE} records rows {record.get('rows_sha256')}, but the "
@@ -412,9 +432,17 @@ def score_bundle(bundle: Path, ctx: JobContext) -> str:
         return [math.nan if value is None else value for value in values]
 
     by_key: Dict[str, Dict[str, Any]] = {key: {} for key in keys}
-    aggregates = score_metrics_per_eligibility(
-        rows, keys, scorer.metrics, by_key, recorded
-    )
+    if rows:
+        aggregates = score_metrics_per_eligibility(
+            rows, keys, scorer.metrics, by_key, recorded
+        )
+    else:
+        # The inline path's all-failed arm (#92): NaN for each enabled metric.
+        aggregates = build_ragas_aggregates(None, enabled_metrics=scorer.metrics)
+    # Inline, a judge that scored no pair leaves the arm's judge settings and
+    # identity null (#518), which keeps the in-run rule withholding ranks
+    # beside a judged arm. The merge copies these nulls.
+    judged = _has_eligible_pair(manifest, rows, keys)
     nan_counts = {
         metric: sum(
             1
@@ -426,12 +454,16 @@ def score_bundle(bundle: Path, ctx: JobContext) -> str:
     result = {
         "bundle": bundle.name,
         "rows_sha256": manifest["rows_sha256"],
-        "ragas_judge_identity_effective": identity,
-        "identity_digest": identity_digest(identity),
-        "ragas_effective_settings": {
-            "timeout": run_config["timeout"],
-            "max_workers": run_config["max_workers"],
-        },
+        "ragas_judge_identity_effective": identity if judged else None,
+        "identity_digest": identity_digest(identity) if judged else None,
+        "ragas_effective_settings": (
+            {
+                "timeout": run_config["timeout"],
+                "max_workers": run_config["max_workers"],
+            }
+            if judged
+            else None
+        ),
         "judge_execution": {
             "job_id": ctx.job_id,
             "node": ctx.node,

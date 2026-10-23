@@ -45,7 +45,7 @@ if str(REPO_ROOT) not in sys.path:
 from src.bin.service_benchmark import ResultHandler  # noqa: E402
 from src.utils.benchmark_schema import json_safe  # noqa: E402
 from src.utils.exclusive_link import link_exclusive  # noqa: E402
-from src.utils.judge_scorer import SCORES_KEYS  # noqa: E402
+from src.utils.judge_scorer import NULLABLE_SCORES_KEYS, SCORES_KEYS  # noqa: E402
 
 TEMPORARY_MAX_AGE_SECONDS = 3600
 # The temporary-file prefix of link_exclusive.
@@ -231,11 +231,16 @@ def merge_one(queue: Path, basename: str, group: Dict[str, Any]) -> int:
         for index in range(count):
             manifest = _load_json(arms[index] / "manifest.json")
             scores = _load_json(arms[index] / "judge_scores.json")
+            # The judge settings and identity are null for an arm the judge
+            # scored no pair of (#518); every other object must be present.
             missing = [
                 name
                 for name in SCORES_KEYS
                 if not isinstance(scores, dict)
-                or not isinstance(scores.get(name), dict)
+                or not (
+                    isinstance(scores.get(name), dict)
+                    or (name in NULLABLE_SCORES_KEYS and scores.get(name, 0) is None)
+                )
             ]
             if missing:
                 raise MergeError(
