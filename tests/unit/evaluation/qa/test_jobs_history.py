@@ -489,13 +489,12 @@ def test_job_manager_terminates_running_evaluation_process(monkeypatch, tmp_path
         request,
         context={"workspace_id": "run", "attempts": 1},
     )
-    # The job file says "running" before Popen returns and the process is
-    # registered, and get() reads the file without the lock (#655).
+    # The process is stored before "running" is written (#435), and neither
+    # read below takes the manager lock, so wait on the file, not the table.
     deadline = time.monotonic() + JOB_WAIT_TIMEOUT
-    while job["id"] not in manager._processes:
+    while manager.get(job["id"])["status"] != "running":
         assert time.monotonic() < deadline
         time.sleep(0.01)
-    assert manager.get(job["id"])["status"] == "running"
     process_id = manager._processes[job["id"]].pid
 
     def on_terminated(terminated_job):
@@ -2127,6 +2126,203 @@ def test_a_late_envelope_after_a_restart_never_resurrects_its_job(tmp_path):
     ), "a late envelope must not read as an active job and block the next one"
 
     manager.wait(manager.list()[0]["id"], timeout=JOB_WAIT_TIMEOUT)
+    manager.close()
+
+
+def test_execute_process_writes_running_only_after_process_is_stored(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+    running_writes_saw_process = []
+    status_when_popen_called = []
+    release = threading.Event()
+    production_write_json = jobs_module.write_json
+
+    def recording_write_json(path, payload):
+        # Record before the write: once "running" is on disk the poll below can
+        # read the list, so the observation must already be in it.
+        if isinstance(payload, dict) and payload.get("status") == "running":
+            running_writes_saw_process.append(payload["id"] in manager._processes)
+        production_write_json(path, payload)
+
+    class _FakeProcess:
+        pid = 2**31 - 1
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout=None):
+            release.wait(timeout)
+            self.returncode = 0
+            return self.returncode
+
+    def fake_popen(command, *args, **kwargs):
+        result_path = Path(command[4])
+        discovered_job_id = result_path.name[1 : -len(".result.json")]
+        status_when_popen_called.append(manager.get(discovered_job_id)["status"])
+        return _FakeProcess()
+
+    monkeypatch.setattr(jobs_module, "write_json", recording_write_json)
+    monkeypatch.setattr(jobs_module.subprocess, "Popen", fake_popen)
+
+    request = {
+        "operation": "composite",
+        "output_dir": str(tmp_path / "run"),
+        "dataset": str(tmp_path / "dataset.json"),
+        "agent_config": str(tmp_path / "config.yaml"),
+        "agent_spec": str(tmp_path / "agent.md"),
+        "evaluator_profile_path": str(tmp_path / "profile.yaml"),
+        "attempts": 1,
+        "run_workers": 1,
+        "score_workers": 1,
+    }
+    job = manager.start_process(
+        request,
+        context={"workspace_id": "run", "attempts": 1},
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while manager.get(job["id"])["status"] != "running":
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+
+        assert running_writes_saw_process
+        assert all(running_writes_saw_process)
+        assert status_when_popen_called == ["queued"]
+    finally:
+        release.set()
+        manager.close()
+
+
+def test_execute_process_popen_failure_records_failed_without_process_entry(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+
+    def failing_popen(*args, **kwargs):
+        raise OSError("boom")
+
+    monkeypatch.setattr(jobs_module.subprocess, "Popen", failing_popen)
+
+    request = {
+        "operation": "composite",
+        "output_dir": str(tmp_path / "run"),
+        "dataset": str(tmp_path / "dataset.json"),
+        "agent_config": str(tmp_path / "config.yaml"),
+        "agent_spec": str(tmp_path / "agent.md"),
+        "evaluator_profile_path": str(tmp_path / "profile.yaml"),
+        "attempts": 1,
+        "run_workers": 1,
+        "score_workers": 1,
+    }
+    job = manager.start_process(
+        request,
+        context={"workspace_id": "run", "attempts": 1},
+    )
+
+    job = manager.wait(job["id"], timeout=JOB_WAIT_TIMEOUT)
+
+    assert job["status"] == "failed"
+    assert "boom" in job["error"]
+    assert job["completed_at"] is not None
+    assert job["id"] not in manager._processes
+    manager.close()
+
+
+def test_execute_process_reaps_the_worker_when_running_cannot_be_written(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+    production_write_json = jobs_module.write_json
+    terminated = []
+    failed_running_writes = []
+
+    def failing_running_write(path, payload):
+        running = isinstance(payload, dict) and payload.get("status") == "running"
+        if running and not failed_running_writes:
+            failed_running_writes.append(payload["id"])
+            raise OSError("disk full")
+        production_write_json(path, payload)
+
+    class _FakeProcess:
+        pid = 2**31 - 1
+
+    process = _FakeProcess()
+    monkeypatch.setattr(jobs_module, "write_json", failing_running_write)
+    monkeypatch.setattr(jobs_module.subprocess, "Popen", lambda *a, **k: process)
+    monkeypatch.setattr(manager, "_terminate", terminated.append)
+
+    request = {
+        "operation": "composite",
+        "output_dir": str(tmp_path / "run"),
+        "dataset": str(tmp_path / "dataset.json"),
+        "agent_config": str(tmp_path / "config.yaml"),
+        "agent_spec": str(tmp_path / "agent.md"),
+        "evaluator_profile_path": str(tmp_path / "profile.yaml"),
+        "attempts": 1,
+        "run_workers": 1,
+        "score_workers": 1,
+    }
+    job = manager.start_process(
+        request,
+        context={"workspace_id": "run", "attempts": 1},
+    )
+
+    job = manager.wait(job["id"], timeout=JOB_WAIT_TIMEOUT)
+
+    assert terminated == [process]
+    assert job["id"] not in manager._processes
+    assert job["status"] == "failed"
+    assert "disk full" in job["error"]
+    assert job["completed_at"] is not None
+    next_job = manager.start("generate_atoms", lambda: {})
+    assert manager.wait(next_job["id"], timeout=JOB_WAIT_TIMEOUT)["status"] == (
+        "completed"
+    ), "a worker that never read as running must not block the next job"
+    manager.close()
+
+
+def test_continue_process_popen_failure_drops_the_prior_start_time(
+    monkeypatch, tmp_path
+):
+    job_id = str(uuid.uuid4())
+    write_json(
+        tmp_path / f"{job_id}.json",
+        {
+            "id": job_id,
+            "kind": "evaluation",
+            "status": "attention_required",
+            "created_at": "2026-10-01T00:00:00+00:00",
+            "started_at": "2026-10-01T00:00:05+00:00",
+            "completed_at": None,
+            "context": {"workspace_id": "run", "attempts": 1},
+        },
+    )
+    manager = EvaluationJobManager(tmp_path)
+
+    def failing_popen(*args, **kwargs):
+        raise OSError("boom")
+
+    monkeypatch.setattr(jobs_module.subprocess, "Popen", failing_popen)
+
+    request = {
+        "operation": "composite",
+        "output_dir": str(tmp_path / "run"),
+        "dataset": str(tmp_path / "dataset.json"),
+        "agent_config": str(tmp_path / "config.yaml"),
+        "agent_spec": str(tmp_path / "agent.md"),
+        "evaluator_profile_path": str(tmp_path / "profile.yaml"),
+        "attempts": 1,
+        "run_workers": 1,
+        "score_workers": 1,
+    }
+    manager.continue_process(job_id, request)
+
+    job = manager.wait(job_id, timeout=JOB_WAIT_TIMEOUT)
+
+    assert job["status"] == "failed"
+    assert job["started_at"] is None, "the first attempt's start time is stale"
     manager.close()
 
 
