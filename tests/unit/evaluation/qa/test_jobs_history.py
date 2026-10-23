@@ -489,8 +489,8 @@ def test_job_manager_terminates_running_evaluation_process(monkeypatch, tmp_path
         request,
         context={"workspace_id": "run", "attempts": 1},
     )
-    # The job file says "running" before Popen returns and the process is
-    # registered, and get() reads the file without the lock (#655).
+    # The wait for process registration stays as a guard from #656, even
+    # though the write order no longer makes "running" precede it.
     deadline = time.monotonic() + JOB_WAIT_TIMEOUT
     while job["id"] not in manager._processes:
         assert time.monotonic() < deadline
@@ -2192,6 +2192,41 @@ def test_execute_process_writes_running_only_after_process_is_stored(
     finally:
         release.set()
         manager.close()
+
+
+def test_execute_process_popen_failure_records_failed_without_process_entry(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+
+    def failing_popen(*args, **kwargs):
+        raise OSError("boom")
+
+    monkeypatch.setattr(jobs_module.subprocess, "Popen", failing_popen)
+
+    request = {
+        "operation": "composite",
+        "output_dir": str(tmp_path / "run"),
+        "dataset": str(tmp_path / "dataset.json"),
+        "agent_config": str(tmp_path / "config.yaml"),
+        "agent_spec": str(tmp_path / "agent.md"),
+        "evaluator_profile_path": str(tmp_path / "profile.yaml"),
+        "attempts": 1,
+        "run_workers": 1,
+        "score_workers": 1,
+    }
+    job = manager.start_process(
+        request,
+        context={"workspace_id": "run", "attempts": 1},
+    )
+
+    job = manager.wait(job["id"], timeout=JOB_WAIT_TIMEOUT)
+
+    assert job["status"] == "failed"
+    assert "boom" in job["error"]
+    assert job["completed_at"] is not None
+    assert job["id"] not in manager._processes
+    manager.close()
 
 
 def test_the_sweep_keeps_a_uuid_spelled_differently_than_the_manager_writes_it(
