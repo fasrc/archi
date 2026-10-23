@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import stat
 import sys
@@ -502,12 +503,14 @@ def test_status_names_every_state(tmp_path, setup, jq, slurm, capsys):
         ("1-02:03:04", 93784),
         ("02:03:04", 7384),
         ("03:04", 184),
-        ("UNLIMITED", None),
+        ("UNLIMITED", math.inf),
         ("NOT_SET", None),
+        ("INVALID", None),
         ("", None),
     ],
 )
 def test_time_left_parses_the_squeue_format(jq, text, seconds):
+    """An unlimited allocation is infinite time; anything else unreadable is unknown."""
     assert jq.parse_time_left(text) == seconds
 
 
@@ -551,11 +554,32 @@ def test_a_bundle_that_needs_more_time_than_is_left_stays_ready(jq):
 def test_an_unlimited_job_claims_everything(jq):
     picked = jq.plan_claims(
         [("a", 10_000), ("b", 10_000)],
-        seconds_left=None,
+        seconds_left=math.inf,
         rows_per_minute=1,
         first_is_free=False,
     )
     assert picked == ["a", "b"]
+
+
+@pytest.mark.parametrize("first_is_free", [True, False])
+def test_an_unknown_time_left_claims_one_bundle_per_round(jq, first_is_free):
+    """A failed squeue query is not an unlimited allocation: the job takes one
+    bundle, scores it, and asks again."""
+    picked = jq.plan_claims(
+        [("a", 10), ("b", 10), ("c", 10)],
+        seconds_left=None,
+        rows_per_minute=1_000,
+        first_is_free=first_is_free,
+    )
+    assert picked == ["a"]
+
+
+def test_a_failed_time_query_is_unknown_not_unlimited(jq, slurm):
+    (slurm.folder / "squeue.1001").write_text("1001\n")
+    (slurm.folder / "timeleft.1001").write_text("")
+    assert jq.time_left("1001") is None
+    slurm.running("1002", time_left="UNLIMITED")
+    assert jq.time_left("1002") == math.inf
 
 
 def test_the_module_imports_nothing_outside_the_standard_library():

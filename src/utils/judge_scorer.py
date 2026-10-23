@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from src.utils.benchmark_schema import (
+    RAGAS_METRIC_NAMES,
     eligible_subset,
     json_safe,
     score_metrics_per_eligibility,
@@ -54,6 +55,14 @@ DEFAULT_CHUNK_SIZE = 8
 SCORES_FILE = "judge_scores.json"
 _SCORER_FIELDS = ("code_digest", "package_digest", "image_digest", "ragas_version")
 _MANIFEST_KEYS = ("enabled_metrics", "ragas_run_config_kwargs", "judge_model")
+#: The objects of judge_scores.json that the merge reads.
+SCORES_KEYS = (
+    "ragas_judge_identity_effective",
+    "ragas_effective_settings",
+    "judge_execution",
+    "scores",
+    "aggregates",
+)
 
 
 class BundleFailed(Exception):
@@ -238,6 +247,53 @@ def _fail(bundle: Path, reason: str) -> str:
     return "FAILED"
 
 
+def scores_file_problem(
+    path: Path,
+    manifest: Mapping[str, Any],
+    rows: List[Dict[str, Any]],
+    keys: List[str],
+) -> Optional[str]:
+    """Why ``judge_scores.json`` at *path* is not a complete result of this bundle.
+
+    None when it loads, has every object the merge reads, records this bundle's
+    rows digest, and has a score (a number or null) for every eligible pair.
+    """
+    try:
+        record = json.loads(Path(path).read_bytes())
+    except (OSError, ValueError) as exc:
+        return f"{SCORES_FILE} does not load: {exc}"
+    if not isinstance(record, dict) or any(
+        not isinstance(record.get(name), dict) for name in SCORES_KEYS
+    ):
+        return f"{SCORES_FILE} lacks one of {', '.join(SCORES_KEYS)}"
+    if record.get("rows_sha256") != manifest["rows_sha256"]:
+        return (
+            f"{SCORES_FILE} records rows {record.get('rows_sha256')}, but the "
+            f"bundle has {manifest['rows_sha256']}"
+        )
+    scores = record["scores"]
+    for metric in (m for m in RAGAS_METRIC_NAMES if m in manifest["enabled_metrics"]):
+        for key in eligible_subset(rows, keys, metric)[1]:
+            if metric not in (scores.get(key) or {}):
+                return f"{SCORES_FILE} has no {metric} score for {key}"
+    return None
+
+
+def _finish(bundle: Path, manifest, rows, keys) -> str:
+    """SCORED when the bundle's judge_scores.json is complete, else FAILED.
+
+    A job that dies after judge_scores.json and before SCORED leaves a complete
+    file (the name never exists without its content), labelled with the identity
+    of the job that scored it. The next job keeps it. A file that is not
+    complete can only come from a manual edit, and the bundle fails with why.
+    """
+    problem = scores_file_problem(bundle / SCORES_FILE, manifest, rows, keys)
+    if problem:
+        return _fail(bundle, problem)
+    link_exclusive(bundle / "SCORED", b"")
+    return "SCORED"
+
+
 def score_bundle(bundle: Path, ctx: JobContext) -> str:
     """Score one claimed bundle; returns SCORED, FAILED or INCOMPATIBLE."""
     bundle = Path(bundle)
@@ -248,6 +304,8 @@ def score_bundle(bundle: Path, ctx: JobContext) -> str:
         manifest, rows, keys = load_bundle(bundle)
     except BundleFailed as exc:
         return _fail(bundle, str(exc))
+    if (bundle / SCORES_FILE).exists():
+        return _finish(bundle, manifest, rows, keys)
     needed = {
         "code_digest": (manifest.get("code_version") or {}).get("digest"),
         "package_digest": manifest.get("package_digest"),
@@ -340,11 +398,10 @@ def score_bundle(bundle: Path, ctx: JobContext) -> str:
         "nan_counts": nan_counts,
     }
     data = json.dumps(json_safe(result), sort_keys=True, indent=2, allow_nan=False)
-    # A job that died after this file and before SCORED left a complete file
-    # (the name never exists without its content): keep it.
+    # Another writer can only be a job that wrote the file first; _finish
+    # checks whatever the name holds before SCORED.
     link_exclusive(bundle / SCORES_FILE, (data + "\n").encode())
-    link_exclusive(bundle / "SCORED", b"")
-    return "SCORED"
+    return _finish(bundle, manifest, rows, keys)
 
 
 def preflight(ctx: JobContext) -> str:

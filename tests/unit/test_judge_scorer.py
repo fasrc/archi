@@ -692,10 +692,61 @@ def test_a_scored_bundle_is_not_scored_again(tmp_path, queue, jq, judge):
     assert len(judge.calls) == calls
 
 
-def test_an_existing_judge_scores_file_is_kept(tmp_path, queue, jq, judge):
-    """A job that died after judge_scores.json and before SCORED left a complete
-    file: the next job keeps it and writes SCORED."""
+def test_a_valid_scores_file_left_by_a_dead_job_is_finalized_without_scoring(
+    tmp_path, queue, jq, judge
+):
+    """A bf16 job wrote judge_scores.json and died before SCORED. The fp8 job that
+    takes over keeps that complete, self-labelled result: it writes SCORED and
+    calls no judge."""
     bundle = make_bundle(queue)
-    (bundle / "judge_scores.json").write_text('{"kept": true}')
     assert score_bundle(bundle, make_ctx(tmp_path, queue, jq)) == "SCORED"
-    assert judge_scores(bundle) == {"kept": True}
+    (bundle / "SCORED").unlink()
+    before = (bundle / "judge_scores.json").read_bytes()
+    calls = len(judge.calls)
+    fp8 = make_ctx(tmp_path, queue, jq, env={"JUDGE_PRECISION": "fp8"})
+    assert score_bundle(bundle, fp8) == "SCORED"
+    assert len(judge.calls) == calls
+    assert (bundle / "judge_scores.json").read_bytes() == before
+    assert judge_scores(bundle)["ragas_judge_identity_effective"]["precision"] == "bf16"
+
+
+def _scored_then_edited(tmp_path, queue, jq, edit):
+    bundle = make_bundle(queue)
+    assert score_bundle(bundle, make_ctx(tmp_path, queue, jq)) == "SCORED"
+    (bundle / "SCORED").unlink()
+    record = judge_scores(bundle)
+    (bundle / "judge_scores.json").write_text(json.dumps(edit(record)))
+    return bundle
+
+
+@pytest.mark.parametrize(
+    "edit,reason",
+    [
+        (lambda record: {"kept": True}, "lacks"),
+        (lambda record: dict(record, rows_sha256="sha256:other"), "sha256:other"),
+        (
+            lambda record: dict(
+                record,
+                scores={k: v for k, v in record["scores"].items() if k != "question_2"},
+            ),
+            "question_2",
+        ),
+    ],
+)
+def test_an_invalid_scores_file_makes_the_bundle_failed(
+    tmp_path, queue, jq, judge, edit, reason
+):
+    bundle = _scored_then_edited(tmp_path, queue, jq, edit)
+    assert score_bundle(bundle, make_ctx(tmp_path, queue, jq)) == "FAILED"
+    failed = (bundle / "FAILED").read_text()
+    assert "judge_scores.json" in failed and reason in failed
+    assert not (bundle / "SCORED").exists()
+
+
+def test_a_scores_file_that_does_not_load_makes_the_bundle_failed(
+    tmp_path, queue, jq, judge
+):
+    bundle = make_bundle(queue)
+    (bundle / "judge_scores.json").write_text("{")
+    assert score_bundle(bundle, make_ctx(tmp_path, queue, jq)) == "FAILED"
+    assert "judge_scores.json does not load" in (bundle / "FAILED").read_text()

@@ -365,6 +365,18 @@ def test_a_question_key_missing_from_the_pending_result_is_refused(merge, run, c
     assert not run.judged_path.exists()
 
 
+def test_a_scores_file_without_a_judge_field_is_refused_not_a_crash(merge, run, capsys):
+    run.score(0)
+    run.score(1)
+    path = run.bundles[1] / "judge_scores.json"
+    record = json.loads(path.read_text())
+    del record["judge_execution"]
+    path.write_text(json.dumps(record))
+    assert _main(merge, run) == 1
+    assert "judge_execution" in capsys.readouterr().err
+    assert not run.judged_path.exists()
+
+
 def test_an_arm_count_that_differs_from_the_pending_result_is_refused(
     merge, run, capsys
 ):

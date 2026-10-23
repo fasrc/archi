@@ -336,8 +336,14 @@ def status_lines(
     return lines
 
 
-def parse_time_left(text: str) -> Optional[int]:
-    """Seconds from a ``squeue -o %L`` value; None for UNLIMITED or anything else."""
+def parse_time_left(text: str) -> Optional[float]:
+    """Seconds from a ``squeue -o %L`` value.
+
+    ``UNLIMITED`` is ``math.inf``. Anything else that does not parse
+    (``NOT_SET``, ``INVALID``, an empty answer) is None: unknown, not unlimited.
+    """
+    if text.strip() == "UNLIMITED":
+        return math.inf
     found = _TIME_LEFT.match(text.strip())
     if not found:
         return None
@@ -345,8 +351,9 @@ def parse_time_left(text: str) -> Optional[int]:
     return ((days * 24 + hours) * 60 + minutes) * 60 + seconds
 
 
-def time_left(job_id: Optional[str]) -> Optional[int]:
-    """Seconds left in the job's allocation, or None when unknown or unlimited."""
+def time_left(job_id: Optional[str]) -> Optional[float]:
+    """Seconds left in the job's allocation; ``math.inf`` when unlimited, None
+    when squeue cannot tell (no job id, a failed query, an unreadable answer)."""
     if not job_id:
         return None
     proc = _run(["squeue", "-h", "-j", job_id, "-o", "%L"])
@@ -369,14 +376,18 @@ def plan_claims(
     bundles already picked need is counted against *seconds_left*, so a job
     claims at start only what the rate says it can finish. With
     *first_is_free*, the first candidate is picked whatever it needs (a job
-    always scores at least one bundle). ``None`` seconds means no limit.
+    always scores at least one bundle). ``math.inf`` seconds is no limit.
+    ``None`` seconds (squeue could not tell) picks at most the first
+    candidate: a failed query must not let one job claim the whole queue.
     """
+    if seconds_left is None:
+        return [item for item, _ in candidates[:1]]
     picked: List[T] = []
     committed = 0.0
     for item, rows in candidates:
         need = rows / rows_per_minute * 60
         free = first_is_free and not picked
-        if free or seconds_left is None or committed + need <= seconds_left:
+        if free or committed + need <= seconds_left:
             picked.append(item)
             committed += need
     return picked
