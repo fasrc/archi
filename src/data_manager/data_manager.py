@@ -67,9 +67,11 @@ class DataManager:
             self.run_ingestion()
 
     def run_ingestion(
-        self, progress_callback: Optional[Callable[[str], None]] = None
-    ) -> None:
-        """Execute initial ingestion and vectorstore update."""
+        self,
+        progress_callback: Optional[Callable[[str], None]] = None,
+        embedding_progress=None,
+    ) -> Optional[str]:
+        """Execute initial ingestion and vectorstore update; return its status."""
         source_aggregation = [
             (
                 "Copying configured local files",
@@ -107,7 +109,9 @@ class DataManager:
         self.vector_manager.delete_existing_collection_if_reset()
         if progress_callback:
             progress_callback("Updating vectorstore")
-        self.vector_manager.update_vectorstore()
+        return self.vector_manager.update_vectorstore(
+            embedding_progress=embedding_progress
+        )
 
     def delete_existing_collection_if_reset(self, *, force: bool = False):
         """Proxy to the underlying vector manager."""
@@ -125,7 +129,7 @@ class DataManager:
         if not (self.should_run_ingestion or force):
             logger.debug("Skipping vectorstore update (ingestion disabled).")
             return None
-        self.vector_manager.update_vectorstore()
+        return self.vector_manager.update_vectorstore()
 
     def _update_after_collect(self) -> None:
         self.persistence.flush_index()

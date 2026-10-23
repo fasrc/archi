@@ -21,6 +21,8 @@ from src.utils.benchmark_provenance import (
     CollectionNotReadyError,
     RetrievalIdentity,
     collection_readiness,
+    embedding_tags_unchanged,
+    live_embedding_tag_state,
     readiness_counts,
     retrieval_record,
 )
@@ -141,6 +143,118 @@ class TestProvenance:
         }
 
 
+_TAG_CONFIG = {
+    "data_manager": {
+        "collection_name": "fasrc",
+        "embedding_name": "HuggingFaceEmbeddings",
+    }
+}
+
+
+class TestLiveEmbeddingTagState:
+    def _state(self, row):
+        return live_embedding_tag_state(FakePool(row), _TAG_CONFIG)
+
+    def test_returns_sorted_tags_and_untagged_count(self):
+        result = self._state((10, 8, 2, ["m2", "m1"]))
+        assert result == {
+            "embedding_model_tags": ["m1", "m2"],
+            "untagged_chunk_count": 2,
+        }
+
+    def test_empty_tags_returns_empty_list(self):
+        result = self._state((5, 5, 0, []))
+        assert result == {"embedding_model_tags": [], "untagged_chunk_count": 0}
+
+    def test_query_is_scoped_to_the_config_collection(self):
+        pool = FakePool((5, 5, 0, ["m1"]))
+        live_embedding_tag_state(pool, _TAG_CONFIG)
+        [(sql, params)] = pool.calls
+        assert params == ("fasrc_with_HuggingFaceEmbeddings",)
+
+    def test_raises_when_the_read_raises(self):
+        class _ErrorPool:
+            def get_connection(self):
+                raise RuntimeError("db down")
+
+        with pytest.raises(RuntimeError, match="db down"):
+            live_embedding_tag_state(_ErrorPool(), _TAG_CONFIG)
+
+
+_START_ZERO = {"embedding_model": "m1", "untagged_chunk_count": 0, "extra": "ok"}
+_START_FIVE = {"embedding_model": "m1", "untagged_chunk_count": 5}
+
+
+def _end(tags, n):
+    return {"embedding_model_tags": tags, "untagged_chunk_count": n}
+
+
+class TestEmbeddingTagsUnchanged:
+    def test_same_tag_zero_untagged_is_unchanged(self):
+        assert embedding_tags_unchanged(_START_ZERO, _end(["m1"], 0)) is True
+
+    def test_empty_end_tags_zero_untagged_is_unchanged(self):
+        assert embedding_tags_unchanged(_START_ZERO, _end([], 0)) is True
+
+    def test_foreign_tag_added_is_changed(self):
+        assert embedding_tags_unchanged(_START_ZERO, _end(["m1", "m2"], 0)) is False
+
+    def test_different_tag_only_is_changed(self):
+        assert embedding_tags_unchanged(_START_ZERO, _end(["m2"], 0)) is False
+
+    def test_untagged_count_increased_is_changed(self):
+        assert embedding_tags_unchanged(_START_ZERO, _end(["m1"], 3)) is False
+
+    def test_fewer_untagged_than_start_is_unchanged(self):
+        assert embedding_tags_unchanged(_START_FIVE, _end(["m1"], 2)) is True
+
+    def test_same_untagged_as_start_is_unchanged(self):
+        assert embedding_tags_unchanged(_START_FIVE, _end(["m1"], 5)) is True
+
+    def test_none_start_returns_none(self):
+        assert embedding_tags_unchanged(None, _end(["m1"], 0)) is None
+
+    def test_start_missing_embedding_model_returns_none(self):
+        assert (
+            embedding_tags_unchanged({"untagged_chunk_count": 0}, _end(["m1"], 0))
+            is None
+        )
+
+    def test_start_missing_untagged_count_returns_none(self):
+        assert (
+            embedding_tags_unchanged({"embedding_model": "m1"}, _end(["m1"], 0)) is None
+        )
+
+    def test_start_bool_untagged_count_returns_none(self):
+        assert (
+            embedding_tags_unchanged(
+                {"embedding_model": "m1", "untagged_chunk_count": False},
+                _end(["m1"], 0),
+            )
+            is None
+        )
+
+    def test_marker_string_end_returns_none(self):
+        assert embedding_tags_unchanged(_START_ZERO, "<unavailable: db error>") is None
+
+    def test_none_end_returns_none(self):
+        assert embedding_tags_unchanged(_START_ZERO, None) is None
+
+    def test_end_bool_untagged_count_returns_none(self):
+        assert (
+            embedding_tags_unchanged(
+                _START_ZERO,
+                {"embedding_model_tags": ["m1"], "untagged_chunk_count": True},
+            )
+            is None
+        )
+
+    def test_end_missing_tags_key_returns_none(self):
+        assert (
+            embedding_tags_unchanged(_START_ZERO, {"untagged_chunk_count": 0}) is None
+        )
+
+
 DSN = os.environ.get("ARCHI_PROVENANCE_TEST_DSN")
 
 
@@ -198,3 +312,29 @@ def test_chunks_of_a_deleted_document_are_not_counted(pg):
     )
 
     assert readiness_counts(pg, "C") == (1, 1, 0, ["A"])
+
+
+def test_live_embedding_tag_state_real_sql(pg):
+    pg.execute(
+        "INSERT INTO document_chunks (embedding, metadata) VALUES "
+        '(\'[1,0,0]\', \'{"collection": "c_with_e", "embedding_model": "m1"}\'), '
+        '(NULL, \'{"collection": "c_with_e"}\')'
+    )
+
+    class PgPool:
+        @contextmanager
+        def get_connection(self):
+            class _Conn:
+                def cursor(self):
+                    return pg.connection.cursor()
+
+            yield _Conn()
+
+    config = {
+        "data_manager": {
+            "collection_name": "c",
+            "embedding_name": "e",
+        }
+    }
+    result = live_embedding_tag_state(PgPool(), config)
+    assert result == {"embedding_model_tags": ["m1"], "untagged_chunk_count": 1}

@@ -1,7 +1,10 @@
 import pytest
 
 from src.utils.evaluations_config import (
+    AGENT_CONFIG_STAGED_FILENAME,
     LIVE_AGENT_CONFIG_PATH,
+    refuse_agent_config_inside_deployment,
+    resolve_agent_config_source,
     validate_evaluations_config,
 )
 
@@ -191,3 +194,261 @@ def test_preflight_verdict_matches_the_runtime_seam(spelling, is_live):
             validate_evaluations_config(config)
     else:
         assert validate_evaluations_config(config) is None
+
+
+# --- resolve_agent_config_source and AGENT_CONFIG_STAGED_FILENAME ---
+
+
+def _make_config(tmp_path, evaluations):
+    yaml_path = tmp_path / "archi.yaml"
+    yaml_path.write_text("# deployment config")
+    return {
+        "_config_path": str(yaml_path),
+        "services": {"chat_app": {"evaluations": evaluations}},
+    }
+
+
+@pytest.mark.parametrize(
+    "evaluations",
+    [
+        {},
+        {"enabled": False},
+        {"enabled": "true", "agent_config_path": "missing.yaml"},
+    ],
+)
+def test_resolve_agent_config_source_returns_none_when_not_enabled(
+    tmp_path, evaluations
+):
+    config = _make_config(tmp_path, evaluations)
+    assert resolve_agent_config_source(config) is None
+
+
+def test_resolve_agent_config_source_existing_absolute_file(tmp_path):
+    src = tmp_path / "agent.yaml"
+    src.write_text("agent config")
+    config = _make_config(tmp_path, {"enabled": True, "agent_config_path": str(src)})
+    assert resolve_agent_config_source(config) == src.resolve()
+
+
+def test_resolve_agent_config_source_relative_resolves_against_yaml_dir(
+    tmp_path, monkeypatch
+):
+    eval_dir = tmp_path / "eval"
+    eval_dir.mkdir()
+    src = eval_dir / "agent.yaml"
+    src.write_text("agent config")
+    config = _make_config(
+        tmp_path, {"enabled": True, "agent_config_path": "eval/agent.yaml"}
+    )
+    monkeypatch.chdir("/tmp")
+    assert resolve_agent_config_source(config) == src.resolve()
+
+
+def test_resolve_agent_config_source_missing_file_raises(tmp_path):
+    missing = tmp_path / "missing.yaml"
+    config = _make_config(
+        tmp_path, {"enabled": True, "agent_config_path": str(missing)}
+    )
+    with pytest.raises(ValueError) as exc_info:
+        resolve_agent_config_source(config)
+    msg = str(exc_info.value)
+    assert _DOTTED_KEY in msg
+    assert "not found" in msg
+    assert str(missing.resolve()) in msg
+
+
+def test_resolve_agent_config_source_directory_raises(tmp_path):
+    d = tmp_path / "agent_dir"
+    d.mkdir()
+    config = _make_config(tmp_path, {"enabled": True, "agent_config_path": str(d)})
+    with pytest.raises(ValueError, match="must be a file"):
+        resolve_agent_config_source(config)
+
+
+def test_resolve_agent_config_source_unreadable_file_raises(tmp_path):
+    import os
+
+    if os.geteuid() == 0:
+        pytest.skip("running as root; file permissions are not enforced")
+    src = tmp_path / "agent.yaml"
+    src.write_text("agent config")
+    src.chmod(0o000)
+    config = _make_config(tmp_path, {"enabled": True, "agent_config_path": str(src)})
+    with pytest.raises(ValueError, match="not readable"):
+        resolve_agent_config_source(config)
+
+
+def test_resolve_agent_config_source_relative_self_reference_raises(tmp_path):
+    config = _make_config(
+        tmp_path, {"enabled": True, "agent_config_path": "archi.yaml"}
+    )
+    with pytest.raises(ValueError, match="live deployment config"):
+        resolve_agent_config_source(config)
+
+
+def test_resolve_agent_config_source_absolute_self_reference_raises(tmp_path):
+    yaml_path = tmp_path / "archi.yaml"
+    yaml_path.write_text("deployment config")
+    config = {
+        "_config_path": str(yaml_path),
+        "services": {
+            "chat_app": {
+                "evaluations": {"enabled": True, "agent_config_path": str(yaml_path)}
+            }
+        },
+    }
+    with pytest.raises(ValueError, match="live deployment config"):
+        resolve_agent_config_source(config)
+
+
+def test_resolve_agent_config_source_live_config_path_raises(tmp_path):
+    config = _make_config(
+        tmp_path,
+        {"enabled": True, "agent_config_path": "/root/archi/configs/config.yaml"},
+    )
+    with pytest.raises(ValueError, match="live deployment config"):
+        resolve_agent_config_source(config)
+
+
+def test_resolve_agent_config_source_relative_without_config_path_raises():
+    config = {
+        "services": {
+            "chat_app": {
+                "evaluations": {"enabled": True, "agent_config_path": "eval/agent.yaml"}
+            }
+        }
+    }
+    with pytest.raises(ValueError, match=_DOTTED_KEY):
+        resolve_agent_config_source(config)
+
+
+def test_resolve_agent_config_source_blank_path_raises(tmp_path):
+    config = _make_config(tmp_path, {"enabled": True, "agent_config_path": ""})
+    with pytest.raises(ValueError, match="is required"):
+        resolve_agent_config_source(config)
+
+
+def test_resolve_agent_config_source_missing_path_key_raises(tmp_path):
+    config = _make_config(tmp_path, {"enabled": True})
+    with pytest.raises(ValueError, match="is required"):
+        resolve_agent_config_source(config)
+
+
+def test_agent_config_staged_filename():
+    assert AGENT_CONFIG_STAGED_FILENAME == "qa_agent_config.yaml"
+
+
+# --- refuse_agent_config_inside_deployment ---
+
+
+def _make_enabled_config(tmp_path, agent_config_path):
+    yaml_path = tmp_path / "archi.yaml"
+    yaml_path.write_text("# deployment config")
+    return {
+        "_config_path": str(yaml_path),
+        "services": {
+            "chat_app": {
+                "evaluations": {"enabled": True, "agent_config_path": agent_config_path}
+            }
+        },
+    }
+
+
+def test_refuse_agent_config_inside_deployment_raises_for_source_inside(tmp_path):
+    base_dir = tmp_path / "deployment"
+    base_dir.mkdir()
+    inside_file = base_dir / "configs" / "config.eval.yaml"
+    inside_file.parent.mkdir()
+    inside_file.write_text("agent config")
+    config = _make_enabled_config(tmp_path, str(inside_file))
+    with pytest.raises(ValueError) as exc_info:
+        refuse_agent_config_inside_deployment([config], base_dir, ["chatbot"])
+    msg = str(exc_info.value)
+    assert _DOTTED_KEY in msg
+    assert str(inside_file.resolve()) in msg
+    assert "outside" in msg
+
+
+def test_refuse_agent_config_inside_deployment_no_raise_for_source_outside(tmp_path):
+    base_dir = tmp_path / "deployment"
+    base_dir.mkdir()
+    outside_file = tmp_path / "agent.yaml"
+    outside_file.write_text("agent config")
+    config = _make_enabled_config(tmp_path, str(outside_file))
+    refuse_agent_config_inside_deployment([config], base_dir, ["chatbot"])
+
+
+def test_refuse_agent_config_inside_deployment_no_raise_when_disabled(tmp_path):
+    base_dir = tmp_path / "deployment"
+    base_dir.mkdir()
+    inside_file = base_dir / "config.eval.yaml"
+    inside_file.write_text("agent config")
+    yaml_path = tmp_path / "archi.yaml"
+    yaml_path.write_text("# deployment config")
+    config = {
+        "_config_path": str(yaml_path),
+        "services": {
+            "chat_app": {
+                "evaluations": {
+                    "enabled": False,
+                    "agent_config_path": str(inside_file),
+                }
+            }
+        },
+    }
+    refuse_agent_config_inside_deployment([config], base_dir, ["chatbot"])
+
+
+def test_refuse_agent_config_inside_deployment_raises_for_second_config_inside(
+    tmp_path,
+):
+    base_dir = tmp_path / "deployment"
+    base_dir.mkdir()
+    outside_file = tmp_path / "agent.yaml"
+    outside_file.write_text("agent config outside")
+    inside_file = base_dir / "config.eval.yaml"
+    inside_file.write_text("agent config inside")
+
+    yaml1 = tmp_path / "archi1.yaml"
+    yaml1.write_text("# config 1")
+    config1 = {
+        "_config_path": str(yaml1),
+        "services": {
+            "chat_app": {
+                "evaluations": {"enabled": True, "agent_config_path": str(outside_file)}
+            }
+        },
+    }
+    yaml2 = tmp_path / "archi2.yaml"
+    yaml2.write_text("# config 2")
+    config2 = {
+        "_config_path": str(yaml2),
+        "services": {
+            "chat_app": {
+                "evaluations": {"enabled": True, "agent_config_path": str(inside_file)}
+            }
+        },
+    }
+    with pytest.raises(ValueError, match="outside"):
+        refuse_agent_config_inside_deployment([config1, config2], base_dir, ["chatbot"])
+
+
+def test_refuse_agent_config_inside_deployment_skips_when_chatbot_not_selected(
+    tmp_path,
+):
+    base_dir = tmp_path / "deployment"
+    base_dir.mkdir()
+    config = _make_enabled_config(tmp_path, str(tmp_path / "missing.yaml"))
+    refuse_agent_config_inside_deployment(
+        [config], base_dir, ["postgres", "benchmarking"]
+    )
+
+
+def test_refuse_agent_config_inside_deployment_checks_when_chatbot_selected(
+    tmp_path,
+):
+    base_dir = tmp_path / "deployment"
+    base_dir.mkdir()
+    config = _make_enabled_config(tmp_path, str(tmp_path / "missing.yaml"))
+    with pytest.raises(ValueError, match="not found"):
+        refuse_agent_config_inside_deployment([config], base_dir, ["chatbot"])

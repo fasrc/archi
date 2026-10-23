@@ -448,7 +448,11 @@ pipeline exported by `src.archi.pipelines`.
 
 The CLI accepts an existing local `.yaml` or `.yml` file through
 `--agent-config`. During the run, Archi snapshots the resolved file as
-`agent_config.resolved.yaml`.
+`agent_config.resolved.yaml`. Values under secret-named keys (API keys, tokens,
+passwords, `Authorization` headers, and the password component of a URL) are
+replaced with `[redacted]` before the write. Every phase, including continue and
+retry, runs from that redacted content. Credentials must come from the environment
+or secrets, not from inline config values.
 
 The browser Console needs no separate agent-config file. It evaluates the agent
 already defined by the running deployment's YAML—for example,
@@ -1131,7 +1135,7 @@ The current workspace schema is `qa-v2`.
 | `input.snapshot.json` or `.jsonl` | Prepare               | Exact input bytes used by the run                                                                                                                                                                    |
 | `evaluator_profile.resolved.yaml`   | Prepare               | Fixed evaluator profile                                                                                                                                                                              |
 | `preparation.jsonl`                 | Prepare               | One terminal record per input item, containing either runnable normalized data and fixed atoms, a skip, or a preparation failure                                                                     |
-| `agent_config.resolved.yaml`        | Run                   | Exact tested Archi config                                                                                                                                                                            |
+| `agent_config.resolved.yaml`        | Run                   | Exact tested Archi config with secret values redacted                                                                                                                                                |
 | `agent_spec.resolved.md`            | Run                   | Exact tested agent spec and prompt                                                                                                                                                                   |
 | `answers.jsonl`                     | Run                   | One terminal`answer_ready` or `execution_failed` row per attempt slot, including tested-agent `duration_ms` and complete ordered tool-call query/response/error records with optional duration |
 | `live_checks.jsonl`                 | Run                   | Ordered pre-run and post-run oracle observations, normalized answers, hashes, metadata, bounded call evidence, or item-scoped live failures                                                          |

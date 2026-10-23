@@ -945,6 +945,114 @@ def test_an_unrecorded_identity_without_an_embedding_difference_is_noted(
     assert "varied factor" not in out.lower()
 
 
+# --- #573: end-of-run embedding tags ---
+
+
+_TAG_KEY = "embedding_tags_unchanged_at_endpoints"
+
+
+def _with_tags(path, value):
+    """Record the end-of-run tag comparison on the single arm of an artifact."""
+    document = json.loads(path.read_text())
+    document["benchmarking_results"][0][_TAG_KEY] = value
+    path.write_text(json.dumps(document))
+    return str(path)
+
+
+@pytest.mark.parametrize("value", [False, None], ids=["changed", "not-observed"])
+@pytest.mark.parametrize("flag", [[], ["--corpus-differs-by-design"]])
+def test_an_arm_whose_embedding_tags_changed_is_refused(_artifact, capsys, value, flag):
+    # A changed tag state means vectors of another model, or of no recorded
+    # model, appeared during the arm. The fingerprint is model-neutral and
+    # cannot see it, and no flag admits it.
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)], name="base.json", fingerprint="sha256/v2:a"
+        )
+    )
+    treat = _with_tags(
+        _artifact(
+            [_row("q1", faithfulness=0.6)], name="treat.json", fingerprint="sha256/v2:a"
+        ),
+        value,
+    )
+
+    code = cr.main([base, treat, *flag])
+
+    assert code == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "embedding model tags" in err
+    assert _TAG_KEY in err
+    flagged = err.split("embedding model tags", 1)[1]
+    assert "treat" in flagged and "base" not in flagged
+
+
+@pytest.mark.parametrize("value", ["absent", True], ids=["legacy", "unchanged"])
+def test_an_arm_without_a_tag_change_compares_as_before(_artifact, value):
+    base = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"))
+    treat_path = _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:a")
+    treat = str(treat_path) if value == "absent" else _with_tags(treat_path, value)
+
+    assert cr.main([base, treat]) == cr.EXIT_OK
+
+
+@pytest.mark.parametrize("allow", [False, True])
+def test_a_noise_replicate_whose_embedding_tags_changed_is_refused(_artifact, allow):
+    # A void replicate must not widen sigma, whatever the corpus flag says.
+    baseline = cr.load_arms(
+        [str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"))]
+    )[0]
+    one = _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:a")
+    changed = _with_tags(
+        _artifact([_row("q1", faithfulness=0.7)], fingerprint="sha256/v2:a"), False
+    )
+
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.noise_floor_from_runs(
+            [str(one), changed], baseline=baseline, allow_corpus_differs=allow
+        )
+
+    assert excinfo.value.code == cr.EXIT_GATE
+    message = str(excinfo.value)
+    assert "embedding model tags" in message
+    assert changed in message
+
+
+@pytest.mark.parametrize(
+    "tags, expected",
+    [
+        (False, "embedding model tags changed while it answered"),
+        (None, "embedding tag reading is unavailable"),
+        (True, None),
+        ("absent", None),
+    ],
+    ids=["changed", "not-observed", "unchanged", "legacy"],
+)
+def test_a_qa_run_whose_embedding_tags_changed_cannot_join(
+    _artifact, tmp_path, capsys, tags, expected
+):
+    question, reference = "how do I request a GPU", "use --gres=gpu:1"
+    rows = [_row(question, reference=reference, faithfulness=0.5)]
+    base = str(_artifact(rows, fingerprint="sha256/v2:a"))
+    treat = str(_artifact(rows, fingerprint="sha256/v2:a"))
+    arms = cr.load_arms([base, treat])
+    corpus = dict(_STABLE)
+    if tags != "absent":
+        corpus[_TAG_KEY] = tags
+    run = _qa_with_corpus(
+        tmp_path / "qa", derive_item_id(question, reference), **corpus
+    )
+
+    code = cr.main([base, treat, "--qa-run", f"{arms[1].label}={run}"])
+
+    if expected is None:
+        assert code == cr.EXIT_OK
+    else:
+        assert code == cr.EXIT_GATE
+        err = capsys.readouterr().err
+        assert "cannot join" in err and expected in err
+
+
 # --- Procedure E: the divergence gate ----------------------------------------
 
 

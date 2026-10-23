@@ -362,3 +362,242 @@ def test_snapshot_keys_are_coerced_to_strings():
     panel = build_knowledge_base_panel(_run_row(config_snapshot={1: "a"}), {})
 
     assert panel["config"] == {"1": "a"}
+
+
+# ---------------------------------------------------------------------------
+# D3 — corpus run vs failed attempt
+# ---------------------------------------------------------------------------
+
+FAILED_LATER = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+FAILED_EARLIER = datetime(2026, 9, 22, 15, 0, tzinfo=timezone.utc)
+FAILED_AT = datetime(2026, 9, 23, 3, 0, tzinfo=timezone.utc)
+
+
+def test_sql_latest_ingest_run_filters_by_success_status():
+    from src.interfaces.chat_app.status_provenance import _SQL_LATEST_INGEST_RUN
+
+    assert "status IN ('updated', 'up_to_date')" in _SQL_LATEST_INGEST_RUN
+
+
+def test_build_kb_panel_reports_failed_at_when_newer_than_corpus_run():
+    panel = build_knowledge_base_panel(
+        _run_row(), current_snapshot={}, last_failed_at=FAILED_LATER
+    )
+    assert panel["last_attempt_failed_at"] == FAILED_LATER
+
+
+def test_build_kb_panel_clears_failed_at_when_older_than_corpus_run():
+    panel = build_knowledge_base_panel(
+        _run_row(), current_snapshot={}, last_failed_at=FAILED_EARLIER
+    )
+    assert panel["last_attempt_failed_at"] is None
+
+
+def test_build_kb_panel_unavailable_carries_failed_at():
+    panel = build_knowledge_base_panel(
+        None, current_snapshot={}, last_failed_at=FAILED_LATER
+    )
+    assert panel["available"] is False
+    assert panel["last_attempt_failed_at"] == FAILED_LATER
+
+
+def test_build_kb_panel_naive_vs_aware_datetime_does_not_raise():
+    naive_failed = datetime(2026, 9, 23, 2, 0)
+    panel = build_knowledge_base_panel(
+        _run_row(), current_snapshot={}, last_failed_at=naive_failed
+    )
+    assert panel["last_attempt_failed_at"] == naive_failed
+
+
+def test_load_status_provenance_four_results_puts_failed_at_in_kb():
+    conn = _FakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+            ({"data_manager": {}},),
+            (FAILED_AT,),
+        ]
+    )
+    view = load_status_provenance(conn)
+    assert view["knowledge_base"]["last_attempt_failed_at"] == FAILED_AT
+
+
+def test_load_status_provenance_three_results_leaves_failed_at_none():
+    conn = _FakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+            ({"data_manager": {}},),
+        ]
+    )
+    view = load_status_provenance(conn)
+    assert view["knowledge_base"]["last_attempt_failed_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# D4 — unavailable current config
+# ---------------------------------------------------------------------------
+
+
+def test_build_kb_panel_none_current_snapshot_gives_no_drift_and_config_unavailable():
+    panel = build_knowledge_base_panel(_run_row(), None)
+    assert panel["drift"] == []
+    assert panel["current_config_available"] is False
+
+
+def test_build_kb_panel_with_mapping_current_snapshot_gives_config_available_and_drift():
+    run = _run_row(config_snapshot={"categorization": True})
+    panel = build_knowledge_base_panel(run, {"categorization": False})
+    assert panel["current_config_available"] is True
+    assert panel["drift"] == [
+        {"key": "categorization", "current": False, "at_ingest": True}
+    ]
+
+
+class _NthCallRaisingCursor:
+    """Raises on the Nth execute call; otherwise behaves like _FakeCursor."""
+
+    def __init__(self, results, raise_on_call):
+        self.results = list(results)
+        self.raise_on_call = raise_on_call
+        self._row = None
+        self._call_count = 0
+
+    def execute(self, sql, params=None):
+        self._call_count += 1
+        if self._call_count == self.raise_on_call:
+            raise RuntimeError("forced error on call %d" % self.raise_on_call)
+        self._row = self.results.pop(0) if self.results else None
+
+    def fetchone(self):
+        return self._row
+
+    def close(self):
+        pass
+
+
+class _NthCallRaisingConn:
+    def __init__(self, results, raise_on_call):
+        self._cursor = _NthCallRaisingCursor(results, raise_on_call)
+
+    def cursor(self, **kwargs):
+        return self._cursor
+
+
+def test_load_provenance_config_query_raises_keeps_deploy_and_run_panels_available():
+    conn = _NthCallRaisingConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+        ],
+        raise_on_call=3,
+    )
+    view = load_status_provenance(conn)
+    assert view["deployment"]["available"] is True
+    assert view["knowledge_base"]["available"] is True
+    assert view["knowledge_base"]["drift"] == []
+    assert view["knowledge_base"]["current_config_available"] is False
+
+
+class _RollbackRecordingConn(_NthCallRaisingConn):
+    def __init__(self, results, raise_on_call):
+        super().__init__(results, raise_on_call)
+        self.rollbacks = 0
+
+    def rollback(self):
+        self.rollbacks += 1
+
+
+_FAILED_AT = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+
+
+def test_a_failed_config_query_still_reads_the_newer_failed_attempt():
+    conn = _RollbackRecordingConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+            (_FAILED_AT,),
+        ],
+        raise_on_call=3,
+    )
+    view = load_status_provenance(conn)
+    assert view["knowledge_base"]["last_attempt_failed_at"] == _FAILED_AT
+    assert view["knowledge_base"]["current_config_available"] is False
+
+
+def test_a_failed_config_query_rolls_the_connection_back():
+    conn = _RollbackRecordingConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+            (_FAILED_AT,),
+        ],
+        raise_on_call=3,
+    )
+    load_status_provenance(conn)
+    assert conn.rollbacks == 1
+
+
+def test_a_config_snapshot_build_error_still_reads_the_failed_attempt(monkeypatch):
+    import src.interfaces.chat_app.status_provenance as provenance
+
+    def _boom(_config):
+        raise ValueError("bad config")
+
+    monkeypatch.setattr(provenance, "build_ingest_config_snapshot", _boom)
+    conn = _FakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+            ({"data_manager": {}},),
+            (_FAILED_AT,),
+        ]
+    )
+    view = load_status_provenance(conn)
+    assert view["knowledge_base"]["last_attempt_failed_at"] == _FAILED_AT
+    assert view["knowledge_base"]["current_config_available"] is False
+
+
+def test_a_config_read_error_without_rollback_support_does_not_raise():
+    conn = _NthCallRaisingConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+            (_FAILED_AT,),
+        ],
+        raise_on_call=3,
+    )
+    view = load_status_provenance(conn)
+    assert view["knowledge_base"]["last_attempt_failed_at"] == _FAILED_AT
+
+
+def test_load_provenance_config_query_no_row_gives_config_unavailable():
+    conn = _FakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+        ]
+    )
+    view = load_status_provenance(conn)
+    assert view["knowledge_base"]["current_config_available"] is False
+    assert view["knowledge_base"]["drift"] == []
+
+
+# ---------------------------------------------------------------------------
+# D5 — pin mismatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "pin_matched, expected_mismatch",
+    [(True, False), (False, True), (None, False)],
+)
+def test_pin_mismatch_reflects_only_a_confirmed_false_verdict(
+    pin_matched, expected_mismatch
+):
+    panel = build_deployment_panel(_deploy_row(pin_matched=pin_matched))
+    assert panel["pin_mismatch"] is expected_mismatch
+
+
+def test_unavailable_deployment_panel_has_no_pin_mismatch():
+    assert build_deployment_panel(None)["pin_mismatch"] is False
