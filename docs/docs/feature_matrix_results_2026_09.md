@@ -333,10 +333,13 @@ i.e. many more, smaller chunks and smaller parents.
 **Reading.** The pre-registered claim ("header-aware chunking raises precision on the
 Markdown-bearing part of the corpus") is refuted at the corpus level: precision and recall of
 the retrieved text both fall by more than their MDEs in both runs. The bank carries no
-"Markdown-bearing page" slice, so the narrower claim was not tested. Yet the answers improved
-on all three gold-atom metrics and arrived 37 % sooner — the same signature as reranker OFF.
-Section 4.1 takes this up. As a default: hurts on the primary metric, with an answer-side
-trade-off and a 55 % larger index; not recommended without the follow-up in section 5.
+"Markdown-bearing page" slice, so the narrower claim was not tested.
+([#490](https://github.com/fasrc/archi/issues/490) disputes this caveat: every source URL in
+the bank resolves to a web-scraped Markdown page, so arm 07 was in effect judged on that
+slice. The correction is open there.) Yet the answers improved on all three gold-atom metrics
+and arrived 37 % sooner — the same signature as reranker OFF. Section 4.1 takes this up. As a
+default: hurts on the primary metric, with an answer-side trade-off and a 55 % larger index;
+not recommended without the follow-up in section 5.
 
 ---
 
