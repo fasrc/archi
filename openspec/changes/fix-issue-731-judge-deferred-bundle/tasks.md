@@ -12,8 +12,9 @@ Rules for every task:
   `src/utils/benchmark_provenance.py`. The lines in `src/bin/service_benchmark.py` are
   thin call sites.
 - Put new tests in NEW files with unique test names. Do not append to an existing test
-  file. The only allowed edit to an existing test file is the two stubs of design D4 in
-  `tests/unit/test_benchmark_resilience.py` (task 3.1).
+  file. The only allowed edits to an existing test file are the two stubs of design D4 in
+  `tests/unit/test_benchmark_resilience.py` (task 3.1) and line 91 of
+  `tests/unit/test_base_config_judge_render.py` (task 3.1c).
 - Patch `ResultHandler.results`, `ResultHandler.metadata`,
   `ResultHandler.category_map_records_by_arm` and `src.bin.service_benchmark.OUTPUT_DIR`
   with `monkeypatch` in every test that writes artifacts. A test that reaches the A/B or
@@ -108,6 +109,76 @@ Rules for every task:
       task 2.2a. Gate, then commit (message: `fix the result basename before the first
       arm`).
 
+- [ ] 3.1a (Review findings: Codex P2 on PR #747, and the wrap-up check.) Design D3 says
+      `plan_judge_run` returns a `JudgePlan` or raises `JudgeRunRefused`, "a `ValueError`
+      subclass". At 21e88806, `src/utils/judge_bundle.py:18` derives `JudgeRunRefused`
+      from `Exception`, and `_read_mode` (`:52-56`) re-raises an invalid `judge_mode` as a
+      plain `ValueError`. `tests/unit/test_judge_mode.py:100` accepts either type, so it
+      cannot see this. Create `tests/unit/test_judge_refused_is_value_error.py` with four
+      tests: (1) `issubclass(JudgeRunRefused, ValueError)` is true; (2) over two config
+      files in `tmp_path` (one `deferred`, one with no `judge_mode`), `plan_judge_run(...)`
+      inside `try: ... except ValueError as exc:` catches the error, and
+      `type(exc) is JudgeRunRefused`; (3) a config file with `judge_mode: Deferred` raises
+      `JudgeRunRefused` (use `pytest.raises(JudgeRunRefused)`, not a tuple) whose message
+      names that file path and `'Deferred'`; (4) a config file whose `ragas_settings` holds
+      `judge_mode: null` (the key present, the value null) raises `JudgeRunRefused` whose
+      message names that file path (design D2: a null that reached the file is refused).
+      Name the config files `a.yaml` and `b.yaml`, so that a path check cannot pass on a
+      mode word in the file name. Run the file and watch all four FAIL. Then change the
+      base class to `ValueError`, change the re-raise in `_read_mode` to
+      `raise JudgeRunRefused(f"{config_path}: {exc}") from exc`, and change the
+      `plan_judge_run` docstring line "Raises ValueError if any config holds an invalid
+      judge_mode" to name `JudgeRunRefused`. `parse_judge_mode` keeps raising a plain
+      `ValueError`. Run this file and `tests/unit/test_judge_mode.py`, and watch both pass.
+      Gate, then commit (message: `refuse an invalid judge_mode with JudgeRunRefused, a
+      ValueError`).
+
+- [ ] 3.1b (Review finding, Codex P2 on PR #747.) Design D4 says `run()` takes the result
+      timestamp as its FIRST statement. At `src/bin/service_benchmark.py:2455` it comes
+      after `wait_for_ingestion_completion()`, which can block for hours, so the file name
+      records the end of the ingest wait. Create
+      `tests/unit/test_benchmark_basename_before_ingest.py`. Copy the `_RunStub` and the
+      `monkeypatch` setup of
+      `tests/unit/test_benchmark_result_basename.py::test_run_records_timestamp_before_first_process_config`
+      (copied, not imported), with one change: `wait_for_ingestion_completion` appends
+      `"wait_for_ingestion"` to `calls` and returns `0.0`. Assert
+      `calls[:2] == ["result_timestamp", "wait_for_ingestion"]` and
+      `calls.count("result_timestamp") == 1`. Run the file and watch it FAIL. Then move the
+      two lines (`_result_ts = ...` and `self.result_basename = ...`) to the top of
+      `run()`, before `wait_for_ingestion_completion()`. Change no other line. Run this
+      file and `tests/unit/test_benchmark_result_basename.py`, and watch both pass. Tick
+      parent task 2.2a (task 3.1 did not tick it). Gate, then commit (message: `take the
+      result timestamp before the ingest wait`).
+
+- [ ] 3.1c (Review findings from the wrap-up check.) Three render checks of task 2.1 can
+      never fail. (a) `tests/unit/test_base_config_judge_render.py:88-91` calls
+      `parse_judge_mode({"judge_mode": ragas["judge_mode"]})`, but `parse_judge_mode`
+      takes the bare value (design D2 now says so), so any dict is refused and the test
+      passes whatever the template renders. (b) No test pins `| tojson` on
+      `judge_bundle_dir` (`src/cli/templates/base-config.yaml:136`): with it removed, a
+      folder named `2026` or `null` loads as an int or `None`, and every test stays green.
+      (c) PyYAML loads a bare `1e3` as a string, so
+      `test_revision_1e3_keeps_string_type` cannot fail. These tests pin behavior that is
+      already correct, so they pass at once; prove each one can fail instead (below).
+      In `tests/unit/test_base_config_judge_render.py`, change only line 91 to
+      `parse_judge_mode(ragas["judge_mode"])`. This is the one allowed edit to that file.
+      Create `tests/unit/test_base_config_judge_render_types.py`. Copy the `_render` and
+      `_render_ragas` helpers of that file (copied, not imported). Tests: a rendered `"deferred"` parses to
+      `"deferred"`; `judge_bundle_dir` `"2026"` and `"null"` each render as that string
+      (`type(...) is str`); `judge_mode` `"null"` renders as the string `"null"`, and
+      `parse_judge_mode` refuses it; `evaluator_model_revision` `"0123456"` (an
+      all-digit short SHA) renders as that string. Prove that each new test can fail:
+      in a scratch edit, remove `| tojson` from the `judge_bundle_dir` line, run the new
+      file, and watch the two `judge_bundle_dir` tests FAIL; do the same for the
+      `evaluator_model_revision` line and the revision test; make `parse_judge_mode`
+      accept `False`, and watch the edited line-91 test FAIL. Restore each scratch edit
+      (`git diff src/` must be empty, except the comment fix below). Also change the
+      template comment of `evaluator_model_revision` (`base-config.yaml:139`): replace the
+      words "Git revision of the judge model image" with "Revision of the judge model
+      (evaluator_model)", and keep the rest of the line, because D2 defines it as the
+      model's revision, not an image's. Run both render test files and watch them pass.
+      Gate, then commit (message: `make the judge render tests able to fail`).
+
 - [ ] 3.2 Create `tests/unit/test_judge_start_refusal.py`. Tests (design D3 steps 4–7,
       D7, D9): `package_digest` is order-independent, ignores blank lines and
       surrounding spaces, and returns `sha256:<64 hex>`; `collect_package_digest` with a
@@ -130,7 +201,8 @@ Rules for every task:
       returns; an inline `run()` leaves no marker; a `dump_artifacts` that raises leaves
       no marker. Run the file and watch it FAIL. Then add `package_digest` and
       `collect_package_digest` to `src/utils/benchmark_provenance.py`, steps 4–7 to
-      `plan_judge_run`, `write_result_complete` to `judge_bundle.py`, and its call site
+      `plan_judge_run` (when `package_digest_fn` is `None`, as in the
+      `Benchmarker.__init__` call, use `collect_package_digest`), `write_result_complete` to `judge_bundle.py`, and its call site
       after `dump_artifacts` in `run()`. Watch the file pass. Tick parent task 2.2b.
       Gate, then commit (message: `refuse a deferred run that no scorer could match`).
 
@@ -163,12 +235,14 @@ Rules for every task:
       `object.__new__(Benchmarker)` (pattern of
       `tests/unit/test_ragas_scoring_characterization.py`), set `config`,
       `benchmarking_configs`, `judge_plan` (deferred, with a code version and a package
-      digest), `result_basename`, `_arm_index`, and replace `get_ragas_llm_evaluator`,
+      digest, and `arm_count` 2), `result_basename`, `_arm_index = 1` (not 0, so that a
+      branch that hard-codes arm 0 fails), and replace `get_ragas_llm_evaluator`,
       `get_ragas_embedding_model` and `get_ragas_results` with functions that fail the
       test if called. Tests (design D6, D8): `_process_config` over 3 scorable questions
-      (stub `_answer_and_score_question`) writes one bundle under
-      `OUTPUT_DIR/judge_bundles/`, whose `rows.jsonl` lines equal the `dataset_result`
-      records by key; `total_results` has no `aggregate_*` and no `*_scored` key;
+      (stub `_answer_and_score_question`) writes exactly one bundle folder, named
+      `OUTPUT_DIR/judge_bundles/<result_basename>-arm1` (assert the exact name), whose
+      manifest has `arm_index` 1, `arm_count` 2 and the bench's `result_basename`, and
+      whose `rows.jsonl` lines equal the `dataset_result` records by key; `total_results` has no `aggregate_*` and no `*_scored` key;
       `_ragas_scored is False`; `_judge_bundle` holds the folder and the digest; a plan
       whose `bundle_dir` is `x` writes under `OUTPUT_DIR/x/`; an arm whose answers all
       failed writes a bundle with zero rows and no `n/a` aggregates; with `judge_plan`
@@ -190,7 +264,8 @@ Rules for every task:
       key, `total_results` with no `aggregate_*` key, `judge_status: "pending"`,
       `judge_bundle`, and `None` for `ragas_effective_settings` and
       `ragas_judge_identity_effective`), so the A/B and leaderboard blocks run (they need
-      2 or more records, `src/bin/service_benchmark.py:2489`, `:2509`). Assert
+      2 or more records: the two `if len(ResultHandler.results) >= 2:` lines,
+      `src/bin/service_benchmark.py:2503` and `:2523` at 21e88806). Assert
       `len(ResultHandler.ab_comparisons) == 1`, and that `ResultHandler.leaderboard` has
       two rows, each with every metric `None` and `incomplete` set to `True`.
       Also test `judge_status_of`: `{}` and an arm without the key give `inline`, and
@@ -272,12 +347,13 @@ Rules for every task:
 
 - [ ] 8.1 Run `bash scripts/gate.sh` once more on the branch tip and confirm it exits 0.
       Confirm each acceptance criterion of issue #731 against the tree. Push the branch:
-      `git push -u origin fix/issue-731-judge-deferred-bundle`. Open the PR:
-      `gh pr create --repo fasrc/archi --base dev --head fix/issue-731-judge-deferred-bundle`
+      `git push -u origin fix/issue-731-judge-deferred-bundle`. The PR already exists
+      (PR #747, opened by the loop harness). Do NOT run `gh pr create`. Edit PR #747:
+      `gh pr edit 747 --repo fasrc/archi --title "..." --body-file /tmp/pr747-body.md`
       with the title `feat(benchmark): judge_mode deferred and the judge bundle writer
-      (judge offload PR 2)` and `Closes #731` in the BODY (not the title). Pass the body
-      with `--body` or a file under `/tmp`; do NOT commit a PR-body file to the
-      repository. In the body: list the acceptance criteria with their evidence (test
+      (judge offload PR 2)` and `Closes #731` in the BODY (not the title). Write the body
+      file under `/tmp`; do NOT commit a PR-body file to the repository. Replace the
+      whole body, but keep its "Review findings" section if it has one. In the body: list the acceptance criteria with their evidence (test
       names, the gate result); list the driver decisions a reviewer must check (design
       D2 `evaluator_model_revision`, D3 refusals, D4 basename for inline runs, D5
       manifest keys, D6 zero-row bundle, D8 `judge_bundle` key); say that task 2.7 and

@@ -94,10 +94,12 @@ none, and always through `| tojson`, so that a configured scalar keeps its type.
 An inline config therefore renders byte for byte as before, so `configuration` and
 `config_version` in an inline result do not change.
 
-`parse_judge_mode(ragas_settings)` returns `"inline"` when the key is absent, `"inline"`
+`parse_judge_mode(value)` takes the value of the key, not the settings mapping. Called
+with no argument (the key is absent), it returns `"inline"`. It returns `"inline"`
 for `"inline"`, `"deferred"` for `"deferred"`, and raises `ValueError` for any other
 value, including `""`, `false`, `null` that reached the file, and other case forms. The
-message names the value and the two allowed values.
+message names the value and the two allowed values. (Corrected after task 1.1: the
+code took the value form, and every caller and test uses it.)
 
 **Why `evaluator_model_revision`.** The parent spec makes the manifest record "the judge
 model id and revision", and D4a of the parent matches a bundle to a judge job by both
