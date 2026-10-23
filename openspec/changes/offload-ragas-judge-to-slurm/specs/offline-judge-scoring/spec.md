@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: A deferred run writes a judge bundle instead of calling the judge
-When `ragas_settings.judge_mode` is `deferred`, the benchmark SHALL answer every question and write a judge bundle for each arm, and it SHALL NOT make any RAGAS judge call. The bundle has two files. `rows.jsonl` has one line per scorable row, with the row's key and the full `user_input`, `retrieved_contexts`, `response` and `reference` that the inline path gives to ragas. `manifest.json` records the enabled metrics, the resolved ragas call settings (the output of `ragas_run_config_kwargs`, including `timeout` and `max_workers`, and the `batch_size` that the inline path passes to `evaluate`), the embedding model, the judge model id and revision, the run's `code_version`, the SHA-256 of the run environment's sorted `pip freeze`, the result basename, the arm index, the arm count of the result, and the SHA-256 of `rows.jsonl`. The run SHALL fix the result basename once, before its first arm, and SHALL use it for both the bundles and the result JSON. The bundle writer writes a `BUNDLE_COMPLETE` marker after every other bundle file.
+When `ragas_settings.judge_mode` is `deferred`, the benchmark SHALL answer every question and write a judge bundle for each arm, and it SHALL NOT make any RAGAS judge call. The bundle has two files. `rows.jsonl` has one line per scorable row, with the row's key and the full `user_input`, `retrieved_contexts`, `response` and `reference` that the inline path gives to ragas. `manifest.json` records the enabled metrics, the resolved ragas call settings (the output of `ragas_run_config_kwargs`, including `timeout` and `max_workers`, and the `batch_size` that the inline path passes to `evaluate`), the embedding model, the judge model id and revision, the run's `code_version`, the SHA-256 of the run environment's sorted `pip freeze`, the result basename, the arm index, the arm count of the result, and the SHA-256 of `rows.jsonl`. The run SHALL fix the result basename once, before its first arm, and SHALL use it for both the bundles and the result JSON. The bundle writer writes a `BUNDLE_COMPLETE` marker after every other bundle file. When `judge_mode` is absent or `inline`, the run SHALL score inline exactly as before.
 
 #### Scenario: Mixed judge modes in one sweep
 - **WHEN** one config of a sweep has `judge_mode: deferred` and another config has no `judge_mode`
@@ -13,7 +13,7 @@ When `ragas_settings.judge_mode` is `deferred`, the benchmark SHALL answer every
 
 #### Scenario: Bundle names the result before the result exists
 - **WHEN** a deferred run with two arms writes the bundle of arm 0
-- **THEN** the manifest names the result basename, and the result JSON that the run writes at the end has that basename When `judge_mode` is absent or `inline`, the run SHALL score inline exactly as before.
+- **THEN** the manifest names the result basename, and the result JSON that the run writes at the end has that basename
 
 #### Scenario: Deferred run makes no judge call
 - **WHEN** a run with `judge_mode: deferred` completes with 3 scorable rows
