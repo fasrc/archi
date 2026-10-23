@@ -123,7 +123,7 @@ A bundle **matches** a judge job when both of these are true:
 
 The match rule also excludes a bundle while one of these records names the digest of the configured `scorer-identity.json`: `<queue>/SCORER_STALE.<digest>` or the bundle's `INCOMPATIBLE.<digest>` (D10). A new sidecar has a new digest, so a rebuilt scorer makes the bundle available again with no manual cleanup.
 
-The submitter and the judge job call one function for this rule (`scripts/benchmarking/judge/queue.py`, standard library only, so that it runs on a login node). A bundle that does not match is **not** a failure. It stays READY, with no terminal marker, until a job with a matching judge and scorer exists. The submitter does not count it, so a queue that holds only such bundles submits no job. `judge_submit.sh --status` lists each one with the reason: the judge it waits for, or both scorer values that differ.
+The submitter and the judge job call one function for this rule (`scripts/benchmarking/judge/judge_queue.py`, standard library only, so that it runs on a login node). The file is not called `queue.py`: Python puts a script's own folder first on `sys.path`, so a `queue.py` beside `score.py` hides the standard library's `queue` module, and `concurrent.futures` (so httpx and ragas) then fails to import. `judge.env` holds `KEY=VALUE` lines, read with the standard library: `JUDGE_MODEL_ID`, `JUDGE_MODEL_REVISION`, `JUDGE_PRECISION` and `JUDGE_BOOTSTRAP_ROWS_PER_MINUTE` are required, and `JUDGE_IMAGE_DIGEST` and `JUDGE_SERVER_ARGS` are optional (the docstring of `judge_queue.py` has the format). A bundle that does not match is **not** a failure. It stays READY, with no terminal marker, until a job with a matching judge and scorer exists. The submitter does not count it, so a queue that holds only such bundles submits no job. `judge_submit.sh --status` lists each one with the reason: the judge it waits for, or both scorer values that differ.
 
 ### D5. Claim at start, one judge per job, time budget
 
@@ -131,6 +131,8 @@ The submitter and the judge job call one function for this rule (`scripts/benchm
 - It then loads the model that its sbatch script names. That is one model and one revision for each job.
 - It lists the READY folders in `<queue>`, oldest first. It claims each bundle that matches the job (D4a), with no claim or a stale claim, by a `link` of `claim.<gen>` (D3). It checks the match before the claim, so it never claims a bundle that it cannot score.
 - Before each claim, it checks the budget: time left (from `squeue -h -j $SLURM_JOB_ID -o %L`) against the bundle's row count divided by the rate. The rate is the rows-per-minute rate that the job has measured so far. Before it has scored a row, it uses `JUDGE_BOOTSTRAP_ROWS_PER_MINUTE` from `judge.env`, a low value that the operator sets from the first measured job (task 5.2). The first bundle is always claimed. The job claims at start only while the bootstrap rate says a bundle fits. Later bundles stay READY, and the job looks again after each bundle, with its measured rate.
+- The measured rate counts only the `(key, metric)` pairs that the judge scored in this job. Finalizing a dead job's complete `judge_scores.json`, or the saved part of a resumed checkpoint, costs no judge time and does not raise the rate. Once a rate is measured, the budget counts each bundle's work in pairs (its row count times its enabled metrics), so a bundle with more metrics costs more; before that, it uses the bootstrap rate in rows.
+- `squeue` reports `UNLIMITED` for an allocation with no limit, and then the job claims every bundle that matches. When `squeue` cannot report the time left (a failed query, an empty or unreadable answer), the job claims at most one bundle in each round: an unknown time is not an unlimited one, and one job must not claim the whole queue on a failed query.
 - Bundles that are not claimed stay READY for the next job. The submitter's next tick submits that job.
 - All arms of a campaign that one job scores therefore share the same weights, precision and server settings.
 
@@ -149,6 +151,10 @@ Condition 3 prevents a false stale report during a short `squeue` gap. A claim f
 
 A new job takes over a stale `claim.<gen>` with one `link` of `claim.<gen+1>`. The old claim file stays in place as a record. If two jobs find the same stale claim, both try `claim.<gen+1>`, and exactly one `link` succeeds. A slow job that read `claim.<gen>` as stale after another job already took it over also tries `claim.<gen+1>`, and it fails, because that name exists. The takeover therefore never removes or replaces a live claim. (A rename-based takeover does not have this property: a slow job can rename away the new, live claim of the job that won.)
 
+A requeued job resumes only its own claims whose manifest asks for its judge (model id and revision). `judge.env` can change between a claim and a requeue; a claim for another judge gets no score and no marker, and it goes stale for a job with that judge when this job ends. The scorer checks the judge again for every bundle it is given.
+
+**Claim fence.** NFS can show a new `claim.<gen+1>` late, so a job that took a stale view of its claim could write beside the job that took it over. The scorer therefore reads the current claim again before each write to the bundle: before it reads the checkpoint (a read can truncate a torn line), before each append, and before `judge_scores.json` and `SCORED`. When another job holds the current claim, it stops that bundle with no write (`LOST_CLAIM`).
+
 The original job is known to be finished, so the takeover cannot race with it. Scoring resumes from the checkpoint of the new job's own `ragas_judge_identity_effective` (D7). The work of a dead job with the same identity is kept. The work of a dead job with a different identity is not used. `judge_submit.sh --status` lists stale claims.
 
 ### D6. Judge server on a private Unix socket, with a per-job API key
@@ -160,6 +166,8 @@ The job starts vLLM from an Apptainer image of the upstream `vllm/vllm-openai` i
 The job also sets a random per-job key, through the `VLLM_API_KEY` environment variable and never as a command-line argument, because other users can read a process's arguments through `ps` or `/proc/<pid>/cmdline`. The key is a second guard, not the main one.
 
 The scorer builds the judge through the judge factory (D2), with an OpenAI-compatible client whose HTTP transport connects to the Unix socket, and with the key from the environment. A unit test confirms that the client sends its requests through the socket, and that the key reaches the request. The job waits until `GET /v1/models` returns HTTP 200 before it claims anything, and it stops the server on exit, through a `trap`.
+
+**Production defaults (fasrc/archi#739, operator decision 2026-10-23).** `build_uds_judge_llm` defaults to `timeout=300` seconds for each request, the value that every inline judge run uses (`fasrc/archi-config` PR #45), and `max_retries=2` for the openai client. The scorer (`score.py run`) calls the builder with these defaults. The unit tests pass their own bound (10 seconds, 0 retries). vLLM serves the model under the name `JUDGE_MODEL_ID` (`--served-model-name`), because the scorer sends that name.
 
 ### D7. Save each row's score and resume
 
@@ -174,6 +182,8 @@ An append is not atomic, so a kill during the write can leave a torn last line. 
 
 It then skips the `(key, metric)` pairs that are already recorded. The final aggregates are computed from the complete per-row set with the same aggregation code (D2). The sbatch script uses `--requeue --open-mode=append`, so this also works on `gpu_requeue`.
 
+**What makes a bundle `FAILED`.** Only a problem of the bundle itself: a manifest that does not load or lacks a scorer field, a `rows.jsonl` whose digest or row count differs from the manifest, or an invalid checkpoint line that is not the last line. A row that the judge cannot score is recorded with `value: null` and the error, and counts as NaN. An exception from the judge itself (for example a vLLM server that stopped) is not a bundle problem: it stops the job with no terminal marker, the claim becomes stale when the job ends (D5a), and the next job resumes from the checkpoint. Marking every claimed bundle `FAILED` because the server stopped would end their scoring for good. Each record is `{key, metric, value, error}`; the shared code is `build_ragas_scorer` in `src/utils/ragas_scoring.py`, which `score_ragas` (the inline path) also calls.
+
 ### D8. The merge writes a new judged file
 
 `scripts/benchmarking/judge/merge.py` runs as a CPU job with `--dependency=afterok:<judge job>`. It also runs by hand.
@@ -184,11 +194,11 @@ It then skips the `(key, metric)` pairs that are already recorded. The final agg
 3. checks each bundle digest against the digest recorded in its pending arm;
 4. writes every arm's per-row scores and `total_results` aggregates;
 5. rebuilds the leaderboard and the A/B comparisons with the existing `ResultHandler` code. When the arms' identities differ, that code withholds ranks and winners (#618), and the per-arm scores stay, each with its own identity;
-6. writes `<basename>.judged.json` in `<queue>/results/`, with `judge_status: scored` and, for each arm, `ragas_effective_settings`, the extended `ragas_judge_identity_effective` (the `judge_identity` of D10) and `judge_execution`. A pending arm has #518's `null` judge fields, and the merge fills them, so the reused code does not treat the arm as not judged. Every other field of the pending file, such as each arm's configuration, corpus fingerprints and `agent_md_sha256`, is copied unchanged, because the campaign archiver reads them.
+6. writes `<basename>.judged.json` in `<queue>/results/`, with `judge_status: scored` and, for each arm, `ragas_effective_settings`, the extended `ragas_judge_identity_effective` (the `judge_identity` of D10) and `judge_execution`. A pending arm has #518's `null` judge fields, and the merge fills them, so the reused code does not treat the arm as not judged. An arm whose bundle has no eligible pair (no scorable row, or no row eligible for any enabled metric) was never judged: the scorer records `null` settings and identity for it, as the inline path does, and the merge keeps them `null`, so the in-run rule still withholds ranks beside a judged arm. A bundle with no row gets the inline all-failed aggregates (NaN for each enabled metric). Every other field of the pending file, such as each arm's configuration, corpus fingerprints and `agent_md_sha256`, is copied unchanged, because the campaign archiver reads them.
 
 A judged file is therefore written once, from the complete set of arms, and a later merge never needs to change it.
 
-It does not change the pending file. Output uses the `dump` format (`json_safe`, `indent=4`, `allow_nan=False`) plus `sort_keys=True`, so a second run gives identical bytes. (`dump` itself does not sort keys.)
+It does not change the pending file. Output uses the `dump` format (`json_safe`, `indent=4`, `allow_nan=False`) plus `sort_keys=True`, so a second run gives identical bytes. (`dump` itself does not sort keys.) The merge rebuilds the comparisons with `ResultHandler.build_comparisons`, the method that `run()` also calls, and gives the leaderboard the pending result's `corpus_snapshot_id`; a new id would change the bytes of each merge.
 
 The merge is safe when two merges run at the same time (the afterok job and a manual run) and when a merge is killed while it writes:
 - It writes a unique temporary file in the same folder, calls `fsync`, validates the file by loading it again, and publishes it with the `link` primitive (D3). `link` fails if the judged file exists, so a second merge can never replace the first.
@@ -216,6 +226,8 @@ The design keeps three records separate:
   - the **scorer identity** below.
 
   It excludes every per-job value, so arms that separate jobs scored with the same settings stay comparable.
+
+  PR 3 (#732) builds the identity with `extended_identity` in `src/utils/judge_identity.py`: the four #618 fields, then `model_revision`, `precision`, `server_image_digest`, `server_args`, `decoding` (`temperature`, `top_p`, `max_tokens` of the built judge object), `timeout`, `max_workers`, `batch_size`, `chunk_size`, `embedding` (`class`, `model`, `revision` and `endpoint` of the built embedding object; the endpoint is the configured base URL, else the built openai client's base URL, so one model name behind two endpoints is two identities), `metrics`, and `scorer` (`code_digest`, `package_digest`, `image_digest`, `ragas_version`). The manifest has no per-metric settings today, so the identity holds the metric list only. The offline judge records provider `vllm`, `base_url: null` (the socket path is per job) and mode `unix_socket`; its revision, precision, image digest and server arguments come from `judge.env`, and its `scorer` fields from the sidecar. The inline path records the same fields, with `null` for those an API judge does not have, and its `scorer` is the benchmark image (code digest and package digest, computed once per run). The comparison helper is `canonical_identity` in the same module.
 - **Scorer identity**:
   - the **code digest** of the scorer's installed `src` package, computed by the same function that makes the benchmark's `code_version.digest` (`src/utils/benchmark_provenance.py:673-699`). A repository commit cannot be used: nothing stamps a commit into the image, and the benchmark's `deploy_git_commit` is frozen at deploy and does not name the code that ran (`docs/docs/interpreting_benchmark_results.md:963-973`). Both sides therefore compare the same content digest;
   - the scorer Apptainer image digest;
@@ -223,7 +235,7 @@ The design keeps three records separate:
   - the ragas version as a readable copy of the same fact;
   - the metric list and the per-metric settings from the manifest.
 
-  ragas holds its prompt templates inside the pinned package, so the package digest covers them.
+  ragas holds its prompt templates inside the pinned package, so the package digest covers them. `score.py write-identity --out <scorer-identity.json> [--image-digest D]` writes the sidecar (sorted keys) at the scorer image build; `compute_scorer_identity` refuses to write one when either digest is unavailable.
 - **`judge_execution`** is the record of the job, and nothing compares it: the job id, node name, start and end times, the list of claimed bundles, and the requeue count.
 
 **The scorer fails closed.** It never scores a bundle whose manifest code digest or package digest differs from its own scorer identity. A deferred run whose `code_version.digest` is unavailable (the `<unavailable>` case in `code_version`) refuses to start, because no scorer could ever match its bundles. There is no override. The refusal is not a terminal state: through the match rule (D4a), the job does not claim such a bundle, and the bundle stays READY with no marker. To score it, build a scorer image whose `src` has the manifest's code digest: build it from the benchmark image that made the run, or from a checkout whose `src` gives the same digest. The manifest's `deploy_git_commit` is only a hint for where to look. The next job that runs that image matches the bundle and claims it. `scorer-identity.json` can be out of date, and then the submitter and the job both match a bundle that the live scorer must refuse. Without a record, each tick would submit a new GPU job that claims the bundle, refuses it and exits, with no end. Two checks stop this:

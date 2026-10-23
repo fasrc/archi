@@ -478,14 +478,16 @@ The dump JSON gains a `leaderboard` key:
     the drift reduction ignores `null` — so without it, one judged arm beside
     an unjudged one reported that arm's worker count as shared by both.
 
-    `judge_identity` records which RAGAS judge scored the arms: the JSON form
-    of each arm's `ragas_judge_identity_effective` (provider, model, endpoint,
-    and client mode), or a sorted list when the arms disagree. A difference
-    here also **withholds ranks**, and `shared_context.warnings` gets an
-    entry that starts `judge_identity differs across swept configs:` and
-    lists the identities. Scores from two judges are not on one scale. The
-    pairwise A/B winners are withheld too, and the log line names the reason
-    "the arms were scored by different RAGAS judges". The endpoint is compared as written, so the
+    `judge_identity` records which RAGAS judge scored the arms: the canonical
+    JSON form of each arm's `ragas_judge_identity_effective` (sorted keys, and
+    a whole-number float such as `0.0` written as `0`), or a sorted list when
+    the arms disagree. A difference in any field of the identity also
+    **withholds ranks**, and `shared_context.warnings` gets an entry that
+    starts `judge_identity differs across swept configs:` and lists the
+    identities. Scores from two judges are not on one scale. The pairwise A/B
+    winners are withheld too, and the log line says "the arms were scored by
+    different RAGAS judges" and names the identity fields that differ (for
+    example `precision`). The endpoint is compared as written, so the
     same server spelled two ways (for example with and without a trailing
     slash) also withholds. Arms with no identity (`null`, no judge ran) are
     left to the judge-pressure check, and result files written before the
@@ -655,7 +657,16 @@ There is no way to give this provider a credential: the client is built through 
         evaluator_provider_mode: ollama
 ```
 
-Each run record carries `ragas_judge_identity_effective`: the `provider`, `model`, `base_url`, and `mode` of the judge the run actually built, or `null` when no judge scored the arm. The endpoint is the one the client received, with the defaults filled in (`OLLAMA_HOST` or `http://127.0.0.1:11434` for an Ollama-mode judge with no URL, the local provider's OpenAI-compatible default for an `openai_compat` judge with no URL). In a sweep, arms scored by different judges are not ranked: every `rank` in the leaderboard is `null` and the difference is listed under `judge_identity` in `shared_context.warnings`. Result files written before this field existed still rank.
+Each run record carries `ragas_judge_identity_effective`, or `null` when no judge scored the arm. It starts with the `provider`, `model`, `base_url`, and `mode` of the judge the run actually built. The endpoint is the one the client received, with the defaults filled in (`OLLAMA_HOST` or `http://127.0.0.1:11434` for an Ollama-mode judge with no URL, the local provider's OpenAI-compatible default for an `openai_compat` judge with no URL). Result files written since #732 also record these fields:
+
+- `model_revision`, `precision`, `server_image_digest`, and `server_args`: the pinned model revision, the weight precision, the vLLM image, and the `vllm serve` arguments that change output, for the offline judge. An API judge such as `huit_bedrock` has none of these, so they are `null`.
+- `decoding`: the `temperature`, `top_p`, and `max_tokens` that the built judge object sends.
+- `timeout`, `max_workers`, and `batch_size`: the ragas call settings after defaults. `chunk_size` is the number of rows that the offline scorer gives to one ragas call (`null` for an inline run).
+- `embedding`: the `class`, `model`, `revision`, and `endpoint` (the base URL that the client sends to, `null` for a local model) of the embedding object that ragas used, read from the object and not from the config value.
+- `metrics`: the enabled RAGAS metrics.
+- `scorer`: the `code_digest` of the `src` package that scored, its `package_digest` (from `pip freeze`), the scorer `image_digest`, and the `ragas_version`. For an inline run, the scorer is the benchmark image.
+
+In a sweep, arms whose identities differ in any field are not ranked: every `rank` in the leaderboard is `null` and the difference is listed under `judge_identity` in `shared_context.warnings`. The comparison uses canonical JSON, so `temperature: 0` and `temperature: 0.0` are equal. Result files written before #618 have no identity and still rank. Result files written between #618 and #732 keep the four-field record.
 
 #### Tool calling and structured output on `huit_bedrock`
 

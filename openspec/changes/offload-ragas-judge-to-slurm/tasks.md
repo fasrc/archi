@@ -35,31 +35,31 @@ Rules for every task:
 
 ## 3. PR 3: offline scorer and merge
 
-- [ ] 3.0 Add tests for the match rule in `scripts/benchmarking/judge/queue.py` (standard library only), then write it. A bundle matches only when its judge model id and revision equal `judge.env`, and its code digest (`code_version.digest`) and package digest equal `scorer-identity.json`. The scorer image build computes the code digest with the same function as the benchmark (`src/utils/benchmark_provenance.py`), and a test checks that the two agree for the same `src`. A bundle that does not match gets a reason that names the judge it waits for, or both scorer values.
-- [ ] 3.1 Add tests for claiming: claim-at-start takes the READY bundles that match (3.0) and skips the others; exactly one of two racing claimants wins (`link` of `claim.1`); a claim file holds the job id at the moment its name exists.
-- [ ] 3.1a Add tests for stale-claim recovery, with `squeue` and `sacct` replaced by stubs:
+- [x] 3.0 Add tests for the match rule in `scripts/benchmarking/judge/judge_queue.py` (standard library only; not `queue.py`, which would hide the standard library's `queue` module from the scripts in that folder), then write it. A bundle matches only when its judge model id and revision equal `judge.env`, and its code digest (`code_version.digest`) and package digest equal `scorer-identity.json`. The scorer image build computes the code digest with the same function as the benchmark (`src/utils/benchmark_provenance.py`), and a test checks that the two agree for the same `src`. A bundle that does not match gets a reason that names the judge it waits for, or both scorer values.
+- [x] 3.1 Add tests for claiming: claim-at-start takes the READY bundles that match (3.0) and skips the others; exactly one of two racing claimants wins (`link` of `claim.1`); a claim file holds the job id at the moment its name exists.
+- [x] 3.1a Add tests for stale-claim recovery, with `squeue` and `sacct` replaced by stubs:
   - a claim whose job is `TIMEOUT` in `sacct` and absent from `squeue` is taken over, and only the unsaved pairs are scored;
   - a claim whose job is running is not taken;
   - of two jobs that race to take one stale claim, exactly one `link` of `claim.<gen+1>` wins;
   - a slow job that read `claim.1` as stale after another job made `claim.2` fails its `link` and leaves `claim.2` unchanged;
   - no takeover removes or renames a claim file;
   - a requeued job with the same job id keeps its claim, counts it as work at start (so it does not exit before the model load), and resumes it; the submitter does not count it as available.
-- [ ] 3.1b Add tests for the scorer identity:
+- [x] 3.1b Add tests for the scorer identity:
   - a code-version mismatch or a package-digest mismatch writes no score and no terminal marker, the bundle stays READY, and `--status` names both values. No flag overrides this;
   - after a matching `scorer-identity.json` is configured, the same bundle is available and is claimed;
   - a live environment that differs from the sidecar at job start creates `SCORER_STALE.<sidecar digest>`, claims nothing, and loads no model; the match rule then excludes every bundle for that sidecar, and a new sidecar digest makes them available again;
   - a live-environment mismatch found after a claim creates the bundle's `INCOMPATIBLE.<sidecar digest>`, writes no score, and the job continues with its other bundles; the match rule then excludes that bundle for that sidecar.
-- [ ] 3.2 Add tests for the time budget: the first bundle is always claimed; before any row is scored, the bootstrap rate from `judge.env` decides; a later bundle that needs more time than is left stays READY.
-- [ ] 3.3 Add tests for checkpoints. The tests check that:
+- [x] 3.2 Add tests for the time budget: the first bundle is always claimed; before any row is scored, the bootstrap rate from `judge.env` decides; a later bundle that needs more time than is left stays READY.
+- [x] 3.3 Add tests for checkpoints. The tests check that:
   - chunked scoring appends newline-terminated lines to `scores.<identity digest>.partial.jsonl`, and a restart after 40 of 109 rows scores only the other 69, with one value for each `(key, metric)`;
   - a file that ends with half a JSON line (a kill inside the write) is truncated to the last complete line, and the pair in the half line is scored again;
   - an invalid line that is not the last line makes the bundle `FAILED` with the line number;
   - a repeated `(key, metric)` pair uses its first record;
   - a job with a different `ragas_judge_identity_effective` (for example `fp8` after `bf16`) does not read the other identity's file, and its final scores come only from its own file.
-- [ ] 3.4 Add a test: a bundle whose digest does not match becomes `FAILED` with a reason, and the other bundles become `SCORED`.
-- [ ] 3.5 Add a test: offline aggregates equal inline aggregates for the same rows and the same stub judge.
-- [ ] 3.6 Write the scorer (`src/evaluation/judge/` or `src/utils/judge_scorer.py`) and its CLI entry `scripts/benchmarking/judge/score.py`.
-- [ ] 3.6a Add tests for `ragas_judge_identity_effective` and `judge_execution` (design D10):
+- [x] 3.4 Add a test: a bundle whose digest does not match becomes `FAILED` with a reason, and the other bundles become `SCORED`.
+- [x] 3.5 Add a test: offline aggregates equal inline aggregates for the same rows and the same stub judge.
+- [x] 3.6 Write the scorer (`src/evaluation/judge/` or `src/utils/judge_scorer.py`) and its CLI entry `scripts/benchmarking/judge/score.py`.
+- [x] 3.6a Add tests for `ragas_judge_identity_effective` and `judge_execution` (design D10):
   - two jobs with the same settings give equal identities and different execution records;
   - a precision change (`bf16` against `fp8`) changes the identity;
   - an embedding change (OpenAI against HuggingFace, or a different model name reported by the built object) changes the identity;
@@ -69,8 +69,8 @@ Rules for every task:
   - an identity with nested values (the metric list, per-metric settings) goes through `ResultHandler.arms_incomparability_reason` and the merge's leaderboard rebuild without error, because the comparison uses canonical JSON (sorted keys) and not `tuple(sorted(identity.items()))` (`src/bin/service_benchmark.py:374-376` at `e2978a1d`); equal nested identities compare equal, and the existing 4-field identities still compare as before;
   - numbers are normalized before the canonical JSON is built, so an integral float equals the integer: `temperature: 0` and `temperature: 0.0` compare equal (plain `json.dumps` gives `0` and `0.0`, which differ). One shared helper makes this form for `arms_incomparability_reason`, the leaderboard context reader (`json.dumps(judge_identity, sort_keys=True)`, `src/bin/service_benchmark.py:1431` at `e2978a1d`) and G12;
   - when two arms differ only in a new field (for example precision, embedding or a scorer digest), the reason that `arms_incomparability_reason` returns names the fields that differ. Today it says "provider, model, endpoint, or client mode" (`src/bin/service_benchmark.py:391-395` at `e2978a1d`), which is false for those cases.
-- [ ] 3.6b Update `docs/docs/benchmarking.md` where it defines `ragas_judge_identity_effective` as only `provider`, `model`, `base_url` and `mode` (`:395`, `:571` at `e2978a1d`). Describe the extended fields, say that arms differing in any of them are not ranked, and say that older result files keep the 4-field record.
-- [ ] 3.7 Add tests for the merge, then write `scripts/benchmarking/judge/merge.py`. The tests check that:
+- [x] 3.6b Update `docs/docs/benchmarking.md` where it defines `ragas_judge_identity_effective` as only `provider`, `model`, `base_url` and `mode` (`:395`, `:571` at `e2978a1d`). Describe the extended fields, say that arms differing in any of them are not ranked, and say that older result files keep the 4-field record.
+- [x] 3.7 Add tests for the merge, then write `scripts/benchmarking/judge/merge.py`. The tests check that:
   - the merge groups bundles by result file, and writes nothing while any arm is not `SCORED` (it names the pending arms and exits 0); after the last arm is `SCORED`, one judged file holds all arms;
   - a `FAILED` arm makes the merge write nothing for that result and exit non-zero;
   - a result whose pending JSON is not yet in `<queue>/results/` gets nothing, and the merge exits 0;

@@ -24,7 +24,7 @@ The dev host (`holygpu7c0717`) cannot host the judge, because the two Qwen serve
 
 ### Modified Capabilities
 
-(none. The inline judge path keeps its current requirements, and the new comparison gates are added under `offline-judge-scoring`.)
+- `benchmark-judge-provenance`: each arm's `ragas_judge_identity_effective` (#618) keeps its four fields and gets the fields of design D10 (revision, precision, server, decoding, resolved ragas call settings, chunk size, embedding, metrics, scorer identity), on the inline path too. Identities are compared by one canonical JSON form (sorted keys, an integral float equals the integer), and the in-run reason names the fields that differ. The new comparison gates are under `offline-judge-scoring`.
 
 ## Impact
 

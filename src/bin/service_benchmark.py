@@ -56,6 +56,7 @@ from src.utils.benchmark_schema import (
     metric_winner,
     normalize_bank,
     ragas_effective_settings,
+    ragas_run_config_kwargs,
     required_fields_for_modes,
     with_effective_ragas_settings,
 )
@@ -71,6 +72,12 @@ from src.utils.judge_bundle import (
     plan_judge_run,
     write_judge_bundle,
     write_result_complete,
+)
+from src.utils.judge_identity import (
+    canonical_identity,
+    differing_fields,
+    extended_identity,
+    inline_scorer_identity,
 )
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
@@ -360,10 +367,12 @@ class ResultHandler:
         # judged. Only a wholly ABSENT key is skipped, and only because it
         # predates the field.
         judge_pressures = set()
-        # Which judge scored the arm (provider, model, endpoint, client mode).
-        # A None identity is skipped: an unjudged arm already fails the
-        # pressure check above, so counting it here adds nothing.
-        judge_identities = set()
+        # Which judge scored the arm (#618), extended with nested fields by
+        # #732. Compared by canonical JSON: a list or dict value cannot go into
+        # a set as a tuple of items. A None identity is skipped: an unjudged arm
+        # already fails the pressure check above, so counting it here adds
+        # nothing.
+        judge_identities: List[Dict[str, Any]] = []
         for record in records:
             stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is not _NOT_RECORDED and stability is not True:
@@ -380,7 +389,7 @@ class ResultHandler:
                 fingerprints.add(fingerprint)
             identity = record.get("ragas_judge_identity_effective")
             if identity is not None:
-                judge_identities.add(tuple(sorted(identity.items())))
+                judge_identities.append(identity)
             pressure = record.get("ragas_effective_settings", _NOT_RECORDED)
             if pressure is _NOT_RECORDED:
                 continue
@@ -395,11 +404,11 @@ class ResultHandler:
                 "(concurrency, per-row budget, or one arm was not judged), "
                 "so their scored denominators are not comparable"
             )
-        if len(judge_identities) > 1:
+        if len({canonical_identity(i) for i in judge_identities}) > 1:
             return (
-                "the arms were scored by different RAGAS judges (provider, "
-                "model, endpoint, or client mode), so their scores are not "
-                "comparable"
+                "the arms were scored by different RAGAS judges (these identity "
+                f"fields differ: {', '.join(differing_fields(judge_identities))}), "
+                "so their scores are not comparable"
             )
         if len(fingerprints) > 1:
             return (
@@ -1237,6 +1246,19 @@ class ResultHandler:
         """Generate all pairwise index combinations for N configs."""
         return list(combinations(range(n_configs), 2))
 
+    @staticmethod
+    def build_comparisons(primary_metric: str) -> None:
+        """Every pairwise A/B comparison, then the leaderboard, of ``results``.
+
+        One path for the run (2+ arms) and for the judge merge (#732), which
+        rebuilds both from the judged arms of a deferred result.
+        """
+        pairs = ResultHandler.generate_pairwise_combinations(len(ResultHandler.results))
+        for idx_a, idx_b in pairs:
+            paired = ResultHandler.pair_ab_results(idx_a, idx_b)
+            ResultHandler.dump_ab_comparison(paired, idx_a, idx_b)
+        ResultHandler.build_leaderboard(primary_metric)
+
     # Leaderboard metric name -> the aggregate key the run loop writes onto
     # total_results (service_benchmark.py RAGAS block). Order is display order.
     LEADERBOARD_METRICS: List[Tuple[str, str]] = [
@@ -1444,9 +1466,7 @@ class ResultHandler:
             )
             judge_identity = record.get("ragas_judge_identity_effective")
             if judge_identity is not None:
-                ctx_fields["judge_identity"].add(
-                    json.dumps(judge_identity, sort_keys=True)
-                )
+                ctx_fields["judge_identity"].add(canonical_identity(judge_identity))
             ctx_fields["queries_path"].add(bench.get("queries_path"))
             # The corpus is a swept-context field like any other: ranking arms
             # scored against different documents asserts controlled conditions
@@ -2198,6 +2218,39 @@ class Benchmarker:
         finally:
             self._ragas_scored = outcome.scored
             self._judge_usage = outcome.usage
+            # The D10 fields of this arm's judge (#732); run() merges them into
+            # the four-field identity it records. None when no judge was built.
+            self._ragas_judge_extension = (
+                None
+                if outcome.decoding is None
+                else {
+                    "model_revision": None,
+                    "precision": None,
+                    "server_image_digest": None,
+                    "server_args": None,
+                    "decoding": outcome.decoding,
+                    "run_config": ragas_run_config_kwargs(ragas_settings, verbosity),
+                    "batch_size": ragas_settings["batch_size"] or None,
+                    "chunk_size": None,
+                    "embedding": outcome.embedding,
+                    "metrics": [m for m in RAGAS_METRIC_NAMES if m in enabled_metrics],
+                }
+            )
+
+    def _recorded_judge_identity(self):
+        """The judge identity this arm records: #618's four fields plus D10's.
+
+        The four-field ``_ragas_judge_identity`` alone when no judge was built
+        or the arm has no extension. The scorer of an inline run is the
+        benchmark image; its identity is computed once per run (``pip freeze``).
+        """
+        base = getattr(self, "_ragas_judge_identity", None)
+        fields = getattr(self, "_ragas_judge_extension", None)
+        if base is None or fields is None:
+            return base
+        if getattr(self, "_inline_scorer", None) is None:
+            self._inline_scorer = inline_scorer_identity(PACKAGE_DIR)
+        return extended_identity(base, scorer=self._inline_scorer, **fields)
 
     def _source_scorable_count(self) -> int:
         """The source-accuracy denominator: questions that declare expected sources.
@@ -2503,6 +2556,7 @@ class Benchmarker:
             _, category_map_before = ResultHandler.get_category_map(arm_config)
             self._judge_usage = None
             self._ragas_judge_identity = None
+            self._ragas_judge_extension = None
             self._ragas_scored = None
             self._judge_bundle = None
             self._arm_index = arm_index
@@ -2532,7 +2586,7 @@ class Benchmarker:
                 retrieval_identity=arm_identity,
                 judge_usage=getattr(self, "_judge_usage", None),
                 ragas_scored=getattr(self, "_ragas_scored", None),
-                judge_identity=getattr(self, "_ragas_judge_identity", None),
+                judge_identity=self._recorded_judge_identity(),
                 judge_bundle=getattr(self, "_judge_bundle", None),
             )
             self.load_new_configuration()
@@ -2540,36 +2594,27 @@ class Benchmarker:
 
         ResultHandler.add_metadata()
 
-        # A/B comparison: pair results across configs when 2+ were run.
-        # Auto-enabled — no explicit flag — because there's no useful "skip
-        # pairing" case when the user gave us multiple configs.
-        if len(ResultHandler.results) >= 2:
-            pairs = ResultHandler.generate_pairwise_combinations(
-                len(ResultHandler.results)
-            )
-            logger.info("Generating %d pairwise A/B comparisons...", len(pairs))
-            for idx_a, idx_b in pairs:
-                paired = ResultHandler.pair_ab_results(idx_a, idx_b)
-                ResultHandler.dump_ab_comparison(paired, idx_a, idx_b)
-                comp = ResultHandler.ab_comparisons[-1]
-                name_a = comp["config_a"].get("name", f"config_{idx_a}")
-                name_b = comp["config_b"].get("name", f"config_{idx_b}")
-                logger.info(
-                    ResultHandler.ab_summary_line(
-                        name_a, name_b, len(paired), comp["aggregate"]
-                    )
-                )
-
-        # Prompt-sweep leaderboard: rank every config by mean RAGAS metric.
-        # Independent of the pairwise block above (reads per-config aggregates
-        # directly). Only meaningful with 2+ variants.
+        # A/B comparison: pair results across configs when 2+ were run, then
+        # the prompt-sweep leaderboard, which ranks every config by mean RAGAS
+        # metric. Auto-enabled — no explicit flag — because there's no useful
+        # "skip pairing" case when the user gave us multiple configs.
         if len(ResultHandler.results) >= 2:
             primary_metric = str(
                 self.config.get("services", {})
                 .get("benchmarking", {})
                 .get("primary_metric", "faithfulness")
             )
-            leaderboard = ResultHandler.build_leaderboard(primary_metric)
+            ResultHandler.build_comparisons(primary_metric)
+            for comp in ResultHandler.ab_comparisons:
+                logger.info(
+                    ResultHandler.ab_summary_line(
+                        comp["config_a"]["name"],
+                        comp["config_b"]["name"],
+                        len(comp["per_question"]),
+                        comp["aggregate"],
+                    )
+                )
+            leaderboard = ResultHandler.leaderboard
             logger.info(
                 "Prompt-sweep leaderboard (ranked by %s):",
                 leaderboard["primary_metric"],
