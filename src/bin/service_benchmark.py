@@ -65,7 +65,7 @@ from src.utils.generate_benchmark_report import (
     format_markdown_output,
     parse_benchmark_results,
 )
-from src.utils.judge_bundle import plan_judge_run
+from src.utils.judge_bundle import is_deferred, plan_judge_run, write_result_complete
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
 
@@ -2627,6 +2627,8 @@ class Benchmarker:
                 )
 
         ResultHandler.dump_artifacts(self.benchmark_name, timestamp=_result_ts)
+        if is_deferred(getattr(self, "judge_plan", None)):
+            write_result_complete(OUTPUT_DIR, self.result_basename)
         return
 
     def _merge_anchor_questions(self) -> None:

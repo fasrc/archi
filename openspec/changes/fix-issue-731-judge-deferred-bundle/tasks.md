@@ -179,7 +179,7 @@ Rules for every task:
       model's revision, not an image's. Run both render test files and watch them pass.
       Gate, then commit (message: `make the judge render tests able to fail`).
 
-- [ ] 3.2 Create `tests/unit/test_judge_start_refusal.py`. Tests (design D3 steps 4–7,
+- [x] 3.2 Create `tests/unit/test_judge_start_refusal.py`. Tests (design D3 steps 4–7,
       D7, D9): `package_digest` is order-independent, ignores blank lines and
       surrounding spaces, and returns `sha256:<64 hex>`; `collect_package_digest` with a
       stub `run` returns the digest of the stub output, and returns
