@@ -1,5 +1,8 @@
-## ADDED Requirements
+# offline-judge-scoring Specification
 
+## Purpose
+Deferred RAGAS judging of a benchmark run on a FASRC Slurm GPU job, with an open-weights judge on vLLM. It covers the judge bundle and its publish step, the queue folder's state markers, the submitter's one-job rule, the match rule between a bundle and a judge job, claim-at-start and stale-claim recovery, the fail-closed scorer identity, the time budget, per-row checkpoints and resume, the merge into a judged result JSON, and the comparison gates G11 (judged) and G12 (one judge) in `compare_runs.py` and the campaign archiver.
+## Requirements
 ### Requirement: A deferred run writes a judge bundle instead of calling the judge
 When `ragas_settings.judge_mode` is `deferred`, the benchmark SHALL answer every question and write a judge bundle for each arm, and it SHALL NOT make any RAGAS judge call. The bundle has two files. `rows.jsonl` has one line per scorable row, with the row's key and the full `user_input`, `retrieved_contexts`, `response` and `reference` that the inline path gives to ragas. `manifest.json` records the enabled metrics, the resolved ragas call settings (the output of `ragas_run_config_kwargs`, including `timeout` and `max_workers`, and the `batch_size` that the inline path passes to `evaluate`), the embedding model, the judge model id and revision, the run's `code_version`, the SHA-256 of the run environment's sorted `pip freeze`, the result basename, the arm index, the arm count of the result, and the SHA-256 of `rows.jsonl`. The run SHALL fix the result basename once, before its first arm, and SHALL use it for both the bundles and the result JSON. The bundle writer writes a `BUNDLE_COMPLETE` marker after every other bundle file. When `judge_mode` is absent or `inline`, the run SHALL score inline exactly as before.
 
@@ -289,6 +292,14 @@ The merge step SHALL write one new judged result JSON beside the pending one in 
 - **WHEN** `archive_run.sh` selects an artifact with `judge_status: pending`
 - **THEN** it exits non-zero, names the judged file to wait for, and appends nothing to the campaign ledger
 
+#### Scenario: Campaign archiver and a judged file beside its pending file
+- **WHEN** the output folder holds the pending `<basename>.json` and its `<basename>.judged.json`
+- **THEN** `archive_run.sh` archives the judged file, dates the run by the pending file, and writes each arm's `ragas_judge_identity_effective` into its ledger row
+
+#### Scenario: Noise replicate scored by another judge
+- **WHEN** a `--noise-runs` replicate records a `ragas_judge_identity_effective` that differs from the baseline's
+- **THEN** `compare_runs.py` exits non-zero and names the replicate and the fields that differ
+
 #### Scenario: Pending run
 - **WHEN** one arm has `judge_status: pending`
 - **THEN** `compare_runs.py` exits non-zero and names the pending arm
@@ -304,3 +315,4 @@ The merge step SHALL write one new judged result JSON beside the pending one in 
 #### Scenario: Two old inline artifacts
 - **WHEN** two artifacts written before this change both record `huit_bedrock` and the same Sonnet model
 - **THEN** `compare_runs.py` compares them as before
+

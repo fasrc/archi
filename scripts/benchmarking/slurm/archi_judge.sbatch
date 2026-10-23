@@ -14,7 +14,7 @@
 # --gres=gpu:1 and JUDGE_PRECISION=fp8 in judge.env (precision is part of the judge identity).
 
 # The offloaded RAGAS judge job (#733; design D5, D6 and D10 in
-# openspec/changes/archive/*-offload-ragas-judge-to-slurm).
+# openspec/changes/archive/2026-10-23-offload-ragas-judge-to-slurm).
 #
 #   sbatch --dependency=singleton scripts/benchmarking/slurm/archi_judge.sbatch
 #   bash scripts/benchmarking/slurm/archi_judge.sbatch --dry-run

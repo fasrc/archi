@@ -9,7 +9,7 @@
 # CPU only. The partition is a setting the operator confirms on fasrc/archi#729.
 
 # Merge the scored judge bundles into judged results (#733; design D8 in
-# openspec/changes/archive/*-offload-ragas-judge-to-slurm).
+# openspec/changes/archive/2026-10-23-offload-ragas-judge-to-slurm).
 #
 #   sbatch scripts/benchmarking/slurm/judge_merge.sbatch
 #   bash scripts/benchmarking/slurm/judge_merge.sbatch --dry-run

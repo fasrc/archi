@@ -115,6 +115,8 @@ PR 2 (#731) fixes the result basename at the top of `run()` for every run, inlin
 
 The merge is also submitted from the judge job (`--dependency=afterok`) as the fast path. Step 4 is the durable path: a judge job that is killed after its last `SCORED` marker and before its `sbatch` of the merge leaves no gap, because the next tick submits the merge.
 
+PR 4 (#733) writes the submitter as `scripts/benchmarking/slurm/judge_submit.sh`. Its settings (the judge home, the queue folder, `judge.env`, the sidecar, the login-node Python) are environment variables with defaults at the top of the script. It counts the available bundles with `judge_queue.py --count`, and step 4 reads `judge_queue.py --merge-ready`: the results whose arms are all `SCORED`, with no `FAILED`, the pending JSON published, and some arm without `MERGED`. One merge job merges every ready result, so the submitter submits at most one. A failed `squeue` submits nothing, because an unknown queue state is not an empty one. `--status` also flags a READY bundle older than 24 hours, and lists every `INCOMPATIBLE` record of a bundle, also the records of an older sidecar.
+
 ### D4a. One match rule for the submitter and the job
 
 A bundle **matches** a judge job when both of these are true:
@@ -169,6 +171,12 @@ The scorer builds the judge through the judge factory (D2), with an OpenAI-compa
 
 **Production defaults (fasrc/archi#739, operator decision 2026-10-23).** `build_uds_judge_llm` defaults to `timeout=300` seconds for each request, the value that every inline judge run uses (`fasrc/archi-config` PR #45), and `max_retries=2` for the openai client. The scorer (`score.py run`) calls the builder with these defaults. The unit tests pass their own bound (10 seconds, 0 retries). vLLM serves the model under the name `JUDGE_MODEL_ID` (`--served-model-name`), because the scorer sends that name.
 
+PR 4 (#733) writes the judge job as `scripts/benchmarking/slurm/archi_judge.sbatch`:
+- It runs `score.py check` in the scorer image first. Exit 0 is work. Exit 3 is no work: the job exits 0 and starts no server. Exit 2 is a stale sidecar: the check writes `SCORER_STALE`, and the job exits non-zero.
+- The socket folder comes from `mktemp -d` under `$TMPDIR`, with mode `0700` and `umask 077`. The key goes into the containers as `APPTAINERENV_VLLM_API_KEY`, and the readiness probe reads it from a header file in the socket folder (`curl -H @file`), so no command line holds it.
+- The server command comes from `judge.env` only: `vllm serve <JUDGE_MODEL_ID> --revision <JUDGE_MODEL_REVISION> --served-model-name <JUDGE_MODEL_ID>`, the precision (`bf16` and `fp16` as `--dtype`, `fp8` as `--quantization fp8`; another value is refused), the tensor-parallel size of the allocation, and then `JUDGE_SERVER_ARGS`. The judge identity therefore records every server setting that changes output. The job sets `HF_HUB_OFFLINE=1`, because the weights are downloaded before (task 5.1).
+- It submits the merge only after the scorer exits 0, because Slurm never satisfies an `afterok` dependency on a failed job.
+
 ### D7. Save each row's score and resume
 
 `get_ragas_results` scores each metric over its eligible rows in one ragas call. The offline scorer calls the shared function over **chunks** of rows (the default is 8), and it appends each chunk's results to a checkpoint file with `fsync`. Each record is one line that ends with a newline.
@@ -208,6 +216,8 @@ The merge is safe when two merges run at the same time (the afterok job and a ma
 
 The publish timer copies each judged file back into the output folder (D3). A person copies judged files into `bench_out/` and commits them.
 
+PR 4 (#733): `scripts/benchmarking/slurm/judge_merge.sbatch` runs `merge.py` in the scorer image on a CPU partition, so the comparisons are rebuilt with the code of the run.
+
 ### D8a. One judge mode for each run
 
 Each sweep config loads its own benchmarking settings (`load_new_configuration`, `src/bin/service_benchmark.py:1422-1434`), so one run can have an inline arm and a deferred arm. The merge unit is the whole result (D8), and an inline arm has no bundle, so such a result would never be merged. The run therefore reads `judge_mode` from every config before it answers any question, and it refuses to start if the configs do not all have the same mode. A person who wants an inline spot check next to a deferred run makes two runs.
@@ -236,6 +246,8 @@ The design keeps three records separate:
   - the metric list and the per-metric settings from the manifest.
 
   ragas holds its prompt templates inside the pinned package, so the package digest covers them. `score.py write-identity --out <scorer-identity.json> [--image-digest D]` writes the sidecar (sorted keys) at the scorer image build; `compute_scorer_identity` refuses to write one when either digest is unavailable.
+
+  PR 4 (#733) adds the image recipe `scripts/benchmarking/slurm/archi-scorer.def` and its build script `build_scorer_image.sh`. The base is a `docker save` archive of the benchmark image that ran the deferred run (`Bootstrap: docker-archive`). The recipe installs nothing and changes no file under `/root/archi/src`, because either change gives the scorer a code or package digest other than the run's. It only adds `score.py`, `judge_queue.py` and `merge.py`, which the benchmark image does not hold. The build script builds the image under a `.new` name, takes the SHA-256 of the SIF file as the image digest, writes the sidecar with `score.py write-identity` inside the new image, and then moves the image and the sidecar into place.
 - **`judge_execution`** is the record of the job, and nothing compares it: the job id, node name, start and end times, the list of claimed bundles, and the requeue count.
 
 **The scorer fails closed.** It never scores a bundle whose manifest code digest or package digest differs from its own scorer identity. A deferred run whose `code_version.digest` is unavailable (the `<unavailable>` case in `code_version`) refuses to start, because no scorer could ever match its bundles. There is no override. The refusal is not a terminal state: through the match rule (D4a), the job does not claim such a bundle, and the bundle stays READY with no marker. To score it, build a scorer image whose `src` has the manifest's code digest: build it from the benchmark image that made the run, or from a checkout whose `src` gives the same digest. The manifest's `deploy_git_commit` is only a hint for where to look. The next job that runs that image matches the bundle and claims it. `scorer-identity.json` can be out of date, and then the submitter and the job both match a bundle that the live scorer must refuse. Without a record, each tick would submit a new GPU job that claims the bundle, refuses it and exits, with no end. Two checks stop this:
@@ -258,6 +270,11 @@ There is no override flag, because the result of a mixed comparison has no meani
 The archiver also applies G12 across runs, because separately archived runs are compared through the ledger, not through `compare_runs.py`. It writes each arm's `ragas_judge_identity_effective` into its ledger row (the row has none today, `archive_run.sh:246-260`). It refuses an archive whose `ragas_judge_identity_effective` differs from the identity of the campaign's earlier RAGAS rows, and it names the fields that differ. An earlier row with no identity never equals a recorded one (the D9 rule), so the first judged run of a campaign that has only older rows is refused, and the operator starts a new campaign for the new judge.
 
 Both archiver paths obey G11 and G12. The anchors above are the single-run path, which refuses an artifact with more than one arm (`archive_run.sh:164`). The `--sweep` path (`archive_run.sh:39-73`, artifact choice at `:62`) archives every arm of a multi-arm artifact through `archive` in `scripts/benchmarking/feature_matrix/sweep_tools.py:317`, and its ledger rows have no judge identity today either.
+
+PR 4 (#733) puts both gates in `src/utils/judge_gates.py`, standard library only, so that `compare_runs.py` can load it by path on a host with no database driver. `normalize_numbers`, `canonical_identity` and `differing_fields` move there from `src/utils/judge_identity.py`, which re-exports them, so one helper still serves every reader. `compare_runs.py` runs G11 and G12 over all arms before the other gates, and over the noise replicates in `check_noise_replicates`. The archiver works as follows:
+- Artifact choice (`select_result`, which both paths call through `fm_select_result` in `lib.sh`). Lynx files (`<basename>-arm<N>.lynx.json`) are not results. The newest result is the one whose own file, `<basename>.json`, is newest, so a judged file copied back later does not make an older run look new. A pending result is refused (G11) unless its judged file is beside it. Then the archiver takes the judged file, and the pending file dates the run (`sweep_tools.py archive --dated-by`), so a re-run that wrote nothing does not archive the earlier run again.
+- The archiver loads the module by path and never runs it as a script: a script's folder goes first on `sys.path`, and `src/utils/logging.py` would hide the standard library's `logging`.
+- Each ledger row records its arm's G12 identity under `ragas_judge_identity_effective`: the recorded key, or the `(evaluator_provider, evaluator_model)` pair for an artifact without the key. An archive is compared with every `kind: ragas` row of the ledger, and the arms of one sweep artifact must agree with each other too.
 
 ## Risks / Trade-offs
 

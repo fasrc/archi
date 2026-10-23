@@ -2,7 +2,7 @@ Bootstrap: docker-archive
 From: {{ benchmark_image }}
 
 # The scorer image of the offloaded RAGAS judge (#733; design D10 in
-# openspec/changes/archive/*-offload-ragas-judge-to-slurm). Build it with
+# openspec/changes/archive/2026-10-23-offload-ragas-judge-to-slurm). Build it with
 # build_scorer_image.sh, never by hand: the build script also writes the
 # scorer-identity.json that judge_submit.sh and archi_judge.sbatch match bundles against.
 #

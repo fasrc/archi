@@ -1,7 +1,7 @@
 """The judge queue: match rule, claims, stale-claim recovery, budget (#732).
 
 Tasks 3.0, 3.1, 3.1a and the budget half of 3.2 of
-openspec/changes/offload-ragas-judge-to-slurm. The module runs on a login node
+openspec/changes/archive/2026-10-23-offload-ragas-judge-to-slurm. The module runs on a login node
 with the standard library only, so the tests load it by path, as the submitter
 does, and replace ``squeue`` and ``sacct`` with stub executables on ``PATH``.
 """

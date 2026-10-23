@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Submit the offloaded RAGAS judge when its queue has work (#733; design D4 in
-# openspec/changes/archive/*-offload-ragas-judge-to-slurm).
+# openspec/changes/archive/2026-10-23-offload-ragas-judge-to-slurm).
 #
 #   judge_submit.sh            # one tick: submit archi-judge and archi-judge-merge as needed
 #   judge_submit.sh --status   # list the queue: READY bundles older than 24 hours, bundles

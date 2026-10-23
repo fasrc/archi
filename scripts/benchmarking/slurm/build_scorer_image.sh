@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the scorer image of the offloaded RAGAS judge and its scorer-identity.json (#733;
-# design D10 in openspec/changes/archive/*-offload-ragas-judge-to-slurm).
+# design D10 in openspec/changes/archive/2026-10-23-offload-ragas-judge-to-slurm).
 #
 #   build_scorer_image.sh <benchmark image tar> <out dir>
 #   build_scorer_image.sh --dry-run <benchmark image tar> <out dir>
