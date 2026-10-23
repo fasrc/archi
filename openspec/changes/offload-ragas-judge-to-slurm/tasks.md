@@ -66,8 +66,8 @@ Rules for every task:
   - a change of the effective `timeout`, `max_workers`, `batch_size` or chunk size changes the identity, and an explicit default equals an unset value;
   - the offline scorer passes the manifest's `batch_size` and run-config values to ragas, not its own defaults;
   - the inline path records the same identity shape;
-  - an identity with nested values (the metric list, per-metric settings) goes through `ResultHandler.arms_incomparability_reason` and the merge's leaderboard rebuild without error, because the comparison uses canonical JSON (sorted keys) and not `tuple(sorted(identity.items()))` (`src/bin/service_benchmark.py:380-382` at `7c7d7450`); equal nested identities compare equal, and the existing 4-field identities still compare as before;
-  - when two arms differ only in a new field (for example precision, embedding or a scorer digest), the reason that `arms_incomparability_reason` returns names the fields that differ. Today it says "provider, model, endpoint, or client mode" (`src/bin/service_benchmark.py:397-401` at `7c7d7450`), which is false for those cases.
+  - an identity with nested values (the metric list, per-metric settings) goes through `ResultHandler.arms_incomparability_reason` and the merge's leaderboard rebuild without error, because the comparison uses canonical JSON (sorted keys) and not `tuple(sorted(identity.items()))` (`src/bin/service_benchmark.py:374-376` at `e2978a1d`); equal nested identities compare equal, and the existing 4-field identities still compare as before;
+  - when two arms differ only in a new field (for example precision, embedding or a scorer digest), the reason that `arms_incomparability_reason` returns names the fields that differ. Today it says "provider, model, endpoint, or client mode" (`src/bin/service_benchmark.py:391-395` at `e2978a1d`), which is false for those cases.
 - [ ] 3.6b Update `docs/docs/benchmarking.md` where it defines `ragas_judge_identity_effective` as only `provider`, `model`, `base_url` and `mode` (`:395`, `:571` at `7c7d7450`). Describe the extended fields, say that arms differing in any of them are not ranked, and say that older result files keep the 4-field record.
 - [ ] 3.7 Add tests for the merge, then write `scripts/benchmarking/judge/merge.py`. The tests check that:
   - the merge groups bundles by result file, and writes nothing while any arm is not `SCORED` (it names the pending arms and exits 0); after the last arm is `SCORED`, one judged file holds all arms;
@@ -96,6 +96,14 @@ Rules for every task:
   - the `(evaluator_provider, evaluator_model)` fallback is used only when `ragas_judge_identity_effective` is absent: two new artifacts with the same provider and model but different precision are refused;
   - two 4-field artifacts from #618 with equal fields compare, and a 4-field artifact never matches an extended one.
 - [ ] 4.6 Document the operator steps in `docs/docs/benchmarking.md`: image and weights download, the `scrontab` entry, `judge_mode: deferred`, how to read the queue, and how to copy judged files into `bench_out/`.
+- [ ] 4.7 Add one end-to-end test that needs no cluster, GPU or network. Operator decision, 2026-10-21: the first real cluster run is in fasrc/archi#737, after the October release, so this test is the release's end-to-end check of the deferred path. Build a deferred arm's pending result JSON and its bundle with the PR 2 code, not with hand-written JSON. Then, on a temporary queue folder, run the real steps in order:
+  - `publish.py` (the bundle becomes READY, and the pending result is copied to `<queue>/results/`);
+  - `judge_submit.sh`, with stub `sbatch` and `squeue` on `PATH` (it submits exactly one judge job);
+  - the scorer CLI with a stub judge in place of vLLM (it claims the bundle, scores it, and marks it `SCORED`);
+  - `merge.py` (it writes the judged file and `MERGED`), and the publish copy-back;
+  - `compare_runs.py` (G11 refuses the pending file and accepts the judged file) and the single-run archiver (one ledger row with the arm's `ragas_judge_identity_effective`).
+
+  The judged aggregates must equal the inline aggregates for the same rows and the same stub judge.
 
 ## 5. Operator (after PR 4 merges, not automated)
 
