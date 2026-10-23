@@ -150,7 +150,7 @@ Rules for every task:
       parent task 2.2a (task 3.1 did not tick it). Gate, then commit (message: `take the
       result timestamp before the ingest wait`).
 
-- [ ] 3.1c (Review findings from the wrap-up check.) Three render checks of task 2.1 can
+- [x] 3.1c (Review findings from the wrap-up check.) Three render checks of task 2.1 can
       never fail. (a) `tests/unit/test_base_config_judge_render.py:88-91` calls
       `parse_judge_mode({"judge_mode": ragas["judge_mode"]})`, but `parse_judge_mode`
       takes the bare value (design D2 now says so), so any dict is refused and the test
