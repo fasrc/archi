@@ -683,6 +683,61 @@ def test_with_no_work_the_job_exits_before_it_builds_a_judge(
     assert built == []
 
 
+def test_a_requeued_claim_for_another_judge_is_not_scored(tmp_path, queue, jq, judge):
+    """judge.env changed before the requeue: the job's own old claim asks for
+    another revision, so the job neither scores it nor counts it as work."""
+    settings = ragas_settings(evaluator_model_revision="rev-old")
+    bundle = make_bundle(queue, settings=settings)
+    (bundle / "claim.1").write_text("1001\n")
+    built = []
+    ctx = make_ctx(tmp_path, queue, jq, judge_built=built)
+    assert preflight(ctx) == "none"
+    assert run_job(ctx) == 0
+    assert built == [] and judge.calls == []
+    assert score_bundle(bundle, ctx) == "OTHER_JUDGE"
+    assert not any((bundle / m).exists() for m in ("SCORED", "FAILED"))
+    assert not list(bundle.glob("scores.*")) and not list(bundle.glob("INCOMPATIBLE.*"))
+
+
+def test_a_finalized_scores_file_does_not_raise_the_measured_rate(
+    tmp_path, queue, jq, judge, monkeypatch
+):
+    """Finalizing a dead job's complete judge_scores.json judges no row, so it
+    must not make the next claim round think the job is fast."""
+    done = make_bundle(queue, "a-20261023_120000", count=12)
+    assert score_bundle(done, make_ctx(tmp_path, queue, jq)) == "SCORED"
+    (done / "SCORED").unlink()
+    (done / "claim.1").write_text("1001\n")
+    waiting = [
+        make_bundle(queue, f"{name}-20261023_120000", count=109, drafts=())
+        for name in "bc"
+    ]
+    calls = len(judge.calls)
+    # 50 minutes at the bootstrap 2 rows per minute: a 109-row bundle needs
+    # 54.5 minutes, so only an inflated rate would claim one.
+    monkeypatch.setattr(jq, "time_left", lambda job_id: 50 * 60)
+    assert run_job(make_ctx(tmp_path, queue, jq)) == 0
+    assert (done / "SCORED").exists()
+    assert len(judge.calls) == calls
+    assert not any(list(b.glob("claim.*")) for b in waiting)
+
+
+def test_a_resumed_bundle_counts_only_the_rows_judged_now(
+    tmp_path, queue, jq, monkeypatch
+):
+    settings = ragas_settings(enabled_metrics=["answer_relevancy"])
+    bundle = make_bundle(queue, count=40, drafts=(), settings=settings)
+    first = StubJudge(fail_after=4)
+    _install_ragas_stub(monkeypatch, first.evaluate)
+    with pytest.raises(RuntimeError):
+        score_bundle(bundle, make_ctx(tmp_path, queue, jq, chunk_size=8))
+    second = StubJudge()
+    _install_ragas_stub(monkeypatch, second.evaluate)
+    ctx = make_ctx(tmp_path, queue, jq, chunk_size=8)
+    assert score_bundle(bundle, ctx) == "SCORED"
+    assert ctx.rows_judged == pytest.approx(8)
+
+
 def test_a_scored_bundle_is_not_scored_again(tmp_path, queue, jq, judge):
     bundle = make_bundle(queue)
     ctx = make_ctx(tmp_path, queue, jq)

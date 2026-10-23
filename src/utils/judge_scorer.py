@@ -92,6 +92,9 @@ class JobContext:
     monotonic: Callable[[], float] = time.monotonic
     started_at: str = ""
     claimed: List[str] = field(default_factory=list)
+    # Bundle rows this job sent to the judge (in proportion to the pairs it
+    # judged); the time budget's measured rate counts only these.
+    rows_judged: float = 0.0
 
 
 def load_bundle(bundle: Path) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[str]]:
@@ -242,6 +245,21 @@ def _scorer_mismatch(expected: Mapping[str, Any], live: Mapping[str, Any]) -> st
     )
 
 
+def other_judge(
+    manifest: Optional[Mapping[str, Any]], judge_env: Mapping[str, Any]
+) -> str:
+    """Why this job's judge is not the one the manifest asks for, else ``""``.
+
+    The match rule (D4a) checks this before a claim; a requeued job's own
+    claims and every bundle that reaches the scorer are checked again, because
+    judge.env can change between a claim and a requeue.
+    """
+    judge = (manifest or {}).get("judge_model") or {}
+    wanted = f"{judge.get('id')}@{judge.get('revision')}"
+    loaded = f"{judge_env['JUDGE_MODEL_ID']}@{judge_env['JUDGE_MODEL_REVISION']}"
+    return "" if wanted == loaded else f"waits for judge {wanted}; this job is {loaded}"
+
+
 def _fail(bundle: Path, reason: str) -> str:
     link_exclusive(bundle / "FAILED", f"{reason}\n".encode())
     return "FAILED"
@@ -295,7 +313,12 @@ def _finish(bundle: Path, manifest, rows, keys) -> str:
 
 
 def score_bundle(bundle: Path, ctx: JobContext) -> str:
-    """Score one claimed bundle; returns SCORED, FAILED or INCOMPATIBLE."""
+    """Score one claimed bundle.
+
+    Returns SCORED, FAILED, INCOMPATIBLE (the live scorer differs from the
+    manifest) or OTHER_JUDGE (the manifest asks for another judge; no score and
+    no marker, so the claim goes stale for a job with that judge).
+    """
     bundle = Path(bundle)
     for marker in ("SCORED", "FAILED"):
         if (bundle / marker).exists():
@@ -306,6 +329,8 @@ def score_bundle(bundle: Path, ctx: JobContext) -> str:
         return _fail(bundle, str(exc))
     if (bundle / SCORES_FILE).exists():
         return _finish(bundle, manifest, rows, keys)
+    if other_judge(manifest, ctx.judge_env):
+        return "OTHER_JUDGE"
     needed = {
         "code_digest": (manifest.get("code_version") or {}).get("digest"),
         "package_digest": manifest.get("package_digest"),
@@ -340,6 +365,8 @@ def score_bundle(bundle: Path, ctx: JobContext) -> str:
     except BundleFailed as exc:
         return _fail(bundle, str(exc))
 
+    total_pairs = sum(len(eligible_subset(rows, keys, m)[1]) for m in scorer.metrics)
+    rows_per_pair = manifest["row_count"] / total_pairs if total_pairs else 0.0
     for metric in scorer.metrics:
         eligible_rows, eligible_keys = eligible_subset(rows, keys, metric)
         todo = [
@@ -356,6 +383,7 @@ def score_bundle(bundle: Path, ctx: JobContext) -> str:
                 )
             records = [_record(key, metric, s) for (_, key), s in zip(chunk, scores)]
             append_records(path, records)
+            ctx.rows_judged += len(chunk) * rows_per_pair
             for record in records:
                 done.setdefault((record["key"], metric), record)
 
@@ -410,7 +438,7 @@ def preflight(ctx: JobContext) -> str:
     A live identity that differs from the sidecar creates
     ``<queue>/SCORER_STALE.<sidecar token>``, so the match rule stops offering
     this sidecar's bundles. The work counts the bundles this job already claims
-    (a requeued job) and the available ones.
+    for its own judge (a requeued job) and the available ones.
     """
     mismatch = _scorer_mismatch(ctx.sidecar.identity, ctx.live)
     if mismatch:
@@ -419,12 +447,21 @@ def preflight(ctx: JobContext) -> str:
             f"sidecar {ctx.sidecar.digest}: {mismatch}\n".encode(),
         )
         return "stale"
-    qa = ctx.queue_api
-    if qa.own_work(ctx.queue, ctx.job_id) or qa.available(
+    if _resumable(ctx) or ctx.queue_api.available(
         ctx.queue, ctx.judge_env, ctx.sidecar
     ):
         return "work"
     return "none"
+
+
+def _resumable(ctx: JobContext) -> List[Path]:
+    """This job's own claims (a requeue) that ask for this job's judge."""
+    qa = ctx.queue_api
+    return [
+        bundle
+        for bundle in qa.own_work(ctx.queue, ctx.job_id)
+        if not other_judge(qa.read_manifest(bundle), ctx.judge_env)
+    ]
 
 
 def _row_count(ctx: JobContext, bundle: Path) -> int:
@@ -467,25 +504,25 @@ def run_job(ctx: JobContext) -> int:
     if state == "none":
         return 0
     ctx.started_at = ctx.started_at or ctx.now()
-    work = list(ctx.queue_api.own_work(ctx.queue, ctx.job_id))
+    work = _resumable(ctx)
     ctx.claimed.extend(bundle.name for bundle in work)
     bootstrap = float(ctx.judge_env["JUDGE_BOOTSTRAP_ROWS_PER_MINUTE"])
-    rows_done = 0
     seconds_spent = 0.0
 
     def rate() -> float:
-        if not rows_done:
+        # Only rows the judge scored in this job: a finalized scores file or
+        # the saved part of a resumed bundle cost no judge time.
+        if not ctx.rows_judged:
             return bootstrap
-        return rows_done / (seconds_spent / 60) if seconds_spent > 0 else math.inf
+        if seconds_spent <= 0:
+            return math.inf
+        return ctx.rows_judged / (seconds_spent / 60)
 
     work += _claim_round(ctx, work, rate(), first_is_free=not work)
     while work:
         bundle = work.pop(0)
         started = ctx.monotonic()
-        outcome = score_bundle(bundle, ctx)
-        elapsed = ctx.monotonic() - started
-        if outcome == "SCORED":
-            rows_done += _row_count(ctx, bundle)
-            seconds_spent += elapsed
+        score_bundle(bundle, ctx)
+        seconds_spent += ctx.monotonic() - started
         work += _claim_round(ctx, work, rate(), first_is_free=False)
     return 0
