@@ -34,7 +34,7 @@ The dev host (`holygpu7c0717`) cannot host the judge, because the two Qwen serve
   - `scripts/benchmarking/compare_runs.py`: two new gates.
   - `src/cli/templates/base-config.yaml`: render `judge_mode`.
   - New Slurm scripts under `scripts/benchmarking/slurm/`.
-- **Config:** new optional `ragas_settings` keys `judge_mode` (default `inline`) and `judge_bundle_dir`. Nothing changes for existing configs.
+- **Config:** new optional `ragas_settings` keys `judge_mode` (default `inline`), `judge_bundle_dir`, and `evaluator_model_revision` (the judge revision that a deferred bundle asks for). Nothing changes for existing configs.
 - **Artifacts:** additive only. Old result JSONs have no `judge_status` key, and they load as `inline`.
 - **Cluster:** needs `scrontab` and GPU partition access (`gpu_h200` for a 70B judge, or `gpu_requeue`). It also needs one download of the judge weights to shared storage, and a vLLM Apptainer image built for the target GPUs. None of this runs on the dev host's GPUs.
 - **Cost:** after the switch, the only Sonnet cost is an optional periodic spot check. fasrc/archi#582 (judge token usage) measures that cost.

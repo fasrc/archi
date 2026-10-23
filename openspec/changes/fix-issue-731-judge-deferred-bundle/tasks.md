@@ -317,7 +317,7 @@ Rules for every task:
 
 ## 7. Correct the parent change
 
-- [ ] 7.1 In `openspec/changes/offload-ragas-judge-to-slurm/design.md`, append one short
+- [x] 7.1 In `openspec/changes/offload-ragas-judge-to-slurm/design.md`, append one short
       paragraph to D3, as #730 did for D2. Say that PR 2 (#731) fixes the basename at
       the top of `run()` for every run; that the judge model id comes from
       `evaluator_model` and the revision from the new `evaluator_model_revision`; that
