@@ -443,6 +443,28 @@ fm_sweep_lock_file() { printf '%s/sweep-%s.lock\n' "$FM_OUT" "$1"; }
 fm_map_pin_file()    { printf '%s/category-map-pin-%s\n' "$FM_OUT" "$1"; }
 fm_sweep_tools()     { "$FM_PYTHON" "$(dirname "${BASH_SOURCE[0]}")/sweep_tools.py" "$@"; }
 
+# The judge gates G11 and G12 (judge offload design D9) are one shared check in
+# src/utils/judge_gates.py, which compare_runs.py also calls. It is standard library only,
+# and it is loaded by path, never run as a script: a script's folder goes first on sys.path,
+# and src/utils holds a logging.py that would hide the standard library's logging.
+fm_judge_gates() { printf '%s/../../../src/utils/judge_gates.py\n' "$(dirname "${BASH_SOURCE[0]}")"; }
+FM_LOAD_JUDGE_GATES='
+import importlib.util, os
+_spec = importlib.util.spec_from_file_location("judge_gates", os.environ["FM_JUDGE_GATES"])
+gates = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(gates)
+'
+# The result to archive for a stack: the newest benchmarking-<stack>-*.json, or its judged
+# file <basename>.judged.json once a deferred judge scored it (Lynx files are not results).
+# Prints the artifact, then the file whose time dates the run: a judged file is copied
+# back after its run, so its pending file dates it. A result whose judge is pending, with
+# no judged file yet, is refused (G11), and the judged file to wait for is named.
+fm_select_result() { # $1 = stack name
+  FM_JUDGE_GATES="$(fm_judge_gates)" "$FM_PYTHON" -c "$FM_LOAD_JUDGE_GATES
+import sys
+sys.exit(gates.main(sys.argv[1:]))" select --dir "$FM_OUT" --prefix "benchmarking-$1-"
+}
+
 # The live category-map digest, computed exactly as the harness records it: the searched
 # collection's URL -> category map through the shared routine, inside the stack's
 # data-manager. Never fails the caller: a failed reading prints `<unavailable: ...>` and the
