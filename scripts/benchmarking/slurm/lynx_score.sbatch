@@ -18,7 +18,7 @@
 ##SBATCH -t 04:00:00
 
 # Score one run's judge bundle with PatronusAI Lynx, in a pinned vLLM container
-# (#735, openspec/changes/add-lynx-faithfulness-scorer design D11).
+# (#735; design D11 in openspec/changes/archive/2026-10-23-add-lynx-faithfulness-scorer).
 #
 #   sbatch scripts/benchmarking/slurm/lynx_score.sbatch <bundle folder> [<out dir>]
 #   bash scripts/benchmarking/slurm/lynx_score.sbatch --dry-run <bundle folder> [<out dir>]
