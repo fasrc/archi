@@ -6,9 +6,10 @@ used, and every comparison names the feature under test as `key: default → arm
 
 **What this is.** The cross-arm report for issue
 [#396](https://github.com/fasrc/archi/issues/396). Between 2026-09-04 and 2026-09-09, on the
-production GPU host, eight configuration changes were each tested in isolation against the
-shipped defaults, with the same 109 questions, the same judge, the same code and a locked
-protocol. The protocol, the pre-registered decision rules and the day-by-day operating log
+production GPU host, eight arms were compared against the shipped defaults, with the same 109
+questions, the same judge, the same code and a locked protocol. Six arms changed one key each;
+arm 02 changed two keys by design (section 2.1), and arm 06 could not apply its change at all
+(section 3.7). The protocol, the pre-registered decision rules and the day-by-day operating log
 live in the [campaign plan](proposals/feature-matrix-campaign-2026.md) and the
 [pre-registration](https://github.com/fasrc/archi/blob/bench/2026-09-feature-matrix/docs/eval/preregs/2026-09-feature-matrix.md);
 this page reports what came out. Times are EDT (the operating log's convention); artifact
@@ -50,10 +51,12 @@ the primary metric in the pre-registered vocabulary (helps / hurts / no measurab
 
 Three things to take from the table before the details:
 
-- **The primary metric is insensitive to the retrieval knobs.** Reranker, k and stemming all
-  leave `context_precision` inside its minimum detectable effect; only the two chunking
-  changes move it, and only downward. `context_recall` and citation accuracy are the metrics
-  that respond to retrieval settings.
+- **The primary metric is insensitive to the retrieval knobs.** Reranker and k leave
+  `context_precision` inside its minimum detectable effect. Only two ingest-side changes move
+  it past that bound, both downward: markdown chunking (its primary metric) and stemming (a
+  secondary metric for that arm). The character-chunking arm's drop (−0.058 / −0.067) stays
+  inside its MDE (0.081 / 0.082). `context_recall` and citation accuracy are the metrics that
+  respond to retrieval settings.
 - **The two shipped defaults with a measurable cost buy nothing measurable.** Categorization
   costs 19 minutes per ingest (about 1 080 LLM calls) and is write-only in the code; the
   reranker costs 45 % of the time per question. Section 5 proposes the issues.
@@ -336,8 +339,8 @@ the retrieved text both fall by more than their MDEs in both runs. The bank carr
 "Markdown-bearing page" slice, so the narrower claim was not tested.
 ([#490](https://github.com/fasrc/archi/issues/490) disputes this caveat: every source URL in
 the bank resolves to a web-scraped Markdown page, so arm 07 was in effect judged on that
-slice. The correction is open there.) Yet the answers improved on all three gold-atom metrics
-and arrived 37 % sooner — the same signature as reranker OFF. Section 4.1 takes this up. As a
+slice. This report keeps the caveat until #490 settles it.) Yet the answers improved on all
+three gold-atom metrics and arrived 37 % sooner — the same signature as reranker OFF. Section 4.1 takes this up. As a
 default: hurts on the primary metric, with an answer-side trade-off and a 55 % larger index;
 not recommended without the follow-up in section 5.
 
@@ -428,7 +431,7 @@ into "a real content change in the FASRC documentation between the two dates". C
 | 05a | Fewer parents raise precision, lower recall | precision half **not supported**; recall half **confirmed** (−0.07) |
 | 05b | More parents lower precision, raise recall | precision half **not supported at N = 2** (−0.013 vs MDE 0.017, both runs on the low side); recall up in both runs, one outside MDE; citations +0.08 |
 | 06 | Raw HTML lowers precision and faithfulness | **untested** (#448) |
-| 07 | Header-aware chunking raises precision on the Markdown-bearing part of the corpus | **refuted** at corpus level (−0.095); the slice was not testable with this bank |
+| 07 | Header-aware chunking raises precision on the Markdown-bearing part of the corpus | **refuted** at corpus level (−0.095); the slice was not testable with this bank (disputed in [#490](https://github.com/fasrc/archi/issues/490)) |
 
 ---
 

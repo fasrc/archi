@@ -141,7 +141,7 @@ archived RAGAS runs, 11 QA runs, zero degraded rows, every Procedure E check pas
 | 05a k = 3 | fewer parents raise precision, lower recall | −0.014 / −0.005 (0.023 / 0.021) | **no measurable difference** on precision; recall −0.087 / −0.061 hurts; citations 0.877 → 0.792 |
 | 05b k = 8 | more parents lower precision, raise recall | −0.014 / −0.013 (0.018 / 0.017) | **no measurable difference** on precision (both runs within 0.004 of the MDE); recall +0.060 / +0.028 (one outside MDE); citations 0.877 → 0.96 (p ≤ 0.012 both runs) |
 | 06 html_to_markdown off | raw HTML lowers precision and faithfulness | — | **untestable** — renderer forces the key to `true` ([#448](https://github.com/fasrc/archi/issues/448)); run refused by the factor check |
-| 07 markdown chunking | raises `context_precision` on the Markdown-bearing part | −0.098 / −0.091 (0.072 / 0.074) re-based; −0.101 / −0.109 vs opening | **hurts** (corpus level; the slice was not testable with this bank); recall −0.14 hurts; gold atoms up; 37 % less time per question |
+| 07 markdown chunking | raises `context_precision` on the Markdown-bearing part | −0.098 / −0.091 (0.072 / 0.074) re-based; −0.101 / −0.109 vs opening | **hurts** (corpus level; the slice was not testable with this bank, disputed in [#490](https://github.com/fasrc/archi/issues/490)); recall −0.14 hurts; gold atoms up; 37 % less time per question |
 
 **Drift check (opening vs closing baseline).** Identical config and code, four days apart:
 chunk count 6926 → 6928, `context_precision` +0.006, `context_recall` −0.021,
