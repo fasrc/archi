@@ -292,7 +292,7 @@ Rules for every task:
       watch it FAIL. Then write `src/utils/exclusive_link.py`. Watch it pass. Tick
       parent task 2.5a. Gate, then commit (message: `add a no-replace link primitive`).
 
-- [ ] 6.2 Create `tests/unit/test_judge_publish.py`, importing
+- [x] 6.2 Create `tests/unit/test_judge_publish.py`, importing
       `from scripts.benchmarking.judge import publish`. Build bundles with
       `write_judge_bundle` in `tmp_path`, and a queue folder in `tmp_path`. Tests
       (design D11, parent task 2.6): `--queue` is required (argparse exits 2); a bundle
