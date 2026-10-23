@@ -4,8 +4,8 @@ The data-manager and chatbot containers run PyTorch with its default of one CPU 
 
 ## What Changes
 
-- Render `OMP_NUM_THREADS` into the `data-manager` and `chatbot` compose services, so torch starts a bounded thread pool.
-- Add an optional config key `data_manager.torch_threads`: a positive integer, default 8, capped at the CPUs the host gives `archi create`. Without the key, an `OMP_NUM_THREADS` in the env file is kept.
+- Render `OMP_NUM_THREADS` and `MKL_NUM_THREADS` (same value; torch reads the MKL one first) into the `data-manager` and `chatbot` compose services, so torch starts a bounded thread pool.
+- Add an optional config key `data_manager.torch_threads`: a positive integer, default 8, capped at the CPUs the host gives `archi create`. Without the key, an `OMP_NUM_THREADS` or `MKL_NUM_THREADS` in the env file is kept.
 - Reject a non-positive or non-integer value at `archi create` and `archi restart -c` time, naming the key, before any file is written.
 - `archi restart -c` refuses a change to the key, as it refuses other `data_manager` changes.
 - No change to any other service, the embedding model, device, chunking or batch sizes.

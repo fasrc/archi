@@ -15,6 +15,10 @@ from dotenv import dotenv_values
 
 DEFAULT_TORCH_THREADS = 8
 
+# Torch sizes its intra-op pool from MKL_NUM_THREADS ahead of OMP_NUM_THREADS, so
+# compose sets both to the same value, and an env file that sets either is kept.
+THREAD_ENV_VARS = ("OMP_NUM_THREADS", "MKL_NUM_THREADS")
+
 
 def configured_torch_threads(config: Optional[Mapping[str, Any]]) -> Optional[int]:
     """Return ``data_manager.torch_threads``, or None when it is not set.
@@ -51,10 +55,10 @@ def resolve_torch_threads(
     config: Optional[Mapping[str, Any]],
     env_values: Optional[Mapping[str, Optional[str]]] = None,
 ) -> Optional[int]:
-    """Return the ``OMP_NUM_THREADS`` compose sets, or None to set nothing.
+    """Return the thread count compose sets, or None to set nothing.
 
-    An explicit ``data_manager.torch_threads`` wins. Without it, an
-    ``OMP_NUM_THREADS`` the env file already sets is kept: compose's
+    An explicit ``data_manager.torch_threads`` wins. Without it, a
+    ``THREAD_ENV_VARS`` value the env file already sets is kept: compose's
     ``environment`` entry would take precedence over ``env_file``, so none is
     rendered. Otherwise the default, capped at the visible CPUs so a small host
     is not oversubscribed.
@@ -62,7 +66,8 @@ def resolve_torch_threads(
     configured = configured_torch_threads(config)
     if configured is not None:
         return configured
-    if ((env_values or {}).get("OMP_NUM_THREADS") or "").strip():
+    env_values = env_values or {}
+    if any((env_values.get(name) or "").strip() for name in THREAD_ENV_VARS):
         return None
     cpus = visible_cpu_count()
     return min(DEFAULT_TORCH_THREADS, cpus) if cpus else DEFAULT_TORCH_THREADS

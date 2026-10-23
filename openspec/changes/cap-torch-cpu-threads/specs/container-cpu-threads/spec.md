@@ -1,27 +1,27 @@
 ## ADDED Requirements
 
 ### Requirement: Embedding containers run torch with a bounded CPU thread count
-The rendered compose file SHALL bound torch's CPU threads in the `data-manager` and `chatbot` services, and in no other service. A configured `data_manager.torch_threads` SHALL be rendered into both as `OMP_NUM_THREADS`. Without it, an `OMP_NUM_THREADS` that the deployment's env file sets SHALL reach both containers unchanged, so compose SHALL render no `OMP_NUM_THREADS` entry that overrides it. Otherwise both SHALL carry 8, capped at the number of CPUs the process that renders the file can run on.
+The rendered compose file SHALL bound torch's CPU threads in the `data-manager` and `chatbot` services, and in no other service, through `OMP_NUM_THREADS` and `MKL_NUM_THREADS` set to the same value (torch reads `MKL_NUM_THREADS` first). A configured `data_manager.torch_threads` SHALL be rendered into both variables in both services. Without it, an `OMP_NUM_THREADS` or `MKL_NUM_THREADS` that the deployment's env file sets SHALL reach both containers unchanged, so compose SHALL render neither variable. Otherwise both variables SHALL carry 8, capped at the number of CPUs the process that renders the file can run on.
 
 #### Scenario: Default when the key is absent
 - **WHEN** a deployment is created from a config with no `data_manager.torch_threads`, on a host where `archi create` can run on 8 or more CPUs
-- **THEN** the rendered `data-manager` and `chatbot` services both carry `OMP_NUM_THREADS: "8"`
+- **THEN** the rendered `data-manager` and `chatbot` services both carry `OMP_NUM_THREADS: "8"` and `MKL_NUM_THREADS: "8"`
 
 #### Scenario: Default on a host with fewer than 8 CPUs
 - **WHEN** a deployment is created from a config with no `data_manager.torch_threads`, on a host where `archi create` can run on 4 CPUs
-- **THEN** the rendered `data-manager` and `chatbot` services both carry `OMP_NUM_THREADS: "4"`
+- **THEN** the rendered `data-manager` and `chatbot` services both carry `OMP_NUM_THREADS: "4"` and `MKL_NUM_THREADS: "4"`
 
 #### Scenario: Operator override
 - **WHEN** a deployment is created with `data_manager.torch_threads: 4`
-- **THEN** the rendered `data-manager` and `chatbot` services both carry `OMP_NUM_THREADS: "4"`, whatever the CPU count and the env file
+- **THEN** the rendered `data-manager` and `chatbot` services both carry `OMP_NUM_THREADS: "4"` and `MKL_NUM_THREADS: "4"`, whatever the CPU count and the env file
 
-#### Scenario: The env file already sets the variable
-- **WHEN** a deployment is created with no `data_manager.torch_threads` and an env file that sets `OMP_NUM_THREADS=4`
-- **THEN** the rendered `data-manager` and `chatbot` services carry no `OMP_NUM_THREADS` entry, and both read 4 from the deployment's `.env`
+#### Scenario: The env file already sets a thread variable
+- **WHEN** a deployment is created with no `data_manager.torch_threads` and an env file that sets `OMP_NUM_THREADS=4` or `MKL_NUM_THREADS=4`
+- **THEN** the rendered `data-manager` and `chatbot` services carry neither variable, and both read the value from the deployment's `.env`
 
 #### Scenario: Other services are untouched
 - **WHEN** a deployment that also enables grader, slack or benchmarking is rendered
-- **THEN** those services carry no `OMP_NUM_THREADS` from this setting
+- **THEN** those services carry no `OMP_NUM_THREADS` or `MKL_NUM_THREADS` from this setting
 
 ### Requirement: An invalid thread count is refused before any file is written
 `archi create` and `archi restart -c` SHALL refuse a `data_manager.torch_threads` value that is not a positive integer (zero, a negative number, a boolean, a float or a string) before either writes a deployment file. The error message SHALL name `data_manager.torch_threads`.

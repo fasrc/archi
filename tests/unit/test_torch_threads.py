@@ -106,17 +106,25 @@ class TestEnvFileValueIsKept:
 
         assert resolve_torch_threads({}, {"OMP_NUM_THREADS": value}) is None
 
-    def test_an_explicit_value_wins_over_the_env_file(self, cpus):
+    def test_an_env_mkl_value_alone_renders_nothing(self, cpus):
+        """Torch sizes its pool from MKL_NUM_THREADS ahead of OMP_NUM_THREADS."""
+        cpus(32)
+
+        assert resolve_torch_threads({}, {"MKL_NUM_THREADS": "12"}) is None
+
+    @pytest.mark.parametrize("name", ["OMP_NUM_THREADS", "MKL_NUM_THREADS"])
+    def test_an_explicit_value_wins_over_the_env_file(self, cpus, name):
         cpus(32)
         config = {"data_manager": {"torch_threads": 2}}
 
-        assert resolve_torch_threads(config, {"OMP_NUM_THREADS": "4"}) == 2
+        assert resolve_torch_threads(config, {name: "4"}) == 2
 
+    @pytest.mark.parametrize("name", ["OMP_NUM_THREADS", "MKL_NUM_THREADS"])
     @pytest.mark.parametrize("value", [None, "", "  "])
-    def test_an_empty_env_value_counts_as_unset(self, cpus, value):
+    def test_an_empty_env_value_counts_as_unset(self, cpus, name, value):
         cpus(32)
 
-        assert resolve_torch_threads({}, {"OMP_NUM_THREADS": value}) == 8
+        assert resolve_torch_threads({}, {name: value}) == 8
 
     def test_other_env_values_do_not_count(self, cpus):
         cpus(32)
