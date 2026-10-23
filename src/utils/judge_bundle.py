@@ -184,6 +184,15 @@ def plan_judge_run(
     )
 
 
+def _fsync_dir(folder: Path) -> None:
+    """Make the names in *folder* durable."""
+    fd = os.open(folder, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def _write_file(path: Path, data: bytes) -> None:
     """Create *path* (never replace it) with *data*, flushed and fsynced."""
     with open(path, "xb") as handle:
@@ -260,9 +269,14 @@ def write_judge_bundle(
     folder = Path(bundle_root) / f"{result_basename}-arm{arm_index}"
     folder.parent.mkdir(parents=True, exist_ok=True)
     folder.mkdir()
+    _fsync_dir(folder.parent)
     _write_file(folder / "rows.jsonl", rows_bytes)
     _write_file(folder / "manifest.json", manifest_bytes)
+    # The names live in the folder: make them durable before the marker that
+    # promises them, and the marker durable after it.
+    _fsync_dir(folder)
     _write_file(folder / "BUNDLE_COMPLETE", b"")
+    _fsync_dir(folder)
     return {"folder": folder.name, "digest": rows_sha256}
 
 
@@ -285,10 +299,19 @@ def judge_status_of(arm_record: Mapping[str, Any]) -> str:
 def write_result_complete(output_dir: Path, result_basename: str) -> Path:
     """Create the empty ``<result_basename>.RESULT_COMPLETE`` marker (design D9).
 
-    Called only after ``dump_artifacts`` returns, so the marker exists only when
-    the result JSON is complete.
+    Called only after ``dump_artifacts`` returns. The result JSON and its folder
+    entry are fsynced first, so the marker never outlives a lost result. A
+    missing result JSON raises, and no marker is written.
     """
-    path = Path(output_dir) / f"{result_basename}.RESULT_COMPLETE"
+    folder = Path(output_dir)
+    fd = os.open(folder / f"{result_basename}.json", os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    _fsync_dir(folder)
+    path = folder / f"{result_basename}.RESULT_COMPLETE"
     with open(path, "wb") as handle:
         os.fsync(handle.fileno())
+    _fsync_dir(folder)
     return path

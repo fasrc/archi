@@ -330,7 +330,13 @@ def test_two_arm_deferred_run_passes_arm_index_and_bundle(monkeypatch, tmp_path)
     monkeypatch.setattr(ResultHandler, "get_category_map", lambda cfg: (None, None))
     monkeypatch.setattr(ResultHandler, "handle_results", _handle_results)
     monkeypatch.setattr(ResultHandler, "add_metadata", lambda: None)
-    monkeypatch.setattr(ResultHandler, "dump_artifacts", lambda name, **kwargs: None)
+    monkeypatch.setattr(
+        ResultHandler,
+        "dump_artifacts",
+        lambda name, **kwargs: (
+            tmp_path / f"{name}-{kwargs['timestamp']}.json"
+        ).write_text("{}"),
+    )
     monkeypatch.setattr(ResultHandler, "results", [])
     monkeypatch.setattr(ResultHandler, "ab_comparison", {})
     monkeypatch.setattr(ResultHandler, "ab_comparisons", [])

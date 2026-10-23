@@ -343,6 +343,22 @@ Rules for every task:
       pass. Gate, then commit (message: `correct judge offload design d3 to the pr 2
       scope`).
 
+- [x] 7.2 (Review findings: the adversarial review before the push.) Two of three
+      findings were valid. (a) `publish.py` copied with `os.replace`, so a second
+      publisher could replace a queue file after the first one created `READY`. Create
+      `tests/unit/test_judge_publish_never_replaces.py`: publish never calls
+      `os.replace` or `os.rename`; another publisher's `rows.jsonl` with other bytes is
+      kept, with no `READY` and exit 1; an identical leftover file is accepted. Then copy
+      each queue file with `link_exclusive` (design D11). (b) No folder `fsync` at the
+      markers. Create `tests/unit/test_judge_write_durability.py`: the bundle folder is
+      `fsync`ed before and after `BUNDLE_COMPLETE`; the result JSON and the output
+      folder are `fsync`ed before `RESULT_COMPLETE`; a missing result JSON writes no
+      marker. Then add `_fsync_dir` to `judge_bundle.py` (design D5, D9). The third
+      finding (two inline runs of one benchmark name in one second) is declined: the
+      name is the container name, and one container runs one benchmark at a time.
+      Gate, then commit (message: `never replace a queue file, and fsync the folders at
+      the judge markers`).
+
 ## 8. Publish
 
 - [ ] 8.1 Run `bash scripts/gate.sh` once more on the branch tip and confirm it exits 0.

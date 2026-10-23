@@ -222,7 +222,10 @@ and returns `{"folder": <folder name>, "digest": <rows_sha256>}`.
   scorer can pass the run's values to ragas.
 - Write order: `rows.jsonl`, then `manifest.json`, then an empty `BUNDLE_COMPLETE`.
   Each file is written, flushed and `fsync`ed before the next one is created, so
-  `BUNDLE_COMPLETE` exists only after both other files are complete.
+  `BUNDLE_COMPLETE` exists only after both other files are complete. The names live
+  in the folder, so the folder is `fsync`ed too: `bundle_root` after the `mkdir`,
+  the arm folder after `manifest.json` and before `BUNDLE_COMPLETE`, and again after
+  `BUNDLE_COMPLETE`. (Added after the adversarial review of PR #747.)
 
 The bundle digest that the arm records is `rows_sha256`. The manifest holds it, so
 publish (D10) and the merge (#732) can check the rows against both.
@@ -291,8 +294,11 @@ therefore reads as `inline`. publish (D10) uses it, and the G8 gate (#733) will.
 
 After `dump_artifacts` returns, a deferred run (`judge_plan.mode == "deferred"`) creates
 an empty `OUTPUT_DIR / f"{self.result_basename}.RESULT_COMPLETE"` through
-`write_result_complete(output_dir, result_basename)` in `judge_bundle.py`. An inline run
-writes no marker. If `dump` raises, the marker is never written. (`dump_artifacts`
+`write_result_complete(output_dir, result_basename)` in `judge_bundle.py`. It first
+`fsync`s `<result_basename>.json` and the output folder, then creates the marker, then
+`fsync`s the folder again, so the marker never outlives a lost result. A missing result
+JSON raises, and no marker is written. An inline run writes no marker. If `dump`
+raises, the marker is never written. (`dump_artifacts`
 swallows a `_report.md` failure, so a report failure does not hold back the marker. The
 JSON is the source of truth.)
 
@@ -330,10 +336,14 @@ no conflict it exits 0, also when there is nothing to do.
    A folder name that is not `f"{result_basename}-arm{arm_index}"` is a conflict.
    - If `Q/READY` exists: the same `rows_sha256` in `Q/manifest.json` is a skip; a
      different one is a conflict, and nothing changes.
-   - Else: copy `rows.jsonl` and `manifest.json` into `Q` (each through a temporary file
-     and `os.replace`, because a folder with no `READY` is ignored by every reader), then
+   - Else: copy `rows.jsonl` and `manifest.json` into `Q`, each with `link_exclusive`.
+     No queue file is ever replaced, because two publishers can meet at one folder
+     before `READY` exists, and a replace after the other one's `READY` would change a
+     ready bundle. A file that exists already (left by an earlier run that stopped)
+     must hold the same bytes; other bytes are a conflict, with no `READY`. Then
      check that the copied `rows.jsonl` hashes to the manifest's `rows_sha256` and that
-     the copied manifest equals the source bytes. A mismatch is a conflict, with no
+     the copied manifest equals the source bytes. (Changed from `os.replace` after the
+     adversarial review of PR #747.) A mismatch is a conflict, with no
      `READY`. Then create `Q/READY` with `link_exclusive(Q / "READY", b"")`. A `False`
      return (another publisher won) falls back to the `READY` check above.
    - A folder with no `BUNDLE_COMPLETE` is not copied.

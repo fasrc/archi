@@ -106,7 +106,8 @@ def test_complete_bundle_becomes_ready_with_equal_files(dirs, monkeypatch):
     ready_calls = []
 
     def _recording_link(path, data):
-        ready_calls.append(sorted(p.name for p in path.parent.iterdir()))
+        if path.name == "READY":
+            ready_calls.append(sorted(p.name for p in path.parent.iterdir()))
         return real_link(path, data)
 
     monkeypatch.setattr(publish, "link_exclusive", _recording_link)
@@ -142,11 +143,13 @@ def test_corrupted_copy_exits_non_zero_with_no_ready(dirs, monkeypatch, capsys):
     real_copy = publish._copy_file
 
     def _corrupting_copy(src, dst):
+        # Reports success, so only the digest check after the copy can see it.
         real_copy(src, dst)
         if dst.name == "rows.jsonl":
             data = bytearray(dst.read_bytes())
             data[0] ^= 1
             dst.write_bytes(bytes(data))
+        return True
 
     monkeypatch.setattr(publish, "_copy_file", _corrupting_copy)
 
@@ -164,7 +167,7 @@ def test_copy_that_raises_leaves_no_ready_and_the_next_run_completes(dirs, monke
     def _crashing_copy(src, dst):
         if dst.name == "manifest.json":
             raise OSError("disk went away")
-        real_copy(src, dst)
+        return real_copy(src, dst)
 
     monkeypatch.setattr(publish, "_copy_file", _crashing_copy)
     with pytest.raises(OSError, match="disk went away"):

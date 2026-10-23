@@ -8,8 +8,8 @@ Each step is idempotent, so a timer can run the script again and again:
 
 1. Bundles. Each folder under ``<out-dir>/<bundle-dir>/`` that has
    ``BUNDLE_COMPLETE`` is copied to ``<queue>/<folder>/``, checked against its
-   manifest, and gets ``READY`` last. A folder with ``READY`` and the same rows
-   digest is a skip.
+   manifest, and gets ``READY`` last. No queue file is ever replaced. A folder
+   with ``READY`` and the same rows digest is a skip.
 2. Pending result. When ``<out-dir>/<basename>.RESULT_COMPLETE`` exists, the
    result JSON loads, and every arm has a queued bundle whose digest the result
    records as pending, the JSON is copied to ``<queue>/results/``.
@@ -26,8 +26,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
-import secrets
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -46,24 +44,18 @@ def _sha256(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
-def _copy_file(src: Path, dst: Path) -> None:
-    """Copy *src* to *dst* through a temporary file and ``os.replace``.
+def _copy_file(src: Path, dst: Path) -> bool:
+    """Create *dst* with the bytes of *src*; never replace an existing *dst*.
 
-    A queue folder with no ``READY`` is ignored by every reader, so replacing a
-    partial copy from an earlier run is safe.
+    Two publishers can meet at one queue folder before ``READY`` exists, so no
+    queue file is ever replaced: a file that one of them checked stays what it
+    checked. A *dst* left by an earlier run must already hold the same bytes.
+    Returns False when it holds other bytes.
     """
-    tmp = dst.with_name(f".{dst.name}.tmp.{secrets.token_hex(8)}")
-    try:
-        with open(tmp, "xb") as handle:
-            handle.write(src.read_bytes())
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, dst)
-    finally:
-        try:
-            tmp.unlink()
-        except FileNotFoundError:
-            pass
+    data = src.read_bytes()
+    if link_exclusive(dst, data):
+        return True
+    return dst.read_bytes() == data
 
 
 def _load_json(path: Path) -> Optional[Any]:
@@ -130,7 +122,12 @@ class _Publisher:
         if not (queued / "READY").exists():
             queued.mkdir(parents=True, exist_ok=True)
             for name in _COPIED_FILES:
-                _copy_file(folder / name, queued / name)
+                if not _copy_file(folder / name, queued / name):
+                    self.conflict(
+                        f"{queued / name}: exists with bytes that differ from "
+                        f"{folder / name}; nothing replaced, no READY"
+                    )
+                    return
             if (
                 _sha256((queued / "rows.jsonl").read_bytes()) != digest
                 or (queued / "manifest.json").read_bytes() != manifest_bytes

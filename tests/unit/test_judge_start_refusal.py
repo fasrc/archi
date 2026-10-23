@@ -383,13 +383,15 @@ def test_deferred_run_writes_result_complete_after_dump(monkeypatch, tmp_path):
     def _dump(name, **kwargs):
         assert not marker.exists(), "RESULT_COMPLETE must come after dump_artifacts"
         dumped.append(kwargs)
+        (tmp_path / f"{name}-{kwargs['timestamp']}.json").write_text("{}")
 
     stub = _run_stub(monkeypatch, tmp_path, _DEFERRED_PLAN, _dump)
     stub.run()
 
     assert dumped == [{"timestamp": "20260101_000000"}]
     assert sorted(p.name for p in tmp_path.iterdir()) == [
-        "bench-20260101_000000.RESULT_COMPLETE"
+        "bench-20260101_000000.RESULT_COMPLETE",
+        "bench-20260101_000000.json",
     ]
     assert marker.read_bytes() == b""
 

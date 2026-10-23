@@ -156,12 +156,18 @@ def test_bundle_complete_comes_after_both_files_are_complete(tmp_path, monkeypat
 
     _write(tmp_path)
 
+    # Each file is fsynced after its write; the bare fsyncs before the first
+    # write, before BUNDLE_COMPLETE and at the end are the folder fsyncs
+    # (tests/unit/test_judge_write_durability.py names them).
     assert events == [
+        ("fsync",),
         ("write", "rows.jsonl", []),
         ("fsync",),
         ("write", "manifest.json", ["rows.jsonl"]),
         ("fsync",),
+        ("fsync",),
         ("write", "BUNDLE_COMPLETE", ["manifest.json", "rows.jsonl"]),
+        ("fsync",),
         ("fsync",),
     ]
     assert (folder / "BUNDLE_COMPLETE").read_bytes() == b""
