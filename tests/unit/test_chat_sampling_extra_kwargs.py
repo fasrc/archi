@@ -50,8 +50,16 @@ DEV_PROVIDERS = {
 PROVIDER_TYPES = sorted(DEV_PROVIDERS)
 
 
-def _assert_dev_sampling(model):
+def _assert_dev_client(model, provider_type):
+    """The client carries the dev block: its model, its vLLM endpoint, its sampling.
+
+    The temperature is only the benchmark's setting if it reaches dev's own server,
+    so the endpoint is checked with it.
+    """
+    block = DEV_PROVIDERS[provider_type]
     assert isinstance(model, ChatOpenAI)
+    assert model.model_name == block["default_model"]
+    assert model.openai_api_base == block["base_url"]
     assert model.temperature == 0.3
     assert model.extra_body == EXTRA_BODY
 
@@ -80,7 +88,7 @@ def test_get_model_passes_extra_kwargs_temperature_to_chat_openai(
         {"base_url": block["base_url"], "extra_kwargs": extra_kwargs},
     )
 
-    _assert_dev_sampling(model)
+    _assert_dev_client(model, provider_type)
 
 
 @pytest.mark.parametrize("provider_type", PROVIDER_TYPES)
@@ -97,7 +105,7 @@ def test_agent_model_built_from_the_dev_block_keeps_temperature(
         provider_type, DEV_PROVIDERS[provider_type]["default_model"], provider_config
     )
 
-    _assert_dev_sampling(model)
+    _assert_dev_client(model, provider_type)
     if provider_type == "openai":
         assert model.openai_api_key.get_secret_value() == "sk-noauth"
 
@@ -114,6 +122,6 @@ def test_request_override_model_built_from_the_dev_block_keeps_temperature(
         provider_type, DEV_PROVIDERS[provider_type]["default_model"]
     )
 
-    _assert_dev_sampling(model)
+    _assert_dev_client(model, provider_type)
     if provider_type == "openai":
         assert model.openai_api_key.get_secret_value() == "sk-noauth"
