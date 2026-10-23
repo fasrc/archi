@@ -111,6 +111,17 @@ def test_check_reports_work_none_and_a_stale_sidecar(files, score, monkeypatch):
     assert list(files["queue"].glob("SCORER_STALE.*"))
 
 
+def test_check_compares_the_image_digest_the_job_passes(files, score):
+    make_bundle(files["queue"])
+    assert (
+        score.main(_args(files, "check", "--image-digest", "sha256:scorer-image")) == 0
+    )
+    assert not list(files["queue"].glob("SCORER_STALE.*"))
+    assert score.main(_args(files, "check", "--image-digest", "sha256:other")) == 2
+    (record,) = files["queue"].glob("SCORER_STALE.*")
+    assert "sha256:other" in record.read_text()
+
+
 def test_check_and_run_need_a_job_id(files, score, monkeypatch, capsys):
     monkeypatch.delenv("SLURM_JOB_ID", raising=False)
     argv = _args(files, "check")

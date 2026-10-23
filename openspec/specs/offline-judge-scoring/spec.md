@@ -156,6 +156,14 @@ The scorer SHALL NOT score a bundle when the manifest's code digest (`code_versi
 - **THEN** the job creates `SCORER_STALE.<sidecar digest>`, claims nothing, loads no model, and exits non-zero
 - **AND** the submitter submits no job for that sidecar until the sidecar changes
 
+#### Scenario: Scorer image rebuilt with the same code
+- **WHEN** the SHA-256 of the scorer image that the job runs differs from the sidecar's `image_digest`, and the code and package digests are equal
+- **THEN** the job creates `SCORER_STALE.<sidecar digest>` with both image digests, claims nothing, and loads no model
+
+#### Scenario: Rebuild while a job runs
+- **WHEN** `build_scorer_image.sh` replaces the image and the sidecar while a judge job runs
+- **THEN** the job scores with the image and the sidecar that it read when it started
+
 #### Scenario: Deferred run with no code digest
 - **WHEN** `judge_mode` is `deferred`, and the run's `code_version.digest` is unavailable
 - **THEN** the run refuses to start and writes no bundle

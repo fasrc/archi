@@ -21,9 +21,11 @@
 #
 # judge_submit.sh submits it from the repo root (Slurm runs a copy of this file, so the repo
 # is ARCHI_REPO or $SLURM_SUBMIT_DIR). In order, the job:
-#   1. checks its live scorer identity against scorer-identity.json and counts its work, in
-#      the scorer image, before any model loads. No work: it exits 0. A stale sidecar: the
-#      check writes <queue>/SCORER_STALE.<token> and the job exits non-zero;
+#   1. pins one scorer image and sidecar pair (a hard link and a copy), hashes the image,
+#      and checks its live scorer identity (code, package and image digests) against the
+#      sidecar and counts its work, in the scorer image, before any model loads. No work: it
+#      exits 0. A stale sidecar: the check writes <queue>/SCORER_STALE.<token> and the job
+#      exits non-zero;
 #   2. starts vLLM in Apptainer on a Unix socket in a 0700 folder under the job's temporary
 #      folder, with no TCP listener. A random per-job key goes to VLLM_API_KEY through the
 #      environment (APPTAINERENV_VLLM_API_KEY), never on a command line, which other users
@@ -120,6 +122,9 @@ fi
 # The socket folder: private to this user and job. A Unix socket path has at most 107 bytes.
 if [ "$DRY_RUN" = true ]; then
   SOCK_DIR="${TMPDIR:-/tmp}/archi-judge.$JOB_ID.XXXXXX"
+  PINNED_IMAGE="$(dirname "$SCORER_IMAGE")/.archi-scorer.$JOB_ID.sif"
+  PINNED_SIDECAR="$SOCK_DIR/scorer-identity.json"
+  IMAGE_DIGEST="sha256:<sha256 of $PINNED_IMAGE>"
 else
   [ -n "${SLURM_JOB_ID:-}" ] || die "not in a Slurm job; submit it with sbatch, or use --dry-run"
   SOCK_DIR=""
@@ -140,15 +145,15 @@ add_bind() {
 commands() {
   local sock="$SOCK_DIR/vllm.sock"
   BINDS=()
-  add_bind "$QUEUE" "$(dirname "$JUDGE_ENV")" "$(dirname "$SIDECAR")"
-  CHECK=(apptainer exec --cleanenv "${BINDS[@]}" "$SCORER_IMAGE"
+  add_bind "$QUEUE" "$(dirname "$JUDGE_ENV")" "$SOCK_DIR"
+  CHECK=(apptainer exec --cleanenv "${BINDS[@]}" "$PINNED_IMAGE"
     python3 "$SCORER_SCRIPTS/score.py" check
-    --queue "$QUEUE" --judge-env "$JUDGE_ENV" --sidecar "$SIDECAR" --job-id "$JOB_ID")
-  add_bind "$SOCK_DIR"
-  RUN=(apptainer exec --cleanenv "${BINDS[@]}" "$SCORER_IMAGE"
+    --queue "$QUEUE" --judge-env "$JUDGE_ENV" --sidecar "$PINNED_SIDECAR"
+    --job-id "$JOB_ID" --image-digest "$IMAGE_DIGEST")
+  RUN=(apptainer exec --cleanenv "${BINDS[@]}" "$PINNED_IMAGE"
     python3 "$SCORER_SCRIPTS/score.py" run
-    --queue "$QUEUE" --judge-env "$JUDGE_ENV" --sidecar "$SIDECAR" --socket "$sock"
-    --job-id "$JOB_ID")
+    --queue "$QUEUE" --judge-env "$JUDGE_ENV" --sidecar "$PINNED_SIDECAR" --socket "$sock"
+    --job-id "$JOB_ID" --image-digest "$IMAGE_DIGEST")
   SERVE=(apptainer exec --nv --cleanenv --bind "$SOCK_DIR" --bind "$SCRATCH_DIR"
     --env "HF_HOME=$SCRATCH_DIR/hf" --env HF_HUB_OFFLINE=1
     --env "XDG_CACHE_HOME=$SCRATCH_DIR/cache"
@@ -186,10 +191,13 @@ fi
 
 command -v apptainer >/dev/null || die "apptainer is not on PATH"
 [ -f "$SCORER_IMAGE" ] || die "no scorer image at $SCORER_IMAGE; build it with build_scorer_image.sh"
+[ -f "$SIDECAR" ] || die "no scorer sidecar at $SIDECAR; build_scorer_image.sh writes it beside the image"
 mkdir -p "$SCRATCH_DIR/hf" "$SCRATCH_DIR/cache" "$SCRATCH_DIR/apptainer"
 export APPTAINER_CACHEDIR="$SCRATCH_DIR/apptainer"
 
 SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/archi-judge.$SLURM_JOB_ID.XXXXXX")"
+PINNED_IMAGE="$(dirname "$SCORER_IMAGE")/.archi-scorer.$SLURM_JOB_ID.sif"
+PINNED_SIDECAR="$SOCK_DIR/scorer-identity.json"
 VLLM_PID=""
 cleanup() {
   if [ -n "$VLLM_PID" ]; then
@@ -197,10 +205,22 @@ cleanup() {
     wait "$VLLM_PID" 2>/dev/null || true
   fi
   rm -rf "$SOCK_DIR"
+  rm -f "$PINNED_IMAGE"
 }
 trap cleanup EXIT
 chmod 700 "$SOCK_DIR"
 [ "${#SOCK_DIR}" -le 96 ] || die "the socket folder $SOCK_DIR is too long for a Unix socket path; set TMPDIR to a shorter folder"
+
+# One scorer image and sidecar pair for the whole job. build_scorer_image.sh can replace
+# both while the job runs, so the job reads them once: a copy of the sidecar, then a hard
+# link to the image (one inode, which a later rename cannot change). The build moves the
+# image first and the sidecar second, and the job reads in the other order, so the only
+# mixed pair a race can give is an old sidecar with a new image. The check catches it by
+# the image digest and writes SCORER_STALE for the old sidecar, which a new sidecar
+# replaces; it never blocks the new one.
+cp "$SIDECAR" "$PINNED_SIDECAR"
+ln -f "$SCORER_IMAGE" "$PINNED_IMAGE" || die "cannot hard-link $SCORER_IMAGE to $PINNED_IMAGE"
+IMAGE_DIGEST="sha256:$(sha256sum "$PINNED_IMAGE" | cut -d' ' -f1)"
 commands
 
 log "job $SLURM_JOB_ID: checking the scorer identity and the queue $QUEUE"

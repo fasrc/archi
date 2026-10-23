@@ -71,7 +71,14 @@ printf '%s\n' "$*" >> "$STUB/apptainer.calls"
 printf '%s\n' "${APPTAINERENV_VLLM_API_KEY:-}" >> "$STUB/apptainer.keys"
 case "$*" in
   *"score.py check"*) exit "$(cat "$STUB/check.rc" 2>/dev/null || echo 0)" ;;
-  *"score.py run"*) exit "$(cat "$STUB/run.rc" 2>/dev/null || echo 0)" ;;
+  *"score.py run"*)
+    prev=""
+    for a in "$@"; do
+      [ "$prev" = --sidecar ] && cp "$a" "$STUB/run.sidecar"
+      case "$a" in *.sif) sha256sum "$a" | cut -d' ' -f1 > "$STUB/run.image.sha" ;; esac
+      prev="$a"
+    done
+    exit "$(cat "$STUB/run.rc" 2>/dev/null || echo 0)" ;;
   *"score.py write-identity"*)
     out=""; digest=""; prev=""
     for a in "$@"; do
@@ -86,6 +93,13 @@ case "$*" in
     for a in "$@"; do [ "$prev" = --uds ] && sock="$a"; prev="$a"; done
     stat -c %a "$(dirname "$sock")" > "$STUB/sockdir.mode"
     echo $$ > "$STUB/vllm.pid"
+    if [ -f "$STUB/rebuild" ]; then
+      # build_scorer_image.sh while the job runs: the image moves first, then the sidecar.
+      printf 'a rebuilt scorer image\n' > "$JUDGE_HOME/archi-scorer.sif.new"
+      mv -f "$JUDGE_HOME/archi-scorer.sif.new" "$JUDGE_HOME/archi-scorer.sif"
+      printf '{"image_digest": "sha256:rebuilt"}\n' > "$JUDGE_HOME/scorer-identity.json.new"
+      mv -f "$JUDGE_HOME/scorer-identity.json.new" "$JUDGE_HOME/scorer-identity.json"
+    fi
     exec sleep 300 ;;
   build*)
     out=""
@@ -456,6 +470,47 @@ def test_a_failed_scorer_submits_no_merge(tmp_path, stub):
     proc = _job(tmp_path, stub, run_rc=1)
     assert proc.returncode != 0
     assert _calls(stub, "sbatch") == []
+
+
+def _image_digest(tmp_path):
+    image = tmp_path / "judge" / "archi-scorer.sif"
+    return "sha256:" + hashlib.sha256(image.read_bytes()).hexdigest()
+
+
+#: The digest of the image that ``_judge_home`` writes.
+IMAGE_DIGEST = "sha256:" + hashlib.sha256(b"a scorer image").hexdigest()
+
+
+def test_the_job_pins_one_image_and_sidecar_and_passes_the_image_digest(tmp_path, stub):
+    digest = IMAGE_DIGEST
+    proc = _job(tmp_path, stub)
+    assert proc.returncode == 0, proc.stderr
+    calls = _calls(stub, "apptainer")
+    pinned = str(tmp_path / "judge" / ".archi-scorer.9001.sif")
+    for needle in ("score.py check", "score.py run"):
+        (call,) = [c for c in calls if needle in c]
+        assert f"--image-digest {digest}" in call
+        assert f" {pinned} " in call
+        assert re.search(
+            r"--sidecar \S+/archi-judge\.9001\.\w+/scorer-identity\.json", call
+        )
+    # The pinned files go away with the job.
+    assert not Path(pinned).exists()
+
+
+def test_a_rebuild_during_the_job_keeps_the_pinned_pair(tmp_path, stub):
+    digest = IMAGE_DIGEST
+    sidecar = json.dumps({"code_digest": "sha256:code", "package_digest": "sha256:pkg"})
+    (stub / "rebuild").write_text("")
+    proc = _job(tmp_path, stub)
+    assert proc.returncode == 0, proc.stderr
+    # The rebuild replaced both files while vLLM started; the scorer still ran
+    # the image the check hashed, with the sidecar the check read.
+    assert _image_digest(tmp_path) != digest
+    assert "sha256:" + (stub / "run.image.sha").read_text().strip() == digest
+    assert (stub / "run.sidecar").read_text() == sidecar
+    (run,) = [c for c in _calls(stub, "apptainer") if "score.py run" in c]
+    assert f"--image-digest {digest}" in run
 
 
 def test_a_job_without_the_scorer_image_starts_nothing(tmp_path, stub):

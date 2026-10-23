@@ -15,7 +15,10 @@
 # The build writes both files under a .new name first, computes the image digest (the
 # SHA-256 of the SIF file), writes the sidecar with `score.py write-identity` inside the new
 # image (the code digest of the image's own src, the package digest, the ragas version),
-# and then moves the image and the sidecar into place. A new sidecar has a new digest, so
+# and then moves the image and the sidecar into place, the image first: a judge job reads
+# the sidecar first and the image second, so a job that starts during the two moves can
+# only pair the old sidecar with the new image, which its image-digest check refuses as
+# SCORER_STALE for the old sidecar (archi_judge.sbatch). A new sidecar has a new digest, so
 # bundles that an old scorer recorded as INCOMPATIBLE or SCORER_STALE become available
 # again with no clean-up. --dry-run prints the commands and runs nothing.
 set -euo pipefail

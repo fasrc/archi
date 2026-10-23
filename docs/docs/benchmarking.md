@@ -355,7 +355,7 @@ bash scripts/benchmarking/slurm/build_scorer_image.sh --dry-run archi-benchmark.
 bash scripts/benchmarking/slurm/build_scorer_image.sh archi-benchmark.tar $HOME/archi-judge
 ```
 
-The script builds `archi-scorer.sif` from `scripts/benchmarking/slurm/archi-scorer.def`, which adds only the three judge scripts to the benchmark image. It then writes `scorer-identity.json` beside the image with `score.py write-identity`: the code digest of the image's `src`, the package digest, the ragas version and the image digest (the SHA-256 of the SIF file).
+The script builds `archi-scorer.sif` from `scripts/benchmarking/slurm/archi-scorer.def`, which adds only the three judge scripts to the benchmark image. It then writes `scorer-identity.json` beside the image with `score.py write-identity`: the code digest of the image's `src`, the package digest, the ragas version and the image digest (the SHA-256 of the SIF file). Each judge job hashes the image it runs and compares the digest with the sidecar's, so an image that the sidecar does not describe gives `SCORER_STALE`. A judge job reads the image and the sidecar once, when it starts, so a rebuild while it runs does not change them.
 
 ### 4. Make a deferred run and publish it
 

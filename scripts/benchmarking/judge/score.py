@@ -3,9 +3,9 @@
 
     score.py write-identity --out <scorer-identity.json> [--image-digest D] \
         [--package-dir <src>]
-    score.py check --queue Q --judge-env E --sidecar S [--job-id ID]
+    score.py check --queue Q --judge-env E --sidecar S [--job-id ID] [--image-digest D]
     score.py run --queue Q --judge-env E --sidecar S --socket P [--job-id ID] \
-        [--chunk-size 8]
+        [--image-digest D] [--chunk-size 8]
 
 ``write-identity`` runs at the scorer image build (#733): it writes the code
 digest of the installed ``src`` (the function of the benchmark's
@@ -16,7 +16,10 @@ writes ``SCORER_STALE.<token>``). ``run`` scores the job's bundles through the
 judge on the Unix socket, with the key in ``VLLM_API_KEY``; vLLM must serve the
 model under the name ``JUDGE_MODEL_ID``. Its exit codes are 0 (done or idle) and
 2 (stale sidecar). Bad input exits 1. ``--job-id`` defaults to
-``$SLURM_JOB_ID``.
+``$SLURM_JOB_ID``. ``--image-digest`` is the SHA-256 of the scorer image the
+job runs (``archi_judge.sbatch`` passes it): a sidecar that records another
+image digest is stale, because the judge scripts in the image are outside the
+code digest.
 """
 
 from __future__ import annotations
@@ -91,12 +94,17 @@ def _context(args, queue_api) -> JobContext:
             huggingface_embeddings=HuggingFaceEmbeddings,
         )
 
+    live = dict(live_identity(PACKAGE_DIR))
+    if getattr(args, "image_digest", None):
+        # The SHA-256 of the image this job runs, computed on the host by
+        # archi_judge.sbatch; preflight compares it with the sidecar's.
+        live["image_digest"] = args.image_digest
     return JobContext(
         queue=args.queue,
         job_id=args.job_id,
         judge_env=judge_env,
         sidecar=queue_api.read_sidecar(args.sidecar),
-        live=live_identity(PACKAGE_DIR),
+        live=live,
         judge_factory=judge_factory,
         embeddings_factory=embeddings_factory,
         queue_api=queue_api,
@@ -118,6 +126,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         command.add_argument("--judge-env", required=True, type=Path)
         command.add_argument("--sidecar", required=True, type=Path)
         command.add_argument("--job-id", default=os.environ.get("SLURM_JOB_ID"))
+        command.add_argument("--image-digest")
         if name == "run":
             command.add_argument("--socket", required=True)
             command.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
