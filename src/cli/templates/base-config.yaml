@@ -209,13 +209,15 @@ services:
     port: {{ services.chat_app.port | default(7861, true) }}
     external_port: {{ services.chat_app.external_port | default(7861, true) }}
     host: {{ services.chat_app.host | default("0.0.0.0", true) }}
+    {%- set v_chat_wsgi_threads = services.chat_app.wsgi_threads %}
+    wsgi_threads: {{ v_chat_wsgi_threads if v_chat_wsgi_threads is defined and v_chat_wsgi_threads is not none else 16 }}
     hostname: {{ services.chat_app.hostname | default("localhost", true) }}
     template_folder: "{{ services.chat_app.template_folder | default('/root/archi/src/interfaces/chat_app/templates', true) }}"
     static_folder: "{{ services.chat_app.static_folder | default('/root/archi/src/interfaces/chat_app/static', true) }}"
     num_responses_until_feedback: {{ services.chat_app.num_responses_until_feedback | default(3, true) }}
     include_copy_button: {{ services.chat_app.include_copy_button | default(false, true) }}
     {%- set v_chat_flask_debug = services.chat_app.flask_debug_mode %}
-    flask_debug_mode: {{ v_chat_flask_debug if v_chat_flask_debug is defined and v_chat_flask_debug is not none else true }}
+    flask_debug_mode: {{ v_chat_flask_debug if v_chat_flask_debug is defined and v_chat_flask_debug is not none else false }}
     evaluations:
       enabled: {{ services.chat_app.evaluations.enabled is sameas true }}
       # tojson, not a raw scalar inside double quotes: the value is loaded once

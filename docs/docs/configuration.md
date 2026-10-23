@@ -191,6 +191,7 @@ these to turn anything off or to hide anything:
 | `services.data_manager.enabled` | the data-manager service is registered `auto_enable=True`, and the service registry adds every auto-enable service unconditionally, so the container is deployed either way |
 | `data_manager.sources.links.enabled` | `ScraperManager` assigns `links_enabled = True` without reading the config, so link input lists are still crawled |
 | `data_manager.sources.links.html_scraper.reset_data` | no consumer reads it — `ScraperManager` extracts the `html_scraper` block but reads only `verify_urls` and `enable_warnings` when it builds link scrapers |
+| `services.chat_app.flask_debug_mode` | the chat service runs on gunicorn and always turns the Flask debugger off. The grader and the data manager still read their own `flask_debug_mode` keys |
 | `visible` on `links`, `indico`, `jira`, `redmine` and `elog` | citations are filtered by the `source_type` stored on each document, and these sources persist `source_type` values that are not their config keys — `web` for links, Indico and ELOG, `ticket` for Jira and Redmine. The lookup misses, so the document defaults to visible (and the service logs `Source type … not found in config`). Tracked as [issue #459](https://github.com/fasrc/archi/issues/459) |
 
 `visible: false` **does** work for `git`, `sso` and `local_files`, whose stored
@@ -284,9 +285,17 @@ The main chat interface.
 | `port` | int | `7861` | Internal container port |
 | `external_port` | int | `7861` | Host-mapped port |
 | `host` | string | `0.0.0.0` | Network binding |
+| `wsgi_threads` | int | `16` | Threads in the one gunicorn worker process. Each open chat stream holds one thread. Must be 1 or more |
 | `num_responses_until_feedback` | int | `3` | Responses before prompting for feedback |
+| `flask_debug_mode` | bool | `false` | No effect on the chat service (see below) |
 | `auth.enabled` | bool | `false` | Enable authentication |
 | `alerts.managers` | list | `[]` | Usernames allowed to create and delete alerts |
+
+The chat service runs on gunicorn with one worker process and the `gthread` worker, so
+`wsgi_threads` is the limit on requests that run at the same time. Each open chat stream
+holds one thread until it ends. A value that is not a whole number of 1 or more stops the
+chat service at start. The chat service never runs the Flask debugger: `flask_debug_mode`
+and the `FLASK_DEBUG` environment variable have no effect on it.
 
 #### `services.chat_app.auth`
 
