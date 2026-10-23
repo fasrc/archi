@@ -932,7 +932,11 @@ class ResultHandler:
         ResultHandler.metadata.update(meta_data)
 
     @staticmethod
-    def dump_artifacts(benchmark_name: Path):
+    def result_timestamp() -> str:
+        return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    @staticmethod
+    def dump_artifacts(benchmark_name: Path, *, timestamp: Optional[str] = None):
         """Write the run's JSON artifact and its markdown report.
 
         The timestamp is captured ONCE so the report is always the JSON's
@@ -941,7 +945,8 @@ class ResultHandler:
         the source of truth); a report failure is logged and swallowed, and
         `--regenerate-md` on the backfill script rebuilds the report later.
         """
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        if timestamp is None:
+            timestamp = ResultHandler.result_timestamp()
         ResultHandler.dump_category_maps(benchmark_name, timestamp)
         json_path = ResultHandler.dump(benchmark_name, timestamp)
         try:
@@ -2447,6 +2452,9 @@ class Benchmarker:
         )
         logger.info("")
 
+        _result_ts = ResultHandler.result_timestamp()
+        self.result_basename = f"{self.benchmark_name}-{_result_ts}"
+
         while self.all_config_files:
             # Read the corpus BEFORE the arm's questions, so the report can show
             # whether they were all scored against the same documents.
@@ -2618,7 +2626,7 @@ class Benchmarker:
                     "Argilla push failed — results were still dumped to disk."
                 )
 
-        ResultHandler.dump_artifacts(self.benchmark_name)
+        ResultHandler.dump_artifacts(self.benchmark_name, timestamp=_result_ts)
         return
 
     def _merge_anchor_questions(self) -> None:

@@ -516,7 +516,7 @@ def test_run_passes_each_arms_ragas_scored_to_handle_results(monkeypatch):
         lambda *args, **kwargs: calls.append(kwargs.get("ragas_scored", "missing")),
     )
     monkeypatch.setattr(ResultHandler, "add_metadata", lambda: None)
-    monkeypatch.setattr(ResultHandler, "dump_artifacts", lambda name: None)
+    monkeypatch.setattr(ResultHandler, "dump_artifacts", lambda name, **kwargs: None)
     monkeypatch.setattr(ResultHandler, "results", [])
     monkeypatch.delenv("ARCHI_ARGILLA", raising=False)
 
@@ -568,7 +568,7 @@ def test_run_passes_judge_identity_to_handle_results(monkeypatch):
         lambda *args, **kwargs: calls.append(kwargs.get("judge_identity", "missing")),
     )
     monkeypatch.setattr(ResultHandler, "add_metadata", lambda: None)
-    monkeypatch.setattr(ResultHandler, "dump_artifacts", lambda name: None)
+    monkeypatch.setattr(ResultHandler, "dump_artifacts", lambda name, **kwargs: None)
     monkeypatch.setattr(ResultHandler, "results", [])
     monkeypatch.delenv("ARCHI_ARGILLA", raising=False)
 

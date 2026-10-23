@@ -76,7 +76,7 @@ Rules for every task:
 
 ## 3. Fixed basename and start refusals (parent tasks 2.2a and 2.2b)
 
-- [ ] 3.1 Create `tests/unit/test_benchmark_result_basename.py`. Tests (design D4):
+- [x] 3.1 Create `tests/unit/test_benchmark_result_basename.py`. Tests (design D4):
       with a two-arm state, `dump_artifacts(Path("bench"), timestamp="20260101_000000")`
       writes exactly `bench-20260101_000000.json`, `bench-20260101_000000_report.md`,
       `bench-20260101_000000_category_map_1.tsv` and
