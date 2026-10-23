@@ -123,7 +123,23 @@ def describe_embedding(embeddings: Any) -> Dict[str, Any]:
         "model": _scalar(getattr(embeddings, "model", None))
         or _scalar(getattr(embeddings, "model_name", None)),
         "revision": _scalar(revision),
+        "endpoint": _embedding_endpoint(embeddings),
     }
+
+
+def _embedding_endpoint(embeddings: Any) -> Any:
+    """The base URL the embedding client sends to; None for a local model.
+
+    The configured base when there is one, else the base URL of the built
+    openai client, so one model name behind two endpoints is two identities.
+    """
+    for name in ("openai_api_base", "base_url"):
+        value = _scalar(getattr(embeddings, name, None))
+        if isinstance(value, str) and value:
+            return value
+    client = getattr(getattr(embeddings, "client", None), "_client", None)
+    base = getattr(client, "base_url", None)
+    return None if base is None else str(base)
 
 
 def extended_identity(

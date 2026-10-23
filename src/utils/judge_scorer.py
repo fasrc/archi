@@ -92,9 +92,9 @@ class JobContext:
     monotonic: Callable[[], float] = time.monotonic
     started_at: str = ""
     claimed: List[str] = field(default_factory=list)
-    # Bundle rows this job sent to the judge (in proportion to the pairs it
-    # judged); the time budget's measured rate counts only these.
-    rows_judged: float = 0.0
+    # (key, metric) pairs this job sent to the judge; the time budget's
+    # measured rate counts only these.
+    pairs_judged: int = 0
 
 
 def load_bundle(bundle: Path) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[str]]:
@@ -297,7 +297,19 @@ def scores_file_problem(
     return None
 
 
-def _finish(bundle: Path, manifest, rows, keys) -> str:
+def _owns(bundle: Path, ctx: JobContext) -> bool:
+    """True when no other job holds the bundle's current claim.
+
+    A takeover links a higher ``claim.<gen>``, and NFS can show it late, so the
+    scorer asks again before each write: before the checkpoint is read (it can
+    truncate), before each append, and before judge_scores.json and SCORED.
+    A bundle with no claim at all is scored only by a direct call.
+    """
+    claim = ctx.queue_api.current_claim(bundle)
+    return claim is None or claim.job_id == ctx.job_id
+
+
+def _finish(bundle: Path, ctx: JobContext, manifest, rows, keys) -> str:
     """SCORED when the bundle's judge_scores.json is complete, else FAILED.
 
     A job that dies after judge_scores.json and before SCORED leaves a complete
@@ -305,6 +317,8 @@ def _finish(bundle: Path, manifest, rows, keys) -> str:
     of the job that scored it. The next job keeps it. A file that is not
     complete can only come from a manual edit, and the bundle fails with why.
     """
+    if not _owns(bundle, ctx):
+        return "LOST_CLAIM"
     problem = scores_file_problem(bundle / SCORES_FILE, manifest, rows, keys)
     if problem:
         return _fail(bundle, problem)
@@ -316,8 +330,9 @@ def score_bundle(bundle: Path, ctx: JobContext) -> str:
     """Score one claimed bundle.
 
     Returns SCORED, FAILED, INCOMPATIBLE (the live scorer differs from the
-    manifest) or OTHER_JUDGE (the manifest asks for another judge; no score and
-    no marker, so the claim goes stale for a job with that judge).
+    manifest), OTHER_JUDGE (the manifest asks for another judge; no score and
+    no marker, so the claim goes stale for a job with that judge) or
+    LOST_CLAIM (another job holds the current claim; this job stops writing).
     """
     bundle = Path(bundle)
     for marker in ("SCORED", "FAILED"):
@@ -327,8 +342,10 @@ def score_bundle(bundle: Path, ctx: JobContext) -> str:
         manifest, rows, keys = load_bundle(bundle)
     except BundleFailed as exc:
         return _fail(bundle, str(exc))
+    if not _owns(bundle, ctx):
+        return "LOST_CLAIM"
     if (bundle / SCORES_FILE).exists():
-        return _finish(bundle, manifest, rows, keys)
+        return _finish(bundle, ctx, manifest, rows, keys)
     if other_judge(manifest, ctx.judge_env):
         return "OTHER_JUDGE"
     needed = {
@@ -360,13 +377,13 @@ def score_bundle(bundle: Path, ctx: JobContext) -> str:
     )
     identity = offline_identity(manifest, ctx, scorer)
     path = checkpoint_path(bundle, identity)
+    if not _owns(bundle, ctx):
+        return "LOST_CLAIM"
     try:
         done = read_checkpoint(path)
     except BundleFailed as exc:
         return _fail(bundle, str(exc))
 
-    total_pairs = sum(len(eligible_subset(rows, keys, m)[1]) for m in scorer.metrics)
-    rows_per_pair = manifest["row_count"] / total_pairs if total_pairs else 0.0
     for metric in scorer.metrics:
         eligible_rows, eligible_keys = eligible_subset(rows, keys, metric)
         todo = [
@@ -382,8 +399,10 @@ def score_bundle(bundle: Path, ctx: JobContext) -> str:
                     f"the judge returned {len(scores)} scores for {len(chunk)} rows"
                 )
             records = [_record(key, metric, s) for (_, key), s in zip(chunk, scores)]
+            if not _owns(bundle, ctx):
+                return "LOST_CLAIM"
             append_records(path, records)
-            ctx.rows_judged += len(chunk) * rows_per_pair
+            ctx.pairs_judged += len(chunk)
             for record in records:
                 done.setdefault((record["key"], metric), record)
 
@@ -426,10 +445,12 @@ def score_bundle(bundle: Path, ctx: JobContext) -> str:
         "nan_counts": nan_counts,
     }
     data = json.dumps(json_safe(result), sort_keys=True, indent=2, allow_nan=False)
+    if not _owns(bundle, ctx):
+        return "LOST_CLAIM"
     # Another writer can only be a job that wrote the file first; _finish
     # checks whatever the name holds before SCORED.
     link_exclusive(bundle / SCORES_FILE, (data + "\n").encode())
-    return _finish(bundle, manifest, rows, keys)
+    return _finish(bundle, ctx, manifest, rows, keys)
 
 
 def preflight(ctx: JobContext) -> str:
@@ -464,28 +485,37 @@ def _resumable(ctx: JobContext) -> List[Path]:
     ]
 
 
-def _row_count(ctx: JobContext, bundle: Path) -> int:
+def _work_units(ctx: JobContext, bundle: Path, per_pair: bool) -> int:
+    """A bundle's work: its rows, or its rows times its metrics (pairs)."""
     manifest = ctx.queue_api.read_manifest(bundle) or {}
-    count = manifest.get("row_count")
-    return count if isinstance(count, int) else 0
+    rows = manifest.get("row_count")
+    rows = rows if isinstance(rows, int) else 0
+    if not per_pair:
+        return rows
+    return rows * len(manifest.get("enabled_metrics") or [])
 
 
 def _claim_round(
-    ctx: JobContext, pending: List[Path], rows_per_minute: float, first_is_free: bool
+    ctx: JobContext,
+    pending: List[Path],
+    units_per_minute: float,
+    per_pair: bool,
+    first_is_free: bool,
 ) -> List[Path]:
     qa = ctx.queue_api
     candidates = [
-        (bundle, _row_count(ctx, bundle))
+        (bundle, _work_units(ctx, bundle, per_pair))
         for bundle in qa.available(ctx.queue, ctx.judge_env, ctx.sidecar)
         if bundle not in pending
     ]
     seconds = qa.time_left(ctx.job_id)
     if seconds is not None:
-        seconds -= sum(_row_count(ctx, b) for b in pending) / rows_per_minute * 60
+        queued = sum(_work_units(ctx, b, per_pair) for b in pending)
+        seconds -= queued / units_per_minute * 60
     picked = qa.plan_claims(
         candidates,
         seconds_left=seconds,
-        rows_per_minute=rows_per_minute,
+        rows_per_minute=units_per_minute,
         first_is_free=first_is_free,
     )
     claimed = []
@@ -509,20 +539,26 @@ def run_job(ctx: JobContext) -> int:
     bootstrap = float(ctx.judge_env["JUDGE_BOOTSTRAP_ROWS_PER_MINUTE"])
     seconds_spent = 0.0
 
-    def rate() -> float:
-        # Only rows the judge scored in this job: a finalized scores file or
-        # the saved part of a resumed bundle cost no judge time.
-        if not ctx.rows_judged:
-            return bootstrap
-        if seconds_spent <= 0:
-            return math.inf
-        return ctx.rows_judged / (seconds_spent / 60)
+    def pace() -> Tuple[float, bool]:
+        """(units per minute, whether a unit is a pair rather than a row).
 
-    work += _claim_round(ctx, work, rate(), first_is_free=not work)
+        Before the judge has scored a pair, the judge.env bootstrap rate in
+        rows. After that, the measured rate in (key, metric) pairs, so a bundle
+        with more metrics costs more. Only pairs the judge scored in this job
+        count: a finalized scores file or a resumed checkpoint costs no judge
+        time.
+        """
+        if not ctx.pairs_judged:
+            return bootstrap, False
+        if seconds_spent <= 0:
+            return math.inf, True
+        return ctx.pairs_judged / (seconds_spent / 60), True
+
+    work += _claim_round(ctx, work, *pace(), first_is_free=not work)
     while work:
         bundle = work.pop(0)
         started = ctx.monotonic()
         score_bundle(bundle, ctx)
         seconds_spent += ctx.monotonic() - started
-        work += _claim_round(ctx, work, rate(), first_is_free=False)
+        work += _claim_round(ctx, work, *pace(), first_is_free=False)
     return 0

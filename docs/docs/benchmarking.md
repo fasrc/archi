@@ -602,7 +602,7 @@ Each run record carries `ragas_judge_identity_effective`, or `null` when no judg
 - `model_revision`, `precision`, `server_image_digest`, and `server_args`: the pinned model revision, the weight precision, the vLLM image, and the `vllm serve` arguments that change output, for the offline judge. An API judge such as `huit_bedrock` has none of these, so they are `null`.
 - `decoding`: the `temperature`, `top_p`, and `max_tokens` that the built judge object sends.
 - `timeout`, `max_workers`, and `batch_size`: the ragas call settings after defaults. `chunk_size` is the number of rows that the offline scorer gives to one ragas call (`null` for an inline run).
-- `embedding`: the `class`, `model`, and `revision` of the embedding object that ragas used, read from the object and not from the config value.
+- `embedding`: the `class`, `model`, `revision`, and `endpoint` (the base URL that the client sends to, `null` for a local model) of the embedding object that ragas used, read from the object and not from the config value.
 - `metrics`: the enabled RAGAS metrics.
 - `scorer`: the `code_digest` of the `src` package that scored, its `package_digest` (from `pip freeze`), the scorer `image_digest`, and the `ragas_version`. For an inline run, the scorer is the benchmark image.
 

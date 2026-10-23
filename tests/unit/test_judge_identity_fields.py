@@ -133,12 +133,46 @@ def test_the_embedding_is_read_from_the_built_object():
         "class": "OpenAIEmbeddings",
         "model": "text-embedding-ada-002",
         "revision": None,
+        "endpoint": None,
     }
     assert describe_embedding(HuggingFaceEmbeddings()) == {
         "class": "HuggingFaceEmbeddings",
         "model": "sentence-transformers/all-mpnet-base-v2",
         "revision": "e8c3b32",
+        "endpoint": None,
     }
+
+
+def test_the_embedding_endpoint_is_part_of_the_identity():
+    proxied = OpenAIEmbeddings()
+    proxied.openai_api_base = "https://proxy.example/v1"
+    assert describe_embedding(proxied)["endpoint"] == "https://proxy.example/v1"
+    assert differing_fields(
+        [
+            _identity(embedding=describe_embedding(OpenAIEmbeddings())),
+            _identity(embedding=describe_embedding(proxied)),
+        ]
+    ) == ["embedding"]
+
+
+def test_the_embedding_endpoint_falls_back_to_the_built_client():
+    """With no configured base, the openai client's own base URL is the endpoint."""
+    built = OpenAIEmbeddings()
+    built.openai_api_base = None
+    built.client = types.SimpleNamespace(
+        _client=types.SimpleNamespace(base_url="https://api.openai.com/v1/")
+    )
+    assert describe_embedding(built)["endpoint"] == "https://api.openai.com/v1/"
+
+
+def test_the_real_openai_embeddings_report_their_endpoint(monkeypatch):
+    from langchain_openai import OpenAIEmbeddings as RealOpenAIEmbeddings
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    endpoint = describe_embedding(RealOpenAIEmbeddings())["endpoint"]
+    assert endpoint.startswith("https://api.openai.com/v1")
 
 
 def test_the_scorer_code_digest_agrees_with_the_benchmark_digest(tmp_path):

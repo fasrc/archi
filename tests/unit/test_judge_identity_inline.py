@@ -87,6 +87,7 @@ def test_the_recorded_inline_identity_has_the_extended_shape(monkeypatch):
         "class": "OpenAIEmbeddings",
         "model": "text-embedding-ada-002",
         "revision": None,
+        "endpoint": None,
     }
     assert identity["metrics"] == ["answer_relevancy"]
     assert identity["scorer"] == _SCORER

@@ -722,7 +722,7 @@ def test_a_finalized_scores_file_does_not_raise_the_measured_rate(
     assert not any(list(b.glob("claim.*")) for b in waiting)
 
 
-def test_a_resumed_bundle_counts_only_the_rows_judged_now(
+def test_a_resumed_bundle_counts_only_the_pairs_judged_now(
     tmp_path, queue, jq, monkeypatch
 ):
     settings = ragas_settings(enabled_metrics=["answer_relevancy"])
@@ -735,7 +735,87 @@ def test_a_resumed_bundle_counts_only_the_rows_judged_now(
     _install_ragas_stub(monkeypatch, second.evaluate)
     ctx = make_ctx(tmp_path, queue, jq, chunk_size=8)
     assert score_bundle(bundle, ctx) == "SCORED"
-    assert ctx.rows_judged == pytest.approx(8)
+    assert ctx.pairs_judged == 8
+
+
+def test_the_budget_counts_metric_pairs_once_a_rate_is_measured(
+    tmp_path, queue, jq, judge, monkeypatch
+):
+    """A rate measured on a one-metric bundle must not price a five-metric
+    bundle as if each row cost one judge call."""
+    one_metric = ragas_settings(enabled_metrics=["answer_relevancy"])
+    measured = make_bundle(
+        queue, "a-20261023_120000", count=40, drafts=(), settings=one_metric
+    )
+    (measured / "claim.1").write_text("1001\n")
+    five_metrics = ragas_settings(
+        enabled_metrics=[
+            "answer_relevancy",
+            "faithfulness",
+            "context_precision",
+            "context_recall",
+            "answer_correctness",
+        ]
+    )
+    waiting = make_bundle(
+        queue, "b-20261023_120000", count=40, drafts=(), settings=five_metrics
+    )
+    ticks = iter([0.0, 60.0])
+    # 40 pairs in one minute: the five-metric bundle (200 pairs) needs five
+    # minutes, and four are left. Counted in rows it would need one.
+    monkeypatch.setattr(jq, "time_left", lambda job_id: 4 * 60)
+    ctx = make_ctx(tmp_path, queue, jq, monotonic=lambda: next(ticks))
+    assert run_job(ctx) == 0
+    assert (measured / "SCORED").exists()
+    assert not list(waiting.glob("claim.*"))
+
+
+def test_a_job_that_lost_its_claim_writes_nothing(tmp_path, queue, jq, judge):
+    bundle = make_bundle(queue)
+    (bundle / "claim.1").write_text("1001\n")
+    (bundle / "claim.2").write_text("2002\n")
+    assert score_bundle(bundle, make_ctx(tmp_path, queue, jq)) == "LOST_CLAIM"
+    assert judge.calls == []
+    assert sorted(p.name for p in bundle.iterdir()) == [
+        "BUNDLE_COMPLETE",
+        "READY",
+        "claim.1",
+        "claim.2",
+        "manifest.json",
+        "rows.jsonl",
+    ]
+
+
+def test_a_takeover_during_scoring_stops_the_old_job_before_its_next_write(
+    tmp_path, queue, jq, monkeypatch
+):
+    settings = ragas_settings(enabled_metrics=["answer_relevancy"])
+    bundle = make_bundle(queue, count=24, drafts=(), settings=settings)
+    (bundle / "claim.1").write_text("1001\n")
+
+    def take_over():
+        if not (bundle / "claim.2").exists():
+            (bundle / "claim.2").write_text("2002\n")
+
+    stub = StubJudge(on_call=take_over)
+    _install_ragas_stub(monkeypatch, stub.evaluate)
+    ctx = make_ctx(tmp_path, queue, jq, chunk_size=8)
+    assert score_bundle(bundle, ctx) == "LOST_CLAIM"
+    assert len(stub.calls) == 1
+    assert not list(bundle.glob("scores.*"))
+    assert not (bundle / "judge_scores.json").exists()
+    assert not (bundle / "SCORED").exists()
+
+
+def test_a_job_that_lost_its_claim_does_not_finalize_a_scores_file(
+    tmp_path, queue, jq, judge
+):
+    bundle = make_bundle(queue)
+    assert score_bundle(bundle, make_ctx(tmp_path, queue, jq)) == "SCORED"
+    (bundle / "SCORED").unlink()
+    (bundle / "claim.1").write_text("2002\n")
+    assert score_bundle(bundle, make_ctx(tmp_path, queue, jq)) == "LOST_CLAIM"
+    assert not (bundle / "SCORED").exists()
 
 
 def test_a_scored_bundle_is_not_scored_again(tmp_path, queue, jq, judge):
