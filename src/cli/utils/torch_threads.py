@@ -7,24 +7,62 @@ embedding call then waits on its slowest thread: ~3 s instead of ~16 ms on the
 data-manager and chatbot from ``data_manager.torch_threads``.
 """
 
-from typing import Any, Mapping, Optional
+import os
+from pathlib import Path
+from typing import Any, Dict, Mapping, Optional
+
+from dotenv import dotenv_values
 
 DEFAULT_TORCH_THREADS = 8
 
 
-def resolve_torch_threads(config: Optional[Mapping[str, Any]]) -> int:
-    """Return the configured thread count, or the default when unset.
+def configured_torch_threads(config: Optional[Mapping[str, Any]]) -> Optional[int]:
+    """Return ``data_manager.torch_threads``, or None when it is not set.
 
     Raises ValueError for anything but a positive integer, so a bad value fails
-    ``archi create`` instead of reaching a container.
+    ``archi create`` or ``archi restart`` before either writes a file.
     """
     data_manager = (config or {}).get("data_manager") or {}
     value = data_manager.get("torch_threads")
     if value is None:
-        return DEFAULT_TORCH_THREADS
+        return None
     # bool is an int subclass; True must not pass as 1.
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(
             f"data_manager.torch_threads must be a positive integer, got {value!r}"
         )
     return value
+
+
+def visible_cpu_count() -> Optional[int]:
+    """CPUs this process may run on: its affinity mask where the OS has one."""
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count()
+
+
+def deployment_env_values(base_dir: Path) -> Dict[str, Optional[str]]:
+    """The values in the deployment's ``.env``, which every service reads as env_file."""
+    env_path = Path(base_dir) / ".env"
+    return dict(dotenv_values(env_path)) if env_path.is_file() else {}
+
+
+def resolve_torch_threads(
+    config: Optional[Mapping[str, Any]],
+    env_values: Optional[Mapping[str, Optional[str]]] = None,
+) -> Optional[int]:
+    """Return the ``OMP_NUM_THREADS`` compose sets, or None to set nothing.
+
+    An explicit ``data_manager.torch_threads`` wins. Without it, an
+    ``OMP_NUM_THREADS`` the env file already sets is kept: compose's
+    ``environment`` entry would take precedence over ``env_file``, so none is
+    rendered. Otherwise the default, capped at the visible CPUs so a small host
+    is not oversubscribed.
+    """
+    configured = configured_torch_threads(config)
+    if configured is not None:
+        return configured
+    if ((env_values or {}).get("OMP_NUM_THREADS") or "").strip():
+        return None
+    cpus = visible_cpu_count()
+    return min(DEFAULT_TORCH_THREADS, cpus) if cpus else DEFAULT_TORCH_THREADS

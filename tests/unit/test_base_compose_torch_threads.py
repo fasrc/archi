@@ -15,6 +15,7 @@ from jinja2 import ChainableUndefined, Environment, FileSystemLoader
 
 from src.cli.managers import templates_manager
 from src.cli.managers.templates_manager import TemplateContext, TemplateManager
+from src.cli.utils import torch_threads
 from src.cli.utils.service_builder import ServiceBuilder
 
 CAPPED_BLOCKS = ("data-manager", "chatbot")
@@ -100,8 +101,12 @@ def test_no_value_renders_no_variable(tmp_path, block):
     assert "OMP_NUM_THREADS" not in _env(services, block)
 
 
-def _render_through_manager(tmp_path, monkeypatch, data_manager):
-    """Drive the real _render_compose_file with a config carrying ``data_manager``."""
+def _render_through_manager(tmp_path, monkeypatch, data_manager, cpus=32):
+    """Drive the real _render_compose_file with a config carrying ``data_manager``.
+
+    ``cpus`` is the CPU count the default is capped at; the real one varies by host.
+    """
+    monkeypatch.setattr(torch_threads, "visible_cpu_count", lambda: cpus)
     repository = Path(__file__).resolve().parents[2]
     manager = TemplateManager(
         jinja_env=Environment(
@@ -141,6 +146,35 @@ def test_render_compose_file_writes_the_resolved_count(
 
     for block in CAPPED_BLOCKS:
         assert _env(services, block).get("OMP_NUM_THREADS") == expected
+
+
+def test_render_compose_file_caps_the_default_at_the_visible_cpus(
+    tmp_path, monkeypatch
+):
+    services = _render_through_manager(tmp_path, monkeypatch, {}, cpus=4)
+
+    for block in CAPPED_BLOCKS:
+        assert _env(services, block).get("OMP_NUM_THREADS") == "4"
+
+
+def test_render_compose_file_keeps_the_env_file_value(tmp_path, monkeypatch):
+    """No ``environment`` entry, so the deployment .env value reaches the container."""
+    (tmp_path / ".env").write_text("PG_PASSWORD=x\nOMP_NUM_THREADS=4\n")
+
+    services = _render_through_manager(tmp_path, monkeypatch, {})
+
+    for block in CAPPED_BLOCKS:
+        assert "OMP_NUM_THREADS" not in _env(services, block)
+        assert ".env" in services[block]["env_file"]
+
+
+def test_render_compose_file_lets_the_key_win_over_the_env_file(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("PG_PASSWORD=x\nOMP_NUM_THREADS=4\n")
+
+    services = _render_through_manager(tmp_path, monkeypatch, {"torch_threads": 2})
+
+    for block in CAPPED_BLOCKS:
+        assert _env(services, block).get("OMP_NUM_THREADS") == "2"
 
 
 def test_render_compose_file_refuses_an_invalid_count(tmp_path, monkeypatch):
