@@ -72,6 +72,7 @@ from src.utils.judge_bundle import (
     write_judge_bundle,
     write_result_complete,
 )
+from src.utils.judge_identity import canonical_identity, differing_fields
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
 
@@ -360,10 +361,12 @@ class ResultHandler:
         # judged. Only a wholly ABSENT key is skipped, and only because it
         # predates the field.
         judge_pressures = set()
-        # Which judge scored the arm (provider, model, endpoint, client mode).
-        # A None identity is skipped: an unjudged arm already fails the
-        # pressure check above, so counting it here adds nothing.
-        judge_identities = set()
+        # Which judge scored the arm (#618), extended with nested fields by
+        # #732. Compared by canonical JSON: a list or dict value cannot go into
+        # a set as a tuple of items. A None identity is skipped: an unjudged arm
+        # already fails the pressure check above, so counting it here adds
+        # nothing.
+        judge_identities: List[Dict[str, Any]] = []
         for record in records:
             stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is not _NOT_RECORDED and stability is not True:
@@ -380,7 +383,7 @@ class ResultHandler:
                 fingerprints.add(fingerprint)
             identity = record.get("ragas_judge_identity_effective")
             if identity is not None:
-                judge_identities.add(tuple(sorted(identity.items())))
+                judge_identities.append(identity)
             pressure = record.get("ragas_effective_settings", _NOT_RECORDED)
             if pressure is _NOT_RECORDED:
                 continue
@@ -395,11 +398,11 @@ class ResultHandler:
                 "(concurrency, per-row budget, or one arm was not judged), "
                 "so their scored denominators are not comparable"
             )
-        if len(judge_identities) > 1:
+        if len({canonical_identity(i) for i in judge_identities}) > 1:
             return (
-                "the arms were scored by different RAGAS judges (provider, "
-                "model, endpoint, or client mode), so their scores are not "
-                "comparable"
+                "the arms were scored by different RAGAS judges (these identity "
+                f"fields differ: {', '.join(differing_fields(judge_identities))}), "
+                "so their scores are not comparable"
             )
         if len(fingerprints) > 1:
             return (
@@ -1444,9 +1447,7 @@ class ResultHandler:
             )
             judge_identity = record.get("ragas_judge_identity_effective")
             if judge_identity is not None:
-                ctx_fields["judge_identity"].add(
-                    json.dumps(judge_identity, sort_keys=True)
-                )
+                ctx_fields["judge_identity"].add(canonical_identity(judge_identity))
             ctx_fields["queries_path"].add(bench.get("queries_path"))
             # The corpus is a swept-context field like any other: ranking arms
             # scored against different documents asserts controlled conditions

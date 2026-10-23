@@ -96,13 +96,17 @@ def build_uds_judge_llm(
     *,
     api_key_env="VLLM_API_KEY",
     chat_openai=ChatOpenAI,
-    timeout=10,
-    max_retries=0,
+    timeout=300,
+    max_retries=2,
 ):
     """Build a RAGAS judge LLM whose HTTP transport connects to a Unix domain socket.
 
     Reads the key from the api_key_env variable; raises ValueError naming the
     variable if it is absent or empty, and makes no request in that case (design D6).
+
+    The defaults are the production values (#739): 300 seconds per request, the
+    timeout of every inline judge run, and 2 retries of the openai client. Unit
+    tests pass their own, shorter bound.
     """
     import os
 
