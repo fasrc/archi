@@ -166,7 +166,7 @@ The scorer SHALL NOT score a bundle when the manifest's code digest (`code_versi
 - **THEN** the scorer scores the bundle
 
 ### Requirement: The judge job saves each row's score and resumes after a requeue
-The judge job SHALL append each scored `(key, metric)` result, as one newline-terminated line and as soon as it is available, to the bundle's checkpoint file for its own `judge_identity` (`scores.<identity digest>.partial.jsonl`). It SHALL NOT read or use a checkpoint file of a different identity. After a restart, it SHALL truncate a torn last line (no final newline, or not valid JSON), mark the bundle `FAILED` for an invalid line that is not the last line, use the first record of a repeated pair, and skip the pairs that are already recorded.
+The judge job SHALL append each scored `(key, metric)` result, as one newline-terminated line and as soon as it is available, to the bundle's checkpoint file for its own `ragas_judge_identity_effective` (`scores.<identity digest>.partial.jsonl`). It SHALL NOT read or use a checkpoint file of a different identity. After a restart, it SHALL truncate a torn last line (no final newline, or not valid JSON), mark the bundle `FAILED` for an invalid line that is not the last line, use the first record of a repeated pair, and skip the pairs that are already recorded.
 
 #### Scenario: Kill during an append
 - **WHEN** a job is killed while it writes a record, and its checkpoint file ends with half a JSON line
@@ -207,26 +207,34 @@ The offline scorer and the inline benchmark path SHALL call one shared scoring f
 - **THEN** both paths give equal aggregates and scored counts
 
 ### Requirement: The judge identity excludes per-job values
-Each judged arm SHALL record a `judge_identity` with the model id and revision, the weight precision, the vLLM image digest, the output-relevant server settings, the decoding settings, the resolved ragas call settings (`timeout`, `max_workers`, `batch_size`, and the scorer's chunk size), the embedding (provider class, the model name that the built embedding object reports, and its revision where the provider gives one), and the scorer identity (the code digest of the scorer's `src`, scorer image digest, package digest, ragas version, metric settings). It SHALL record the job id, node, times, claimed bundles and requeue count in a separate `judge_execution` record.
+Each judged arm SHALL record a `judge_identity`, stored under the existing per-arm key `ragas_judge_identity_effective` and not under a new key, with the model id and revision, the weight precision, the vLLM image digest, the output-relevant server settings, the decoding settings, the resolved ragas call settings (`timeout`, `max_workers`, `batch_size`, and the scorer's chunk size), the embedding (provider class, the model name that the built embedding object reports, and its revision where the provider gives one), and the scorer identity (the code digest of the scorer's `src`, scorer image digest, package digest, ragas version, metric settings). It SHALL record the job id, node, times, claimed bundles and requeue count in a separate `judge_execution` record.
 
 #### Scenario: Embedding differs
 - **WHEN** two arms have the same judge model and settings, but one was scored with the OpenAI embedding and the other with the HuggingFace embedding
-- **THEN** their `judge_identity` records differ in the embedding fields
+- **THEN** their `ragas_judge_identity_effective` records differ in the embedding fields
 
 #### Scenario: Judge pressure differs
 - **WHEN** two arms have the same judge model and settings, but one ran with `max_workers: 6` and the other with the default
-- **THEN** their `judge_identity` records differ in `max_workers`
+- **THEN** their `ragas_judge_identity_effective` records differ in `max_workers`
 
 #### Scenario: Same settings, different jobs
 - **WHEN** two arms were scored by two different jobs with identical model, precision, image, server, decoding and scorer settings
-- **THEN** their `judge_identity` records are equal, and their `judge_execution` records differ
+- **THEN** their `ragas_judge_identity_effective` records are equal, and their `judge_execution` records differ
 
 #### Scenario: Precision differs
 - **WHEN** one arm was scored with `bf16` weights and the other with `fp8` weights of the same model revision
-- **THEN** their `judge_identity` records differ in the precision field
+- **THEN** their `ragas_judge_identity_effective` records differ in the precision field
+
+#### Scenario: Nested identity values
+- **WHEN** two arms' `ragas_judge_identity_effective` records hold nested values, such as the metric list and the per-metric settings
+- **THEN** the in-run comparability check and the merge's leaderboard rebuild compare them by canonical JSON without error, and equal nested values compare equal
+
+#### Scenario: Equal numbers of different types
+- **WHEN** one arm's `judge_identity` records `temperature: 0` and another records `temperature: 0.0`, with all other fields equal
+- **THEN** the two identities compare equal
 
 ### Requirement: The merge writes a judged result and never edits the pending one
-The merge step SHALL write one new judged result JSON beside the pending one in the queue's results folder, from all arms of that result together, and only when every arm's bundle is `SCORED` and the pending result JSON is in that folder. The merge SHALL compute cross-arm RAGAS outputs (leaderboard and A/B metrics) only when every arm has the same `judge_identity`; otherwise it SHALL omit them and record `cross_arm_ragas: refused` with the fields that differ. The judged result SHALL have every arm's per-row metric scores and recomputed `total_results` RAGAS aggregates, the leaderboard and the A/B comparisons, `judge_status: scored`, and each arm's `judge_identity`, `judge_execution` and bundle SHA-256. The merge SHALL NOT change the pending file. Running the merge again on the same scores SHALL give an identical file. The merge SHALL write through a temporary file that it validates and then publishes with an atomic, no-replace `link`, and it SHALL write `MERGED` only after the judged file exists. It SHALL NOT replace an existing judged file, and it SHALL exit non-zero when an existing judged file has different bytes.
+The merge step SHALL write one new judged result JSON beside the pending one in the queue's results folder, from all arms of that result together, and only when every arm's bundle is `SCORED` and the pending result JSON is in that folder. The merge SHALL build the leaderboard and the A/B comparisons with the existing result-handler code, which withholds ranks and winners when arms differ in judge identity. The judged result SHALL have every arm's per-row metric scores and recomputed `total_results` RAGAS aggregates, the leaderboard and the A/B comparisons, `judge_status: scored`, and each arm's `ragas_effective_settings`, `judge_identity` (as `ragas_judge_identity_effective`), `judge_execution` and bundle SHA-256. Every other field of the pending result SHALL be in the judged result unchanged. The merge SHALL NOT change the pending file. Running the merge again on the same scores SHALL give an identical file. The merge SHALL write through a temporary file that it validates and then publishes with an atomic, no-replace `link`, and it SHALL write `MERGED` only after the judged file exists. It SHALL NOT replace an existing judged file, and it SHALL exit non-zero when an existing judged file has different bytes.
 
 #### Scenario: One arm still pending
 - **WHEN** a result has two arms, arm 0's bundle is `SCORED`, and arm 1's bundle is still READY
@@ -239,7 +247,7 @@ The merge step SHALL write one new judged result JSON beside the pending one in 
 
 #### Scenario: Arms scored by different judge identities
 - **WHEN** arm 0 was scored with `bf16` weights and arm 1 with `fp8` weights, and both are `SCORED`
-- **THEN** the judged file has each arm's scores and identity, no RAGAS metric in the leaderboard or the A/B comparisons, and `cross_arm_ragas: refused` naming the precision field
+- **THEN** the judged file has each arm's scores and identity, and the leaderboard and the A/B comparisons withhold ranks and winners
 
 #### Scenario: One arm failed
 - **WHEN** one arm's bundle of a result is `FAILED`
@@ -271,7 +279,7 @@ The merge step SHALL write one new judged result JSON beside the pending one in 
 - **THEN** the merge exits non-zero and writes no judged file
 
 ### Requirement: Comparison refuses pending runs and mixed judges
-`compare_runs.py` and the campaign archiver (`scripts/benchmarking/feature_matrix/archive_run.sh`) SHALL refuse a run whose judge status is `pending`, through one shared check. The campaign archiver SHALL write each arm's `judge_identity` into its ledger row, and SHALL refuse an archive whose `judge_identity` differs from that of the campaign's earlier RAGAS rows. `compare_runs.py` SHALL also refuse to compare RAGAS metrics across arms whose `judge_identity` differs in any field, naming the fields that differ. An artifact with no `judge_identity` SHALL get `(evaluator_provider, evaluator_model)` from its recorded settings, and a missing field SHALL never equal a recorded one.
+`compare_runs.py` and the campaign archiver (`scripts/benchmarking/feature_matrix/archive_run.sh`, in its single-run path and its `--sweep` path) SHALL refuse a run whose judge status is `pending`, through one shared check. The campaign archiver SHALL write each arm's `ragas_judge_identity_effective` into its ledger row, and SHALL refuse an archive whose `ragas_judge_identity_effective` differs from that of the campaign's earlier RAGAS rows. `compare_runs.py` SHALL also refuse to compare RAGAS metrics across arms whose `ragas_judge_identity_effective` differs in any field, naming the fields that differ, and SHALL refuse any `--noise-runs` replicate whose identity differs from the baseline's. An artifact with no `ragas_judge_identity_effective` key SHALL get `(evaluator_provider, evaluator_model)` from its recorded settings; this fallback SHALL apply only when the key is absent, and a missing field SHALL never equal a recorded one.
 
 #### Scenario: Campaign archiver and a different judge
 - **WHEN** the campaign ledger has RAGAS rows with a `bf16` judge identity, and `archive_run.sh` selects a scored artifact with an `fp8` identity
@@ -290,7 +298,7 @@ The merge step SHALL write one new judged result JSON beside the pending one in 
 - **THEN** `compare_runs.py` refuses the RAGAS comparison and names both judges
 
 #### Scenario: Same judge across separate jobs
-- **WHEN** two offline arms have equal `judge_identity` and different `judge_execution`
+- **WHEN** two offline arms have equal `ragas_judge_identity_effective` and different `judge_execution`
 - **THEN** `compare_runs.py` compares them
 
 #### Scenario: Two old inline artifacts

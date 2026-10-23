@@ -31,7 +31,7 @@ Rules for every task:
   - the pending result JSON is copied to `<queue>/results/` only after `<basename>.RESULT_COMPLETE` exists and the file loads with one arm for each bundle and matching digests; a half-written file is not copied;
   - a judged file with `MERGED` on all its bundles is copied back into the output folder.
   Then write the script. `run_goldenset_eval.sh` does not call it.
-- [ ] 2.7 Write the `archi-judge-publish.service` and `archi-judge-publish.timer` user units (every 5 minutes) in `fasrc/archi-config` beside the other host timers, as a separate PR in that repository. `publish.py --status` lists complete bundles that are not yet in the queue.
+- [ ] 2.7 Write the `archi-judge-publish.service` and `archi-judge-publish.timer` user units (every 5 minutes) in `fasrc/archi-config` beside the other host timers, as a separate PR in that repository. `publish.py --status` lists complete bundles that are not yet in the queue. (Operator step: tracked in fasrc/archi#737, not in the PR 2 issue.)
 
 ## 3. PR 3: offline scorer and merge
 
@@ -55,23 +55,27 @@ Rules for every task:
   - a file that ends with half a JSON line (a kill inside the write) is truncated to the last complete line, and the pair in the half line is scored again;
   - an invalid line that is not the last line makes the bundle `FAILED` with the line number;
   - a repeated `(key, metric)` pair uses its first record;
-  - a job with a different `judge_identity` (for example `fp8` after `bf16`) does not read the other identity's file, and its final scores come only from its own file.
+  - a job with a different `ragas_judge_identity_effective` (for example `fp8` after `bf16`) does not read the other identity's file, and its final scores come only from its own file.
 - [ ] 3.4 Add a test: a bundle whose digest does not match becomes `FAILED` with a reason, and the other bundles become `SCORED`.
 - [ ] 3.5 Add a test: offline aggregates equal inline aggregates for the same rows and the same stub judge.
 - [ ] 3.6 Write the scorer (`src/evaluation/judge/` or `src/utils/judge_scorer.py`) and its CLI entry `scripts/benchmarking/judge/score.py`.
-- [ ] 3.6a Add tests for `judge_identity` and `judge_execution` (design D10):
+- [ ] 3.6a Add tests for `ragas_judge_identity_effective` and `judge_execution` (design D10):
   - two jobs with the same settings give equal identities and different execution records;
   - a precision change (`bf16` against `fp8`) changes the identity;
   - an embedding change (OpenAI against HuggingFace, or a different model name reported by the built object) changes the identity;
   - a change of the effective `timeout`, `max_workers`, `batch_size` or chunk size changes the identity, and an explicit default equals an unset value;
   - the offline scorer passes the manifest's `batch_size` and run-config values to ragas, not its own defaults;
-  - the inline path records the same identity shape.
+  - the inline path records the same identity shape;
+  - an identity with nested values (the metric list, per-metric settings) goes through `ResultHandler.arms_incomparability_reason` and the merge's leaderboard rebuild without error, because the comparison uses canonical JSON (sorted keys) and not `tuple(sorted(identity.items()))` (`src/bin/service_benchmark.py:374-376` at `e2978a1d`); equal nested identities compare equal, and the existing 4-field identities still compare as before;
+  - numbers are normalized before the canonical JSON is built, so an integral float equals the integer: `temperature: 0` and `temperature: 0.0` compare equal (plain `json.dumps` gives `0` and `0.0`, which differ). One shared helper makes this form for `arms_incomparability_reason`, the leaderboard context reader (`json.dumps(judge_identity, sort_keys=True)`, `src/bin/service_benchmark.py:1431` at `e2978a1d`) and G12;
+  - when two arms differ only in a new field (for example precision, embedding or a scorer digest), the reason that `arms_incomparability_reason` returns names the fields that differ. Today it says "provider, model, endpoint, or client mode" (`src/bin/service_benchmark.py:391-395` at `e2978a1d`), which is false for those cases.
+- [ ] 3.6b Update `docs/docs/benchmarking.md` where it defines `ragas_judge_identity_effective` as only `provider`, `model`, `base_url` and `mode` (`:395`, `:571` at `e2978a1d`). Describe the extended fields, say that arms differing in any of them are not ranked, and say that older result files keep the 4-field record.
 - [ ] 3.7 Add tests for the merge, then write `scripts/benchmarking/judge/merge.py`. The tests check that:
   - the merge groups bundles by result file, and writes nothing while any arm is not `SCORED` (it names the pending arms and exits 0); after the last arm is `SCORED`, one judged file holds all arms;
   - a `FAILED` arm makes the merge write nothing for that result and exit non-zero;
   - a result whose pending JSON is not yet in `<queue>/results/` gets nothing, and the merge exits 0;
-  - arms with different `judge_identity` values keep their per-arm scores, and the leaderboard and A/B comparisons have no RAGAS metric, with `cross_arm_ragas: refused` naming the fields;
-  - the judged file has every arm's per-row scores and aggregates, the leaderboard, A/B, `judge_status: scored`, and each arm's `judge_identity` and `judge_execution`;
+  - arms with different `ragas_judge_identity_effective` values keep their per-arm scores, and the leaderboard and A/B comparisons withhold ranks and winners, as #618 does in-run;
+  - the judged file has every arm's per-row scores and aggregates, the leaderboard, A/B, `judge_status: scored`, and each arm's `ragas_effective_settings`, `ragas_judge_identity_effective` (the extended `judge_identity`) and `judge_execution`, and every other field of the pending file unchanged;
   - the pending file is unchanged, and a second merge gives identical bytes;
   - a digest mismatch exits non-zero;
   - a merge killed while it writes leaves no judged file and no `MERGED`, and the next merge completes, and removes the temporary file only when it is older than 1 hour;
@@ -84,15 +88,35 @@ Rules for every task:
 - [ ] 4.1 Add tests for `scripts/benchmarking/slurm/judge_submit.sh`, with `squeue` and `sbatch` replaced by stubs on `PATH`. It submits nothing if a job exists or no bundle is available, nothing if the only READY bundles do not match the configured judge or scorer (3.0), and exactly one job if a matching bundle is READY and no job exists. Every `sbatch` of `archi-judge` has `--dependency=singleton`. For a result whose arms are all `SCORED` with no `MERGED` and no merge job, it submits one `archi-judge-merge` job. `--status` lists READY bundles older than 24 hours, bundles that do not match with the reason, `SCORER_STALE` and `INCOMPATIBLE` records, and stale claims.
 - [ ] 4.2 Write `scripts/benchmarking/slurm/archi_judge.sbatch`. It has `#SBATCH -J archi-judge --requeue --open-mode=append`, and the partition, GPU count and `-t` are settings at the top of the script. It checks the live scorer identity against the sidecar and counts its available bundles first, and exits without starting vLLM when the sidecar is stale or no bundle is available. It starts vLLM in Apptainer on a Unix socket (`--uds`) in a `0700` folder under the job's private temporary folder, with no TCP listener, and with a random key in `VLLM_API_KEY` (never on the command line). It waits for `/v1/models` through the socket, runs the scorer, and stops vLLM through a `trap`. It then submits the merge job with `--dependency=afterok:$SLURM_JOB_ID`. It must have a `--dry-run` that prints the resolved commands, with a test for it.
 - [ ] 4.3 Write `scripts/benchmarking/slurm/judge_merge.sbatch` (CPU only), with a `--dry-run` test.
-- [ ] 4.4 Add tests for G8 as one shared check, used by `scripts/benchmarking/compare_runs.py` and `scripts/benchmarking/feature_matrix/archive_run.sh`: a pending arm exits non-zero and is named; the archiver appends nothing to the ledger for a pending artifact and names the judged file to wait for; it archives a `judge_status: scored` judged file, with each arm's `judge_identity` in the ledger row; it refuses a scored artifact whose identity differs from the campaign's earlier RAGAS rows, and names the fields. Then write the gate.
-- [ ] 4.5 Add tests for G9, then write the gate. The tests check that:
-  - arms whose `judge_identity` differs are refused, and the differing fields are named (inline Sonnet against offline Llama; `bf16` against `fp8`);
+- [ ] 4.4 Add tests for G11 as one shared check, used by `scripts/benchmarking/compare_runs.py` and both paths of `scripts/benchmarking/feature_matrix/archive_run.sh` (the single-run path, and `--sweep`, which archives through `archive` in `scripts/benchmarking/feature_matrix/sweep_tools.py:317`): a pending arm exits non-zero and is named; the archiver appends nothing to the ledger for a pending artifact and names the judged file to wait for; it archives a `judge_status: scored` judged file, with each arm's `ragas_judge_identity_effective` in its ledger row; it refuses a scored artifact whose identity differs from the campaign's earlier RAGAS rows, and names the fields. Then write the gate.
+- [ ] 4.5 Add tests for G12, then write the gate. The tests check that:
+  - arms whose `ragas_judge_identity_effective` differs are refused, and the differing fields are named (inline Sonnet against offline Llama; `bf16` against `fp8`);
   - two offline arms with equal identity from separate jobs compare;
   - two older inline artifacts with the same judge still compare;
-  - an old artifact never matches a new one that records a digest.
-- [ ] 4.6 Document the operator steps in `docs/docs/benchmarking.md`: image and weights download, the `scrontab` entry, `judge_mode: deferred`, how to read the queue, and how to copy judged files into `bench_out/`.
+  - an old artifact never matches a new one that records a digest;
+  - the `(evaluator_provider, evaluator_model)` fallback is used only when `ragas_judge_identity_effective` is absent: two new artifacts with the same provider and model but different precision are refused;
+  - two 4-field artifacts from #618 with equal fields compare, and a 4-field artifact never matches an extended one;
+  - every `--noise-runs` replicate is held to the same rule: its `ragas_judge_identity_effective` is compared with the baseline's, and a mismatch is refused and named. The replicates set the G7 sigma, and `check_noise_replicates` (`scripts/benchmarking/compare_runs.py:1152` at `e2978a1d`) checks their bank, corpus, code and config but not their judge, so Sonnet-scored or mixed-precision replicates could move the threshold for Llama-scored arms.
+- [ ] 4.6 Document the operator steps in `docs/docs/benchmarking.md`: image and weights download, the `scrontab` entry, `judge_mode: deferred`, how to read the queue, and how to copy judged files into `bench_out/`. Also add G11 and G12 to `docs/docs/interpreting_benchmark_results.md`: the gate table (ends at G8, `:482` at `e2978a1d`) and the Procedure C sentence "It implements G3–G10" (`:601`), with what each gate refuses and why.
+- [ ] 4.7 Add one end-to-end test that needs no cluster, GPU or network. Operator decision, 2026-10-21: the first real cluster run is in fasrc/archi#737, after the October release, so this test is the release's end-to-end check of the deferred path. Build a deferred run with **two arms** (`compare_runs.run` refuses fewer than two arms with a usage error before any gate runs, `scripts/benchmarking/compare_runs.py:3097-3102` at `e2978a1d`). Make its pending result JSON and its two bundles with the PR 2 code, not with hand-written JSON. Then, on a temporary queue folder, run the real steps in order:
+  - `publish.py` (both bundles become READY, and the pending result is copied to `<queue>/results/`);
+  - `judge_submit.sh`, with stub `sbatch` and `squeue` on `PATH` (it submits exactly one judge job);
+  - the scorer CLI with a stub judge in place of vLLM (it claims both bundles, scores them, and marks them `SCORED`);
+  - `merge.py` (it writes one judged file with both arms, and `MERGED`), and the publish copy-back;
+  - `compare_runs.py` on the two-arm file: G11 refuses the pending file and accepts the judged file, and G12 passes because both arms have the same identity; then `archive_run.sh --sweep <sweep_dir> --stack <stack> --run 1 --census <census.json>` on the judged file (one ledger row per arm, each with its `ragas_judge_identity_effective`). Do not use the single-run path: it refuses an artifact with more than one arm (`scripts/benchmarking/feature_matrix/archive_run.sh:164` at `e2978a1d`), and only `--sweep` (`:39-73`) writes one ledger row per arm.
+
+  The sweep archiver refuses unless every campaign precondition holds. Build each one in the temporary folder, as the `sweep` fixture and the `_lock`, `_artifact`, `_census` and `_ledger` helpers of `tests/unit/test_sweep_tools.py` do for `sweep_tools.archive` (anchors at `e2978a1d`):
+  - the two arms are a generated two-arm sweep (`sweep_tools.generate`), locked with `sweep_tools.build_lock`, and the deferred run uses their configs, so each arm's name and `agent_md_sha256` match the lock (`scripts/benchmarking/feature_matrix/sweep_tools.py:337-350`, `:396-400`);
+  - both arms record the same usable corpus fingerprint at both endpoints (`:382-385`, `:414-415`);
+  - a passing census for run 1, whose corpus fingerprint, inputs and map digest match the arms and the lock, passed with `--census` (`_check_census`, `:276-314`, called for run 1 at `:421-422`; map digest at `:463-476`);
+  - a `ragas-start` ledger row for the stack, older than the judged file (`:368-375`);
+  - the lock at `$FM_OUT/sweep-<stack>.lock`, the stack stamp under `ARCHI_DIR`, a stub `FM_DOCKER` that reports the benchmark container exited, and an `FM_GIT` that gives the locked code tree and a clean status (`scripts/benchmarking/feature_matrix/lib.sh:434-450`).
+
+  The test fails if the archiver refuses the judged file for any reason. The judged file must keep each arm's other fields from the pending file (configuration, corpus fingerprints, `agent_md_sha256`), because the archiver reads them. The judged aggregates must equal the inline aggregates for the same rows and the same stub judge.
 
 ## 5. Operator (after PR 4 merges, not automated)
+
+Tracked in fasrc/archi#737 (milestone `v2026.11.0`), together with task 2.7 and the open questions. The code PRs (groups 1–4) do not wait for these steps.
 
 - [ ] 5.1 Pull the vLLM image to a SIF, and the judge weights to lab or netscratch storage. Record the image tag and the model revision.
 - [ ] 5.2 Make one deferred fm-00 run and publish it. Run the judge job by hand on the chosen partition, and record the queue wait, the load time and the rows per minute.
