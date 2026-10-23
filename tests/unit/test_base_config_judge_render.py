@@ -88,7 +88,7 @@ def test_judge_mode_false_survives_the_render():
 def test_rendered_false_judge_mode_is_refused_by_parse_judge_mode():
     ragas = _render_ragas({"judge_mode": False})
     with pytest.raises(ValueError):
-        parse_judge_mode({"judge_mode": ragas["judge_mode"]})
+        parse_judge_mode(ragas["judge_mode"])
 
 
 # --- YAML 1.1 retype guard on evaluator_model_revision ----------------------

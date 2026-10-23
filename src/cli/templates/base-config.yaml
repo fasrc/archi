@@ -136,7 +136,7 @@ services:
         judge_bundle_dir: {{ services.benchmarking.mode_settings.ragas_settings.judge_bundle_dir | tojson }}
         {%- endif %}
         {%- if services.benchmarking.mode_settings.ragas_settings.evaluator_model_revision is defined and services.benchmarking.mode_settings.ragas_settings.evaluator_model_revision is not none %}
-        # Git revision of the judge model image that a deferred bundle requests; tojson guards against YAML 1.1 retyping.
+        # Revision of the judge model (evaluator_model) that a deferred bundle requests; tojson guards against YAML 1.1 retyping.
         evaluator_model_revision: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_model_revision | tojson }}
         {%- endif %}
 
