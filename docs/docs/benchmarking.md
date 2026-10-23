@@ -311,34 +311,39 @@ The scripts are in `scripts/benchmarking/slurm/`, and each one has its settings 
 | `JUDGE_QUEUE` | `$JUDGE_HOME/queue` | The queue folder. The dev host publishes to it and the jobs read it, so it must be on shared storage |
 | `JUDGE_LAB` or `JUDGE_SCRATCH` | — | Lab storage for the judge weights (about 140 GB), the Apptainer cache and the vLLM compile cache: `/n/netscratch/<lab>/Lab/$USER/archi-judge`, or a folder of your own. The judge job refuses to start without one of them |
 | `JUDGE_PYTHON` | `python3` | The Python on the login node, 3.8 or later (for example after `module load python`). The submitter uses the standard library only |
-| `JUDGE_VLLM_IMAGE` | `docker://vllm/vllm-openai:<pinned tag>` | The vLLM image of the judge job |
+| `JUDGE_VLLM_IMAGE` | `<lab storage>/vllm-openai.sif` | The vLLM image of the judge job, a local SIF file. A `docker://` tag is refused, because a tag can move to other bytes |
 
 ### 1. Get the vLLM image and the judge weights
 
-Download the judge weights at their pinned revision to lab storage, on a node with internet access. The judge job sets `HF_HUB_OFFLINE=1`, so it never downloads weights itself. For a gated model (Llama 3.3), accept its license on Hugging Face and give your token in `HF_TOKEN`:
+Pull the vLLM image at a pinned tag to a SIF file in lab storage, and download the judge weights at their pinned revision, on a node with internet access. The judge job sets `HF_HUB_OFFLINE=1`, so it never downloads weights itself. For a gated model (Llama 3.3), accept its license on Hugging Face and give your token in `HF_TOKEN`:
 
 ```bash
-apptainer exec --env HF_HOME=/n/netscratch/<lab>/Lab/$USER/archi-judge/hf \
-  docker://vllm/vllm-openai:<pinned tag> \
+LAB_DIR=/n/netscratch/<lab>/Lab/$USER/archi-judge
+apptainer pull $LAB_DIR/vllm-openai.sif docker://vllm/vllm-openai:<pinned tag>
+apptainer exec --env HF_HOME=$LAB_DIR/hf $LAB_DIR/vllm-openai.sif \
   hf download <judge model id> --revision <judge model revision>
 ```
 
-The first `apptainer exec` of the image also converts it into the Apptainer cache. Record the image digest in `judge.env` as `JUDGE_IMAGE_DIGEST`: it is part of the judge identity.
+Each judge job hashes the SIF file it serves the judge from, and the judge identity records that SHA-256 as `server_image_digest`. A new SIF file is therefore a new judge identity.
 
 ### 2. Write judge.env
 
-`$JUDGE_HOME/judge.env` names the judge of every job, one `KEY=VALUE` per line, with no shell expansion. The model id and the revision must equal the run's `evaluator_model` and `evaluator_model_revision`, or no bundle matches the job:
+`$JUDGE_HOME/judge.env` names the judge of every job, one `KEY=VALUE` per line, with no shell expansion. A comment must be on its own line: text after a value is part of the value. The model id and the revision must equal the run's `evaluator_model` and `evaluator_model_revision`, or no bundle matches the job:
 
 ```bash
 JUDGE_MODEL_ID=meta-llama/Llama-3.3-70B-Instruct
 JUDGE_MODEL_REVISION=<pinned revision>
-JUDGE_PRECISION=bf16                    # bf16, fp16 or fp8
-JUDGE_BOOTSTRAP_ROWS_PER_MINUTE=20      # the time budget's rate before a row is scored
-JUDGE_IMAGE_DIGEST=sha256:<vLLM image digest>      # optional
-JUDGE_SERVER_ARGS=--max-model-len 16384            # optional, the vllm serve arguments that change output
+# bf16, fp16 or fp8
+JUDGE_PRECISION=bf16
+# The time budget's rate before the job has scored a row
+JUDGE_BOOTSTRAP_ROWS_PER_MINUTE=20
+# Optional: the vllm serve arguments that change output
+JUDGE_SERVER_ARGS=--max-model-len 16384
+# Optional: the SHA-256 of vllm-openai.sif (sha256sum); the job refuses another image
+JUDGE_IMAGE_DIGEST=sha256:<sha256 of vllm-openai.sif>
 ```
 
-The precision, the image digest and the server arguments are part of each arm's `ragas_judge_identity_effective`, so a change of any of them starts a new baseline (gate G12). Set the bootstrap rate low, and correct it from the rows per minute of the first job.
+The precision, the vLLM image digest and the server arguments are part of each arm's `ragas_judge_identity_effective`, so a change of any of them starts a new baseline (gate G12). Set the bootstrap rate low, and correct it from the rows per minute of the first job.
 
 ### 3. Build the scorer image
 

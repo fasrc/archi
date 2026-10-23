@@ -51,6 +51,25 @@ def test_the_operator_section_names(needle):
     assert needle in _section()
 
 
+def test_the_judge_env_example_loads_with_the_real_parser(tmp_path):
+    import importlib.util
+
+    section = _section()
+    start = section.index("### 2. Write judge.env")
+    block = section[start:].split("```bash\n", 1)[1].split("```", 1)[0]
+    path = tmp_path / "judge.env"
+    path.write_text(block)
+    queue_py = DOCS.parents[1] / "scripts" / "benchmarking" / "judge" / "judge_queue.py"
+    spec = importlib.util.spec_from_file_location("docs_judge_queue", queue_py)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    values = module.read_judge_env(path)
+    assert values["JUDGE_PRECISION"] == "bf16"
+    assert float(values["JUDGE_BOOTSTRAP_ROWS_PER_MINUTE"]) > 0
+    assert values["JUDGE_SERVER_ARGS"] == "--max-model-len 16384"
+    assert "#" not in "".join(v or "" for v in values.values())
+
+
 def test_the_deferred_section_no_longer_says_the_scorer_is_missing():
     text = (DOCS / "benchmarking.md").read_text()
     assert "until then, a deferred result has no RAGAS scores" not in text

@@ -45,11 +45,15 @@ QUEUE="${JUDGE_QUEUE:-$JUDGE_HOME/queue}"
 JUDGE_ENV="${JUDGE_ENV:-$JUDGE_HOME/judge.env}"
 SCORER_IMAGE="${JUDGE_SCORER_IMAGE:-$JUDGE_HOME/archi-scorer.sif}"
 SIDECAR="${JUDGE_SIDECAR:-$JUDGE_HOME/scorer-identity.json}"
-VLLM_IMAGE="${JUDGE_VLLM_IMAGE:-docker://vllm/vllm-openai:v0.31.0-cu129}"
-# The judge weights (about 140 GB), the image cache and the vLLM compile cache go to lab
-# storage: set JUDGE_LAB (your lab folder under /n/netscratch) or JUDGE_SCRATCH.
+# The judge weights (about 140 GB), the vLLM image, the image cache and the vLLM compile
+# cache go to lab storage: set JUDGE_LAB (your lab folder under /n/netscratch) or
+# JUDGE_SCRATCH.
 LAB="${JUDGE_LAB:-}"
 SCRATCH_DIR="${JUDGE_SCRATCH:-${SCRATCH:-/n/netscratch}/${LAB}/Lab/${USER}/archi-judge}"
+# A local SIF, never a docker:// tag: a tag can move to other bytes, and the job records
+# the SHA-256 of the image it serves the judge from. Pull it once:
+#   apptainer pull "$SCRATCH_DIR/vllm-openai.sif" docker://vllm/vllm-openai:v0.31.0-cu129
+VLLM_IMAGE="${JUDGE_VLLM_IMAGE:-$SCRATCH_DIR/vllm-openai.sif}"
 # Python 3.8 or later on the node, for judge.env (standard library only).
 JUDGE_PYTHON="${JUDGE_PYTHON:-python3}"
 READY_TIMEOUT_SECONDS="${JUDGE_READY_TIMEOUT:-1800}"
@@ -90,8 +94,9 @@ queue = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(queue)
 env = queue.read_judge_env(sys.argv[2])
 for name, key in (("MODEL_ID", "JUDGE_MODEL_ID"), ("MODEL_REVISION", "JUDGE_MODEL_REVISION"),
-                  ("PRECISION", "JUDGE_PRECISION")):
-    print(f"{name}={shlex.quote(env[key])}")
+                  ("PRECISION", "JUDGE_PRECISION"),
+                  ("CONFIGURED_IMAGE_DIGEST", "JUDGE_IMAGE_DIGEST")):
+    print(f"{name}={shlex.quote(env[key] or '')}")
 args = shlex.split(env["JUDGE_SERVER_ARGS"] or "")
 print("SERVER_ARGS=(" + " ".join(shlex.quote(a) for a in args) + ")")
 PY
@@ -104,6 +109,7 @@ else
   [ "$DRY_RUN" = true ] || die "no judge.env at $JUDGE_ENV"
   log "no judge.env at $JUDGE_ENV; the dry run shows its values as placeholders"
   MODEL_ID="<JUDGE_MODEL_ID>" MODEL_REVISION="<JUDGE_MODEL_REVISION>" PRECISION=bf16
+  CONFIGURED_IMAGE_DIGEST=""
   SERVER_ARGS=()
 fi
 # The weight precision decides the vLLM setting; the judge identity records the precision.
@@ -125,6 +131,8 @@ if [ "$DRY_RUN" = true ]; then
   PINNED_IMAGE="$(dirname "$SCORER_IMAGE")/.archi-scorer.$JOB_ID.sif"
   PINNED_SIDECAR="$SOCK_DIR/scorer-identity.json"
   IMAGE_DIGEST="sha256:<sha256 of $PINNED_IMAGE>"
+  PINNED_VLLM="$(dirname "$VLLM_IMAGE")/.vllm-openai.$JOB_ID.sif"
+  SERVER_IMAGE_DIGEST="sha256:<sha256 of $PINNED_VLLM>"
 else
   [ -n "${SLURM_JOB_ID:-}" ] || die "not in a Slurm job; submit it with sbatch, or use --dry-run"
   SOCK_DIR=""
@@ -153,11 +161,12 @@ commands() {
   RUN=(apptainer exec --cleanenv "${BINDS[@]}" "$PINNED_IMAGE"
     python3 "$SCORER_SCRIPTS/score.py" run
     --queue "$QUEUE" --judge-env "$JUDGE_ENV" --sidecar "$PINNED_SIDECAR" --socket "$sock"
-    --job-id "$JOB_ID" --image-digest "$IMAGE_DIGEST")
+    --job-id "$JOB_ID" --image-digest "$IMAGE_DIGEST"
+    --server-image-digest "$SERVER_IMAGE_DIGEST")
   SERVE=(apptainer exec --nv --cleanenv --bind "$SOCK_DIR" --bind "$SCRATCH_DIR"
     --env "HF_HOME=$SCRATCH_DIR/hf" --env HF_HUB_OFFLINE=1
     --env "XDG_CACHE_HOME=$SCRATCH_DIR/cache"
-    "$VLLM_IMAGE"
+    "$PINNED_VLLM"
     vllm serve "$MODEL_ID" --revision "$MODEL_REVISION" --served-model-name "$MODEL_ID"
     --tensor-parallel-size "$GPUS" "${PRECISION_ARGS[@]}" ${SERVER_ARGS[@]+"${SERVER_ARGS[@]}"}
     --uds "$sock")
@@ -176,9 +185,11 @@ show() {
 
 if [ "$DRY_RUN" = true ]; then
   commands
+  echo "# 0. pin $SCORER_IMAGE and $SIDECAR (a hard link and a copy), and hash the image"
   echo "# 1. check the scorer identity and count the work (exit 3: no work, 2: stale sidecar)"
   show "${CHECK[@]}"
-  echo "# 2. export APPTAINERENV_VLLM_API_KEY=<random per job>, then start vLLM"
+  echo "# 2. pin $VLLM_IMAGE and hash it (judge.env JUDGE_IMAGE_DIGEST, if set, must equal it),"
+  echo "#    export APPTAINERENV_VLLM_API_KEY=<random per job>, then start vLLM"
   show "${SERVE[@]}"
   echo "# 3. wait for HTTP 200, the key in a 0600 header file"
   show "${PROBE[@]}"
@@ -192,12 +203,15 @@ fi
 command -v apptainer >/dev/null || die "apptainer is not on PATH"
 [ -f "$SCORER_IMAGE" ] || die "no scorer image at $SCORER_IMAGE; build it with build_scorer_image.sh"
 [ -f "$SIDECAR" ] || die "no scorer sidecar at $SIDECAR; build_scorer_image.sh writes it beside the image"
+[ -f "$VLLM_IMAGE" ] || die "no vLLM image at $VLLM_IMAGE; pull it to a SIF first: apptainer pull $VLLM_IMAGE docker://vllm/vllm-openai:<pinned tag>"
 mkdir -p "$SCRATCH_DIR/hf" "$SCRATCH_DIR/cache" "$SCRATCH_DIR/apptainer"
 export APPTAINER_CACHEDIR="$SCRATCH_DIR/apptainer"
 
 SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/archi-judge.$SLURM_JOB_ID.XXXXXX")"
 PINNED_IMAGE="$(dirname "$SCORER_IMAGE")/.archi-scorer.$SLURM_JOB_ID.sif"
 PINNED_SIDECAR="$SOCK_DIR/scorer-identity.json"
+PINNED_VLLM="$(dirname "$VLLM_IMAGE")/.vllm-openai.$SLURM_JOB_ID.sif"
+SERVER_IMAGE_DIGEST=""
 VLLM_PID=""
 cleanup() {
   if [ -n "$VLLM_PID" ]; then
@@ -205,7 +219,7 @@ cleanup() {
     wait "$VLLM_PID" 2>/dev/null || true
   fi
   rm -rf "$SOCK_DIR"
-  rm -f "$PINNED_IMAGE"
+  rm -f "$PINNED_IMAGE" "$PINNED_VLLM"
 }
 trap cleanup EXIT
 chmod 700 "$SOCK_DIR"
@@ -237,6 +251,17 @@ case "$CHECK_RC" in
   2) die "the scorer sidecar $SIDECAR does not describe the live scorer; the check wrote SCORER_STALE in $QUEUE; rebuild the scorer image (build_scorer_image.sh)" ;;
   *) die "the scorer check failed with exit $CHECK_RC" ;;
 esac
+
+# The vLLM image the judge runs, pinned like the scorer image. Its SHA-256 is the judge
+# identity's server_image_digest (score.py run --server-image-digest), so the identity
+# records the image that served the judge; a JUDGE_IMAGE_DIGEST in judge.env that names
+# another image is refused before the server starts.
+ln -f "$VLLM_IMAGE" "$PINNED_VLLM" || die "cannot hard-link $VLLM_IMAGE to $PINNED_VLLM"
+SERVER_IMAGE_DIGEST="sha256:$(sha256sum "$PINNED_VLLM" | cut -d' ' -f1)"
+if [ -n "$CONFIGURED_IMAGE_DIGEST" ] && [ "$CONFIGURED_IMAGE_DIGEST" != "$SERVER_IMAGE_DIGEST" ]; then
+  die "judge.env sets JUDGE_IMAGE_DIGEST=$CONFIGURED_IMAGE_DIGEST, but $VLLM_IMAGE has digest $SERVER_IMAGE_DIGEST"
+fi
+commands
 
 KEY="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
 [ "${#KEY}" -eq 64 ] || die "could not make a per-job API key"

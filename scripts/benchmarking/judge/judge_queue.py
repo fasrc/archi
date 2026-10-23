@@ -28,8 +28,10 @@ quotes around a value is removed. No shell expansion is done. Required keys:
   budget uses before the job has scored a row (D5).
 
 Optional keys, recorded in the judge identity (D10) and ``None`` when absent:
-``JUDGE_IMAGE_DIGEST`` (the vLLM image) and ``JUDGE_SERVER_ARGS`` (the
-output-relevant ``vllm serve`` arguments, for example ``--max-model-len``).
+``JUDGE_IMAGE_DIGEST`` (the vLLM image; the judge job measures the SHA-256 of
+the SIF it serves from, records that, and refuses a value that differs) and
+``JUDGE_SERVER_ARGS`` (the output-relevant ``vllm serve`` arguments, for
+example ``--max-model-len``). A comment must be on its own line.
 
 **scorer-identity.json** (the sidecar) is written beside the scorer image by
 ``score.py write-identity``. It holds at least ``code_digest`` and

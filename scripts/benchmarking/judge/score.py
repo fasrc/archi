@@ -5,7 +5,7 @@
         [--package-dir <src>]
     score.py check --queue Q --judge-env E --sidecar S [--job-id ID] [--image-digest D]
     score.py run --queue Q --judge-env E --sidecar S --socket P [--job-id ID] \
-        [--image-digest D] [--chunk-size 8]
+        [--image-digest D] [--server-image-digest V] [--chunk-size 8]
 
 ``write-identity`` runs at the scorer image build (#733): it writes the code
 digest of the installed ``src`` (the function of the benchmark's
@@ -19,7 +19,9 @@ model under the name ``JUDGE_MODEL_ID``. Its exit codes are 0 (done or idle) and
 ``$SLURM_JOB_ID``. ``--image-digest`` is the SHA-256 of the scorer image the
 job runs (``archi_judge.sbatch`` passes it): a sidecar that records another
 image digest is stale, because the judge scripts in the image are outside the
-code digest.
+code digest. ``--server-image-digest`` is the SHA-256 of the vLLM image the job
+serves the judge from; the judge identity records it as ``server_image_digest``,
+and a ``JUDGE_IMAGE_DIGEST`` in judge.env that differs is refused.
 """
 
 from __future__ import annotations
@@ -75,6 +77,18 @@ def live_identity(package_dir: str) -> Dict[str, Optional[str]]:
 
 def _context(args, queue_api) -> JobContext:
     judge_env = queue_api.read_judge_env(args.judge_env)
+    server_image = getattr(args, "server_image_digest", None)
+    if server_image:
+        # The judge identity records the vLLM image the job measured, not a
+        # value that nothing checked; judge.env may name it too, but then it
+        # must be the same.
+        configured = judge_env.get("JUDGE_IMAGE_DIGEST")
+        if configured and configured != server_image:
+            raise ValueError(
+                f"judge.env sets JUDGE_IMAGE_DIGEST={configured}, but the job runs "
+                f"the vLLM image with digest {server_image}"
+            )
+        judge_env = {**judge_env, "JUDGE_IMAGE_DIGEST": server_image}
     socket_path = getattr(args, "socket", None)
 
     def judge_factory():
@@ -129,6 +143,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         command.add_argument("--image-digest")
         if name == "run":
             command.add_argument("--socket", required=True)
+            command.add_argument("--server-image-digest")
             command.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
     args = parser.parse_args(argv)
 

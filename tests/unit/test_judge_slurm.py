@@ -390,8 +390,17 @@ def test_the_job_refuses_to_run_outside_slurm(tmp_path, stub):
     assert _calls(stub, "apptainer") == []
 
 
-def _job(tmp_path, stub, check_rc=0, run_rc=0, **extra):
-    _judge_home(tmp_path)
+VLLM_BYTES = b"a vllm image"
+VLLM_DIGEST = "sha256:" + hashlib.sha256(VLLM_BYTES).hexdigest()
+
+
+def _job(
+    tmp_path, stub, check_rc=0, run_rc=0, judge_env=None, vllm=VLLM_BYTES, **extra
+):
+    _judge_home(tmp_path, **(judge_env or {}))
+    if vllm is not None:
+        (tmp_path / "scratch").mkdir(exist_ok=True)
+        (tmp_path / "scratch" / "vllm-openai.sif").write_bytes(vllm)
     (stub / "check.rc").write_text(str(check_rc))
     (stub / "run.rc").write_text(str(run_rc))
     return _run(
@@ -517,6 +526,48 @@ def test_a_rebuild_during_the_job_keeps_the_pinned_pair(tmp_path, stub):
     assert (stub / "run.sidecar").read_text() == sidecar
     (run,) = [c for c in _calls(stub, "apptainer") if "score.py run" in c]
     assert f"--image-digest {digest}" in run
+
+
+def test_the_job_serves_a_pinned_vllm_sif_and_records_its_measured_digest(
+    tmp_path, stub
+):
+    proc = _job(tmp_path, stub)
+    assert proc.returncode == 0, proc.stderr
+    calls = _calls(stub, "apptainer")
+    pinned = str(tmp_path / "scratch" / ".vllm-openai.9001.sif")
+    (serve,) = [c for c in calls if "vllm serve" in c]
+    assert f" {pinned} vllm serve " in serve
+    (run,) = [c for c in calls if "score.py run" in c]
+    assert f"--server-image-digest {VLLM_DIGEST}" in run
+    assert not Path(pinned).exists()
+
+
+def test_a_judge_env_digest_of_another_vllm_image_is_refused_before_serving(
+    tmp_path, stub
+):
+    proc = _job(tmp_path, stub, judge_env={"JUDGE_IMAGE_DIGEST": "sha256:other"})
+    assert proc.returncode != 0 and "JUDGE_IMAGE_DIGEST" in proc.stderr
+    assert VLLM_DIGEST in proc.stderr
+    assert not any("vllm serve" in c for c in _calls(stub, "apptainer"))
+
+
+def test_a_judge_env_digest_of_this_vllm_image_is_accepted(tmp_path, stub):
+    proc = _job(tmp_path, stub, judge_env={"JUDGE_IMAGE_DIGEST": VLLM_DIGEST})
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_a_job_without_the_vllm_sif_starts_no_server(tmp_path, stub):
+    proc = _job(tmp_path, stub, vllm=None)
+    assert proc.returncode != 0 and "apptainer pull" in proc.stderr
+    assert not any("vllm serve" in c for c in _calls(stub, "apptainer"))
+
+
+def test_the_dry_run_names_the_measured_vllm_digest(tmp_path, stub):
+    _judge_home(tmp_path)
+    proc = _run(JOB, tmp_path, stub, "--dry-run")
+    assert proc.returncode == 0, proc.stderr
+    assert "--server-image-digest" in proc.stdout
+    assert "vllm-openai.sif" in proc.stdout and "docker://" not in proc.stdout
 
 
 def test_a_job_without_the_scorer_image_starts_nothing(tmp_path, stub):

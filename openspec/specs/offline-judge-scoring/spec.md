@@ -232,6 +232,10 @@ Each judged arm SHALL record a `judge_identity`, stored under the existing per-a
 - **WHEN** two arms were scored by two different jobs with identical model, precision, image, server, decoding and scorer settings
 - **THEN** their `ragas_judge_identity_effective` records are equal, and their `judge_execution` records differ
 
+#### Scenario: The vLLM image is measured
+- **WHEN** a judge job serves the judge from a vLLM SIF file
+- **THEN** the identity's `server_image_digest` is the SHA-256 of that file, and a `JUDGE_IMAGE_DIGEST` in `judge.env` that names another image stops the job before the server starts
+
 #### Scenario: Precision differs
 - **WHEN** one arm was scored with `bf16` weights and the other with `fp8` weights of the same model revision
 - **THEN** their `ragas_judge_identity_effective` records differ in the precision field

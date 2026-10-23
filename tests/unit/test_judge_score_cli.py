@@ -122,6 +122,32 @@ def test_check_compares_the_image_digest_the_job_passes(files, score):
     assert "sha256:other" in record.read_text()
 
 
+def _run_args(files, *extra):
+    return _args(files, "run", "--socket", "/nonexistent/vllm.sock", *extra)
+
+
+def test_run_records_the_vllm_image_digest_the_job_measured(files, score, monkeypatch):
+    stub = StubJudge()
+    _install_ragas_stub(monkeypatch, stub.evaluate)
+    monkeypatch.setenv("VLLM_API_KEY", "k-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    bundle = make_bundle(files["queue"])
+    assert score.main(_run_args(files, "--server-image-digest", "sha256:vllm")) == 0
+    record = json.loads((bundle / "judge_scores.json").read_text())
+    identity = record["ragas_judge_identity_effective"]
+    assert identity["server_image_digest"] == "sha256:vllm"
+
+
+def test_run_refuses_a_judge_env_digest_of_another_vllm_image(files, score, capsys):
+    files["env"].write_text(
+        files["env"].read_text() + "JUDGE_IMAGE_DIGEST=sha256:configured\n"
+    )
+    make_bundle(files["queue"])
+    assert score.main(_run_args(files, "--server-image-digest", "sha256:vllm")) == 1
+    err = capsys.readouterr().err
+    assert "sha256:configured" in err and "sha256:vllm" in err
+
+
 def test_check_and_run_need_a_job_id(files, score, monkeypatch, capsys):
     monkeypatch.delenv("SLURM_JOB_ID", raising=False)
     argv = _args(files, "check")
