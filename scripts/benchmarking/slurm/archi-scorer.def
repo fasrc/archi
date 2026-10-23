@@ -1,0 +1,29 @@
+Bootstrap: docker-archive
+From: {{ benchmark_image }}
+
+# The scorer image of the offloaded RAGAS judge (#733; design D10 in
+# openspec/changes/archive/*-offload-ragas-judge-to-slurm). Build it with
+# build_scorer_image.sh, never by hand: the build script also writes the
+# scorer-identity.json that judge_submit.sh and archi_judge.sbatch match bundles against.
+#
+# The base is the benchmark image that ran the deferred run (`docker save` on the dev
+# host). A bundle matches a scorer only when the run's code digest and package digest
+# equal the scorer's, so this recipe installs nothing and changes no file under
+# /root/archi/src: it only adds the three judge scripts, which the benchmark image does
+# not hold. score.py and merge.py import the image's own src from /root/archi.
+
+%arguments
+    benchmark_image=archi-benchmark.tar
+    repo=.
+
+%files
+    {{ repo }}/scripts/benchmarking/judge/score.py /root/archi/scripts/benchmarking/judge/score.py
+    {{ repo }}/scripts/benchmarking/judge/judge_queue.py /root/archi/scripts/benchmarking/judge/judge_queue.py
+    {{ repo }}/scripts/benchmarking/judge/merge.py /root/archi/scripts/benchmarking/judge/merge.py
+
+%labels
+    org.archi.role ragas-judge-scorer
+
+%help
+    The scorer of the offloaded RAGAS judge: score.py (check, run, write-identity) and
+    merge.py, over the src of the benchmark image it was built from.

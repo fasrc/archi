@@ -593,3 +593,78 @@ def test_the_module_imports_nothing_outside_the_standard_library():
             if top == "__future__":
                 continue
             assert top in stdlib, line
+
+
+# --- 4.1: what the submitter reads (#733) -----------------------------------------
+
+
+def test_status_flags_a_ready_bundle_older_than_24_hours(setup, jq):
+    queue, env, sidecar = setup
+    import time
+
+    make_bundle(queue, "old-20261023_120000-arm0", mtime=time.time() - 30 * 3600)
+    make_bundle(queue, "new-20261023_120000-arm0")
+    lines = jq.status_lines(queue, env, sidecar)
+    old = [line for line in lines if line.startswith("old-")]
+    new = [line for line in lines if line.startswith("new-")]
+    assert "READY for 30 hours" in old[0]
+    assert "READY for" not in new[0]
+
+
+def test_status_lists_incompatible_records_of_other_sidecars(setup, jq):
+    queue, env, sidecar = setup
+    bundle = make_bundle(queue, "x-20261023_120000-arm0")
+    (bundle / "INCOMPATIBLE.0ld").write_text("an older scorer: live pkg Y")
+    text = "\n".join(jq.status_lines(queue, env, sidecar))
+    assert (
+        "x-20261023_120000-arm0: INCOMPATIBLE.0ld: an older scorer: live pkg Y" in text
+    )
+
+
+def _result(queue, basename, arms, *, scored=(), merged=(), failed=(), pending=True):
+    """Bundles of one result with markers, and its pending JSON when *pending*."""
+    for index in range(arms):
+        folder = make_bundle(queue, f"{basename}-arm{index}")
+        manifest = json.loads((folder / "manifest.json").read_text())
+        manifest["arm_count"] = arms
+        (folder / "manifest.json").write_text(json.dumps(manifest))
+        for marker, indices in (
+            ("SCORED", scored),
+            ("MERGED", merged),
+            ("FAILED", failed),
+        ):
+            if index in indices:
+                (folder / marker).write_text("")
+    if pending:
+        (queue / "results").mkdir(exist_ok=True)
+        (queue / "results" / f"{basename}.json").write_text("{}")
+
+
+def test_merge_ready_names_results_whose_arms_are_all_scored(setup, jq):
+    queue = setup[0]
+    _result(queue, "ready-20261023_120000", 2, scored=(0, 1))
+    _result(queue, "half-20261023_120000", 2, scored=(0,))
+    _result(queue, "merged-20261023_120000", 2, scored=(0, 1), merged=(0, 1))
+    _result(queue, "unpublished-20261023_120000", 1, scored=(0,), pending=False)
+    _result(queue, "failed-20261023_120000", 2, scored=(0,), failed=(1,))
+    assert jq.merge_ready(queue) == ["ready-20261023_120000"]
+
+
+def test_a_result_with_one_arm_not_merged_is_ready_again(setup, jq):
+    # A merge killed between two MERGED writes; the merge is idempotent.
+    queue = setup[0]
+    _result(queue, "r-20261023_120000", 2, scored=(0, 1), merged=(0,))
+    assert jq.merge_ready(queue) == ["r-20261023_120000"]
+
+
+def test_the_merge_ready_cli_needs_no_judge_env_or_sidecar(setup, jq, capsys):
+    queue = setup[0]
+    _result(queue, "ready-20261023_120000", 1, scored=(0,))
+    assert jq.main(["--queue", str(queue), "--merge-ready"]) == 0
+    assert capsys.readouterr().out.split() == ["ready-20261023_120000"]
+
+
+def test_status_and_count_still_need_the_judge_env_and_sidecar(setup, jq, capsys):
+    queue = setup[0]
+    assert jq.main(["--queue", str(queue), "--count"]) == 2
+    assert "--judge-env" in capsys.readouterr().err

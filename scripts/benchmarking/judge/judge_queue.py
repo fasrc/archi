@@ -3,6 +3,11 @@
 
     python scripts/benchmarking/judge/judge_queue.py --queue <dir> \
         --judge-env <judge.env> --sidecar <scorer-identity.json> (--status | --count)
+    python scripts/benchmarking/judge/judge_queue.py --queue <dir> --merge-ready
+
+``--merge-ready`` prints the result basenames whose arms are all ``SCORED`` and
+not all ``MERGED``, with the pending result published; the submitter
+(``scripts/benchmarking/slurm/judge_submit.sh``) submits the merge job for them.
 
 Standard library only: the submitter runs this on a login node with no project
 environment. ``src/utils/exclusive_link.py`` is loaded by path for the same
@@ -49,6 +54,7 @@ import math
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple, TypeVar
 
@@ -62,6 +68,8 @@ REQUIRED_ENV_KEYS = (
 )
 OPTIONAL_ENV_KEYS = ("JUDGE_IMAGE_DIGEST", "JUDGE_SERVER_ARGS")
 TERMINAL_MARKERS = ("SCORED", "FAILED")
+#: ``--status`` flags a bundle READY for longer than this with no score.
+STALE_READY_HOURS = 24
 # sacct states after which a job can never run again under its id.
 TERMINAL_JOB_STATES = frozenset(
     {
@@ -303,37 +311,88 @@ def own_work(queue: Path, job_id: str) -> List[Path]:
     return found
 
 
+def _state_line(
+    bundle: Path, judge_env: Dict[str, Optional[str]], sidecar: Sidecar, queue: Path
+) -> str:
+    if (bundle / "FAILED").exists():
+        return f"{bundle.name}: FAILED: {(bundle / 'FAILED').read_text().strip()}"
+    reason = match_reason(bundle, judge_env, sidecar, queue)
+    claim = current_claim(bundle)
+    if reason is not None:
+        return f"{bundle.name}: not matched: {reason}"
+    if claim is None:
+        return f"{bundle.name}: available"
+    if claim_is_stale(bundle, claim):
+        owner = claim.job_id or "<no job id>"
+        return (
+            f"{bundle.name}: stale claim of job {owner} (claim.{claim.gen}); available"
+        )
+    return f"{bundle.name}: claimed by job {claim.job_id} (claim.{claim.gen})"
+
+
 def status_lines(
-    queue: Path, judge_env: Dict[str, Optional[str]], sidecar: Sidecar
+    queue: Path,
+    judge_env: Dict[str, Optional[str]],
+    sidecar: Sidecar,
+    *,
+    now: Optional[float] = None,
 ) -> List[str]:
-    """One line for each READY bundle without SCORED, then each SCORER_STALE record."""
+    """One line for each READY bundle without SCORED, then the records.
+
+    A bundle READY for more than 24 hours says so: a lost scrontab entry or a
+    crashed submitter leaves bundles with no job (design, Risks). Every
+    ``INCOMPATIBLE`` record of a bundle is listed, also for an older sidecar,
+    and then every ``SCORER_STALE`` record of the queue.
+    """
+    now = time.time() if now is None else now
     lines = []
     for bundle in ready_bundles(queue):
         if (bundle / "SCORED").exists():
             continue
-        if (bundle / "FAILED").exists():
-            reason = (bundle / "FAILED").read_text().strip()
-            lines.append(f"{bundle.name}: FAILED: {reason}")
-            continue
-        reason = match_reason(bundle, judge_env, sidecar, queue)
-        claim = current_claim(bundle)
-        if reason is not None:
-            lines.append(f"{bundle.name}: not matched: {reason}")
-        elif claim is None:
-            lines.append(f"{bundle.name}: available")
-        elif claim_is_stale(bundle, claim):
-            owner = claim.job_id or "<no job id>"
-            lines.append(
-                f"{bundle.name}: stale claim of job {owner} (claim.{claim.gen}); "
-                f"available"
-            )
-        else:
-            lines.append(
-                f"{bundle.name}: claimed by job {claim.job_id} (claim.{claim.gen})"
-            )
+        line = _state_line(bundle, judge_env, sidecar, queue)
+        hours = (now - (bundle / "READY").stat().st_mtime) / 3600
+        if hours > STALE_READY_HOURS:
+            line += f"; READY for {int(hours)} hours"
+        lines.append(line)
+        for record in sorted(bundle.glob("INCOMPATIBLE.*")):
+            if record.name != f"INCOMPATIBLE.{sidecar.token}":
+                lines.append(
+                    f"{bundle.name}: {record.name}: {record.read_text().strip()}"
+                )
     for record in sorted(Path(queue).glob("SCORER_STALE.*")):
         lines.append(f"{record.name}: {record.read_text().strip()}")
     return lines
+
+
+def merge_ready(queue: Path) -> List[str]:
+    """Result basenames the merge can write now (design D4, step 4).
+
+    Every arm of the result has a READY bundle with ``SCORED``, no arm is
+    ``FAILED``, the pending result is in ``<queue>/results/``, and some arm has
+    no ``MERGED`` yet. The merge is idempotent, so a result that a killed merge
+    left half marked is ready again.
+    """
+    counts: Dict[str, object] = {}
+    arms: Dict[str, Dict[object, Path]] = {}
+    for bundle in ready_bundles(queue):
+        manifest = read_manifest(bundle) or {}
+        basename = str(manifest.get("result_basename"))
+        counts.setdefault(basename, manifest.get("arm_count"))
+        arms.setdefault(basename, {})[manifest.get("arm_index")] = bundle
+    ready = []
+    for basename in sorted(arms):
+        count = counts[basename]
+        if not isinstance(count, int) or set(arms[basename]) != set(range(count)):
+            continue
+        folders = list(arms[basename].values())
+        if (
+            all((folder / "SCORED").exists() for folder in folders)
+            and not any((folder / "FAILED").exists() for folder in folders)
+            and not all((folder / "MERGED").exists() for folder in folders)
+            and (Path(queue) / "results" / f"{basename}.json").is_file()
+        ):
+            ready.append(basename)
+    return ready
 
 
 def parse_time_left(text: str) -> Optional[float]:
@@ -398,12 +457,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         description="List or count the judge bundles a judge job can take."
     )
     parser.add_argument("--queue", required=True, type=Path)
-    parser.add_argument("--judge-env", required=True, type=Path)
-    parser.add_argument("--sidecar", required=True, type=Path)
+    parser.add_argument("--judge-env", type=Path)
+    parser.add_argument("--sidecar", type=Path)
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--status", action="store_true")
     action.add_argument("--count", action="store_true")
+    action.add_argument("--merge-ready", action="store_true")
     args = parser.parse_args(argv)
+    if args.merge_ready:
+        for basename in merge_ready(args.queue):
+            print(basename)
+        return 0
+    if args.judge_env is None or args.sidecar is None:
+        print(
+            "judge_queue: --status and --count need --judge-env and --sidecar",
+            file=sys.stderr,
+        )
+        return 2
     try:
         judge_env = read_judge_env(args.judge_env)
         sidecar = read_sidecar(args.sidecar)
