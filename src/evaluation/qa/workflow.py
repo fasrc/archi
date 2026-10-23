@@ -355,6 +355,7 @@ class QAWorkflow:
         # D1: run, continue, and retry all execute from the redacted config; write
         # the snapshot before any agent call so every phase sees identical content.
         config = redact_agent_config(config)
+        readings = corpus_provenance.start_readings(config, spec)
         if overwrite:
             owned = RUN_FILES | SCORE_FILES
             if authorize_staged_invalid:
@@ -369,12 +370,16 @@ class QAWorkflow:
                 manifest.pop(key, None)
             for key in corpus_provenance.TAG_KEYS:
                 manifest.pop(key, None)
-            for name in RUN_FILES | SCORE_FILES:
+            for name in owned:
                 manifest["artifacts"].pop(name, None)
+            manifest["status"] = "prepared"
         write_yaml(run_dir / "agent_config.resolved.yaml", config)
         write_text(run_dir / "agent_spec.resolved.md", spec_text)
         config_hash = sha256_file(run_dir / "agent_config.resolved.yaml")
         spec_hash = sha256_file(run_dir / "agent_spec.resolved.md")
+        if authorize_staged_invalid:
+            manifest["artifacts"]["agent_config.resolved.yaml"] = config_hash
+            manifest["artifacts"]["agent_spec.resolved.md"] = spec_hash
         chat = config["services"]["chat_app"]
         vectorstore = (
             LazyVectorstore(config)
@@ -382,7 +387,7 @@ class QAWorkflow:
             else None
         )
         # The start guard and the first corpus reading, before any question.
-        manifest.update(corpus_provenance.start_readings(config, spec))
+        manifest.update(readings)
         started_at = utc_now()
         manifest["runtime_phase"] = (
             EvaluationRuntimePhase.CHECKING_LIVE_ANSWERS.value
@@ -423,7 +428,6 @@ class QAWorkflow:
                             "INSERT INTO authorized VALUES (?)", (prepared.item_id,)
                         )
                 authorized_connection.commit()
-                staged_checks_path.unlink()
             pre_checks_path = Path(live_staging_dir) / "pre-run.jsonl"
             try:
                 with AtomicJsonlWriter(pre_checks_path) as check_writer:
@@ -818,6 +822,7 @@ class QAWorkflow:
             manifest["phases"].pop("score", None)
             for name in SCORE_FILES:
                 manifest["artifacts"].pop(name, None)
+            manifest["status"] = "run_completed"
         started_at = utc_now()
         manifest["runtime_phase"] = EvaluationRuntimePhase.SCORING.value
         write_json(run_dir / "manifest.json", manifest)
