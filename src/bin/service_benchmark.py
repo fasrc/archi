@@ -65,6 +65,7 @@ from src.utils.generate_benchmark_report import (
     format_markdown_output,
     parse_benchmark_results,
 )
+from src.utils.judge_bundle import plan_judge_run
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
 
@@ -1697,6 +1698,11 @@ class Benchmarker:
         self.required_fields = ["user_input"]
         self.benchmark_name = os.environ["container_name"]
         self.all_config_files = self.get_all_configs(configs)
+        self.judge_plan = plan_judge_run(
+            self.all_config_files,
+            package_dir=PACKAGE_DIR,
+            git_info_path=EXTRA_METADATA_PATH,
+        )
         self.all_config_files.append("FINISHED")
         self.previous_input_list = []
         self.chain = None
