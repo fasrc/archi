@@ -109,7 +109,7 @@ Rules for every task:
       task 2.2a. Gate, then commit (message: `fix the result basename before the first
       arm`).
 
-- [ ] 3.1a (Review findings: Codex P2 on PR #747, and the wrap-up check.) Design D3 says
+- [x] 3.1a (Review findings: Codex P2 on PR #747, and the wrap-up check.) Design D3 says
       `plan_judge_run` returns a `JudgePlan` or raises `JudgeRunRefused`, "a `ValueError`
       subclass". At 21e88806, `src/utils/judge_bundle.py:18` derives `JudgeRunRefused`
       from `Exception`, and `_read_mode` (`:52-56`) re-raises an invalid `judge_mode` as a
@@ -133,7 +133,7 @@ Rules for every task:
       Gate, then commit (message: `refuse an invalid judge_mode with JudgeRunRefused, a
       ValueError`).
 
-- [ ] 3.1b (Review finding, Codex P2 on PR #747.) Design D4 says `run()` takes the result
+- [x] 3.1b (Review finding, Codex P2 on PR #747.) Design D4 says `run()` takes the result
       timestamp as its FIRST statement. At `src/bin/service_benchmark.py:2455` it comes
       after `wait_for_ingestion_completion()`, which can block for hours, so the file name
       records the end of the ingest wait. Create

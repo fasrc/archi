@@ -2432,6 +2432,9 @@ class Benchmarker:
             }
 
     def run(self):
+        _result_ts = ResultHandler.result_timestamp()
+        self.result_basename = f"{self.benchmark_name}-{_result_ts}"
+
         ingest_wall_seconds = self.wait_for_ingestion_completion()
 
         modes_being_run = set(self.benchmarking_configs["modes"])
@@ -2451,9 +2454,6 @@ class Benchmarker:
             f"Processing {len(self.queries_to_answers)} questions and {len(self.all_config_files)} configuration(s)."
         )
         logger.info("")
-
-        _result_ts = ResultHandler.result_timestamp()
-        self.result_basename = f"{self.benchmark_name}-{_result_ts}"
 
         while self.all_config_files:
             # Read the corpus BEFORE the arm's questions, so the report can show
