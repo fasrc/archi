@@ -54,6 +54,8 @@ The bundle is the `rows` and `keys` that `_process_config` already passes to `ge
 
 The extraction is a separate, mechanical PR with no change in behavior. `service_benchmark.py` is large, so run the black-seam check before the edit.
 
+PR 1 (#730) moved only the evaluate, judge and embedding wiring into `src/utils/ragas_scoring.py`. The pure helpers stay in `src/utils/benchmark_schema.py`. The module imports `score_metrics_per_eligibility`, `build_ragas_metric_objects`, `ragas_result_column` and `ragas_run_config_kwargs` from there, and `ragas_effective_settings` stays with its `service_benchmark` caller. The `Benchmarker` wrappers keep `_judge_usage`, `_ragas_scored` and `_ragas_judge_identity`, so `run()` and `handle_results` do not change. The builders take their constructors as arguments, so the test patch points in `service_benchmark` still apply.
+
 ### D3. Bundle layout and state markers on shared storage
 
 ```
