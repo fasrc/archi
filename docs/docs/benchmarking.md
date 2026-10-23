@@ -337,7 +337,9 @@ JUDGE_MODEL_REVISION=<pinned revision>
 JUDGE_PRECISION=bf16
 # The time budget's rate before the job has scored a row
 JUDGE_BOOTSTRAP_ROWS_PER_MINUTE=20
-# Optional: the vllm serve arguments that change output
+# Optional: the vllm serve arguments that change output. The job refuses the flags
+# it sets itself (--model, --revision, --served-model-name, --dtype, --quantization,
+# --tensor-parallel-size), and --uds, --host, --port and --api-key.
 JUDGE_SERVER_ARGS=--max-model-len 16384
 # Optional: the SHA-256 of vllm-openai.sif (sha256sum); the job refuses another image
 JUDGE_IMAGE_DIGEST=sha256:<sha256 of vllm-openai.sif>

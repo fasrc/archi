@@ -119,6 +119,18 @@ case "$PRECISION" in
   fp8) PRECISION_ARGS=(--quantization fp8) ;;
   *) die "JUDGE_PRECISION=$PRECISION has no vLLM setting here; use bf16, fp16 or fp8" ;;
 esac
+# The job builds these flags from its pinned settings, and the judge identity records those
+# settings. JUDGE_SERVER_ARGS must not set them again: a later --revision would serve other
+# weights under the recorded revision. Nor may it open a TCP listener or put a key on the
+# command line.
+for arg in ${SERVER_ARGS[@]+"${SERVER_ARGS[@]}"}; do
+  case "${arg%%=*}" in
+    --model | --revision | --served-model-name | --dtype | --quantization | -q \
+      | --tensor-parallel-size | -tp | --uds | --host | --port | --api-key)
+      die "JUDGE_SERVER_ARGS sets ${arg%%=*}, which the job sets from judge.env or must not set; remove it from JUDGE_SERVER_ARGS"
+      ;;
+  esac
+done
 
 if [ -z "${JUDGE_SCRATCH:-}" ] && [ -z "$LAB" ]; then
   [ "$DRY_RUN" = true ] || die "set JUDGE_LAB (your lab folder under /n/netscratch) or JUDGE_SCRATCH"

@@ -377,6 +377,33 @@ def test_the_dry_run_works_before_judge_env_exists(tmp_path, stub):
     assert r"vllm serve \<JUDGE_MODEL_ID\>" in proc.stdout
 
 
+@pytest.mark.parametrize(
+    "server_args",
+    [
+        "--revision other-revision",
+        "--revision=other-revision",
+        "--served-model-name other",
+        "--dtype float32",
+        "--quantization awq",
+        "--tensor-parallel-size 1",
+        "--port 8000",
+        "--host 0.0.0.0",
+        "--uds /tmp/other.sock",
+        "--api-key visible",
+        "--model other/model",
+    ],
+)
+def test_server_args_that_override_a_pinned_flag_are_refused(
+    tmp_path, stub, server_args
+):
+    _judge_home(tmp_path, JUDGE_SERVER_ARGS=server_args)
+    proc = _run(JOB, tmp_path, stub, "--dry-run")
+    flag = server_args.split()[0].split("=")[0]
+    assert proc.returncode != 0 and flag in proc.stderr
+    assert "JUDGE_SERVER_ARGS" in proc.stderr
+    assert _calls(stub, "apptainer") == []
+
+
 def test_an_unknown_precision_is_refused(tmp_path, stub):
     _judge_home(tmp_path, JUDGE_PRECISION="int3")
     proc = _run(JOB, tmp_path, stub, "--dry-run")
