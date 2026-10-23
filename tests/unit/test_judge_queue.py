@@ -686,3 +686,97 @@ def test_status_and_count_still_need_the_judge_env_and_sidecar(setup, jq, capsys
     queue = setup[0]
     assert jq.main(["--queue", str(queue), "--count"]) == 2
     assert "--judge-env" in capsys.readouterr().err
+
+
+# --- the Slurm snapshot: claim recovery inside the scorer container (#733) --------
+# The scorer image has no Slurm client, so the judge job writes one snapshot on the
+# host at its start, and judge_queue reads it in the container (JUDGE_SLURM_STATE).
+
+
+def _state(tmp_path, monkeypatch, **state):
+    path = tmp_path / "slurm-state.json"
+    path.write_text(json.dumps({"written": 1.0, **state}))
+    monkeypatch.setenv("JUDGE_SLURM_STATE", str(path))
+    # No squeue or sacct exists in the container.
+    monkeypatch.setenv("PATH", "/nonexistent")
+    return path
+
+
+def test_a_stale_claim_is_taken_over_from_the_snapshot(
+    tmp_path, setup, jq, monkeypatch
+):
+    queue, env, sidecar = setup
+    bundle = make_bundle(queue)
+    (bundle / "claim.1").write_text("1002\n")
+    _state(tmp_path, monkeypatch, squeue={"1002": False}, sacct={"1002": "TIMEOUT"})
+    assert jq.available(queue, env, sidecar) == [bundle]
+    assert jq.try_claim(bundle, "2001")
+    assert (bundle / "claim.2").read_text().strip() == "2001"
+
+
+def test_a_claim_of_a_running_job_in_the_snapshot_is_not_stale(
+    tmp_path, setup, jq, monkeypatch
+):
+    queue, env, sidecar = setup
+    bundle = make_bundle(queue)
+    (bundle / "claim.1").write_text("1002\n")
+    _state(tmp_path, monkeypatch, squeue={"1002": True}, sacct={"1002": "RUNNING"})
+    assert jq.available(queue, env, sidecar) == []
+
+
+def test_a_job_the_snapshot_does_not_know_is_not_stale(
+    tmp_path, setup, jq, monkeypatch
+):
+    queue, env, sidecar = setup
+    bundle = make_bundle(queue)
+    (bundle / "claim.1").write_text("1003\n")
+    _state(tmp_path, monkeypatch, squeue={}, sacct={})
+    assert jq.available(queue, env, sidecar) == []
+
+
+def test_an_unreadable_snapshot_knows_nothing(tmp_path, setup, jq, monkeypatch):
+    queue, env, sidecar = setup
+    bundle = make_bundle(queue)
+    (bundle / "claim.1").write_text("1002\n")
+    path = _state(
+        tmp_path, monkeypatch, squeue={"1002": False}, sacct={"1002": "TIMEOUT"}
+    )
+    path.write_text("{half")
+    assert jq.available(queue, env, sidecar) == []
+    assert jq.time_left("2001") is None
+
+
+def test_time_left_comes_from_the_snapshot_deadline(tmp_path, jq, monkeypatch):
+    import time as clock
+
+    _state(
+        tmp_path,
+        monkeypatch,
+        deadline={"2001": clock.time() + 600, "2002": "UNLIMITED"},
+    )
+    assert 590 < jq.time_left("2001") <= 600
+    assert jq.time_left("2002") == math.inf
+    assert jq.time_left("2003") is None
+
+
+def test_the_host_writes_the_snapshot_for_the_claims_and_the_job(
+    tmp_path, setup, jq, slurm, capsys
+):
+    queue = setup[0]
+    stale = make_bundle(queue, "a-20261023_120000-arm0")
+    (stale / "claim.1").write_text("1002\n")
+    slurm.ended("1002")
+    live = make_bundle(queue, "b-20261023_120000-arm0")
+    (live / "claim.1").write_text("1003\n")
+    slurm.running("1003")
+    slurm.running("2001", time_left="1:00:00")
+    out = tmp_path / "state" / "slurm-state.json"
+    out.parent.mkdir()
+    argv = ["--queue", str(queue), "--slurm-state", str(out), "--job-id", "2001"]
+    assert jq.main(argv) == 0
+    state = json.loads(out.read_text())
+    assert state["squeue"] == {"1002": False, "1003": True, "2001": True}
+    assert state["sacct"]["1002"] == "TIMEOUT"
+    import time as clock
+
+    assert 3590 < state["deadline"]["2001"] - clock.time() <= 3600

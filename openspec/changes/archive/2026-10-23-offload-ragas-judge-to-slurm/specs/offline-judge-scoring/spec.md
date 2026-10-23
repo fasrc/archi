@@ -128,6 +128,10 @@ The judge job and the submitter SHALL treat a bundle's current claim (the `claim
 - **THEN** the submitter counts the bundle as available
 - **AND** the next job takes over the claim and scores only the pairs that are not saved
 
+#### Scenario: Recovery inside the scorer container
+- **WHEN** the scorer runs in a container with no Slurm client, and a claim's job is gone from `squeue` and `TIMEOUT` in `sacct`
+- **THEN** the scorer reads the Slurm snapshot that the job wrote on the host at its start, and takes over the claim
+
 #### Scenario: Claimant is still running
 - **WHEN** a bundle's current claim names a job that `squeue` lists as running
 - **THEN** the claim is not stale, and no other job takes it

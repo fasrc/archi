@@ -310,6 +310,7 @@ The scripts are in `scripts/benchmarking/slurm/`, and each one has its settings 
 | `JUDGE_HOME` | `$HOME/archi-judge` | The judge home: `judge.env`, `archi-scorer.sif` and `scorer-identity.json` |
 | `JUDGE_QUEUE` | `$JUDGE_HOME/queue` | The queue folder. The dev host publishes to it and the jobs read it, so it must be on shared storage |
 | `JUDGE_LAB` or `JUDGE_SCRATCH` | — | Lab storage for the judge weights (about 140 GB), the Apptainer cache and the vLLM compile cache: `/n/netscratch/<lab>/Lab/$USER/archi-judge`, or a folder of your own. The judge job refuses to start without one of them |
+| `JUDGE_SECRETS` | `$JUDGE_HOME/secrets.env` | `KEY=VALUE` credentials the scorer needs, for example `OPENAI_API_KEY` for OpenAI embeddings. The file must have mode `0600`. The jobs pass each key into the containers as `APPTAINERENV_<KEY>`, because `--cleanenv` passes no other host variable |
 | `JUDGE_PYTHON` | `python3` | The Python on the login node, 3.8 or later (for example after `module load python`). The submitter uses the standard library only |
 | `JUDGE_VLLM_IMAGE` | `<lab storage>/vllm-openai.sif` | The vLLM image of the judge job, a local SIF file. A `docker://` tag is refused, because a tag can move to other bytes |
 
@@ -392,7 +393,7 @@ bash scripts/benchmarking/slurm/archi_judge.sbatch --dry-run
 bash scripts/benchmarking/slurm/judge_merge.sbatch --dry-run
 ```
 
-The judge job checks its scorer image against `scorer-identity.json` and counts its work before it loads a model. With no work it exits in seconds. Then it starts vLLM on a Unix socket in a private folder, with a random per-job API key in the environment and no TCP listener, scores the bundles, and submits the merge job after itself (`--dependency=afterok`). Its log is `archi-judge-<job id>.out` in the repo folder.
+The judge job copies `judge.env` and pins its images once at its start, so an edit while it runs reaches neither the server nor the judge identity. The scorer image has no Slurm client, so the job also writes a snapshot of `squeue` and `sacct` for the claims and of its own time limit, and the scorer reads it to take over stale claims and to keep its time budget. The judge job checks its scorer image against `scorer-identity.json` and counts its work before it loads a model. With no work it exits in seconds. Then it starts vLLM on a Unix socket in a private folder, with a random per-job API key in the environment and no TCP listener, scores the bundles, and submits the merge job after itself (`--dependency=afterok`). Its log is `archi-judge-<job id>.out` in the repo folder.
 
 ### 6. Read the queue
 

@@ -45,6 +45,9 @@ QUEUE="${JUDGE_QUEUE:-$JUDGE_HOME/queue}"
 JUDGE_ENV="${JUDGE_ENV:-$JUDGE_HOME/judge.env}"
 SCORER_IMAGE="${JUDGE_SCORER_IMAGE:-$JUDGE_HOME/archi-scorer.sif}"
 SIDECAR="${JUDGE_SIDECAR:-$JUDGE_HOME/scorer-identity.json}"
+# KEY=VALUE credentials the scorer needs (OPENAI_API_KEY for OpenAI embeddings), mode
+# 0600. They reach the containers as APPTAINERENV_<KEY>, never on a command line.
+SECRETS="${JUDGE_SECRETS:-$JUDGE_HOME/secrets.env}"
 # The judge weights (about 140 GB), the vLLM image, the image cache and the vLLM compile
 # cache go to lab storage: set JUDGE_LAB (your lab folder under /n/netscratch) or
 # JUDGE_SCRATCH.
@@ -85,9 +88,39 @@ GPUS="${SLURM_GPUS_ON_NODE:-2}"
 # The scripts inside the scorer image (archi-scorer.def puts them there).
 SCORER_SCRIPTS=/root/archi/scripts/benchmarking/judge
 
+# A job reads each input once, into a folder private to this user and job (mode 0700):
+# the judge.env copy, the scorer sidecar copy, the Slurm snapshot and the vLLM socket. An
+# edit of judge.env while the job runs therefore reaches neither the server nor the judge
+# identity: both use the copy. A Unix socket path has at most 107 bytes.
+PINNED_IMAGE=""
+PINNED_VLLM=""
+VLLM_PID=""
+cleanup() {
+  if [ -n "$VLLM_PID" ]; then
+    kill "$VLLM_PID" 2>/dev/null || true
+    wait "$VLLM_PID" 2>/dev/null || true
+  fi
+  [ -z "${SOCK_DIR:-}" ] || rm -rf "$SOCK_DIR"
+  [ -z "$PINNED_IMAGE" ] || rm -f "$PINNED_IMAGE"
+  [ -z "$PINNED_VLLM" ] || rm -f "$PINNED_VLLM"
+}
+if [ "$DRY_RUN" = true ]; then
+  SOCK_DIR="${TMPDIR:-/tmp}/archi-judge.$JOB_ID.XXXXXX"
+  RUN_ENV="$JUDGE_ENV"
+else
+  [ -n "${SLURM_JOB_ID:-}" ] || die "not in a Slurm job; submit it with sbatch, or use --dry-run"
+  [ -f "$JUDGE_ENV" ] || die "no judge.env at $JUDGE_ENV"
+  SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/archi-judge.$SLURM_JOB_ID.XXXXXX")"
+  trap cleanup EXIT
+  chmod 700 "$SOCK_DIR"
+  [ "${#SOCK_DIR}" -le 96 ] || die "the socket folder $SOCK_DIR is too long for a Unix socket path; set TMPDIR to a shorter folder"
+  RUN_ENV="$SOCK_DIR/judge.env"
+  cp "$JUDGE_ENV" "$RUN_ENV"
+fi
+
 # judge.env, read by the rules of judge_queue.read_judge_env, as shell assignments.
 judge_settings() {
-  "$JUDGE_PYTHON" - "$REPO/scripts/benchmarking/judge/judge_queue.py" "$JUDGE_ENV" <<'PY'
+  "$JUDGE_PYTHON" - "$REPO/scripts/benchmarking/judge/judge_queue.py" "$RUN_ENV" <<'PY'
 import importlib.util, shlex, sys
 spec = importlib.util.spec_from_file_location("judge_queue", sys.argv[1])
 queue = importlib.util.module_from_spec(spec)
@@ -102,7 +135,25 @@ print("SERVER_ARGS=(" + " ".join(shlex.quote(a) for a in args) + ")")
 PY
 }
 
-if [ -f "$JUDGE_ENV" ]; then
+# The secrets file as APPTAINERENV_<KEY> exports (KEY=VALUE lines, # comments, no
+# expansion). A line that does not parse is named by its number; no value is printed.
+secret_exports() {
+  "$JUDGE_PYTHON" - "$SECRETS" <<'PY'
+import re, shlex, sys
+for number, raw in enumerate(open(sys.argv[1]).read().splitlines(), 1):
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        continue
+    key, sep, value = (part.strip() for part in line.partition("="))
+    if not sep or not re.fullmatch(r"[A-Z_][A-Z0-9_]*", key):
+        sys.exit(f"{sys.argv[1]}: line {number} is not KEY=VALUE")
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    print(f"export APPTAINERENV_{key}={shlex.quote(value)}")
+PY
+}
+
+if [ -f "$RUN_ENV" ]; then
   SETTINGS="$(judge_settings)" || die "$JUDGE_ENV does not load (see above)"
   eval "$SETTINGS"
 else
@@ -137,17 +188,12 @@ if [ -z "${JUDGE_SCRATCH:-}" ] && [ -z "$LAB" ]; then
   log "JUDGE_LAB is not set; a job refuses to start without it or JUDGE_SCRATCH"
 fi
 
-# The socket folder: private to this user and job. A Unix socket path has at most 107 bytes.
 if [ "$DRY_RUN" = true ]; then
-  SOCK_DIR="${TMPDIR:-/tmp}/archi-judge.$JOB_ID.XXXXXX"
   PINNED_IMAGE="$(dirname "$SCORER_IMAGE")/.archi-scorer.$JOB_ID.sif"
   PINNED_SIDECAR="$SOCK_DIR/scorer-identity.json"
   IMAGE_DIGEST="sha256:<sha256 of $PINNED_IMAGE>"
   PINNED_VLLM="$(dirname "$VLLM_IMAGE")/.vllm-openai.$JOB_ID.sif"
   SERVER_IMAGE_DIGEST="sha256:<sha256 of $PINNED_VLLM>"
-else
-  [ -n "${SLURM_JOB_ID:-}" ] || die "not in a Slurm job; submit it with sbatch, or use --dry-run"
-  SOCK_DIR=""
 fi
 
 # Every folder a container reads or writes is bound once.
@@ -165,14 +211,14 @@ add_bind() {
 commands() {
   local sock="$SOCK_DIR/vllm.sock"
   BINDS=()
-  add_bind "$QUEUE" "$(dirname "$JUDGE_ENV")" "$SOCK_DIR"
+  add_bind "$QUEUE" "$(dirname "$RUN_ENV")" "$SOCK_DIR"
   CHECK=(apptainer exec --cleanenv "${BINDS[@]}" "$PINNED_IMAGE"
     python3 "$SCORER_SCRIPTS/score.py" check
-    --queue "$QUEUE" --judge-env "$JUDGE_ENV" --sidecar "$PINNED_SIDECAR"
+    --queue "$QUEUE" --judge-env "$RUN_ENV" --sidecar "$PINNED_SIDECAR"
     --job-id "$JOB_ID" --image-digest "$IMAGE_DIGEST")
   RUN=(apptainer exec --cleanenv "${BINDS[@]}" "$PINNED_IMAGE"
     python3 "$SCORER_SCRIPTS/score.py" run
-    --queue "$QUEUE" --judge-env "$JUDGE_ENV" --sidecar "$PINNED_SIDECAR" --socket "$sock"
+    --queue "$QUEUE" --judge-env "$RUN_ENV" --sidecar "$PINNED_SIDECAR" --socket "$sock"
     --job-id "$JOB_ID" --image-digest "$IMAGE_DIGEST"
     --server-image-digest "$SERVER_IMAGE_DIGEST")
   SERVE=(apptainer exec --nv --cleanenv --bind "$SOCK_DIR" --bind "$SCRATCH_DIR"
@@ -197,7 +243,9 @@ show() {
 
 if [ "$DRY_RUN" = true ]; then
   commands
-  echo "# 0. pin $SCORER_IMAGE and $SIDECAR (a hard link and a copy), and hash the image"
+  echo "# 0. copy judge.env, pin $SCORER_IMAGE and $SIDECAR (a hard link and a copy), hash"
+  echo "#    the image, write the Slurm snapshot for the scorer (judge_queue.py --slurm-state),"
+  echo "#    and export the keys of $SECRETS (mode 0600) as APPTAINERENV_<KEY>"
   echo "# 1. check the scorer identity and count the work (exit 3: no work, 2: stale sidecar)"
   show "${CHECK[@]}"
   echo "# 2. pin $VLLM_IMAGE and hash it (judge.env JUDGE_IMAGE_DIGEST, if set, must equal it),"
@@ -219,23 +267,21 @@ command -v apptainer >/dev/null || die "apptainer is not on PATH"
 mkdir -p "$SCRATCH_DIR/hf" "$SCRATCH_DIR/cache" "$SCRATCH_DIR/apptainer"
 export APPTAINER_CACHEDIR="$SCRATCH_DIR/apptainer"
 
-SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/archi-judge.$SLURM_JOB_ID.XXXXXX")"
 PINNED_IMAGE="$(dirname "$SCORER_IMAGE")/.archi-scorer.$SLURM_JOB_ID.sif"
 PINNED_SIDECAR="$SOCK_DIR/scorer-identity.json"
 PINNED_VLLM="$(dirname "$VLLM_IMAGE")/.vllm-openai.$SLURM_JOB_ID.sif"
 SERVER_IMAGE_DIGEST=""
-VLLM_PID=""
-cleanup() {
-  if [ -n "$VLLM_PID" ]; then
-    kill "$VLLM_PID" 2>/dev/null || true
-    wait "$VLLM_PID" 2>/dev/null || true
-  fi
-  rm -rf "$SOCK_DIR"
-  rm -f "$PINNED_IMAGE" "$PINNED_VLLM"
-}
-trap cleanup EXIT
-chmod 700 "$SOCK_DIR"
-[ "${#SOCK_DIR}" -le 96 ] || die "the socket folder $SOCK_DIR is too long for a Unix socket path; set TMPDIR to a shorter folder"
+
+# --cleanenv passes no host variable into the containers, so the credentials the scorer
+# needs come from the 0600 secrets file as APPTAINERENV_<KEY>.
+if [ -f "$SECRETS" ]; then
+  case "$(stat -c %a "$SECRETS")" in
+    ?00) ;;
+    *) die "$SECRETS can be read by other users; chmod 600 $SECRETS" ;;
+  esac
+  EXPORTS="$(secret_exports)" || die "$SECRETS does not load (see above)"
+  eval "$EXPORTS"
+fi
 
 # One scorer image and sidecar pair for the whole job. build_scorer_image.sh can replace
 # both while the job runs, so the job reads them once: a copy of the sidecar, then a hard
@@ -247,6 +293,16 @@ chmod 700 "$SOCK_DIR"
 cp "$SIDECAR" "$PINNED_SIDECAR"
 ln -f "$SCORER_IMAGE" "$PINNED_IMAGE" || die "cannot hard-link $SCORER_IMAGE to $PINNED_IMAGE"
 IMAGE_DIGEST="sha256:$(sha256sum "$PINNED_IMAGE" | cut -d' ' -f1)"
+
+# The scorer image has no Slurm client, so the claim rules (stale claims) and the time
+# budget read a snapshot that the job takes here, on the host, at its start. Its answers
+# stay safe for the whole job: a terminal sacct state is final, and a claim it saw as live,
+# or a job id it does not know, is never taken over.
+SLURM_STATE="$SOCK_DIR/slurm-state.json"
+"$JUDGE_PYTHON" "$REPO/scripts/benchmarking/judge/judge_queue.py" --queue "$QUEUE" \
+  --slurm-state "$SLURM_STATE" --job-id "$SLURM_JOB_ID" \
+  || die "could not write the Slurm snapshot $SLURM_STATE (see above)"
+export APPTAINERENV_JUDGE_SLURM_STATE="$SLURM_STATE"
 commands
 
 log "job $SLURM_JOB_ID: checking the scorer identity and the queue $QUEUE"

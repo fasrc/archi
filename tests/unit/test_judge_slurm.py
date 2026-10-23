@@ -34,11 +34,12 @@ PYTHON_BIN = str(Path(sys.executable).parent)
 _SQUEUE = r"""#!/bin/sh
 printf '%s\n' "$*" >> "$STUB/squeue.calls"
 [ -f "$STUB/squeue.fail" ] && { echo "squeue: error: cannot reach slurmctld" >&2; exit 1; }
-id=""; name=""
+id=""; name=""; fmt=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -j) id="$2"; shift 2 ;;
     -n) name="$2"; shift 2 ;;
+    -o) fmt="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -46,7 +47,10 @@ if [ -n "$name" ]; then
   [ -f "$STUB/jobs.$name" ] && cat "$STUB/jobs.$name"
   exit 0
 fi
-[ -f "$STUB/job.$id" ] && { echo "$id"; exit 0; }
+if [ -f "$STUB/job.$id" ]; then
+  if [ "$fmt" = "%L" ]; then cat "$STUB/timeleft.$id" 2>/dev/null || echo 1:00:00; else echo "$id"; fi
+  exit 0
+fi
 echo "slurm_load_jobs error: Invalid job id specified" >&2
 exit 1
 """
@@ -70,10 +74,15 @@ _APPTAINER = r"""#!/bin/bash
 printf '%s\n' "$*" >> "$STUB/apptainer.calls"
 printf '%s\n' "${APPTAINERENV_VLLM_API_KEY:-}" >> "$STUB/apptainer.keys"
 case "$*" in
-  *"score.py check"*) exit "$(cat "$STUB/check.rc" 2>/dev/null || echo 0)" ;;
+  *"score.py check"*)
+    [ -n "${APPTAINERENV_JUDGE_SLURM_STATE:-}" ] \
+      && cp "$APPTAINERENV_JUDGE_SLURM_STATE" "$STUB/check.slurm-state"
+    exit "$(cat "$STUB/check.rc" 2>/dev/null || echo 0)" ;;
   *"score.py run"*)
+    printf '%s' "${APPTAINERENV_OPENAI_API_KEY:-}" > "$STUB/run.openai"
     prev=""
     for a in "$@"; do
+      [ "$prev" = --judge-env ] && cp "$a" "$STUB/run.judge-env"
       [ "$prev" = --sidecar ] && cp "$a" "$STUB/run.sidecar"
       case "$a" in *.sif) sha256sum "$a" | cut -d' ' -f1 > "$STUB/run.image.sha" ;; esac
       prev="$a"
@@ -93,6 +102,10 @@ case "$*" in
     for a in "$@"; do [ "$prev" = --uds ] && sock="$a"; prev="$a"; done
     stat -c %a "$(dirname "$sock")" > "$STUB/sockdir.mode"
     echo $$ > "$STUB/vllm.pid"
+    if [ -f "$STUB/edit-env" ]; then
+      # An operator edits judge.env while the model loads.
+      sed -i 's/^JUDGE_PRECISION=bf16$/JUDGE_PRECISION=fp8/' "$JUDGE_HOME/judge.env"
+    fi
     if [ -f "$STUB/rebuild" ]; then
       # build_scorer_image.sh while the job runs: the image moves first, then the sidecar.
       printf 'a rebuilt scorer image\n' > "$JUDGE_HOME/archi-scorer.sif.new"
@@ -175,7 +188,7 @@ def _calls(stub, name):
 
 def _judge_home(tmp_path, **env_overrides):
     home = tmp_path / "judge"
-    (home / "queue").mkdir(parents=True)
+    (home / "queue").mkdir(parents=True, exist_ok=True)
     values = {
         "JUDGE_MODEL_ID": "meta-llama/Llama-3.3-70B-Instruct",
         "JUDGE_MODEL_REVISION": "rev1",
@@ -430,6 +443,7 @@ def _job(
         (tmp_path / "scratch" / "vllm-openai.sif").write_bytes(vllm)
     (stub / "check.rc").write_text(str(check_rc))
     (stub / "run.rc").write_text(str(run_rc))
+    (stub / "job.9001").write_text("")
     return _run(
         JOB,
         tmp_path,
@@ -597,6 +611,59 @@ def test_the_dry_run_names_the_measured_vllm_digest(tmp_path, stub):
     assert "vllm-openai.sif" in proc.stdout and "docker://" not in proc.stdout
 
 
+def test_the_job_hands_the_scorer_a_slurm_snapshot(tmp_path, stub):
+    # The scorer image has no Slurm client: the job asks Slurm on the host and
+    # the container reads the snapshot (stale claims, the time budget).
+    home = _judge_home(tmp_path)
+    stale = _bundle(home, "r-20261023_120000-arm0")
+    (stale / "claim.1").write_text("1002\n")
+    (stub / "sacct.1002").write_text("TIMEOUT\n")
+    (stub / "timeleft.9001").write_text("2:00:00\n")
+    proc = _job(tmp_path, stub)
+    assert proc.returncode == 0, proc.stderr
+    state = json.loads((stub / "check.slurm-state").read_text())
+    assert state["squeue"]["1002"] is False and state["sacct"]["1002"] == "TIMEOUT"
+    assert 7190 < state["deadline"]["9001"] - time.time() <= 7200
+
+
+def test_the_job_forwards_the_secrets_file_into_the_scorer(tmp_path, stub):
+    home = tmp_path / "judge"
+    home.mkdir()
+    secrets = home / "secrets.env"
+    secrets.write_text("# embedding credentials\nOPENAI_API_KEY=sk-test-embed\n")
+    secrets.chmod(0o600)
+    proc = _job(tmp_path, stub)
+    assert proc.returncode == 0, proc.stderr
+    assert (stub / "run.openai").read_text() == "sk-test-embed"
+    for name in ("apptainer", "curl", "sbatch"):
+        assert all("sk-test-embed" not in call for call in _calls(stub, name)), name
+
+
+def test_a_secrets_file_that_others_can_read_is_refused(tmp_path, stub):
+    home = tmp_path / "judge"
+    home.mkdir()
+    secrets = home / "secrets.env"
+    secrets.write_text("OPENAI_API_KEY=sk-test-embed\n")
+    secrets.chmod(0o644)
+    proc = _job(tmp_path, stub)
+    assert proc.returncode != 0 and "chmod 600" in proc.stderr
+    assert _calls(stub, "apptainer") == []
+
+
+def test_a_judge_env_change_during_the_job_does_not_reach_the_scorer(tmp_path, stub):
+    (stub / "edit-env").write_text("")
+    proc = _job(tmp_path, stub)
+    assert proc.returncode == 0, proc.stderr
+    # The server and the scorer both use the copy the job took at its start.
+    assert "JUDGE_PRECISION=fp8" in (tmp_path / "judge" / "judge.env").read_text()
+    assert "JUDGE_PRECISION=bf16" in (stub / "run.judge-env").read_text()
+    calls = _calls(stub, "apptainer")
+    paths = {
+        re.search(r"--judge-env (\S+)", c).group(1) for c in calls if "score.py" in c
+    }
+    assert len(paths) == 1 and "/archi-judge.9001." in paths.pop()
+
+
 def test_a_job_without_the_scorer_image_starts_nothing(tmp_path, stub):
     _judge_home(tmp_path)
     (tmp_path / "judge" / "archi-scorer.sif").unlink()
@@ -667,7 +734,13 @@ def test_the_recipe_adds_only_the_judge_scripts_to_the_benchmark_image():
         )
     # Anything installed would change the package digest, and no bundle of the
     # run would match the scorer any more.
-    assert "pip" not in text and "%post" not in text
+    assert "pip" not in text and "apt" not in text
+    # An ordinary cluster user must reach /root/archi: the benchmark image
+    # leaves /root at 0750. The mode of /root is outside the code digest.
+    post = text.split("%post", 1)[1].split("\n%", 1)[0]
+    commands = [line.strip() for line in post.splitlines() if line.strip()]
+    commands = [line for line in commands if not line.startswith("#")]
+    assert commands == ["chmod o+rx /root"]
 
 
 def test_the_build_dry_run_prints_the_build_and_the_identity_and_runs_nothing(

@@ -5,6 +5,12 @@
         --judge-env <judge.env> --sidecar <scorer-identity.json> (--status | --count)
     python scripts/benchmarking/judge/judge_queue.py --queue <dir> --merge-ready \
         [--sidecar <scorer-identity.json>]
+    python scripts/benchmarking/judge/judge_queue.py --queue <dir> \
+        --slurm-state <file> --job-id <id>
+
+``--slurm-state`` writes the Slurm snapshot that the judge job hands to the
+scorer container, which has no Slurm client: with ``JUDGE_SLURM_STATE`` set,
+the claim and time-budget rules read it in place of ``squeue`` and ``sacct``.
 
 ``--merge-ready`` prints the result basenames whose arms are all ``SCORED`` and
 not all ``MERGED``, with the pending result published; with ``--sidecar``, only
@@ -55,6 +61,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -73,6 +80,9 @@ REQUIRED_ENV_KEYS = (
 OPTIONAL_ENV_KEYS = ("JUDGE_IMAGE_DIGEST", "JUDGE_SERVER_ARGS")
 TERMINAL_MARKERS = ("SCORED", "FAILED")
 #: ``--status`` flags a bundle READY for longer than this with no score.
+#: The environment variable that names the host's Slurm snapshot (see
+#: ``_slurm_state``).
+SLURM_STATE_ENV = "JUDGE_SLURM_STATE"
 STALE_READY_HOURS = 24
 # sacct states after which a job can never run again under its id.
 TERMINAL_JOB_STATES = frozenset(
@@ -235,8 +245,41 @@ def _run(command: Sequence[str]) -> Optional[subprocess.CompletedProcess]:
         return None
 
 
+def _slurm_state() -> Optional[Dict[str, object]]:
+    """The Slurm snapshot named by ``JUDGE_SLURM_STATE``, or None to ask Slurm.
+
+    The scorer image has no Slurm client, so ``archi_judge.sbatch`` writes one
+    snapshot on the host when the job starts (``--slurm-state``) and the scorer
+    reads it in the container. Its answers stay safe for the whole job: a
+    terminal ``sacct`` state is final, a claim it saw as live stays untouched,
+    and a job id it does not know is unknown. A snapshot that does not load
+    knows nothing (an empty dict), so no claim is stale and no time is known.
+    """
+    name = os.environ.get(SLURM_STATE_ENV)
+    if not name:
+        return None
+    try:
+        state = json.loads(Path(name).read_text())
+    except (OSError, ValueError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _section(state: Dict[str, object], name: str) -> Dict[str, object]:
+    value = state.get(name)
+    return value if isinstance(value, dict) else {}
+
+
 def job_in_squeue(job_id: str) -> Optional[bool]:
     """True when squeue lists the job, False when it does not, None when unknown."""
+    state = _slurm_state()
+    if state is not None:
+        known = _section(state, "squeue").get(job_id)
+        return known if isinstance(known, bool) else None
+    return _live_in_squeue(job_id)
+
+
+def _live_in_squeue(job_id: str) -> Optional[bool]:
     proc = _run(["squeue", "-h", "-j", job_id, "-o", "%i"])
     if proc is None:
         return None
@@ -249,13 +292,22 @@ def job_in_squeue(job_id: str) -> Optional[bool]:
 
 def job_ended(job_id: str) -> bool:
     """True only when sacct reports the job in a terminal state."""
+    state = _slurm_state()
+    if state is not None:
+        recorded = _section(state, "sacct").get(job_id)
+        return str(recorded or "").upper() in TERMINAL_JOB_STATES
+    return (_live_job_state(job_id) or "") in TERMINAL_JOB_STATES
+
+
+def _live_job_state(job_id: str) -> Optional[str]:
+    """The job's first sacct state, upper case, or None when sacct cannot tell."""
     proc = _run(["sacct", "-n", "-X", "-P", "-j", job_id, "-o", "State"])
     if proc is None or proc.returncode != 0:
-        return False
+        return None
     for line in proc.stdout.splitlines():
         if line.strip():
-            return line.split()[0].upper() in TERMINAL_JOB_STATES
-    return False
+            return line.split()[0].upper()
+    return None
 
 
 def claim_is_stale(bundle: Path, claim: Claim) -> bool:
@@ -427,11 +479,59 @@ def time_left(job_id: Optional[str]) -> Optional[float]:
     when squeue cannot tell (no job id, a failed query, an unreadable answer)."""
     if not job_id:
         return None
+    state = _slurm_state()
+    if state is not None:
+        deadline = _section(state, "deadline").get(job_id)
+        if deadline == "UNLIMITED":
+            return math.inf
+        if isinstance(deadline, (int, float)) and not isinstance(deadline, bool):
+            return max(0.0, deadline - time.time())
+        return None
+    return _live_time_left(job_id)
+
+
+def _live_time_left(job_id: str) -> Optional[float]:
     proc = _run(["squeue", "-h", "-j", job_id, "-o", "%L"])
     if proc is None or proc.returncode != 0:
         return None
     lines = proc.stdout.strip().splitlines()
     return parse_time_left(lines[0]) if lines else None
+
+
+def write_slurm_state(queue: Path, out: Path, job_id: str) -> Dict[str, object]:
+    """Write the Slurm snapshot of *job_id* and of every current claim, on the host.
+
+    For each job id: whether squeue lists it (only a known answer), its sacct
+    state, and for *job_id* its deadline (an epoch second, or ``UNLIMITED``).
+    The file is replaced in one rename, so a reader never sees half of it.
+    """
+    ids = {job_id}
+    for bundle in ready_bundles(queue):
+        claim = current_claim(bundle)
+        if claim is not None and claim.job_id:
+            ids.add(claim.job_id)
+    squeue: Dict[str, bool] = {}
+    sacct: Dict[str, str] = {}
+    for one in sorted(ids):
+        listed = _live_in_squeue(one)
+        if listed is not None:
+            squeue[one] = listed
+        recorded = _live_job_state(one)
+        if recorded is not None:
+            sacct[one] = recorded
+    deadline: Dict[str, object] = {}
+    left = _live_time_left(job_id)
+    now = time.time()
+    if left == math.inf:
+        deadline[job_id] = "UNLIMITED"
+    elif left is not None:
+        deadline[job_id] = now + left
+    state = {"written": now, "squeue": squeue, "sacct": sacct, "deadline": deadline}
+    out = Path(out)
+    tmp = out.with_name(f".{out.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(state, sort_keys=True))
+    os.replace(tmp, out)
+    return state
 
 
 def plan_claims(
@@ -475,7 +575,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     action.add_argument("--status", action="store_true")
     action.add_argument("--count", action="store_true")
     action.add_argument("--merge-ready", action="store_true")
+    action.add_argument("--slurm-state", type=Path)
+    parser.add_argument("--job-id")
     args = parser.parse_args(argv)
+    if args.slurm_state is not None:
+        if not args.job_id:
+            print("judge_queue: --slurm-state needs --job-id", file=sys.stderr)
+            return 2
+        write_slurm_state(args.queue, args.slurm_state, args.job_id)
+        return 0
     if args.merge_ready:
         code = None
         if args.sidecar is not None:
