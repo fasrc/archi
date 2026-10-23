@@ -190,6 +190,7 @@ def _artifact(
     map_pairs=None,
     prompt_override=None,
     unchanged=True,
+    tags=None,
 ):
     out = sweep / "bench_out"
     out.mkdir(exist_ok=True)
@@ -217,6 +218,12 @@ def _artifact(
                 "category_map_file": tsv,
                 "agent_md_sha256": (prompt_override or {}).get(name)
                 or (_prompt_text_sha(prompt) if prompt else None),
+                # #573: the end-of-run tag comparison, absent unless the test names it.
+                **(
+                    {"embedding_tags_unchanged_at_endpoints": (tags or {})[name]}
+                    if name in (tags or {})
+                    else {}
+                ),
             }
         )
     path = out / f"{stem}.json"
@@ -294,6 +301,26 @@ def test_run_one_archives_every_arm_and_writes_both_pins(sweep):
     assert len(copied) == 5  # artifact, report, three snapshots
 
 
+def test_run_one_writes_no_pin_when_the_ledger_write_fails(sweep, monkeypatch):
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep)
+    _ledger(sweep)
+    census = _census(sweep, digest, lock)
+    ledger = sweep / "out/ledger.json"
+    real_replace = st.os.replace
+
+    def failing_replace(src, dst):
+        if os.fspath(dst) == os.fspath(ledger):
+            raise OSError("ledger write failed")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(st.os, "replace", failing_replace)
+    with pytest.raises(OSError, match="ledger write failed"):
+        _archive(sweep, lock, artifact, 1, census)
+    assert not (sweep / "out/corpus-pin-r0").exists()
+    assert not (sweep / "out/category-map-pin-r0").exists()
+
+
 def test_run_one_requires_a_passing_census(sweep):
     lock = _lock(sweep)
     artifact, digest = _artifact(sweep)
@@ -365,6 +392,31 @@ def test_a_changed_map_is_archived_with_its_state(sweep):
     assert all(row["category_map_unchanged_at_endpoints"] is False for row in rows)
 
 
+@pytest.mark.parametrize("value", [False, None], ids=["changed", "not-observed"])
+def test_an_arm_whose_embedding_tags_changed_is_refused(sweep, value):
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep, tags={STEMS[1]: value})
+    _ledger(sweep)
+    with pytest.raises(st.SweepError) as excinfo:
+        _archive(sweep, lock, artifact, 1, _census(sweep, digest, lock))
+    message = str(excinfo.value)
+    assert STEMS[1] in message and "embedding model tags changed" in message
+    assert not (sweep / "out/corpus-pin-r0").exists()
+    assert not (sweep / "out/category-map-pin-r0").exists()
+    assert len(json.loads((sweep / "out/ledger.json").read_text())) == 1
+
+
+@pytest.mark.parametrize("value", ["absent", True], ids=["legacy", "unchanged"])
+def test_an_arm_without_a_tag_change_archives_as_before(sweep, value):
+    lock = _lock(sweep)
+    tags = None if value == "absent" else {name: value for name in STEMS}
+    artifact, digest = _artifact(sweep, tags=tags)
+    _ledger(sweep)
+    rows = _archive(sweep, lock, artifact, 1, _census(sweep, digest, lock))
+    assert [row["arm"] for row in rows] == STEMS
+    assert (sweep / "out/corpus-pin-r0").read_text().strip() == "sha256:corpus"
+
+
 def test_stale_artifact_is_refused(sweep):
     lock = _lock(sweep)
     artifact, digest = _artifact(sweep)
@@ -395,7 +447,7 @@ def test_run_two_checks_both_pins_and_refuses_a_reused_run(sweep):
 
 
 def test_a_retry_after_a_failed_ledger_write_completes(sweep, monkeypatch):
-    """Pins and copies land before the ledger replace; a retry of run 1 finishes."""
+    """Copies land before the ledger replace, pins after it; a retry of run 1 finishes."""
     lock = _lock(sweep)
     artifact, digest = _artifact(sweep)
     _ledger(sweep)
@@ -409,13 +461,14 @@ def test_a_retry_after_a_failed_ledger_write_completes(sweep, monkeypatch):
     monkeypatch.setattr(st.os, "replace", failing_replace)
     with pytest.raises(OSError):
         _archive(sweep, lock, artifact, 1, census)
-    assert (sweep / "out/corpus-pin-r0").exists()
+    assert not (sweep / "out/corpus-pin-r0").exists()
     assert len(json.loads((sweep / "out/ledger.json").read_text())) == 1
 
     monkeypatch.setattr(st.os, "replace", real_replace)
     rows = _archive(sweep, lock, artifact, 1, census)
     assert len(rows) == 3
     assert len(json.loads((sweep / "out/ledger.json").read_text())) == 4
+    assert (sweep / "out/corpus-pin-r0").read_text().strip() == "sha256:corpus"
 
 
 def test_a_v2_reading_is_usable():

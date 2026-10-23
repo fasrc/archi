@@ -15,6 +15,10 @@ The system SHALL remove every `h1`–`h6` element whose stripped text is empty a
 - **WHEN** `html_to_markdown` converts `<h3>Title</h3>`, `<h3><code>foo</code></h3>`, or `<h3><img src="a.png" alt="A"></h3>`
 - **THEN** the results are `### Title`, ``### `foo` ``, and `### A`, the same as before this change
 
+#### Scenario: An empty heading inside a link is dropped and the link is kept once
+- **WHEN** `html_to_markdown` converts a link that holds two multi-line `<code>` blocks and an empty `h1`–`h6`
+- **THEN** the result equals the result for the same link without the heading, and the link target occurs exactly once
+
 #### Scenario: Ingest and drift check agree
 - **WHEN** `HtmlToMarkdownProcessor` converts an `html` resource that contains `<h3></h3>`
 - **THEN** the persisted Markdown has no bare `###` line, because the processor calls the same `html_to_markdown` function as the drift check

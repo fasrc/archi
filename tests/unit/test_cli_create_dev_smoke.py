@@ -28,8 +28,14 @@ def satisfied_base_images(monkeypatch):
     every test in this file would depend on the developer's machine being logged in to ghcr,
     and would fail for a reason unrelated to what it is testing. The preflight's own tests
     install their own probe after this one, so they still exercise the real decision paths.
+
+    `VolumeManager.create_required_volumes` is also stubbed out: it calls the container
+    tool directly via subprocess (not through ContainerProbe), so on a machine without the
+    tool it raises FileNotFoundError before the test can reach the assertion it is testing.
+    Volume creation is incidental to what any test in this file exercises.
     """
     from src.cli.managers import base_image_preflight
+    from src.cli.managers.volume_manager import VolumeManager
 
     class _SatisfiedProbe:
         def __init__(self, container_tool="docker", timeout=600):
@@ -51,6 +57,7 @@ def satisfied_base_images(monkeypatch):
             return "Python 3.11.9"
 
     monkeypatch.setattr(base_image_preflight, "ContainerProbe", _SatisfiedProbe)
+    monkeypatch.setattr(VolumeManager, "create_required_volumes", lambda *a, **kw: None)
 
 
 @pytest.fixture
@@ -78,6 +85,8 @@ def env_file(tmp_path):
         "OPENAI_API_KEY=sk-test\n"
         "PG_PASSWORD=test-pg\n"
         "HUGGING_FACE_HUB_TOKEN=test-hf\n"
+        "GIT_USERNAME=test-git\n"
+        "GIT_TOKEN=test-git\n"
     )
     return p
 
@@ -148,10 +157,9 @@ data_manager:
 
 
 @pytest.mark.usefixtures("fake_repo_root")
-def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
+def test_dev_flag_prints_warning_in_dry_run(env_file, archi_home, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
-    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
 
     from src.cli.cli_main import create
 
@@ -183,10 +191,9 @@ def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
     )
 
 
-def test_dry_run_succeeds_without_docker(env_file, tmp_path, monkeypatch):
+def test_dry_run_succeeds_without_docker(env_file, archi_home, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
-    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
 
     from src.cli import cli_main
 
@@ -409,10 +416,9 @@ def test_non_dry_create_requires_docker_under_verbose_logging(
     )
 
 
-def test_no_dev_flag_no_warning(env_file, tmp_path, monkeypatch):
+def test_no_dev_flag_no_warning(env_file, archi_home, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
-    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
 
     from src.cli.cli_main import create
 
@@ -1334,13 +1340,20 @@ def test_force_evaluate_refuses_when_removal_silently_fails(
     """
     from src.cli import cli_main
     from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.volume_manager import VolumeManager
 
     _existing_deployment(archi_home)
     teardowns = []
+    volume_calls = []
     monkeypatch.setattr(
         DeploymentManager,
         "delete_deployment",
         lambda self, **kwargs: teardowns.append(kwargs),
+    )
+    monkeypatch.setattr(
+        VolumeManager,
+        "create_required_volumes",
+        lambda self, *a, **kw: volume_calls.append((a, kw)),
     )
     monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
     monkeypatch.setattr(
@@ -1372,6 +1385,10 @@ def test_force_evaluate_refuses_when_removal_silently_fails(
     assert len(teardowns) == 1, (
         f"deletion must have been attempted exactly once. "
         f"teardowns={teardowns}\noutput:\n{result.output}\n"
+    )
+    assert len(volume_calls) == 1, (
+        f"create_required_volumes must have been called exactly once. "
+        f"volume_calls={volume_calls}\noutput:\n{result.output}\n"
     )
 
 
@@ -2357,3 +2374,185 @@ def test_force_evaluate_with_an_uncoverable_service_template_keeps_existing_depl
         "the refusal must precede any image work, which is what puts it above the teardown; "
         f"pulled {record['pulled']}"
     )
+
+
+def test_force_create_with_missing_agent_config_file_keeps_existing_deployment(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """A missing agent_config_path file must not cost the operator a running deployment.
+
+    validate_configs() calls resolve_agent_config_source() through
+    _validate_chat_app_config(), which is above remove_existing_deployment().
+    This guards against moving the check into template staging (after the teardown).
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    data.setdefault("services", {}).setdefault("chat_app", {})["evaluations"] = {
+        "enabled": True,
+        "agent_config_path": str(tmp_path / "absent.yaml"),
+    }
+    bad_config = tmp_path / "config-eval-missing-file.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before evaluations file check ran. "
+        f"output:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed for a missing evaluations file. "
+        f"output:\n{result.output}\n"
+    )
+    assert result.exit_code != 0, (
+        f"evaluations.enabled:true with absent agent_config_path should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        "services.chat_app.evaluations.agent_config_path" in result.output
+    ), f"the error should name the key. output:\n{result.output}\n"
+    assert (
+        "not found" in result.output
+    ), f"the error should say 'not found'. output:\n{result.output}\n"
+
+
+@pytest.mark.parametrize("selected", ["chatbot", "slack"])
+def test_force_create_with_agent_config_inside_deployment_keeps_existing_deployment(
+    selected, env_file, archi_home, monkeypatch, tmp_path
+):
+    """A source file inside the deployment dir must not cost the operator a running deployment.
+
+    refuse_agent_config_inside_deployment() runs above remove_existing_deployment(),
+    so a config that names a file under the deployment directory is refused before any
+    teardown occurs. `--services slack` also runs the chatbot, so it is refused too.
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+    env_file.write_text(
+        env_file.read_text() + "SLACK_BOT_TOKEN=xoxb-test\nSLACK_APP_TOKEN=xapp-test\n"
+    )
+
+    from src.cli import cli_main
+    from src.cli.managers.volume_manager import VolumeManager
+
+    existing = _existing_deployment(archi_home)
+
+    inside_file = existing / "configs" / "config.eval.yaml"
+    inside_file.parent.mkdir(parents=True, exist_ok=True)
+    inside_file.write_text("agent config inside deployment")
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    data.setdefault("services", {}).setdefault("chat_app", {})["evaluations"] = {
+        "enabled": True,
+        "agent_config_path": str(inside_file),
+    }
+    bad_config = tmp_path / "config-eval-inside-deployment.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        VolumeManager, "create_required_volumes", lambda self, *a, **kw: None
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            selected,
+            "--hostmode",
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before inside-deployment check ran. "
+        f"output:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed for an inside-deployment config. "
+        f"output:\n{result.output}\n"
+    )
+    assert result.exit_code != 0, (
+        f"agent_config_path inside the deployment dir should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        "services.chat_app.evaluations.agent_config_path" in result.output
+    ), f"the error should name the key. output:\n{result.output}\n"
+
+
+@pytest.mark.usefixtures("fake_repo_root")
+def test_slack_only_selection_validates_the_chatbot_it_runs(
+    archi_home, tmp_path, monkeypatch
+):
+    """`--services slack` also runs the chatbot, so its chat config is validated."""
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        EXAMPLE_CONFIG.read_text().replace(
+            "  chat_app:\n", "  chat_app:\n    provider: openai\n", 1
+        )
+    )
+    env = tmp_path / "secrets.env"
+    env.write_text(
+        "OPENAI_API_KEY=sk-test\nPG_PASSWORD=test-pg\nHUGGING_FACE_HUB_TOKEN=test-hf\n"
+        "SLACK_BOT_TOKEN=xoxb-test\nSLACK_APP_TOKEN=xapp-test\n"
+    )
+
+    from src.cli import cli_main
+
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: False)
+    result = CliRunner().invoke(
+        cli_main.create,
+        [
+            "--dry",
+            "-n",
+            "slackonly",
+            "-c",
+            str(config),
+            "-e",
+            str(env),
+            "--services",
+            "slack",
+            "--hostmode",
+        ],
+    )
+
+    assert result.exit_code != 0, f"output:\n{result.output}\n"
+    assert "Legacy keys detected" in result.output, f"output:\n{result.output}\n"

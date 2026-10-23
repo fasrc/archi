@@ -85,8 +85,20 @@ class PreparationRecord:
     answer_sha256: Optional[str] = None
     oracle_metadata: Optional[Dict[str, Any]] = None
     oracle_calls: Optional[Tuple[OracleCallEvidence, ...]] = None
+    usage: Optional[Dict[str, Any]] = None
+    # True when the row carries a usage key, even a null one.
+    usage_recorded: bool = False
+    gold_extraction_attempts: Optional[int] = None
 
     def __post_init__(self) -> None:
+        if self.gold_extraction_attempts is not None and (
+            isinstance(self.gold_extraction_attempts, bool)
+            or not isinstance(self.gold_extraction_attempts, int)
+            or self.gold_extraction_attempts < 1
+        ):
+            raise ValueError(
+                "preparation gold_extraction_attempts must be a positive integer"
+            )
         validate_nonempty_string(self.item_id, "preparation item_id")
         validate_optional_nonempty_string(
             self.category,
@@ -195,6 +207,9 @@ class PreparationRecord:
             or self.answer_sha256 is not None
             or self.oracle_metadata is not None
             or self.oracle_calls is not None
+            or self.usage is not None
+            or self.usage_recorded
+            or self.gold_extraction_attempts is not None
         ):
             raise ValueError("skipped preparation cannot contain output")
 
@@ -249,12 +264,20 @@ class PreparationRecord:
                         ],
                     }
                 )
+            if self.usage is not None or self.usage_recorded:
+                row["usage"] = self.usage
+            if self.gold_extraction_attempts is not None:
+                row["gold_extraction_attempts"] = self.gold_extraction_attempts
         elif self.status == "preparation_failed":
             row["error"] = self.error
             if self.oracle_calls is not None:
                 row["oracle_calls"] = [
                     evidence.to_dict() for evidence in self.oracle_calls
                 ]
+            if self.usage is not None or self.usage_recorded:
+                row["usage"] = self.usage
+            if self.gold_extraction_attempts is not None:
+                row["gold_extraction_attempts"] = self.gold_extraction_attempts
         return row
 
 
@@ -289,6 +312,9 @@ def prepare_dataset_item(
             answer_mode=item.answer_mode,
             answer_source=item.answer_source,
         )
+    _extractor_was_called = False
+    _extractor_usage: Optional[Dict[str, Any]] = None
+    _usage_recorded = False
     try:
         resolved = None
         if item.state is DatasetItemState.UNRESOLVED_LIVE:
@@ -306,6 +332,8 @@ def prepare_dataset_item(
             gold_atoms = item.expected_atoms
             atom_source: AtomSource = "supplied"
         else:
+            _extractor_was_called = True
+            _usage_recorded = hasattr(extractor, "last_usage")
             gold_atoms = validate_gold_output(
                 extractor.extract_gold(
                     item.question,
@@ -318,7 +346,10 @@ def prepare_dataset_item(
                 context=f"gold extraction for item {item.id}",
             )
             atom_source = "inferred"
+            _extractor_usage = getattr(extractor, "last_usage", None)
     except Exception as exc:
+        if _extractor_was_called:
+            _extractor_usage = getattr(extractor, "last_usage", None)
         if isinstance(exc, OracleResolutionError):
             detail: Any = exc.detail
         elif item.is_live:
@@ -337,6 +368,8 @@ def prepare_dataset_item(
                 if isinstance(exc, OracleResolutionError)
                 else (resolved.calls if resolved is not None else None)
             ),
+            usage=_extractor_usage,
+            usage_recorded=_usage_recorded,
         )
     live_fields: Dict[str, Any] = {}
     if item.is_live:
@@ -363,6 +396,8 @@ def prepare_dataset_item(
         time_sensitive=item.time_sensitive,
         gold_atoms=tuple(gold_atoms),
         atom_source=atom_source,
+        usage=_extractor_usage,
+        usage_recorded=_usage_recorded,
         **live_fields,
     )
 
@@ -419,6 +454,15 @@ def _record_from_row(row: Dict[str, Any], *, index: int) -> PreparationRecord:
         }
     if status == "preparation_failed" and "oracle_calls" in row:
         status_fields.add("oracle_calls")
+    if status in {"prepared", "preparation_failed"} and "usage" in row:
+        if row["usage"] is not None and not isinstance(row["usage"], dict):
+            raise ValueError(f"{context} usage must be a dict or null")
+        status_fields.add("usage")
+    if (
+        status in {"prepared", "preparation_failed"}
+        and "gold_extraction_attempts" in row
+    ):
+        status_fields.add("gold_extraction_attempts")
     _require_exact_keys(row, base_fields | status_fields, context=context)
     common = {
         "item_id": row["item_id"],
@@ -458,6 +502,9 @@ def _record_from_row(row: Dict[str, Any], *, index: int) -> PreparationRecord:
                 if row["time_sensitive"] is True
                 else None
             ),
+            usage=row.get("usage"),
+            usage_recorded="usage" in row,
+            gold_extraction_attempts=row.get("gold_extraction_attempts"),
         )
 
     if status == "preparation_failed":
@@ -476,6 +523,9 @@ def _record_from_row(row: Dict[str, Any], *, index: int) -> PreparationRecord:
                 if "oracle_calls" in row
                 else None
             ),
+            usage=row.get("usage"),
+            usage_recorded="usage" in row,
+            gold_extraction_attempts=row.get("gold_extraction_attempts"),
         )
     return PreparationRecord(**common, status=status)
 

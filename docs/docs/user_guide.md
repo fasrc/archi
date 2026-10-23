@@ -52,6 +52,7 @@ Archi provides these deployable services:
 | `piazza` | Piazza forum integration with Slack | — |
 | `redmine-mailer` | Redmine ticket responses via email | — |
 | `mattermost` | Mattermost channel integration | — |
+| `slack` | Slack bot for mentions and direct messages | — |
 | `grafana` | Monitoring dashboard | 3000 |
 | `grader` | Automated grading service | 7862 |
 

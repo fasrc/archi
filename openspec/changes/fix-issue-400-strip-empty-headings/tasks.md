@@ -11,6 +11,13 @@
       called, the exact rule, decompose not unwrap, and why no digest fixture changes. You are
       not searching for an approach. Where the issue body and the design differ, the design
       wins.
+- [x] 0.5 Loop 1 (2026-10-23) merged origin/dev `e2978a1d` into this branch and resolved the
+      two conflict hunks in `processing.py` as the issue's Resume section says: #713's
+      `_HOIST_MARKER_ATTRS` and `_drop_source_markers` first, then `_drop_empty_headings`;
+      in `_promote_block_code`, `_drop_source_markers(soup)` then `_drop_empty_headings(soup)`.
+      The merge also changed 7 #713 test inputs and added
+      `test_400_empty_heading_in_link_dropped_link_kept` (design D6). The merge commit passed
+      the gate. Do not merge again and do not rebase.
 
 ## Rules that apply to EVERY task below
 
@@ -83,7 +90,9 @@
       `git ls-remote https://github.com/fasrc/archi refs/heads/fix/issue-400-strip-empty-headings`
       must print the same SHA as `git rev-parse HEAD`. If it prints nothing, the push went
       elsewhere — write the reason to `STATUS.md` and halt. Then write the PR body to `/tmp/pr-body-400.md` (NOT under
-      `docs/`), with `Closes #400` on its own line in the body, and run
+      `docs/`), with `Closes #400` on its own line in the body. The body must also name
+      design D6 for the reviewer: the merge changed the input of 7 #713 test cases (the
+      expected strings are unchanged) and added one #400 test. Then run
       `gh pr create --repo fasrc/archi --base dev --title "fix(#400): drop empty headings in html_to_markdown" --body-file /tmp/pr-body-400.md`.
       Do not merge.
 

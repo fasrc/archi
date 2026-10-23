@@ -48,7 +48,24 @@ removes it and its empty children.
 **D5 — Digests.** The golden-set drift check hashes `html_to_markdown` output, so pages with
 empty headings get a new digest. This is expected (issue #400 "Decision"). No test in the repo
 pins a digest for a page with an empty heading (`grep -rn '<h[1-6]></h' tests/` is empty on
-`26e6429e`), so no test fixture changes.
+`26e6429e`), so no test fixture changes. This stopped being true when #713 (PR #716) merged;
+see D6.
+
+**D6 — Merge with #713 (Loop 1, 2026-10-23, origin/dev `e2978a1d`).** #713 added 7 test
+cases that put an empty heading inside a hoisted link and pin the heading's ATX hashes as
+the link text: `test_hoist_empty_heading_after_two_blocks_gives_one_link` (h1–h6) and
+`test_hoist_empty_heading_before_block_keeps_link`. D2 drops those headings before the
+hoist, so the 7 cases failed after the merge. Resolution:
+
+- The 7 cases now put an empty `<code></code>` in the heading. D3 keeps such a heading, so
+  the hoist still meets it. The expected strings are unchanged. A mutation that removes
+  `h1`–`h6` from `_RENDERS_WITHOUT_TEXT` still fails all 7.
+- New test `test_400_empty_heading_in_link_dropped_link_kept` (h1–h6): an empty heading in
+  the same link is dropped, and the output equals the output for the link without the
+  heading (`<https://x/y>` then the blocks), with the link target once. A mutation that
+  disables `_drop_empty_headings` fails all 6.
+- Rejected: keep empty headings inside a link. The issue's decision is "strip
+  unconditionally", and `[#](https://x/y)` is the bare-marker text that #400 removes.
 
 ## Risks / Trade-offs
 

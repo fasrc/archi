@@ -4,6 +4,7 @@ key.py
 !requirements.txt
 !requirements/*.txt
 !examples/qa_eval/sentinel_value.txt
+!src/cli/templates/dockerfiles/benchmark-constraints.txt
 !templates/dockerfiles/base-pytorch-image/*
 !templates/dockerfiles/base-python-image/*
 *.ipynb
