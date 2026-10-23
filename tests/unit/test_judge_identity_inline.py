@@ -39,7 +39,9 @@ def _score_one_metric(monkeypatch):
     _install_ragas_stub(monkeypatch, _evaluate)
     monkeypatch.setattr(
         "src.bin.service_benchmark.ChatOpenAI",
-        lambda **kw: types.SimpleNamespace(temperature=0.0, top_p=None, max_tokens=None),
+        lambda **kw: types.SimpleNamespace(
+            temperature=0.0, top_p=None, max_tokens=None
+        ),
     )
     monkeypatch.setattr("src.bin.service_benchmark.OpenAIEmbeddings", OpenAIEmbeddings)
     monkeypatch.setattr(
@@ -48,7 +50,12 @@ def _score_one_metric(monkeypatch):
     )
     bench = _make_bench(["answer_relevancy"])
     rows = [
-        {"user_input": "q", "retrieved_contexts": ["c"], "response": "a", "reference": ""}
+        {
+            "user_input": "q",
+            "retrieved_contexts": ["c"],
+            "response": "a",
+            "reference": "",
+        }
     ]
     bench.get_ragas_results(rows, ["question_1"], {"question_1": {}})
     return bench
@@ -71,7 +78,11 @@ def test_the_recorded_inline_identity_has_the_extended_shape(monkeypatch):
     assert identity["chunk_size"] is None
     assert identity["timeout"] == 120 and identity["max_workers"] == 16
     assert identity["batch_size"] is None
-    assert identity["decoding"] == {"temperature": 0.0, "top_p": None, "max_tokens": None}
+    assert identity["decoding"] == {
+        "temperature": 0.0,
+        "top_p": None,
+        "max_tokens": None,
+    }
     assert identity["embedding"] == {
         "class": "OpenAIEmbeddings",
         "model": "text-embedding-ada-002",

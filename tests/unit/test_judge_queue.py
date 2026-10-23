@@ -234,9 +234,7 @@ def test_a_bundle_for_this_judge_and_scorer_matches(setup, jq):
     "overrides",
     [{"model": "deepseek-ai/R1-Distill-Llama-70B"}, {"revision": "rev2"}],
 )
-def test_a_bundle_for_another_judge_names_the_judge_it_waits_for(
-    setup, jq, overrides
-):
+def test_a_bundle_for_another_judge_names_the_judge_it_waits_for(setup, jq, overrides):
     queue, env, sidecar = setup
     bundle = make_bundle(queue, **overrides)
     reason = jq.match_reason(bundle, env, sidecar, queue)
@@ -277,9 +275,7 @@ def test_a_stale_sidecar_excludes_every_bundle_until_the_sidecar_changes(
     assert jq.match_reason(bundle, env, rebuilt, queue) is None
 
 
-def test_an_incompatible_record_excludes_only_that_bundle_for_that_sidecar(
-    setup, jq
-):
+def test_an_incompatible_record_excludes_only_that_bundle_for_that_sidecar(setup, jq):
     queue, env, sidecar = setup
     bad = make_bundle(queue, "run-20261023_120000-arm0")
     good = make_bundle(queue, "run-20261023_130000-arm0")
