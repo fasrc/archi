@@ -46,7 +46,9 @@ def _fail(*args, **kwargs):
 def _make_bench(judge_plan, *, all_fail=False):
     bench = object.__new__(Benchmarker)
     bench.config = {
-        "services": {"benchmarking": {"mode_settings": {"ragas_settings": _RAGAS_SETTINGS}}},
+        "services": {
+            "benchmarking": {"mode_settings": {"ragas_settings": _RAGAS_SETTINGS}}
+        },
         "global": {"verbosity": 0},
     }
     bench.benchmarking_configs = {"mode_settings": {"ragas_settings": _RAGAS_SETTINGS}}
@@ -62,7 +64,10 @@ def _make_bench(judge_plan, *, all_fail=False):
     def _answer(question_item, question_id, modes_being_run):
         if all_fail:
             return {
-                "q_results": {"question": question_item["user_input"], "status": FAILED},
+                "q_results": {
+                    "question": question_item["user_input"],
+                    "status": FAILED,
+                },
                 "dataset_result": None,
                 "matches": None,
             }
@@ -129,9 +134,7 @@ def test_deferred_arm_uses_the_plan_bundle_dir(out_dir):
     bench._process_config({"RAGAS"})
 
     assert [p.name for p in out_dir.iterdir()] == ["x"]
-    assert [p.name for p in (out_dir / "x").iterdir()] == [
-        "bench-20260101_000000-arm1"
-    ]
+    assert [p.name for p in (out_dir / "x").iterdir()] == ["bench-20260101_000000-arm1"]
 
 
 def test_all_failed_deferred_arm_writes_an_empty_bundle_and_no_na(out_dir):

@@ -279,7 +279,7 @@ Rules for every task:
 
 ## 6. Exclusive link and publish (parent tasks 2.5a and 2.6)
 
-- [ ] 6.1 Create `tests/unit/test_exclusive_link.py`. Tests (design D10): a new name
+- [x] 6.1 Create `tests/unit/test_exclusive_link.py`. Tests (design D10): a new name
       gets the full bytes and `True`, and no `.tmp.*` file is left; a second writer of
       the same name gets `False`, and the first bytes stay; replace `os.link` in the
       module with a function that calls the real `os.link` and then raises
