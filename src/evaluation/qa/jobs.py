@@ -190,6 +190,7 @@ class EvaluationJobManager:
                     f"job {active['id']} is already {active['status']}"
                 )
             job["status"] = JobStatus.QUEUED.value
+            job["started_at"] = None
             job["completed_at"] = None
             job.pop("result", None)
             job.pop("error", None)
@@ -255,7 +256,19 @@ class EvaluationJobManager:
             self._processes[job_id] = process
             job["status"] = JobStatus.RUNNING.value
             job["started_at"] = utc_now()
-            write_json(self._path(job_id), job)
+            try:
+                write_json(self._path(job_id), job)
+            except Exception as exc:
+                # The record still reads queued and nothing will wait on this
+                # worker, so stop it rather than leave it running untracked.
+                self._processes.pop(job_id, None)
+                self._terminate(process)
+                self._remove_result(result_path)
+                job["status"] = JobStatus.FAILED.value
+                job["completed_at"] = utc_now()
+                job["error"] = str(exc)
+                write_json(self._path(job_id), job)
+                return
 
         return_code = process.wait()
         with self._lock:

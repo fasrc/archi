@@ -6,3 +6,9 @@
 ## 2. Publish
 
 - [x] 2.1 Tick this box and commit it BEFORE you push, so the push carries every commit. Push the branch with `git push -u origin fix/issue-435-running-after-popen` and open the PR against `fasrc/archi:dev` with `gh pr create --repo fasrc/archi --base dev`. Put `Closes #435` in the PR **body** (not the title). In the body, state the ordering defect (`running` written before `Popen` and the `_processes` store) and the fix. Add one sentence that #656 (`4d113289`) fixed the flake on the test side, so this PR fixes only the production ordering. No `Co-Authored-By` trailer. Do not merge.
+
+## 3. Review round 1 (2026-10-23, Codex on e95235f6 and 37bad0d0)
+
+- [x] 3.1 If the `running` write raises after `Popen`, drop the `_processes` entry, terminate the worker, remove its result file, and record `failed` (`test_execute_process_reaps_the_worker_when_running_cannot_be_written`; red on the old code).
+- [x] 3.2 `continue_process` sets `started_at` to `None` when it queues the job again (`test_continue_process_popen_failure_drops_the_prior_start_time`; red on the old code).
+- [x] 3.3 Test races: `test_job_manager_terminates_running_evaluation_process` waits for `running` on disk, not for the process-table entry; `test_execute_process_writes_running_only_after_process_is_stored` records its observation before the real write. Both old versions fail under a forced 0.3 s delay at the race point; the new versions pass.
