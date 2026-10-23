@@ -155,7 +155,7 @@ The run checks these keys once, before the ingest wait and before the first ques
 - the configs of a deferred sweep do not resolve to the same `judge_bundle_dir`;
 - a deferred run cannot compute its code digest or its package digest (`pip freeze`). Without them, no scorer can match the bundles.
 
-A deferred arm writes `<out_dir>/<judge_bundle_dir>/<result basename>-arm<N>/` (`N` starts at 0) with `rows.jsonl`, `manifest.json` and an empty `BUNDLE_COMPLETE`. An arm with no scorable answer still writes a bundle, with no rows. In the result JSON, the arm has `judge_status: pending`, `judge_bundle` (the folder name and the SHA-256 of `rows.jsonl`), and no RAGAS aggregates, so the leaderboard shows its metrics as missing. After the result JSON is written, the run creates `<result basename>.RESULT_COMPLETE` in `out_dir`. `python scripts/benchmarking/judge/publish.py --out-dir <out_dir> --queue <queue>` copies complete bundles and complete pending results to the queue folder. The offline scorer and the merge come with #732; until then, a deferred result has no RAGAS scores.
+A deferred arm writes `<out_dir>/<judge_bundle_dir>/<result basename>-arm<N>/` (`N` starts at 0) with `rows.jsonl`, `manifest.json` and an empty `BUNDLE_COMPLETE`. An arm with no scorable answer still writes a bundle, with no rows. In the result JSON, the arm has `judge_status: pending`, `judge_bundle` (the folder name and the SHA-256 of `rows.jsonl`), and no RAGAS aggregates, so the leaderboard shows its metrics as missing. After the result JSON is written, the run creates `<result basename>.RESULT_COMPLETE` in `out_dir`. `python scripts/benchmarking/judge/publish.py --out-dir <out_dir> --queue <queue>` copies complete bundles and complete pending results to the queue folder. A Slurm GPU job scores the bundles, and a merge writes `<result basename>.judged.json`: see [Offloaded RAGAS judge on Slurm](#offloaded-ragas-judge-on-slurm). Until the judged file exists, the result has no RAGAS scores, and `compare_runs.py` and the campaign archiver refuse it (gate G11).
 
 ---
 
@@ -296,6 +296,125 @@ To analyze results, see `scripts/benchmarking/` which contains:
 - Plotting functions
 - An IPython notebook with usage examples (`benchmark_handler.ipynb`)
 - `analyze_grades.ipynb` — for runs that pushed human grades to Argilla (see below)
+
+---
+
+## Offloaded RAGAS judge on Slurm
+
+A `judge_mode: deferred` run (see [Deferred judge](#deferred-judge-judge_mode)) writes a judge bundle for each arm and calls no judge. A FASRC Slurm GPU job then scores the bundles with an open-weights judge on vLLM, and a CPU job merges the scores into one judged result file for each run. These are the operator steps. The design is the OpenSpec change `offload-ragas-judge-to-slurm` (archived under `openspec/changes/archive/`), and the first cluster run is tracked in [#737](https://github.com/fasrc/archi/issues/737).
+
+The scripts are in `scripts/benchmarking/slurm/`, and each one has its settings at the top. The defaults are the design's first option: the `gpu_h200` partition, 2 GPUs, `bf16`, and the judge home `$HOME/archi-judge` with the queue folder `$HOME/archi-judge/queue`. The operator confirms them on [#729](https://github.com/fasrc/archi/issues/729). These environment variables change them for every script:
+
+| Variable | Default | What it is |
+|---|---|---|
+| `JUDGE_HOME` | `$HOME/archi-judge` | The judge home: `judge.env`, `archi-scorer.sif` and `scorer-identity.json` |
+| `JUDGE_QUEUE` | `$JUDGE_HOME/queue` | The queue folder. The dev host publishes to it and the jobs read it, so it must be on shared storage |
+| `JUDGE_LAB` or `JUDGE_SCRATCH` | — | Lab storage for the judge weights (about 140 GB), the Apptainer cache and the vLLM compile cache: `/n/netscratch/<lab>/Lab/$USER/archi-judge`, or a folder of your own. The judge job refuses to start without one of them |
+| `JUDGE_PYTHON` | `python3` | The Python on the login node, 3.8 or later (for example after `module load python`). The submitter uses the standard library only |
+| `JUDGE_VLLM_IMAGE` | `docker://vllm/vllm-openai:<pinned tag>` | The vLLM image of the judge job |
+
+### 1. Get the vLLM image and the judge weights
+
+Download the judge weights at their pinned revision to lab storage, on a node with internet access. The judge job sets `HF_HUB_OFFLINE=1`, so it never downloads weights itself. For a gated model (Llama 3.3), accept its license on Hugging Face and give your token in `HF_TOKEN`:
+
+```bash
+apptainer exec --env HF_HOME=/n/netscratch/<lab>/Lab/$USER/archi-judge/hf \
+  docker://vllm/vllm-openai:<pinned tag> \
+  hf download <judge model id> --revision <judge model revision>
+```
+
+The first `apptainer exec` of the image also converts it into the Apptainer cache. Record the image digest in `judge.env` as `JUDGE_IMAGE_DIGEST`: it is part of the judge identity.
+
+### 2. Write judge.env
+
+`$JUDGE_HOME/judge.env` names the judge of every job, one `KEY=VALUE` per line, with no shell expansion. The model id and the revision must equal the run's `evaluator_model` and `evaluator_model_revision`, or no bundle matches the job:
+
+```bash
+JUDGE_MODEL_ID=meta-llama/Llama-3.3-70B-Instruct
+JUDGE_MODEL_REVISION=<pinned revision>
+JUDGE_PRECISION=bf16                    # bf16, fp16 or fp8
+JUDGE_BOOTSTRAP_ROWS_PER_MINUTE=20      # the time budget's rate before a row is scored
+JUDGE_IMAGE_DIGEST=sha256:<vLLM image digest>      # optional
+JUDGE_SERVER_ARGS=--max-model-len 16384            # optional, the vllm serve arguments that change output
+```
+
+The precision, the image digest and the server arguments are part of each arm's `ragas_judge_identity_effective`, so a change of any of them starts a new baseline (gate G12). Set the bootstrap rate low, and correct it from the rows per minute of the first job.
+
+### 3. Build the scorer image
+
+The scorer runs in an Apptainer image built from the benchmark image that ran the deferred run. A bundle matches a scorer only when the run's code digest and package digest equal the scorer's, so build the scorer image from that benchmark image, and build it again after each change of archi's `src`. On the dev host, save the benchmark image and copy the file to the cluster:
+
+```bash
+docker save <benchmarking image>:<tag> -o archi-benchmark.tar
+```
+
+On the cluster:
+
+```bash
+bash scripts/benchmarking/slurm/build_scorer_image.sh --dry-run archi-benchmark.tar $HOME/archi-judge
+bash scripts/benchmarking/slurm/build_scorer_image.sh archi-benchmark.tar $HOME/archi-judge
+```
+
+The script builds `archi-scorer.sif` from `scripts/benchmarking/slurm/archi-scorer.def`, which adds only the three judge scripts to the benchmark image. It then writes `scorer-identity.json` beside the image with `score.py write-identity`: the code digest of the image's `src`, the package digest, the ragas version and the image digest (the SHA-256 of the SIF file).
+
+### 4. Make a deferred run and publish it
+
+Set `judge_mode: deferred` and the judge revision in the run's config (see [Deferred judge](#deferred-judge-judge_mode)), and run the benchmark. Then publish the run's bundles to the queue:
+
+```bash
+python scripts/benchmarking/judge/publish.py --out-dir <out_dir> --queue <queue>
+```
+
+The publish step is idempotent, so a timer can run it every few minutes. The `archi-judge-publish.timer` units are an operator step in `fasrc/archi-config` ([#737](https://github.com/fasrc/archi/issues/737)).
+
+### 5. Submit the judge job
+
+`scripts/benchmarking/slurm/judge_submit.sh` submits one `archi-judge` job when a matching bundle is READY and no judge job exists, and one `archi-judge-merge` job when a result has all its arms SCORED and not MERGED. Every judge job has `--dependency=singleton`, so Slurm runs at most one at a time. Run it from `scrontab`, every 15 minutes (`scrontab -e`):
+
+```bash
+#SCRON -p shared
+#SCRON -t 00:10:00
+*/15 * * * * JUDGE_LAB=<lab> /path/to/archi/scripts/benchmarking/slurm/judge_submit.sh
+```
+
+A person can run one tick by hand, and print the commands of each job without starting it:
+
+```bash
+bash scripts/benchmarking/slurm/judge_submit.sh
+bash scripts/benchmarking/slurm/archi_judge.sbatch --dry-run
+bash scripts/benchmarking/slurm/judge_merge.sbatch --dry-run
+```
+
+The judge job checks its scorer image against `scorer-identity.json` and counts its work before it loads a model. With no work it exits in seconds. Then it starts vLLM on a Unix socket in a private folder, with a random per-job API key in the environment and no TCP listener, scores the bundles, and submits the merge job after itself (`--dependency=afterok`). Its log is `archi-judge-<job id>.out` in the repo folder.
+
+### 6. Read the queue
+
+```bash
+bash scripts/benchmarking/slurm/judge_submit.sh --status
+```
+
+prints one line for each READY bundle that has no `SCORED`, and then the records:
+
+| Line | What it means | What to do |
+|---|---|---|
+| `available` | A job can claim it | Nothing: the next tick submits a job |
+| `claimed by job <id>` | A job holds the claim | Nothing |
+| `stale claim of job <id>` | The job ended with no terminal marker | Nothing: the next job takes the claim over and resumes from the checkpoint |
+| `not matched: waits for judge <id>@<revision>` | `judge.env` names another judge | Score it with a job for that judge, or leave it |
+| `not matched: waits for a scorer with code digest ...` | No scorer image of the run's code | Build the scorer image from the benchmark image of the run (step 3) |
+| `FAILED: <reason>` | A problem of the bundle itself | Read the reason. The merge refuses that result |
+| `; READY for <n> hours` | READY for more than 24 hours | Check `scrontab -l` and `squeue -u $USER` |
+| `INCOMPATIBLE.<token>: ...` | A job found that its live scorer differs from the bundle | Build a scorer image that matches (step 3) |
+| `SCORER_STALE.<token>: ...` | `scorer-identity.json` does not describe the scorer image | Build the scorer image again (step 3) |
+
+`INCOMPATIBLE` and `SCORER_STALE` are not terminal: a new scorer image has a new identity digest, so the bundles become available again with no clean-up. In a bundle folder, `READY`, `claim.<gen>`, `scores.<identity digest>.partial.jsonl`, `judge_scores.json`, `SCORED` or `FAILED`, and `MERGED` show its progress. The merge writes `<queue>/results/<basename>.judged.json`, and a judged file is complete only when every arm of its result has `MERGED`.
+
+### 7. Copy the judged file into bench_out/
+
+When every arm of a result has `MERGED`, the publish step copies `<basename>.judged.json` back into the run's output folder, beside the pending `<basename>.json`. Copy the judged file into `bench_out/` and commit it in [`fasrc/archi-bench-out`](https://github.com/fasrc/archi-bench-out). Compare and archive the judged file, never the pending file:
+
+- `compare_runs.py` refuses an arm with `judge_status: pending` (G11), and arms or noise replicates whose `ragas_judge_identity_effective` differ (G12). See [Interpreting benchmark results](interpreting_benchmark_results.md#4-the-gate).
+- `scripts/benchmarking/feature_matrix/archive_run.sh` takes the judged file when it is beside the pending file, refuses a pending result and names the judged file to wait for, and records each arm's judge identity in its ledger row. It refuses a run whose judge differs from the campaign's earlier RAGAS rows. A campaign whose rows were archived before the rows recorded a judge identity cannot take a judged run: start a new campaign for the new judge.
 
 ---
 

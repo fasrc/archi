@@ -466,7 +466,7 @@ Our currently *sensitive* metrics — the ones with room to move in both directi
 ## 4. The gate
 
 A benchmark result **may not be reported as an improvement**, and **may not be
-used to justify shipping a change**, unless all eight items below pass. For
+used to justify shipping a change**, unless all ten items below pass. For
 exploratory runs where no decision is being made, the gate is advisory — but say
 so explicitly when you circulate the numbers.
 
@@ -480,6 +480,8 @@ so explicitly when you circulate the numbers.
 | **G6** | Only questions scored cleanly **in both arms** are compared | Guards denominator drift. §3.4 |
 | **G7** | The improvement exceeds **2× the noise floor** *and* 2× its own standard error | One threshold for "bigger than the wobble", one for "not a fluke of these 73 questions" |
 | **G8** | The **anchors** hold, and no other metric regressed by more than one noise-floor unit | Catches the classic trap: raising `faithfulness` by teaching the model to hedge, while quietly tanking `answer_relevancy` |
+| **G11** | Every arm is **judged**: no arm has `judge_status: pending` | A deferred run writes its result before its judge runs, so its arms have no RAGAS scores yet. Use the judged file `<basename>.judged.json` ([offloaded judge](benchmarking.md#offloaded-ragas-judge-on-slurm)) |
+| **G12** | **One RAGAS judge** scored every arm and every noise replicate: equal `ragas_judge_identity_effective` | Two judges, or one judge at two precisions or with two scorer images, give different scores to the same answer. A delta between them measures the judges, not the arms |
 
 ### On G5: why paired comparison, and why it is free
 
@@ -598,7 +600,7 @@ pre-reg that the corpora differ by design. Worked example:
 
 ### Procedure C: compare two arms
 
-`scripts/benchmarking/compare_runs.py` does this. It implements G3–G10 in one
+`scripts/benchmarking/compare_runs.py` does this. It implements G3–G12 in one
 tested place, so a comparison cannot skip a gate by accident:
 
 ```bash
@@ -614,7 +616,7 @@ it is compared against the first. `path@2` picks one arm out of a sweep, and
 | Flag | What it is for |
 |---|---|
 | `--noise-floor METRIC=SIGMA,...` | the noise floor from [Procedure A](#procedure-a-measure-the-noise-floor). Without one, nothing is ever called SIGNIFICANT (G2) |
-| `--noise-runs FILE ...` | measure sigma here instead: every arm of every file is one replicate, and sigma is the standard deviation of the **recomputed** means (needs two or more). Replicates face the same bank, corpus, code/config identity and divergence checks as the arms, and sigma is measured over the *same* questions the paired table uses — sigma *is* the G7 threshold, so a stale or foreign replicate would move the bar rather than describe it |
+| `--noise-runs FILE ...` | measure sigma here instead: every arm of every file is one replicate, and sigma is the standard deviation of the **recomputed** means (needs two or more). Replicates face the same bank, corpus, code/config identity, divergence and judge (G11, G12) checks as the arms, and sigma is measured over the *same* questions the paired table uses — sigma *is* the G7 threshold, so a stale or foreign replicate would move the bar rather than describe it |
 | `--corpus-differs-by-design` | the only way past the G3 corpus gate; prints both fingerprints and the Procedure B warning |
 | `--config-differs-by-design DOTTED.PATH` | the only way past the G10 answer-path gate for one named setting; accepts only `services.chat_app.context_editing` and `services.chat_app.recursion_limit`; repeatable; prints both values and marks the row OVERRIDDEN; never hides the difference |
 | `--ignore-config-divergence` | the only way past a non-empty `divergence_from_selected_file` |
@@ -665,6 +667,24 @@ files are.
   refused — prompt arms vary it on purpose.
 - **`divergence_from_selected_file` is non-empty** — the run did not use the
   settings you selected (Procedure E), so its scores belong to neither arm.
+- **An arm or a `--noise-runs` replicate has `judge_status: pending`** — a
+  `judge_mode: deferred` run writes its result before the Slurm judge scores
+  it, so the arm has no RAGAS scores, and a comparison would read the missing
+  values as a result (G11). The refusal names the judged file
+  `<basename>.judged.json` to wait for. No flag overrides this.
+- **The arms, or a `--noise-runs` replicate and the baseline, recorded
+  different `ragas_judge_identity_effective`** — another judge model, revision,
+  precision, server or decoding setting, embedding, judge pressure or scorer
+  image gives different scores to the same answer (G12). The refusal names the
+  fields that differ and each arm's value. An artifact from before the key
+  existed is compared on `(evaluator_provider, evaluator_model)` from its
+  recorded configuration, and only with another such artifact: a missing field
+  never equals a recorded one, so an older artifact never matches a newer one,
+  and a four-field record (#618) never matches an extended one. The replicates
+  set the G7 sigma, so a replicate that another judge scored would move the
+  threshold for these arms. No flag overrides this. `archive_run.sh` holds
+  campaign runs to the same two gates, through the same shared check
+  (`src/utils/judge_gates.py`).
 
 **What it prints.** Run provenance including the three question counts (asked /
 anchors / bank rows, so the denominator is visible); the gate results; the paired
