@@ -299,6 +299,66 @@ To analyze results, see `scripts/benchmarking/` which contains:
 
 ---
 
+## Lynx faithfulness (offline)
+
+[PatronusAI Lynx](https://huggingface.co/PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct) is an open-weights model that checks one answer against its retrieved context. For each row it gives one verdict: PASS if the answer is faithful to the context, and FAIL if the answer adds information that is not in the context or contradicts it. Lynx reads the question, the retrieved contexts and the answer. It does not read the reference answer. The Lynx verdict is a metric next to the RAGAS metrics. It is not a RAGAS metric, and Lynx is not the RAGAS judge.
+
+Lynx scores only `judge_mode: deferred` runs (see "Deferred judge" above), because only a deferred run writes a judge bundle. The input is one arm's bundle folder, `<out_dir>/<judge_bundle_dir>/<result basename>-arm<N>/`, with `BUNDLE_COMPLETE`.
+
+### Submit the job
+
+`scripts/benchmarking/slurm/lynx_score.sbatch` runs the scorer on a FASRC GPU node, inside the `vllm/vllm-openai` image at a pinned tag, with Lynx 8B at a pinned revision. The image, the model id, the model revision, the partition, the GPU count and the time limit are settings at the top of the script. The job asks for one full A100 on the `gpu` partition for 2 hours, and it is never requeued, because the scorer cannot resume a half-scored bundle.
+
+1. Set `LYNX_LAB` to your lab folder under `/n/netscratch`. The job keeps the model and the image cache in `/n/netscratch/<lab>/Lab/<user>/archi-lynx`. To use a different folder, set `LYNX_SCRATCH`.
+2. From the repo root, check the command. The dry run prints the `apptainer exec` command, and it starts nothing:
+
+    ```bash
+    bash scripts/benchmarking/slurm/lynx_score.sbatch --dry-run <bundle folder> [<out dir>]
+    ```
+
+3. From the repo root, submit the job:
+
+    ```bash
+    LYNX_LAB=<lab> sbatch scripts/benchmarking/slurm/lynx_score.sbatch <bundle folder> [<out dir>]
+    ```
+
+The out dir is the folder of the result JSON. Without the second argument, the job uses the nearest folder above the bundle folder that holds `<result basename>.json`. The job refuses a missing bundle folder, a folder with no `BUNDLE_COMPLETE` (a `READY` queue copy too), and an existing Lynx file. The job log is `archi-lynx-<job id>.out` in the repo root. The first job also converts the image into the Apptainer cache, so it takes longer than later jobs.
+
+!!! note
+    The script also holds a commented Lynx 70B variant (`gpu_h200`, two GPUs). It cannot load the model yet, because the scorer puts the model on one GPU ([#755](https://github.com/fasrc/archi/issues/755)).
+
+### Run the scorer by hand
+
+The job runs this command. You can run it yourself where `vllm` is installed, or with `--backend stub` to test the file flow with no model:
+
+```bash
+python -m scripts.benchmarking.lynx.score <bundle folder> \
+    --model PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct \
+    --revision 5523f869eb5eecb4bca417b6e6d3532e746a9664 \
+    --out-dir <folder of the result JSON> [--backend vllm|stub]
+```
+
+Give the folder of the result JSON as `--out-dir`, outside the bundle folder: `compare_runs.py` looks for the Lynx file beside the result JSON. The scorer refuses an `--out-dir` that is the bundle folder or inside it, and it never changes a file in the bundle folder. It also accepts a `READY` queue copy of a bundle. It never replaces an existing Lynx file: to score a bundle again, remove the old file. The scorer exits 0 when it wrote the file, 1 when it refused, and 2 for a usage error.
+
+### Read the output
+
+The scorer writes `<basename>-arm<N>.lynx.json`, where `<basename>` is the result basename and `N` is the arm index, from 0. For each row, the file records the verdict, the status (`scored`, `skipped_overflow` or `parse_error`), the model's reasoning and the prompt token count. A `parse_error` row also keeps the reason and the raw model output. The file also records the model id, the model revision and the SHA-256 of the bundle's `rows.jsonl`.
+
+| Count | Meaning |
+|---|---|
+| `lynx_scored` | Rows with a PASS or a FAIL verdict |
+| `lynx_pass` | Rows with a PASS verdict |
+| `lynx_skipped_overflow` | Rows whose prompt plus 600 output tokens is more than 8,000 tokens. The scorer does not send these rows to the model, and it does not cut them |
+| `lynx_parse_errors` | Rows whose model output has no strict `PASS` or `FAIL` verdict |
+
+`lynx_faithfulness` is `lynx_pass / lynx_scored`, or `null` when no row was scored. The PASS rate is over scored rows only: skipped rows and parse errors are in neither part of the rate. So always read the rate beside the four counts. A run with many long answers can have a high rate over few rows.
+
+`compare_runs.py` finds the Lynx file of arm `@N` beside its result JSON, as `<basename>-arm<N-1>.lynx.json` (`@1` reads `-arm0`). The pending result `<basename>.json` and the judged result `<basename>.judged.json` find the same file. For each arm with a Lynx file, the report shows a "Lynx faithfulness (descriptive)" block with the rate and the four counts. A file that does not match its arm shows as refused, with the reason. For each arm against the baseline, the report also gives an exact McNemar test of PASS over the questions that both arms scored, paired on question text. For the rest of the report, see [Interpreting benchmark results](interpreting_benchmark_results.md).
+
+The PASS rate is descriptive, and it gates nothing: it is not in the leaderboard, the A/B winner, the Holm set or any regression gate. A refused Lynx file does not change the exit code of `compare_runs.py`.
+
+---
+
 ## Prompt sweep
 
 A *prompt sweep* runs N agent prompts through the RAGAS harness with everything
