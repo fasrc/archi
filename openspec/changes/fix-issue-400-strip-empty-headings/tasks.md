@@ -75,7 +75,7 @@
 
 ## 2. Docs
 
-- [ ] 2.1 In `docs/docs/configuration.md`, in the `html_to_markdown.enabled` table row
+- [x] 2.1 In `docs/docs/configuration.md`, in the `html_to_markdown.enabled` table row
       (search for `| \`html_to_markdown.enabled\` |`), add one sentence at the end of the
       description cell: `Empty headings (no text and no image or code) are dropped, so no bare \`#\` line reaches the Markdown.`
       Keep it one table row on one line. Run `bash scripts/gate.sh` green, then commit
@@ -83,7 +83,7 @@
 
 ## 3. Publish
 
-- [ ] 3.1 Push the branch and open the PR. The branch was cut with `checkout -b`, so its
+- [x] 3.1 Push the branch and open the PR. The branch was cut with `checkout -b`, so its
       upstream can be `origin/dev` — push with
       `git push -u origin fix/issue-400-strip-empty-headings`. Confirm the push landed on
       **fasrc/archi**, not a fork:
