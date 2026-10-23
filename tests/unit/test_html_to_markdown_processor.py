@@ -1018,21 +1018,23 @@ def test_hoist_empty_q_before_block_keeps_link():
 )
 def test_hoist_empty_heading_after_two_blocks_gives_one_link(tag, hashes):
     """An empty heading writes ATX hashes as link text, so the head half must not
-    add a second link (issue #713)."""
+    add a second link (issue #713). The heading holds an empty <code> so that
+    issue #400 keeps it; a heading with no child at all is dropped before the hoist."""
     assert (
         html_to_markdown(
             f'<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
-            f"<{tag}></{tag}></a></p>"
+            f"<{tag}><code></code></{tag}></a></p>"
         )
         == _A + "\n\n" + _C + f"\n\n[{hashes}](https://x/y)"
     )
 
 
 def test_hoist_empty_heading_before_block_keeps_link():
-    """An empty <h1> before the block is the link text for the head half (issue #713)."""
+    """An empty <h1> before the block is the link text for the head half (issue #713).
+    The <h1> holds an empty <code> so that issue #400 keeps it."""
     assert (
         html_to_markdown(
-            '<p><a href="https://x/y"><h1></h1><code>a<br>b</code></a></p>'
+            '<p><a href="https://x/y"><h1><code></code></h1><code>a<br>b</code></a></p>'
         )
         == "[#](https://x/y)\n\n" + _A
     )
@@ -2361,6 +2363,66 @@ def test_410_nested_list_needs_break_empty_text():
     html = "<li><ul><li>Inner</li></ul>tail</li>"
     ul = BeautifulSoup(html, "html.parser").find("ul")
     assert _nested_list_needs_break(ul, "   ") is False
+
+
+# --- issue #400: empty headings are dropped ---------------------------------
+
+
+def test_400_empty_heading_dropped():
+    result = html_to_markdown("<h3></h3><p>x</p>")
+    assert "x" in result
+    assert not any(line.startswith("#") for line in result.splitlines())
+
+
+def test_400_whitespace_and_nbsp_heading_dropped():
+    for html in ["<h2>   </h2><p>x</p>", "<h2>&nbsp;</h2><p>x</p>"]:
+        result = html_to_markdown(html)
+        assert "x" in result
+        assert not any(line.startswith("#") for line in result.splitlines())
+
+
+def test_400_empty_span_and_br_heading_dropped():
+    for html in ["<h1><span></span></h1><p>x</p>", "<h4><br></h4><p>x</p>"]:
+        result = html_to_markdown(html)
+        assert "x" in result
+        assert not any(line.startswith("#") for line in result.splitlines())
+
+
+def test_400_heading_with_content_kept():
+    assert html_to_markdown("<h3>Title</h3>") == "### Title"
+    assert html_to_markdown("<h3><code>foo</code></h3>") == "### `foo`"
+    assert html_to_markdown('<h3><img src="a.png" alt="A"></h3>') == "### A"
+
+
+def test_400_all_heading_levels():
+    for level in range(1, 7):
+        empty = html_to_markdown(f"<h{level}></h{level}>")
+        assert not any(line.startswith("#") for line in empty.splitlines())
+        kept = html_to_markdown(f"<h{level}>T</h{level}>")
+        assert kept == ("#" * level) + " T"
+
+
+def test_400_processor_drops_empty_heading():
+    html = "<h3></h3><p>x</p>"
+    out = HtmlToMarkdownProcessor().process(_html_resource(content=html))
+    content = out.get_content()
+    assert content == html_to_markdown(html)
+    assert not any(line.startswith("#") for line in content.splitlines())
+
+
+@pytest.mark.parametrize("tag", ["h1", "h2", "h3", "h4", "h5", "h6"])
+def test_400_empty_heading_in_link_dropped_link_kept(tag):
+    """An empty heading inside a hoisted link is dropped, and the link is kept once,
+    as for a link that holds only the blocks (issues #400 and #713)."""
+    only_blocks = html_to_markdown(
+        '<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code></a></p>'
+    )
+    result = html_to_markdown(
+        f'<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+        f"<{tag}></{tag}></a></p>"
+    )
+    assert result == only_blocks == "<https://x/y>\n\n" + _A + "\n\n" + _C
+    assert result.count("https://x/y") == 1
 
 
 # --- issue #410: _ArchiMarkdownConverter and markdownify wrapper (task 1.2) ---
