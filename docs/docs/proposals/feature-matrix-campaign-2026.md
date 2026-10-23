@@ -178,7 +178,9 @@ its archive checks) and the two `qa_arm.sh` corpus-drift exits (the corpus chang
 the QA run, for a normal arm or a sweep arm).
 The subject names the stack and the arm; the body carries the refusal reason. The exit
 code (2) and the terminal message do not change. Precondition refusals (a bad arm label,
-a missing file, a dirty checkout) fail before any long work starts and never page. A
+a missing file, a dirty checkout) fail before any long work starts and never page. The
+`qa_arm.sh` refusal of a run that scored nothing (§5.3) comes after long work but does not
+page either; it exits 2 with no ledger row. A
 failing mail binary prints `feature_matrix: page failed` and does not change the exit.
 A mail binary that does not return in `FM_MAIL_TIMEOUT` seconds (default 60; a zero or
 non-numeric value also gives 60, because `timeout 0` means no bound) is stopped
@@ -281,6 +283,18 @@ What it does, and why each step exists:
    `r1`. The dataset is the bank + anchors converted once per
    campaign with `ragas_bank_to_qa_dataset.py` ([#418](https://github.com/fasrc/archi/issues/418));
    its item ids are content-derived, and `compare_runs.py` joins them to the RAGAS rows.
+
+   After `archi eval qa` returns, the wrapper re-reads the corpus fingerprint (a moved
+   corpus refuses and pages; see Paging above). Then it reads `summary.json` in the output
+   directory. If that file is missing, is not valid JSON, or its
+   `attempt_lifecycle_counts.scored` is not a whole number above 0, the wrapper exits 2
+   with `QA run scored nothing …` (or `no …/summary.json`, or `… is not readable JSON`)
+   and `the run is void`. It keeps the output directory for diagnosis, writes **no**
+   ledger row, and does **not** page
+   ([#434](https://github.com/fasrc/archi/issues/434)). A run that scored nothing is not
+   an observation, so exit 2 here is never a success. To repeat the run, start `qa_arm.sh`
+   again without `--run`: the kept directory holds its number, so the new run takes the
+   next one. The sweep form (`qa_arm.sh --sweep`) applies the same check.
 3. Optional, for the console's trend graphs: copy the run directory under claw's
    `~/.archi/archi-claw/data/evaluations/runs/` (root-owned; `sudo`). The console lists
    every run directory it finds, so all arms appear side by side in its history view.
@@ -356,6 +370,7 @@ time of day across arms where possible, and the ledger records start and end tim
 | The arm is the pre-registered treatment | lock | the arm YAML's sha256 equals the lock's per-arm manifest entry for its label |
 | A run is tied to a start | provenance | archive refuses when the ledger holds no `ragas-start` row for the stack; the live document/chunk counts must be readable (the stack is deleted right after) |
 | The QA corpus held for the whole run | G3 | `qa_arm.sh` re-reads the fingerprint after `archi eval qa` returns and writes no row if it moved |
+| A QA run that scored nothing is void | #434 | `qa_arm.sh` writes no row unless the run's `summary.json` records `attempt_lifecycle_counts.scored` > 0; it keeps the output directory and exits 2 |
 
 ## 8. Budget
 

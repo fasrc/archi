@@ -81,3 +81,11 @@
       `gh pr create --repo fasrc/archi --base dev --head fix/issue-434-qa-arm-fail-closed --title "fix(#434): qa_arm fails closed on a qa run that scored nothing" --body-file /tmp/pr-434.md`.
       The task is complete when `gh pr view --repo fasrc/archi
       fix/issue-434-qa-arm-fail-closed` prints the PR.
+
+## 5. Review round 1 (2026-10-23, Codex on 3bc34523)
+
+- [x] 5.1 Document the new refusal in the campaign runbook
+      (`docs/docs/proposals/feature-matrix-campaign-2026.md`): §5.3 step 2 states the
+      `summary.json` check, the three messages, exit 2, the kept output directory, no ledger
+      row, no page, and that a repeat run without `--run` takes the next number; the Paging
+      paragraph says this refusal does not page; the §7 table has a row for it.
