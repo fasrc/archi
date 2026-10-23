@@ -55,11 +55,16 @@ No text is cut.
 ### D4. A strict parser
 
 `parse.py` decodes every top-level JSON object in the output (`json.JSONDecoder.raw_decode`
-at each `{`). The verdict comes from the `SCORE` values of these objects. Only the exact
-strings `PASS` and `FAIL`, after `strip()`, are verdicts. These are parse errors: no JSON
-object, no `SCORE` key, a `SCORE` that is not one of the two strings (`"pass"`, `"PASS."`,
-a number), and two objects with different scores. A parse error gives `verdict: null` and
-`status: parse_error`, and it is in neither the numerator nor the denominator.
+at each `{` that is not inside an object it already decoded). The verdict comes from the
+`SCORE` values of these objects. Only the exact strings `PASS` and `FAIL`, after `strip()`,
+are verdicts. These are parse errors: no JSON object, no `SCORE` key, a `SCORE` that is not
+one of the two strings (`"pass"`, `"PASS."`, a number), two objects with different scores,
+`NaN` or `Infinity` in an object, and a top-level `{` that does not start a complete JSON
+object. The last rule stops a cut-off answer, such as
+`{"REASONING": {"SCORE": "PASS"}, "SCORE": "FAIL"`, from giving the verdict of a nested
+object; a stray `{` in prose before the answer is also a parse error. A parse error gives
+`verdict: null` and `status: parse_error`, and it is in neither the numerator nor the
+denominator.
 
 ### D5. Bundle checks before any model call
 

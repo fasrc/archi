@@ -30,7 +30,13 @@ def _reject_constant(name: str) -> Any:
 
 
 def _top_level_objects(text: str) -> List[dict]:
-    """Every JSON object in *text* that is not inside another one, in order."""
+    """Every JSON object in *text* that is not inside another one, in order.
+
+    Raises ValueError at a ``{`` outside these objects that does not start a
+    complete JSON object. Scanning on inside it would read a nested object of a
+    cut-off answer, such as ``{"REASONING": {"SCORE": "PASS"}, "SCORE": "FAIL"``,
+    as the verdict.
+    """
     decoder = json.JSONDecoder(parse_constant=_reject_constant)
     objects: List[dict] = []
     index = text.find("{")
@@ -38,17 +44,20 @@ def _top_level_objects(text: str) -> List[dict]:
         try:
             value, end = decoder.raw_decode(text, index)
         except ValueError:
-            index = text.find("{", index + 1)
-            continue
-        if isinstance(value, dict):
-            objects.append(value)
+            raise ValueError(
+                f"the '{{' at offset {index} does not start a complete JSON object"
+            ) from None
+        objects.append(value)
         index = text.find("{", end)
     return objects
 
 
 def parse_output(text: str) -> Parsed:
     """The verdict in one Lynx output, or a parse error that names the reason."""
-    objects = _top_level_objects(text)
+    try:
+        objects = _top_level_objects(text)
+    except ValueError as exc:
+        return Parsed(None, error=str(exc))
     if not objects:
         return Parsed(None, error="no JSON object in the output")
     scored = [obj for obj in objects if "SCORE" in obj]

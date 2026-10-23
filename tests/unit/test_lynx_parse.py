@@ -42,6 +42,10 @@ def test_text_around_the_object_is_ignored():
         '["PASS"]',
         '{"REASONING": NaN, "SCORE": "PASS"}',
         '{"REASONING": [Infinity], "SCORE": "FAIL"}',
+        # A cut-off outer object must not yield the verdict of an inner one.
+        '{"REASONING": {"SCORE": "PASS"}, "SCORE": "FAIL"',
+        '{"REASONING": ["a", {"SCORE": "PASS"}], "SCORE": "FA',
+        'Note {draft} {"REASONING": "r", "SCORE": "PASS"}',
     ],
 )
 def test_anything_else_is_a_parse_error(output):
@@ -63,6 +67,16 @@ def test_a_second_object_without_a_score_does_not_change_the_verdict():
 def test_a_nested_score_is_not_read_as_a_second_object():
     output = '{"REASONING": {"SCORE": "FAIL"}, "SCORE": "PASS"}'
     assert parse.parse_output(output).verdict == "PASS"
+
+
+def test_braces_inside_a_complete_object_are_fine():
+    output = '{"REASONING": "uses {name} and }", "SCORE": "PASS"}'
+    assert parse.parse_output(output).verdict == "PASS"
+
+
+def test_a_brace_that_starts_no_object_names_its_offset():
+    error = parse.parse_output('{"SCORE": "PASS"} {broken').error
+    assert "offset 18" in error
 
 
 def test_the_errors_name_the_reason():
