@@ -352,6 +352,11 @@ data_manager:
     chunk_overlap: {{ data_manager.chunking.chunk_overlap | tojson }}
 {%- endif %}
   parallel_workers: {{ data_manager.parallel_workers | default(32, true) }}
+  # Rendered into compose as OMP_NUM_THREADS, not read here. Recorded only when set,
+  # so `archi restart -c` sees a change to it as a data_manager change (#721).
+{%- if data_manager.torch_threads is defined and data_manager.torch_threads is not none %}
+  torch_threads: {{ data_manager.torch_threads }}
+{%- endif %}
   # Scrape-phase concurrency (issue #136), independent of the embedding-phase
   # `parallel_workers` above. `scrape_workers` bounds how many seed URLs are crawled
   # in parallel; `scrape_per_host_workers` caps concurrent in-flight requests to any
