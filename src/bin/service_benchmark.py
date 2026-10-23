@@ -56,6 +56,7 @@ from src.utils.benchmark_schema import (
     metric_winner,
     normalize_bank,
     ragas_effective_settings,
+    ragas_run_config_kwargs,
     required_fields_for_modes,
     with_effective_ragas_settings,
 )
@@ -72,7 +73,12 @@ from src.utils.judge_bundle import (
     write_judge_bundle,
     write_result_complete,
 )
-from src.utils.judge_identity import canonical_identity, differing_fields
+from src.utils.judge_identity import (
+    canonical_identity,
+    differing_fields,
+    extended_identity,
+    inline_scorer_identity,
+)
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
 
@@ -2199,6 +2205,39 @@ class Benchmarker:
         finally:
             self._ragas_scored = outcome.scored
             self._judge_usage = outcome.usage
+            # The D10 fields of this arm's judge (#732); run() merges them into
+            # the four-field identity it records. None when no judge was built.
+            self._ragas_judge_extension = (
+                None
+                if outcome.decoding is None
+                else {
+                    "model_revision": None,
+                    "precision": None,
+                    "server_image_digest": None,
+                    "server_args": None,
+                    "decoding": outcome.decoding,
+                    "run_config": ragas_run_config_kwargs(ragas_settings, verbosity),
+                    "batch_size": ragas_settings["batch_size"] or None,
+                    "chunk_size": None,
+                    "embedding": outcome.embedding,
+                    "metrics": [m for m in RAGAS_METRIC_NAMES if m in enabled_metrics],
+                }
+            )
+
+    def _recorded_judge_identity(self):
+        """The judge identity this arm records: #618's four fields plus D10's.
+
+        The four-field ``_ragas_judge_identity`` alone when no judge was built
+        or the arm has no extension. The scorer of an inline run is the
+        benchmark image; its identity is computed once per run (``pip freeze``).
+        """
+        base = getattr(self, "_ragas_judge_identity", None)
+        fields = getattr(self, "_ragas_judge_extension", None)
+        if base is None or fields is None:
+            return base
+        if getattr(self, "_inline_scorer", None) is None:
+            self._inline_scorer = inline_scorer_identity(PACKAGE_DIR)
+        return extended_identity(base, scorer=self._inline_scorer, **fields)
 
     def _source_scorable_count(self) -> int:
         """The source-accuracy denominator: questions that declare expected sources.
@@ -2504,6 +2543,7 @@ class Benchmarker:
             _, category_map_before = ResultHandler.get_category_map(arm_config)
             self._judge_usage = None
             self._ragas_judge_identity = None
+            self._ragas_judge_extension = None
             self._ragas_scored = None
             self._judge_bundle = None
             self._arm_index = arm_index
@@ -2533,7 +2573,7 @@ class Benchmarker:
                 retrieval_identity=arm_identity,
                 judge_usage=getattr(self, "_judge_usage", None),
                 ragas_scored=getattr(self, "_ragas_scored", None),
-                judge_identity=getattr(self, "_ragas_judge_identity", None),
+                judge_identity=self._recorded_judge_identity(),
                 judge_bundle=getattr(self, "_judge_bundle", None),
             )
             self.load_new_configuration()

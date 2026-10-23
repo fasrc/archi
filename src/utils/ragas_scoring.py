@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import importlib
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from langchain_openai import ChatOpenAI
 
@@ -19,6 +19,7 @@ from src.utils.benchmark_schema import (
     ragas_run_config_kwargs,
     score_metrics_per_eligibility,
 )
+from src.utils.judge_identity import describe_decoding, describe_embedding
 from src.utils.llm_usage import UsageRecorder
 
 
@@ -27,6 +28,21 @@ class RagasScoreOutcome:
     aggregates: Dict[str, Any] = field(default_factory=dict)
     scored: bool = False
     usage: Optional[Dict[str, Any]] = None
+    # What the built judge and embedding objects report (D10), or None when
+    # the judge was never built.
+    decoding: Optional[Dict[str, Any]] = None
+    embedding: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class RagasScorer:
+    """A built judge: ``score_fn(metric, rows)`` returns one score per row."""
+
+    metrics: List[str]
+    score_fn: Callable[[str, List[Dict[str, Any]]], List[Any]]
+    recorder: UsageRecorder
+    decoding: Dict[str, Any]
+    embedding: Dict[str, Any]
 
 
 def build_ragas_judge_llm(identity, *, chat_openai, get_model):
@@ -153,6 +169,66 @@ def build_ragas_embeddings(
             return openai_embeddings()
 
 
+def build_ragas_scorer(
+    *,
+    enabled_metrics,
+    ragas_settings,
+    verbosity,
+    judge_factory,
+    embeddings_factory,
+    judge_provider,
+    judge_model,
+    on_call=None,
+) -> RagasScorer:
+    """Build the judge, the embeddings and the ragas call settings once.
+
+    The inline path (``score_ragas``) and the offline scorer (#732) both score
+    through the returned ``score_fn``, so one ragas call serves both. Keeps lazy
+    ragas imports, and builds the judge and embeddings eagerly. ``on_call`` runs
+    before each ragas call.
+    """
+    from ragas import EvaluationDataset, RunConfig, evaluate
+
+    ragas_metrics = importlib.import_module("ragas.metrics")
+    from ragas.embeddings import LangchainEmbeddingsWrapper
+    from ragas.llms import LangchainLLMWrapper
+
+    metrics = [name for name in RAGAS_METRIC_NAMES if name in enabled_metrics]
+    all_metrics = build_ragas_metric_objects(ragas_metrics, metrics)
+
+    batch_size = ragas_settings["batch_size"] or None
+    runconfig = RunConfig(**ragas_run_config_kwargs(ragas_settings, verbosity))
+    judge = judge_factory()
+    llm = LangchainLLMWrapper(judge)
+    embedder = embeddings_factory()
+    embeddings = LangchainEmbeddingsWrapper(embedder)
+    recorder = UsageRecorder(judge_provider, judge_model or "")
+
+    def score_fn(metric, eligible_rows):
+        if on_call is not None:
+            on_call()
+        dataset = EvaluationDataset.from_list(eligible_rows)
+        evaluation = evaluate(
+            dataset,
+            metrics=[all_metrics[metric]],
+            llm=llm,
+            embeddings=embeddings,
+            run_config=runconfig,
+            batch_size=batch_size,
+            callbacks=[recorder],
+        )
+        column = ragas_result_column(all_metrics[metric])
+        return evaluation.to_pandas()[column].tolist()
+
+    return RagasScorer(
+        metrics=metrics,
+        score_fn=score_fn,
+        recorder=recorder,
+        decoding=describe_decoding(judge),
+        embedding=describe_embedding(embedder),
+    )
+
+
 def score_ragas(
     rows,
     keys,
@@ -169,42 +245,28 @@ def score_ragas(
 ):
     """Score RAGAS metrics, writing per-row results into results_by_key and outcome.
 
-    Keeps lazy ragas imports and builds the judge and embeddings eagerly before
-    checking row eligibility, matching today's order in service_benchmark.
+    Builds the judge and embeddings eagerly before checking row eligibility,
+    matching today's order in service_benchmark.
     """
-    from ragas import EvaluationDataset, RunConfig, evaluate
 
-    ragas_metrics = importlib.import_module("ragas.metrics")
-    from ragas.embeddings import LangchainEmbeddingsWrapper
-    from ragas.llms import LangchainLLMWrapper
-
-    metrics = [name for name in RAGAS_METRIC_NAMES if name in enabled_metrics]
-    all_metrics = build_ragas_metric_objects(ragas_metrics, metrics)
-
-    batch_size = ragas_settings["batch_size"] or None
-    runconfig = RunConfig(**ragas_run_config_kwargs(ragas_settings, verbosity))
-    llm = LangchainLLMWrapper(judge_factory())
-    embeddings = LangchainEmbeddingsWrapper(embeddings_factory())
-    recorder = UsageRecorder(judge_provider, judge_model or "")
-
-    def score_fn(metric, eligible_rows):
+    def mark_scored():
         outcome.scored = True
-        dataset = EvaluationDataset.from_list(eligible_rows)
-        evaluation = evaluate(
-            dataset,
-            metrics=[all_metrics[metric]],
-            llm=llm,
-            embeddings=embeddings,
-            run_config=runconfig,
-            batch_size=batch_size,
-            callbacks=[recorder],
-        )
-        column = ragas_result_column(all_metrics[metric])
-        return evaluation.to_pandas()[column].tolist()
 
+    scorer = build_ragas_scorer(
+        enabled_metrics=enabled_metrics,
+        ragas_settings=ragas_settings,
+        verbosity=verbosity,
+        judge_factory=judge_factory,
+        embeddings_factory=embeddings_factory,
+        judge_provider=judge_provider,
+        judge_model=judge_model,
+        on_call=mark_scored,
+    )
+    outcome.decoding = scorer.decoding
+    outcome.embedding = scorer.embedding
     try:
         outcome.aggregates = score_metrics_per_eligibility(
-            rows, keys, metrics, results_by_key, score_fn
+            rows, keys, scorer.metrics, results_by_key, scorer.score_fn
         )
     finally:
-        outcome.usage = recorder.snapshot()
+        outcome.usage = scorer.recorder.snapshot()
