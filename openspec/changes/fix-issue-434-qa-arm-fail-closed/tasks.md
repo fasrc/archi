@@ -47,7 +47,7 @@
       `eval qa score <dir>`, never on `eval qa run` or `eval qa prepare`). Run the
       self-test: it must still end `0 failed` with the same passed count as before. Commit
       (`test: stub archi writes a qa summary.json`).
-- [ ] 1.2 Add checks 90–94 (design D4) to `test_feature_matrix_wrappers.sh` after the check 82
+- [x] 1.2 Add checks 90–94 (design D4) to `test_feature_matrix_wrappers.sh` after the check 82
       block (the last block in the file), before the final `printf ... passed`, and fix the
       header block (design D5). Each new check prints exactly one `ok` or `not ok` line. Run
       the self-test and confirm 90, 91, 92 and 94 fail (93 can already pass). Then add

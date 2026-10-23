@@ -395,6 +395,39 @@ with open(path, "w") as f:
 EOF
 }
 
+fm_require_scored() { # $1 = QA output dir → refuses unless summary.json records at least one scored attempt
+  local path result
+  path="$1/summary.json"
+  result="$(FM_SUMMARY_PATH="$path" "$FM_PYTHON" - 2>/dev/null <<'EOF'
+import json, os, sys
+path = os.environ["FM_SUMMARY_PATH"]
+if not os.path.exists(path):
+    print("missing"); sys.exit(0)
+try:
+    data = json.load(open(path))
+except Exception:
+    print("notjson"); sys.exit(0)
+if not isinstance(data, dict):
+    print("notjson"); sys.exit(0)
+alc = data.get("attempt_lifecycle_counts")
+if not isinstance(alc, dict):
+    print(f"unscored:{alc!r}"); sys.exit(0)
+scored = alc.get("scored")
+if scored is None or isinstance(scored, bool) or not isinstance(scored, int) or scored <= 0:
+    print(f"unscored:{scored!r}"); sys.exit(0)
+print("ok")
+EOF
+  )" || result="notjson"
+  [ -n "$result" ] || result="notjson"
+  case "$result" in
+    ok) return 0 ;;
+    missing) fm_die "no $path; output kept at $1 but NOT recorded — the run is void" ;;
+    notjson) fm_die "$path is not readable JSON; output kept at $1 but NOT recorded — the run is void" ;;
+    unscored:*) fm_die "QA run scored nothing ($path attempt_lifecycle_counts.scored = ${result#unscored:}); output kept at $1 but NOT recorded — the run is void" ;;
+    *) fm_die "$path is not readable JSON; output kept at $1 but NOT recorded — the run is void" ;;
+  esac
+}
+
 fm_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # --- sweep mode (change sweep-mode-feature-matrix-wrappers) ------------------------------
