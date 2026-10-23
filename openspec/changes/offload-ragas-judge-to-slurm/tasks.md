@@ -75,7 +75,7 @@ Rules for every task:
   - a `FAILED` arm makes the merge write nothing for that result and exit non-zero;
   - a result whose pending JSON is not yet in `<queue>/results/` gets nothing, and the merge exits 0;
   - arms with different `ragas_judge_identity_effective` values keep their per-arm scores, and the leaderboard and A/B comparisons withhold ranks and winners, as #618 does in-run;
-  - the judged file has every arm's per-row scores and aggregates, the leaderboard, A/B, `judge_status: scored`, and each arm's `ragas_effective_settings`, `ragas_judge_identity_effective` (the extended `judge_identity`) and `judge_execution`;
+  - the judged file has every arm's per-row scores and aggregates, the leaderboard, A/B, `judge_status: scored`, and each arm's `ragas_effective_settings`, `ragas_judge_identity_effective` (the extended `judge_identity`) and `judge_execution`, and every other field of the pending file unchanged;
   - the pending file is unchanged, and a second merge gives identical bytes;
   - a digest mismatch exits non-zero;
   - a merge killed while it writes leaves no judged file and no `MERGED`, and the next merge completes, and removes the temporary file only when it is older than 1 hour;
@@ -103,9 +103,16 @@ Rules for every task:
   - `judge_submit.sh`, with stub `sbatch` and `squeue` on `PATH` (it submits exactly one judge job);
   - the scorer CLI with a stub judge in place of vLLM (it claims both bundles, scores them, and marks them `SCORED`);
   - `merge.py` (it writes one judged file with both arms, and `MERGED`), and the publish copy-back;
-  - `compare_runs.py` on the two-arm file: G11 refuses the pending file and accepts the judged file, and G12 passes because both arms have the same identity; then `archive_run.sh --sweep` on the judged file (one ledger row per arm, each with its `ragas_judge_identity_effective`). Do not use the single-run path: it refuses an artifact with more than one arm (`scripts/benchmarking/feature_matrix/archive_run.sh:164` at `e2978a1d`), and only `--sweep` (`:39-73`) writes one ledger row per arm. Run it with `FM_OUT` on the temporary folder, a stub `FM_DOCKER`, a sweep lock and stack stamp for the two arms, and a `ragas-start` ledger row for the stack.
+  - `compare_runs.py` on the two-arm file: G11 refuses the pending file and accepts the judged file, and G12 passes because both arms have the same identity; then `archive_run.sh --sweep <sweep_dir> --stack <stack> --run 1 --census <census.json>` on the judged file (one ledger row per arm, each with its `ragas_judge_identity_effective`). Do not use the single-run path: it refuses an artifact with more than one arm (`scripts/benchmarking/feature_matrix/archive_run.sh:164` at `e2978a1d`), and only `--sweep` (`:39-73`) writes one ledger row per arm.
 
-  The judged aggregates must equal the inline aggregates for the same rows and the same stub judge.
+  The sweep archiver refuses unless every campaign precondition holds. Build each one in the temporary folder, as the `sweep` fixture and the `_lock`, `_artifact`, `_census` and `_ledger` helpers of `tests/unit/test_sweep_tools.py` do for `sweep_tools.archive` (anchors at `e2978a1d`):
+  - the two arms are a generated two-arm sweep (`sweep_tools.generate`), locked with `sweep_tools.build_lock`, and the deferred run uses their configs, so each arm's name and `agent_md_sha256` match the lock (`scripts/benchmarking/feature_matrix/sweep_tools.py:337-350`, `:396-400`);
+  - both arms record the same usable corpus fingerprint at both endpoints (`:382-385`, `:414-415`);
+  - a passing census for run 1, whose corpus fingerprint, inputs and map digest match the arms and the lock, passed with `--census` (`_check_census`, `:276-314`, called for run 1 at `:421-422`; map digest at `:463-476`);
+  - a `ragas-start` ledger row for the stack, older than the judged file (`:368-375`);
+  - the lock at `$FM_OUT/sweep-<stack>.lock`, the stack stamp under `ARCHI_DIR`, a stub `FM_DOCKER` that reports the benchmark container exited, and an `FM_GIT` that gives the locked code tree and a clean status (`scripts/benchmarking/feature_matrix/lib.sh:434-450`).
+
+  The test fails if the archiver refuses the judged file for any reason. The judged file must keep each arm's other fields from the pending file (configuration, corpus fingerprints, `agent_md_sha256`), because the archiver reads them. The judged aggregates must equal the inline aggregates for the same rows and the same stub judge.
 
 ## 5. Operator (after PR 4 merges, not automated)
 
