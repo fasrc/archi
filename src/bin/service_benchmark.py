@@ -65,7 +65,13 @@ from src.utils.generate_benchmark_report import (
     format_markdown_output,
     parse_benchmark_results,
 )
-from src.utils.judge_bundle import is_deferred, plan_judge_run, write_result_complete
+from src.utils.judge_bundle import (
+    is_deferred,
+    pending_arm_fields,
+    plan_judge_run,
+    write_judge_bundle,
+    write_result_complete,
+)
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
 
@@ -643,6 +649,7 @@ class ResultHandler:
         judge_usage: Optional[Dict[str, Any]] = None,
         ragas_scored: Optional[bool] = None,
         judge_identity: Optional[Dict[str, Any]] = None,
+        judge_bundle: Optional[Dict[str, str]] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -856,6 +863,10 @@ class ResultHandler:
                 selected_file=str(config_path),
             ),
         }
+        # A deferred arm (#731, design D8): `judge_status: pending` and its
+        # bundle. An inline arm gets neither key.
+        if judge_bundle is not None:
+            current_results.update(pending_arm_fields(judge_bundle))
 
         ResultHandler.results.append(current_results)
         ResultHandler.category_map_records_by_arm.append(category_map_end_records)
@@ -2267,7 +2278,32 @@ class Benchmarker:
             # False (#518). get_ragas_results sets it True only when a metric
             # invokes the judge. Left untouched when RAGAS is not a mode.
             self._ragas_scored = False
-            if ragas_input:
+            if is_deferred(getattr(self, "judge_plan", None)):
+                # Deferred (#731, design D6): write this arm's judge bundle in
+                # place of the judge. No judge or embedding object is built and
+                # no aggregate is written; _ragas_scored stays False, so
+                # handle_results records the #518 null judge fields. An arm with
+                # no scorable row still writes a bundle: the merge waits for
+                # every arm.
+                plan = self.judge_plan
+                self._judge_bundle = write_judge_bundle(
+                    OUTPUT_DIR / plan.bundle_dir,
+                    result_basename=self.result_basename,
+                    arm_index=self._arm_index,
+                    arm_count=plan.arm_count,
+                    rows=ragas_input,
+                    keys=list(scorable_items(question_wise_results).keys()),
+                    enabled_metrics=self.benchmarking_configs["mode_settings"][
+                        "ragas_settings"
+                    ]["enabled_metrics"],
+                    ragas_settings=self.config["services"]["benchmarking"][
+                        "mode_settings"
+                    ]["ragas_settings"],
+                    verbosity=self.config.get("global", {}).get("verbosity", 0),
+                    code_version=plan.code_version,
+                    package_digest=plan.package_digest,
+                )
+            elif ragas_input:
                 logger.info("Starting to collect RAGAS results")
                 # scorable_items carries #92's per-question keys in ragas_input
                 # order; get_ragas_results scores each metric over its own
@@ -2455,6 +2491,9 @@ class Benchmarker:
         )
         logger.info("")
 
+        # 0-based position of the arm in benchmarking_results; a deferred arm
+        # names its judge bundle with it (#731, design D5).
+        arm_index = 0
         while self.all_config_files:
             # Read the corpus BEFORE the arm's questions, so the report can show
             # whether they were all scored against the same documents.
@@ -2465,6 +2504,8 @@ class Benchmarker:
             self._judge_usage = None
             self._ragas_judge_identity = None
             self._ragas_scored = None
+            self._judge_bundle = None
+            self._arm_index = arm_index
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
                 Path(self.current_config),
@@ -2492,8 +2533,10 @@ class Benchmarker:
                 judge_usage=getattr(self, "_judge_usage", None),
                 ragas_scored=getattr(self, "_ragas_scored", None),
                 judge_identity=getattr(self, "_ragas_judge_identity", None),
+                judge_bundle=getattr(self, "_judge_bundle", None),
             )
             self.load_new_configuration()
+            arm_index += 1
 
         ResultHandler.add_metadata()
 

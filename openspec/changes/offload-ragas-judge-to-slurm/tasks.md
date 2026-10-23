@@ -20,8 +20,8 @@ Rules for every task:
 - [x] 2.2a Add a test: the run fixes its result basename once, before the first arm, and `dump_artifacts` writes the JSON and the `_report.md` with that basename. Then pass the basename from the run start to `dump_artifacts` and to the bundle writer.
 - [x] 2.2b Add a test: a deferred run writes `<basename>.RESULT_COMPLETE` only after `dump_artifacts` returns, and a deferred run whose `code_version.digest` is unavailable refuses to start.
 - [x] 2.3 Add a test: the bundle writer makes `rows.jsonl` equal to the inline ragas records for each key, a `manifest.json` that has every field in the spec (including the arm count of the result, and the resolved `ragas_run_config_kwargs` output and `batch_size`) and the correct SHA-256, and `BUNDLE_COMPLETE` after every other file. Then write the writer (`src/utils/judge_bundle.py`).
-- [ ] 2.4 Add a test: a deferred arm makes no judge-factory call, records `judge_status: pending` and the bundle digest, and has no RAGAS aggregates. Then add the call site in `_process_config`.
-- [ ] 2.5 Add a test: a result JSON with no `judge_status` loads as `inline`.
+- [x] 2.4 Add a test: a deferred arm makes no judge-factory call, records `judge_status: pending` and the bundle digest, and has no RAGAS aggregates. Then add the call site in `_process_config`.
+- [x] 2.5 Add a test: a result JSON with no `judge_status` loads as `inline`.
 - [ ] 2.5a Add tests for the `link` primitive (design D3) in one shared helper: exactly one of two writers of the same name wins; the loser never replaces the winner's bytes; a writer whose `link` returns `EEXIST` while its temporary file has link count 2 reports success; the name never exists without its full content.
 - [ ] 2.6 Add tests for `scripts/benchmarking/judge/publish.py`. The tests check that:
   - `READY` is written last, with the `link` primitive;

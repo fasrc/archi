@@ -266,6 +266,22 @@ def write_judge_bundle(
     return {"folder": folder.name, "digest": rows_sha256}
 
 
+def pending_arm_fields(judge_bundle: Mapping[str, str]) -> Dict[str, Any]:
+    """The two keys a deferred arm's result record gets (design D8)."""
+    return {
+        "judge_status": "pending",
+        "judge_bundle": {
+            "folder": judge_bundle["folder"],
+            "digest": judge_bundle["digest"],
+        },
+    }
+
+
+def judge_status_of(arm_record: Mapping[str, Any]) -> str:
+    """The judge status of a result arm; a record with no status reads as inline."""
+    return arm_record.get("judge_status") or "inline"
+
+
 def write_result_complete(output_dir: Path, result_basename: str) -> Path:
     """Create the empty ``<result_basename>.RESULT_COMPLETE`` marker (design D9).
 

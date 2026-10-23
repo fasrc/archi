@@ -231,7 +231,7 @@ Rules for every task:
 
 ## 5. The deferred call site (parent tasks 2.4 and 2.5)
 
-- [ ] 5.1 Create `tests/unit/test_benchmark_deferred_arm.py`. Build the bench with
+- [x] 5.1 Create `tests/unit/test_benchmark_deferred_arm.py`. Build the bench with
       `object.__new__(Benchmarker)` (pattern of
       `tests/unit/test_ragas_scoring_characterization.py`), set `config`,
       `benchmarking_configs`, `judge_plan` (deferred, with a code version and a package
