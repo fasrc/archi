@@ -58,3 +58,37 @@ Rules for every task:
 - [x] 7.1 `tests/unit/test_lynx_acceptance.py`: `import scripts.benchmarking.lynx.score`
       works with `vllm` and `transformers` blocked; `src/utils/benchmark_schema.py` and the
       `METRICS` of `compare_runs.py` do not name Lynx (D10).
+
+## 8. Slurm job (issue #735, Plan steps 1-4)
+
+Issue #735 is the work order for groups 8 and 9. Where it and D11 differ, D11 wins.
+No test needs Slurm, a GPU, Apptainer or the network: stub `apptainer`, `sbatch` and
+`squeue` executables on `PATH` record each call.
+
+- [x] 8.1 `tests/unit/test_lynx_sbatch.py`: `bash scripts/benchmarking/slurm/lynx_score.sbatch
+      --dry-run <bundle folder>` exits 0 and prints one `apptainer exec` command with `--nv`,
+      the pinned image, `python3 -m scripts.benchmarking.lynx.score <bundle folder>`, the
+      model id, the revision, `--out-dir` and `--backend vllm`; no stub records a call and
+      no scratch folder is made. Then `scripts/benchmarking/slurm/lynx_score.sbatch` (D11).
+- [x] 8.2 Same file: a missing folder, a folder with no `BUNDLE_COMPLETE` (also a `READY`
+      queue copy), a folder name that is not `<basename>-arm<N>`, an existing Lynx file and
+      a usage error exit non-zero and start nothing (D11).
+- [x] 8.3 Same file: the out dir is the second argument, or else the nearest folder above
+      the bundle folder that holds `<basename>.json`, also for a nested `judge_bundle_dir`;
+      with neither, and with an out dir that is the bundle folder, the script exits
+      non-zero (D11).
+- [x] 8.4 Same file: the script text names neither requeue partition and has
+      `#SBATCH --no-requeue`; the image setting has an exact tag, and the tag check fails on
+      `:latest` and on no tag; the active `#SBATCH` lines ask for one GPU on `gpu`, and the
+      70B variant is commented out (D11).
+- [x] 8.5 Same file: without `--dry-run`, a run outside a Slurm job, a submit folder that is
+      not the repo root, and an unset lab are refused before `apptainer`; in a Slurm job the
+      stub `apptainer` gets the same arguments that `--dry-run` prints (D11).
+
+## 9. Docs (issue #735, Plan step 5)
+
+- [x] 9.1 `tests/unit/test_benchmarking_docs_lynx.py`: the "Lynx faithfulness (offline)"
+      section of `docs/docs/benchmarking.md` gives the job and the scorer invocation, says
+      that `--out-dir` is the folder of the result JSON and is outside the bundle folder,
+      names the four counts, says that the PASS rate is over scored rows only, and says
+      that it gates nothing. Then the section (D12). `mkdocs build --strict` passes.

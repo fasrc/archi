@@ -48,6 +48,10 @@ places, and the issue says to obey the merged code:
   when the file does not match the arm, and adds a Lynx McNemar entry for each arm against
   the baseline over the questions that both arms scored.
 - A result with no Lynx file loads and reports exactly as before.
+- Issue #735 (child 2 of 2 of #583) adds `scripts/benchmarking/slurm/lynx_score.sbatch`,
+  a FASRC Slurm GPU job that runs the scorer over one run bundle in a pinned vLLM
+  container, with a tested `--dry-run`, and a "Lynx faithfulness (offline)" section in
+  `docs/docs/benchmarking.md`.
 
 ## Capabilities
 
@@ -67,9 +71,12 @@ None. Lynx is not a RAGAS metric: it is not in `RAGAS_METRIC_NAMES`, in the `MET
   `score.py`, `report.py`, and new unit tests with a template fixture.
 - Changed: `scripts/benchmarking/compare_runs.py` (call sites for the Lynx block, its
   rendering, and the Lynx paired entry).
+- New (#735): `scripts/benchmarking/slurm/lynx_score.sbatch`,
+  `tests/unit/test_lynx_sbatch.py` and `tests/unit/test_benchmarking_docs_lynx.py`.
+- Changed (#735): `docs/docs/benchmarking.md` (a new section).
 - Not changed: the bundle writer, `publish.py`, the offload judge job, `src/utils/benchmark_schema.py`,
-  `docs/`, and `fasrc/archi-config`.
-- Not in scope: the Slurm job script and the docs (#735), and any release or comparison
-  gate.
+  and `fasrc/archi-config`.
+- Not in scope: any release or comparison gate, a run on the cluster (#737, step 7), and
+  Lynx 70B on more than one GPU (#755).
 - Dependencies: none added. `vllm` and `transformers` are not in `pyproject.toml`; the
   scorer runs inside a vLLM container on the cluster (#735).

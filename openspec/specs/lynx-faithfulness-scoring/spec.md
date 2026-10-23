@@ -1,5 +1,8 @@
-## ADDED Requirements
+# lynx-faithfulness-scoring Specification
 
+## Purpose
+A per-row PatronusAI Lynx faithfulness verdict for a `judge_mode: deferred` run, scored offline from the run's judge bundle. It covers the model-card prompt, the strict PASS or FAIL parser, the overflow skips, the output file outside the bundle, the descriptive Lynx block and paired exact test in `compare_runs.py`, the FASRC Slurm job that runs the scorer in a pinned vLLM container, and the docs that tell an operator how to run it and read it.
+## Requirements
 ### Requirement: The Lynx prompt is the model-card template
 The Lynx scorer SHALL build each prompt from the model-card template of `PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct`, byte for byte, with QUESTION = `user_input`, DOCUMENT = the `retrieved_contexts` joined with `"\n\n"`, and ANSWER = `response`. It SHALL NOT use `reference`. The vLLM backend SHALL send the prompt as one user chat message, and it SHALL count the tokens of that same chat text.
 
@@ -95,3 +98,26 @@ The Lynx scorer SHALL NOT create, change or remove any file in the bundle folder
 #### Scenario: Positional keys differ
 - **WHEN** the same question is `question_3` in the baseline and `question_2` in the arm
 - **THEN** the paired test pairs the two rows by their question text
+
+### Requirement: The Lynx Slurm job scores one run bundle in a pinned container
+`scripts/benchmarking/slurm/lynx_score.sbatch` SHALL run the Lynx scorer with `--backend vllm` over one run bundle with `BUNDLE_COMPLETE`, through `apptainer exec --nv` of a `vllm/vllm-openai` image at an exact tag, with the model id and revision set at the top of the script. It SHALL refuse, with a non-zero exit and before it starts a container, a missing bundle folder, a folder with no `BUNDLE_COMPLETE`, a folder name that is not `<basename>-arm<N>`, and a run with no out dir. The out dir SHALL be the second argument, or else the nearest folder above the bundle folder that holds `<basename>.json`. The script SHALL NOT name a requeue partition, and it SHALL ask Slurm not to requeue the job. With `--dry-run`, it SHALL print the command, exit 0, and start nothing.
+
+#### Scenario: Dry run
+- **WHEN** the operator runs `bash scripts/benchmarking/slurm/lynx_score.sbatch --dry-run <bundle folder>` for a bundle under `<out_dir>/judge_bundles/` with `<basename>.json` in `<out_dir>`
+- **THEN** the script exits 0, prints the `apptainer exec` command with `--nv`, the pinned image, the scorer module, the model id, the revision, `--out-dir <out_dir>` and `--backend vllm`, and starts no container
+
+#### Scenario: Incomplete bundle
+- **WHEN** the bundle folder is missing, or has no `BUNDLE_COMPLETE`
+- **THEN** the script exits non-zero and starts no container
+
+#### Scenario: No requeue
+- **WHEN** a reviewer reads the script
+- **THEN** it names no requeue partition and it has `#SBATCH --no-requeue`
+
+### Requirement: The benchmarking docs describe the Lynx job and its output
+`docs/docs/benchmarking.md` SHALL have a "Lynx faithfulness (offline)" section that gives the job and the scorer invocation, says that `--out-dir` is the folder of the result JSON and is outside the bundle folder, names the four counts, and says that the PASS rate is over scored rows only and gates nothing.
+
+#### Scenario: Docs section
+- **WHEN** a reader opens the Lynx section
+- **THEN** it holds the scorer invocation, the `--out-dir` rule, the four count names, and the statement that the PASS rate gates nothing
+

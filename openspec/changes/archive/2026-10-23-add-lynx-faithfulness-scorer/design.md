@@ -18,8 +18,12 @@ result records `judge_bundle: {folder, digest}` for each deferred arm
 file outside the bundle, and a descriptive Lynx block plus a paired exact test in
 `compare_runs.py`.
 
-**Non-Goals:** the Slurm job (#735), docs (#735), any gate, any change to the bundle writer
-or the publish step, and any use of Lynx as the RAGAS judge.
+Issue #735 adds the Slurm job and the docs to this change (D11, D12). Its anchors are
+against `origin/dev` at `6282a299`, where the scorer of #734 is merged.
+
+**Non-Goals:** any gate, any change to the bundle writer or the publish step, any use of
+Lynx as the RAGAS judge, a run on the cluster (an operator step of #737), and Lynx 70B on
+more than one GPU (#755).
 
 ## Decisions
 
@@ -149,6 +153,72 @@ an arm when the arm's or the baseline's Lynx file is missing or refused.
 Lynx is not added to `RAGAS_METRIC_NAMES`, `build_ragas_metric_objects`, the `METRICS` of
 `compare_runs.py`, `ResultHandler.LEADERBOARD_METRICS`, the Holm set, or any gate.
 
+### D11. The Slurm job scores one run bundle in a pinned vLLM container
+
+`scripts/benchmarking/slurm/lynx_score.sbatch [--dry-run] <bundle folder> [<out dir>]` is
+its own job. It uses none of the queue, claims or merge of the offload judge job (#733).
+The settings are at the top of the file: the image, the model id, the model revision, and
+the `#SBATCH` partition, GPU count and time limit.
+
+- **Input.** The job scores a run's own bundle, `<out_dir>/<judge_bundle_dir>/<basename>-arm<N>/`
+  with `BUNDLE_COMPLETE`. It refuses a missing folder, a folder with no `BUNDLE_COMPLETE`
+  (a `READY` queue copy too, because the job does not use the queue), and a folder name
+  that is not `<basename>-arm<N>`. The scorer does the full checks of D5 again in the job.
+- **Out dir.** The second argument, or else the nearest folder above the bundle folder that
+  holds `<basename>.json`, the result JSON of the run (`publish.py` reads it there). D6
+  says that no default fits both bundle layouts. This default is not a guess about the
+  layout: it finds the result file itself, so a nested `judge_bundle_dir` works too. With
+  no such folder and no second argument, the job exits non-zero.
+- **Partition.** `-p gpu` with one GPU, not `gpu_test` as the issue says. On `gpu_test` a
+  GPU is a 3g.20GB MIG slice of an A100 (FASRC "Running Jobs" page). The Lynx 8B weights
+  are 16,060,556,096 bytes (Hugging Face `usedStorage` at the pinned revision). vLLM uses
+  90% of a GPU by default. On a 19,968 MiB slice, that leaves about 2.8 GB for the
+  activations, the CUDA graphs and the KV cache together, and one 8,192-token sequence
+  needs 1 GiB of KV cache (32 layers x 2 x 8 KV heads x 128 x 2 bytes per token). The job
+  can fail at load, and the scorer exposes no memory setting. `gpu` gives a full A100 and
+  is not preempted. The script names no requeue partition and
+  sets `--no-requeue`, because the scorer cannot resume a half-scored bundle.
+- **Image.** `docker://vllm/vllm-openai:v0.31.0-cu129`, an exact tag. The plain `v0.31.0`
+  image is built on CUDA 13.0.2, which needs a newer NVIDIA driver than the CUDA 12.9
+  build. The image entrypoint is `vllm serve`; `apptainer exec` does not run it, and the
+  image's Python is `python3`.
+- **Command.** `apptainer exec --nv --bind <repo>,<bundle>,<out dir>,<scratch> --pwd <repo>
+  --env HF_HOME=<scratch>/hf --env XDG_CACHE_HOME=<scratch>/cache --env PYTHONNOUSERSITE=1
+  <image> python3 -m
+  scripts.benchmarking.lynx.score <bundle> --model <id> --revision <sha> --out-dir <out dir>
+  --backend vllm`. Apptainer binds `$HOME` by default, so `PYTHONNOUSERSITE=1` keeps the
+  user's `~/.local` packages out of the container's Python. No `--cleanenv`: Slurm's
+  `CUDA_VISIBLE_DEVICES` must reach vLLM.
+- **Scratch.** `HF_HOME` and `APPTAINER_CACHEDIR` are under
+  `${SCRATCH:-/n/netscratch}/<lab>/Lab/$USER/archi-lynx` (FASRC sets `$SCRATCH`), with the
+  lab from `LYNX_LAB`, or the whole folder from `LYNX_SCRATCH`. The home folder is too
+  small for a 16 GB model and a 10 GB image. `XDG_CACHE_HOME` is also under scratch:
+  vLLM's `VLLM_CACHE_ROOT` defaults to `~/.cache/vllm` and follows `XDG_CACHE_HOME`, and
+  vLLM puts the torch.compile and Triton caches in it (vLLM docs, "Cache Directory
+  Security"). Apptainer binds the home folder, so without it these files go to the home
+  quota.
+- **Repo.** In a job, the repo is `$SLURM_SUBMIT_DIR`, because Slurm runs a copy of the
+  script from its spool folder; the job must be submitted from the repo root. With
+  `--dry-run`, the repo is the folder three levels above the script.
+- **Guards.** `--dry-run` prints the command and exits 0. It makes no folder and starts
+  nothing. Without `--dry-run`, the script refuses to run outside a Slurm job
+  (`SLURM_JOB_ID` unset), from a submit folder with no `scripts/benchmarking/lynx/score.py`,
+  or with no lab and no `LYNX_SCRATCH`.
+- **70B.** A commented variant (`gpu_h200`, two GPUs, the 70B id and revision) is in the
+  file with a NOTE: `VllmBackend` passes no `tensor_parallel_size` (`backends.py:57`), so
+  the variant cannot load the 141 GB model until #755 is done.
+
+### D12. The docs
+
+`docs/docs/benchmarking.md` gets a "Lynx faithfulness (offline)" section after the "Results"
+section. It is not in the deferred judge section, which the offload work (#732, #733) edits.
+It says what Lynx measures; that it scores only `judge_mode: deferred` runs;
+how to submit the job and how to run the scorer by hand; that `--out-dir` is the folder of
+the result JSON, outside the bundle folder, so that `compare_runs.py` finds the file; how to
+read `<basename>-arm<N>.lynx.json` and the four counts; and that the PASS rate is over scored
+rows only, is descriptive, and gates nothing. A unit test keeps these statements in the
+section.
+
 ## Risks / Trade-offs
 
 - A Llama 3 chat template from a newer `transformers` can differ from the one in training.
@@ -157,3 +227,7 @@ Lynx is not added to `RAGAS_METRIC_NAMES`, `build_ragas_metric_objects`, the `ME
   a bundle digest. A deferred arm always records one (`pending_arm_fields`).
 - The 8,000-token limit skips large rows, so the PASS rate covers only the rows that fit.
   The block shows the skip count beside the rate.
+- No test runs the job on the cluster. The first Lynx 8B run is an operator step (#737,
+  step 7). That run is the first proof of the image, the driver and the memory settings.
+- The first job converts the image into the Apptainer cache, which uses part of the time
+  limit. Later jobs use the cached image.
