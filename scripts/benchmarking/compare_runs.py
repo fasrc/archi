@@ -417,6 +417,14 @@ def _category_modules():
     return category_slice, paired_tests
 
 
+def _lynx_report():
+    """The descriptive Lynx section (#734), importable from a plain script run."""
+    _project_root_on_path()
+    from scripts.benchmarking.lynx import report
+
+    return report
+
+
 def load_arms(specs: Sequence[str]) -> List[Arm]:
     """Load every spec into arms.
 
@@ -2563,6 +2571,7 @@ def render_markdown(report: dict) -> str:
             )
         out.append("")
     out += render_category_sections(report)
+    out += _lynx_report().render_section(report.get("lynx"), _table)
     return "\n".join(out).rstrip("\n")
 
 
@@ -3198,6 +3207,10 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     )
     report["paired_tests"] = paired_tests_block(baseline, arms, primaries)
     report["category"] = category_block(baseline, arms, map_rules)
+    # Descriptive only: no Lynx file, no key; a refused file never changes the exit.
+    lynx = _lynx_report().lynx_section(baseline, arms)
+    if lynx is not None:
+        report["lynx"] = lynx
     print(render_markdown(report))
     if args.json:
         Path(args.json).write_text(json.dumps(report, indent=2, allow_nan=False))

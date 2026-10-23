@@ -62,7 +62,9 @@ def _fake_vllm(calls):
             calls["params"] = params
             return [
                 types.SimpleNamespace(
-                    outputs=[types.SimpleNamespace(text=f"out {len(r['prompt_token_ids'])}")]
+                    outputs=[
+                        types.SimpleNamespace(text=f"out {len(r['prompt_token_ids'])}")
+                    ]
                 )
                 for r in requests
             ]
@@ -94,7 +96,10 @@ def test_the_vllm_backend_sends_one_user_chat_message_per_prompt(monkeypatch):
     # "<user> a b c <assistant>" is 5 words, "<user> d <assistant>" is 3.
     assert outputs == ["out 5", "out 3"]
     assert [len(r["prompt_token_ids"]) for r in calls["requests"]] == [5, 3]
-    assert tokenizer.templated[-2:] == ["<user> a b c <assistant>", "<user> d <assistant>"]
+    assert tokenizer.templated[-2:] == [
+        "<user> a b c <assistant>",
+        "<user> d <assistant>",
+    ]
 
 
 def test_the_vllm_backend_counts_the_chat_text(monkeypatch):

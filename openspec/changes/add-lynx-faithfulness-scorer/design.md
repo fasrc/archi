@@ -128,10 +128,16 @@ counts differ from the counts of its rows. A refusal does not change the exit co
 Bundle keys are the arm's positional `question_<n>` keys. `report.py` maps each key to the
 question text through the arm's `single_question_results`, and pairs on that text, as gate
 G5 does. `paired_binary` runs over the questions that both arms scored (`status ==
-"scored"`), with `True` for PASS. Each excluded question is listed under each reason that
-applies: `baseline skipped_overflow`, `baseline parse_error`, `arm skipped_overflow`,
-`arm parse_error`, `not scored by baseline`, `not scored by arm`, `key not in result`.
-The entry has no Holm adjustment and no primary role, and it feeds no gate.
+"scored"`), with `True` for PASS. The questions are those that have a Lynx row in either
+file. Each excluded question is listed under each reason that applies:
+`baseline skipped_overflow`, `baseline parse_error`, `baseline no Lynx row`, and the same
+three for `arm`. A Lynx key that names no row of its result is listed, as a key, under
+`baseline key not in result` or `arm key not in result`.
+
+The entry is in the Lynx section of the report (`report["lynx"]["paired"]`), not in the
+`paired_tests` table, so the Holm family and the pre-registered primaries stay unchanged.
+It has no Holm adjustment and no primary role, and it feeds no gate. There is no entry for
+an arm when the arm's or the baseline's Lynx file is missing or refused.
 
 ### D10. Not a RAGAS metric, not a gate
 
