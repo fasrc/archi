@@ -32,7 +32,7 @@ Rules for every task:
 
 ## 1. Judge mode and the one-mode rule (parent task 2.1)
 
-- [ ] 1.1 Create `tests/unit/test_judge_mode.py` with tests for `parse_judge_mode` and
+- [x] 1.1 Create `tests/unit/test_judge_mode.py` with tests for `parse_judge_mode` and
       the mode part of `plan_judge_run` (design D2 and D3 steps 1–3): absent gives
       `inline`; `"inline"` gives `inline`; `"deferred"` gives `deferred`; `""`,
       `False`, `None` present in the dict, `"Deferred"` and `"offline"` raise
