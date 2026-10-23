@@ -59,7 +59,7 @@
 
 ## 2. Publish
 
-- [ ] 2.1 Run `git fetch origin dev`. If `git merge-base --is-ancestor origin/dev HEAD`
+- [x] 2.1 Run `git fetch origin dev`. If `git merge-base --is-ancestor origin/dev HEAD`
       fails, run `git merge --no-edit origin/dev`. If that merge conflicts, run `git merge
       --abort`, do not merge, and say so in the PR body. If the merge brings new checks into
       `test_feature_matrix_wrappers.sh` with numbers 90 or higher, renumber checks 90–94
