@@ -361,7 +361,7 @@ Rules for every task:
 
 ## 8. Publish
 
-- [ ] 8.1 Run `bash scripts/gate.sh` once more on the branch tip and confirm it exits 0.
+- [x] 8.1 Run `bash scripts/gate.sh` once more on the branch tip and confirm it exits 0.
       Confirm each acceptance criterion of issue #731 against the tree. Push the branch:
       `git push -u origin fix/issue-731-judge-deferred-bundle`. The PR already exists
       (PR #747, opened by the loop harness). Do NOT run `gh pr create`. Edit PR #747:
