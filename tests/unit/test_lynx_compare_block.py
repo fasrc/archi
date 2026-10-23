@@ -246,6 +246,11 @@ def test_a_file_that_does_not_load_is_refused(tmp_path):
     assert "does not load" in _refused(tmp_path, "{not json")
 
 
+def test_a_file_with_a_non_finite_number_is_refused(tmp_path):
+    body = json.dumps(_lynx(0, BASE_VERDICTS)).replace('"rev1"', "NaN")
+    assert "does not load" in _refused(tmp_path, body)
+
+
 def test_a_file_that_is_not_an_object_is_refused(tmp_path):
     assert "not an object" in _refused(tmp_path, "[]")
 

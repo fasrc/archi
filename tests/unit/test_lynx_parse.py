@@ -42,6 +42,9 @@ def test_text_around_the_object_is_ignored():
         '["PASS"]',
         '{"REASONING": NaN, "SCORE": "PASS"}',
         '{"REASONING": [Infinity], "SCORE": "FAIL"}',
+        # A number too large for a float decodes to inf, which is not JSON either.
+        '{"REASONING": [1e309], "SCORE": "PASS"}',
+        '{"REASONING": {"x": -1e400}, "SCORE": "FAIL"}',
         # A cut-off outer object must not yield the verdict of an inner one.
         '{"REASONING": {"SCORE": "PASS"}, "SCORE": "FAIL"',
         '{"REASONING": ["a", {"SCORE": "PASS"}], "SCORE": "FA',

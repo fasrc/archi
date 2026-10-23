@@ -59,7 +59,7 @@ at each `{` that is not inside an object it already decoded). The verdict comes 
 `SCORE` values of these objects. Only the exact strings `PASS` and `FAIL`, after `strip()`,
 are verdicts. These are parse errors: no JSON object, no `SCORE` key, a `SCORE` that is not
 one of the two strings (`"pass"`, `"PASS."`, a number), two objects with different scores,
-`NaN` or `Infinity` in an object, and a top-level `{` that does not start a complete JSON
+`NaN`, `Infinity` or a number too large for a float (`1e309`) in an object, and a top-level `{` that does not start a complete JSON
 object. The last rule stops a cut-off answer, such as
 `{"REASONING": {"SCORE": "PASS"}, "SCORE": "FAIL"`, from giving the verdict of a nested
 object; a stray `{` in prose before the answer is also a parse error. A parse error gives
@@ -122,7 +122,7 @@ pending result and the judged result find the same file. No file: no Lynx block 
 arm, and no change to the report. The new logic is in `scripts/benchmarking/lynx/report.py`;
 `compare_runs.py` has only thin call sites.
 
-The file is refused, with the reason in the block, when it does not load, when its
+The file is refused, with the reason in the block, when it does not load as strict JSON (no `NaN`, `Infinity` or float overflow, which would crash the report's `allow_nan=False` write), when its
 `result_basename` or `arm_index` differs from the arm, when the arm records
 `judge_bundle.digest` and the file's `bundle_rows_sha256` differs, when a row has an
 unknown status or a verdict that does not agree with its status, or when the recorded

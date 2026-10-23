@@ -198,6 +198,23 @@ def test_the_rate_divides_by_scored_rows_only(tmp_path):
     assert document["rows"]["question_3"]["verdict"] == "FAIL"
 
 
+def test_a_non_finite_number_in_one_output_fails_only_that_row(tmp_path):
+    folder = _bundle(tmp_path, rows=[_row("huge one"), _row("Q2")])
+
+    def answer(prompt):
+        if "huge one" in prompt:
+            return '{"REASONING": [1e309], "SCORE": "PASS"}'
+        return PASS
+
+    code, _ = _run(folder, tmp_path, backend=backends.StubBackend(output=answer))
+
+    assert code == 0
+    document = json.loads(_lynx_file(tmp_path).read_text())
+    assert document["rows"]["question_1"]["status"] == "parse_error"
+    assert document["rows"]["question_2"]["verdict"] == "PASS"
+    assert document["counts"]["lynx_parse_errors"] == 1
+
+
 def test_nothing_scored_gives_a_null_rate(tmp_path):
     folder = _bundle(tmp_path, rows=[_row("Q1")])
     stub = backends.StubBackend(output="no verdict")

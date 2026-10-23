@@ -10,11 +10,10 @@ reason; a refusal never changes the exit code. Lynx is descriptive only.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from scripts.benchmarking.lynx.parse import VERDICTS
+from scripts.benchmarking.lynx.parse import VERDICTS, strict_loads
 from scripts.benchmarking.lynx.score import (
     STATUSES,
     count_rows,
@@ -101,7 +100,8 @@ def load_arm_lynx(source: str, raw: Mapping[str, Any]) -> Optional[Dict[str, Any
         return None
     document: Any = None
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        # A non-finite number would crash the report's allow_nan=False write.
+        document = strict_loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         reason: Optional[str] = f"the Lynx file does not load: {exc}"
     else:

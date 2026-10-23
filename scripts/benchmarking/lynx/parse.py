@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 from typing import Any, List, Optional
 
 VERDICTS = ("PASS", "FAIL")
@@ -29,6 +30,20 @@ def _reject_constant(name: str) -> Any:
     raise ValueError(f"{name} is not JSON")
 
 
+def _finite_float(text: str) -> float:
+    # A number too large for a float (1e309) decodes to inf, which the
+    # canonical output cannot hold either.
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError(f"{text} is not a finite number")
+    return value
+
+
+def strict_loads(text: str) -> Any:
+    """``json.loads`` that refuses NaN, Infinity and numbers too large for a float."""
+    return json.loads(text, parse_constant=_reject_constant, parse_float=_finite_float)
+
+
 def _top_level_objects(text: str) -> List[dict]:
     """Every JSON object in *text* that is not inside another one, in order.
 
@@ -37,15 +52,18 @@ def _top_level_objects(text: str) -> List[dict]:
     cut-off answer, such as ``{"REASONING": {"SCORE": "PASS"}, "SCORE": "FAIL"``,
     as the verdict.
     """
-    decoder = json.JSONDecoder(parse_constant=_reject_constant)
+    decoder = json.JSONDecoder(
+        parse_constant=_reject_constant, parse_float=_finite_float
+    )
     objects: List[dict] = []
     index = text.find("{")
     while index != -1:
         try:
             value, end = decoder.raw_decode(text, index)
-        except ValueError:
+        except ValueError as exc:
             raise ValueError(
-                f"the '{{' at offset {index} does not start a complete JSON object"
+                f"the '{{' at offset {index} does not start a complete JSON "
+                f"object: {exc}"
             ) from None
         objects.append(value)
         index = text.find("{", end)
