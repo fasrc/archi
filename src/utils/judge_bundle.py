@@ -15,7 +15,7 @@ _ABSENT = object()
 _ALLOWED = ("inline", "deferred")
 
 
-class JudgeRunRefused(Exception):
+class JudgeRunRefused(ValueError):
     """Raised when a benchmark sweep cannot start due to incompatible judge configs."""
 
 
@@ -53,7 +53,7 @@ def _read_mode(config_path: str) -> str:
         try:
             return parse_judge_mode(ragas["judge_mode"])
         except ValueError as exc:
-            raise ValueError(f"{config_path}: {exc}") from exc
+            raise JudgeRunRefused(f"{config_path}: {exc}") from exc
     return parse_judge_mode()
 
 
@@ -66,7 +66,7 @@ def plan_judge_run(
 ) -> JudgePlan:
     """Check judge_mode across all config files and return a JudgePlan (steps 1–3).
 
-    Raises ValueError if any config holds an invalid judge_mode.
+    Raises JudgeRunRefused if any config holds an invalid judge_mode.
     Raises JudgeRunRefused if configs disagree on mode (design D8a).
     """
     modes: List[str] = []
