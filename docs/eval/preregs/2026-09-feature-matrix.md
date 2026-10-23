@@ -134,12 +134,12 @@ archived RAGAS runs, 11 QA runs, zero degraded rows, every Procedure E check pas
 
 | Arm | Claim under test | Primary Δ per run (MDE) | Verdict (pre-registered vocabulary) |
 |---|---|---|---|
-| 01 rerank off | disabling rerank lowers `context_precision` | −0.025 / −0.010 (0.063 / 0.064) | **no measurable difference** — claim not supported; `context_recall` lower in both runs (one outside MDE); gold atoms up 4–12σ; 45 % less time per question |
+| 01 rerank off | disabling rerank lowers `context_precision` | −0.025 / −0.010 (0.063 / 0.064) | **no measurable difference** — claim not supported; `context_recall` lower in both runs (one outside MDE); gold atoms up (exploratory, one unpaired QA run); 45 % less time per question |
 | 02 character chunking | lowers `context_precision` | −0.058 / −0.067 (0.081 / 0.082) re-based; −0.070 / −0.073 vs opening | **no measurable difference** — claim not established at this MDE; `context_recall` −0.16 / −0.19 hurts |
 | 03 categorization off | does not change `context_precision` | −0.004 / −0.002 (0.025 / 0.027) | **no measurable difference** — claim confirmed; ingest −19 min |
 | 04 stemming on | raises `context_recall` | −0.032 / −0.015 (0.040 / 0.055) re-based; −0.052 / −0.029 vs opening | **no measurable difference** — claim not supported; `context_precision` −0.09 hurts (secondary) |
-| 05a k = 3 | fewer parents raise precision, lower recall | −0.014 / −0.005 (0.023 / 0.021) | **no measurable difference** on precision; recall −0.087 / −0.061 hurts; citations 0.877 → 0.792 |
-| 05b k = 8 | more parents lower precision, raise recall | −0.014 / −0.013 (0.018 / 0.017) | **no measurable difference** on precision (both runs within 0.004 of the MDE); recall +0.060 / +0.028 (one outside MDE); citations 0.877 → 0.96 (p ≤ 0.012 both runs) |
+| 05a k = 3 | fewer parents raise precision, lower recall | −0.014 / −0.005 (0.023 / 0.021) | **no measurable difference** on precision; recall −0.087 / −0.061 hurts; reference page retrieved 0.877 → 0.792 |
+| 05b k = 8 | more parents lower precision, raise recall | −0.014 / −0.013 (0.018 / 0.017) | **no measurable difference** on precision (both runs within 0.004 of the MDE); recall +0.060 / +0.028 (one outside MDE); reference page retrieved 0.877 → 0.96 (p ≤ 0.012 both runs) |
 | 06 html_to_markdown off | raw HTML lowers precision and faithfulness | — | **untestable** — renderer forces the key to `true` ([#448](https://github.com/fasrc/archi/issues/448)); run refused by the factor check |
 | 07 markdown chunking | raises `context_precision` on the Markdown-bearing part | −0.098 / −0.091 (0.072 / 0.074) re-based; −0.101 / −0.109 vs opening | **hurts** (corpus level; the slice was not testable with this bank, disputed in [#490](https://github.com/fasrc/archi/issues/490)); recall −0.14 hurts; gold atoms up; 37 % less time per question |
 
@@ -154,6 +154,11 @@ harness drift. Bank blob hash unchanged (G4).
 (02, 03, 04, 07) are judged against the mean of the two Sep 9 baseline-configuration runs
 rather than the Sep 5 opening baseline, with the tool's MDE unchanged; both numbers are
 shown in the report. No primary verdict differs between the two comparisons.
+
+**Other deviations, recorded after review:** section 2.4 of the report lists every departure
+from this file — runs judged one at a time instead of pooled, the ingest-arm re-basing above,
+an exploratory atom analysis in place of the paired one with McNemar, `answer_correctness`
+not collected, and the k = 8 proposal resting on a secondary metric.
 
 **Follow-up issues:** filed 2026-09-17 on fasrc/archi: #496 (categorization default off), #497
 (reranker default decision, with the payload-size experiment), #498 (k = 8), #499 (recursion-limit
