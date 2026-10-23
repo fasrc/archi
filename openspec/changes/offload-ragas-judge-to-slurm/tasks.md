@@ -16,7 +16,7 @@ Rules for every task:
 ## 2. PR 2: deferred mode, bundle writer, publish step
 
 - [x] 2.1 Add tests for `judge_mode` parsing: absent or `inline` gives inline, `deferred` gives deferred, and any other value is refused. A sweep whose configs have different modes refuses to start before any question, and names the configs (design D8a).
-- [ ] 2.2 Render `judge_mode` and `judge_bundle_dir` in `src/cli/templates/base-config.yaml`, with a render test.
+- [x] 2.2 Render `judge_mode` and `judge_bundle_dir` in `src/cli/templates/base-config.yaml`, with a render test.
 - [ ] 2.2a Add a test: the run fixes its result basename once, before the first arm, and `dump_artifacts` writes the JSON and the `_report.md` with that basename. Then pass the basename from the run start to `dump_artifacts` and to the bundle writer.
 - [ ] 2.2b Add a test: a deferred run writes `<basename>.RESULT_COMPLETE` only after `dump_artifacts` returns, and a deferred run whose `code_version.digest` is unavailable refuses to start.
 - [ ] 2.3 Add a test: the bundle writer makes `rows.jsonl` equal to the inline ragas records for each key, a `manifest.json` that has every field in the spec (including the arm count of the result, and the resolved `ragas_run_config_kwargs` output and `batch_size`) and the correct SHA-256, and `BUNDLE_COMPLETE` after every other file. Then write the writer (`src/utils/judge_bundle.py`).

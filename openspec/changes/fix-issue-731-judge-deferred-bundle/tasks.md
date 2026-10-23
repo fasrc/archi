@@ -58,7 +58,7 @@ Rules for every task:
 
 ## 2. Render the new keys (parent task 2.2)
 
-- [ ] 2.1 Create `tests/unit/test_base_config_judge_render.py`. Copy the `_render`
+- [x] 2.1 Create `tests/unit/test_base_config_judge_render.py`. Copy the `_render`
       helper pattern of `tests/unit/test_base_config_benchmark_render.py:20-29` into it
       (do not import from that test module). Tests: with none of the three keys set, the
       rendered `ragas_settings` has no `judge_mode`, `judge_bundle_dir` or
