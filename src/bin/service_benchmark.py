@@ -1246,6 +1246,19 @@ class ResultHandler:
         """Generate all pairwise index combinations for N configs."""
         return list(combinations(range(n_configs), 2))
 
+    @staticmethod
+    def build_comparisons(primary_metric: str) -> None:
+        """Every pairwise A/B comparison, then the leaderboard, of ``results``.
+
+        One path for the run (2+ arms) and for the judge merge (#732), which
+        rebuilds both from the judged arms of a deferred result.
+        """
+        pairs = ResultHandler.generate_pairwise_combinations(len(ResultHandler.results))
+        for idx_a, idx_b in pairs:
+            paired = ResultHandler.pair_ab_results(idx_a, idx_b)
+            ResultHandler.dump_ab_comparison(paired, idx_a, idx_b)
+        ResultHandler.build_leaderboard(primary_metric)
+
     # Leaderboard metric name -> the aggregate key the run loop writes onto
     # total_results (service_benchmark.py RAGAS block). Order is display order.
     LEADERBOARD_METRICS: List[Tuple[str, str]] = [
@@ -2581,36 +2594,27 @@ class Benchmarker:
 
         ResultHandler.add_metadata()
 
-        # A/B comparison: pair results across configs when 2+ were run.
-        # Auto-enabled — no explicit flag — because there's no useful "skip
-        # pairing" case when the user gave us multiple configs.
-        if len(ResultHandler.results) >= 2:
-            pairs = ResultHandler.generate_pairwise_combinations(
-                len(ResultHandler.results)
-            )
-            logger.info("Generating %d pairwise A/B comparisons...", len(pairs))
-            for idx_a, idx_b in pairs:
-                paired = ResultHandler.pair_ab_results(idx_a, idx_b)
-                ResultHandler.dump_ab_comparison(paired, idx_a, idx_b)
-                comp = ResultHandler.ab_comparisons[-1]
-                name_a = comp["config_a"].get("name", f"config_{idx_a}")
-                name_b = comp["config_b"].get("name", f"config_{idx_b}")
-                logger.info(
-                    ResultHandler.ab_summary_line(
-                        name_a, name_b, len(paired), comp["aggregate"]
-                    )
-                )
-
-        # Prompt-sweep leaderboard: rank every config by mean RAGAS metric.
-        # Independent of the pairwise block above (reads per-config aggregates
-        # directly). Only meaningful with 2+ variants.
+        # A/B comparison: pair results across configs when 2+ were run, then
+        # the prompt-sweep leaderboard, which ranks every config by mean RAGAS
+        # metric. Auto-enabled — no explicit flag — because there's no useful
+        # "skip pairing" case when the user gave us multiple configs.
         if len(ResultHandler.results) >= 2:
             primary_metric = str(
                 self.config.get("services", {})
                 .get("benchmarking", {})
                 .get("primary_metric", "faithfulness")
             )
-            leaderboard = ResultHandler.build_leaderboard(primary_metric)
+            ResultHandler.build_comparisons(primary_metric)
+            for comp in ResultHandler.ab_comparisons:
+                logger.info(
+                    ResultHandler.ab_summary_line(
+                        comp["config_a"]["name"],
+                        comp["config_b"]["name"],
+                        len(comp["per_question"]),
+                        comp["aggregate"],
+                    )
+                )
+            leaderboard = ResultHandler.leaderboard
             logger.info(
                 "Prompt-sweep leaderboard (ranked by %s):",
                 leaderboard["primary_metric"],
