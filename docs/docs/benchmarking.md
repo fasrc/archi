@@ -309,7 +309,7 @@ Lynx scores only `judge_mode: deferred` runs (see "Deferred judge" above), becau
 
 `scripts/benchmarking/slurm/lynx_score.sbatch` runs the scorer on a FASRC GPU node, inside the `vllm/vllm-openai` image at a pinned tag, with Lynx 8B at a pinned revision. The image, the model id, the model revision, the partition, the GPU count and the time limit are settings at the top of the script. The job asks for one full A100 on the `gpu` partition for 2 hours, and it is never requeued, because the scorer cannot resume a half-scored bundle.
 
-1. Set `LYNX_LAB` to your lab folder under `/n/netscratch`. The job keeps the model and the image cache in `/n/netscratch/<lab>/Lab/<user>/archi-lynx`. To use a different folder, set `LYNX_SCRATCH`.
+1. Set `LYNX_LAB` to your lab folder under `/n/netscratch`. The job keeps the model, the vLLM compile cache and the image cache in `/n/netscratch/<lab>/Lab/<user>/archi-lynx`, not in the home folder. Netscratch deletes files older than 90 days, so a later job can download the model again. To use a different folder, set `LYNX_SCRATCH`.
 2. From the repo root, check the command. The dry run prints the `apptainer exec` command, and it starts nothing:
 
     ```bash

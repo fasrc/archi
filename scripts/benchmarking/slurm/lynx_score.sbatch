@@ -31,7 +31,8 @@
 # <basename>.json. --dry-run prints the container command and starts nothing.
 #
 # Set LYNX_LAB to your lab folder under $SCRATCH (/n/netscratch), or LYNX_SCRATCH to a
-# folder of your own. The model and the image cache go there, not to the home folder.
+# folder of your own. The model, the image cache and the vLLM compile cache (which
+# follows XDG_CACHE_HOME) go there, not to the home folder that Apptainer binds in.
 # The scorer cannot resume a half-scored bundle, so the job never runs on a partition
 # that preempts and requeues it.
 set -euo pipefail
@@ -117,6 +118,7 @@ CMD=(
   --bind "$REPO" --bind "$BUNDLE" --bind "$OUT_DIR" --bind "$SCRATCH_DIR"
   --pwd "$REPO"
   --env "HF_HOME=$SCRATCH_DIR/hf"
+  --env "XDG_CACHE_HOME=$SCRATCH_DIR/cache"
   --env PYTHONNOUSERSITE=1
   "$IMAGE"
   python3 -m scripts.benchmarking.lynx.score "$BUNDLE"
@@ -136,7 +138,7 @@ fi
   || die "$REPO is not the archi repo root; submit the job from the repo root"
 command -v apptainer >/dev/null || die "apptainer is not on PATH"
 
-mkdir -p "$SCRATCH_DIR/hf" "$SCRATCH_DIR/apptainer"
+mkdir -p "$SCRATCH_DIR/hf" "$SCRATCH_DIR/cache" "$SCRATCH_DIR/apptainer"
 export APPTAINER_CACHEDIR="$SCRATCH_DIR/apptainer"
 echo "lynx_score: job $SLURM_JOB_ID scores $BUNDLE into $OUT_DIR" >&2
 exec "${CMD[@]}"

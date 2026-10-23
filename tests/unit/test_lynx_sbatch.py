@@ -110,6 +110,8 @@ def _expected_command(bundle, out, scratch):
         "--env",
         f"HF_HOME={scratch}/hf",
         "--env",
+        f"XDG_CACHE_HOME={scratch}/cache",
+        "--env",
         "PYTHONNOUSERSITE=1",
         _setting("IMAGE"),
         "python3",
@@ -333,6 +335,8 @@ def test_a_job_runs_the_command_that_the_dry_run_prints(tmp_path):
     assert ["apptainer", *argv] == shlex.split(dry.stdout.strip())
     scratch = tmp_path / "scratch"
     assert (scratch / "hf").is_dir()
+    # vLLM's compile cache follows XDG_CACHE_HOME; the home folder is bound in.
+    assert (scratch / "cache").is_dir()
     assert (calls / "apptainer.cachedir").read_text() == str(scratch / "apptainer")
     assert (scratch / "apptainer").is_dir()
 

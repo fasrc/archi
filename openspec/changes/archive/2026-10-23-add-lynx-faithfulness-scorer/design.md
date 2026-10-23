@@ -183,7 +183,8 @@ the `#SBATCH` partition, GPU count and time limit.
   build. The image entrypoint is `vllm serve`; `apptainer exec` does not run it, and the
   image's Python is `python3`.
 - **Command.** `apptainer exec --nv --bind <repo>,<bundle>,<out dir>,<scratch> --pwd <repo>
-  --env HF_HOME=<scratch>/hf --env PYTHONNOUSERSITE=1 <image> python3 -m
+  --env HF_HOME=<scratch>/hf --env XDG_CACHE_HOME=<scratch>/cache --env PYTHONNOUSERSITE=1
+  <image> python3 -m
   scripts.benchmarking.lynx.score <bundle> --model <id> --revision <sha> --out-dir <out dir>
   --backend vllm`. Apptainer binds `$HOME` by default, so `PYTHONNOUSERSITE=1` keeps the
   user's `~/.local` packages out of the container's Python. No `--cleanenv`: Slurm's
@@ -191,7 +192,11 @@ the `#SBATCH` partition, GPU count and time limit.
 - **Scratch.** `HF_HOME` and `APPTAINER_CACHEDIR` are under
   `${SCRATCH:-/n/netscratch}/<lab>/Lab/$USER/archi-lynx` (FASRC sets `$SCRATCH`), with the
   lab from `LYNX_LAB`, or the whole folder from `LYNX_SCRATCH`. The home folder is too
-  small for a 16 GB model and a 10 GB image.
+  small for a 16 GB model and a 10 GB image. `XDG_CACHE_HOME` is also under scratch:
+  vLLM's `VLLM_CACHE_ROOT` defaults to `~/.cache/vllm` and follows `XDG_CACHE_HOME`, and
+  vLLM puts the torch.compile and Triton caches in it (vLLM docs, "Cache Directory
+  Security"). Apptainer binds the home folder, so without it these files go to the home
+  quota.
 - **Repo.** In a job, the repo is `$SLURM_SUBMIT_DIR`, because Slurm runs a copy of the
   script from its spool folder; the job must be submitted from the repo root. With
   `--dry-run`, the repo is the folder three levels above the script.
