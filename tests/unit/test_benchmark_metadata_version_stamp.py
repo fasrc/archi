@@ -35,7 +35,9 @@ def _isolate(monkeypatch, tmp_path):
         ResultHandler, "get_corpus_snapshot_id", staticmethod(lambda: "snap")
     )
     monkeypatch.setattr(
-        ResultHandler, "get_corpus_fingerprint", staticmethod(lambda: "sha256:corpus")
+        ResultHandler,
+        "get_corpus_fingerprint",
+        staticmethod(lambda _config: "sha256:corpus"),
     )
 
     git_info = tmp_path / "git_info.yaml"

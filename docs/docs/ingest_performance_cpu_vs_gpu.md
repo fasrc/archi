@@ -193,7 +193,11 @@ is CUDA runtime overhead.
 
 1. **New bottleneck: Git clone + LLM categorize** (12m 51s, was 8m 53s — more
    files). Scales linearly with file count; batching the categorization LLM calls
-   would help.
+   would help. **Superseded 2026-09-22:** the 2026-09 feature-matrix campaign
+   measured the categorization half at about +19 min per 1091-document ingest (an
+   approximate figure — the two arms' corpora were 0.43 % apart) with no resolvable
+   retrieval effect, and no default retrieval path reads the label it writes, so the
+   FASRC configs turn the feature off instead of batching it (issue #496).
 2. **Incremental embedding:** skip files whose content hash already has vectors in
    Postgres. A no-change re-ingest would be near-instant instead of 22 minutes.
 3. **772 remaining "disallowed suffix" warnings** are legitimate (.png, .rst,

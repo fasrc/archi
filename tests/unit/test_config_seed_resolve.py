@@ -3,9 +3,8 @@
 A multi-config benchmarking deployment renders per-variant files (e.g.
 `fasrc-cannon-v1-strict.yaml`) instead of a single `config.yaml`, so config-seed
 must fall back to the first `*.yaml` in the rendered-config directory rather than
-aborting the whole deployment with FileNotFoundError. (Seeding Postgres from any
-one config is harmless — the benchmarker reads the YAML files directly and never
-consumes the seeded static_config.)
+aborting the whole deployment with FileNotFoundError. Arms must agree outside the
+arm-override paths; see `test_config_seed_arm_divergence.py`.
 """
 
 from src.cli.tools.config_seed import resolve_config_path

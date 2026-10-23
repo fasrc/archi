@@ -68,6 +68,7 @@ from src.archi.utils.output_dataclass import PipelineOutput
 
 # from src.data_manager.data_manager import DataManager
 from src.data_manager.data_viewer_service import DataViewerService
+from src.data_manager.vectorstore import parent_nodes
 from src.data_manager.vectorstore.manager import VectorStoreManager
 from src.interfaces.chat_app.config_fingerprint import (
     build_health_payload,
@@ -106,6 +107,7 @@ from src.utils.config_access import (
 )
 from src.utils.config_service import ConfigService
 from src.utils.env import read_secret
+from src.utils.local_mode import apply_local_mode
 from src.utils.logging import get_logger
 
 # RBAC imports for role-based access control
@@ -178,8 +180,8 @@ def _build_provider_config_from_payload(
     # enable_thinking) — dropping them here silently strips the thinking toggle
     # from a request-time LLM override. Mirror base_react._build_provider_config.
     extra = dict(cfg.get("extra_kwargs", {}) or {})
-    if provider_type == ProviderType.LOCAL and cfg.get("mode"):
-        extra["local_mode"] = cfg.get("mode")
+    if provider_type == ProviderType.LOCAL:
+        apply_local_mode(extra, cfg.get("mode"))
 
     return ProviderConfig(
         provider_type=provider_type,
@@ -252,6 +254,8 @@ def _build_request_local_pipeline(
         view._vector_tools = None
     if hasattr(view, "_vector_retrievers"):
         view._vector_retrievers = None
+    if hasattr(view, "_forced_vector_tool"):
+        view._forced_vector_tool = None
     view.refresh_agent(force=True)
     return view
 
@@ -2851,16 +2855,20 @@ class FlaskAppWrapper(object):
 
         # Conditionally register OpenAI-compatible /v1 blueprint
         openai_compat_config = self.chat_app_config.get("openai_compat", {})
-        if openai_compat_config.get("enabled", False):
-            from src.interfaces.chat_app.openai_compat import register_openai_compat
+        from src.interfaces.chat_app.openai_compat import (
+            openai_compat_options,
+            openai_compat_wanted,
+            register_openai_compat,
+        )
 
+        if openai_compat_wanted(openai_compat_config):
             user_service = UserService(pg_config=self.pg_config)
             register_openai_compat(
                 self.app,
                 self.chat,
                 user_service=user_service,
                 auth_enabled=self.auth_enabled,
-                token_ttl_days=openai_compat_config.get("token_ttl_days", 90),
+                **openai_compat_options(openai_compat_config),
             )
 
         # QA evaluation console: off unless services.chat_app.evaluations.enabled
@@ -3294,7 +3302,12 @@ class FlaskAppWrapper(object):
             logger.info("Adding QA evaluation console endpoints")
             register_evaluations(
                 self.app,
-                authorize_request=build_authorize_request(self.auth_enabled),
+                authorize_request=build_authorize_request(
+                    self.auth_enabled,
+                    sso_enabled=lambda: self.sso_enabled,
+                    allow_anonymous=lambda: get_registry().allow_anonymous,
+                    is_api_request=is_api_request,
+                ),
                 service=self.evaluation_service,
             )
 
@@ -6181,11 +6194,19 @@ class FlaskAppWrapper(object):
                         logger.info(
                             f"Deleted {chunks_deleted} chunks for {len(hashes_to_delete)} documents"
                         )
+                        parents_deleted = (  # pragma: no cover
+                            parent_nodes.delete_unreferenced_parents_for_resources(
+                                cursor, hashes_to_delete
+                            )
+                        )
+                        logger.info(  # pragma: no cover
+                            f"Deleted {parents_deleted} unreferenced parent nodes"
+                        )
 
                     # Mark documents as deleted
                     cursor.execute(
                         """
-                        UPDATE documents 
+                        UPDATE documents
                         SET is_deleted = TRUE, deleted_at = NOW()
                         WHERE source_type = 'git' 
                           AND NOT is_deleted
@@ -6814,6 +6835,14 @@ class FlaskAppWrapper(object):
                         chunks_deleted = cursor.rowcount
                         logger.info(
                             f"Deleted {chunks_deleted} chunks for {len(hashes_to_delete)} Jira documents"
+                        )
+                        parents_deleted = (  # pragma: no cover
+                            parent_nodes.delete_unreferenced_parents_for_resources(
+                                cursor, hashes_to_delete
+                            )
+                        )
+                        logger.info(  # pragma: no cover
+                            f"Deleted {parents_deleted} unreferenced parent nodes"
                         )
 
                     # Mark documents from this Jira project as deleted

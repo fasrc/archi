@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
+from scripts.benchmarking import compare_runs as cr
 from src.utils.benchmark_resilience import (
+    BANK_SLICE_FIELDS,
     DEGRADED,
     FAILED,
     OK,
@@ -24,6 +28,7 @@ from src.utils.benchmark_resilience import (
     scorable_items,
     source_hits,
 )
+from src.utils.benchmark_schema import RAGAS_METRIC_NAMES
 
 # --- classify_metadata: degraded detection (F3 / PR#91 F2) ------------------
 
@@ -109,6 +114,27 @@ class _StubBenchmarker(Benchmarker):
 
 _QITEM = {"user_input": "how do I do X?", "reference": "ref", "sources": []}
 _MODES = {"RAGAS", "SOURCES"}
+
+
+def _slice_arm(label, rows):
+    """A real `compare_runs.Arm` over `rows`, for slice-level assertions.
+
+    Deliberately the production dataclass rather than a stub: the behaviour under
+    test lives in `Arm.has_metric` and `Arm.is_scorable`, so a hand-written stand-in
+    could agree with the assertion while disagreeing with the real comparison.
+    """
+    return cr.Arm(
+        label=label,
+        source=f"{label}.json",
+        rows=rows,
+        order=list(rows),
+        total_results={},
+        config_version={},
+        corpus_fingerprint="f1",
+        corpus_snapshot_id="s1",
+        code_version_digest="sha256:a",
+        configuration_file=f"configs/{label}.yaml",
+    )
 
 
 def _result(answer="an answer", metadata=None):
@@ -255,13 +281,7 @@ def test_source_hits_strict():
 
 def test_build_ragas_aggregates_nan_when_none():
     aggs = build_ragas_aggregates(None)
-    assert set(aggs) == {
-        "aggregate_answer_relevancy",
-        "aggregate_faithfulness",
-        "aggregate_context_precision",
-        "aggregate_context_recall",
-        "aggregate_answer_correctness",
-    }
+    assert set(aggs) == {f"aggregate_{m}" for m in RAGAS_METRIC_NAMES}
     assert all(isinstance(v, float) and math.isnan(v) for v in aggs.values())
 
 
@@ -418,6 +438,143 @@ def test_process_config_all_failed_ragas_is_nan():
     # no scorable RAGAS input -> aggregates are NaN, not an empty-Dataset crash
     assert math.isnan(total["aggregate_faithfulness"])
     assert math.isnan(total["aggregate_answer_relevancy"])
+
+
+def test_process_config_marks_an_all_failed_ragas_arm_as_unscored():
+    """No scorable input means the judge never ran for this arm (#518)."""
+    agent = _ConfigStub(queries=[{"user_input": "q"}], bundles=[_fail_bundle()])
+    agent._ragas_scored = None
+    agent._process_config({"RAGAS"})
+    assert agent._ragas_scored is False
+
+
+@pytest.mark.parametrize("judge_ran", [True, False])
+def test_process_config_keeps_the_judge_verdict_from_get_ragas_results(judge_ran):
+    """Scorable input is not enough: the verdict is whether the judge ran (#518)."""
+
+    class _RagasStub(_ConfigStub):
+        def get_ragas_results(self, rows, keys, results_by_key):
+            self._ragas_scored = judge_ran
+            return {"aggregate_faithfulness": 1.0}
+
+    agent = _RagasStub(queries=[{"user_input": "q"}], bundles=[_ok_bundle()])
+    agent._ragas_scored = None
+    agent._process_config({"RAGAS"})
+    assert agent._ragas_scored is judge_ran
+
+
+def test_process_config_leaves_ragas_scored_unset_when_ragas_is_not_a_mode():
+    agent = _ConfigStub(
+        queries=[{"user_input": "q", "sources": ["x"]}], bundles=[_ok_bundle()]
+    )
+    agent._ragas_scored = None
+    agent._process_config({"SOURCES"})
+    assert agent._ragas_scored is None
+
+
+def test_run_passes_each_arms_ragas_scored_to_handle_results(monkeypatch):
+    """``run()`` must hand ``_process_config``'s verdict to the record (#518).
+
+    The first arm was scored, the second was not, so the reset before each arm
+    must not let the first arm's ``True`` leak into the second.
+    """
+    calls = []
+    verdicts = [True, False]
+
+    class _RunStub(Benchmarker):
+        def __init__(self):
+            self.benchmarking_configs = {"modes": ["RAGAS"]}
+            self.benchmark_name = "t"
+            self.queries_to_answers = []
+            self.all_config_files = ["a.yaml", "b.yaml"]
+            self.current_config = "a.yaml"
+            self.chain = None
+            self.config = {}
+
+        def wait_for_ingestion_completion(self):
+            return 0.0
+
+        def _merge_anchor_questions(self):
+            return None
+
+        def _process_config(self, modes_being_run):
+            assert self._ragas_scored is None
+            self._ragas_scored = verdicts.pop(0)
+            return {}, {}
+
+        def load_new_configuration(self):
+            self.all_config_files.pop(0)
+            if self.all_config_files:
+                self.current_config = self.all_config_files[0]
+
+    monkeypatch.setattr(ResultHandler, "check_collection", lambda cfg: None)
+    monkeypatch.setattr(ResultHandler, "get_corpus_fingerprint", lambda cfg: None)
+    monkeypatch.setattr(ResultHandler, "get_category_map", lambda cfg: (None, None))
+    monkeypatch.setattr(
+        ResultHandler,
+        "handle_results",
+        lambda *args, **kwargs: calls.append(kwargs.get("ragas_scored", "missing")),
+    )
+    monkeypatch.setattr(ResultHandler, "add_metadata", lambda: None)
+    monkeypatch.setattr(ResultHandler, "dump_artifacts", lambda name: None)
+    monkeypatch.setattr(ResultHandler, "results", [])
+    monkeypatch.delenv("ARCHI_ARGILLA", raising=False)
+
+    _RunStub().run()
+
+    assert calls == [True, False]
+
+
+def test_run_passes_judge_identity_to_handle_results(monkeypatch):
+    """run() resets _ragas_judge_identity before each arm and passes it to handle_results."""
+    calls = []
+    _identity = {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "base_url": None,
+        "mode": "openai_compat",
+    }
+
+    class _RunStub(Benchmarker):
+        def __init__(self):
+            self.benchmarking_configs = {"modes": ["RAGAS"]}
+            self.benchmark_name = "t"
+            self.queries_to_answers = []
+            self.all_config_files = ["a.yaml"]
+            self.current_config = "a.yaml"
+            self.chain = None
+            self.config = {}
+
+        def wait_for_ingestion_completion(self):
+            return 0.0
+
+        def _merge_anchor_questions(self):
+            return None
+
+        def _process_config(self, modes_being_run):
+            assert self._ragas_judge_identity is None
+            self._ragas_judge_identity = _identity
+            return {}, {}
+
+        def load_new_configuration(self):
+            self.all_config_files.pop(0)
+
+    monkeypatch.setattr(ResultHandler, "check_collection", lambda cfg: None)
+    monkeypatch.setattr(ResultHandler, "get_corpus_fingerprint", lambda cfg: None)
+    monkeypatch.setattr(ResultHandler, "get_category_map", lambda cfg: (None, None))
+    monkeypatch.setattr(
+        ResultHandler,
+        "handle_results",
+        lambda *args, **kwargs: calls.append(kwargs.get("judge_identity", "missing")),
+    )
+    monkeypatch.setattr(ResultHandler, "add_metadata", lambda: None)
+    monkeypatch.setattr(ResultHandler, "dump_artifacts", lambda name: None)
+    monkeypatch.setattr(ResultHandler, "results", [])
+    monkeypatch.delenv("ARCHI_ARGILLA", raising=False)
+
+    _RunStub().run()
+
+    assert calls == [_identity]
 
 
 def test_process_config_skips_invalid_items():
@@ -649,3 +806,152 @@ def test_pair_ab_results_still_ties_on_nan_both_sides(monkeypatch):
     paired = ResultHandler.pair_ab_results(0, 1)
 
     assert paired[0].winner_by_metric == {"faithfulness": "tie"}
+
+
+# --- _answer_and_score_question: bank `difficulty` propagation (#431) -------
+
+
+def test_answer_and_score_propagates_bank_difficulty():
+    item = {
+        "user_input": "how do I do X?",
+        "reference": "ref",
+        "sources": [],
+        "difficulty": "hard",
+    }
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(item, 1, _MODES)
+    assert bundle["q_results"]["difficulty"] == "hard"
+
+
+def test_answer_and_score_omits_difficulty_when_bank_row_lacks_it():
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(_QITEM, 1, _MODES)
+    assert "difficulty" not in bundle["q_results"]
+
+
+def test_difficulty_key_agrees_with_compare_runs_slice_fields():
+    item = {
+        "user_input": "how do I do X?",
+        "reference": "ref",
+        "sources": [],
+        "difficulty": "hard",
+    }
+    agent = _StubBenchmarker(chain=lambda **kw: _result())
+    bundle = agent._answer_and_score_question(item, 1, _MODES)
+
+    assert "difficulty" in cr.SLICE_FIELDS
+    assert "difficulty" in bundle["q_results"]
+
+
+# --- failed entries keep the bank's slice fields (#431 round 1, Codex P2) ---
+#
+# A question that raised jumps to the isolation handler before the success path
+# copies the bank row's `difficulty`, so its stored row carried no such key. That
+# is not merely missing metadata: `compare_runs.slice_block` reads a value from
+# the baseline arm and counts every arm that disagrees as `excluded_mismatched`,
+# whose documented meaning is "a bank edit re-labelled this question between the
+# runs". `Arm.has_metric` is True when ANY row carries the field, so one failed
+# question in the treatment arm yields `None != "hard"` and is reported as a bank
+# relabelling. A harness failure must never be published as bank drift.
+
+
+def test_build_failure_entry_carries_the_banks_slice_fields():
+    entry = build_failure_entry(
+        question="q",
+        reference_answer="ref",
+        error=RuntimeError("boom"),
+        question_item={
+            "user_input": "q",
+            "difficulty": "hard",
+            "anchor_type": "reasoning",
+        },
+    )
+
+    assert entry["status"] == FAILED
+    assert entry["difficulty"] == "hard"
+    assert entry["anchor_type"] == "reasoning"
+
+
+def test_build_failure_entry_omits_slice_fields_the_bank_row_lacks():
+    entry = build_failure_entry(
+        question="q", reference_answer="ref", error=RuntimeError("boom")
+    )
+
+    # Absent, not defaulted: `slice_block` skips a falsy baseline value, so an
+    # empty-string sentinel would be equivalent here -- but inventing a value the
+    # bank never stated is what would make a real relabelling unreportable.
+    assert "difficulty" not in entry
+    assert "anchor_type" not in entry
+
+
+def test_build_failure_entry_tolerates_a_non_dict_bank_row():
+    entry = build_failure_entry(
+        question="q",
+        reference_answer="ref",
+        error=RuntimeError("boom"),
+        question_item="a bare question string",
+    )
+
+    assert entry["status"] == FAILED
+    assert "difficulty" not in entry
+
+
+def test_failure_slice_fields_agree_with_compare_runs():
+    # The tuple is duplicated across the src/ and scripts/ boundary on purpose --
+    # src must not import from scripts. This is the drift guard for that copy.
+    assert set(BANK_SLICE_FIELDS) == set(cr.SLICE_FIELDS)
+
+
+def test_answer_and_score_keeps_difficulty_when_the_question_raises():
+    def _boom(**kw):
+        raise RuntimeError("context length is only 32768")
+
+    item = {
+        "user_input": "how do I do X?",
+        "reference": "ref",
+        "sources": [],
+        "difficulty": "hard",
+        "anchor_type": "reasoning",
+    }
+    agent = _StubBenchmarker(chain=_boom)
+
+    bundle = agent._answer_and_score_question(item, 1, _MODES)
+
+    assert bundle["q_results"]["status"] == FAILED
+    assert bundle["q_results"]["difficulty"] == "hard"
+    assert bundle["q_results"]["anchor_type"] == "reasoning"
+
+
+def test_a_failed_treatment_question_is_not_reported_as_a_bank_relabelling():
+    """End-to-end on the consequence: `excluded_mismatched` must stay 0.
+
+    Builds the two arms `slice_block` sees when one question fails in the
+    treatment arm only, using the row the fixed `build_failure_entry` writes.
+    """
+    baseline_rows = {
+        f"q{i}": {"difficulty": "hard", "faithfulness": 0.5, "status": OK}
+        for i in range(3)
+    }
+    treatment_rows = {
+        f"q{i}": {"difficulty": "hard", "faithfulness": 0.6, "status": OK}
+        for i in range(2)
+    }
+    treatment_rows["q2"] = build_failure_entry(
+        question="q2",
+        reference_answer="ref",
+        error=RuntimeError("boom"),
+        question_item={"user_input": "q2", "difficulty": "hard"},
+    )
+
+    baseline = _slice_arm("baseline", baseline_rows)
+    treatment = _slice_arm("treatment", treatment_rows)
+    arms = [baseline, treatment]
+
+    block = cr.slice_block(baseline, arms, [f"q{i}" for i in range(3)], {})
+    difficulty_entries = [e for e in block if e["field"] == "difficulty"]
+
+    assert difficulty_entries, "the difficulty slice must still be reported"
+    assert all(e["excluded_mismatched"] == 0 for e in difficulty_entries), (
+        "a question that failed in one arm is a harness failure, not a bank "
+        f"relabelling: {[e['excluded_mismatched'] for e in difficulty_entries]}"
+    )

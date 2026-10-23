@@ -261,6 +261,12 @@ jobs:
       # that does not touch a base-image input unable to pull the base it builds on --
       # which is most of them. The job already holds `packages: read`.
       - name: Log in to GHCR
+        # Must match DOCKER_CONFIG in .github/actions/run-smoke/action.yml. That
+        # action replaces HOME, so a login written under the real HOME is
+        # invisible to the pull it performs. Step level, never job level:
+        # `runner` is unavailable at job level and breaks the whole file.
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/.docker
         uses: docker/login-action@v3
         with:
           registry: ghcr.io

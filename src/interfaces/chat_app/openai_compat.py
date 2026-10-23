@@ -8,6 +8,7 @@ to use archi as a backend.
 Registered conditionally via services.chat_app.openai_compat.enabled config.
 """
 
+import ipaddress
 import json
 import time
 import uuid
@@ -16,9 +17,14 @@ from functools import wraps
 from typing import Any
 
 import psycopg2
-from flask import Blueprint, Response, g, jsonify, request
+from flask import Blueprint, Response, g, jsonify, request, stream_with_context
 
 from src.archi.utils.citation_formatter import format_citations
+from src.interfaces.slack_trace_tags import (
+    slack_trace_attributes,
+    tag_current_span,
+    with_trace_attributes,
+)
 from src.utils.logging import get_logger
 from src.utils.rbac import Permission, get_registry, has_permission
 from src.utils.rbac.audit import (
@@ -36,7 +42,12 @@ _chat_wrapper: Any = None
 _user_service: Any = None
 _auth_enabled: bool = False
 _token_ttl_days: int = 90
+_local_only: bool = False
 _boot_timestamp = int(time.time())
+
+# Headers a reverse proxy adds. A proxy on the same host connects from loopback, so
+# with local_only on, any of these means the real caller may be remote.
+_FORWARDING_HEADERS = ("Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Real-IP")
 
 
 def register_openai_compat(
@@ -46,6 +57,7 @@ def register_openai_compat(
     user_service=None,
     auth_enabled=False,
     token_ttl_days: int = 90,
+    local_only: bool = False,
 ):
     """
     Register the OpenAI-compatible blueprint with a Flask app.
@@ -56,14 +68,69 @@ def register_openai_compat(
         user_service: UserService instance for token auth
         auth_enabled: Whether authentication is enabled
         token_ttl_days: Number of days before API tokens expire (default 90)
+        local_only: Answer /v1 only for loopback callers with no proxy forwarding
+            headers (services.chat_app.openai_compat.local_only). For a deployment
+            that turns /v1 on for a same-host client (the Slack service in host
+            mode) without opening a model API to the network.
     """
-    global _chat_wrapper, _user_service, _auth_enabled, _token_ttl_days
+    global _chat_wrapper, _user_service, _auth_enabled, _token_ttl_days, _local_only
     _chat_wrapper = chat_wrapper
     _user_service = user_service
     _auth_enabled = auth_enabled
     _token_ttl_days = token_ttl_days
+    _local_only = bool(local_only)
     app.register_blueprint(openai_compat)
-    logger.info("Registered OpenAI-compatible API blueprint at /v1")
+    logger.info(
+        "Registered OpenAI-compatible API blueprint at /v1%s",
+        " (local_only: loopback callers only)" if _local_only else "",
+    )
+
+
+def openai_compat_wanted(config: dict) -> bool:
+    """Whether to register /v1: `enabled`, or `local_only` alone.
+
+    A deployment that wants /v1 for local callers only sets `local_only: true` and
+    NOT `enabled`. An older chat app reads only `enabled`, so that config keeps /v1
+    off there instead of serving it to the network (openspec v1-local-only, D5).
+    """
+    return bool(config.get("enabled")) or bool(config.get("local_only"))
+
+
+def openai_compat_options(config: dict) -> dict:
+    """The register_openai_compat keyword arguments read from
+    services.chat_app.openai_compat (app.py passes them through unchanged)."""
+    return {
+        "token_ttl_days": config.get("token_ttl_days", 90),
+        "local_only": bool(config.get("local_only")),
+    }
+
+
+def _is_local_request() -> bool:
+    """True when the TCP peer is loopback and no proxy forwarded the request.
+
+    request.remote_addr is the socket peer: the app installs no ProxyFix, so a client
+    cannot set it with a header.
+    """
+    if any(h in request.headers for h in _FORWARDING_HEADERS):
+        return False
+    try:
+        return ipaddress.ip_address(request.remote_addr or "").is_loopback
+    except ValueError:
+        return False
+
+
+@openai_compat.before_request
+def _enforce_local_only():
+    """With local_only on, refuse a non-local caller before auth and validation."""
+    if _local_only and not _is_local_request():
+        logger.warning(
+            "Refused /v1 request from %s: openai_compat.local_only is on",
+            request.remote_addr,
+        )
+        return _openai_error(
+            "This API answers local callers only", "permission_error", 403
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -282,10 +349,16 @@ def chat_completions():
 
     request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
 
+    # Slack bot requests carry slack:<team>:<channel>:<thread_ts>; tag their spans.
+    trace_attributes = slack_trace_attributes(external_chat_id)
+    tag_current_span(trace_attributes)
+
     if stream:
-        return _streaming_response(request_id, model, stream_kwargs)
+        return _streaming_response(request_id, model, stream_kwargs, trace_attributes)
     else:
-        return _non_streaming_response(request_id, model, stream_kwargs)
+        return _non_streaming_response(
+            request_id, model, stream_kwargs, trace_attributes
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +383,7 @@ def _extract_delta(content, accumulated):
 # ---------------------------------------------------------------------------
 
 
-def _streaming_response(request_id, model, stream_kwargs):
+def _streaming_response(request_id, model, stream_kwargs, trace_attributes=None):
     """Return an SSE streaming response."""
 
     def generate():
@@ -319,7 +392,9 @@ def _streaming_response(request_id, model, stream_kwargs):
         source_scores = []
 
         try:
-            for event in _chat_wrapper.stream(**stream_kwargs):
+            for event in with_trace_attributes(
+                _chat_wrapper.stream(**stream_kwargs), trace_attributes
+            ):
                 event_type = event.get("type", "")
 
                 if event_type == "chunk":
@@ -370,8 +445,16 @@ def _streaming_response(request_id, model, stream_kwargs):
             yield _sse_chunk(request_id, model, finish_reason="stop")
             yield "data: [DONE]\n\n"
 
+    # stream_with_context, not a bare generator: Flask tears down the request when
+    # this function returns, and the WSGI server pulls the generator after that. The
+    # Flask instrumentor's active span context goes with the teardown, so every span
+    # _chat_wrapper.stream() opens -- LangGraph, the model call, Postgres -- would
+    # start a second trace with no parent, and the agent loop's log lines would carry
+    # that orphan trace id instead of the request's. The server span still exports,
+    # so the symptom is a short span plus orphan roots rather than a missing span.
+    # app.py does the same for /api/get_chat_response_stream.
     return Response(
-        generate(),
+        stream_with_context(generate()),
         content_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -385,15 +468,18 @@ def _streaming_response(request_id, model, stream_kwargs):
 # ---------------------------------------------------------------------------
 
 
-def _non_streaming_response(request_id, model, stream_kwargs):
+def _non_streaming_response(request_id, model, stream_kwargs, trace_attributes=None):
     """Accumulate from stream() and return a complete JSON response."""
     final_content = ""
     source_documents = []
     source_scores = []
     append_citations = False
+    archi_message_id = None
 
     try:
-        for event in _chat_wrapper.stream(**stream_kwargs):
+        for event in with_trace_attributes(
+            _chat_wrapper.stream(**stream_kwargs), trace_attributes
+        ):
             event_type = event.get("type", "")
 
             if event_type == "final":
@@ -416,6 +502,9 @@ def _non_streaming_response(request_id, model, stream_kwargs):
                 if docs:
                     source_documents = docs
                     source_scores = scores_list
+                raw_id = event.get("message_id")
+                if isinstance(raw_id, int) and not isinstance(raw_id, bool):
+                    archi_message_id = raw_id
 
             elif event_type == "error":
                 error_msg = event.get("message", "Unknown error")
@@ -453,6 +542,7 @@ def _non_streaming_response(request_id, model, stream_kwargs):
                 "completion_tokens": 0,
                 "total_tokens": 0,
             },
+            "archi_message_id": archi_message_id,
         }
     )
 

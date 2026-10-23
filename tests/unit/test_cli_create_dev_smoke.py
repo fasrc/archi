@@ -28,8 +28,14 @@ def satisfied_base_images(monkeypatch):
     every test in this file would depend on the developer's machine being logged in to ghcr,
     and would fail for a reason unrelated to what it is testing. The preflight's own tests
     install their own probe after this one, so they still exercise the real decision paths.
+
+    `VolumeManager.create_required_volumes` is also stubbed out: it calls the container
+    tool directly via subprocess (not through ContainerProbe), so on a machine without the
+    tool it raises FileNotFoundError before the test can reach the assertion it is testing.
+    Volume creation is incidental to what any test in this file exercises.
     """
     from src.cli.managers import base_image_preflight
+    from src.cli.managers.volume_manager import VolumeManager
 
     class _SatisfiedProbe:
         def __init__(self, container_tool="docker", timeout=600):
@@ -51,6 +57,7 @@ def satisfied_base_images(monkeypatch):
             return "Python 3.11.9"
 
     monkeypatch.setattr(base_image_preflight, "ContainerProbe", _SatisfiedProbe)
+    monkeypatch.setattr(VolumeManager, "create_required_volumes", lambda *a, **kw: None)
 
 
 @pytest.fixture
@@ -78,6 +85,8 @@ def env_file(tmp_path):
         "OPENAI_API_KEY=sk-test\n"
         "PG_PASSWORD=test-pg\n"
         "HUGGING_FACE_HUB_TOKEN=test-hf\n"
+        "GIT_USERNAME=test-git\n"
+        "GIT_TOKEN=test-git\n"
     )
     return p
 
@@ -91,8 +100,11 @@ def benchmark_config(tmp_path):
     ollama_url) so validate_configs passes with services=["postgres",
     "benchmarking"].  agent_md_file uses an absolute path to an existing repo
     file so the exists() check in _validate_benchmarking_config passes.
+    queries_path names a real bank: without one, evaluate() stages "." and the
+    render (and so the preflight) refuses it.
     """
     agent_md = REPO_ROOT / "examples" / "agents" / "cms-comp-ops.md"
+    queries = REPO_ROOT / "examples" / "benchmarking" / "queries.json"
     miscellanea = (
         REPO_ROOT / "examples" / "deployments" / "basic-openai" / "miscellanea.list"
     )
@@ -127,6 +139,7 @@ services:
   benchmarking:
     agent_class: CMSCompOpsAgent
     agent_md_file: {str(agent_md)}
+    queries_path: {str(queries)}
     provider: openai
     model: gpt-4o
     ollama_url: http://localhost:11434
@@ -144,10 +157,9 @@ data_manager:
 
 
 @pytest.mark.usefixtures("fake_repo_root")
-def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
+def test_dev_flag_prints_warning_in_dry_run(env_file, archi_home, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
-    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
 
     from src.cli.cli_main import create
 
@@ -179,10 +191,9 @@ def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
     )
 
 
-def test_dry_run_succeeds_without_docker(env_file, tmp_path, monkeypatch):
+def test_dry_run_succeeds_without_docker(env_file, archi_home, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
-    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
 
     from src.cli import cli_main
 
@@ -405,10 +416,9 @@ def test_non_dry_create_requires_docker_under_verbose_logging(
     )
 
 
-def test_no_dev_flag_no_warning(env_file, tmp_path, monkeypatch):
+def test_no_dev_flag_no_warning(env_file, archi_home, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
-    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
 
     from src.cli.cli_main import create
 
@@ -1002,22 +1012,41 @@ def test_force_create_still_tears_down_once_validation_passes(
 ):
     """The fix must not be 'never tear down'.
 
-    With valid inputs the forced teardown still runs, and still runs before the
-    replacement deployment directory is created.
+    With valid inputs the forced teardown still runs, and runs after the
+    preflight render and volumes but before the real deployment write.
     """
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
 
     from src.cli import cli_main
+    from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.templates_manager import TemplateManager
+    from src.cli.managers.volume_manager import VolumeManager
 
     _existing_deployment(archi_home)
-    teardowns = _record_teardowns(monkeypatch)
     monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
 
-    def _stop_before_host_mutation(*args, **kwargs):
+    events = []
+    teardowns = []
+
+    def _recording_preflight(self, *a, **kw):
+        events.append("preflight")
+
+    monkeypatch.setattr(TemplateManager, "preflight_render", _recording_preflight)
+    monkeypatch.setattr(
+        VolumeManager, "create_required_volumes", lambda self, *a, **kw: None
+    )
+
+    def _recording_teardown(self, **kwargs):
+        teardowns.append(kwargs)
+        events.append("teardown")
+
+    monkeypatch.setattr(DeploymentManager, "delete_deployment", _recording_teardown)
+
+    def _recording_render(self, *a, **kw):
         raise RuntimeError(SENTINEL)
 
-    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
+    monkeypatch.setattr(TemplateManager, "prepare_deployment_files", _recording_render)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -1045,46 +1074,59 @@ def test_force_create_still_tears_down_once_validation_passes(
         f"which proves the teardown ran before the replacement was written. "
         f"output:\n{result.output}\n"
     )
+    assert events.index("preflight") < events.index(
+        "teardown"
+    ), f"preflight must run before the teardown. events={events}\noutput:\n{result.output}\n"
 
 
 def test_force_evaluate_still_removes_existing_runtime(
     env_file, archi_home, benchmark_config, monkeypatch
 ):
-    """Splitting the helper must not break archi evaluate --force.
+    """evaluate --force tears down the existing runtime and the preflight runs before it.
 
-    evaluate() calls handle_existing_deployment() followed by
-    remove_existing_deployment(), then refuses if the directory still exists. It
-    depends on the destructive half running at that call site, which is why the
-    split had to update it rather than leave only the precondition behind.
+    evaluate() calls handle_existing_deployment() followed by preflight_render()
+    (fasrc/archi#294), then remove_existing_deployment(), then refuses if the
+    directory still exists.  The destructive half must still run at its call site,
+    which is why the split had to update it rather than leave only the precondition
+    behind.
 
-    The TemplateManager sentinel stops the run before any host mutation so the
-    test never creates real volumes or containers.  The sentinel appearing in
-    the output proves the run reached deployment setup, meaning the teardown
-    genuinely ran rather than the test passing vacuously because validation
-    refused first.
+    prepare_deployment_files raises SENTINEL to stop before any real host mutation,
+    proving the teardown ran before the replacement was written.  The events list
+    also proves the preflight ran before the teardown.
     """
     import shutil
 
     from src.cli import cli_main
     from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.templates_manager import TemplateManager
+    from src.cli.managers.volume_manager import VolumeManager
 
     existing = _existing_deployment(archi_home)
 
     teardowns = []
+    events = []
 
     def _delete(self, **kwargs):
         teardowns.append(kwargs)
+        events.append("teardown")
         shutil.rmtree(existing, ignore_errors=True)
 
-    def _stop_before_host_mutation(*args, **kwargs):
+    def _recording_preflight(self, plan, cfg_mgr, sec, **opts):
+        events.append("preflight")
+
+    def _raise_sentinel(self, *a, **kw):
         raise RuntimeError(SENTINEL)
 
     monkeypatch.setattr(DeploymentManager, "delete_deployment", _delete)
+    monkeypatch.setattr(TemplateManager, "preflight_render", _recording_preflight)
+    monkeypatch.setattr(
+        VolumeManager, "create_required_volumes", lambda self, *a, **kw: None
+    )
+    monkeypatch.setattr(TemplateManager, "prepare_deployment_files", _raise_sentinel)
     monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
     monkeypatch.setattr(
         cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
     )
-    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -1112,6 +1154,10 @@ def test_force_evaluate_still_removes_existing_runtime(
     assert SENTINEL in result.output, (
         f"expected the run to reach deployment setup and stop at the sentinel, "
         f"which proves the teardown ran before the replacement was written. "
+        f"output:\n{result.output}\n"
+    )
+    assert events.index("preflight") < events.index("teardown"), (
+        f"preflight must run before the teardown. events={events}\n"
         f"output:\n{result.output}\n"
     )
 
@@ -1294,13 +1340,20 @@ def test_force_evaluate_refuses_when_removal_silently_fails(
     """
     from src.cli import cli_main
     from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.volume_manager import VolumeManager
 
     _existing_deployment(archi_home)
     teardowns = []
+    volume_calls = []
     monkeypatch.setattr(
         DeploymentManager,
         "delete_deployment",
         lambda self, **kwargs: teardowns.append(kwargs),
+    )
+    monkeypatch.setattr(
+        VolumeManager,
+        "create_required_volumes",
+        lambda self, *a, **kw: volume_calls.append((a, kw)),
     )
     monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
     monkeypatch.setattr(
@@ -1332,6 +1385,10 @@ def test_force_evaluate_refuses_when_removal_silently_fails(
     assert len(teardowns) == 1, (
         f"deletion must have been attempted exactly once. "
         f"teardowns={teardowns}\noutput:\n{result.output}\n"
+    )
+    assert len(volume_calls) == 1, (
+        f"create_required_volumes must have been called exactly once. "
+        f"volume_calls={volume_calls}\noutput:\n{result.output}\n"
     )
 
 
@@ -1441,19 +1498,32 @@ def test_force_create_continues_when_teardown_fails(env_file, archi_home, monkey
 
     from src.cli import cli_main
     from src.cli.managers.deployment_manager import DeploymentManager
+    from src.cli.managers.templates_manager import TemplateManager
+    from src.cli.managers.volume_manager import VolumeManager
 
     _existing_deployment(archi_home)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    events = []
+
+    def _recording_preflight(self, *a, **kw):
+        events.append("preflight")
+
+    monkeypatch.setattr(TemplateManager, "preflight_render", _recording_preflight)
+    monkeypatch.setattr(
+        VolumeManager, "create_required_volumes", lambda self, *a, **kw: None
+    )
 
     def _failing_delete(self, **kwargs):
+        events.append("teardown")
         raise RuntimeError("compose stop failed")
 
     monkeypatch.setattr(DeploymentManager, "delete_deployment", _failing_delete)
-    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
 
-    def _stop_before_host_mutation(*args, **kwargs):
+    def _recording_render(self, *a, **kw):
         raise RuntimeError(SENTINEL)
 
-    monkeypatch.setattr(cli_main, "TemplateManager", _stop_before_host_mutation)
+    monkeypatch.setattr(TemplateManager, "prepare_deployment_files", _recording_render)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -1479,6 +1549,9 @@ def test_force_create_continues_when_teardown_fails(env_file, archi_home, monkey
     assert (
         SENTINEL in result.output
     ), f"a failed teardown should not abort the create. output:\n{result.output}\n"
+    assert events.index("preflight") < events.index(
+        "teardown"
+    ), f"preflight must run before the teardown. events={events}\noutput:\n{result.output}\n"
 
 
 def test_force_create_with_missing_secret_fails_under_verbose_logging(
@@ -1920,7 +1993,14 @@ def test_force_create_with_an_uncoverable_service_template_keeps_existing_deploy
         "@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"
     )
     (templates / "Dockerfile-probe").write_text("FROM docker.io/library/python:3.11\n")
-    monkeypatch.setattr(base_image_preflight, "TEMPLATE_DIR", templates)
+    # Patch the *resolver*, not TEMPLATE_DIR. TEMPLATE_DIR is only the installed
+    # location; the directory the preflight actually reads is
+    # build_template_dir(), which prefers the checkout the build ships from
+    # (fasrc/archi#436 review). Patching the constant alone is silently ignored
+    # wherever `_repository_info` exists -- i.e. in CI and in any real install,
+    # but not in a bare worktree -- which made this test pass locally and both
+    # vacuous and red in CI.
+    monkeypatch.setattr(base_image_preflight, "build_template_dir", lambda: templates)
 
     existing = _existing_deployment(archi_home)
     teardowns = _record_teardowns(monkeypatch)
@@ -2189,3 +2269,290 @@ def test_force_create_with_enabled_evaluations_and_no_agent_config_path_keeps_ex
     assert (
         "services.chat_app.evaluations.agent_config_path" in result.output
     ), f"the error should name the missing key. output:\n{result.output}\n"
+
+
+# --- issue #394: the evaluate path runs the base-image preflight above the teardown ---
+
+
+def test_force_evaluate_with_unobtainable_base_image_keeps_existing_deployment(
+    archi_home, env_file, benchmark_config, monkeypatch
+):
+    """The ordering contract, applied to the base image, for evaluate (fasrc/archi#394).
+
+    Mirrors test_force_create_with_unobtainable_base_image_keeps_existing_deployment at
+    :1855, but through evaluate() rather than create(): a benchmarking run that cannot
+    obtain a base image was always going to fail, so it must not cost the operator a
+    running deployment first.
+    """
+    from src.cli import cli_main
+    from src.cli.managers import base_image_preflight
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+    _patch_probe(monkeypatch, fetch_error=base_image_preflight.Cause.UNAUTHORIZED)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, f"expected refusal. output:\n{result.output}"
+    assert teardowns == [], f"runtime was torn down before the refusal: {teardowns}"
+    assert (existing / "marker.txt").exists(), "existing runtime was destroyed"
+
+
+def test_force_evaluate_with_an_uncoverable_service_template_keeps_existing_deployment(
+    archi_home, env_file, benchmark_config, monkeypatch, tmp_path
+):
+    """The ordering contract, applied to the uncoverable-template refusal, for evaluate.
+
+    Mirrors test_force_create_with_an_uncoverable_service_template_keeps_existing_deployment
+    at :1897, but through evaluate() rather than create().
+    """
+    from src.cli import cli_main
+    from src.cli.managers import base_image_preflight
+
+    templates = tmp_path / "dockerfiles"
+    templates.mkdir()
+    (templates / "Dockerfile-chat").write_text(
+        "FROM ghcr.io/fasrc/a2rchi-python-base"
+        "@sha256:c068f17b8cba96682e7007c9dd5511f43fea86c796f3cbeee44e2766c5a9b8e8\n"
+    )
+    (templates / "Dockerfile-probe").write_text("FROM docker.io/library/python:3.11\n")
+    # Patch the *resolver*, not TEMPLATE_DIR. TEMPLATE_DIR is only the installed
+    # location; the directory the preflight actually reads is
+    # build_template_dir(), which prefers the checkout the build ships from
+    # (fasrc/archi#436 review). Patching the constant alone is silently ignored
+    # wherever `_repository_info` exists -- i.e. in CI and in any real install,
+    # but not in a bare worktree -- which made this test pass locally and both
+    # vacuous and red in CI.
+    monkeypatch.setattr(base_image_preflight, "build_template_dir", lambda: templates)
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli_main, "preflight_benchmark_configs", lambda configs: ([], [])
+    )
+    record = _patch_probe(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.evaluate,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(benchmark_config),
+            "-e",
+            str(env_file),
+        ],
+    )
+
+    assert result.exit_code != 0, f"expected refusal. output:\n{result.output}"
+    assert "Dockerfile-probe" in result.output, (
+        "the refusal must name the uncoverable template, or the operator cannot act on it. "
+        f"output:\n{result.output}"
+    )
+    assert teardowns == [], f"runtime was torn down before the refusal: {teardowns}"
+    assert (existing / "marker.txt").exists(), "existing runtime was destroyed"
+    assert record["pulled"] == [], (
+        "the refusal must precede any image work, which is what puts it above the teardown; "
+        f"pulled {record['pulled']}"
+    )
+
+
+def test_force_create_with_missing_agent_config_file_keeps_existing_deployment(
+    env_file, archi_home, monkeypatch, tmp_path
+):
+    """A missing agent_config_path file must not cost the operator a running deployment.
+
+    validate_configs() calls resolve_agent_config_source() through
+    _validate_chat_app_config(), which is above remove_existing_deployment().
+    This guards against moving the check into template staging (after the teardown).
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+
+    from src.cli import cli_main
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    data.setdefault("services", {}).setdefault("chat_app", {})["evaluations"] = {
+        "enabled": True,
+        "agent_config_path": str(tmp_path / "absent.yaml"),
+    }
+    bad_config = tmp_path / "config-eval-missing-file.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    existing = _existing_deployment(archi_home)
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            "chatbot",
+            "--hostmode",
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before evaluations file check ran. "
+        f"output:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed for a missing evaluations file. "
+        f"output:\n{result.output}\n"
+    )
+    assert result.exit_code != 0, (
+        f"evaluations.enabled:true with absent agent_config_path should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        "services.chat_app.evaluations.agent_config_path" in result.output
+    ), f"the error should name the key. output:\n{result.output}\n"
+    assert (
+        "not found" in result.output
+    ), f"the error should say 'not found'. output:\n{result.output}\n"
+
+
+@pytest.mark.parametrize("selected", ["chatbot", "slack"])
+def test_force_create_with_agent_config_inside_deployment_keeps_existing_deployment(
+    selected, env_file, archi_home, monkeypatch, tmp_path
+):
+    """A source file inside the deployment dir must not cost the operator a running deployment.
+
+    refuse_agent_config_inside_deployment() runs above remove_existing_deployment(),
+    so a config that names a file under the deployment directory is refused before any
+    teardown occurs. `--services slack` also runs the chatbot, so it is refused too.
+    """
+    import yaml
+
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+    env_file.write_text(
+        env_file.read_text() + "SLACK_BOT_TOKEN=xoxb-test\nSLACK_APP_TOKEN=xapp-test\n"
+    )
+
+    from src.cli import cli_main
+    from src.cli.managers.volume_manager import VolumeManager
+
+    existing = _existing_deployment(archi_home)
+
+    inside_file = existing / "configs" / "config.eval.yaml"
+    inside_file.parent.mkdir(parents=True, exist_ok=True)
+    inside_file.write_text("agent config inside deployment")
+
+    data = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+    data.setdefault("services", {}).setdefault("chat_app", {})["evaluations"] = {
+        "enabled": True,
+        "agent_config_path": str(inside_file),
+    }
+    bad_config = tmp_path / "config-eval-inside-deployment.yaml"
+    bad_config.write_text(yaml.safe_dump(data))
+
+    teardowns = _record_teardowns(monkeypatch)
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        VolumeManager, "create_required_volumes", lambda self, *a, **kw: None
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.create,
+        [
+            "--force",
+            "-n",
+            "smoke",
+            "-c",
+            str(bad_config),
+            "-e",
+            str(env_file),
+            "--services",
+            selected,
+            "--hostmode",
+        ],
+    )
+
+    assert teardowns == [], (
+        f"existing deployment was torn down before inside-deployment check ran. "
+        f"output:\n{result.output}\n"
+    )
+    assert (existing / "marker.txt").exists(), (
+        f"existing deployment directory was removed for an inside-deployment config. "
+        f"output:\n{result.output}\n"
+    )
+    assert result.exit_code != 0, (
+        f"agent_config_path inside the deployment dir should fail. "
+        f"exit_code={result.exit_code}\noutput:\n{result.output}\n"
+    )
+    assert (
+        "services.chat_app.evaluations.agent_config_path" in result.output
+    ), f"the error should name the key. output:\n{result.output}\n"
+
+
+@pytest.mark.usefixtures("fake_repo_root")
+def test_slack_only_selection_validates_the_chatbot_it_runs(
+    archi_home, tmp_path, monkeypatch
+):
+    """`--services slack` also runs the chatbot, so its chat config is validated."""
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        EXAMPLE_CONFIG.read_text().replace(
+            "  chat_app:\n", "  chat_app:\n    provider: openai\n", 1
+        )
+    )
+    env = tmp_path / "secrets.env"
+    env.write_text(
+        "OPENAI_API_KEY=sk-test\nPG_PASSWORD=test-pg\nHUGGING_FACE_HUB_TOKEN=test-hf\n"
+        "SLACK_BOT_TOKEN=xoxb-test\nSLACK_APP_TOKEN=xapp-test\n"
+    )
+
+    from src.cli import cli_main
+
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: False)
+    result = CliRunner().invoke(
+        cli_main.create,
+        [
+            "--dry",
+            "-n",
+            "slackonly",
+            "-c",
+            str(config),
+            "-e",
+            str(env),
+            "--services",
+            "slack",
+            "--hostmode",
+        ],
+    )
+
+    assert result.exit_code != 0, f"output:\n{result.output}\n"
+    assert "Legacy keys detected" in result.output, f"output:\n{result.output}\n"

@@ -26,6 +26,7 @@ answer would silently pass*, not to decorate the implementation:
 import itertools
 import json
 import math
+import pathlib
 import re
 import statistics
 import sys
@@ -134,6 +135,7 @@ def _artifact(tmp_path):
         total=None,
         metadata=None,
         corpus_unchanged="absent",
+        configuration=None,
     ):
         arm_rows = arms if arms is not None else [rows or []]
         count = len(arm_rows)
@@ -141,6 +143,8 @@ def _artifact(tmp_path):
         digests = _per_arm(digest, count)
         divergences = _per_arm(divergence, count)
         totals = _per_arm(total, count)
+        effective_cfg = {} if configuration is None else configuration
+        configurations = _per_arm(effective_cfg, count)
         results = []
         for index, these in enumerate(arm_rows):
             arm = {
@@ -149,7 +153,6 @@ def _artifact(tmp_path):
                 },
                 "total_results": _honest_totals(these, totals[index]),
                 "configuration_file": f"configs/arm{index + 1}.yaml",
-                "configuration": {},
                 "config_version": {
                     "digest": digests[index],
                     "source": "test fixture",
@@ -159,6 +162,9 @@ def _artifact(tmp_path):
                     "key_settings": {},
                 },
             }
+            cfg = configurations[index]
+            if cfg != "absent":
+                arm["configuration"] = cfg
             if fingerprints[index] is not None:
                 arm["corpus_fingerprint"] = fingerprints[index]
             if corpus_unchanged != "absent":
@@ -744,6 +750,309 @@ def test_unavailable_fingerprint_counts_as_unrecorded(_artifact):
     assert cr.load_arms([str(path)])[0].corpus_fingerprint is None
 
 
+# --- #570: fingerprint version, collection, and embedding gates -------------
+
+
+def _identity(
+    model="model-a", *, collection="docs_with_HF", source="chunks", untagged=0
+):
+    """A ``retrieval_identity`` block shaped like ``retrieval_record``."""
+    return {
+        "collection": collection,
+        "embedding_name": "HuggingFaceEmbeddings",
+        "embedding_model": model,
+        "chunk_count": 10,
+        "usable_chunk_count": 10,
+        "untagged_chunk_count": untagged,
+        "embedding_model_source": source,
+    }
+
+
+def _with_identity(path, identity):
+    """Record ``identity`` on the single arm of an artifact written by the fixture."""
+    document = json.loads(path.read_text())
+    document["benchmarking_results"][0]["retrieval_identity"] = identity
+    path.write_text(json.dumps(document))
+    return str(path)
+
+
+def _config_for(model):
+    """A recorded ``configuration`` whose data manager names ``model``."""
+    return {
+        "data_manager": {
+            "collection_name": "docs",
+            "embedding_name": "HF",
+            "embedding_class_map": {
+                "HF": {
+                    "class": "HuggingFaceEmbeddings",
+                    "kwargs": {"model_name": model},
+                }
+            },
+        }
+    }
+
+
+@pytest.mark.parametrize("flag", [[], ["--corpus-differs-by-design"]])
+def test_a_v1_fingerprint_against_a_v2_one_is_refused_with_a_version_reason(
+    _artifact, capsys, flag
+):
+    # A v1 and a v2 digest never match, whatever the corpus. Reporting the pair
+    # as "different corpora" would invite the G3 override for what is really a
+    # stale pin.
+    base = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256:aaa"))
+    treat = str(_artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:aaa"))
+
+    code = cr.main([base, treat, *flag])
+
+    assert code == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "fingerprint versions differ" in err
+    assert "re-pin" in err
+    assert "G3" not in err
+
+
+@pytest.mark.parametrize("allow", [False, True])
+def test_a_v1_noise_replicate_against_a_v2_baseline_is_refused_by_version(
+    _artifact, allow
+):
+    baseline = cr.load_arms(
+        [str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"))]
+    )[0]
+    one = _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:a")
+    stale = _artifact([_row("q1", faithfulness=0.7)], fingerprint="sha256:a")
+
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.noise_floor_from_runs(
+            [str(one), str(stale)], baseline=baseline, allow_corpus_differs=allow
+        )
+
+    assert excinfo.value.code == cr.EXIT_GATE
+    message = str(excinfo.value)
+    assert "fingerprint versions differ" in message
+    assert "re-pin" in message
+    assert "G3" not in message
+
+
+def test_the_g3_reason_names_both_collections_when_they_differ(_artifact, capsys):
+    base = _with_identity(
+        _artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"),
+        _identity(collection="docs_with_HF"),
+    )
+    treat = _with_identity(
+        _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:b"),
+        _identity(collection="wiki_with_HF"),
+    )
+
+    code = cr.main([base, treat])
+
+    assert code == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "G3" in err
+    assert "docs_with_HF" in err and "wiki_with_HF" in err
+
+
+def test_an_embedding_ab_with_verified_provenance_states_the_varied_factor(
+    _artifact, capsys
+):
+    # The digest is model-neutral: equal digests prove the text and collection
+    # were the same, and the verified identities prove which model each used.
+    base = _with_identity(
+        _artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"),
+        _identity("model-a"),
+    )
+    treat = _with_identity(
+        _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:a"),
+        _identity("model-b"),
+    )
+
+    assert cr.main([base, treat]) == cr.EXIT_OK
+
+    header = capsys.readouterr().out.split("## Provenance")[0]
+    assert "varied factor" in header.lower()
+    assert "embedding_model" in header
+    assert "model-a" in header and "model-b" in header
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        _identity("model-b", source="config (chunks untagged)", untagged=10),
+        _identity("model-b", source="chunks (3 untagged)", untagged=3),
+        None,
+    ],
+    ids=["config-untagged", "chunks-partly-untagged", "no-identity"],
+)
+@pytest.mark.parametrize("flag", [[], ["--corpus-differs-by-design"]])
+def test_an_embedding_difference_with_unverified_provenance_is_refused(
+    _artifact, capsys, identity, flag
+):
+    # Two runs over an untagged legacy collection can both have been served by
+    # one older model, whatever their configs say, so no flag admits this.
+    base = _with_identity(
+        _artifact(
+            [_row("q1", faithfulness=0.5)], name="base.json", fingerprint="sha256/v2:a"
+        ),
+        _identity("model-a"),
+    )
+    treat_path = _artifact(
+        [_row("q1", faithfulness=0.6)],
+        name="treat.json",
+        fingerprint="sha256/v2:a",
+        configuration=_config_for("model-b"),
+    )
+    treat = (
+        str(treat_path) if identity is None else _with_identity(treat_path, identity)
+    )
+
+    code = cr.main([base, treat, *flag])
+
+    assert code == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "embedding provenance unverified" in err
+    # The refusal names the unverified arm, and only that arm.
+    flagged = err.split("embedding provenance unverified for ", 1)[1].split(": ")[0]
+    assert flagged.startswith("treat (")
+    assert "base (" not in flagged
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    [_config_for("model-a"), {}],
+    ids=["config-names-the-same-model", "model-unknowable"],
+)
+def test_an_unrecorded_identity_without_an_embedding_difference_is_noted(
+    _artifact, capsys, configuration
+):
+    # Absent is unknowable, not unequal, as for corpus_unchanged_at_endpoints.
+    base = _with_identity(
+        _artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"),
+        _identity("model-a"),
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            name="treat.json",
+            fingerprint="sha256/v2:a",
+            configuration=configuration,
+        )
+    )
+
+    assert cr.main([base, treat]) == cr.EXIT_OK
+
+    out = capsys.readouterr().out
+    assert "retrieval_identity" in out
+    assert re.search(r"`treat`[^\n]*not recorded", out)
+    assert "varied factor" not in out.lower()
+
+
+# --- #573: end-of-run embedding tags ---
+
+
+_TAG_KEY = "embedding_tags_unchanged_at_endpoints"
+
+
+def _with_tags(path, value):
+    """Record the end-of-run tag comparison on the single arm of an artifact."""
+    document = json.loads(path.read_text())
+    document["benchmarking_results"][0][_TAG_KEY] = value
+    path.write_text(json.dumps(document))
+    return str(path)
+
+
+@pytest.mark.parametrize("value", [False, None], ids=["changed", "not-observed"])
+@pytest.mark.parametrize("flag", [[], ["--corpus-differs-by-design"]])
+def test_an_arm_whose_embedding_tags_changed_is_refused(_artifact, capsys, value, flag):
+    # A changed tag state means vectors of another model, or of no recorded
+    # model, appeared during the arm. The fingerprint is model-neutral and
+    # cannot see it, and no flag admits it.
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)], name="base.json", fingerprint="sha256/v2:a"
+        )
+    )
+    treat = _with_tags(
+        _artifact(
+            [_row("q1", faithfulness=0.6)], name="treat.json", fingerprint="sha256/v2:a"
+        ),
+        value,
+    )
+
+    code = cr.main([base, treat, *flag])
+
+    assert code == cr.EXIT_GATE
+    err = capsys.readouterr().err
+    assert "embedding model tags" in err
+    assert _TAG_KEY in err
+    flagged = err.split("embedding model tags", 1)[1]
+    assert "treat" in flagged and "base" not in flagged
+
+
+@pytest.mark.parametrize("value", ["absent", True], ids=["legacy", "unchanged"])
+def test_an_arm_without_a_tag_change_compares_as_before(_artifact, value):
+    base = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"))
+    treat_path = _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:a")
+    treat = str(treat_path) if value == "absent" else _with_tags(treat_path, value)
+
+    assert cr.main([base, treat]) == cr.EXIT_OK
+
+
+@pytest.mark.parametrize("allow", [False, True])
+def test_a_noise_replicate_whose_embedding_tags_changed_is_refused(_artifact, allow):
+    # A void replicate must not widen sigma, whatever the corpus flag says.
+    baseline = cr.load_arms(
+        [str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="sha256/v2:a"))]
+    )[0]
+    one = _artifact([_row("q1", faithfulness=0.6)], fingerprint="sha256/v2:a")
+    changed = _with_tags(
+        _artifact([_row("q1", faithfulness=0.7)], fingerprint="sha256/v2:a"), False
+    )
+
+    with pytest.raises(cr.CompareError) as excinfo:
+        cr.noise_floor_from_runs(
+            [str(one), changed], baseline=baseline, allow_corpus_differs=allow
+        )
+
+    assert excinfo.value.code == cr.EXIT_GATE
+    message = str(excinfo.value)
+    assert "embedding model tags" in message
+    assert changed in message
+
+
+@pytest.mark.parametrize(
+    "tags, expected",
+    [
+        (False, "embedding model tags changed while it answered"),
+        (None, "embedding tag reading is unavailable"),
+        (True, None),
+        ("absent", None),
+    ],
+    ids=["changed", "not-observed", "unchanged", "legacy"],
+)
+def test_a_qa_run_whose_embedding_tags_changed_cannot_join(
+    _artifact, tmp_path, capsys, tags, expected
+):
+    question, reference = "how do I request a GPU", "use --gres=gpu:1"
+    rows = [_row(question, reference=reference, faithfulness=0.5)]
+    base = str(_artifact(rows, fingerprint="sha256/v2:a"))
+    treat = str(_artifact(rows, fingerprint="sha256/v2:a"))
+    arms = cr.load_arms([base, treat])
+    corpus = dict(_STABLE)
+    if tags != "absent":
+        corpus[_TAG_KEY] = tags
+    run = _qa_with_corpus(
+        tmp_path / "qa", derive_item_id(question, reference), **corpus
+    )
+
+    code = cr.main([base, treat, "--qa-run", f"{arms[1].label}={run}"])
+
+    if expected is None:
+        assert code == cr.EXIT_OK
+    else:
+        assert code == cr.EXIT_GATE
+        err = capsys.readouterr().err
+        assert "cannot join" in err and expected in err
+
+
 # --- Procedure E: the divergence gate ----------------------------------------
 
 
@@ -791,6 +1100,594 @@ def test_null_divergence_prints_the_procedure_e_caveat(_artifact, capsys):
     out = capsys.readouterr().out
     assert "Procedure E" in out
     assert "backfilled" in out
+
+
+# --- G10: the answer-path gate ---------------------------------------------
+
+_G10_BOUND = {
+    "services": {
+        "chat_app": {
+            "recursion_limit": 50,
+            "context_editing": {"trigger": 32768, "keep": 1},
+        }
+    }
+}
+_G10_LIMIT_ONLY = {"services": {"chat_app": {"recursion_limit": 50}}}
+
+
+def test_g10_refuses_when_context_editing_is_absent(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_LIMIT_ONLY,
+        )
+    )
+
+    code = cr.main([base, treat])
+
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "G10" in err
+    assert "services.chat_app.context_editing" in err
+    assert "32768" in err
+    assert "absent" in err
+
+
+def test_g10_refuses_when_context_editing_is_null(_artifact, capsys):
+    treat_cfg = {
+        "services": {"chat_app": {"recursion_limit": 50, "context_editing": None}}
+    }
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=treat_cfg,
+        )
+    )
+
+    code = cr.main([base, treat])
+
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "null" in err
+    assert "32768" in err
+
+
+def test_g10_passes_and_shows_row_for_identical_answer_paths(
+    _artifact, capsys, tmp_path
+):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main([base, treat])
+    assert code == cr.EXIT_OK
+    out = capsys.readouterr().out
+    g10_line = [line for line in out.splitlines() if line.startswith("| G10 ")][0]
+    assert g10_line.startswith("| G10 one answer path | pass |")
+
+    code2 = cr.main([base, treat, "--json", str(out_json)])
+    capsys.readouterr()
+    assert code2 == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert len(g10_entries) == 1
+    g10 = g10_entries[0]
+    assert g10["status"] == "pass"
+    assert "services.chat_app.context_editing" in g10["detail"]
+    assert "services.chat_app.recursion_limit" in g10["detail"]
+
+
+def test_g10_constants_are_stable():
+    assert cr.ANSWER_PATH_REFUSED == (
+        "services.chat_app.context_editing",
+        "services.chat_app.recursion_limit",
+    )
+    assert cr.ANSWER_PATH_REPORTED == ("services.benchmarking.agent_md_file",)
+
+
+def test_g10_override_waives_named_path(_artifact, capsys, tmp_path):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_LIMIT_ONLY,
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    out = capsys.readouterr().out
+    assert code == cr.EXIT_OK
+    g10_lines = [line for line in out.splitlines() if line.startswith("| G10 ")]
+    assert g10_lines, "no G10 row in output"
+    g10_line = g10_lines[0]
+    assert "OVERRIDDEN" in g10_line
+    assert "--config-differs-by-design services.chat_app.context_editing" in g10_line
+    assert "32768" in out
+    assert "absent" in out
+
+    code2 = cr.main(
+        [
+            base,
+            treat,
+            "--config-differs-by-design",
+            "services.chat_app.context_editing",
+            "--json",
+            str(out_json),
+        ]
+    )
+    capsys.readouterr()
+    assert code2 == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert g10_entries
+    g10 = g10_entries[0]
+    assert "OVERRIDDEN" in g10["status"]
+    assert "32768" in g10["detail"] or "absent" in g10["detail"]
+
+
+def test_g10_override_wrong_path_does_not_waive(_artifact, capsys):
+    base_cfg = {"services": {"chat_app": {"recursion_limit": 50}}}
+    treat_cfg = {"services": {"chat_app": {"recursion_limit": 25}}}
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=base_cfg,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=treat_cfg,
+        )
+    )
+
+    code_no_flag = cr.main([base, treat])
+    err_no_flag = capsys.readouterr().err
+    assert code_no_flag == cr.EXIT_GATE
+    assert "services.chat_app.recursion_limit" in err_no_flag
+    assert "50" in err_no_flag
+    assert "25" in err_no_flag
+
+    code_wrong = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    capsys.readouterr()
+    assert code_wrong == cr.EXIT_GATE
+
+    code_right = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.recursion_limit"]
+    )
+    capsys.readouterr()
+    assert code_right == cr.EXIT_OK
+
+
+def test_g10_override_one_path_both_differing(_artifact, capsys):
+    treat_cfg = {"services": {"chat_app": {"recursion_limit": 25}}}
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=treat_cfg,
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "services.chat_app.recursion_limit" in err
+
+
+def test_g10_unknown_path_is_usage_error(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.default_model"]
+    )
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_USAGE
+    assert "services.chat_app.context_editing" in err
+    assert "services.chat_app.recursion_limit" in err
+
+
+def test_g10_reported_path_cannot_be_waived(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+
+    code = cr.main(
+        [
+            base,
+            treat,
+            "--config-differs-by-design",
+            "services.benchmarking.agent_md_file",
+        ]
+    )
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_USAGE
+    assert "services.chat_app.context_editing" in err
+    assert "services.chat_app.recursion_limit" in err
+
+
+def test_g10_override_nondiffering_path_stays_pass(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    out = capsys.readouterr().out
+    assert code == cr.EXIT_OK
+    g10_lines = [line for line in out.splitlines() if line.startswith("| G10 ")]
+    assert g10_lines
+    assert "pass" in g10_lines[0]
+    assert "OVERRIDDEN" not in g10_lines[0]
+
+
+def test_g10_agent_md_file_reported_when_different(_artifact, capsys, tmp_path):
+    cfg_a = {
+        "services": {
+            "chat_app": {
+                "recursion_limit": 50,
+                "context_editing": {"trigger": 32768, "keep": 1},
+            },
+            "benchmarking": {"agent_md_file": "prompts/a.md"},
+        }
+    }
+    cfg_b = {
+        "services": {
+            "chat_app": {
+                "recursion_limit": 50,
+                "context_editing": {"trigger": 32768, "keep": 1},
+            },
+            "benchmarking": {"agent_md_file": "prompts/b.md"},
+        }
+    }
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)], fingerprint="corpus-1", configuration=cfg_a
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)], fingerprint="corpus-1", configuration=cfg_b
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main([base, treat])
+    out = capsys.readouterr().out
+    assert code == cr.EXIT_OK
+    g10_lines = [line for line in out.splitlines() if line.startswith("| G10 ")]
+    assert g10_lines
+    assert g10_lines[0].startswith("| G10 one answer path | pass |")
+
+    code2 = cr.main([base, treat, "--json", str(out_json)])
+    capsys.readouterr()
+    assert code2 == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert g10_entries
+    detail = g10_entries[0]["detail"]
+    assert "agent_md_file" in detail
+    assert "prompts/a.md" in detail
+    assert "prompts/b.md" in detail
+
+
+def test_g10_agent_md_file_absent_from_detail_when_equal(_artifact, tmp_path):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main([base, treat, "--json", str(out_json)])
+    assert code == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert g10_entries
+    assert "agent_md_file" not in g10_entries[0]["detail"]
+
+
+def test_g10_both_arms_unrecorded_refused(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+
+    code = cr.main([base, treat])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "G10" in err
+    assert "not recorded" in err
+
+
+def test_g10_one_arm_unrecorded_refused(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+
+    code = cr.main([base, treat])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    treat_label = "run_2"
+    assert f"{treat_label}=not recorded" in err
+
+
+def test_g10_unrecorded_waived_by_both_paths(_artifact, capsys, tmp_path):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+    out_json = tmp_path / "out.json"
+
+    code = cr.main(
+        [
+            base,
+            treat,
+            "--config-differs-by-design",
+            "services.chat_app.context_editing",
+            "--config-differs-by-design",
+            "services.chat_app.recursion_limit",
+            "--json",
+            str(out_json),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == cr.EXIT_OK
+    g10_lines = [line for line in out.splitlines() if line.startswith("| G10 ")]
+    assert g10_lines
+    assert "OVERRIDDEN" in g10_lines[0]
+
+    report = json.loads(out_json.read_text())
+    g10_entries = [g for g in report["gates"] if g["id"] == "G10"]
+    assert g10_entries
+    assert "not recorded" in g10_entries[0]["detail"]
+
+
+def test_g10_unrecorded_waived_partial_still_refuses(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration="absent",
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    capsys.readouterr()
+    assert code == cr.EXIT_GATE
+
+
+def test_g10_null_configuration_counts_as_not_recorded(_artifact, capsys):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=[None],
+        )
+    )
+
+    code = cr.main([base, treat])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "not recorded" in err
+
+
+@pytest.mark.parametrize(
+    "treat_cfg",
+    ["unknown", {"services": "unknown"}, {"services": {"benchmarking": "unknown"}}],
+)
+def test_g10_non_mapping_configuration_is_refused_not_crashed(
+    _artifact, capsys, treat_cfg
+):
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=[treat_cfg],
+        )
+    )
+
+    code = cr.main([base, treat])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    assert "G10" in err
+
+
+def test_g10_unknown_override_path_is_a_usage_error_before_other_gates(
+    _artifact, capsys
+):
+    base = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="corpus-1"))
+    treat = str(_artifact([_row("q1", faithfulness=0.6)], fingerprint="corpus-2"))
+
+    code = cr.main([base, treat, "--config-differs-by-design", "typo"])
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_USAGE
+    assert "'typo'" in err
+
+
+def test_g10_refusal_still_names_the_waived_and_reported_differences(_artifact, capsys):
+    treat_cfg = {
+        "services": {
+            "chat_app": {"recursion_limit": 25},
+            "benchmarking": {"agent_md_file": "treat.md"},
+        }
+    }
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            configuration=_G10_BOUND,
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            configuration=treat_cfg,
+        )
+    )
+
+    code = cr.main(
+        [base, treat, "--config-differs-by-design", "services.chat_app.context_editing"]
+    )
+    err = capsys.readouterr().err
+    assert code == cr.EXIT_GATE
+    refused = err.partition("waived")[0]
+    assert "services.chat_app.recursion_limit" in refused
+    assert "services.chat_app.context_editing" in err
+    assert "32768" in err
+    assert "services.benchmarking.agent_md_file" in err
+    assert '"treat.md"' in err
 
 
 # --- G8: the anchors ---------------------------------------------------------
@@ -1892,3 +2789,732 @@ def test_table_cells_survive_a_pipe_and_a_newline(_artifact, anchors_file, capsy
         # the six columns of the anchor table
         assert "`a \\| b`" in line
         assert len(re.findall(r"(?<!\\)\|", line)) == 7
+
+
+# --- issue #441: a failed row is not a bank relabelling ---
+
+
+def test_has_clean_row_is_the_status_half_of_is_scorable():
+    arm = cr.Arm(
+        label="test",
+        source="test",
+        rows={
+            "ok_q": {"status": "ok", "faithfulness": 0.5},
+            "no_status_q": {"faithfulness": 0.5},
+            "failed_q": {"status": "failed"},
+            "degraded_q": {"status": "degraded", "faithfulness": 0.9},
+        },
+        order=["ok_q", "no_status_q", "failed_q", "degraded_q"],
+        total_results={},
+        config_version={},
+        corpus_fingerprint=None,
+        corpus_snapshot_id=None,
+        code_version_digest=None,
+        configuration_file=None,
+    )
+
+    assert arm.has_clean_row("ok_q") is True
+    assert arm.has_clean_row("no_status_q") is True
+    assert arm.has_clean_row("failed_q") is False
+    assert arm.has_clean_row("degraded_q") is False
+    assert arm.has_clean_row("absent_q") is False
+
+    assert arm.is_scorable("ok_q", "faithfulness") is True
+    assert arm.is_scorable("no_status_q", "faithfulness") is True
+    assert arm.is_scorable("failed_q", "faithfulness") is False
+    assert arm.is_scorable("degraded_q", "faithfulness") is False
+    assert arm.is_scorable("absent_q", "faithfulness") is False
+
+
+def test_a_question_that_failed_in_one_arm_is_not_a_bank_relabelling(_artifact):
+    # A failed row has no bank fields, so None != "hard" was counting as a
+    # relabelling.  After the fix, has_clean_row drops the question before the
+    # field-mismatch check, leaving excluded_mismatched at 0.
+    base_rows = [
+        _row("ok1", anchor_type="reasoning", difficulty="easy", faithfulness=0.5),
+        _row("ok2", anchor_type="reasoning", difficulty="easy", faithfulness=0.5),
+        _row("bad", anchor_type="reasoning", difficulty="hard", faithfulness=0.5),
+    ]
+    treat_rows = [
+        _row("ok1", anchor_type="reasoning", difficulty="easy", faithfulness=0.6),
+        _row("ok2", anchor_type="reasoning", difficulty="easy", faithfulness=0.6),
+        _row("bad", status="failed"),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+    questions = ["ok1", "ok2", "bad"]
+
+    block = list(cr.slice_block(arms[0], arms, questions, {}))
+
+    for row in block:
+        assert (
+            row["excluded_mismatched"] == 0
+        ), f"field={row['field']!r} got excluded_mismatched={row['excluded_mismatched']}"
+    anchor_rows = [r for r in block if r["field"] == "anchor_type"]
+    difficulty_rows = [r for r in block if r["field"] == "difficulty"]
+    assert all(r["excluded_mismatched"] == 0 for r in anchor_rows)
+    assert all(r["excluded_mismatched"] == 0 for r in difficulty_rows)
+    easy_rows = [
+        r for r in block if r["field"] == "difficulty" and r["value"] == "easy"
+    ]
+    assert len(easy_rows) > 0
+    assert easy_rows[0]["n"] == 2
+
+
+def test_a_degraded_row_is_not_a_bank_relabelling(_artifact):
+    # Same as the failed-row case but with status="degraded"; has_clean_row
+    # treats both non-"ok" statuses identically.
+    base_rows = [
+        _row("ok1", anchor_type="reasoning", difficulty="easy", faithfulness=0.5),
+        _row("ok2", anchor_type="reasoning", difficulty="easy", faithfulness=0.5),
+        _row("bad", anchor_type="reasoning", difficulty="hard", faithfulness=0.5),
+    ]
+    treat_rows = [
+        _row("ok1", anchor_type="reasoning", difficulty="easy", faithfulness=0.6),
+        _row("ok2", anchor_type="reasoning", difficulty="easy", faithfulness=0.6),
+        _row("bad", status="degraded"),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+    questions = ["ok1", "ok2", "bad"]
+
+    block = list(cr.slice_block(arms[0], arms, questions, {}))
+
+    anchor_rows = [r for r in block if r["field"] == "anchor_type"]
+    difficulty_rows = [r for r in block if r["field"] == "difficulty"]
+    assert all(r["excluded_mismatched"] == 0 for r in anchor_rows)
+    assert all(r["excluded_mismatched"] == 0 for r in difficulty_rows)
+
+
+def test_a_relabelled_question_is_still_counted_when_both_arms_are_clean(_artifact):
+    # Both arms ran every question to completion.  A genuine bank relabelling
+    # (different field values in the two arms) must still be detected and counted.
+    # This test must pass both before and after the #441 fix.
+    base_rows = [
+        _row("agreed", difficulty="easy", faithfulness=0.5),
+        _row("relabelled", difficulty="easy", faithfulness=0.5),
+    ]
+    treat_rows = [
+        _row("agreed", difficulty="easy", faithfulness=0.7),
+        _row("relabelled", difficulty="hard", faithfulness=0.9),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["agreed", "relabelled"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert [row["value"] for row in rows] == ["easy"]
+    assert rows[0]["excluded_mismatched"] == 1
+    assert rows[0]["n"] == 1
+
+
+def test_a_relabelling_survives_a_third_arm_failing_the_same_question(_artifact):
+    """One arm's failure must not hide a genuine relabelling in a different arm.
+
+    `specs` is `nargs="+"` and a bare `-cd` sweep expands into *all* of its arms
+    (`compare_runs.py:326-334`), so three or more arms is the normal Procedure B
+    shape, not an edge case. Gating the mismatch test on **every** arm having a
+    clean row means one unrelated failure suppresses the relabelling another arm
+    genuinely carries: `treat_a` is clean and disagrees with a clean baseline,
+    which is exactly what `excluded_mismatched` is documented to report.
+    """
+    base_rows = [
+        _row("agreed", difficulty="easy", faithfulness=0.5),
+        _row("relabelled", difficulty="easy", faithfulness=0.5),
+    ]
+    clean_relabeller = [
+        _row("agreed", difficulty="easy", faithfulness=0.7),
+        _row("relabelled", difficulty="hard", faithfulness=0.9),
+    ]
+    failed_the_question = [
+        _row("agreed", difficulty="easy", faithfulness=0.6),
+        _row("relabelled", status="failed"),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(base_rows)),
+            str(_artifact(clean_relabeller)),
+            str(_artifact(failed_the_question)),
+        ]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["agreed", "relabelled"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted"
+    assert all(
+        row["excluded_mismatched"] == 1 for row in rows
+    ), f"got {[row['excluded_mismatched'] for row in rows]}, want 1 in every row"
+
+
+def test_a_third_arms_failure_does_not_shrink_another_arms_slice(_artifact):
+    """A failure in one arm must not drop a question from another arm's pairing.
+
+    `paired_deltas(baseline, arm, ...)` requires the baseline and *that* arm to be
+    scorable (`compare_runs.py:594-605`); a third arm's status has no bearing on
+    that pair. So a question every arm labels identically, which `treat_b` merely
+    failed, must still contribute to `treat_a`'s slice. This is the shape #440
+    produces: a failure row that carries its `BANK_SLICE_FIELDS`.
+    """
+    base_rows = [
+        _row("q1", difficulty="hard", faithfulness=0.5),
+        _row("q2", difficulty="hard", faithfulness=0.5),
+    ]
+    clean_throughout = [
+        _row("q1", difficulty="hard", faithfulness=0.9),
+        _row("q2", difficulty="hard", faithfulness=0.9),
+    ]
+    failed_q2_but_kept_its_label = [
+        _row("q1", difficulty="hard", faithfulness=0.7),
+        _row("q2", status="failed", difficulty="hard"),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(base_rows)),
+            str(_artifact(clean_throughout)),
+            str(_artifact(failed_q2_but_kept_its_label)),
+        ]
+    )
+
+    by_arm = {
+        row["arm"]: row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty"
+        and row["value"] == "hard"
+        and row["metric"] == "faithfulness"
+    }
+
+    assert (
+        by_arm[arms[1].label]["n"] == 2
+    ), f"the clean arm must keep both questions, got n={by_arm[arms[1].label]['n']}"
+    assert (
+        by_arm[arms[2].label]["n"] == 1
+    ), "the arm that failed q2 legitimately pairs only q1"
+
+
+def test_a_failed_baseline_row_does_not_hide_a_relabelling_between_clean_arms(
+    _artifact,
+):
+    """`excluded_mismatched` is a fact about the artifacts, not about `--baseline`.
+
+    The per-arm skip exists so one arm's failure cannot hide a relabelling another
+    arm genuinely carries -- and `interpreting_benchmark_results.md` now promises
+    exactly that: "One arm that fails a question therefore neither hides a
+    re-labelling another arm genuinely carries". Dropping the question whenever the
+    *baseline* row is unclean breaks that promise for the one arm the promise cannot
+    exclude, because any arm can be the baseline: `--baseline` selects it and a bare
+    `-cd` sweep orders the arms by their directory.
+
+    This shape only became reachable once #431 landed. Before it, a failed row
+    carried no bank field, so the `isinstance(value, str)` guard skipped the
+    question first; now a failed row keeps its label, the guard passes, and the
+    baseline-clean check is what drops it.
+
+    The group key still has to come from a clean baseline row -- a key from a row
+    that did not run establishes nothing -- so the question contributes to no
+    slice. Only the count is at stake, and the count must not move when the
+    operator points `--baseline` at a different arm.
+    """
+    agreed_and_failed_the_other = [
+        _row("agreed", difficulty="easy", faithfulness=0.5),
+        # #431's shape: the row failed but kept its bank fields.
+        _row("relabelled", status="failed", difficulty="easy"),
+    ]
+    clean_says_easy = [
+        _row("agreed", difficulty="easy", faithfulness=0.7),
+        _row("relabelled", difficulty="easy", faithfulness=0.7),
+    ]
+    clean_says_hard = [
+        _row("agreed", difficulty="easy", faithfulness=0.9),
+        _row("relabelled", difficulty="hard", faithfulness=0.9),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(agreed_and_failed_the_other)),
+            str(_artifact(clean_says_easy)),
+            str(_artifact(clean_says_hard)),
+        ]
+    )
+
+    counted = {}
+    for index, baseline in enumerate(arms):
+        rows = [
+            row
+            for row in cr.slice_block(baseline, arms, ["agreed", "relabelled"], {})
+            if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+        ]
+        assert rows, f"the difficulty slice must be emitted for baseline {index}"
+        counts = {row["excluded_mismatched"] for row in rows}
+        assert len(counts) == 1, f"baseline {index} reported {counts}, want one value"
+        counted[index] = counts.pop()
+
+    assert counted[0] == 1, (
+        "the failed baseline row hid the relabelling the two clean arms carry: "
+        f"got {counted[0]}, want 1"
+    )
+    assert len(set(counted.values())) == 1, (
+        "excluded_mismatched moved with the choice of baseline over identical "
+        f"artifacts: {counted}"
+    )
+
+
+def test_an_unclean_baseline_row_whose_arms_agree_is_dropped_without_a_count(
+    _artifact,
+):
+    """The other half of the baseline rule, and the branch reordering exposes.
+
+    This one **passes before and after** the count fix — it is the over-reach
+    guard for it, so it is not contrived to fail. Moving the baseline-clean check
+    below the mismatch test makes this the path that check now serves: a baseline
+    row that did not run but still carries its label (#431's shape), whose arms
+    all agree. There is no disagreement, so nothing may be counted; the group key
+    would come from a row that did not run, so nothing may be grouped either.
+
+    Both halves have to hold at once. A fix that counted this as a mismatch would
+    invent a bank edit out of a harness failure, which is the whole defect #441
+    exists to remove.
+    """
+    baseline_failed_q2_but_kept_its_label = [
+        _row("q1", difficulty="easy", faithfulness=0.5),
+        _row("q2", status="failed", difficulty="hard"),
+    ]
+    clean_agrees = [
+        _row("q1", difficulty="easy", faithfulness=0.7),
+        _row("q2", difficulty="hard", faithfulness=0.7),
+    ]
+    clean_agrees_too = [
+        _row("q1", difficulty="easy", faithfulness=0.9),
+        _row("q2", difficulty="hard", faithfulness=0.9),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(baseline_failed_q2_but_kept_its_label)),
+            str(_artifact(clean_agrees)),
+            str(_artifact(clean_agrees_too)),
+        ]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted for q1"
+    assert all(
+        row["excluded_mismatched"] == 0 for row in rows
+    ), f"agreeing arms are no bank edit, got {[r['excluded_mismatched'] for r in rows]}"
+    assert not [
+        row for row in rows if row["value"] == "hard"
+    ], "q2's group key came from a row that did not run"
+    assert all(
+        row["n"] == 1 for row in rows
+    ), f"only q1 is groupable, got {[(r['value'], r['n']) for r in rows]}"
+
+
+def test_a_non_string_bank_label_is_a_mismatch_and_never_an_exception(_artifact):
+    """A slice field holds whatever the bank put there, including unhashable JSON.
+
+    `load_artifact` parses the artifact with plain `json.loads` and validates only
+    the top-level shape, so a bank row's `difficulty` can arrive as a list, a dict
+    or a number. `compare_runs.py` is deliberately defensive about artifact
+    contents elsewhere -- it accepts bare `NaN` tokens and has every consumer test
+    finiteness -- and a comparison must not abort on a malformed label. Aborting is
+    strictly worse than counting the question as a mismatch, which is what an
+    unequal label is.
+
+    This is a regression guard: comparing labels through a `set` would raise
+    `TypeError: unhashable type: 'list'` here and take the whole comparison down.
+    Compare them with `!=` instead, which is what the artifact's own values
+    support.
+    """
+    baseline_rows = [
+        _row("q1", difficulty="hard", faithfulness=0.5),
+        _row("q2", difficulty="hard", faithfulness=0.5),
+    ]
+    unhashable_label = [
+        # The bank wrapped the label in a list. Still a clean, scored row.
+        _row("q1", difficulty=["hard"], faithfulness=0.7),
+        _row("q2", difficulty="hard", faithfulness=0.7),
+    ]
+    arms = cr.load_arms(
+        [str(_artifact(baseline_rows)), str(_artifact(unhashable_label))]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted for q2"
+    assert all(
+        row["excluded_mismatched"] == 1 for row in rows
+    ), f"a list label differs from 'hard', got {[r['excluded_mismatched'] for r in rows]}"
+    assert all(
+        row["value"] == "hard" and row["n"] == 1 for row in rows
+    ), f"only q2 is groupable, got {[(r['value'], r['n']) for r in rows]}"
+
+
+def test_nested_json_true_and_one_are_different_labels_too(_artifact):
+    """The coercion recurs inside containers, so the comparison canonicalises.
+
+    Guarding the top-level type only moves the bug one level down: `[True] == [1]`
+    is true because Python compares containers element-wise with `==`, and the outer
+    types are both `list`. The same holds at any depth, and for dict values.
+
+    Comparing canonical JSON closes the whole class in one place rather than adding
+    a layer per report. `json.dumps` on a value that came from `json.loads` cannot
+    fail, distinguishes `true` from `1` and `1` from `1.0`, and returns a string --
+    so no label is ever hashed and the unhashable-type abort stays fixed.
+    """
+    baseline_rows = [
+        _row("q1", status="failed", difficulty="hard"),
+        _row("q2", difficulty="hard", faithfulness=0.5),
+    ]
+    nested_bool = [
+        _row("q1", difficulty=[True], faithfulness=0.7),
+        _row("q2", difficulty="hard", faithfulness=0.7),
+    ]
+    nested_int = [
+        _row("q1", difficulty=[1], faithfulness=0.8),
+        _row("q2", difficulty="hard", faithfulness=0.8),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(baseline_rows)),
+            str(_artifact(nested_bool)),
+            str(_artifact(nested_int)),
+        ]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted for q2"
+    assert all(row["excluded_mismatched"] == 1 for row in rows), (
+        "`[true]` and `[1]` are different labels and q1 must count as a mismatch, got "
+        f"{[r['excluded_mismatched'] for r in rows]}"
+    )
+
+
+def test_json_true_and_one_are_different_labels_not_the_same_one(_artifact):
+    """`True == 1` in Python, but `true` and `1` are different JSON values.
+
+    Bare `!=` fixed the `unhashable type` abort the `set` caused, and brought
+    Python's numeric tower with it: `True == 1` and `1 == 1.0` are both true, so
+    two arms recording genuinely different JSON labels compare equal and the
+    disagreement goes uncounted. That is the same silent-undercount failure
+    `excluded_mismatched` exists to prevent, arriving through a different door.
+
+    Compare the type alongside the value. Not through a `set` -- hashing is what
+    the sibling test above rules out -- but with a tuple, whose `!=` compares
+    element-wise and never hashes, so a list or dict label still works.
+    """
+    # The baseline FAILED q1 but kept a string label, so it supplies the group key
+    # and is then excluded from the clean-arm comparison. That is what leaves the
+    # two clean arms alone on the `!=`, where the coercion can bite.
+    baseline_rows = [
+        _row("q1", status="failed", difficulty="hard"),
+        _row("q2", difficulty="hard", faithfulness=0.5),
+    ]
+    # Two clean arms whose q1 labels are `true` and `1`: equal under `==`,
+    # different in the artifacts on disk.
+    bool_label = [
+        _row("q1", difficulty=True, faithfulness=0.7),
+        _row("q2", difficulty="hard", faithfulness=0.7),
+    ]
+    int_label = [
+        _row("q1", difficulty=1, faithfulness=0.8),
+        _row("q2", difficulty="hard", faithfulness=0.8),
+    ]
+    arms = cr.load_arms(
+        [
+            str(_artifact(baseline_rows)),
+            str(_artifact(bool_label)),
+            str(_artifact(int_label)),
+        ]
+    )
+
+    rows = [
+        row
+        for row in cr.slice_block(arms[0], arms, ["q1", "q2"], {})
+        if row["field"] == "difficulty" and row["metric"] == "faithfulness"
+    ]
+
+    assert rows, "the difficulty slice must still be emitted for q2"
+    assert all(row["excluded_mismatched"] == 1 for row in rows), (
+        "`true` and `1` are different labels and q1 must count as a mismatch, got "
+        f"{[r['excluded_mismatched'] for r in rows]}"
+    )
+    assert all(
+        row["value"] == "hard" and row["n"] == 1 for row in rows
+    ), f"only q2 is groupable, got {[(r['value'], r['n']) for r in rows]}"
+
+
+# --- #582: usage keys are additive ---
+
+
+def test_load_qa_run_equals_with_and_without_usage_rows(tmp_path):
+    """usage dict in answers/evaluation rows is additive — load_qa_run is unaffected."""
+    item_id = "item-001"
+    _usage = {
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "calls": 1,
+        "unreported_calls": 0,
+        "by_model": [
+            {
+                "provider": "anthropic",
+                "model": "claude-3-5-haiku-20241022",
+                "input_tokens": 120,
+                "output_tokens": 30,
+            }
+        ],
+    }
+
+    plain_dir = tmp_path / "plain"
+    _qa_run(
+        plain_dir, item_id, item_pass_rate=0.8, atom_score=0.7, durations=(1000, 2000)
+    )
+
+    with_dir = tmp_path / "with_usage"
+    _qa_run(
+        with_dir, item_id, item_pass_rate=0.8, atom_score=0.7, durations=(1000, 2000)
+    )
+    for fname in ("answers.jsonl", "evaluation_results.jsonl"):
+        fpath = with_dir / fname
+        rows = [json.loads(line) for line in fpath.read_text().splitlines() if line]
+        for row in rows:
+            row["usage"] = _usage
+        fpath.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    plain = cr.load_qa_run(str(plain_dir))
+    with_usage = cr.load_qa_run(str(with_dir))
+
+    assert with_usage["items"] == plain["items"]
+    assert with_usage["durations"] == plain["durations"]
+    assert with_usage["overall_attempt_pass_rate"] == plain["overall_attempt_pass_rate"]
+    assert with_usage["macro_mean_item_pass_rate"] == plain["macro_mean_item_pass_rate"]
+    assert (
+        with_usage["macro_mean_scored_attempt_atom_score"]
+        == plain["macro_mean_scored_attempt_atom_score"]
+    )
+    assert set(with_usage["evaluations"]) == set(plain["evaluations"])
+    for iid in plain["evaluations"]:
+        plain_scores = [r["atom_score"] for r in plain["evaluations"][iid]]
+        with_scores = [r["atom_score"] for r in with_usage["evaluations"][iid]]
+        assert with_scores == plain_scores
+
+
+# --- host provenance ---------------------------------------------------------
+
+
+def test_provenance_rows_show_host(_artifact):
+    # Two artifacts with recorded hosts — the provenance table names both.
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            metadata={
+                "host": {"hostname": "node-1.example.com", "cpu_model": "Intel Xeon"}
+            },
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            metadata={
+                "host": {"hostname": "node-2.example.com", "cpu_model": "AMD EPYC"}
+            },
+        )
+    )
+    arms = cr.load_arms([base, treat])
+    rows = cr.provenance_rows(arms)
+
+    host_row = next((r for r in rows if r["field"] == "host"), None)
+    assert host_row is not None, "provenance_rows must include a 'host' field"
+    values = list(host_row["values"].values())
+    assert "node-1.example.com" in values[0]
+    assert "node-2.example.com" in values[1]
+
+
+def test_provenance_rows_show_host_without_cpu_model(_artifact):
+    # When cpu_model is None the hostname renders alone, with no literal "None".
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            metadata={"host": {"hostname": "node-1.example.com", "cpu_model": None}},
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            metadata={"host": {"hostname": "node-2.example.com", "cpu_model": None}},
+        )
+    )
+    arms = cr.load_arms([base, treat])
+    rows = cr.provenance_rows(arms)
+
+    host_row = next((r for r in rows if r["field"] == "host"), None)
+    assert host_row is not None
+    for value in host_row["values"].values():
+        assert "None" not in value
+
+
+def test_provenance_rows_show_not_recorded_when_host_absent(_artifact):
+    # An arm with no host key renders "not recorded".
+    base = str(_artifact([_row("q1", faithfulness=0.5)], fingerprint="corpus-1"))
+    treat = str(_artifact([_row("q1", faithfulness=0.6)], fingerprint="corpus-1"))
+    arms = cr.load_arms([base, treat])
+    rows = cr.provenance_rows(arms)
+
+    host_row = next((r for r in rows if r["field"] == "host"), None)
+    assert host_row is not None
+    for value in host_row["values"].values():
+        assert value == "not recorded"
+
+
+def test_flags_two_arms_that_ran_on_different_hosts(_artifact, anchors_file, capsys):
+    # Two arms with different hostnames → warning appears in output; exit code unchanged.
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            metadata={"host": {"hostname": "node-1.example.com", "cpu_model": "Intel"}},
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+            metadata={"host": {"hostname": "node-2.example.com", "cpu_model": "Intel"}},
+        )
+    )
+    anchors = anchors_file([])
+    result = cr.main([base, treat, "--anchors", anchors])
+    out = capsys.readouterr().out
+    assert result == cr.EXIT_OK
+    assert "host mismatch" in out.lower()
+
+
+def test_one_recorded_and_one_unrecorded_host_prints_no_warning(
+    _artifact, anchors_file, capsys
+):
+    # One arm has a host, one has none — not enough recorded hosts to compare, no warning.
+    base = str(
+        _artifact(
+            [_row("q1", faithfulness=0.5)],
+            fingerprint="corpus-1",
+            metadata={"host": {"hostname": "node-1.example.com", "cpu_model": "Intel"}},
+        )
+    )
+    treat = str(
+        _artifact(
+            [_row("q1", faithfulness=0.6)],
+            fingerprint="corpus-1",
+        )
+    )
+    anchors = anchors_file([])
+    result = cr.main([base, treat, "--anchors", anchors])
+    out = capsys.readouterr().out
+    assert result == cr.EXIT_OK
+    assert "host mismatch" not in out.lower()
+
+
+def test_recorded_accepts_a_v2_reading():
+    assert cr._recorded("sha256/v2:abc") == "sha256/v2:abc"
+
+
+def _qa_with_corpus(directory, item_id, **corpus):
+    """A QA run whose summary records the corpus readings of its answering phase."""
+    run = _qa_run(directory, item_id)
+    summary_path = pathlib.Path(run) / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["provenance"] = corpus
+    summary_path.write_text(json.dumps(summary))
+    return run
+
+
+_STABLE = {
+    "corpus_fingerprint_before": "sha256/v2:a",
+    "corpus_fingerprint": "sha256/v2:a",
+    "corpus_unchanged_at_endpoints": True,
+}
+
+
+@pytest.mark.parametrize(
+    "corpus, expected",
+    [
+        (_STABLE, None),
+        ({}, None),
+        (
+            {
+                "corpus_fingerprint_before": None,
+                "corpus_fingerprint": None,
+                "corpus_unchanged_at_endpoints": None,
+            },
+            None,
+        ),
+        ({**_STABLE, "corpus_fingerprint": "sha256/v2:b"}, "changed"),
+        ({**_STABLE, "corpus_unchanged_at_endpoints": False}, "changed"),
+        ({**_STABLE, "corpus_fingerprint_before": "<unavailable: x>"}, "unavailable"),
+        (
+            {
+                "corpus_fingerprint_before": "sha256/v2:z",
+                "corpus_fingerprint": "sha256/v2:z",
+                "corpus_unchanged_at_endpoints": True,
+            },
+            "different corpus",
+        ),
+        (
+            {
+                "corpus_fingerprint_before": "sha256:a",
+                "corpus_fingerprint": "sha256:a",
+                "corpus_unchanged_at_endpoints": True,
+            },
+            "versions differ",
+        ),
+    ],
+    ids=[
+        "same-stable-corpus",
+        "legacy-run",
+        "no-search-tool",
+        "moved-during-answering",
+        "flagged-unstable",
+        "unavailable-reading",
+        "other-corpus",
+        "other-version",
+    ],
+)
+def test_a_qa_run_joins_only_on_the_arms_corpus(
+    _artifact, tmp_path, capsys, corpus, expected
+):
+    """Its pass rates feed G8, so its answers must come from the arm's corpus."""
+    question, reference = "how do I request a GPU", "use --gres=gpu:1"
+    rows = [_row(question, reference=reference, faithfulness=0.5)]
+    base = str(_artifact(rows, fingerprint="sha256/v2:a"))
+    treat = str(_artifact(rows, fingerprint="sha256/v2:a"))
+    arms = cr.load_arms([base, treat])
+    run = _qa_with_corpus(
+        tmp_path / "qa", derive_item_id(question, reference), **corpus
+    )
+
+    code = cr.main([base, treat, "--qa-run", f"{arms[1].label}={run}"])
+
+    if expected is None:
+        assert code == cr.EXIT_OK
+    else:
+        assert code == cr.EXIT_GATE
+        err = capsys.readouterr().err
+        assert "cannot join" in err and expected in err

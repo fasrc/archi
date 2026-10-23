@@ -205,3 +205,65 @@ def test_create_provider_llm_survives_a_provider_that_raises(monkeypatch):
 
     assert llm == "chat-model:m"
     assert window is None
+
+
+# --- local_mode canonicalization at the app seam (#463) ----------------------
+
+
+def _cfg_with_mode(mode, extra_kwargs=None):
+    return {
+        "services": {
+            "chat_app": {
+                "providers": {
+                    "local": {
+                        "base_url": "http://localhost:8001/v1",
+                        "mode": mode,
+                        "default_model": "m",
+                        "models": ["m"],
+                        "extra_kwargs": extra_kwargs or {},
+                    }
+                }
+            }
+        }
+    }
+
+
+def test_app_seam_mixed_case_mode_canonicalized():
+    pc = _build_provider_config_from_payload(
+        _cfg_with_mode("OpenAI_Compat"), ProviderType.LOCAL
+    )
+    assert pc is not None
+    assert pc.extra_kwargs["local_mode"] == "openai_compat"
+
+
+def test_app_seam_invalid_mode_raises():
+    import pytest
+
+    with pytest.raises(ValueError):
+        _build_provider_config_from_payload(_cfg_with_mode("vllm"), ProviderType.LOCAL)
+
+
+def test_app_seam_empty_mode_raises():
+    import pytest
+
+    with pytest.raises(ValueError):
+        _build_provider_config_from_payload(_cfg_with_mode(""), ProviderType.LOCAL)
+
+
+def test_app_seam_no_mode_key_writes_no_local_mode():
+    cfg = {
+        "services": {
+            "chat_app": {
+                "providers": {
+                    "local": {
+                        "base_url": "http://localhost:8001/v1",
+                        "default_model": "m",
+                        "models": ["m"],
+                        "extra_kwargs": {},
+                    }
+                }
+            }
+        }
+    }
+    pc = _build_provider_config_from_payload(cfg, ProviderType.LOCAL)
+    assert "local_mode" not in pc.extra_kwargs

@@ -14,6 +14,8 @@ server or an OpenAI-compatible endpoint. See issue #73.
 
 from typing import Any, Dict, Optional
 
+from src.utils.local_mode import canonical_local_mode
+
 
 def resolve_local_mode(ollama_url: Any, explicit: Optional[str] = None) -> str:
     """Decide the local-provider mode for the SUT.
@@ -22,9 +24,16 @@ def resolve_local_mode(ollama_url: Any, explicit: Optional[str] = None) -> str:
     Otherwise auto-detect: an endpoint ending in ``/v1`` is the OpenAI-compatible
     convention (vLLM, llama.cpp, etc.), so use ``openai_compat``; anything else is
     a native Ollama server.
+
+    Only an absent key and the empty string auto-detect. The test is written
+    against those two values rather than truthiness because YAML decodes
+    ``provider_mode: false`` to ``False`` and ``provider_mode: 0`` to ``0``: both
+    are falsy, so a truthiness guard hands them to auto-detection and silently
+    picks a dialect the operator never asked for, while every other unusable
+    spelling is refused.
     """
-    if explicit:
-        return str(explicit).lower()
+    if explicit is not None and explicit != "":
+        return canonical_local_mode(explicit)
     url = str(ollama_url or "").rstrip("/")
     return "openai_compat" if url.endswith("/v1") else "ollama"
 

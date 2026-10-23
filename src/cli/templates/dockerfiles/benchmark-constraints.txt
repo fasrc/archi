@@ -1,0 +1,53 @@
+# Constraints for the benchmark image's own pip step (fasrc/archi#681).
+#
+# Dockerfile-benchmarks and Dockerfile-benchmarks-gpu install archi with `pip install .`
+# and then add the benchmark stack (pandas, ragas, langchain-openai, argilla) with
+# `pip install -c src/cli/templates/dockerfiles/benchmark-constraints.txt ...`. Without
+# this file that step floated its whole transitive closure. On 2026-10-11 datasets 5.1.0
+# pulled huggingface-hub 2.2.0 past transformers 4.53.3's `<1.0`, and pyarrow 26.0.0
+# needed NumPy 2 against the base image's numpy 1.26.4, so every fresh build died at
+# startup.
+#
+# What belongs here: an exact pin for every package that step installs or changes, at
+# versions proven together. Nothing else. The step does not touch packages the base
+# image or `pip install .` own, and pinning those here would let it re-pin them. Today's
+# versions come from benchmarking-prompt-sweep-r0-atoms:2000 (built 2026-09-29), the last
+# image that imported cleanly and completed benchmark and QA runs.
+#
+# Several pins differ from requirements/requirements-base.txt or pyproject.toml because
+# the benchmark stack requires it, mostly instructor (a ragas dependency). Each one is
+# recorded with its measured cause in BENCHMARK_OVERRIDES in
+# tests/unit/test_benchmark_dockerfile_pins.py, which also guards this file's shape and
+# its compatibility with the base pins.
+#
+# Regenerate or change this file only with a no-cache build, then check completeness:
+#   1. Stage the build context the way the CLI does: src/ copied as archi_code/, plus
+#      pyproject.toml, LICENSE, empty configs/ and weblists/, and a git_info.yaml.
+#   2. Build the image up to and including `pip install .`, and `pip freeze` it.
+#   3. Build the full image with --no-cache, `pip freeze` it, and run the import smoke
+#      (sentence_transformers, datasets, pyarrow, ragas, transformers).
+#   4. Every package whose version differs between the two freezes must be pinned here.
+#      Add any that is missing, record a new override with its cause, and repeat 3.
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.3
+appdirs==1.4.4
+argilla==2.8.0
+click==8.5.0
+datasets==5.0.1
+dill==0.4.1
+diskcache==5.6.3
+fsspec==2026.6.0
+huggingface-hub==0.36.2
+idna==3.20
+instructor==1.17.0
+jinja2==3.1.6
+langchain-openai==1.0.1
+multiprocess==0.70.19
+pyarrow==25.0.1
+ragas==0.3.5
+requests==2.34.2
+rich==14.3.4
+scikit-network==0.33.5
+standardwebhooks==1.1.0
+typer==0.27.2
+urllib3==2.8.0

@@ -8,6 +8,7 @@ from src.utils.config_access import get_services_config
 from src.utils.env import read_secret
 from src.utils.logging import setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
+from src.utils.telemetry import instrument_flask_app
 
 # set basicConfig for logging and get debug value for flask app
 setup_logging()
@@ -21,12 +22,12 @@ PostgresServiceFactory.set_instance(factory)
 
 grader_config = get_services_config().get("grader_app", {})
 
-app = FlaskAppWrapper(
-    Flask(
-        __name__,
-        template_folder=grader_config["template_folder"],
-    )
+flask_app = Flask(
+    __name__,
+    template_folder=grader_config["template_folder"],
 )
+instrument_flask_app(flask_app)
+app = FlaskAppWrapper(flask_app)
 
 app.run(
     debug=grader_config["flask_debug_mode"],

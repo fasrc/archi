@@ -154,7 +154,6 @@ automatically-maintained labels close that gap — see
 |------|---------|
 | `ready-to-merge` | Nothing blocks a merge: not a draft, no conflicts, checks green, and no unresolved review finding. |
 | `conflicts` | Merge-conflicted with `dev`, drafts included. Resolve it before spending another review round — answering findings cannot land the PR. |
-| *neither* | In flight: review findings outstanding, or checks not green. |
 
 `ready-to-merge` is **not** a claim that review is provably complete — it is a
 mechanical predicate: no unresolved review threads, checks green, not conflicted.
@@ -163,6 +162,73 @@ is the authoritative signal.
 
 Filter for what is actually mergeable:
 [`is:pr is:open label:ready-to-merge`](https://github.com/fasrc/archi/pulls?q=is%3Apr+is%3Aopen+label%3Aready-to-merge).
+
+#### Why a PR is not ready
+
+The chip is withheld for several different reasons and its absence used to look
+the same for all of them. Exactly one **status label** names the reason, from
+the same precedence ladder that decides the chip:
+
+| Status label | Meaning |
+|------|---------|
+| `review-pending` | One or more review threads are unresolved. Reply and **resolve** them — a reply alone does not clear this, which is the most common reason a green PR sits for days. |
+| `checks-failing` | A check on the head commit has finished and come back bad. Something to fix. |
+| `checks-pending` | Checks have not finished yet. Nothing to fix — wait. |
+| `base-behind` | The branch is behind `dev`, so the checks on record did not test the current base. Merge `dev` in. |
+| `unverifiable` | Readiness could not be determined from the snapshot — a truncated review-thread or check connection. Never read as ready; the next sweep retries. |
+
+A ready PR carries none of these, and neither does a **draft** (GitHub already
+marks drafts in the list) or a **conflicted** PR (`conflicts` says it). At most
+one is ever present: they come from an `if`/`elif`, so the earliest matching
+reason wins — a PR with both a failing check and an open thread reads
+`checks-failing`, and a red check outranks a still-running one.
+
+One state is deliberately unlabelled: mergeability GitHub has not finished
+computing, which is what it returns right after a push to `dev`. That path
+revokes the chip **and any stale status label**, and adds nothing, by a
+long-standing invariant that it must not assert what it cannot see. Removing
+withdraws a claim; adding would make one. Such a PR shows nothing until the
+next sweep resolves it.
+
+Find what needs a human:
+[`is:pr is:open label:review-pending`](https://github.com/fasrc/archi/pulls?q=is%3Apr+is%3Aopen+label%3Areview-pending).
+
+#### Labels a PR inherits
+
+A PR also carries the **kind**, **priority** and **area** of the issues it
+closes, so the PR list can be triaged like the issue list:
+
+| Group | Labels | Source |
+|------|---------|--------|
+| Kind | `bug`, `enhancement`, `documentation` | The closing issue. With no closing issue, a `fix:` / `feat:` / `docs:` title prefix. Any other prefix yields nothing. |
+| Priority | `P1`, `P2`, `P3` | The closing issue; the strongest wins when several are closed. |
+| Area | `ragas`, `upstream` | The closing issues, accumulated. |
+
+These are **grant-only**: added when absent, never removed. Re-prioritise a PR
+by hand and the next sweep will leave your label alone; relabel the issue after
+the PR opened and the PR is not rewritten. An exclusive group is skipped
+entirely when the PR already has one of its labels, so an inherited `P3` never
+lands beside a hand-set `P1`.
+
+#### The issue taxonomy
+
+The same labels on issues, plus the ones that drive the nightly automation.
+These are applied by a human or by nightly triage, never by CI:
+
+| Group | Labels |
+|------|---------|
+| Kind | `bug`, `enhancement`, `documentation`, `question` |
+| Priority | `P1` drop everything · `P2` this cycle · `P3` when possible |
+| Area | `ragas`, `upstream` |
+| Queue | `auto-ok` the nightly run may open a PR · `explore` turn into an exploration note · `ai-wip` claimed and in flight · `priority` jump the queue |
+| Routing | `sonnet` mechanical, fully-specified · `ultracode` multi-agent orchestration |
+| Blocked | `needs-human` needs a design decision · `needs-human-session` needs a human to do the work · `needs-deploy` needs the live deployment |
+| Scheduling | `parked` deliberately unscheduled · `evidence-trial` operator-driven trial, automation never touches it |
+
+None of the queue, routing, blocked or scheduling labels is mirrored onto PRs.
+They answer "should automation pick this up", which does not arise for work
+already in flight, or they need a judgment a deterministic reconciler must not
+guess at.
 
 ## Editing Documentation
 

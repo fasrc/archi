@@ -170,6 +170,24 @@ with `~/miniforge3/envs/archi` on `PATH`, the FASRC VPN up, and the judge key in
 file: `RAGAS_ENV_FILE=/home/a2rchi/.archi/.env.benchmark`. The wrappers under
 `scripts/benchmarking/feature_matrix/` are one step each; the runbook is this section.
 
+**Paging (#504).** A wrapper can mail the operator when it stops after long unattended
+work. Set `FM_PAGE_MAIL_TO` to the recipient; it is empty by default, and empty means
+paging is off. `FM_MAIL` names the mail binary (default `mail`, called as
+`mail -s <subject> <recipient>` with the message on stdin). These exits page: the
+`archive_run.sh` refusals after the run finished (an arm artifact that fails any check in
+§5.1, live document and chunk counts that cannot be read, and a sweep artifact that fails
+its archive checks) and the two `qa_arm.sh` corpus-drift exits (the corpus changed during
+the QA run, for a normal arm or a sweep arm).
+The subject names the stack and the arm; the body carries the refusal reason. The exit
+code (2) and the terminal message do not change. Precondition refusals (a bad arm label,
+a missing file, a dirty checkout) fail before any long work starts and never page. A
+failing mail binary prints `feature_matrix: page failed` and does not change the exit.
+A mail binary that does not return in `FM_MAIL_TIMEOUT` seconds (default 60; a zero or
+non-numeric value also gives 60, because `timeout 0` means no bound) is stopped
+and counts as a failure. On a host without `timeout` but with `sleep`, a watchdog gives the
+same bound (a fractional value is rounded up to whole seconds). On a host with neither, the
+page is still sent, with no bound.
+
 ### 5.1 Ingest arm (00, 02, 03, 04, 06, 07)
 
 ```bash
@@ -327,7 +345,7 @@ time of day across arms where possible, and the ledger records start and end tim
 | Invariant | Gate | Check |
 |---|---|---|
 | Same questions in both arms | G4 | question text sets equal; no override |
-| Same corpus for a retrieval arm | G3 | `corpus_fingerprint` equal to the baseline pin. The wrappers compute the live fingerprint with the harness's own `CORPUS_STATE_QUERY` and `corpus_fingerprint` routine (documents, chunks, parent nodes; sha256), run inside the stack's data-manager container, so the pin taken from an artifact and the live check are one digest |
+| Same corpus for a retrieval arm | G3 | `corpus_fingerprint` equal to the baseline pin. The wrappers compute the live fingerprint with the shared `live_corpus_fingerprint` routine in `benchmark_provenance.py` (fingerprint v2, prefix `sha256/v2:`: scoped to the searched collection; its chunks, the documents that own them, and the parent nodes they reference), run inside the stack's data-manager container, so the pin taken from an artifact and the live check are one digest. A v1 pin never equals a v2 digest, so re-pin after the deploy that ships v2 |
 | Different corpus for an ingest arm is declared | G3 | `--corpus-differs-by-design`, with both fingerprints and the document/chunk counts printed |
 | The run used the selected settings | Procedure E | `divergence_from_selected_file` empty on every artifact |
 | Same code | Procedure E | `metadata.code_version.digest` equal across the campaign |

@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Union
 
 PYTHON_BASE = "a2rchi-python-base"
 PYTORCH_BASE = "a2rchi-pytorch-base"
@@ -35,7 +35,153 @@ PYTORCH_BASE = "a2rchi-pytorch-base"
 # `test_every_placeable_base_is_reachable_from_the_two_image_rule`.
 PLACEABLE_BASES = frozenset({PYTHON_BASE, PYTORCH_BASE})
 
+# The *installed* template location, and only that. It is NOT the directory this
+# module reads -- that is `build_template_dir()`, which prefers the checkout the
+# build ships from and falls back here. Monkeypatching this constant alone does
+# not redirect the preflight wherever `_repository_info` exists (CI, and any real
+# install); patch `build_template_dir` instead. Pinned by
+# `test_build_template_dir_outranks_a_patched_template_dir`.
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "cli" / "templates" / "dockerfiles"
+
+# The root TEMPLATE_DIR is derived from, and the same root
+# `templates_manager._package_repo_root()` falls back to when no checkout is recorded. The
+# two must not drift: this module judging one tree while the source copy ships another is the
+# fail-open it exists to remove. Pinned by
+# `test_the_package_root_is_the_root_template_dir_is_derived_from`.
+PACKAGE_ROOT = Path(__file__).resolve().parents[3]
+
+_TEMPLATE_SUBPATH = ("src", "cli", "templates", "dockerfiles")
+
+# What ``copy_source_code()`` copies out of the recorded checkout
+# (``templates_manager.py:1201-1205``). It raises on any one of them that is absent, and it
+# runs below the teardown, so the preflight pre-checks exactly this list.
+_COPIED_SOURCE_PATHS = ("src", "pyproject.toml", "LICENSE")
+
+
+def build_source_root() -> Optional[Path]:
+    """The checkout root this deployment builds from, or ``None`` when there is none recorded.
+
+    Every question the preflight asks about "the tree being deployed" resolves through
+    here, so the answers cannot disagree with each other. There are two of them today --
+    which Dockerfiles will be built (``build_template_dir``) and which
+    ``requires-python`` the build will honour (``build_pyproject_path``) -- and they were
+    resolved independently until they were caught disagreeing (fasrc/archi#436 review).
+
+    ``None`` means no checkout is recorded, not that resolution failed. See
+    ``build_template_dir`` for why that is an answer rather than a fallback, and why a
+    checkout that *is* recorded but unreadable refuses instead.
+    """
+    from src.cli.managers import source_version
+
+    try:
+        recorded = source_version._recorded_repo_root()
+    except Exception:
+        # No checkout recorded. `PACKAGE_ROOT` is then the tree the build ships -- but that
+        # is a claim, and this module may not pass on a claim, so check it too.
+        _refuse_a_root_the_source_copy_cannot_use(PACKAGE_ROOT, recorded=False)
+        return None
+
+    _refuse_a_root_the_source_copy_cannot_use(recorded, recorded=True)
+    return recorded
+
+
+def _refuse_a_root_the_source_copy_cannot_use(root: Path, *, recorded: bool) -> None:
+    """Raise unless ``root`` holds everything the build reads out of it.
+
+    One check for both roots, deliberately. ``copy_source_code`` demands the same three
+    paths whichever root it resolves (``templates_manager.py:1201-1205``, raising at
+    ``:1218``) and runs below ``remove_existing_deployment()`` either way, so a root that
+    is good enough for one branch and not the other cannot exist -- and two copies of this
+    rule would eventually disagree about it.
+    """
+    unreadable = [name for name in _COPIED_SOURCE_PATHS if not (root / name).exists()]
+    if not root.joinpath(*_TEMPLATE_SUBPATH).is_dir():
+        unreadable.append(Path(*_TEMPLATE_SUBPATH).as_posix())
+    if not unreadable:
+        return
+
+    if recorded:
+        remedy = (
+            "  Re-run `pip install .` from the checkout you intend to deploy, or restore "
+            "the recorded one."
+        )
+        whose = f"The checkout this install records at {root}"
+    else:
+        remedy = (
+            "  This install records no source checkout, so the package root is the only "
+            "tree the deployment could build from. Re-run `pip install .` from the "
+            "checkout you intend to deploy."
+        )
+        whose = f"This install records no checkout, and the package root {root}"
+
+    raise BaseImagePreflightError(
+        "Base image check failed:\n"
+        f"  {whose} is missing {', '.join(unreadable)}.\n"
+        f"  That is the tree the deployment builds from -- "
+        f"prepare_deployment_files() copies it below the teardown -- so the preflight "
+        f"cannot establish anything by reading the installed templates instead.\n"
+        + remedy
+    )
+
+
+def build_pyproject_path() -> Optional[Path]:
+    """The ``pyproject.toml`` whose ``requires-python`` the build will actually honour.
+
+    The floor is not a property of the installed CLI; it is a property of the tree
+    ``pip install .`` runs inside the image, which is the recorded checkout. Reading it
+    from the installed distribution's metadata while reading the Dockerfiles from the
+    checkout let a base image pass against a floor the build would then reject -- below
+    the teardown (fasrc/archi#436 review). ``build_source_root`` has already established
+    that this file exists: ``pyproject.toml`` is one of ``_COPIED_SOURCE_PATHS``.
+
+    ``None`` when no checkout is recorded, which leaves ``declared_python_floor``'s own
+    resolution order intact rather than reaching into it. That order then lands on
+    ``_source_pyproject()``, which is ``PACKAGE_ROOT / "pyproject.toml"`` -- and
+    ``build_source_root`` has already refused any package root that does not hold it. So
+    ``declared_python_floor``'s metadata fallback is now unreachable *through this entry
+    point*, which is the intent: metadata is frozen at install time, and every path here
+    that can read a real file does. It stays in place for a direct caller.
+    """
+    root = build_source_root()
+    return None if root is None else root / "pyproject.toml"
+
+
+def build_template_dir() -> Path:
+    """The template directory whose Dockerfiles this deployment will actually build.
+
+    ``TEMPLATE_DIR`` is derived from *this module's* location, which under a non-editable
+    ``pip install .`` is a site-packages copy. That is not the tree compose builds from:
+    ``base-compose.yaml`` names ``archi_code/cli/templates/dockerfiles/...``, and
+    ``archi_code`` is filled by ``TemplateManager.copy_source_code()`` from the checkout
+    ``setup.py`` recorded at install time (``templates_manager.py:1191-1193``). When the two
+    trees diverge -- an operator edits the checkout after installing -- probing the installed
+    copy establishes nothing about the build, and ``--force`` would remove a working
+    deployment on the strength of it (fasrc/archi#436 review).
+
+    Two outcomes, per the governing invariant -- and deliberately no third:
+
+    **No checkout recorded** -> ``TEMPLATE_DIR``. An editable install has no
+    ``_repository_info`` to import (``setup.py:12`` generates it, and it is absent from the
+    working tree), and in that case the installed location *is* the tree the build ships
+    from. This is an answer, not a fallback.
+
+    **A checkout recorded but unusable** -> refuse, here, above the teardown. Falling back to
+    the installed templates would be a fail-open of the worst kind: the build does not read
+    them. ``_stage_source_copy`` (``templates_manager.py:704``) copies from this same
+    recorded checkout and raises on a missing ``src``, ``pyproject.toml`` or ``LICENSE``
+    (``:1192-1198``) -- and that stage runs *below* ``remove_existing_deployment()``
+    (``cli_main.py:906`` then ``:923``). So a silent fallback would pass the preflight,
+    destroy the operator's runtime, and only then die copying a checkout that is not there.
+    Refusing first is the entire purpose of this module.
+
+    ``TEMPLATE_DIR`` and ``templates_manager._package_repo_root()`` are two ``__file__``
+    derivations of the same root, and they must agree -- otherwise this returns a tree
+    the source copy does not ship. Pinned by
+    ``test_the_source_copy_fallback_agrees_with_the_preflight_template_dir``.
+    """
+    root = build_source_root()
+    return TEMPLATE_DIR if root is None else root.joinpath(*_TEMPLATE_SUBPATH)
+
 
 # Templates excluded from the service set. Keys are relative paths from the template
 # directory root. Each value is the reason the file is not a service template, so a
@@ -47,6 +193,15 @@ NON_SERVICE_TEMPLATES: dict[str, str] = {
     "Dockerfile-grafana": "builds on docker.io/grafana/grafana-enterprise:10.2.0",
     "base-python-image/Dockerfile": "defines an a2rchi base image itself",
     "base-pytorch-image/Dockerfile": "defines an a2rchi base image itself",
+}
+
+# Maps each compose service name whose Dockerfile builds FROM a third-party image to that
+# template name. Each value must also appear in NON_SERVICE_TEMPLATES (so it is excluded
+# from the service set and therefore not probed for the Python floor). A unit test pins
+# this invariant: `test_every_third_party_base_template_is_a_key_of_non_service_templates`.
+THIRD_PARTY_BASE_TEMPLATES: dict[str, str] = {
+    "postgres": "Dockerfile-postgres",
+    "grafana": "Dockerfile-grafana",
 }
 
 # Every `FROM <ref> [AS <alias>]` line. One matcher for both readers -- the coverage check
@@ -294,6 +449,7 @@ class Cause(str, Enum):
     UNAUTHORIZED = "unauthorized"
     UNKNOWN_TAG = "unknown_tag"
     UNREACHABLE = "unreachable"
+    RATE_LIMITED = "rate_limited"
     NO_DISK = "no_disk"
     LOCAL_BUILD_MISSING = "local_build_missing"
     NO_RUNTIME = "no_runtime"
@@ -327,13 +483,27 @@ class Outcome:
         return self.verdict is Verdict.UNVERIFIED
 
 
+@dataclass(frozen=True)
+class BaseReference:
+    """A reference passed to ``run_preflight``, with an optional floor-check bypass.
+
+    ``check_floor=False`` skips ``python_version`` and ``check_python_floor`` for images
+    that are not a2rchi bases and carry no Python interpreter to check (design D1, D2).
+    A plain ``str`` passed to ``run_preflight`` is normalized to ``BaseReference(image)``,
+    so ``Outcome.reference`` is always the image string and callers need no type change.
+    """
+
+    image: str
+    check_floor: bool = True
+
+
 def service_templates(template_dir: Optional[Path] = None) -> List[Path]:
     """The sorted Paths of every Dockerfile* that is a service template.
 
     Service templates build ``FROM`` an ``a2rchi-*-base`` image. The six excluded by
     ``NON_SERVICE_TEMPLATES`` define base images themselves or build on third-party images.
     """
-    directory = template_dir or TEMPLATE_DIR
+    directory = template_dir or build_template_dir()
     return sorted(
         p
         for p in directory.rglob("Dockerfile*")
@@ -347,8 +517,60 @@ def stale_template_exclusions(template_dir: Optional[Path] = None) -> List[str]:
     A non-empty return means the exclusion list names a template that no longer exists,
     so it excludes nothing and silently over-reports the service-template count.
     """
-    directory = template_dir or TEMPLATE_DIR
+    directory = template_dir or build_template_dir()
     return [name for name in NON_SERVICE_TEMPLATES if not (directory / name).exists()]
+
+
+def third_party_base_references(
+    compose_config,
+    template_dir: Optional[Path] = None,
+) -> List[str]:
+    """The FROM references for third-party base images of services planned in ``compose_config``.
+
+    For each entry in ``THIRD_PARTY_BASE_TEMPLATES`` whose service is enabled, reads the
+    final-stage FROM from the corresponding template using the existing ``_final_stage_base``
+    reader. Returns the references in map order.
+
+    ``ValueError`` from ``get_service`` is treated as "not in the plan" (same as the grader
+    lookup in ``enforce_base_images``). Other exceptions propagate.
+
+    Raises ``BaseImagePreflightError`` when a template is absent or unreadable for a service
+    that is enabled (design D3): "cannot name the image" must not silently become "nothing
+    to check".
+    """
+    directory = template_dir or build_template_dir()
+    refs = []
+    for service_name, template_name in THIRD_PARTY_BASE_TEMPLATES.items():
+        try:
+            service = compose_config.get_service(service_name)
+        except ValueError:
+            continue
+        if not service.enabled:
+            continue
+        template_path = directory / template_name
+        if not template_path.exists():
+            raise BaseImagePreflightError(
+                f"Base image check failed: service {service_name!r} is planned but its "
+                f"template {template_name!r} does not exist under {directory}.\n"
+                f"  The preflight cannot name the third-party base image without it."
+            )
+        try:
+            text = template_path.read_text()
+        except (OSError, UnicodeError) as exc:
+            raise BaseImagePreflightError(
+                f"Base image check failed: service {service_name!r} is planned but its "
+                f"template {template_name!r} under {directory} cannot be read ({exc}).\n"
+                f"  The preflight cannot name the third-party base image without it."
+            ) from exc
+        ref = _final_stage_base(text)
+        if ref is None:
+            raise BaseImagePreflightError(
+                f"Base image check failed: service {service_name!r} is planned but its "
+                f"template {template_name!r} has no readable FROM reference.\n"
+                f"  The preflight cannot name the third-party base image without it."
+            )
+        refs.append(ref)
+    return refs
 
 
 def nested_service_templates(template_dir: Optional[Path] = None) -> List[Path]:
@@ -364,7 +586,7 @@ def nested_service_templates(template_dir: Optional[Path] = None) -> List[Path]:
     base deploys correctly. It is a repo-level guard, so that making the set recursive and
     making the rewriter recursive have to land together.
     """
-    directory = template_dir or TEMPLATE_DIR
+    directory = template_dir or build_template_dir()
     return [p for p in service_templates(directory) if p.parent != directory]
 
 
@@ -580,11 +802,16 @@ def decide_availability(
     present_locally: bool,
     fetch_cause: Optional[Cause] = None,
     dry: bool = False,
+    check_floor: bool = True,
 ) -> Outcome:
     """Decide one reference from probe results. Pure: never shells out, never raises.
 
     ``fetch_cause`` is ``None`` when the fetch succeeded -- a pull on a real create, a
     reachability check on a dry run -- and otherwise names why it did not.
+
+    ``check_floor=False`` changes only the dry-run reachable branch: reachability is the
+    full answer for a floor-free image, so AVAILABLE is returned instead of UNVERIFIED
+    (design D2). All other branches are unchanged.
     """
     if not runtime_available:
         # A dry run is allowed to proceed without a runtime; a real create is not, because
@@ -604,8 +831,9 @@ def decide_availability(
 
     if fetch_cause is None:
         # Pulled on a real create; merely reachable on a dry run, which cannot read a version
-        # it did not fetch.
-        if dry:
+        # it did not fetch. A floor-free image has no version to read, so reachability is the
+        # full answer: return AVAILABLE rather than UNVERIFIED (design D2).
+        if dry and check_floor:
             return Outcome(reference, Verdict.UNVERIFIED, Cause.NOT_PULLED)
         return Outcome(reference, Verdict.AVAILABLE)
 
@@ -671,19 +899,42 @@ def compose_message(outcome: Outcome, container_tool: str = "docker") -> str:
     registry = reference.split("/", 1)[0] if "/" in reference else reference
 
     if outcome.cause is Cause.UNAUTHORIZED:
+        if reference.startswith("ghcr.io/fasrc/"):
+            return (
+                f"Not authorized to pull the base image {reference}.\n"
+                f"  The fasrc packages are 'internal', so a login is required:\n"
+                f"    echo $TOKEN | {container_tool} login {registry} -u <user> --password-stdin\n"
+                f"  The token MUST be a classic personal access token carrying 'read:packages'. "
+                f"A fine-grained token has no Packages permission and fails identically.\n"
+                f"  If SSO is enforced, authorize the token for the organization first."
+            )
         return (
             f"Not authorized to pull the base image {reference}.\n"
-            f"  The fasrc packages are 'internal', so a login is required:\n"
+            f"  A login may be required for {registry}:\n"
             f"    echo $TOKEN | {container_tool} login {registry} -u <user> --password-stdin\n"
-            f"  The token MUST be a classic personal access token carrying 'read:packages'. "
-            f"A fine-grained token has no Packages permission and fails identically.\n"
-            f"  If SSO is enforced, authorize the token for the organization first."
+            f"  Check the registry's authentication requirements."
         )
     if outcome.cause is Cause.UNKNOWN_TAG:
+        if not _names_placeable_base(reference):
+            # The repin script rewrites only the a2rchi bases, so it cannot repair a
+            # third-party pin such as Dockerfile-postgres or Dockerfile-grafana.
+            return (
+                f"The base image {reference} does not exist in its registry.\n"
+                f"  The pin is stale or the tag was deleted. Logging in will not help.\n"
+                f"  Edit the FROM line of the service template that names it to a tag "
+                f"that exists upstream."
+            )
         return (
             f"The base image {reference} does not exist in its registry.\n"
             f"  The pin is stale or the tag was deleted. Logging in will not help.\n"
             f"  Re-run scripts/dev/update_service_base_images.py to repin."
+        )
+    if outcome.cause is Cause.RATE_LIMITED:
+        return (
+            f"The registry refused to serve the base image {reference}: pull rate limit "
+            f"reached.\n"
+            f"  Wait for the limit to reset and retry, or log in to raise it:\n"
+            f"    {container_tool} login {registry}"
         )
     if outcome.cause is Cause.UNREACHABLE:
         return (
@@ -740,6 +991,9 @@ _ERROR_PATTERNS = (
         Cause.PROBE_UNSUPPORTED,
         ("is not a docker command", "unknown command", "unrecognized command"),
     ),
+    # Before UNAUTHORIZED: Docker Hub's pull-limit text suggests "authenticating", and a
+    # rate limit is neither a credential fault nor a network fault.
+    (Cause.RATE_LIMITED, ("toomanyrequests", "too many requests", "pull rate limit")),
     (
         Cause.UNAUTHORIZED,
         (
@@ -870,7 +1124,7 @@ class ContainerProbe:
 
 
 def run_preflight(
-    references: Sequence[str],
+    references: Sequence[Union[str, BaseReference]],
     *,
     probe,
     floor: str,
@@ -881,12 +1135,17 @@ def run_preflight(
     Availability first, because a version cannot be read from an image that is not there --
     attempting it would report an unreadable version where the real cause is a failed pull.
     The floor check then runs for every image that ended up present, on a real create and on
-    a dry run alike (design D5).
+    a dry run alike (design D5), unless ``check_floor`` is false on the item (design D1, D2).
+
+    A plain ``str`` item is normalized to ``BaseReference(item)``, keeping
+    ``Outcome.reference`` as the image string.
     """
     runtime = probe.runtime_available()
     outcomes: List[Outcome] = []
 
-    for reference in references:
+    for item in references:
+        ref = item if isinstance(item, BaseReference) else BaseReference(item)
+        reference = ref.image
         present = runtime and probe.image_present(reference)
         fetch_cause = None
         if runtime and not present and not reference.startswith(LOCAL_PREFIX):
@@ -900,9 +1159,10 @@ def run_preflight(
             present_locally=present,
             fetch_cause=fetch_cause,
             dry=dry,
+            check_floor=ref.check_floor,
         )
 
-        if outcome.verdict is Verdict.AVAILABLE and present:
+        if outcome.verdict is Verdict.AVAILABLE and present and ref.check_floor:
             outcome = check_python_floor(
                 reference, probe.python_version(reference), floor
             )
@@ -1020,10 +1280,27 @@ def enforce_base_images(
         raise BaseImagePreflightError(
             "Base image check failed:\n"
             f"  This deployment requires {', '.join(unresolved)}, but no service template "
-            f"under {template_dir or TEMPLATE_DIR} declares a FROM line for it.\n"
+            f"under {template_dir or build_template_dir()} declares a FROM line "
+            f"for it.\n"
             f"  The preflight cannot verify an image it cannot name, and will not proceed "
             f"as though there were nothing to check."
         )
+
+    # Append floor-free references for third-party service images (design D4).
+    # Deduplicate on the image string so a ref appearing in both sets is only probed once.
+    _seen_refs = set(references)
+    for _tp_ref in third_party_base_references(compose_config, template_dir):
+        if _tp_ref not in _seen_refs:
+            _seen_refs.add(_tp_ref)
+            references.append(BaseReference(_tp_ref, check_floor=False))
+
+    # The floor must come from the same tree the Dockerfiles above came from. When the
+    # caller pinned `template_dir`, it owns the tree and the pyproject default stays out
+    # of the way -- defaulting one and not the other would re-open the same split with
+    # the trees swapped. `build_pyproject_path()` is `None` when no checkout is recorded,
+    # which leaves `declared_python_floor`'s own resolution order untouched.
+    if pyproject_path is None and template_dir is None:
+        pyproject_path = build_pyproject_path()
 
     outcomes = run_preflight(
         references,

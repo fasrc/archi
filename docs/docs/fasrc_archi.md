@@ -574,7 +574,11 @@ dockerfile: .../Dockerfile-chat{{ '-gpu' if gpu_ids else '' }}
 ```
 
 The rendered compose already names `Dockerfile-chat-gpu` for the chatbot, but the
-running chatbot image is a **stale CPU build**:
+running chatbot image is a **stale CPU build**. Observed on fasrc-dev before
+2026-09-15; the torch versions below are what those two images held at the time,
+not the current pins. The base images moved to torch 2.7.0 on 2026-09-15 (#472), so
+a freshly built pair reports 2.7.0 rather than 2.6.0. The asymmetry is the point
+here, not the version:
 
 | | chatbot | data-manager |
 |---|---|---|
@@ -642,9 +646,9 @@ Two layers:
 >
 > **This does not make `--force` safe in general.** Config, secrets, the compose
 > plan, the agent files, and port configuration (bad or duplicated values) are
-> checked before anything is destroyed. Closing this class of errors more
-> completely means rendering the replacement before destroying the old deployment
-> rather than adding checks one at a time
+> checked before anything is destroyed. The whole replacement is now rendered into a temporary directory and discarded
+> before anything is destroyed, for both `archi create --force` and
+> `archi evaluate --force`; a `--dry` run performs the same render check
 > ([#294](https://github.com/fasrc/archi/issues/294)). Beyond that, a failure
 > while *starting* the deployment — an image that will not pull, a port already
 > taken by something else, a compose error — still leaves you without a running
@@ -669,11 +673,11 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 [File reference](#file-reference).
 
 > **This is not the `deploy/fasrc-dev/` deployment.** That one is
-> `DEPLOYMENT="dev"` (`deploy/scripts/lib.sh:74-75`) → containers
+> `DEPLOYMENT="dev"` (`deploy/scripts/lib.sh:96-97`) → containers
 > `chatbot-dev` / `postgres-dev`. Since issue #363 the name `dev` is reserved for
 > the GPU host; the no-GPU workstation deploys as `claw` via its own `host.env`.
 > Both point at a remote vLLM endpoint, and both leave `GPU_IDS` off
-> (`lib.sh:91-104`). Everything on this page is the
+> (`lib.sh:113-126`). Everything on this page is the
 > `archi-openai-compat` deployment on `archi.rc.fas.harvard.edu`. The container
 > names are not interchangeable between the two.
 
@@ -705,7 +709,7 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 >
 > **Provisioning is not automatic here.** `ensure_config`, which checks the
 > checkout out at a pinned, SHA-verified ref, has exactly one caller —
-> `deploy/scripts/lib.sh:282` — on the *other* deployment. This page's
+> `deploy/scripts/lib.sh:373` — on the *other* deployment. This page's
 > active path is the repo-root `g.sh` calling `archi create` directly, which never
 > runs it. So on this host `config/` is simply whatever is on disk, at whatever
 > revision someone last left it, with nothing verifying it.
@@ -727,11 +731,10 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 >
 > 1. Add the launchers, both units, the compat shim and `vllm_patches/` to
 >    `fasrc/archi-config`.
-> 2. Give *this* deployment a provisioning step that pins them. Bumping
->    `CONFIG_REF`/`CONFIG_SHA` in `deploy/scripts/lib.sh` governs
->    **every script-managed deployment** — `dev` on the GPU host and `claw` on the
->    workstation both source that shared file, and `archi_deploy` calls
->    `ensure_config` unconditionally, so one bump converges both on their next
+> 2. Give *this* deployment a provisioning step that pins them. The pin table in
+>    `deploy/scripts/lib.sh` has one `CONFIG_REF`/`CONFIG_SHA` row for each
+>    script-managed deployment — `dev` on the GPU host and `claw` on the
+>    workstation — so a bump of one row converges only that deployment on its next
 >    create/redeploy. It still does nothing here. Either wrap `g.sh` so it sources
 >    `ensure_config` before `archi create`, or record an explicit checkout step in
 >    this deployment's procedure that **verifies the commit, not just the tag
@@ -740,7 +743,7 @@ values already seeded into Postgres. `config/` is a checkout of the separate
 >    against the recorded SHA and abort on mismatch, and only then
 >    `git -C config/ checkout "$resolved"`. A bare `checkout <tag>` accepts
 >    whatever commit the remote tag currently names — that is not the SHA-verified
->    pin `ensure_config` implements (`lib.sh:121-139`), which rejects a re-pointed
+>    pin `ensure_config` implements (`lib.sh:248-284`), which rejects a re-pointed
 >    remote tag outright. (When creating the tag: make a *new* annotated tag —
 >    never move an existing one, as `git fetch --tags` refuses to clobber a moved
 >    tag.)

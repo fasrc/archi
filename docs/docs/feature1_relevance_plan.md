@@ -19,13 +19,30 @@
 ## Context
 
 **Problem.** The FASRC Cannon support bot (ReAct agent, `CMSCompOpsAgent`)
-retrieves documents whose hybrid relevance score is computed by the retriever
-and shown to the *model*, but the score is discarded before it reaches the
-chat UI (`retriever.py:116` passes only `Document` objects; `RunMemory` stores
-no scores — see its `# TODO` at line 14). The agent's final
-`PipelineOutput.metadata` therefore never contains `retriever_scores`, so the
-existing sources box renders agent answers with **no relevance signal and no
-score-driven ordering**.
+retrieves documents whose relevance score is computed by the retriever, but the
+score is discarded before it reaches the chat UI (`retriever.py` passes only
+`Document` objects to `store_docs`; `RunMemory` stores no scores — see its
+`# TODO` at line 14). The agent's final `PipelineOutput.metadata` therefore
+never contains `retriever_scores`, so the existing sources box renders agent
+answers with **no relevance signal and no score-driven ordering**.
+
+> **Corrected 2026-09-11 (issue #464).** This section previously said the score
+> was "shown to the *model*". That was true only on the non-default retrieval
+> path. `hierarchical_rerank.enabled` defaults to `true`, which selects
+> `LlamaIndexHierarchicalRetriever`; it returns a bare `List[Document]` because
+> `BaseRetriever.invoke()` is contractually `List[Document]`, and it records its
+> cross-encoder score on `doc.metadata["rerank_score"]`. Until #464 nothing read
+> that key back, so the agent's tool output rendered `Score: n/a` for every
+> document on the default path. Reranked *ordering* still reached the model; only
+> the number did not. #464 fixed the read at the formatter seam
+> (`_normalize_results`), so the score now reaches the model on both paths. The
+> chat-UI half of the problem above is unaffected and remains open.
+>
+> **Caution: the three score producers are not on one scale.** `hybrid_search`
+> returns a min-max normalized score that `postgres_vectorstore.py` documents as
+> "**not** comparable across queries"; the cross-encoder score is absolute. All
+> are higher-is-better, but any presentation work planned from this document must
+> decide what a single `Score:` label means across them.
 
 **What prompted this.** While debugging a search-loop regression in the FASRC
 bot we explored surfacing how relevant each cited document is. Investigation

@@ -129,11 +129,54 @@ One thin wrapper per step of the #396 campaign protocol
   `divergence_from_selected_file` is non-empty, and a later run whose fingerprint
   drifted; writes the corpus pin on run 1. The pin moves only for the closing baseline
   (`--new-corpus`: arm 00, after a fresh deploy, old pin recorded). Every wrapper refuses
-  an arm label that does not match the YAML's own `name`. The live fingerprint is the
-  harness's own routine (`CORPUS_STATE_QUERY` + `corpus_fingerprint`), run inside the
-  data-manager container.
-- **`test_feature_matrix_wrappers.sh`** — hermetic 45-check self-test (stubbed
+  an arm label that does not match the YAML's own `name`. The live fingerprint comes from
+  one shared routine in `src/utils/benchmark_provenance.py`: `container_corpus_fingerprint`,
+  run inside the stack's data-manager container, calls `live_corpus_fingerprint`, which the
+  harness, the QA workflow, and `category_census.py` also use. So every reader computes one
+  digest. The digest is fingerprint v2, with the prefix `sha256/v2:`. It covers only the
+  collection the stack's config searches (plus untagged rows), and only rows retrieval can
+  reach: every chunk in scope (chunks with no document link too), the documents that own
+  them, and only the parent nodes a chunk references. It hashes chunk text, the
+  `collection` tag, a flag for a `NULL` vector, and the citation fields (URL, display name,
+  source type, title, filename). It leaves out `size_bytes`. It is model-neutral: a
+  re-embed of the same text with another model does not move it. The model is recorded
+  beside it as `retrieval_identity.embedding_model`, and a start guard checks it against
+  the chunk tags. The guard stops a run before its first question if the collection has no
+  chunk, no chunk with a vector, or a chunk tagged with another model. A v1 pin
+  (`sha256:`) never equals a v2 digest, so re-pin once after the deploy that ships v2: run
+  arm 00 on a fresh deploy and archive it with `archive_run.sh 00 <run> <yaml> --new-corpus`,
+  which moves the pin to v2 and records the old pin in `repinned_from`. `category_census.py` now
+  takes `--collection` (the searched collection tag) and scopes both of its readings to it.
+- **`test_feature_matrix_wrappers.sh`** — hermetic 58-check self-test (stubbed
   `docker`/`archi`, temp stack), run by `scripts/gate.sh`.
+
+### Sweep mode (rung-0 prompt sweep, plan W8)
+
+A prompt sweep runs every arm of a `generate_prompt_sweep.py` directory on **one** stack
+in one `archi evaluate --config-dir` invocation, so the wrappers take `--sweep` instead of
+an arm label and a `sweep-<stack>.lock` instead of the campaign lock. In order:
+
+```bash
+D=feature_matrix   # scripts/benchmarking/feature_matrix
+python scripts/benchmarking/generate_prompt_sweep.py -m <manifest.yaml>          # arm configs
+$D/qa_prepare.sh   --sweep r0 --qa-dataset <qa-v2.json> --qa-profile <profile>   # gold atoms, once
+$D/lock_campaign.sh --sweep <sweep_dir> --manifest <manifest.yaml> --stack r0 \
+                    --qa-dataset <qa-v2.json> --qa-profile <profile>             # pins every arm
+RAGAS_ENV_FILE=<judge.env> $D/run_arm.sh --sweep <sweep_dir> --stack r0          # replicate 1
+python scripts/benchmarking/category_census.py --pg-dsn <postgres-r0 dsn> --collection <collection tag> ... --json census.json
+$D/archive_run.sh --sweep <sweep_dir> --stack r0 --run 1 --census census.json --wait
+$D/qa_arm.sh --sweep <sweep_dir> --stack r0 --arm <prompt-stem>                  # once per arm
+$D/run_arm.sh --sweep <sweep_dir> --stack r0 --rerun                             # replicate 2
+$D/archive_run.sh --sweep <sweep_dir> --stack r0 --run 2 --wait
+$D/qa_arm.sh --sweep <sweep_dir> --stack r0 --arm <prompt-stem> --run 2          # once per arm
+```
+
+Every step verifies the whole lock first (code tree, every arm config and prompt, bank,
+anchors, QA inputs, prepared atoms). The rerun needs both pins archive run 1 writes — the
+corpus pin and the category-map pin — before and after recreating the benchmark container.
+Archive checks every arm before writing anything and appends all rows in one write; run 1
+needs a passing census bound to the run's corpus, map and inputs. Every QA run (sweep or
+not) writes `category_map_readings.json`, which `compare_runs.py --qa-run` requires.
 
 ## Comparing two runs
 
@@ -160,6 +203,35 @@ One thin wrapper per step of the #396 campaign protocol
   Everything else is standard library and reads finished artifacts, so it runs on
   any host that has the JSON files: no deployment, no database. Exit codes: 0 ok,
   1 usage, 2 gate refusal, 3 config divergence.
+
+  **Rung-0 sweep additions** (plan `categories-action-plan.md` §5–§6.1):
+  - **Arm selectors.** `--baseline`, `--primary`, `--routes-on-category` and
+    `--qa-run` accept either the printed label (`<artifact>@N`) or the arm's
+    recorded `services.benchmarking.name` — for a sweep, the prompt stem such as
+    `fasrc-docs-r0a-category`. A name two arms share is refused; use the label.
+  - **Paired tests.** Every arm gets an exact two-sided McNemar test against the
+    baseline for `source` (relative hit: any declared source matched, on rows clean
+    in both arms with the same canonical sources) and `completion` (status `ok`).
+    b counts baseline-succeeds/arm-fails, c the reverse, and the direction is
+    reported. `--primary ARM=source|completion` marks the pre-registered primary;
+    the other test is secondary and Holm-adjusted across all secondaries. The "no
+    tool call" count is descriptive.
+  - **Category slice.** An arm's per-category table reads its
+    `_category_map_<N>.tsv` only when the file exists, the corpus is stable at both
+    endpoints, the map did not change between them, and the file's sha256 equals
+    `category_map_sha256_end`; a pair also needs equal corpus fingerprints, even
+    under `--corpus-differs-by-design`. Otherwise the section says which check
+    failed.
+  - **Map rule (G9).** `--routes-on-category ARM` names an arm whose mechanism reads
+    the map (r0a). A map mismatch with the baseline — any of the four readings
+    missing or unavailable, a start differing from its end, or different end
+    digests — voids that comparison: the arm leaves every section and G9 names it.
+    For any other arm a mismatch drops only its slice, unless a benchmark or joined
+    QA trace called `search_metadata_index`, which voids it too.
+  - **QA join.** For an arm that records category-map digests, `--qa-run` refuses
+    (exit 2) a run whose `category_map_readings.json` start and end do not both
+    equal the arm's end digest, and for an arm that records `agent_md_sha256`, a run
+    whose recorded agent spec is a different prompt.
 
 ## Analysis and run helpers
 

@@ -9,6 +9,7 @@ from src.utils.config_access import get_full_config
 from src.utils.env import read_secret
 from src.utils.logging import setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
+from src.utils.telemetry import instrument_flask_app
 
 
 def main():
@@ -37,13 +38,13 @@ def main():
     )
 
     generate_script(chat_config)
-    app = FlaskAppWrapper(
-        Flask(
-            __name__,
-            template_folder=chat_config["template_folder"],
-            static_folder=chat_config["static_folder"],
-        )
+    flask_app = Flask(
+        __name__,
+        template_folder=chat_config["template_folder"],
+        static_folder=chat_config["static_folder"],
     )
+    instrument_flask_app(flask_app)
+    app = FlaskAppWrapper(flask_app)
     app.run(
         debug=True,
         use_reloader=False,

@@ -21,6 +21,9 @@
 #     legitimate re-pin is the closing baseline (plan §6 step 7): --new-corpus is honoured
 #     only for arm 00, only when the stack's latest ragas-start was a fresh deploy (not a
 #     re-run or re-seed), and the old and new fingerprints are both recorded in the row.
+#     A pin and readings of different fingerprint versions (sha256: vs sha256/v2:) are
+#     refused with a version reason. The move to a new version is a re-pin, so it takes
+#     the same closing-baseline path: arm 00, fresh deploy, --new-corpus.
 #   - the arm YAML's fixed factors differ from the campaign lock, the YAML is not the locked
 #     file for that arm label, or the stack was deployed under a different lock,
 #   - no ragas-start row exists for the stack (nothing ties the artifact to a lock or a
@@ -28,9 +31,47 @@
 # On run 1 of a stack it writes the corpus pin every later re-run and re-seed checks.
 # Appends: fingerprint, snapshot id, config + code digests, ingest_wall_seconds, live
 # document and chunk counts (from the stack's Postgres), per-metric scored counts
-# recomputed from finite values (#279), and the degraded-row count.
+# recomputed from finite values (#279), the degraded-row count, and the searched
+# collection and embedding model from the artifact's retrieval_identity (null if unrecorded).
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+# Sweep mode: archive_run.sh --sweep <sweep_dir> --stack <name> --run <N> [--census <json>] [--wait]
+# Archives one multi-arm sweep artifact (the newest benchmarking-<stack>-*.json in FM_OUT):
+# every arm is checked before anything is written (sweep_tools.py archive), then the artifact,
+# its report and every _category_map_<N>.tsv are copied to $FM_OUT/archive/<stack>, one
+# ledger row per arm is appended in one write, and run 1 writes the corpus and map pins.
+if [ "${1:-}" = --sweep ]; then
+  SWEEP_DIR="${2:?--sweep needs the sweep directory}"; shift 2
+  STACK=""; RUN=""; CENSUS=""; WAIT=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --stack) STACK="${2:?}"; shift 2 ;;
+      --run) RUN="${2:?}"; shift 2 ;;
+      --census) CENSUS="${2:?}"; shift 2 ;;
+      --wait) WAIT=true; shift ;;
+      *) fm_die "unknown option $1" ;;
+    esac
+  done
+  fm_require_stack_name "$STACK"; fm_require_run_number "$RUN"
+  fm_require_sweep_lock "$STACK" --stamped
+  if [ "$WAIT" = true ]; then
+    while [ "$(fm_container_state "benchmarking-$STACK")" = "running" ]; do sleep "${FM_POLL_SECONDS:-30}"; done
+  fi
+  [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "benchmarking-$STACK is still running (use --wait)"
+  ARTIFACT="$(ls -t "$FM_OUT"/benchmarking-"$STACK"-*.json 2>/dev/null | head -1 || true)"
+  [ -n "$ARTIFACT" ] || fm_die "no artifact benchmarking-$STACK-*.json under $FM_OUT"
+  FM_ERRF="$(mktemp)"
+  if ! fm_sweep_tools archive --lock "$(fm_sweep_lock_file "$STACK")" --artifact "$ARTIFACT" --stack "$STACK" \
+    --run "$RUN" --ledger "$(fm_ledger)" --pins-dir "$FM_OUT" --dest "$FM_OUT/archive/$STACK" \
+    ${CENSUS:+--census "$CENSUS"} --finished "$(fm_now)" 2>"$FM_ERRF"; then
+    cat "$FM_ERRF" >&2
+    FM_REASON="$(cat "$FM_ERRF")"; rm -f "$FM_ERRF"
+    fm_die_paged "stack $STACK sweep" "refusing to archive $ARTIFACT (see above)" "$FM_REASON"
+  fi
+  rm -f "$FM_ERRF"
+  exit 0
+fi
 
 ARM="${1:-}"; fm_require_arm "$ARM"; RUN="${2:-}"; [ -n "$RUN" ] || fm_die "usage: archive_run.sh <arm> <run> <arm.yaml> [--stack <name>] [--wait] [--new-corpus]"; fm_require_run_number "$RUN"
 YAML="${3:-}"; fm_require_arm_yaml "$ARM" "$YAML"; shift 3
@@ -58,7 +99,8 @@ ARTIFACT="$(ls -t "$FM_OUT"/benchmarking-"$STACK"-*.json 2>/dev/null | head -1 |
 
 # One artifact, one ledger row: refuse a file already archived, and a file that predates
 # this stack's latest ragas-start (the re-run produced nothing; this is run 1's file).
-FM_LEDGER="$(fm_ledger)" FM_ARTIFACT="$ARTIFACT" FM_STACK="$STACK" FM_ARM="$ARM" FM_RUN="$RUN" FM_PIN_FILE="$(fm_pin_file "$STACK")" FM_ACTIVE_LOCK_SHA="$(fm_lock_sha)" "$FM_PYTHON" - <<'EOF' || fm_die "refusing to archive $ARTIFACT (see above)"
+FM_ERRF="$(mktemp)"
+if ! FM_LEDGER="$(fm_ledger)" FM_ARTIFACT="$ARTIFACT" FM_STACK="$STACK" FM_ARM="$ARM" FM_RUN="$RUN" FM_PIN_FILE="$(fm_pin_file "$STACK")" FM_ACTIVE_LOCK_SHA="$(fm_lock_sha)" "$FM_PYTHON" - 2>"$FM_ERRF" <<'EOF'
 import datetime as dt, json, os, sys
 ledger, artifact, stack = os.environ["FM_LEDGER"], os.environ["FM_ARTIFACT"], os.environ["FM_STACK"]
 arm, run = os.environ["FM_ARM"], int(os.environ["FM_RUN"])
@@ -94,17 +136,27 @@ if True:
     if latest_row.get("lock_sha256") != os.environ["FM_ACTIVE_LOCK_SHA"]:
         print(f"the run that produced this artifact started under lock {str(latest_row.get('lock_sha256'))[:12]}, not the active lock {os.environ['FM_ACTIVE_LOCK_SHA'][:12]} — re-run it under the current lock", file=sys.stderr); sys.exit(1)
 EOF
+then
+  cat "$FM_ERRF" >&2
+  FM_REASON="$(cat "$FM_ERRF")"; rm -f "$FM_ERRF"
+  fm_die_paged "stack $STACK arm $ARM" "refusing to archive $ARTIFACT (see above)" "$FM_REASON"
+fi
+rm -f "$FM_ERRF"
 
 # The live document and chunk counts are part of every arm's cost report and the stack is
 # deleted right after archiving, so they must be read NOW or never: refuse on failure.
 DOCS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "select count(*) from documents where is_deleted is not true;" 2>/dev/null | tr -d '[:space:]' || true)"
 CHUNKS="$("$FM_DOCKER" exec "postgres-$STACK" psql -U archi -d archi-db -tAc "select count(*) from document_chunks;" 2>/dev/null | tr -d '[:space:]' || true)"
-[[ "$DOCS" =~ ^[0-9]+$ && "$CHUNKS" =~ ^[0-9]+$ ]] || fm_die "could not read the live document/chunk counts from postgres-$STACK (got docs='${DOCS}' chunks='${CHUNKS}'); the stack must be up when a run is archived"
+[[ "$DOCS" =~ ^[0-9]+$ && "$CHUNKS" =~ ^[0-9]+$ ]] || fm_die_paged "stack $STACK arm $ARM" "could not read the live document/chunk counts from postgres-$STACK (got docs='${DOCS}' chunks='${CHUNKS}'); the stack must be up when a run is archived"
 
 PIN_FILE="$(fm_pin_file "$STACK")"
-ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \
+# The artifact checks below refuse after the run finished, so they page like the ones above.
+# Their REFUSED line is the whole terminal message: page it and keep the validator's exit
+# code, with no generic refusal line added (stderr is the same as with paging off).
+FM_ERRF="$(mktemp)"
+FM_VALIDATED="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \
   FM_LEDGER="$(fm_ledger)" FM_LOCK_SHA="$(fm_lock_sha)" \
-  FM_PIN_FILE="$PIN_FILE" FM_NEW_CORPUS="$NEW_CORPUS" FM_FINISHED="$(fm_now)" "$FM_PYTHON" - <<'EOF'
+  FM_PIN_FILE="$PIN_FILE" FM_NEW_CORPUS="$NEW_CORPUS" FM_FINISHED="$(fm_now)" "$FM_PYTHON" - 2>"$FM_ERRF" <<'EOF'
 import json, math, os, sys, yaml
 p = os.environ["FM_ARTIFACT"]
 d = json.loads(open(p).read().replace("NaN", "null"))          # pre-#279 artifacts carry bare NaN
@@ -140,17 +192,32 @@ if div:
     print(f"REFUSED: the run did not use the selected settings — divergence_from_selected_file = {div}", file=sys.stderr); sys.exit(2)
 fp = arm.get("corpus_fingerprint")
 fp_before = arm.get("corpus_fingerprint_before")
-def usable(x): return isinstance(x, str) and x.startswith("sha256:")
+# The digest prefix names its version (v1 "sha256:", v2 "sha256/v2:"); readings of two
+# versions never compare equal, so a mix is a version finding, not a corpus change.
+def version(x):
+    return next((v for v in ("sha256/v2:", "sha256:") if isinstance(x, str) and x.startswith(v)), None)
+def usable(x): return version(x) is not None
 if not usable(fp) or not usable(fp_before):
     print(f"REFUSED: the artifact lacks usable endpoint fingerprints (before={fp_before!r}, after={fp!r})", file=sys.stderr); sys.exit(2)
 # The harness samples the corpus at both ends of the arm. Questions scored across two
 # corpora are not one observation; such an artifact must never become the pin.
 if fp != fp_before or arm.get("corpus_unchanged_at_endpoints") is not True:
     print(f"REFUSED: the corpus changed during the run (before {fp_before}, after {fp}, unchanged={arm.get('corpus_unchanged_at_endpoints')!r}); the arm is void", file=sys.stderr); sys.exit(2)
+# #573: the fingerprint is model-neutral, so a re-embed under another model during the arm
+# shows only in the end-of-run tag reading. An absent key predates the reading and passes;
+# a recorded false (changed) or null (not observed) does not.
+if "embedding_tags_unchanged_at_endpoints" in arm and arm["embedding_tags_unchanged_at_endpoints"] is not True:
+    print(f"REFUSED: the embedding model tags changed during the run (embedding_tags_unchanged_at_endpoints={arm['embedding_tags_unchanged_at_endpoints']!r}, end={arm.get('embedding_tags_end')!r}); the arm is void", file=sys.stderr); sys.exit(2)
 pin_file, run = os.environ["FM_PIN_FILE"], int(os.environ["FM_RUN"])
 previous_pin = None
+new_pin = None
+if os.path.isdir(pin_file):
+    print(f"REFUSED: the corpus pin path {pin_file} is a directory; remove it so the pin can be written there", file=sys.stderr); sys.exit(2)
 if os.path.exists(pin_file):
     pin = open(pin_file).read().strip()
+    # A version change is a re-pin: it takes the closing-baseline path below, like a new corpus.
+    if version(pin) != version(fp) and os.environ["FM_NEW_CORPUS"] != "true":
+        print(f"REFUSED: the fingerprint versions differ (pin {pin} is {version(pin)!r}, the artifact's readings are {version(fp)!r}); a pin of one version never equals a reading of another — re-pin the stack under {version(fp)!r} with the closing baseline: arm 00, fresh deploy, --new-corpus", file=sys.stderr); sys.exit(2)
     if fp != pin:
         if os.environ["FM_NEW_CORPUS"] != "true":
             print(f"REFUSED: fingerprint {fp} != pin {pin} for this stack (a re-pin is only the closing baseline: arm 00, fresh deploy, --new-corpus)", file=sys.stderr); sys.exit(2)
@@ -164,13 +231,15 @@ if os.path.exists(pin_file):
         if not starts or starts[-1].get("rerun") is not False:
             print("REFUSED: --new-corpus needs a fresh deploy (run_arm.sh <arm> <yaml>) as this stack's latest ragas-start; the latest was a re-run or re-seed", file=sys.stderr); sys.exit(2)
         previous_pin = pin
-        open(pin_file, "w").write(fp + "\n")
+        new_pin = fp
 else:
-    open(pin_file, "w").write(fp + "\n")
+    new_pin = fp
 rows = arm.get("single_question_results") or {}
 def finite(x): return isinstance(x, (int, float)) and math.isfinite(x)
 metrics = sorted({k for r in rows.values() for k in r if k in ("answer_relevancy", "faithfulness", "context_precision", "context_recall", "answer_correctness")})
 scored = {m: f"{sum(1 for r in rows.values() if r.get('status', 'ok') == 'ok' and finite(r.get(m)))} of {len(rows)}" for m in metrics}
+identity = arm.get("retrieval_identity")
+identity = identity if isinstance(identity, dict) else {}
 def num(s):
     try: return int(s)
     except (TypeError, ValueError): return None
@@ -179,6 +248,7 @@ entry = {
     "finished": os.environ["FM_FINISHED"], "artifact": p,
     "arm_config": os.environ["FM_ARM_YAML"], "configuration_file": arm.get("configuration_file"),
     "corpus_fingerprint": fp, "corpus_fingerprint_before": fp_before, "fingerprint_source": "artifact", "repinned_from": previous_pin,
+    "collection": identity.get("collection"), "embedding_model": identity.get("embedding_model"),
     "lock_sha256": os.environ["FM_LOCK_SHA"],
     "corpus_snapshot_id": (d.get("metadata") or {}).get("corpus_snapshot_id"),
     "config_digest": cv.get("digest"), "code_digest": ((d.get("metadata") or {}).get("code_version") or {}).get("digest"),
@@ -189,9 +259,34 @@ entry = {
     "aggregates": {m: arm.get("total_results", {}).get(f"aggregate_{m}") for m in metrics},
 }
 print(json.dumps(entry))
+print(new_pin or "")
 EOF
-)"
+)" || {
+  FM_RC=$?
+  cat "$FM_ERRF" >&2
+  fm_page "stack $STACK arm $ARM: refusing to archive $ARTIFACT" "$(cat "$FM_ERRF")"
+  rm -f "$FM_ERRF"; exit "$FM_RC"
+}
+rm -f "$FM_ERRF"
+ENTRY="${FM_VALIDATED%%$'\n'*}"
+# $(...) strips ALL trailing newlines, so an empty second line (no new pin) leaves
+# FM_VALIDATED with no newline at all; without this guard the `#*$'\n'` below would then
+# return the whole (unmatched) string, turning the ENTRY json itself into "the new pin".
+if [[ "$FM_VALIDATED" == *$'\n'* ]]; then
+  NEW_PIN="${FM_VALIDATED#*$'\n'}"
+else
+  NEW_PIN=""
+fi
 fm_ledger_append "$ENTRY"
+if [ -n "$NEW_PIN" ]; then
+  # Two standalone commands: set -e ignores a failure on the left of `&&`, so a failed
+  # temp write would skip the move and still log success with no pin.
+  # os.replace is an atomic rename on POSIX and raises IsADirectoryError when the target
+  # is a directory; a plain mv -f moves the pin inside the directory and exits 0.
+  # set -e makes the failed call fail the archive before fm_log "archived arm ...".
+  printf '%s\n' "$NEW_PIN" > "$PIN_FILE.tmp.$$"
+  "$FM_PYTHON" -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' "$PIN_FILE.tmp.$$" "$PIN_FILE"
+fi
 fm_log "archived arm $ARM run $RUN: $ARTIFACT"
 FM_ENTRY="$ENTRY" "$FM_PYTHON" - <<'EOF'
 import json, os

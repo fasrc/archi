@@ -98,9 +98,12 @@ grading** in Argilla. See [`benchmarking.md`](benchmarking.md#human-grading-via-
 
 ## 2. The metrics, in plain words
 
-Archi reports two families of scores. All are between 0 and 1, higher is better.
+Archi reports two families of scores. All are between 0 and 1. Higher is better for
+every score except `noise_sensitivity`, where **lower is better** (it is the share of
+wrong claims). The leaderboard ranks it ascending, and the reports color it on that
+reversed scale.
 
-### 2.1 The five RAGAS metrics
+### 2.1 The RAGAS metrics
 
 RAGAS is the open-source library (version 0.3.5) that computes these. Each metric
 answers a different question, and — critically — **each one looks at a different
@@ -113,6 +116,11 @@ subset of the available information.**
 | `context_precision` | Of the chunks retrieved, how many were actually useful? | chunks + reference answer |
 | `context_recall` | Did retrieval find everything the reference answer needed? | chunks + reference answer |
 | `answer_correctness` | Is the answer *correct* against the reference answer? | answer + reference answer |
+| `factual_correctness_recall` | What share of the reference answer's claims does the answer cover? | answer + reference answer |
+| `factual_correctness_precision` | What share of the answer's claims does the reference support? | answer + reference answer |
+| `noise_sensitivity` | What share of the answer's claims are *wrong*? **Lower is better.** | question + answer + chunks + reference answer |
+| `answer_accuracy` | Does the answer agree with the reference? (two judge ratings, averaged) | question + answer + reference answer |
+| `response_groundedness` | Is the answer supported by the chunks? (two judge ratings, averaged) | answer + chunks |
 
 Read that last column carefully, because it determines what each metric can
 detect.
@@ -125,21 +133,45 @@ detect.
 - **`answer_relevancy` never looks at the retrieved chunks.** An answer can be
   perfectly relevant and entirely made up.
 
-- **`answer_correctness` is the only metric that compares the answer to the
-  reference answer.** The other four grade *relevance* and *grounding*; none of
-  them can tell a right answer from a wrong one. A fluent answer, grounded in
-  correctly retrieved chunks, that still contradicts the reference scores well on
-  all four and poorly only here. It blends factual overlap with the reference
-  (weight 0.75) and embedding similarity (0.25).
+- **`answer_correctness` is the only one of the original five that compares the
+  answer to the reference answer.** The other four grade *relevance* and
+  *grounding*; none of them can tell a right answer from a wrong one. A fluent
+  answer, grounded in correctly retrieved chunks, that still contradicts the
+  reference scores well on all four and poorly only here. It is one **blended**
+  score: factual overlap with the reference (weight 0.75) plus embedding
+  similarity (0.25). Four of the generation-side metrics below also compare the
+  answer to the reference, each on one narrower question:
+  `factual_correctness_recall`, `factual_correctness_precision`,
+  `noise_sensitivity` and `answer_accuracy`. `response_groundedness` does not.
 
     This metric is **opt-in**: add it to
     `services.benchmarking.mode_settings.ragas_settings.enabled_metrics`. A run
     that omits it reports the original four, so an older run's JSON carries no
     `aggregate_answer_correctness` key at all.
 
-- **Three metrics require a non-empty reference answer** — the two `context_*`
-  metrics and `answer_correctness`. Rows without one are silently excluded from
-  those metrics only. (In code: `src/utils/benchmark_schema.py`,
+- **The generation-side metrics are opt-in too** (the last five rows). They
+  grade the answer rather than retrieval, the half a prompt edit can move:
+
+    - `factual_correctness_recall` and `factual_correctness_precision` split
+      what `answer_correctness` blends. Recall falls when the answer *leaves
+      facts out*; precision falls when it *adds claims the reference does not
+      make*. A "be thorough" prompt can raise the first and lower the second, and
+      one blended score hides that trade. Neither includes an embedding
+      similarity term.
+    - `noise_sensitivity` is the only metric where **lower is better**. It counts
+      answer claims that are incorrect given the reference, attributing them to
+      the retrieved chunks (ragas' `relevant` mode). `faithfulness` asks only
+      whether a claim is *in* the chunks, not whether it is right. The
+      leaderboard, the A/B winner and `compare_runs`' regression checks all read
+      its direction from `LOWER_IS_BETTER_METRICS` in
+      `src/utils/benchmark_schema.py`.
+    - `answer_accuracy` and `response_groundedness` are ragas' NVIDIA metrics:
+      each asks the judge twice and averages, so they are steadier on small banks
+      but give no per-claim explanation.
+
+- **Seven metrics require a non-empty reference answer** — every metric above
+  except `answer_relevancy`, `faithfulness` and `response_groundedness`. Rows
+  without one are silently excluded from those metrics only. (In code: `src/utils/benchmark_schema.py`,
   `_METRIC_REQUIRED_COLUMN`.) This is why the metrics can each be averaged over a
   *different number of questions* in the same run — see
   [Denominator drift](#34-denominator-drift-the-quiet-one).
@@ -170,13 +202,15 @@ else changed too.
 | If you change… | Expect movement in | Should barely move |
 |---|---|---|
 | chunking, reranking, retrieval weights | `context_precision`, `context_recall`, both source metrics | `answer_relevancy` |
-| the system prompt, or the SUT model | `faithfulness`, `answer_relevancy`, `answer_correctness` | the `context_*` metrics |
+| the system prompt, or the SUT model | `faithfulness`, `answer_relevancy`, `answer_correctness`, and the five generation-side metrics | the `context_*` metrics — but the agent writes its own search queries, so a prompt edit *can* move them; if it does, the prompt changed retrieval too |
 
-`answer_correctness` is the one metric that can move when nothing else does. If a
+The reference-based answer metrics (`answer_correctness`, and when enabled
+`factual_correctness_recall`, `factual_correctness_precision`,
+`noise_sensitivity` and `answer_accuracy`) can move when nothing else does. If a
 change makes the bot *right* more often without changing what it retrieved or how
-grounded it sounds, only this metric registers it. In the other direction, a
-retrieval change moves it only when retrieval was the thing standing between the
-bot and a correct answer.
+grounded it sounds, only these metrics register it; of the original five, only
+`answer_correctness` does. In the other direction, a retrieval change moves them
+only when retrieval was the thing standing between the bot and a correct answer.
 
 !!! danger "The coupling that breaks this table"
     Archi's agent decides *its own search queries* as it reasons. So changing the
@@ -225,6 +259,47 @@ ServiceNow-ticket bank, and now the 73-question `ragas-jeopardy-master` bank.
 Numbers from different banks are **different measurements of different things**
 and must never be compared.
 
+**When the tool says a row was re-labelled.** `compare_runs.py` slices each
+metric by the bank fields the arms carry — `anchor_type` and `difficulty` —
+and files every question under the value the **baseline** arm recorded. A
+question the arms label differently belongs to no single value, so the tool
+drops it from every slice of that field and counts it in that field's
+`excluded_mismatched`. The report turns a non-zero count into a sentence that
+names a bank edit as the cause. That counter has a precise contract, and it is
+worth reading before you go and diff the bank:
+
+- The tool compares only an arm that **ran the question to completion**. It
+  skips a row whose `status` is anything other than `ok` — a failure or a
+  degraded row — and does not count it. A row that did not run is not evidence
+  of a bank edit either way: its own `status` says why it disagrees. Older
+  artifacts make this vivid, because a failure row written before the change
+  closing #431 carries no bank field at all, so an absent label used to read as
+  a changed label.
+- The skip is per **arm**, never per question. A sweep expands into three or
+  more arms, and the tool pairs each arm with the baseline on its own. One
+  **non-baseline** arm that fails a question therefore neither hides a
+  re-labelling another arm genuinely carries, nor removes that question from the
+  other arms' slices. The baseline is the exception, and the next bullet states
+  it: the baseline supplies the group key for every pair, so a baseline row that
+  did not run takes the question out of all of them.
+- The tool drops a question whose **baseline** row did not run to completion
+  from every slice of that field. The baseline's value is the group key, and a
+  key taken from a row that did not run establishes nothing. It is dropped from
+  the slices, not from the count: the count compares the arms that *did* run the
+  question against each other, so it still reports a re-labelling those arms
+  carry. That is deliberate — any arm can be the baseline, and a count that
+  moved when you passed a different `--baseline` would not be a fact about the
+  bank.
+- Two limits on that, both being tracked in issue #447. If the baseline arm
+  records **no value at all** for the field on a question, the tool skips that
+  question, so a disagreement between two other arms goes uncounted. And if
+  *every* question is re-labelled, no slice survives to carry the number, and the
+  report says no slice field is present instead. A zero is therefore weaker
+  evidence than a non-zero: read a count as a reason to diff the bank, never read
+  its absence as proof the bank held still.
+- So a non-zero `excluded_mismatched` means the label really moved between two
+  arms that both ran the question to completion. Diff the bank.
+
 ### 3.3 The corpus changed
 
 If documents were re-ingested between two runs, retrieval had a different haystack
@@ -264,6 +339,41 @@ Read it with three cautions:
 An arm whose corpus reading failed, or whose corpus differs from the others', is
 withheld from the leaderboard and the A/B winner rather than ranked, because
 ranking it would assert a controlled comparison that did not happen.
+
+**The embedding model tags at the end of the run.** Every chunk carries an
+`embedding_model` tag naming the model that made its vector. The start check
+refuses to run when a tag names another model. Newer RAGAS arms and QA runs also
+read the tags again at the end, and record two fields (per arm in the results
+file; in `manifest.json` and `summary.json` `provenance` for a QA run):
+
+- `embedding_tags_end` — the tags found at the end (`embedding_model_tags`) and
+  the number of chunks with no tag (`untagged_chunk_count`). A value beginning
+  `<unavailable:` means the read failed; the text after it says why.
+- `embedding_tags_unchanged_at_endpoints` — the end state compared with the
+  start:
+    - `true`: no tag other than the run's own model appeared, and the untagged
+      count did not grow. Ordinary ingestion with the same model is still `true`;
+      the corpus fingerprint reports that content change.
+    - `false`: the collection was re-embedded during the run. A tag of another
+      model appeared, or more chunks lost their tag, so some questions searched
+      vectors of another model or of no recorded model. The fingerprint cannot
+      see this, because it reads the text and not the vectors: it stays equal and
+      `corpus_unchanged_at_endpoints` stays `true`.
+    - `null`: not observed. The end read failed, or the start record was
+      missing. (A QA run whose agent had no search tool also records `null`,
+      with null corpus readings; it searched nothing, so nothing refuses it.)
+    - absent: the run predates the field. That is unknown, not unstable, and
+      nothing refuses it.
+
+A `false` or `null` value withholds the arm's rank on the leaderboard (the
+warning names the variant), puts an alert in the per-arm report, makes
+`compare_runs.py` refuse the arm, noise replicate, or QA run, and makes
+`archive_run.sh` refuse the artifact, in single-arm and `--sweep` mode. No flag
+admits it; `--corpus-differs-by-design` does not apply, because the change is a
+different model, not different content. **The remedy is to re-run the arm**:
+wait until the re-embed has finished, confirm every chunk carries the configured
+model's tag (the start check reports this), and run again. A `null` from a
+failed read also needs a re-run once the database can be read.
 
 ### 3.4 Denominator drift — the quiet one
 
@@ -488,7 +598,7 @@ pre-reg that the corpora differ by design. Worked example:
 
 ### Procedure C: compare two arms
 
-`scripts/benchmarking/compare_runs.py` does this. It implements G3–G8 in one
+`scripts/benchmarking/compare_runs.py` does this. It implements G3–G10 in one
 tested place, so a comparison cannot skip a gate by accident:
 
 ```bash
@@ -506,6 +616,7 @@ it is compared against the first. `path@2` picks one arm out of a sweep, and
 | `--noise-floor METRIC=SIGMA,...` | the noise floor from [Procedure A](#procedure-a-measure-the-noise-floor). Without one, nothing is ever called SIGNIFICANT (G2) |
 | `--noise-runs FILE ...` | measure sigma here instead: every arm of every file is one replicate, and sigma is the standard deviation of the **recomputed** means (needs two or more). Replicates face the same bank, corpus, code/config identity and divergence checks as the arms, and sigma is measured over the *same* questions the paired table uses — sigma *is* the G7 threshold, so a stale or foreign replicate would move the bar rather than describe it |
 | `--corpus-differs-by-design` | the only way past the G3 corpus gate; prints both fingerprints and the Procedure B warning |
+| `--config-differs-by-design DOTTED.PATH` | the only way past the G10 answer-path gate for one named setting; accepts only `services.chat_app.context_editing` and `services.chat_app.recursion_limit`; repeatable; prints both values and marks the row OVERRIDDEN; never hides the difference |
 | `--ignore-config-divergence` | the only way past a non-empty `divergence_from_selected_file` |
 | `--anchors PATH` | the anchors file (default `examples/benchmarking/anchor_questions.json`). Required: the default is tracked, so a missing file means a broken checkout rather than a run without anchors. For a deliberately anchor-free comparison, point it at a file holding `[]` |
 | `--include-anchors-in-bank` | average the five anchors into the bank aggregates. Off by default — see [Gap 3](#gap-3-anchors-are-averaged-into-the-bank-aggregates) |
@@ -534,6 +645,24 @@ files are.
   questions against two of them even when it started and finished on the same
   one. `--corpus-differs-by-design` continues and prints the Procedure B
   warning; it does not make the arms comparable.
+- **An arm, a `--noise-runs` replicate, or a `--qa-run` recorded
+  `embedding_tags_unchanged_at_endpoints: false`** — the collection was
+  re-embedded while it ran, so some questions searched vectors of another model
+  or of no recorded model. The corpus fingerprint is model-neutral and cannot
+  see this. A recorded `null` (not observed) is refused the same way; a missing
+  key (an older artifact) is not. No flag admits it, including
+  `--corpus-differs-by-design`; re-run the arm
+  ([section 3.3](#33-the-corpus-changed)). `archive_run.sh` refuses the same
+  artifact.
+- **The arms recorded different answer-path settings, or an arm recorded no
+  `configuration` at all** — the bound (`services.chat_app.context_editing`)
+  and the limit (`services.chat_app.recursion_limit`) decide which questions the
+  agent can finish, so a delta between arms set up differently does not measure
+  what it claims to measure (G10). In the 2026-09-19 case, 6 of 109 questions
+  were lost because the treatment arm had a lower recursion limit. To waive one
+  setting, use `--config-differs-by-design DOTTED.PATH`; both values are still
+  printed. `services.benchmarking.agent_md_file` is reported rather than
+  refused — prompt arms vary it on purpose.
 - **`divergence_from_selected_file` is non-empty** — the run did not use the
   settings you selected (Procedure E), so its scores belong to neither arm.
 
@@ -575,14 +704,14 @@ vacuous. Each metric's sigma is measured over the rows every arm *and* every
 replicate could score for that metric, so the threshold and the delta it judges
 describe the same population.
 
-!!! note "The `difficulty` slice needs a bank that reaches the artifact"
-    Procedure D lists `difficulty` as a row field, but the harness copies only
-    `anchor_type` from the bank into `single_question_results`
-    (`service_benchmark.py`, `_answer_and_score_question`). Artifacts written by
-    the current harness therefore carry no `difficulty`, and the slice is
-    skipped rather than shown empty. The tool supports the field for when the
-    harness propagates it; until then, the bank slice available in practice is
-    `anchor_type`.
+!!! note "The `difficulty` slice needs a bank that carries the field"
+    The harness propagates `difficulty` from the bank row into
+    `single_question_results` (`service_benchmark.py`,
+    `_answer_and_score_question`) when the row carries it. A bank without the
+    field still produces no `difficulty` key, so the slice is skipped rather
+    than shown empty, exactly as before. The FASRC bank
+    (`fasrc_ragas_queries.json`) has no `difficulty` today; `ragas-jeopardy-master.json`
+    does.
 
 Two things the tool will not do for you. It never prints SIGNIFICANT without a
 noise floor, and it identifies the anchors by **question text** rather than by
@@ -659,7 +788,10 @@ bench_out/benchmarking-<name>-<timestamp>.json
 ├── metadata
 │   ├── corpus_snapshot_id     # shared => ran together (see §3.3)
 │   ├── git_info.last_commit   # the DEPLOY's commit, NOT this run's code (§5.E)
+│   ├── git_info.git_diff      # uncommitted changes at DEPLOY; capped at 256 KB, top-level bench_out/ excluded
+│   ├── git_info.git_diff_stat # git diff --stat of the same changes, at most 200 files
 │   ├── code_version           # which code produced this (§5.E)
+│   ├── host                   # machine that ran the deploy (§5.E)
 │   └── config_versions[]      # one config digest per arm, in run order
 └── benchmarking_results[]     # one entry per config in a -cd sweep
     ├── configuration_file
@@ -683,6 +815,7 @@ bench_out/benchmarking-<name>-<timestamp>.json
             ├── status         # "ok" | "degraded" | ...
             ├── anchor_type    # anchors only: easy_retrieve|reasoning|should_refuse
             ├── difficulty     # bank rows only: easy|medium|hard
+            │                  #   the harness started writing this in the change closing #431
             └── answer_relevancy, faithfulness, context_precision,
                 context_recall, answer_correctness  # last one: opt-in
 ```
@@ -701,8 +834,14 @@ fields.
 **Do not use `git_info.last_commit` for this.** `archi create` writes
 `git_info.yaml` once at deploy and then freezes it. Every run between 2026-08-11
 and 2026-08-17 reports the same commit (`0a157cdce0`) with an empty diff, because
-they shared one deployment — even though they ran different code. The field names
+they shared one deployment — even though they ran different code. Since #514 the diff
+is bounded: `git_diff` holds at most 256 KB (also once JSON-escaped in the artifact),
+`git_diff_truncated` says whether it was cut, `git_diff_original_bytes` gives the full
+size, and top-level `bench_out/` is excluded. The field names
 the deploy, not the image. It is kept, and labelled, for exactly that reason.
+`metadata.host` does not share this freeze trap: a container cannot move to another
+machine, so the host recorded at deploy is the host every run in that deployment
+used. The host is written only when the container endpoint is provably local; `archi create` records `null` rather than a guess when it is not.
 
 Use the digests instead. Each is a content hash: **equal digest means equal
 input**, and the property is readable from the finished file forever, with no need
@@ -711,6 +850,7 @@ for Postgres or the config file to still exist.
 | Field | Scope | Answers |
 |---|---|---|
 | `metadata.code_version.digest` | per invocation | Did these runs execute the same code? |
+| `metadata.host` | per invocation | Did these runs execute on the same machine? |
 | `<arm>.config_version.digest` | per arm | Did these arms use the same settings? |
 | `<arm>.config_version.key_settings` | per arm | Which settings define this arm? |
 | `<arm>.config_version.divergence_from_selected_file` | per arm | Did the run use the config you selected? |
@@ -802,7 +942,8 @@ pointing at it still lands somewhere truthful.
 `scripts/benchmarking/compare_runs.py` exists. It refuses to run when the
 question sets differ (G4, with no override), when the corpus fingerprints differ
 or were never recorded (G3), or when `divergence_from_selected_file` is non-empty
-(Procedure E); and it prints the paired table, the slices, and the anchor
+(Procedure E), or when the arms recorded different answer-path settings (G10);
+and it prints the paired table, the slices, and the anchor
 pass/fail block. See [Procedure C](#procedure-c-compare-two-arms).
 
 Two limits are worth stating rather than discovering:

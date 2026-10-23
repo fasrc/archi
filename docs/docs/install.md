@@ -101,10 +101,28 @@ Two things commonly go wrong here:
 Do not add the `repo` scope. The container registry uses granular permissions and does not
 need it, and the token creation form will try to select it for you.
 
-`archi create` checks the base images before it changes anything, so a machine that is not
-logged in is told so up front — naming the image and the command to run — rather than failing
-part way through a build. Under `--force` this check runs before the existing deployment is
-removed, so a create that cannot obtain its base images leaves the running deployment alone.
+`archi create` and `archi evaluate` both check the base images before they change anything, so
+a machine that is not logged in is told so up front — naming the image and the command to run —
+rather than failing part way through a build. Under `--force` this check runs before the
+existing deployment is removed, so a run that cannot obtain its base images leaves the running
+deployment alone.
 
 If you already have the base images locally, no login is required: the check accepts an image
 that is present on the host without contacting any registry.
+
+The same check also covers two third-party base images from Docker Hub, but only for the
+services that the deployment enables:
+
+- `postgres` builds on `docker.io/pgvector/pgvector` (from `Dockerfile-postgres`).
+- `grafana` builds on `docker.io/grafana/grafana-enterprise` (from `Dockerfile-grafana`).
+
+The check does not read a Python version from these two images. These images are public, so
+the `ghcr.io` token above does not apply to them. If the check refuses one of these images,
+the message gives the cause and the remedy:
+
+- **Rate limit.** Docker Hub limits anonymous pulls. Wait for the limit to reset, or run
+  `docker login docker.io` to get a higher limit.
+- **Unknown tag.** The tag is not on Docker Hub. Change the `FROM` line in the template to a
+  tag that exists. `scripts/dev/update_service_base_images.py` changes only the archi base
+  images, so it cannot fix this pin.
+- **Not authorized.** Log in to `docker.io` with the container tool that you deploy with.
