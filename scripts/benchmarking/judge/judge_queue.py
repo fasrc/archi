@@ -3,10 +3,12 @@
 
     python scripts/benchmarking/judge/judge_queue.py --queue <dir> \
         --judge-env <judge.env> --sidecar <scorer-identity.json> (--status | --count)
-    python scripts/benchmarking/judge/judge_queue.py --queue <dir> --merge-ready
+    python scripts/benchmarking/judge/judge_queue.py --queue <dir> --merge-ready \
+        [--sidecar <scorer-identity.json>]
 
 ``--merge-ready`` prints the result basenames whose arms are all ``SCORED`` and
-not all ``MERGED``, with the pending result published; the submitter
+not all ``MERGED``, with the pending result published; with ``--sidecar``, only
+the results of the sidecar's code digest. The submitter
 (``scripts/benchmarking/slurm/judge_submit.sh``) submits the merge job for them.
 
 Standard library only: the submitter runs this on a login node with no project
@@ -364,13 +366,15 @@ def status_lines(
     return lines
 
 
-def merge_ready(queue: Path) -> List[str]:
+def merge_ready(queue: Path, code_digest: Optional[str] = None) -> List[str]:
     """Result basenames the merge can write now (design D4, step 4).
 
     Every arm of the result has a READY bundle with ``SCORED``, no arm is
     ``FAILED``, the pending result is in ``<queue>/results/``, and some arm has
     no ``MERGED`` yet. The merge is idempotent, so a result that a killed merge
-    left half marked is ready again.
+    left half marked is ready again. With *code_digest* (the configured
+    scorer's), only results whose bundles record that code digest: the merge
+    job runs the scorer image, which merges only results of its own code.
     """
     counts: Dict[str, object] = {}
     arms: Dict[str, Dict[object, Path]] = {}
@@ -385,6 +389,12 @@ def merge_ready(queue: Path) -> List[str]:
         if not isinstance(count, int) or set(arms[basename]) != set(range(count)):
             continue
         folders = list(arms[basename].values())
+        codes = {
+            ((read_manifest(folder) or {}).get("code_version") or {}).get("digest")
+            for folder in folders
+        }
+        if code_digest is not None and codes != {code_digest}:
+            continue
         if (
             all((folder / "SCORED").exists() for folder in folders)
             and not any((folder / "FAILED").exists() for folder in folders)
@@ -465,7 +475,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     action.add_argument("--merge-ready", action="store_true")
     args = parser.parse_args(argv)
     if args.merge_ready:
-        for basename in merge_ready(args.queue):
+        code = None
+        if args.sidecar is not None:
+            try:
+                code = str(read_sidecar(args.sidecar).identity["code_digest"])
+            except (OSError, ValueError) as exc:
+                print(f"judge_queue: {exc}", file=sys.stderr)
+                return 2
+        for basename in merge_ready(args.queue, code):
             print(basename)
         return 0
     if args.judge_env is None or args.sidecar is None:

@@ -657,6 +657,24 @@ def test_a_result_with_one_arm_not_merged_is_ready_again(setup, jq):
     assert jq.merge_ready(queue) == ["r-20261023_120000"]
 
 
+def test_merge_ready_with_a_code_digest_keeps_only_results_of_that_code(setup, jq):
+    queue = setup[0]
+    _result(queue, "ready-20261023_120000", 1, scored=(0,))
+    assert jq.merge_ready(queue, code_digest="sha256:code") == ["ready-20261023_120000"]
+    assert jq.merge_ready(queue, code_digest="sha256:other") == []
+
+
+def test_the_merge_ready_cli_filters_by_the_sidecars_code(tmp_path, setup, jq, capsys):
+    queue = setup[0]
+    _result(queue, "ready-20261023_120000", 1, scored=(0,))
+    other = write_sidecar(tmp_path, code="sha256:other", name="other.json")
+    argv = ["--queue", str(queue), "--merge-ready", "--sidecar"]
+    assert jq.main(argv + [str(other)]) == 0
+    assert capsys.readouterr().out.split() == []
+    assert jq.main(argv + [str(tmp_path / "scorer-identity.json")]) == 0
+    assert capsys.readouterr().out.split() == ["ready-20261023_120000"]
+
+
 def test_the_merge_ready_cli_needs_no_judge_env_or_sidecar(setup, jq, capsys):
     queue = setup[0]
     _result(queue, "ready-20261023_120000", 1, scored=(0,))

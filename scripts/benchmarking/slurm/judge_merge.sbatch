@@ -16,8 +16,10 @@
 #
 # The judge job submits it with --dependency=afterok when it ends, and judge_submit.sh
 # submits it for a result whose arms are all SCORED with no MERGED. merge.py runs in the
-# scorer image, so the leaderboard and the A/B comparisons are rebuilt with the code of the
-# run. It is idempotent: a second merge of a result gives the same bytes and changes nothing.
+# scorer image with --own-code-only: it merges only the results whose bundles record the
+# code digest of the image's src, so the leaderboard and the A/B comparisons are rebuilt
+# with the code of the run. A result of other code waits for a scorer image of its code.
+# It is idempotent: a second merge of a result gives the same bytes and changes nothing.
 # --dry-run prints the command and starts nothing.
 set -euo pipefail
 
@@ -43,7 +45,7 @@ case "$QUEUE" in
 esac
 
 CMD=(apptainer exec --cleanenv --bind "$QUEUE" "$SCORER_IMAGE"
-  python3 /root/archi/scripts/benchmarking/judge/merge.py --queue "$QUEUE")
+  python3 /root/archi/scripts/benchmarking/judge/merge.py --queue "$QUEUE" --own-code-only)
 
 if [ "$DRY_RUN" = true ]; then
   printf '%q' "${CMD[0]}"

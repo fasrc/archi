@@ -369,7 +369,7 @@ The publish step is idempotent, so a timer can run it every few minutes. The `ar
 
 ### 5. Submit the judge job
 
-`scripts/benchmarking/slurm/judge_submit.sh` submits one `archi-judge` job when a matching bundle is READY and no judge job exists, and one `archi-judge-merge` job when a result has all its arms SCORED and not MERGED. Every judge job has `--dependency=singleton`, so Slurm runs at most one at a time. Run it from `scrontab`, every 15 minutes (`scrontab -e`):
+`scripts/benchmarking/slurm/judge_submit.sh` submits one `archi-judge` job when a matching bundle is READY and no judge job exists, and one `archi-judge-merge` job when a result has all its arms SCORED and not MERGED. Every judge job has `--dependency=singleton`, so Slurm runs at most one at a time. The merge job runs in the scorer image and merges only the results of the image's own code, because it rebuilds the leaderboard and the A/B comparisons with that code: a result of an older run waits until a scorer image of its code is configured again. Run it from `scrontab`, every 15 minutes (`scrontab -e`):
 
 ```bash
 #SCRON -p shared

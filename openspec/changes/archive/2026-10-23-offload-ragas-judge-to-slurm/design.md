@@ -115,7 +115,7 @@ PR 2 (#731) fixes the result basename at the top of `run()` for every run, inlin
 
 The merge is also submitted from the judge job (`--dependency=afterok`) as the fast path. Step 4 is the durable path: a judge job that is killed after its last `SCORED` marker and before its `sbatch` of the merge leaves no gap, because the next tick submits the merge.
 
-PR 4 (#733) writes the submitter as `scripts/benchmarking/slurm/judge_submit.sh`. Its settings (the judge home, the queue folder, `judge.env`, the sidecar, the login-node Python) are environment variables with defaults at the top of the script. It counts the available bundles with `judge_queue.py --count`, and step 4 reads `judge_queue.py --merge-ready`: the results whose arms are all `SCORED`, with no `FAILED`, the pending JSON published, and some arm without `MERGED`. One merge job merges every ready result, so the submitter submits at most one. A failed `squeue` submits nothing, because an unknown queue state is not an empty one. `--status` also flags a READY bundle older than 24 hours, and lists every `INCOMPATIBLE` record of a bundle, also the records of an older sidecar.
+PR 4 (#733) writes the submitter as `scripts/benchmarking/slurm/judge_submit.sh`. Its settings (the judge home, the queue folder, `judge.env`, the sidecar, the login-node Python) are environment variables with defaults at the top of the script. It counts the available bundles with `judge_queue.py --count`, and step 4 reads `judge_queue.py --merge-ready --sidecar <sidecar>`: the results of the configured scorer's code digest whose arms are all `SCORED`, with no `FAILED`, the pending JSON published, and some arm without `MERGED`. A result of other code gets no merge job, because the merge job runs the configured scorer image, which merges only results of its own code (D8). One merge job merges every ready result, so the submitter submits at most one. A failed `squeue` submits nothing, because an unknown queue state is not an empty one. `--status` also flags a READY bundle older than 24 hours, and lists every `INCOMPATIBLE` record of a bundle, also the records of an older sidecar.
 
 ### D4a. One match rule for the submitter and the job
 
@@ -216,7 +216,7 @@ The merge is safe when two merges run at the same time (the afterok job and a ma
 
 The publish timer copies each judged file back into the output folder (D3). A person copies judged files into `bench_out/` and commits them.
 
-PR 4 (#733): `scripts/benchmarking/slurm/judge_merge.sbatch` runs `merge.py` in the scorer image on a CPU partition, so the comparisons are rebuilt with the code of the run.
+PR 4 (#733): `scripts/benchmarking/slurm/judge_merge.sbatch` runs `merge.py --own-code-only` in the scorer image on a CPU partition. The merge rebuilds the comparisons with the ResultHandler of the `src` it runs, and an operator can rebuild the scorer image for a newer run before an older result is merged. With `--own-code-only`, `merge.py` therefore merges only the results whose bundles record the code digest of its own `src`; another result waits, with exit 0, for a scorer image of its code. A merge by hand without the flag merges every result, as before.
 
 ### D8a. One judge mode for each run
 

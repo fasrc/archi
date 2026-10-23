@@ -192,7 +192,13 @@ def _judge_home(tmp_path, **env_overrides):
 
 
 def _bundle(
-    home, name, *, arms=1, model="meta-llama/Llama-3.3-70B-Instruct", markers=()
+    home,
+    name,
+    *,
+    arms=1,
+    model="meta-llama/Llama-3.3-70B-Instruct",
+    markers=(),
+    code="sha256:code",
 ):
     folder = home / "queue" / name
     folder.mkdir()
@@ -205,7 +211,7 @@ def _bundle(
                 "arm_count": arms,
                 "row_count": 3,
                 "judge_model": {"id": model, "revision": "rev1"},
-                "code_version": {"digest": "sha256:code"},
+                "code_version": {"digest": code},
                 "package_digest": "sha256:pkg",
                 "enabled_metrics": ["faithfulness"],
             }
@@ -545,7 +551,20 @@ def test_the_merge_dry_run_prints_the_merge_and_starts_nothing(tmp_path, stub):
         "merge.py --queue" in proc.stdout
         and str(tmp_path / "judge" / "queue") in proc.stdout
     )
+    # The merge image merges only the results of its own code.
+    assert "--own-code-only" in proc.stdout
     assert _calls(stub, "apptainer") == []
+
+
+def test_no_merge_job_for_a_result_of_other_code_than_the_scorer(tmp_path, stub):
+    # The merge job runs the configured scorer image, which merges only results
+    # of its own code; a job for another result would merge nothing on every tick.
+    home = _judge_home(tmp_path)
+    _bundle(home, "r-20261023_120000-arm0", markers=("SCORED",), code="sha256:old")
+    _publish_result(home, "r-20261023_120000")
+    proc = _run(SUBMIT, tmp_path, stub)
+    assert proc.returncode == 0, proc.stderr
+    assert not any("judge_merge.sbatch" in call for call in _calls(stub, "sbatch"))
 
 
 def test_the_merge_job_runs_the_merge_in_the_scorer_image(tmp_path, stub):

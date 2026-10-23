@@ -13,8 +13,9 @@
 #   2. submits one archi-judge job when the count is 1 or more and no archi-judge job of
 #      this user exists. Every archi-judge job has --dependency=singleton, so Slurm runs at
 #      most one at a time even when two submitters race;
-#   3. submits one archi-judge-merge job when a result has all its arms SCORED, its pending
-#      JSON in <queue>/results/ and some arm without MERGED, and no merge job exists. The
+#   3. submits one archi-judge-merge job when a result of the configured scorer's code has
+#      all its arms SCORED, its pending JSON in <queue>/results/ and some arm without
+#      MERGED, and no merge job exists. The
 #      judge job also submits the merge when it ends; this step covers a judge job that was
 #      killed between its last SCORED and that submission.
 # A failed squeue submits nothing: an unknown queue state is not an empty one.
@@ -66,7 +67,9 @@ else
   fi
 fi
 
-READY="$("$JUDGE_PYTHON" "$QUEUE_PY" --queue "$QUEUE" --merge-ready)" \
+# Only results of the configured scorer's code: the merge job runs that image, and it
+# merges only results of its own code (merge.py --own-code-only).
+READY="$("$JUDGE_PYTHON" "$QUEUE_PY" --queue "$QUEUE" --sidecar "$SIDECAR" --merge-ready)" \
   || die "judge_queue.py could not list the results to merge (see above)"
 if [ -n "$READY" ]; then
   MERGE_JOBS="$(jobs_named archi-judge-merge)"

@@ -285,6 +285,10 @@ The merge step SHALL write one new judged result JSON beside the pending one in 
 - **WHEN** a judged file exists and a new merge computes different bytes
 - **THEN** the merge exits non-zero and leaves the existing file unchanged
 
+#### Scenario: Merge job in a scorer image of other code
+- **WHEN** every arm of a result is `SCORED`, and the configured scorer image has another code digest than the result's bundles
+- **THEN** the submitter submits no merge job for the result, and a merge job (`merge.py --own-code-only`) writes nothing for it and exits 0
+
 #### Scenario: Digest mismatch is refused
 - **WHEN** the scores' bundle SHA-256 differs from the digest recorded in the pending result
 - **THEN** the merge exits non-zero and writes no judged file
