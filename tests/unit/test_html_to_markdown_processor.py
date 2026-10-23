@@ -1,6 +1,7 @@
 """Tests for HtmlToMarkdownProcessor (HTML->Markdown conversion at persist time)."""
 
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,10 @@ from src.data_manager.collectors.processing import (
     HtmlToMarkdownProcessor,
     ResourcePipeline,
     _ArchiMarkdownConverter,
+    _escape_link_label,
+    _escape_unbalanced_brackets,
     _fence_language,
+    _link_destination,
     _markdownify,
     _nested_list_needs_break,
     _next_content_sibling,
@@ -939,7 +943,9 @@ def test_hoist_anchor_with_image_before_code_keeps_linked_image():
     ("element", "link"),
     [
         ("<hr>", "[---](https://x/y)"),
-        ('<video src="v.mp4"></video>', "[[](v.mp4)](https://x/y)"),
+        # The video's own empty link is written as text so that the outer link
+        # parses: a link may not hold a link (PR #709 review round 2).
+        ('<video src="v.mp4"></video>', "[\\[\\](v.mp4)](https://x/y)"),
     ],
 )
 def test_hoist_anchor_with_textless_rendered_element_converts_as_before(element, link):
@@ -964,6 +970,774 @@ def test_hoist_two_blocks_then_text_give_no_extra_link():
     )
 
 
+# --- hoisted anchor with a tag that writes link text with no text (issue #713) ---
+
+_A = "```\na\nb\n```"
+_C = "```\nc\nd\n```"
+
+
+def test_hoist_empty_q_after_two_blocks_gives_one_link():
+    """An empty <q> is link text (markdownify writes '""'), so the head half must
+    not add a second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<q></q></a></p>"
+        )
+        == _A + "\n\n" + _C + '\n\n[""](https://x/y)'
+    )
+
+
+def test_hoist_empty_q_issue_first_probe_gives_one_link():
+    """The first probe from issue #713 (no wrapping <p>) gives exactly one link."""
+    result = html_to_markdown(
+        '<a href="https://x/y"><code>a<br>b</code><code>c<br>d</code><q></q></a>'
+    )
+    assert result == _A + "\n\n" + _C + '\n\n[""](https://x/y)'
+    assert result.count("https://x/y") == 1
+
+
+def test_hoist_empty_q_before_block_keeps_link():
+    """An empty <q> before the block is the link text for the head half (issue #713)."""
+    assert (
+        html_to_markdown('<p><a href="https://x/y"><q></q><code>a<br>b</code></a></p>')
+        == '[""](https://x/y)\n\n' + _A
+    )
+
+
+@pytest.mark.parametrize(
+    ("tag", "hashes"),
+    [
+        ("h1", "#"),
+        ("h2", "##"),
+        ("h3", "###"),
+        ("h4", "####"),
+        ("h5", "#####"),
+        ("h6", "######"),
+    ],
+)
+def test_hoist_empty_heading_after_two_blocks_gives_one_link(tag, hashes):
+    """An empty heading writes ATX hashes as link text, so the head half must not
+    add a second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            f'<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            f"<{tag}></{tag}></a></p>"
+        )
+        == _A + "\n\n" + _C + f"\n\n[{hashes}](https://x/y)"
+    )
+
+
+def test_hoist_empty_heading_before_block_keeps_link():
+    """An empty <h1> before the block is the link text for the head half (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><h1></h1><code>a<br>b</code></a></p>'
+        )
+        == "[#](https://x/y)\n\n" + _A
+    )
+
+
+@pytest.mark.parametrize("tag", ["td", "th"])
+def test_hoist_empty_table_cell_after_two_blocks_gives_one_link(tag):
+    """An empty <td> or <th> writes a pipe character as link text, so the head half
+    must not add a second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            f'<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            f"<{tag}></{tag}></a></p>"
+        )
+        == _A + "\n\n" + _C + "\n\n [|](https://x/y)"
+    )
+
+
+def test_hoist_empty_table_row_after_two_blocks_gives_one_link():
+    """An empty <tr> writes a pipe row as link text, so the head half must not add
+    a second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<tr></tr></a></p>"
+        )
+        == _A + "\n\n" + _C + "\n\n[|\n|  |](https://x/y)"
+    )
+
+
+def test_hoist_empty_span_after_two_blocks_is_not_link_text():
+    """Guard: an empty <span> is still not link text; output unchanged (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<span></span></a></p>"
+        )
+        == "<https://x/y>\n\n" + _A + "\n\n" + _C
+    )
+
+
+def test_hoist_lone_block_in_link_is_unchanged():
+    """Guard: a lone block with no other content is unchanged (issue #713)."""
+    assert (
+        html_to_markdown('<p><a href="https://x/y"><code>a<br>b</code></a></p>')
+        == "<https://x/y>\n\n" + _A
+    )
+
+
+# --- a newly counted tag counts only where the link shows its href (PR #716) ---
+
+
+@pytest.mark.parametrize("wrap", ["kbd", "samp"])
+@pytest.mark.parametrize("tag", ["q", "h1", "h6", "td", "th", "tr"])
+def test_hoist_new_tag_under_noformat_keeps_target(wrap, tag):
+    """Under <kbd> or <samp> markdownify writes the link text but never the href, so
+    an empty newly counted tag must not hide the target; the output is the same as
+    before issue #713 (Codex review on PR #716)."""
+    assert (
+        html_to_markdown(
+            f'<{wrap}><a href="https://x/y"><code>a<br>b</code>'
+            f"<{tag}></{tag}></a></{wrap}>"
+        )
+        == "`https://x/y`\n\n" + _A
+    )
+
+
+def test_hoist_empty_q_before_block_under_kbd_keeps_target():
+    """The head half under <kbd> does not count an empty <q> either (PR #716)."""
+    assert (
+        html_to_markdown(
+            '<p><kbd><a href="https://x/y"><q></q><code>a<br>b</code></a></kbd></p>'
+        )
+        == "`https://x/y`\n\n" + _A
+    )
+
+
+def test_hoist_two_blocks_and_empty_q_under_kbd_keep_target():
+    """Two blocks and an empty <q> under <kbd> keep the target, as before #713."""
+    assert (
+        html_to_markdown(
+            '<p><kbd><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<q></q></a></kbd></p>"
+        )
+        == "`https://x/y`\n\n" + _A + "\n\n" + _C + '\n\n`""`'
+    )
+
+
+@pytest.mark.parametrize("wrap", ["td", "th"])
+@pytest.mark.parametrize("tag", ["h1", "h6"])
+def test_hoist_empty_heading_in_cell_keeps_target(wrap, tag):
+    """markdownify writes no hashes for a heading inside a table cell, so an empty
+    heading there is not link text (Codex review on PR #716)."""
+    assert (
+        html_to_markdown(
+            f'<{wrap}><a href="https://x/y"><code>a<br>b</code>'
+            f"<{tag}></{tag}></a></{wrap}>"
+        )
+        == " <https://x/y>  ``` a b ``` |"
+    )
+
+
+def test_hoist_empty_heading_in_heading_keeps_target():
+    """A heading inside a heading gets no hashes either (PR #716)."""
+    assert (
+        html_to_markdown(
+            '<h2><a href="https://x/y"><code>a<br>b</code><h1></h1></a></h2>'
+        )
+        == "## <https://x/y> ``` a b ```"
+    )
+
+
+def test_hoist_empty_heading_before_block_in_table_keeps_target():
+    """The head half in a table cell does not count an empty heading (PR #716)."""
+    assert (
+        html_to_markdown(
+            '<table><tr><td><a href="https://x/y"><h1></h1><code>a<br>b</code></a>'
+            "</td></tr></table>"
+        )
+        == "|  |\n| --- |\n| <https://x/y>  ``` a b ``` |"
+    )
+
+
+def test_hoist_two_blocks_and_empty_q_in_cell_give_one_link():
+    """Guard: markdownify writes '""' for a <q> in a cell too, so it still counts
+    there and the head half adds no second link (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<td><a href="https://x/y"><code>a<br>b</code><code>c<br>d</code>'
+            "<q></q></a></td>"
+        )
+        == ' ``` a b ```  ``` c d ```  [""](https://x/y) |'
+    )
+
+
+def test_hoist_empty_cell_in_cell_is_link_text():
+    """Guard: markdownify writes a pipe for a cell in a cell, so it still counts."""
+    assert (
+        html_to_markdown(
+            '<td><a href="https://x/y"><code>a<br>b</code><td></td></a></td>'
+        )
+        == " ``` a b ```   [|](https://x/y) |"
+    )
+
+
+def test_hoist_kbd_inside_link_does_not_stop_the_count():
+    """Guard: only the ancestors of the link decide; a <kbd> inside the link still
+    shows the href, so the empty <q> in it counts (PR #716)."""
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/y"><code>a<br>b</code><kbd><q></q></kbd></a></p>'
+        )
+        == _A + '\n\n[`""`](https://x/y)'
+    )
+
+
+# --- hoist marker attributes in source HTML are ignored (issue #713) ----------
+
+
+def test_source_link_shown_attr_does_not_hide_link_target():
+    """data-archi-link-shown on a source anchor must be stripped before the hoist
+    reads it, so the anchor is not already 'shown' and the link appears (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a data-archi-link-shown href="https://x/y">'
+            "<code>a<br>b</code></a></p>"
+        )
+        == "<https://x/y>\n\n" + _A
+    )
+
+
+def test_source_link_shown_issue_second_probe_keeps_link():
+    """The second probe from issue #713 (no wrapping <p>) keeps the link target."""
+    assert (
+        html_to_markdown(
+            '<a data-archi-link-shown href="https://x/y"><code>a<br>b</code></a>'
+        )
+        == "<https://x/y>\n\n" + _A
+    )
+
+
+def test_source_link_shown_upper_case_attr_is_removed():
+    """html.parser lowercases attribute names, so DATA-ARCHI-LINK-SHOWN is also
+    removed (issue #713)."""
+    assert (
+        html_to_markdown(
+            '<p><a DATA-ARCHI-LINK-SHOWN href="https://x/y">'
+            "<code>a<br>b</code></a></p>"
+        )
+        == "<https://x/y>\n\n" + _A
+    )
+
+
+def test_source_promoted_attr_does_not_label_native_block():
+    """data-archi-promoted on a native <pre> must be stripped before the fence
+    language reader sees it, so the block is not treated as promoted (issue #713)."""
+    assert (
+        html_to_markdown('<pre data-archi-promoted class="bash">ls</pre>')
+        == "```\nls\n```"
+    )
+
+
+def test_promote_step_drops_both_source_markers():
+    """_promote_block_code removes data-archi-link-shown and data-archi-promoted
+    from source HTML before doing its own work (issue #713)."""
+    assert (
+        _promote_block_code(
+            '<p><a data-archi-link-shown="" href="x">t</a>'
+            '<pre data-archi-promoted class="bash">ls</pre></p>'
+        )
+        == '<p><a href="x">t</a><pre class="bash">ls</pre></p>'
+    )
+
+
+def test_promoted_block_still_carries_marker():
+    """Guard: _promote_block_code still sets data-archi-promoted on the blocks it
+    promotes (issue #713)."""
+    assert (
+        _promote_block_code('<p><code class="bash">a<br>b</code></p>')
+        == '<p><pre class="bash" data-archi-promoted=""><code class="bash">a\nb</code></pre></p>'
+    )
+
+
+def test_link_destination_unmatched_close_paren_escapes():
+    assert (
+        html_to_markdown('<p><a href="/docs/foo)bar">Docs</a></p>')
+        == "[Docs](</docs/foo)bar>)"
+    )
+
+
+def test_link_destination_unmatched_open_paren_escapes():
+    assert (
+        html_to_markdown('<p><a href="/docs/foo(bar">Docs</a></p>')
+        == "[Docs](</docs/foo(bar>)"
+    )
+
+
+def test_link_destination_space_escapes():
+    assert (
+        html_to_markdown('<p><a href="https://x/a b">Docs</a></p>')
+        == "[Docs](<https://x/a b>)"
+    )
+
+
+def test_link_destination_angle_brackets_escape_inside_angle_destination():
+    assert (
+        html_to_markdown('<p><a href="/a b<c>">Docs</a></p>') == "[Docs](</a b\\<c\\>>)"
+    )
+
+
+def test_link_destination_title_kept_with_escaped_destination():
+    assert (
+        html_to_markdown('<p><a href="/a(b" title="T">Docs</a></p>')
+        == '[Docs](</a(b> "T")'
+    )
+
+
+def test_link_destination_autolink_with_space_becomes_explicit_link():
+    assert (
+        html_to_markdown('<p><a href="https://x/a b">https://x/a b</a></p>')
+        == "[https://x/a b](<https://x/a b>)"
+    )
+
+
+def test_link_destination_kept_link_around_hoisted_code_escapes():
+    assert (
+        html_to_markdown('<p><a href="/docs/foo)bar"><code>a<br>b</code></a></p>')
+        == "[/docs/foo)bar](</docs/foo)bar>)\n\n```\na\nb\n```"
+    )
+
+
+def test_link_destination_balanced_parens_guard_unchanged():
+    assert (
+        html_to_markdown('<p><a href="/w/Foo_(bar)">Foo</a></p>')
+        == "[Foo](/w/Foo_(bar))"
+    )
+
+
+def test_link_destination_plain_url_guard_unchanged():
+    assert (
+        html_to_markdown('<p><a href="https://x/y">Docs</a></p>')
+        == "[Docs](https://x/y)"
+    )
+
+
+def test_link_destination_helper_bare_valid_url_unchanged():
+    assert _link_destination("https://x/y") == "https://x/y"
+
+
+def test_link_destination_helper_space_escapes():
+    assert _link_destination("https://x/a b") == "<https://x/a b>"
+
+
+def test_link_destination_helper_tab_escapes():
+    assert _link_destination("https://x/a\tb") == "<https://x/a\tb>"
+
+
+def test_link_destination_helper_unbalanced_paren_escapes():
+    assert _link_destination("/docs/foo)bar") == "</docs/foo)bar>"
+
+
+def test_link_destination_helper_backslash_before_punctuation_escapes():
+    # A DOM href has no backslash escapes, so ``\)`` is two literal characters;
+    # bare, a CommonMark reader would consume the backslash and read ``/a)b``.
+    assert _link_destination("/a\\)b") == "</a\\\\)b>"
+
+
+def test_link_destination_helper_backslash_before_letter_stays_bare():
+    assert _link_destination("/a\\b") == "/a\\b"
+
+
+def test_link_destination_helper_trailing_backslash_forces_angle_form():
+    # Bare, the trailing backslash would escape the closing ``)`` of the link.
+    assert _link_destination("/x\\") == "</x\\\\>"
+
+
+def test_link_destination_trailing_backslash_href_becomes_angle_form():
+    assert html_to_markdown('<p><a href="/x\\">Docs</a></p>') == "[Docs](</x\\\\>)"
+
+
+def test_link_destination_helper_entity_lead_forces_angle_form():
+    assert _link_destination("/a&amp;b") == "</a\\&amp;b>"
+
+
+def test_link_destination_backslash_paren_href_becomes_angle_form():
+    assert html_to_markdown('<p><a href="/a\\)b">Docs</a></p>') == "[Docs](</a\\\\)b>)"
+
+
+def test_link_destination_helper_empty_string_stays_bare():
+    assert _link_destination("") == ""
+
+
+def test_link_destination_helper_leading_angle_bracket_escapes():
+    assert _link_destination("<foo") == "<\\<foo>"
+
+
+def test_link_destination_helper_literal_backslash_doubles():
+    assert _link_destination("/a b\\)c") == "</a b\\\\)c>"
+
+
+def test_link_destination_helper_entity_leading_ampersand_escapes():
+    assert _link_destination("/a b&amp;") == "</a b\\&amp;>"
+
+
+def test_link_destination_helper_plain_ampersand_unchanged_when_wrapped():
+    assert _link_destination("/a b&c") == "</a b&c>"
+
+
+def test_link_destination_helper_nul_is_percent_encoded():
+    # CommonMark replaces a literal U+0000 with U+FFFD before it parses, so a
+    # copied NUL would become U+FFFD; the percent-encoded form parses as ``%00``.
+    assert _link_destination("https://x/a\x00b") == "<https://x/a%00b>"
+
+
+@pytest.mark.parametrize("eol", ["\n", "\r", "\r\n"])
+def test_link_destination_line_ending_href_left_as_markdownify_writes_it(eol):
+    # No CommonMark destination form can hold a line ending (design Non-Goals),
+    # so the angle-bracket form would not help; the output stays unchanged.
+    href = f"/a{eol}b"
+    assert _link_destination(href) == href
+    assert html_to_markdown(f'<p><a href="{href}">Docs</a></p>') == f"[Docs]({href})"
+    url = f"https://x/a{eol}b"
+    self_link = f'<p><a href="{url}">{url}</a></p>'
+    assert html_to_markdown(self_link) == library_markdownify(self_link).strip()
+
+
+def test_link_destination_control_char_autolink_becomes_explicit_link():
+    assert (
+        html_to_markdown('<p><a href="/a\x01b">/a\x01b</a></p>')
+        == "[/a\x01b](</a\x01b>)"
+    )
+
+
+def test_link_destination_leading_angle_bracket_becomes_explicit_link():
+    assert html_to_markdown('<p><a href="&lt;foo">Docs</a></p>') == "[Docs](<\\<foo>)"
+
+
+def test_link_destination_nested_image_same_href_escapes_outer_link():
+    assert (
+        html_to_markdown('<p><a href="/a b"><img src="/a b" alt="pic"></a></p>')
+        == "[![pic](/a b)](</a b>)"
+    )
+
+
+def test_link_destination_autolink_label_escapes_unmatched_bracket():
+    assert (
+        html_to_markdown('<p><a href="https://x/a ] b">https://x/a ] b</a></p>')
+        == "[https://x/a \\] b](<https://x/a ] b>)"
+    )
+
+
+def test_link_destination_noformat_context_left_untouched():
+    assert (
+        html_to_markdown('<pre><a href="https://x/a b">&lt;https://x/a b&gt;</a></pre>')
+        == "```\n<https://x/a b>\n```"
+    )
+
+
+def test_link_destination_title_repeating_href_escapes_outer_destination():
+    assert (
+        html_to_markdown('<p><a href="/a b" title="x](/a b">Docs</a></p>')
+        == '[Docs](</a b> "x](/a b")'
+    )
+
+
+def test_link_destination_autolink_label_escapes_inline_html():
+    assert (
+        html_to_markdown(
+            '<p><a href="https://x/a &lt;em&gt;x&lt;/em&gt; b">'
+            "https://x/a &lt;em&gt;x&lt;/em&gt; b</a></p>"
+        )
+        == "[https://x/a \\<em\\>x\\</em\\> b](<https://x/a \\<em\\>x\\</em\\> b>)"
+    )
+
+
+def test_link_destination_autolink_label_escapes_code_and_emphasis():
+    assert (
+        html_to_markdown('<p><a href="https://x/a `c` b">https://x/a `c` b</a></p>')
+        == "[https://x/a \\`c\\` b](<https://x/a `c` b>)"
+    )
+    assert (
+        html_to_markdown('<p><a href="https://x/a _u_ b">https://x/a _u_ b</a></p>')
+        == "[https://x/a \\_u\\_ b](<https://x/a _u_ b>)"
+    )
+
+
+def test_link_label_helper_escapes_entity_lead_only():
+    assert _escape_link_label("a &amp; b & c*") == "a \\&amp; b & c\\*"
+
+
+# _escape_unbalanced_brackets tests (issue #691)
+
+
+def test_escape_unbalanced_brackets_unmatched_close_escaped():
+    assert _escape_unbalanced_brackets("] [") == "\\] \\["
+
+
+def test_escape_unbalanced_brackets_balanced_unchanged():
+    result = _escape_unbalanced_brackets("[a]")
+    assert result == "[a]"
+
+
+def test_escape_unbalanced_brackets_declaration_needs_ascii_letter():
+    # CommonMark 0.31 starts a declaration with any ASCII letter, either case
+    # (PR #709 review round 3).
+    assert _escape_unbalanced_brackets("<!x ]>") == "<!x ]>"
+    assert _escape_unbalanced_brackets("<!\u00e9 ]>") == "<!\u00e9 \\]>"
+
+
+def test_escape_unbalanced_brackets_angle_destination_stops_at_carriage_return():
+    # A CR is a line ending, which an angle-bracket destination cannot hold, so
+    # the image tail is not valid and its ``]`` counts (PR #709 review round 3).
+    assert _escape_unbalanced_brackets("![a](<b\r]>)") == "![a](<b\r\\]>)"
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # A backslash before a line ending is no escape, so the angle
+        # destination still stops at the line ending.
+        ("![a](<foo\\\n]>)", "![a](<foo\\\n\\]>)"),
+        # A backslash before a space is no escape, so the space still ends a
+        # bare destination.
+        ("![a](foo\\ ]bar)", "![a](foo\\ \\]bar)"),
+        # An escaped ``)`` stays in the bare destination, so the tail holds
+        # the ``]`` and nothing changes.
+        ("![a](foo\\)]bar)", "![a](foo\\)]bar)"),
+    ],
+)
+def test_escape_unbalanced_brackets_destination_backslash_escapes_only_punctuation(
+    text, expected
+):
+    # CommonMark escapes ASCII punctuation only (PR #709 review round 5).
+    assert _escape_unbalanced_brackets(text) == expected
+
+
+def test_comment_with_double_hyphen_skipped_as_raw_html():
+    # CommonMark 0.31 dropped the rule against ``--`` in a comment body.
+    s = "<!-- a--b ] -->"
+    assert _escape_unbalanced_brackets(s) is s
+
+
+def test_escape_unbalanced_brackets_already_escaped_unchanged():
+    s = "\\]"
+    result = _escape_unbalanced_brackets(s)
+    assert result == s
+
+
+def test_escape_unbalanced_brackets_code_span_unchanged():
+    s = "`a]b`"
+    result = _escape_unbalanced_brackets(s)
+    assert result == s
+
+
+def test_escape_unbalanced_brackets_unmatched_backtick_then_close():
+    # Unmatched backtick run: the ] after it is not inside a code span
+    assert _escape_unbalanced_brackets("`]") == "`\\]"
+
+
+def test_escape_unbalanced_brackets_trailing_backslash_doubled():
+    # A lone terminal backslash would escape the label's closing ``]`` (PR #709 review).
+    assert _escape_unbalanced_brackets("a\\") == "a\\\\"
+    assert _escape_unbalanced_brackets("[\\") == "\\[\\\\"
+    assert _escape_unbalanced_brackets("a\\\\") == "a\\\\"
+
+
+def test_escape_unbalanced_brackets_skips_raw_html():
+    # Brackets in raw inline HTML do not take part in label balancing (PR #709 review).
+    assert _escape_unbalanced_brackets('<span title="[">x</span>]') == (
+        '<span title="[">x</span>\\]'
+    )
+    assert _escape_unbalanced_brackets('<span title="]">x</span>') == (
+        '<span title="]">x</span>'
+    )
+    assert _escape_unbalanced_brackets("<!-- [ -->]") == "<!-- [ -->\\]"
+    assert _escape_unbalanced_brackets("<? [ ?>]") == "<? [ ?>\\]"
+    assert _escape_unbalanced_brackets("<![CDATA[ ] ]]>") == "<![CDATA[ ] ]]>"
+    assert _escape_unbalanced_brackets("<!X [>]") == "<!X [>\\]"
+    assert _escape_unbalanced_brackets("</x>]") == "</x>\\]"
+    # A lone ``<`` that opens no HTML or autolink is plain text.
+    assert _escape_unbalanced_brackets("a < b ]") == "a < b \\]"
+
+
+def test_escape_unbalanced_brackets_tag_whitespace_is_ascii_only():
+    # A tag and a bare destination end only at an ASCII space, tab, or line
+    # ending; other whitespace is part of the value (PR #709 review round 3).
+    assert _escape_unbalanced_brackets("<i a=v ]>") == "<i a=v ]>"
+    assert _escape_unbalanced_brackets("<i a=v\x0c]>") == "<i a=v\x0c]>"
+    assert _escape_unbalanced_brackets("<i a =v]>") == "<i a =v\\]>"
+    assert _escape_unbalanced_brackets("![a](b ]c)") == "![a](b ]c)"
+    # DEL is an ASCII control character, so no destination holds it.
+    assert _escape_unbalanced_brackets("![a](b\x7f]c)") == "![a](b\x7f\\]c)"
+    assert _escape_unbalanced_brackets("<https://a\x7f]>") == "<https://a\x7f\\]>"
+
+
+def test_escape_unbalanced_brackets_skips_autolinks():
+    assert _escape_unbalanced_brackets("<https://x/a]b>") == "<https://x/a]b>"
+    assert _escape_unbalanced_brackets("<https://x/a]b> ]") == "<https://x/a]b> \\]"
+
+
+def test_escape_unbalanced_brackets_skips_nested_link_destination_and_title():
+    # A backtick in a nested destination opens no code span (PR #709 review).
+    assert _escape_unbalanced_brackets("![pic](a`) tail ] `") == (
+        "![pic](a`) tail \\] `"
+    )
+    assert _escape_unbalanced_brackets('![a](/s "t ] u")') == '![a](/s "t ] u")'
+    assert _escape_unbalanced_brackets("![a](<s ] t> 't [ u')") == (
+        "![a](<s ] t> 't [ u')"
+    )
+    assert _escape_unbalanced_brackets("![a](s(1)) [") == "![a](s(1)) \\["
+    # A bracket pair followed by text that is no link tail stays plain text.
+    assert _escape_unbalanced_brackets("[a](b c d ]") == "[a](b c d \\]"
+
+
+def test_escape_unbalanced_brackets_linear_in_backtick_runs():
+    # Each unmatched run once rescanned the whole suffix (PR #709 review).
+    label = "".join("`" * (i + 1) + "x" for i in range(1000)) + "]"
+    start = time.perf_counter()
+    assert _escape_unbalanced_brackets(label).endswith("x\\]")
+    assert time.perf_counter() - start < 2.0
+
+
+def test_escape_unbalanced_brackets_paren_title_stops_at_open_paren():
+    # An unescaped ``(`` ends a parenthesized title, so each unclosed one scans
+    # only to the next ``(`` instead of to the end of the text.
+    assert _escape_unbalanced_brackets("![a](b (c) d) [") == "![a](b (c) d) \\["
+    assert _escape_unbalanced_brackets("![a](b (c\\(d)) [") == "![a](b (c\\(d)) \\["
+    label = "[a](b (" * 20000 + "]"
+    start = time.perf_counter()
+    assert _escape_unbalanced_brackets(label).endswith("(\\]")
+    assert time.perf_counter() - start < 2.0
+
+
+def test_escape_unbalanced_brackets_destination_nesting_limit():
+    # CommonMark readers stop a destination at 32 nested ``(``, which also keeps
+    # each malformed tail scan short (PR #709 review round 2).
+    deep = "![a](" + "(" * 32 + "]" + ")" * 32 + ")"
+    assert _escape_unbalanced_brackets(deep) == deep
+    deeper = "![a](" + "(" * 33 + "]" + ")" * 33 + ")"
+    assert _escape_unbalanced_brackets(deeper) == (
+        "![a](" + "(" * 33 + "\\]" + ")" * 33 + ")"
+    )
+    label = "[" * 8000 + "](" * 8000
+    start = time.perf_counter()
+    _escape_unbalanced_brackets(label)
+    assert time.perf_counter() - start < 2.0
+
+
+def test_escape_unbalanced_brackets_neutralizes_inner_links():
+    # A link inside link text stops the outer link from parsing, so its
+    # brackets are escaped; an image may sit in a link (PR #709 review round 2).
+    assert _escape_unbalanced_brackets("[a](b) x") == "\\[a\\](b) x"
+    assert _escape_unbalanced_brackets("[a](b) ]") == "\\[a\\](b) \\]"
+    assert _escape_unbalanced_brackets("\\![i](s)") == "\\!\\[i\\](s)"
+    assert _escape_unbalanced_brackets("![a [b](c)](d)") == "![a \\[b\\](c)](d)"
+    assert _escape_unbalanced_brackets("![i](s) [a]") == "![i](s) [a]"
+
+
+def test_escape_unbalanced_brackets_empty_unchanged():
+    result = _escape_unbalanced_brackets("")
+    assert result == ""
+
+
+# html_to_markdown integration tests for bracket escaping (issue #691)
+
+
+def test_unmatched_close_bracket_in_link_text_escaped():
+    assert (
+        html_to_markdown('<p><a href="https://x/y">a ] b</a></p>')
+        == "[a \\] b](https://x/y)"
+    )
+
+
+def test_unmatched_open_bracket_in_link_text_escaped():
+    assert html_to_markdown('<p><a href="x">a [ b</a></p>') == "[a \\[ b](x)"
+
+
+def test_self_link_text_no_longer_equals_href_escaped():
+    assert (
+        html_to_markdown('<a href="https://x/a  ]b">https://x/a  ]b</a>')
+        == "[https://x/a \\]b](<https://x/a  ]b>)"
+    )
+
+
+def test_titled_self_link_bracket_escaped():
+    assert (
+        html_to_markdown('<a href="https://x/a ] b" title="T">https://x/a ] b</a>')
+        == '[https://x/a \\] b](<https://x/a ] b> "T")'
+    )
+
+
+def test_balanced_brackets_in_link_text_unchanged():
+    assert html_to_markdown('<p><a href="x">a [b] c</a></p>') == "[a [b] c](x)"
+
+
+def test_nested_image_in_link_unchanged():
+    assert (
+        html_to_markdown('<p><a href="/b"><img src="/a" alt="pic"></a></p>')
+        == "[![pic](/a)](/b)"
+    )
+
+
+def test_bracket_inside_code_span_in_link_unchanged():
+    assert html_to_markdown('<p><a href="x"><code>a]b</code></a></p>') == "[`a]b`](x)"
+
+
+def test_already_escaped_bracket_in_link_unchanged():
+    assert html_to_markdown('<p><a href="x">a \\] b</a></p>') == "[a \\] b](x)"
+
+
+def test_autolink_with_bracket_unchanged():
+    assert (
+        html_to_markdown('<p><a href="https://x/a]b">https://x/a]b</a></p>')
+        == "<https://x/a]b>"
+    )
+
+
+def test_anchor_without_href_text_unchanged():
+    # No link is written, so no escape is needed (PR #709 review).
+    assert html_to_markdown("<p><a>a ] b</a></p>") == "a ] b"
+    assert html_to_markdown('<p><a href="">a ] b</a></p>') == "a ] b"
+
+
+def test_escaped_label_equal_to_href_keeps_original_text():
+    # The escaped label equals the href, so the base converter writes an
+    # autolink; the visible text must stay the HTML text (PR #709 review).
+    assert html_to_markdown('<a href="a\\]">a]</a>') == "[a\\]](<a\\\\]>)"
+    assert (
+        html_to_markdown('<a href="https://x/a\\]">https://x/a]</a>')
+        == "[https://x/a\\]](<https://x/a\\\\]>)"
+    )
+
+
+def test_link_text_terminal_backslash_doubled():
+    assert html_to_markdown('<a href="x">[\\</a>') == "[\\[\\\\](x)"
+    assert html_to_markdown('<a href="x">a\\ </a>') == "[a\\\\](x) "
+
+
+def test_link_text_raw_html_and_autolink_brackets():
+    assert (
+        html_to_markdown('<a href="x">&lt;span title="["&gt;x&lt;/span&gt;]</a>')
+        == '[<span title="[">x</span>\\]](x)'
+    )
+    assert (
+        html_to_markdown('<a href="x">&lt;https://x/a]b&gt;</a>')
+        == "[<https://x/a]b>](x)"
+    )
+
+
+def test_link_text_literal_link_syntax_stays_inside_the_link():
+    assert html_to_markdown('<a href="u">[a](b) x</a>') == "[\\[a\\](b) x](u)"
+    assert html_to_markdown('<a href="u">[a](b) ]</a>') == "[\\[a\\](b) \\]](u)"
+
+
+def test_link_text_nested_image_destination_backtick():
+    assert (
+        html_to_markdown('<a href="x"><img src="a&#96;" alt="pic"> tail ] &#96;</a>')
+        == "[![pic](a`) tail \\] `](x)"
+    )
+    assert (
+        html_to_markdown('<a href="x"><img src="/s" title="t ] u" alt="a"></a>')
+        == '[![a](/s "t ] u")](x)'
+    )
+
+
 def test_renders_link_text_stops_at_first_text(monkeypatch):
     """The check runs once per block on the head half, which still holds every
     earlier block; collecting all of its text makes the hoist quadratic."""
@@ -983,6 +1757,71 @@ def test_hoist_anchor_with_relative_href_keeps_a_markdown_link(href):
     assert (
         html_to_markdown(f'<p><a href="{href}"><code>a<br>b</code></a></p>')
         == f"[{href}]({href})\n\n```\na\nb\n```"
+    )
+
+
+def test_root_relative_self_link_becomes_a_markdown_link():
+    assert html_to_markdown('<p><a href="/docs">/docs</a></p>') == "[/docs](/docs)"
+
+
+def test_fragment_self_link_becomes_a_markdown_link():
+    assert html_to_markdown('<p><a href="#sec">#sec</a></p>') == "[#sec](#sec)"
+
+
+def test_path_relative_self_link_becomes_a_markdown_link():
+    assert (
+        html_to_markdown('<p><a href="docs/page.html">docs/page.html</a></p>')
+        == "[docs/page.html](docs/page.html)"
+    )
+
+
+def test_whitespace_around_a_self_link_is_kept():
+    assert (
+        html_to_markdown('<p>see<a href="/docs"> /docs </a>now</p>')
+        == "see [/docs](/docs) now"
+    )
+
+
+def test_self_link_text_keeps_the_converters_escapes():
+    assert html_to_markdown('<p><a href="/a_b">/a_b</a></p>') == "[/a\\_b](/a_b)"
+
+
+def test_absolute_self_link_stays_an_autolink():
+    assert (
+        html_to_markdown('<p><a href="https://x/y">https://x/y</a></p>')
+        == "<https://x/y>"
+    )
+    assert (
+        html_to_markdown('<p><a href="mailto:a@b">mailto:a@b</a></p>') == "<mailto:a@b>"
+    )
+
+
+def test_self_link_with_other_text_is_unchanged():
+    assert html_to_markdown('<p><a href="/docs">Docs</a></p>') == "[Docs](/docs)"
+
+
+def test_titled_self_link_is_unchanged():
+    assert (
+        html_to_markdown('<p><a href="/docs" title="T">/docs</a></p>')
+        == '[/docs](/docs "T")'
+    )
+
+
+def test_self_link_inside_code_is_unchanged():
+    assert (
+        html_to_markdown('<p><code><a href="/x">&lt;/x&gt;</a></code></p>') == "`</x>`"
+    )
+
+
+@pytest.mark.parametrize("anchor", ["<a>&lt;&gt;</a>", '<a href="">&lt;&gt;</a>'])
+def test_anchor_without_href_keeps_its_literal_text(anchor):
+    assert html_to_markdown(f"<p>{anchor}</p>") == "<>"
+
+
+def test_hoist_kept_link_with_underscore_href_uses_same_rule():
+    assert (
+        html_to_markdown('<p><a href="/a_b"><code>a<br>b</code></a></p>')
+        == "[/a\\_b](/a_b)\n\n```\na\nb\n```"
     )
 
 

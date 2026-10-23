@@ -8,6 +8,7 @@ the per-snippet header must surface the document ``title`` and ``url`` (while
 still carrying the ``resource_hash`` the document-fetch tool needs).
 """
 
+import pytest
 from langchain_core.documents import Document
 
 from src.archi.pipelines.agents.tools.retriever import _format_documents_for_llm
@@ -94,3 +95,53 @@ class TestTitleFallback:
         out = _format_documents_for_llm(_wrap(doc), max_documents=4, max_chars=800)
         assert "page.md" in out
         assert "https://example.org/page" in out
+
+
+class TestMatchedSpan:
+    """The snippet shows the passage that ranked the document, not its opening."""
+
+    PREFIX = "A" * 1000
+    PASSAGE = "Large Data Transfer with Globus: start a Globus transfer."
+    TEXT = PREFIX + PASSAGE + "B" * 100
+
+    def _doc(self, **span):
+        metadata = {"title": "FASSE transfers", "url": "https://example.org/f"}
+        metadata.update(span)
+        return Document(page_content=self.TEXT, metadata=metadata)
+
+    def test_span_beyond_the_old_window_is_rendered(self):
+        start = self.TEXT.index(self.PASSAGE)
+        doc = self._doc(matched_start=start, matched_end=start + len(self.PASSAGE))
+
+        out = _format_documents_for_llm(_wrap(doc), max_documents=4, max_chars=800)
+
+        assert self.PASSAGE in out
+        assert "AAAA" not in out
+        assert "BBBB" not in out
+
+    def test_no_span_renders_the_start(self):
+        out = _format_documents_for_llm(
+            _wrap(self._doc()), max_documents=4, max_chars=800
+        )
+
+        assert ("A" * 800 + "...") in out
+        assert self.PASSAGE not in out
+
+    @pytest.mark.parametrize(
+        "span",
+        [
+            pytest.param({"matched_start": 1000, "matched_end": 10_000}, id="past-end"),
+            pytest.param({"matched_start": -1, "matched_end": 50}, id="negative"),
+            pytest.param({"matched_start": 1000, "matched_end": 1000}, id="empty"),
+            pytest.param({"matched_start": 1050, "matched_end": 1000}, id="reversed"),
+            pytest.param({"matched_start": 1000.0, "matched_end": 1050.0}, id="floats"),
+            pytest.param({"matched_start": True, "matched_end": 50}, id="bool"),
+            pytest.param({"matched_start": 1000}, id="end-missing"),
+        ],
+    )
+    def test_invalid_span_renders_the_start(self, span):
+        out = _format_documents_for_llm(
+            _wrap(self._doc(**span)), max_documents=4, max_chars=800
+        )
+
+        assert ("A" * 800 + "...") in out

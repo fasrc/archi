@@ -1,5 +1,40 @@
 from dataclasses import dataclass, field
-from typing import Dict, List
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
+
+INPUT_LIST_PREFIXES: Dict[str, str] = {
+    "git-": "git",
+    "sso-": "sso",
+    "elog-": "elog",
+    "indico-": "indico",
+}
+
+
+def split_prefixed_entry(entry: str) -> Optional[Tuple[str, str]]:
+    """Return (source_name, url) if entry has a known prefix, else None."""
+    for prefix, source in INPUT_LIST_PREFIXES.items():
+        if entry.startswith(prefix):
+            return (source, entry[len(prefix) :])
+    return None
+
+
+def is_elog_url(url: str) -> bool:
+    """Return True if the URL path contains /elog/ or /elogs/."""
+    path = urlparse(url).path.lower()
+    return "/elog/" in path or "/elogs/" in path
+
+
+def read_input_list_entries(path) -> List[str]:
+    """Parse a list file, skipping blank lines and # comments; strip ,depth suffixes."""
+    entries: List[str] = []
+    with Path(path).open("r") as fh:
+        for line in fh:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            entries.append(stripped.split(",")[0].strip())
+    return entries
 
 
 @dataclass
@@ -72,6 +107,13 @@ class SourceRegistry:
                     "data_manager.sources.redmine.url",
                     "data_manager.sources.redmine.project",
                 ],
+            )
+        )
+        self.register(
+            SourceDefinition(
+                name="elog",
+                description="ELOG logbook scraping",
+                depends_on=["links"],
             )
         )
         self.register(

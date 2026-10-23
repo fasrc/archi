@@ -30,11 +30,22 @@ from .node_parsing import (
     build_hierarchical_nodes,
     embed_child_nodes,
     resolve_effective_strategy,
+    warm_up_sentence_tokenizer,
 )
 from .postgres_vectorstore import PostgresVectorStore
 from .schema import ensure_chunks_parent_id_index, ensure_hierarchical_schema
 
 logger = get_logger(__name__)
+
+
+def _report_embedding_progress(embedding_progress, done, total):
+    if embedding_progress is None:
+        return
+    try:
+        embedding_progress(done, total)
+    except Exception:
+        logger.warning("Embedding progress callback failed", exc_info=True)
+
 
 SUPPORTED_DISTANCE_METRICS = ["l2", "cosine", "ip"]
 
@@ -297,7 +308,7 @@ class VectorStoreManager:
         logger.info(f"N in PostgreSQL collection: {count}")
         return store
 
-    def update_vectorstore(self) -> None:
+    def update_vectorstore(self, embedding_progress=None) -> str:
         """Synchronise filesystem documents with the vectorstore.
 
         Wraps the sync so every outcome is recorded. A run that raises must not
@@ -307,13 +318,14 @@ class VectorStoreManager:
         """
         started_at = datetime.now(timezone.utc)
         try:
-            run_status = self._sync_vectorstore()
+            run_status = self._sync_vectorstore(embedding_progress=embedding_progress)
         except Exception:
             self._record_ingest_run(started_at, "failed")
             raise
         self._record_ingest_run(started_at, run_status)
+        return run_status
 
-    def _sync_vectorstore(self) -> str:
+    def _sync_vectorstore(self, embedding_progress=None) -> str:
         """Do the synchronisation; return the terminal run status."""
         store = self.fetch_collection()
 
@@ -371,7 +383,9 @@ class VectorStoreManager:
             if files_to_add:
                 logger.info(f"Adding {len(files_to_add)} new documents")
                 try:
-                    self._add_to_postgres(files_to_add)
+                    self._add_to_postgres(
+                        files_to_add, embedding_progress=embedding_progress
+                    )
                 except Exception as e:
                     logger.error(f"Files could not be added", exc_info=e)
                     # The ingest carries on (unchanged behaviour), but the run
@@ -405,7 +419,10 @@ class VectorStoreManager:
                 config_snapshot=build_ingest_config_snapshot(
                     getattr(self, "_data_manager_config", {})
                 ),
-                counts=collect_ingest_counts(conn),
+                counts=collect_ingest_counts(
+                    conn,
+                    collection_name=getattr(self, "collection_name", None),
+                ),
             )
         finally:
             conn.close()
@@ -555,7 +572,9 @@ class VectorStoreManager:
         finally:
             conn.close()
 
-    def _add_to_postgres(self, files_to_add: Dict[str, str]) -> None:
+    def _add_to_postgres(
+        self, files_to_add: Dict[str, str], embedding_progress=None
+    ) -> None:
         """Add files to PostgreSQL vectorstore."""
         if not files_to_add:
             return
@@ -704,6 +723,16 @@ class VectorStoreManager:
         max_workers = max(1, self.parallel_workers)
         logger.info(f"Processing files with up to {max_workers} parallel workers")
 
+        if self.hierarchical_chunking:
+            # Load NLTK's stopwords here, not first in a racing worker (#119).
+            # On failure, carry on: each worker then fails its own file
+            # through the handler below instead of the batch staying
+            # 'embedding'.
+            try:
+                warm_up_sentence_tokenizer()
+            except Exception as exc:
+                logger.warning("NLTK warm-up failed; files will retry it: %s", exc)
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(process_file, filehash, file_path): filehash
@@ -743,7 +772,9 @@ class VectorStoreManager:
 
                 total_files = len(files_to_add_items)
                 files_since_commit = 0
+                files_committed = 0
                 deleted_parent_count = 0
+                _report_embedding_progress(embedding_progress, 0, total_files)
                 for file_idx, (filehash, file_path) in enumerate(files_to_add_items):
                     processed = processed_results.get(filehash)
                     if not processed:
@@ -812,7 +843,11 @@ class VectorStoreManager:
                                 "Committed embedding progress batch (%d files)",
                                 files_since_commit,
                             )
+                            files_committed += files_since_commit
                             files_since_commit = 0
+                            _report_embedding_progress(
+                                embedding_progress, files_committed, total_files
+                            )
                         continue
 
                     filename, chunks, metadatas = processed
@@ -841,7 +876,11 @@ class VectorStoreManager:
                                 "Committed embedding progress batch (%d files)",
                                 files_since_commit,
                             )
+                            files_committed += files_since_commit
                             files_since_commit = 0
+                            _report_embedding_progress(
+                                embedding_progress, files_committed, total_files
+                            )
                         continue
 
                     logger.info(f"Finished embedding {filename}")
@@ -915,7 +954,11 @@ class VectorStoreManager:
                             "Committed embedding progress batch (%d files)",
                             files_since_commit,
                         )
+                        files_committed += files_since_commit
                         files_since_commit = 0
+                        _report_embedding_progress(
+                            embedding_progress, files_committed, total_files
+                        )
 
                 if self.hierarchical_chunking:
                     logger.info(
@@ -928,6 +971,11 @@ class VectorStoreManager:
                     logger.info(
                         "Committed final embedding progress batch (%d files)",
                         files_since_commit,
+                    )
+                    files_committed += files_since_commit
+                    files_since_commit = 0
+                    _report_embedding_progress(
+                        embedding_progress, files_committed, total_files
                     )
         finally:
             conn.close()

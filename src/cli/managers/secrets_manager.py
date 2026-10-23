@@ -69,7 +69,27 @@ class SecretsManager:
         registry_secrets = self.registry.get_required_secrets(list(services))
         required_secrets.update(registry_secrets)
 
+        required_secrets.update(self._slack_api_token_secrets(services))
+
         return required_secrets
+
+    def _slack_api_token_secrets(self, services: Set[str]) -> Set[str]:
+        """Require ARCHI_API_TOKEN when the slack bot must authenticate to /v1.
+
+        Only required secrets reach a container (secret files and .env), so an
+        optional token would never arrive. With chat auth on, /v1 refuses the bot
+        without it; requiring it here fails `archi create` instead of the bot.
+        """
+        if "slack" not in services or not self.config_manager:
+            return set()
+        for config in self.config_manager.get_configs():
+            services_cfg = (
+                (config.get("services") or {}) if isinstance(config, dict) else {}
+            )
+            auth = ((services_cfg.get("chat_app") or {}).get("auth")) or {}
+            if auth.get("enabled"):
+                return {"ARCHI_API_TOKEN"}
+        return set()
 
     def get_required_secrets_for_sources(self, sources: Set[str]) -> Set[str]:
         if not sources:

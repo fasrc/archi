@@ -34,13 +34,13 @@
 
 ## 6. Service wiring (PR 2)
 
-- [ ] 6.1 Register `slack` in `src/cli/service_registry.py` (`category="integration"`, `depends_on=["postgres", "chatbot"]` (the entry point reads its config from Postgres, like `service_chat.py`; the Compose block also waits for `config-seed`), `required_secrets=["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"]`, `consumes_agent_specs=False`)
-- [ ] 6.2 Add `"slack": ServiceState()` to `src/cli/utils/service_builder.py`
-- [ ] 6.3 Add the `services.slack` block to `src/cli/templates/base-config.yaml`
-- [ ] 6.4 Add the `slack` service to `src/cli/templates/base-compose.yaml` with `OTEL_SERVICE_NAME: archi-slack` and `depends_on: chatbot`
-- [ ] 6.5 Add `src/cli/templates/dockerfiles/Dockerfile-slack` (no GPU variant)
-- [ ] 6.6 Extend the render tests that list services
-- [ ] 6.7 Document the Slack app manifest, secrets, config, and the access boundary in `docs/docs/services.md`, `docs/docs/user_guide.md`, and `docs/docs/configuration.md`
+- [x] 6.1 Register `slack` in `src/cli/service_registry.py` (`category="integration"`, `depends_on=["postgres", "chatbot"]` (the entry point reads its config from Postgres, like `service_chat.py`; the Compose block also waits for `config-seed`), `required_secrets=["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"]`, `consumes_agent_specs=False`)
+- [x] 6.2 Add `"slack": ServiceState()` to `src/cli/utils/service_builder.py`
+- [x] 6.3 Add the `services.slack` block to `src/cli/templates/base-config.yaml`
+- [x] 6.4 Add the `slack` service to `src/cli/templates/base-compose.yaml` with `OTEL_SERVICE_NAME: archi-slack` and `depends_on: chatbot`
+- [x] 6.5 Add `src/cli/templates/dockerfiles/Dockerfile-slack` (no GPU variant)
+- [x] 6.6 Extend the render tests that list services
+- [x] 6.7 Document the Slack app manifest, secrets, config, and the access boundary in `docs/docs/services.md`, `docs/docs/user_guide.md`, and `docs/docs/configuration.md`
 - [ ] 6.8 Gate, adversarial review, open PR 2 with `Closes #510`
 
 ## 7. Live check (human, after PR 2)
