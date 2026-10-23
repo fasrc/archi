@@ -9,17 +9,21 @@ match. ``write_result_complete`` marks a deferred result as fully written (D9).
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import yaml
 
 from src.utils.benchmark_provenance import collect_code_version, collect_package_digest
+from src.utils.benchmark_schema import RAGAS_METRIC_NAMES, ragas_run_config_kwargs
 
 _ABSENT = object()
-_ALLOWED = ("inline", "deferred")
 DEFAULT_BUNDLE_DIR = "judge_bundles"
+BUNDLE_FORMAT = 1
+_ROW_FIELDS = ("user_input", "retrieved_contexts", "response", "reference")
 
 
 class JudgeRunRefused(ValueError):
@@ -178,6 +182,88 @@ def plan_judge_run(
         code_version=code_version,
         package_digest=package["digest"],
     )
+
+
+def _write_file(path: Path, data: bytes) -> None:
+    """Create *path* (never replace it) with *data*, flushed and fsynced."""
+    with open(path, "xb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def write_judge_bundle(
+    bundle_root: Path,
+    *,
+    result_basename: str,
+    arm_index: int,
+    arm_count: int,
+    rows: Sequence[Mapping[str, Any]],
+    keys: Sequence[str],
+    enabled_metrics: Sequence[str],
+    ragas_settings: Mapping[str, Any],
+    verbosity: int,
+    code_version: Mapping[str, Any],
+    package_digest: str,
+) -> Dict[str, str]:
+    """Write the judge bundle of one deferred arm (design D5).
+
+    Makes ``<bundle_root>/<result_basename>-arm<arm_index>/`` with
+    ``rows.jsonl``, ``manifest.json`` and an empty ``BUNDLE_COMPLETE``, in that
+    order. The folder must not exist: a bundle is never overwritten. Zero rows
+    still give a complete bundle, because the merge waits for every arm.
+    Returns ``{"folder": <folder name>, "digest": <rows_sha256>}``.
+    """
+    if len(rows) != len(keys):
+        raise ValueError(
+            f"a judge bundle needs one key per row, but got {len(rows)} rows "
+            f"and {len(keys)} keys"
+        )
+    # ensure_ascii (the default) escapes every non-ASCII character, so a lone
+    # surrogate in an answer cannot make the UTF-8 encode raise.
+    rows_bytes = b"".join(
+        (
+            json.dumps(
+                {"key": key, **{name: row[name] for name in _ROW_FIELDS}},
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+        for key, row in zip(keys, rows)
+    )
+    rows_sha256 = "sha256:" + hashlib.sha256(rows_bytes).hexdigest()
+    manifest = {
+        "bundle_format": BUNDLE_FORMAT,
+        "result_basename": result_basename,
+        "arm_index": arm_index,
+        "arm_count": arm_count,
+        "row_count": len(rows),
+        "rows_sha256": rows_sha256,
+        "enabled_metrics": [m for m in RAGAS_METRIC_NAMES if m in enabled_metrics],
+        "ragas_run_config_kwargs": ragas_run_config_kwargs(
+            dict(ragas_settings), verbosity
+        ),
+        "batch_size": ragas_settings.get("batch_size") or None,
+        "embedding_model": ragas_settings.get("embedding_model"),
+        "judge_model": {
+            "id": ragas_settings.get("evaluator_model"),
+            "revision": ragas_settings.get("evaluator_model_revision"),
+        },
+        "code_version": dict(code_version),
+        "package_digest": package_digest,
+    }
+    manifest_bytes = (
+        json.dumps(manifest, sort_keys=True, indent=2, allow_nan=False) + "\n"
+    ).encode("utf-8")
+
+    folder = Path(bundle_root) / f"{result_basename}-arm{arm_index}"
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    folder.mkdir()
+    _write_file(folder / "rows.jsonl", rows_bytes)
+    _write_file(folder / "manifest.json", manifest_bytes)
+    _write_file(folder / "BUNDLE_COMPLETE", b"")
+    return {"folder": folder.name, "digest": rows_sha256}
 
 
 def write_result_complete(output_dir: Path, result_basename: str) -> Path:

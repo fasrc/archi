@@ -208,7 +208,7 @@ Rules for every task:
 
 ## 4. The bundle writer (parent task 2.3)
 
-- [ ] 4.1 Create `tests/unit/test_judge_bundle_writer.py`. Tests (design D5): over 3
+- [x] 4.1 Create `tests/unit/test_judge_bundle_writer.py`. Tests (design D5): over 3
       rows and keys, `write_judge_bundle` makes `<root>/<basename>-arm0/` with a
       3-line `rows.jsonl` whose lines, without `key`, equal the input rows and keep
       full contexts; the manifest has exactly the keys of the D5 table with the right
