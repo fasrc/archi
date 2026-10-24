@@ -80,6 +80,7 @@ case "$*" in
     exit "$(cat "$STUB/check.rc" 2>/dev/null || echo 0)" ;;
   *"score.py run"*)
     printf '%s' "${APPTAINERENV_OPENAI_API_KEY:-}" > "$STUB/run.openai"
+    printf '%s' "${APPTAINERENV_SLURM_RESTART_COUNT:-}" > "$STUB/run.restarts"
     prev=""
     for a in "$@"; do
       [ "$prev" = --judge-env ] && cp "$a" "$STUB/run.judge-env"
@@ -637,6 +638,17 @@ def test_the_job_forwards_the_secrets_file_into_the_scorer(tmp_path, stub):
     assert (stub / "run.openai").read_text() == "sk-test-embed"
     for name in ("apptainer", "curl", "sbatch"):
         assert all("sk-test-embed" not in call for call in _calls(stub, name)), name
+
+
+@pytest.mark.parametrize("restarts, expected", [("2", "2"), (None, "0")])
+def test_the_requeue_count_reaches_the_scorer_container(
+    tmp_path, stub, restarts, expected
+):
+    # score.py records it in judge_execution; --cleanenv drops every host variable.
+    extra = {} if restarts is None else {"SLURM_RESTART_COUNT": restarts}
+    proc = _job(tmp_path, stub, **extra)
+    assert proc.returncode == 0, proc.stderr
+    assert (stub / "run.restarts").read_text() == expected
 
 
 def test_a_secrets_file_that_others_can_read_is_refused(tmp_path, stub):

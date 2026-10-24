@@ -303,6 +303,8 @@ SLURM_STATE="$SOCK_DIR/slurm-state.json"
   --slurm-state "$SLURM_STATE" --job-id "$SLURM_JOB_ID" \
   || die "could not write the Slurm snapshot $SLURM_STATE (see above)"
 export APPTAINERENV_JUDGE_SLURM_STATE="$SLURM_STATE"
+# score.py records the requeue count in judge_execution; --cleanenv would drop it.
+export APPTAINERENV_SLURM_RESTART_COUNT="${SLURM_RESTART_COUNT:-0}"
 commands
 
 log "job $SLURM_JOB_ID: checking the scorer identity and the queue $QUEUE"
