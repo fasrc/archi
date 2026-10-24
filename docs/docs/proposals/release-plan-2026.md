@@ -131,7 +131,8 @@ any "answers improved" claim.
 Target: end of October. Depends on the v2026.09.0 rig. Amended 2026-08-28: the release
 also delivers those answers where users already are — a WordPress chat window backed by
 `/v1` ([#384](https://github.com/fasrc/archi/issues/384)). On 2026-10-23 an operator
-decision moved that window to `v2026.11.0` (row there).
+decision moved that window to `v2026.11.0` (row there), so this release no longer
+delivers it.
 
 | Gate | Why it gates | Size |
 |---|---|---|
