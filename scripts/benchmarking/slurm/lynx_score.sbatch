@@ -9,9 +9,8 @@
 #SBATCH -o archi-lynx-%j.out
 #
 # Lynx 70B variant: two H200 GPUs. Use these lines in place of the -p, --gres, --mem
-# and -t lines above, and the 70B MODEL_ID and MODEL_REVISION below.
-# NOTE: the variant cannot load the model yet. The scorer's vLLM backend puts the whole
-# model on one GPU (no tensor_parallel_size), and the 70B weights are 141 GB (#755).
+# and -t lines above, and the 70B MODEL_ID, MODEL_REVISION and GPUS below. The 70B
+# weights are 141 GB, more than one GPU holds, so vLLM splits the model over the GPUs.
 ##SBATCH -p gpu_h200
 ##SBATCH --gres=gpu:2
 ##SBATCH --mem=256G
@@ -41,9 +40,13 @@ set -euo pipefail
 IMAGE="docker://vllm/vllm-openai:v0.31.0-cu129"
 MODEL_ID="PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct"
 MODEL_REVISION="5523f869eb5eecb4bca417b6e6d3532e746a9664"
-# Lynx 70B (see the NOTE at the top):
+# The GPUs that vLLM splits the model over (--tensor-parallel-size): the N of
+# --gres=gpu:<N> above.
+GPUS="1"
+# Lynx 70B (see the variant at the top):
 # MODEL_ID="PatronusAI/Llama-3-Patronus-Lynx-70B-Instruct"
 # MODEL_REVISION="503b9b9469aec7be01144517e697a20bd966f27a"
+# GPUS="2"
 LAB="${LYNX_LAB:-}"
 SCRATCH_DIR="${LYNX_SCRATCH:-${SCRATCH:-/n/netscratch}/${LAB}/Lab/${USER}/archi-lynx}"
 # -----------------------------------------------------------------------------
@@ -123,7 +126,7 @@ CMD=(
   "$IMAGE"
   python3 -m scripts.benchmarking.lynx.score "$BUNDLE"
   --model "$MODEL_ID" --revision "$MODEL_REVISION"
-  --out-dir "$OUT_DIR" --backend vllm
+  --out-dir "$OUT_DIR" --backend vllm --tensor-parallel-size "$GPUS"
 )
 
 if [ "$DRY_RUN" = true ]; then

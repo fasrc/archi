@@ -62,3 +62,12 @@ def test_the_section_says_how_to_read_the_rate():
     assert "`<basename>-arm<N>.lynx.json`" in section
     assert "scored rows only" in section
     assert "gates nothing" in section
+
+
+def test_the_section_gives_the_70b_settings_and_the_gpu_count():
+    section = _lynx_section()
+    assert "PatronusAI/Llama-3-Patronus-Lynx-70B-Instruct" in section
+    assert "`GPUS`" in section
+    assert "--tensor-parallel-size" in section
+    assert "`tensor_parallel_size`" in section
+    assert "cannot load" not in section

@@ -1,13 +1,16 @@
 """Score one judge bundle with Lynx (design D3, D5, D6, D7).
 
     python -m scripts.benchmarking.lynx.score <bundle folder> --model <hf id> \
-        --revision <sha> --out-dir <folder> [--backend vllm|stub]
+        --revision <sha> --out-dir <folder> [--backend vllm|stub] \
+        [--tensor-parallel-size N]
 
 The bundle folder is a run's own bundle (``BUNDLE_COMPLETE``) or its queue copy
 (``READY``). The scorer checks it before it builds the backend, never changes a
 file in it, and writes ``<out-dir>/<result_basename>-arm<arm_index>.lynx.json``.
 Give the folder of the result JSON as ``--out-dir``: ``compare_runs.py`` reads
 the Lynx file beside the result. An existing Lynx file is never replaced.
+``--tensor-parallel-size`` is the number of GPUs that vLLM splits the model over
+(#755); the Lynx file records it.
 
 A row whose prompt tokens plus 600 is more than 8,000 is ``skipped_overflow``;
 it is never truncated and never sent. A row whose output has no strict verdict
@@ -187,6 +190,7 @@ def score_bundle(
     model_id: str,
     model_revision: str,
     backend_name: str,
+    tensor_parallel_size: int = 1,
 ) -> Dict[str, Any]:
     """The Lynx document of one bundle (design D3, D7)."""
     rows: Dict[str, Dict[str, Any]] = {}
@@ -232,6 +236,7 @@ def score_bundle(
         "model_id": model_id,
         "model_revision": model_revision,
         "backend": backend_name,
+        "tensor_parallel_size": tensor_parallel_size,
         "result_basename": bundle.result_basename,
         "arm_index": bundle.arm_index,
         "bundle_rows_sha256": bundle.rows_sha256,
@@ -270,7 +275,7 @@ def write_lynx_file(target: Path, document: Mapping[str, Any]) -> None:
 
 def main(
     argv: Optional[Sequence[str]] = None,
-    backend_factory: Callable[[str, str, str], Any] = make_backend,
+    backend_factory: Callable[..., Any] = make_backend,
 ) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m scripts.benchmarking.lynx.score",
@@ -286,20 +291,38 @@ def main(
         help="the folder of the result JSON; must be outside the bundle folder",
     )
     parser.add_argument("--backend", choices=("vllm", "stub"), default="vllm")
+    parser.add_argument(
+        "--tensor-parallel-size",
+        type=int,
+        default=1,
+        metavar="N",
+        help="the number of GPUs that vLLM splits the model over (default 1)",
+    )
     args = parser.parse_args(argv)
     try:
         for flag, value in (("--model", args.model), ("--revision", args.revision)):
             if not value.strip():
                 raise Refused(f"{flag} must not be empty")
+        if args.tensor_parallel_size < 1:
+            raise Refused(
+                f"--tensor-parallel-size must be 1 or more, not "
+                f"{args.tensor_parallel_size}"
+            )
         bundle = read_bundle(args.bundle)
         target = check_out_dir(args.out_dir, bundle)
-        backend = backend_factory(args.backend, args.model, args.revision)
+        backend = backend_factory(
+            args.backend,
+            args.model,
+            args.revision,
+            tensor_parallel_size=args.tensor_parallel_size,
+        )
         document = score_bundle(
             bundle,
             backend,
             model_id=args.model,
             model_revision=args.revision,
             backend_name=args.backend,
+            tensor_parallel_size=args.tensor_parallel_size,
         )
         write_lynx_file(target, document)
     except Refused as exc:

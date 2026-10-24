@@ -434,7 +434,7 @@ Lynx scores only `judge_mode: deferred` runs (see "Deferred judge" above), becau
 
 ### Submit the job
 
-`scripts/benchmarking/slurm/lynx_score.sbatch` runs the scorer on a FASRC GPU node, inside the `vllm/vllm-openai` image at a pinned tag, with Lynx 8B at a pinned revision. The image, the model id, the model revision, the partition, the GPU count and the time limit are settings at the top of the script. The job asks for one full A100 on the `gpu` partition for 2 hours, and it is never requeued, because the scorer cannot resume a half-scored bundle.
+`scripts/benchmarking/slurm/lynx_score.sbatch` runs the scorer on a FASRC GPU node, inside the `vllm/vllm-openai` image at a pinned tag, with Lynx 8B at a pinned revision. The image, the model id, the model revision, the partition, the GPU count and the time limit are settings at the top of the script. `GPUS` is the number of GPUs that vLLM splits the model over, and the job passes it to the scorer as `--tensor-parallel-size`. It must equal the `N` of `#SBATCH --gres=gpu:<N>`. The job asks for one full A100 on the `gpu` partition for 2 hours, and it is never requeued, because the scorer cannot resume a half-scored bundle.
 
 1. Set `LYNX_LAB` to your lab folder under `/n/netscratch`. The job keeps the model, the vLLM compile cache and the image cache in `/n/netscratch/<lab>/Lab/<user>/archi-lynx`, not in the home folder. Netscratch deletes files older than 90 days, so a later job can download the model again. To use a different folder, set `LYNX_SCRATCH`.
 2. From the repo root, check the command. The dry run prints the `apptainer exec` command, and it starts nothing:
@@ -451,8 +451,8 @@ Lynx scores only `judge_mode: deferred` runs (see "Deferred judge" above), becau
 
 The out dir is the folder of the result JSON. Without the second argument, the job uses the nearest folder above the bundle folder that holds `<result basename>.json`. The job refuses a missing bundle folder, a folder with no `BUNDLE_COMPLETE` (a `READY` queue copy too), and an existing Lynx file. The job log is `archi-lynx-<job id>.out` in the repo root. The first job also converts the image into the Apptainer cache, so it takes longer than later jobs.
 
-!!! note
-    The script also holds a commented Lynx 70B variant (`gpu_h200`, two GPUs). It cannot load the model yet, because the scorer puts the model on one GPU ([#755](https://github.com/fasrc/archi/issues/755)).
+!!! note "Lynx 70B"
+    The script also holds a commented variant for `PatronusAI/Llama-3-Patronus-Lynx-70B-Instruct`. Its weights are 141 GB, more than one GPU holds, so the variant splits the model over two H200 GPUs. To use it, put the four commented `##SBATCH` lines (`-p gpu_h200`, `--gres=gpu:2`, `--mem=256G`, `-t 04:00:00`) in place of the active `#SBATCH` lines with the same options, and put the three commented settings (the 70B `MODEL_ID`, its `MODEL_REVISION`, and `GPUS="2"`) in place of the active ones. The dry run then shows `--tensor-parallel-size 2`.
 
 ### Run the scorer by hand
 
@@ -462,14 +462,17 @@ The job runs this command. You can run it yourself where `vllm` is installed, or
 python -m scripts.benchmarking.lynx.score <bundle folder> \
     --model PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct \
     --revision 5523f869eb5eecb4bca417b6e6d3532e746a9664 \
-    --out-dir <folder of the result JSON> [--backend vllm|stub]
+    --out-dir <folder of the result JSON> [--backend vllm|stub] \
+    [--tensor-parallel-size N]
 ```
+
+`--tensor-parallel-size` is the number of GPUs that vLLM splits the model over, 1 by default. The scorer refuses a value below 1 before it reads the bundle.
 
 Give the folder of the result JSON as `--out-dir`, outside the bundle folder: `compare_runs.py` looks for the Lynx file beside the result JSON. The scorer refuses an `--out-dir` that is the bundle folder or inside it, and it never changes a file in the bundle folder. It also accepts a `READY` queue copy of a bundle. It never replaces an existing Lynx file: to score a bundle again, remove the old file. The scorer exits 0 when it wrote the file, 1 when it refused, and 2 for a usage error.
 
 ### Read the output
 
-The scorer writes `<basename>-arm<N>.lynx.json`, where `<basename>` is the result basename and `N` is the arm index, from 0. For each row, the file records the verdict, the status (`scored`, `skipped_overflow` or `parse_error`), the model's reasoning and the prompt token count. A `parse_error` row also keeps the reason and the raw model output. The file also records the model id, the model revision and the SHA-256 of the bundle's `rows.jsonl`.
+The scorer writes `<basename>-arm<N>.lynx.json`, where `<basename>` is the result basename and `N` is the arm index, from 0. For each row, the file records the verdict, the status (`scored`, `skipped_overflow` or `parse_error`), the model's reasoning and the prompt token count. A `parse_error` row also keeps the reason and the raw model output. The file also records the model id, the model revision, the GPU count (`tensor_parallel_size`) and the SHA-256 of the bundle's `rows.jsonl`.
 
 | Count | Meaning |
 |---|---|
