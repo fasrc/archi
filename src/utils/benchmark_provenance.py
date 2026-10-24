@@ -42,8 +42,6 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
-from src.utils.ingest_provenance import effective_chunking
-
 __all__ = [
     "ARM_OVERRIDE_PATHS",
     "DEPLOY_REWRITTEN_PATHS",
@@ -812,6 +810,12 @@ def config_version(
 
     key_settings = settings_at_paths(basis, KEY_SETTING_PATHS)
     if isinstance(basis, dict) and isinstance(basis.get("data_manager"), dict):
+        # Imported here, not at the top: ``compare_runs.py`` loads this file by
+        # path on hosts with no database driver, and any ``src.utils`` import
+        # re-enters the package ``__init__`` (psycopg2). It needs only
+        # ``retrieval_identity``, never this branch.
+        from src.utils.ingest_provenance import effective_chunking
+
         key_settings["effective_chunking"] = effective_chunking(basis["data_manager"])
 
     return {

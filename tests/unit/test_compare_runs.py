@@ -2505,6 +2505,24 @@ def test_the_anchors_reader_works_without_importing_the_src_package(
     assert list(cr.anchor_questions(path)) == ["tripwire"]
 
 
+def test_the_embedding_model_fallback_works_without_importing_the_src_package(
+    _artifact, monkeypatch
+):
+    # An arm with no `retrieval_identity` derives its model from the recorded
+    # configuration through `benchmark_provenance.retrieval_identity`, loaded
+    # from its own file like the bank normalizer above. A module-level import of
+    # another `src.utils` module would re-enter the package `__init__` from that
+    # file load, and with it psycopg2.
+    path = _artifact([_row("q")], configuration=_config_for("model-a"))
+    arm = cr.load_arms([str(path)])[0]
+    for name in ("src.utils.benchmark_provenance", "src.utils.ingest_provenance"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.setitem(sys.modules, "src.utils", None)
+
+    assert arm.retrieval_identity is None
+    assert cr._embedding_model(arm) == "model-a"
+
+
 def test_anchors_do_not_reach_the_qa_join_without_a_qa_run(
     _artifact, anchors_file, monkeypatch
 ):
