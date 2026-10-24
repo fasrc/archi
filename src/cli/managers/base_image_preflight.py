@@ -116,7 +116,7 @@ def _unusable_source_paths(root: Path) -> tuple:
     `pyproject.toml` and `LICENSE` (design D1). A directory counts as readable only when
     the user can both list it (`R_OK`) and enter it (`X_OK`).
 
-    `src` is walked only when `src` itself is missing or unreadable (design D2): a root
+    `src` is walked only when `src` itself is present and readable (design D2): a root
     whose `src` cannot even be entered cannot be walked, and reporting `src` once is
     enough for the operator to act on.
     """
