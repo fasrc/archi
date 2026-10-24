@@ -71,3 +71,12 @@ def test_the_section_gives_the_70b_settings_and_the_gpu_count():
     assert "--tensor-parallel-size" in section
     assert "`tensor_parallel_size`" in section
     assert "cannot load" not in section
+
+
+def test_the_section_shows_the_form_lynx_writes_and_the_parse_errors():
+    section = _lynx_section()
+    assert """{"REASONING": ['""" in section
+    assert '"SCORE": FAIL}' in section
+    assert "single-quoted" in section
+    assert "cut off" in section
+    assert "no strict" not in section
