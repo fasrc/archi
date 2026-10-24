@@ -16,6 +16,13 @@
       it (merge commit `1cecfe42`, no conflicts). Every line number in tasks 2.1 and 3.1 is
       measured at that tip. On that date no #434 PR existed, so the issue's order rule says
       continue from `origin/dev`: do NOT merge `origin/fix/issue-434-qa-arm-fail-closed`.
+- [x] 0.6 On 2026-10-23 `origin/dev` `71027576` was merged into this branch (merge commit
+      `181c4b24`). #434 landed on dev first (PR #749), and its `summary.json` stub in
+      `test_feature_matrix_wrappers.sh` conflicted with task 2.1. The resolution keeps
+      #749's logic under the `qa` name: `[ "\$1" = "qa" ]`, the subcommand in `\$2`, and
+      the score directory in `\$3`. The harness passed 104 of 104 in the conda archi env.
+      Under the system python 3.14, clean `dev` fails the same 4 sweep tests, so that
+      failure is not from this branch. Gate: 7704 passed, patch coverage 98%.
 
 ## Rules that apply to EVERY task below
 
@@ -117,7 +124,7 @@
 
 ## 3. Docs and script prose say `archi qa`
 
-- [ ] 3.1 Sweep the remaining mentions. The red is the acceptance grep:
+- [x] 3.1 Sweep the remaining mentions. The red is the acceptance grep:
       `git grep -nE "archi eval([^u]|$)|eval qa" -- docs scripts tests` prints many lines
       now. Change each to the new spelling (design D8, D9):
       `archi eval qa prepare|run|score` → `archi qa prepare|run|score`;
@@ -140,6 +147,12 @@
       `docs/docs/cli_reference.md`. `git grep -n "archi-eval-qa" -- docs` prints nothing.
       `python -m pytest tests/unit/test_compare_runs.py -q` passes with the same count as
       before. Gate, then commit `say archi qa in docs and benchmarking prose (#564)`.
+      Done 2026-10-23 at the `181c4b24` tip. Red: the grep printed 69 lines in 14 files.
+      `docs/docs/feature_matrix_results_2026_09.md` came from dev after this task was
+      written, and D8 covers it too. Green: the grep prints only line 219 of
+      `cli_reference.md` (the note), `archi-eval-qa` is gone from `docs`, no
+      `archi evaluate` text changed, `test_compare_runs.py` ran 157 before and 157 after,
+      and `mkdocs build --strict` passes.
 
 ## 4. Publish
 

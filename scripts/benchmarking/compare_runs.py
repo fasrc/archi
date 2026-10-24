@@ -71,7 +71,7 @@ to move both dilutes the signal and hides the tripwire).
 Standard library only, plus three reuses from the project: ``normalize_bank`` for
 the anchors file (so a legacy-dialect anchors file still matches),
 ``retrieval_identity`` for an arm that recorded none (so its config names its
-embedding model), and ``derive_item_id`` for the optional ``archi eval qa`` join.
+embedding model), and ``derive_item_id`` for the optional ``archi qa`` join.
 
 Exit codes: 0 ok, 1 usage/IO, 2 gate refusal, 3 config-divergence stop.
 """
@@ -2028,7 +2028,7 @@ def _normalize_newlines(text: str) -> str:
 
 
 def qa_item_id(row: dict) -> Optional[str]:
-    """The ``archi eval qa`` item id for a benchmark row, or None.
+    """The ``archi qa`` item id for a benchmark row, or None.
 
     The id is content-derived from the newline-normalized question and reference
     answer — the same derivation the RAGAS-bank converter uses — so the two
@@ -2070,7 +2070,7 @@ def _read_jsonl(path: Path) -> List[dict]:
 
 
 def load_qa_run(directory: str) -> dict:
-    """Read one ``archi eval qa`` run directory into an item-keyed index."""
+    """Read one ``archi qa`` run directory into an item-keyed index."""
     base = Path(directory)
     summary_path = base / "summary.json"
     if not summary_path.exists():
@@ -2981,7 +2981,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="LABEL=RUN_DIR",
-        help="an `archi eval qa` run directory to join to an arm (repeatable)",
+        help="an `archi qa` run directory to join to an arm (repeatable)",
     )
     parser.add_argument(
         "--primary",

@@ -22,7 +22,7 @@ four metric families. The four families and where each comes from:
 | Family | Metric(s) | Source |
 |---|---|---|
 | Accuracy, RAGAS + sources | `answer_relevancy`, `faithfulness`, `context_precision`, `context_recall`, `answer_correctness`, `source_accuracy` | `archi evaluate` (the RAGAS harness) |
-| Accuracy, gold atoms | atom score, required-atom recall, pass rate | `archi eval qa` (the QA evaluator, CLI form) |
+| Accuracy, gold atoms | atom score, required-atom recall, pass rate | `archi qa` (the QA evaluator, CLI form) |
 | Time to result | per-question `time_elapsed` (harness), per-attempt `duration_ms` (QA) | both, on the same stack |
 | Time to ingest | `ingest_wall_seconds` per arm | `archi evaluate`, after [#417](https://github.com/fasrc/archi/issues/417) |
 
@@ -199,7 +199,7 @@ scripts/benchmarking/feature_matrix/run_arm.sh $ARM $YAML            # archi eva
 scripts/benchmarking/feature_matrix/archive_run.sh $ARM 1 $YAML --wait  # proves the artifact ran this arm on one corpus; appends ledger.json, writes the corpus pin
 scripts/benchmarking/feature_matrix/run_arm.sh $ARM --rerun          # benchmark container only, same corpus → run 2
 scripts/benchmarking/feature_matrix/archive_run.sh $ARM 2 $YAML
-scripts/benchmarking/feature_matrix/qa_arm.sh $ARM $YAML             # archi eval qa against the same stack (§5.3)
+scripts/benchmarking/feature_matrix/qa_arm.sh $ARM $YAML             # archi qa against the same stack (§5.3)
 archi delete --name fm-$ARM --rmi --rmv                              # after archive_run.sh confirmed both artifacts
 ```
 
@@ -270,7 +270,7 @@ What it does, and why each step exists:
    `HUIT_API_KEY_FILE=$STACK/secrets/huit_api_key.txt`, `OPENAI_API_KEY=EMPTY`, `HOST_MODE=1`:
 
    ```bash
-   archi eval qa \
+   archi qa \
      --dataset bench_out/feature_matrix/qa/fasrc_ragas_queries.qa-v2.json \
      --agent-config bench_out/feature_matrix/qa/$ARM.agent-config.yaml \
      --agent-spec config/agents/claw/fasrc-docs.md \
@@ -286,7 +286,7 @@ What it does, and why each step exists:
    campaign with `ragas_bank_to_qa_dataset.py` ([#418](https://github.com/fasrc/archi/issues/418));
    its item ids are content-derived, and `compare_runs.py` joins them to the RAGAS rows.
 
-   After `archi eval qa` returns, the wrapper re-reads the corpus fingerprint (a moved
+   After `archi qa` returns, the wrapper re-reads the corpus fingerprint (a moved
    corpus refuses and pages; see Paging above). Then it reads `summary.json` in the output
    directory. If that file is missing, is not valid JSON, or its
    `attempt_lifecycle_counts.scored` is not a whole number above 0, the wrapper exits 2
@@ -371,7 +371,7 @@ time of day across arms where possible, and the ledger records start and end tim
 | The stack belongs to the active lock | lock | `run_arm.sh` stamps the lock's sha256 into the deployment directory at deploy; re-run, re-seed, QA and archive refuse a stack stamped with another lock |
 | The arm is the pre-registered treatment | lock | the arm YAML's sha256 equals the lock's per-arm manifest entry for its label |
 | A run is tied to a start | provenance | archive refuses when the ledger holds no `ragas-start` row for the stack; the live document/chunk counts must be readable (the stack is deleted right after) |
-| The QA corpus held for the whole run | G3 | `qa_arm.sh` re-reads the fingerprint after `archi eval qa` returns and writes no row if it moved |
+| The QA corpus held for the whole run | G3 | `qa_arm.sh` re-reads the fingerprint after `archi qa` returns and writes no row if it moved |
 | A QA run that scored nothing is void | #434 | `qa_arm.sh` writes no row unless the run's `summary.json` records `attempt_lifecycle_counts.scored` > 0; it keeps the output directory and exits 2 |
 
 ## 8. Budget
@@ -497,7 +497,7 @@ rather than loud, which is why they are listed.
 | 1 | `config/` at the campaign pin | `git -C config rev-parse HEAD` = the `CONFIG_SHA` in `deploy/scripts/lib.sh` | `redeploy.sh` refuses an off-pin checkout with local edits — correctly, and it refuses *before* touching containers |
 | 2 | Checkout on the campaign code, runtime trees clean | `git status --porcelain --untracked-files=no -- src scripts deploy` empty | `lock_campaign.sh` and every wrapper refuse otherwise. Untracked files elsewhere (docs) are fine by design |
 | 3 | `RAGAS_ENV_FILE` exported | `[ -f "$RAGAS_ENV_FILE" ]` | `run_arm.sh` dies without it. It does **not** persist between shells — export it in every invocation |
-| 4 | Host conda env can build embeddings | `python -c "from langchain_huggingface import HuggingFaceEmbeddings"` | **`archi eval qa` runs in-process on the host**, not in a container. Drift here silently voids every QA run (§13.2 #5) |
+| 4 | Host conda env can build embeddings | `python -c "from langchain_huggingface import HuggingFaceEmbeddings"` | **`archi qa` runs in-process on the host**, not in a container. Drift here silently voids every QA run (§13.2 #5) |
 | 5 | ghcr.io login + `ijson` present | `grep ghcr.io ~/.docker/config.json`; `python -c "import ijson"` | Both fail the deploy before containers move |
 | 6 | Ports 5434 / 7882 free | `ss -ltn \| grep -E ':(5434\|7882)'` | Every stack binds the same pair, so only one arm can exist at a time |
 | 7 | Disk headroom | `df -h /scratch` (Docker root here) — ~10 GB per stack | The plan's "13 GB free" figure was claw's, not this host's |
@@ -510,7 +510,7 @@ rather than loud, which is why they are listed.
 | 2 | §5 pointed at `~/Projects/archi` and `/home/austin/.archi/archi-ragas-205/.env` | Written on claw | Paths corrected to this checkout and `~/.archi/.env.benchmark` | **fixed** |
 | 3 | Pre-reg claimed the campaign prompt was byte-identical to the GPU host's production spec; that file did not exist | The host served `fasrc-v2.md` (name `FASRC`, `search_vectorstore_hybrid` only) | Production migrated to `config/agents/claw/fasrc-docs.md`; `fasrc-v2.md` retired to `agents/archive/`. Claim is now true rather than asserted | **fixed, verified live** |
 | 4 | Arms would run with **no in-loop context bound** while production has 32768 | Every arm YAML omitted `services.chat_app.context_editing`; `base-config.yaml` emits the block only when declared | Added to all nine arms, matching production byte for byte. The lock's `sut.context_editing` is the check — it read `null` before | **fixed pre-lock** |
-| 5 | QA run "completes", exits 0, and scores **nothing** | `archi eval qa` runs in-process on the host; the host env had `transformers` 5.9.0 against `huggingface_hub` 0.36.2 → `ImportError: cannot import name 'is_offline_mode'`, surfaced as the misleading `Could not import sentence_transformers` | `pip install "transformers==4.57.6" "sentence-transformers==5.1.2"` (the versions the benchmark image runs; the latter is also the repo pin). Re-run went from `execution_failed: 8` to `scored: 8` | **fixed** |
+| 5 | QA run "completes", exits 0, and scores **nothing** | `archi qa` runs in-process on the host; the host env had `transformers` 5.9.0 against `huggingface_hub` 0.36.2 → `ImportError: cannot import name 'is_offline_mode'`, surfaced as the misleading `Could not import sentence_transformers` | `pip install "transformers==4.57.6" "sentence-transformers==5.1.2"` (the versions the benchmark image runs; the latter is also the repo pin). Re-run went from `execution_failed: 8` to `scored: 8` | **fixed** |
 | 6 | A QA run that scored nothing still gets a ledger row and exit 0 | `qa_arm.sh` does not fail closed on `scored: 0`, unlike `archive_run.sh` on the RAGAS side | **Open.** Until fixed, read `summary.json` → `attempt_lifecycle_counts.scored` after every QA run. A zero there with exit 0 is the silent-failure shape. `bench_out/feature_matrix/check_qa_scored.sh` does this across every QA run dir. **Cannot be fixed mid-campaign**: `scripts/` is inside the locked code trees, so editing `qa_arm.sh` forces a `--relock` and a redeploy of every stack | **open — [#434](https://github.com/fasrc/archi/issues/434)** |
 | 7 | `archi delete --rmv` aborts non-interactively | It calls `click.confirm(..., abort=True)` and there is no `--force`/`--yes` | `printf 'y\n' \| archi delete --name <stack> --rmi --rmv` | **works** |
 | 8 | A retired agent spec survives a redeploy in the staged agents dir | `archi create --force` cannot remove `data/evaluations` (root-owned), so it abandons removal of the whole `data/` dir — the staged `data/agents/` keeps old files | Delete the retired spec from `~/.archi/archi-<name>/data/agents/` by hand after the redeploy, then restart the chatbot | **works, manual step** |

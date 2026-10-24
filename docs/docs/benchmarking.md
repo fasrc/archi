@@ -2,7 +2,7 @@
 
 Archi provides benchmarking functionality via the `archi evaluate` CLI command to measure retrieval and response quality.
 
-Archi also offers a separate `archi eval qa` command and browser console for
+Archi also offers a separate `archi qa` command and browser console for
 atom-based correctness evaluation of complete agent answers: repeated
 attempts, optional manual gold-atom review, live Dataset V2 checks, and
 persisted per-attempt tool evidence. The two workflows measure different
