@@ -2,7 +2,7 @@
 
     python -m scripts.benchmarking.lynx.score <bundle folder> --model <hf id> \
         --revision <sha> --out-dir <folder> [--backend vllm|stub] \
-        [--tensor-parallel-size N]
+        [--tensor-parallel-size N] [--context-tokens N]
 
 The bundle folder is a run's own bundle (``BUNDLE_COMPLETE``) or its queue copy
 (``READY``). The scorer checks it before it builds the backend, never changes a
@@ -12,8 +12,10 @@ the Lynx file beside the result. An existing Lynx file is never replaced.
 ``--tensor-parallel-size`` is the number of GPUs that vLLM splits the model over
 (#755); the Lynx file records it.
 
-A row whose prompt tokens plus 600 is more than 8,000 is ``skipped_overflow``;
-it is never truncated and never sent. A row whose output has no strict verdict
+``--context-tokens`` is the token limit, 8,000 by default (#773). A row whose
+prompt tokens plus 600 is more than the limit is ``skipped_overflow``; it is
+never truncated and never sent. The vLLM backend reserves the same limit, and the
+Lynx file records it as ``token_budget.context_tokens``. A row whose output has no strict verdict
 is ``parse_error``. ``lynx_faithfulness`` is ``lynx_pass / lynx_scored``.
 """
 
@@ -191,6 +193,7 @@ def score_bundle(
     model_revision: str,
     backend_name: str,
     tensor_parallel_size: int = 1,
+    context_tokens: int = CONTEXT_TOKENS,
 ) -> Dict[str, Any]:
     """The Lynx document of one bundle (design D3, D7)."""
     rows: Dict[str, Dict[str, Any]] = {}
@@ -198,7 +201,7 @@ def score_bundle(
     for row in bundle.rows:
         prompt = build_prompt(row)
         tokens = backend.count_tokens(prompt)
-        if tokens + MAX_NEW_TOKENS > CONTEXT_TOKENS:
+        if tokens + MAX_NEW_TOKENS > context_tokens:
             rows[row["key"]] = {
                 "verdict": None,
                 "status": "skipped_overflow",
@@ -241,7 +244,7 @@ def score_bundle(
         "arm_index": bundle.arm_index,
         "bundle_rows_sha256": bundle.rows_sha256,
         "token_budget": {
-            "context_tokens": CONTEXT_TOKENS,
+            "context_tokens": context_tokens,
             "max_new_tokens": MAX_NEW_TOKENS,
         },
         "rows": rows,
@@ -298,6 +301,16 @@ def main(
         metavar="N",
         help="the number of GPUs that vLLM splits the model over (default 1)",
     )
+    parser.add_argument(
+        "--context-tokens",
+        type=int,
+        default=CONTEXT_TOKENS,
+        metavar="N",
+        help=(
+            f"the token limit: a row whose prompt plus {MAX_NEW_TOKENS} new tokens is "
+            f"more than N is skipped (default {CONTEXT_TOKENS})"
+        ),
+    )
     args = parser.parse_args(argv)
     try:
         for flag, value in (("--model", args.model), ("--revision", args.revision)):
@@ -308,6 +321,11 @@ def main(
                 f"--tensor-parallel-size must be 1 or more, not "
                 f"{args.tensor_parallel_size}"
             )
+        if args.context_tokens <= MAX_NEW_TOKENS:
+            raise Refused(
+                f"--context-tokens must be more than the {MAX_NEW_TOKENS} new tokens, "
+                f"not {args.context_tokens}"
+            )
         bundle = read_bundle(args.bundle)
         target = check_out_dir(args.out_dir, bundle)
         backend = backend_factory(
@@ -315,6 +333,7 @@ def main(
             args.model,
             args.revision,
             tensor_parallel_size=args.tensor_parallel_size,
+            context_tokens=args.context_tokens,
         )
         document = score_bundle(
             bundle,
@@ -323,6 +342,7 @@ def main(
             model_revision=args.revision,
             backend_name=args.backend,
             tensor_parallel_size=args.tensor_parallel_size,
+            context_tokens=args.context_tokens,
         )
         write_lynx_file(target, document)
     except Refused as exc:

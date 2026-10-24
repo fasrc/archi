@@ -128,7 +128,22 @@ def _expected_command(bundle, out, scratch):
         "vllm",
         "--tensor-parallel-size",
         _setting("GPUS"),
+        "--context-tokens",
+        _setting("CONTEXT_TOKENS"),
     ]
+
+
+def _variant_settings(lines, heading):
+    """The commented ``# NAME="value"`` settings under the line that starts *heading*."""
+    start = next(i for i, line in enumerate(lines) if line.startswith(heading))
+    settings = []
+    for line in lines[start + 1 :]:
+        if re.fullmatch(r'# [A-Z_]+="[^"]*"', line):
+            settings.append(line[2:])
+        elif settings or not line.startswith("#"):
+            break
+    assert settings, f"no commented settings under {heading!r}"
+    return settings
 
 
 def _swap_70b(text):
@@ -136,11 +151,28 @@ def _swap_70b(text):
 
     This is the swap that the script's header tells the operator to make: each
     ``##SBATCH`` line replaces the active ``#SBATCH`` line of the same option, and
-    each commented ``# NAME="value"`` setting replaces the active ``NAME=`` line.
+    each commented ``# NAME="value"`` setting of the 70B block replaces the active
+    ``NAME=`` line.
     """
+    return _swap(text, "# Lynx 70B (see the variant at the top)", with_directives=True)
+
+
+def _swap_v11(text):
+    """The script with its commented Lynx 8B v1.1 settings in place of the active ones.
+
+    The v1.1 variant runs on one GPU, so it has no ``##SBATCH`` lines.
+    """
+    return _swap(text, "# Lynx 8B v1.1", with_directives=False)
+
+
+def _swap(text, heading, *, with_directives):
     lines = text.splitlines()
-    directives = [line[1:] for line in lines if line.startswith("##SBATCH ")]
-    settings = [line[2:] for line in lines if re.fullmatch(r'# [A-Z_]+="[^"]*"', line)]
+    directives = (
+        [line[1:] for line in lines if line.startswith("##SBATCH ")]
+        if with_directives
+        else []
+    )
+    settings = _variant_settings(lines, heading)
     used = []
 
     def option(directive):
@@ -158,7 +190,7 @@ def _swap_70b(text):
         elif re.fullmatch(r'[A-Z_]+="[^"]*"', line):
             line = swap(line, settings, lambda x: x.split("=", 1)[0])
         swapped.append(line)
-    assert sorted(used) == sorted(directives + settings), "a 70B line swaps nothing"
+    assert sorted(used) == sorted(directives + settings), "a variant line swaps nothing"
     return "\n".join(swapped) + "\n"
 
 
@@ -184,11 +216,17 @@ def test_the_8b_job_runs_the_model_on_one_gpu():
     assert _setting("GPUS") == "1"
 
 
-@pytest.mark.parametrize("variant", ["8b", "70b"])
+def test_the_8b_job_keeps_the_8000_token_limit():
+    assert _setting("CONTEXT_TOKENS") == "8000"
+
+
+@pytest.mark.parametrize("variant", ["8b", "70b", "v1.1"])
 def test_the_gres_line_asks_for_the_gpus_that_the_model_is_split_over(variant):
     text = SCRIPT.read_text()
     if variant == "70b":
         text = _swap_70b(text)
+    if variant == "v1.1":
+        text = _swap_v11(text)
     gpus = re.search(r'^GPUS="(\d+)"$', text, re.MULTILINE).group(1)
     assert f"#SBATCH --gres=gpu:{gpus}" in text.splitlines()
 
@@ -206,12 +244,48 @@ def test_the_70b_variant_splits_the_model_over_two_gpus(tmp_path):
     revision = printed[printed.index("--revision") + 1]
     assert revision == "503b9b9469aec7be01144517e697a20bd966f27a"
     assert printed[printed.index("--tensor-parallel-size") + 1] == "2"
+    assert printed[printed.index("--context-tokens") + 1] == "8000"
     directives = [
         x for x in variant.read_text().splitlines() if x.startswith("#SBATCH ")
     ]
     assert "#SBATCH -p gpu_h200" in directives
     assert "#SBATCH --gres=gpu:2" in directives
     assert _called(calls) == []
+
+
+def test_the_v11_variant_reads_32000_tokens_on_one_gpu(tmp_path):
+    variant = tmp_path / "scripts" / "benchmarking" / "slurm" / SCRIPT.name
+    variant.parent.mkdir(parents=True)
+    variant.write_text(_swap_v11(SCRIPT.read_text()))
+    _, bundle = _run_bundle(tmp_path)
+    proc, calls = _run(tmp_path, "--dry-run", bundle, script=variant)
+    assert proc.returncode == 0, proc.stderr
+    printed = shlex.split(proc.stdout.strip())
+    assert (
+        printed[printed.index("--model") + 1]
+        == "PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct-v1.1"
+    )
+    assert (
+        printed[printed.index("--revision") + 1]
+        == "00de9f9062d93a95e4e359d3c92b8ea1d0114738"
+    )
+    assert printed[printed.index("--tensor-parallel-size") + 1] == "1"
+    assert printed[printed.index("--context-tokens") + 1] == "32000"
+    directives = [
+        x for x in variant.read_text().splitlines() if x.startswith("#SBATCH ")
+    ]
+    assert "#SBATCH --gres=gpu:1" in directives
+    assert _called(calls) == []
+
+
+def test_the_v11_variant_is_commented_out():
+    text = SCRIPT.read_text()
+    assert '# MODEL_ID="PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct-v1.1"' in text
+    assert '# MODEL_REVISION="00de9f9062d93a95e4e359d3c92b8ea1d0114738"' in text
+    assert '# CONTEXT_TOKENS="32000"' in text
+    assert "PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct-v1.1" not in _setting(
+        "MODEL_ID"
+    )
 
 
 # --- 8.2 refusals ------------------------------------------------------------
@@ -247,6 +321,23 @@ def test_a_gpu_count_that_is_not_a_whole_number_of_one_or_more_is_refused(
     proc, calls = _run(tmp_path, "--dry-run", bundle, script=variant)
     assert proc.returncode != 0
     assert "GPUS" in proc.stderr
+    assert proc.stdout == ""
+    assert _called(calls) == []
+
+
+@pytest.mark.parametrize("limit", ["600", "0", "", "abc", "8k", "8000.5"])
+def test_a_token_limit_that_is_not_a_whole_number_above_600_is_refused(tmp_path, limit):
+    variant = tmp_path / "scripts" / "benchmarking" / "slurm" / SCRIPT.name
+    variant.parent.mkdir(parents=True)
+    text = SCRIPT.read_text()
+    assert text.count('\nCONTEXT_TOKENS="8000"\n') == 1
+    variant.write_text(
+        text.replace('\nCONTEXT_TOKENS="8000"\n', f'\nCONTEXT_TOKENS="{limit}"\n')
+    )
+    _, bundle = _run_bundle(tmp_path)
+    proc, calls = _run(tmp_path, "--dry-run", bundle, script=variant)
+    assert proc.returncode != 0
+    assert "CONTEXT_TOKENS" in proc.stderr
     assert proc.stdout == ""
     assert _called(calls) == []
 

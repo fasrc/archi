@@ -62,6 +62,7 @@ def _lynx(
     digest="sha256:rows",
     counts=None,
     rate=None,
+    context_tokens=8000,
 ):
     """A Lynx file body; *verdicts* maps key -> "PASS", "FAIL", or a status."""
     rows = {}
@@ -88,7 +89,7 @@ def _lynx(
         "result_basename": basename,
         "arm_index": arm_index,
         "bundle_rows_sha256": digest,
-        "token_budget": {"context_tokens": 8000, "max_new_tokens": 600},
+        "token_budget": {"context_tokens": context_tokens, "max_new_tokens": 600},
         "rows": rows,
         "counts": counts or default_counts,
         "lynx_faithfulness": (
@@ -163,6 +164,24 @@ def test_matching_files_show_the_rate_and_four_counts(tmp_path, capsys):
     assert "0.6667" in out
 
 
+def test_each_arm_shows_the_token_limit_its_file_records(tmp_path, capsys):
+    path = _sweep(tmp_path)
+    _write_lynx(tmp_path, 0, _lynx(0, BASE_VERDICTS))
+    _write_lynx(tmp_path, 1, _lynx(1, ARM_VERDICTS, context_tokens=32000))
+
+    code, report = _run(tmp_path, path)
+
+    assert code == 0
+    base, arm = report["lynx"]["arms"]
+    assert base["context_tokens"] == 8000
+    assert arm["context_tokens"] == 32000
+    out = capsys.readouterr().out
+    section = out[out.index("## Lynx faithfulness (descriptive)") :]
+    assert "token limit" in section
+    assert "| 32000 |" in section
+    assert "8,000" not in section
+
+
 def test_the_judged_result_finds_the_same_file(tmp_path):
     path = _artifact(
         tmp_path, [_entry("base"), _entry("arm")], name=f"{BASENAME}.judged.json"
@@ -198,6 +217,7 @@ def _refused(tmp_path, body, **entry_kwargs):
     [entry] = report["lynx"]["arms"]
     assert entry["status"] == "refused"
     assert entry["counts"] is None and entry["lynx_faithfulness"] is None
+    assert entry["context_tokens"] is None
     return entry["reason"]
 
 

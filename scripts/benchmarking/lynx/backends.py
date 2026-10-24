@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Callable, List, Optional, Sequence, Union
 
-#: Lynx (Llama 3) reads 8,000 tokens; the model card generates 600.
+#: The default token limit: the Lynx 8B v1.0 model card reads 8,000 tokens. The
+#: scorer's ``--context-tokens`` sets another (#773). The model card generates 600.
 CONTEXT_TOKENS = 8000
 MAX_NEW_TOKENS = 600
 
@@ -45,7 +46,10 @@ class VllmBackend:
     """vLLM offline inference at a pinned revision, greedy, 600 new tokens.
 
     ``tensor_parallel_size`` is the number of GPUs that vLLM splits the model
-    over; Lynx 70B does not fit on one GPU (#755).
+    over; Lynx 70B does not fit on one GPU (#755). ``context_tokens`` is the
+    token limit, passed as ``max_model_len``: vLLM sizes its KV cache for it, not
+    for the model's whole window, and refuses a limit above the model's trained
+    length (#773).
 
     The model card trained Lynx on chat format and sends the prompt as one user
     message, so each prompt goes through the tokenizer's chat template. The
@@ -56,7 +60,12 @@ class VllmBackend:
     name = "vllm"
 
     def __init__(
-        self, model: str, revision: str, *, tensor_parallel_size: int = 1
+        self,
+        model: str,
+        revision: str,
+        *,
+        tensor_parallel_size: int = 1,
+        context_tokens: int = CONTEXT_TOKENS,
     ) -> None:
         from vllm import LLM, SamplingParams
 
@@ -65,6 +74,7 @@ class VllmBackend:
             revision=revision,
             tokenizer_revision=revision,
             tensor_parallel_size=tensor_parallel_size,
+            max_model_len=context_tokens,
         )
         self._params = SamplingParams(temperature=0, max_tokens=MAX_NEW_TOKENS)
         self._tokenizer = self._llm.get_tokenizer()
@@ -88,14 +98,24 @@ class VllmBackend:
 
 
 def make_backend(
-    name: str, model: str, revision: str, *, tensor_parallel_size: int = 1
+    name: str,
+    model: str,
+    revision: str,
+    *,
+    tensor_parallel_size: int = 1,
+    context_tokens: int = CONTEXT_TOKENS,
 ):
     """The backend called *name* (``vllm`` or ``stub``).
 
-    The stub ignores ``tensor_parallel_size``.
+    The stub ignores ``tensor_parallel_size`` and ``context_tokens``.
     """
     if name == "stub":
         return StubBackend()
     if name == "vllm":
-        return VllmBackend(model, revision, tensor_parallel_size=tensor_parallel_size)
+        return VllmBackend(
+            model,
+            revision,
+            tensor_parallel_size=tensor_parallel_size,
+            context_tokens=context_tokens,
+        )
     raise ValueError(f"unknown backend {name!r}; allowed: 'vllm', 'stub'")

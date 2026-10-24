@@ -114,6 +114,13 @@ def load_arm_lynx(source: str, raw: Mapping[str, Any]) -> Optional[Dict[str, Any
     }
 
 
+def _context_tokens(document: Mapping[str, Any]) -> Optional[int]:
+    """The token limit a Lynx file records (#773), or None when it records none."""
+    budget = document.get("token_budget")
+    value = budget.get("context_tokens") if isinstance(budget, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def _block_entry(arm: Any, loaded: Mapping[str, Any]) -> Dict[str, Any]:
     document = loaded["document"] or {}
     counts = document.get("counts")
@@ -127,6 +134,7 @@ def _block_entry(arm: Any, loaded: Mapping[str, Any]) -> Dict[str, Any]:
         "model_revision": document.get("model_revision"),
         "counts": counts,
         "lynx_faithfulness": faithfulness(counts) if counts else None,
+        "context_tokens": _context_tokens(document),
     }
 
 
@@ -243,15 +251,16 @@ def render_section(
         "## Lynx faithfulness (descriptive)",
         "",
         "PatronusAI Lynx gives one PASS or FAIL per row. The rate is PASS over scored "
-        "rows only: rows skipped because they do not fit in 8,000 tokens, and rows "
-        "whose output has no strict verdict, are in neither part. No gate reads it.",
+        "rows only: rows skipped because they do not fit in the arm's token limit, "
+        "and rows whose output has no strict verdict, are in neither part. No gate "
+        "reads it.",
         "",
     ]
     rows = []
     for entry in section["arms"]:
         arm = f"{entry['label']} ({entry['name']})"
         if entry["status"] != "ok":
-            rows.append([arm, f"refused: {entry['reason']}"] + ["—"] * 5)
+            rows.append([arm, f"refused: {entry['reason']}"] + ["—"] * 6)
             continue
         counts = entry["counts"]
         rows.append(
@@ -263,6 +272,11 @@ def render_section(
                 str(counts["lynx_pass"]),
                 str(counts["lynx_skipped_overflow"]),
                 str(counts["lynx_parse_errors"]),
+                (
+                    "—"
+                    if entry["context_tokens"] is None
+                    else str(entry["context_tokens"])
+                ),
             ]
         )
     out += table(
@@ -274,6 +288,7 @@ def render_section(
             "pass",
             "skipped overflow",
             "parse errors",
+            "token limit",
         ],
         rows,
     )
