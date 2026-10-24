@@ -208,10 +208,16 @@ to a config key using the following table, then reads `visible` from that config
 | `ticket` | `ticket_provider=redmine` | `redmine` |
 | anything else | — | *(no key — treated as visible)* |
 
-Documents ingested before the fix in [issue #459](https://github.com/fasrc/archi/issues/459) may
-lack `scraper` or `ticket_provider` metadata. Those documents fall through to the last row
-and are treated as visible regardless of the `visible` flag; a full re-ingest populates the
-markers so the flag is honoured.
+A document can lack its `scraper` or `ticket_provider` marker, for example when an older
+ingest did not write it. The table above still applies, and the two cases differ:
+
+- A `web` document with no `scraper` marker maps to `links`. `links.visible: false` hides it,
+  even when it came from an Indico or ELOG source that is set to visible.
+- A `ticket` document with no `ticket_provider` marker maps to no key. It stays visible,
+  whatever the `jira` or `redmine` `visible` flag says.
+
+A full re-ingest writes the markers again. After that, each document obeys the flag of its own
+source.
 
 To keep a link source out of an ingest today, remove it from `input_lists` rather than
 setting `enabled: false`.
