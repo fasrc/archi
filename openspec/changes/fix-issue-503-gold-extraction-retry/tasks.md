@@ -51,7 +51,7 @@
 
 ## 2. The one-time retry
 
-- [ ] 2.1 Retry `extract_gold` once on a `validate_gold_output` `ValueError` in
+- [x] 2.1 Retry `extract_gold` once on a `validate_gold_output` `ValueError` in
       `prepare_dataset_item` (design D1, D4). Tests first in `test_preparation.py`, then code,
       one commit (`fix: retry a gold extraction once after a shape violation`). Use a fake
       extractor class that returns a queue of results and counts calls (and, for (e), sets

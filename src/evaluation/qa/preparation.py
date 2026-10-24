@@ -18,6 +18,9 @@ from typing import (
     Union,
 )
 
+from src.utils.llm_usage import sum_usage
+from src.utils.logging import get_logger
+
 from .artifacts import iter_jsonl
 from .oracle import (
     DIAGNOSTIC_LIMIT,
@@ -45,6 +48,8 @@ from .validation import (
 )
 
 # isort: on
+
+logger = get_logger(__name__)
 
 PreparationStatus = Literal[
     "prepared",
@@ -315,6 +320,7 @@ def prepare_dataset_item(
     _extractor_was_called = False
     _extractor_usage: Optional[Dict[str, Any]] = None
     _usage_recorded = False
+    _gold_extraction_attempts: Optional[int] = None
     try:
         resolved = None
         if item.state is DatasetItemState.UNRESOLVED_LIVE:
@@ -334,21 +340,34 @@ def prepare_dataset_item(
         else:
             _extractor_was_called = True
             _usage_recorded = hasattr(extractor, "last_usage")
-            gold_atoms = validate_gold_output(
-                extractor.extract_gold(
-                    item.question,
-                    (
-                        item.answer_for_extraction()
-                        if isinstance(answer, str)
-                        else canonical_json(answer)
-                    ),
-                ),
-                context=f"gold extraction for item {item.id}",
+            extraction_input = (
+                item.answer_for_extraction()
+                if isinstance(answer, str)
+                else canonical_json(answer)
             )
+            raw_gold = extractor.extract_gold(item.question, extraction_input)
+            try:
+                gold_atoms = validate_gold_output(
+                    raw_gold, context=f"gold extraction for item {item.id}"
+                )
+                _extractor_usage = getattr(extractor, "last_usage", None)
+            except ValueError:
+                logger.warning(
+                    "Gold extraction for item %s failed shape validation; retrying once",
+                    item.id,
+                )
+                first_usage = getattr(extractor, "last_usage", None)
+                raw_gold = extractor.extract_gold(item.question, extraction_input)
+                _gold_extraction_attempts = 2
+                _extractor_usage = sum_usage(
+                    [first_usage, getattr(extractor, "last_usage", None)]
+                )
+                gold_atoms = validate_gold_output(
+                    raw_gold, context=f"gold extraction for item {item.id}"
+                )
             atom_source = "inferred"
-            _extractor_usage = getattr(extractor, "last_usage", None)
     except Exception as exc:
-        if _extractor_was_called:
+        if _extractor_was_called and _gold_extraction_attempts is None:
             _extractor_usage = getattr(extractor, "last_usage", None)
         if isinstance(exc, OracleResolutionError):
             detail: Any = exc.detail
@@ -370,6 +389,7 @@ def prepare_dataset_item(
             ),
             usage=_extractor_usage,
             usage_recorded=_usage_recorded,
+            gold_extraction_attempts=_gold_extraction_attempts,
         )
     live_fields: Dict[str, Any] = {}
     if item.is_live:
@@ -398,6 +418,7 @@ def prepare_dataset_item(
         atom_source=atom_source,
         usage=_extractor_usage,
         usage_recorded=_usage_recorded,
+        gold_extraction_attempts=_gold_extraction_attempts,
         **live_fields,
     )
 
