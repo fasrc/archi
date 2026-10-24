@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.benchmarking.lynx import backends, score
+from scripts.benchmarking.lynx import backends, parse, score
 from src.utils.judge_bundle import write_judge_bundle
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -470,3 +470,41 @@ def test_the_module_runs_as_a_cli(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "lynx_scored 3" in result.stdout
     assert _lynx_file(tmp_path).is_file()
+
+
+def test_answers_in_lynx_form_are_scored(tmp_path):
+    # Lynx writes single-quoted reasoning and a bare verdict, which is not JSON.
+    folder = _bundle(
+        tmp_path,
+        rows=[_row("pass one"), _row("fail one"), _row("pass two"), _row("fail two")],
+    )
+
+    def answer(prompt):
+        verdict = "FAIL" if "fail one" in prompt or "fail two" in prompt else "PASS"
+        return '{"REASONING": [\'The ANSWER\'s claim is checked.\'], "SCORE": %s}' % (
+            verdict
+        )
+
+    code, _ = _run(folder, tmp_path, backend=backends.StubBackend(output=answer))
+
+    assert code == 0
+    document = json.loads(_lynx_file(tmp_path).read_text())
+    assert document["counts"] == {
+        "lynx_scored": 4,
+        "lynx_pass": 2,
+        "lynx_skipped_overflow": 0,
+        "lynx_parse_errors": 0,
+    }
+    assert document["lynx_faithfulness"] == 0.5
+    assert document["rows"]["question_2"]["verdict"] == "FAIL"
+    assert document["rows"]["question_1"]["reasoning"] == [
+        "The ANSWER's claim is checked."
+    ]
+
+
+def test_the_stub_answers_in_lynx_form():
+    # So a --backend stub run reads the same form as a real run (D5).
+    assert "['stub backend']" in backends.STUB_OUTPUT
+    assert backends.STUB_OUTPUT.endswith('"SCORE": PASS}')
+    result = parse.parse_output(backends.STUB_OUTPUT)
+    assert (result.verdict, result.reasoning) == ("PASS", ["stub backend"])

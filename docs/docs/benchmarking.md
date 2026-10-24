@@ -479,7 +479,15 @@ The scorer writes `<basename>-arm<N>.lynx.json`, where `<basename>` is the resul
 | `lynx_scored` | Rows with a PASS or a FAIL verdict |
 | `lynx_pass` | Rows with a PASS verdict |
 | `lynx_skipped_overflow` | Rows whose prompt plus 600 output tokens is more than 8,000 tokens. The scorer does not send these rows to the model, and it does not cut them |
-| `lynx_parse_errors` | Rows whose model output has no strict `PASS` or `FAIL` verdict |
+| `lynx_parse_errors` | Rows whose model output has no `PASS` or `FAIL` verdict that the scorer can read (see below) |
+
+Lynx writes its answer in a form that looks like JSON but is not: the reasoning items are single-quoted, and the verdict is a bare word.
+
+```text
+{"REASONING": ['The CONTEXT explicitly states that netscratch is not backed up.', 'The ANSWER claims that netscratch is backed up nightly to tape, which directly contradicts the information provided in the CONTEXT.'], "SCORE": FAIL}
+```
+
+The scorer reads this form and JSON (`"SCORE": "FAIL"`). An apostrophe inside a single-quoted item, as in `'The ANSWER's claim'`, stays in the item. The verdict must be exactly `PASS` or `FAIL`. These outputs are parse errors: an answer cut off before its closing `}`, any other verdict (`pass`, `Pass`, `PASS.`), two answers with different verdicts, a bare word anywhere but the verdict, and output with no answer object. An item whose apostrophe is followed by `,`, `]` or `}`, as in `'the users', he said'`, ends early, and the row is a parse error. A parse error never counts as PASS or FAIL, and its row keeps the raw output, so you can see what the model wrote.
 
 `lynx_faithfulness` is `lynx_pass / lynx_scored`, or `null` when no row was scored. The PASS rate is over scored rows only: skipped rows and parse errors are in neither part of the rate. So always read the rate beside the four counts. A run with many long answers can have a high rate over few rows.
 

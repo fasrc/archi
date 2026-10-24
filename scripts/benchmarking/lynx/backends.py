@@ -13,7 +13,8 @@ from typing import Callable, List, Optional, Sequence, Union
 CONTEXT_TOKENS = 8000
 MAX_NEW_TOKENS = 600
 
-STUB_OUTPUT = '{"REASONING": ["stub backend"], "SCORE": "PASS"}'
+#: Lynx's own form: single-quoted reasoning items and a bare verdict, not JSON.
+STUB_OUTPUT = '{"REASONING": [\'stub backend\'], "SCORE": PASS}'
 
 
 class StubBackend:

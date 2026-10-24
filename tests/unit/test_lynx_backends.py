@@ -5,7 +5,7 @@ import types
 
 import pytest
 
-from scripts.benchmarking.lynx import backends
+from scripts.benchmarking.lynx import backends, parse
 
 
 def test_the_stub_records_what_it_got_and_answers_pass_by_default():
@@ -13,7 +13,7 @@ def test_the_stub_records_what_it_got_and_answers_pass_by_default():
     outputs = stub.generate(["first prompt", "second prompt"])
     assert stub.received == ["first prompt", "second prompt"]
     assert len(outputs) == 2
-    assert all('"SCORE": "PASS"' in text for text in outputs)
+    assert all(parse.parse_output(text).verdict == "PASS" for text in outputs)
 
 
 def test_the_stub_takes_a_function_of_the_prompt():
