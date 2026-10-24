@@ -28,8 +28,14 @@ def satisfied_base_images(monkeypatch):
     every test in this file would depend on the developer's machine being logged in to ghcr,
     and would fail for a reason unrelated to what it is testing. The preflight's own tests
     install their own probe after this one, so they still exercise the real decision paths.
+
+    `VolumeManager.create_required_volumes` is also stubbed out: it calls the container
+    tool directly via subprocess (not through ContainerProbe), so on a machine without the
+    tool it raises FileNotFoundError before the test can reach the assertion it is testing.
+    Volume creation is incidental to what any test in this file exercises.
     """
     from src.cli.managers import base_image_preflight
+    from src.cli.managers.volume_manager import VolumeManager
 
     class _SatisfiedProbe:
         def __init__(self, container_tool="docker", timeout=600):
@@ -51,6 +57,7 @@ def satisfied_base_images(monkeypatch):
             return "Python 3.11.9"
 
     monkeypatch.setattr(base_image_preflight, "ContainerProbe", _SatisfiedProbe)
+    monkeypatch.setattr(VolumeManager, "create_required_volumes", lambda *a, **kw: None)
 
 
 @pytest.fixture
@@ -78,6 +85,8 @@ def env_file(tmp_path):
         "OPENAI_API_KEY=sk-test\n"
         "PG_PASSWORD=test-pg\n"
         "HUGGING_FACE_HUB_TOKEN=test-hf\n"
+        "GIT_USERNAME=test-git\n"
+        "GIT_TOKEN=test-git\n"
     )
     return p
 
@@ -148,10 +157,9 @@ data_manager:
 
 
 @pytest.mark.usefixtures("fake_repo_root")
-def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
+def test_dev_flag_prints_warning_in_dry_run(env_file, archi_home, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
-    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
 
     from src.cli.cli_main import create
 
@@ -183,10 +191,9 @@ def test_dev_flag_prints_warning_in_dry_run(env_file, tmp_path, monkeypatch):
     )
 
 
-def test_dry_run_succeeds_without_docker(env_file, tmp_path, monkeypatch):
+def test_dry_run_succeeds_without_docker(env_file, archi_home, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
-    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
 
     from src.cli import cli_main
 
@@ -409,10 +416,9 @@ def test_non_dry_create_requires_docker_under_verbose_logging(
     )
 
 
-def test_no_dev_flag_no_warning(env_file, tmp_path, monkeypatch):
+def test_no_dev_flag_no_warning(env_file, archi_home, monkeypatch):
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
-    monkeypatch.setenv("ARCHI_DIR", str(tmp_path / "archi-home"))
 
     from src.cli.cli_main import create
 
@@ -2435,21 +2441,26 @@ def test_force_create_with_missing_agent_config_file_keeps_existing_deployment(
     ), f"the error should say 'not found'. output:\n{result.output}\n"
 
 
+@pytest.mark.parametrize("selected", ["chatbot", "slack"])
 def test_force_create_with_agent_config_inside_deployment_keeps_existing_deployment(
-    env_file, archi_home, monkeypatch, tmp_path
+    selected, env_file, archi_home, monkeypatch, tmp_path
 ):
     """A source file inside the deployment dir must not cost the operator a running deployment.
 
     refuse_agent_config_inside_deployment() runs above remove_existing_deployment(),
     so a config that names a file under the deployment directory is refused before any
-    teardown occurs.
+    teardown occurs. `--services slack` also runs the chatbot, so it is refused too.
     """
     import yaml
 
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+    env_file.write_text(
+        env_file.read_text() + "SLACK_BOT_TOKEN=xoxb-test\nSLACK_APP_TOKEN=xapp-test\n"
+    )
 
     from src.cli import cli_main
+    from src.cli.managers.volume_manager import VolumeManager
 
     existing = _existing_deployment(archi_home)
 
@@ -2467,6 +2478,9 @@ def test_force_create_with_agent_config_inside_deployment_keeps_existing_deploym
 
     teardowns = _record_teardowns(monkeypatch)
     monkeypatch.setattr(cli_main, "check_docker_available", lambda: True)
+    monkeypatch.setattr(
+        VolumeManager, "create_required_volumes", lambda self, *a, **kw: None
+    )
 
     runner = CliRunner()
     result = runner.invoke(
@@ -2480,7 +2494,7 @@ def test_force_create_with_agent_config_inside_deployment_keeps_existing_deploym
             "-e",
             str(env_file),
             "--services",
-            "chatbot",
+            selected,
             "--hostmode",
         ],
     )
@@ -2500,3 +2514,45 @@ def test_force_create_with_agent_config_inside_deployment_keeps_existing_deploym
     assert (
         "services.chat_app.evaluations.agent_config_path" in result.output
     ), f"the error should name the key. output:\n{result.output}\n"
+
+
+@pytest.mark.usefixtures("fake_repo_root")
+def test_slack_only_selection_validates_the_chatbot_it_runs(
+    archi_home, tmp_path, monkeypatch
+):
+    """`--services slack` also runs the chatbot, so its chat config is validated."""
+    if not EXAMPLE_CONFIG.exists():
+        pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        EXAMPLE_CONFIG.read_text().replace(
+            "  chat_app:\n", "  chat_app:\n    provider: openai\n", 1
+        )
+    )
+    env = tmp_path / "secrets.env"
+    env.write_text(
+        "OPENAI_API_KEY=sk-test\nPG_PASSWORD=test-pg\nHUGGING_FACE_HUB_TOKEN=test-hf\n"
+        "SLACK_BOT_TOKEN=xoxb-test\nSLACK_APP_TOKEN=xapp-test\n"
+    )
+
+    from src.cli import cli_main
+
+    monkeypatch.setattr(cli_main, "check_docker_available", lambda: False)
+    result = CliRunner().invoke(
+        cli_main.create,
+        [
+            "--dry",
+            "-n",
+            "slackonly",
+            "-c",
+            str(config),
+            "-e",
+            str(env),
+            "--services",
+            "slack",
+            "--hostmode",
+        ],
+    )
+
+    assert result.exit_code != 0, f"output:\n{result.output}\n"
+    assert "Legacy keys detected" in result.output, f"output:\n{result.output}\n"

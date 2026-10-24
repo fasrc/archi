@@ -23,8 +23,57 @@ that fetch this download is in that slice; they are ``Dockerfile-grader``,
 ``Dockerfile-grader-gpu``, ``Dockerfile-chat-gpu``, ``Dockerfile-data-manager-gpu``,
 ``Dockerfile-mattermost-gpu``, and ``Dockerfile-benchmarks-gpu``. These templates
 had been unbuildable on ``dev`` for as long as Mozilla has served xz.
+
+The contract (issue #519, operator decision of 2026-10-09; design D31 of
+``openspec/changes/fix-issue-519-tar-guard-findings``). The guard reads a few simple
+forms and fails closed on everything else, so review checks this list instead of
+finding the next shell feature a hand-written parser misreads.
+
+1. Instructions. Comment lines are dropped, then lines ending in ``\\`` are joined. Each
+   line is one instruction; its first word, in any case, is the keyword.
+2. These instructions fail closed: any instruction holding ``<<`` (a heredoc or
+   here-string; the scan stops there and this entry cannot be allow-listed); ``RUN [``
+   (exec form); a second ``FROM``; ``SHELL``; ``ADD`` of a URL; ``ENV`` or ``ARG``
+   holding a moving URL, ``TAR_OPTIONS`` or ``TAPE``; a line that is not a Dockerfile
+   instruction. Every other instruction except ``RUN`` is skipped; ``COPY`` and ``ADD``
+   do not change what the guard knows about a path.
+3. A shell-form ``RUN`` is read when it names ``tar``, ``wget`` or ``curl`` as a word (any
+   case), or holds a moving URL, ``TAR_OPTIONS`` or ``TAPE``, in its raw text or in its
+   words after quote removal (so ``t\\ar`` names tar). Other RUNs are skipped; a RUN
+   that cannot be split into words fails closed. The ``RUN`` keyword and its ``--flag``
+   words are dropped.
+4. Words use ``'…'``, ``"…"`` and backslash escapes; an unquoted ``#`` at the start of a
+   word starts a comment. ``&&``, ``;`` and ``|`` separate simple commands, read left to
+   right. Output redirections (``>``, ``>>``, ``>|``, ``2>``, ``2>&1``, ``&>``) are
+   allowed except on wget and curl. Fails closed: an unterminated quote, ``||``, ``&``,
+   ``|&``, ``;;``, ``(``, ``)``, a backtick or ``$(``, and any input redirection.
+5. Leading ``NAME=value`` words are assignments; the next word is the command. Fails
+   closed: an assignment in front of tar, wget or curl; a command word holding ``$``; a
+   reserved word or brace as the command; a shell, ``eval``, ``source`` or ``.``; any other
+   command carrying a word named tar, wget, curl or a shell, unless it only prints or
+   installs its arguments (``_PRINTS_OR_INSTALLS``); a moving URL outside wget and curl.
+   Any other command is skipped.
+6. tar. A first argument with no leading ``-`` is a traditional option word (letters
+   only); each of its letters that takes an argument takes the next word, in letter
+   order, and the words after are read as usual. Dash clusters: each letter must be a
+   GNU tar 1.35 short option; one that takes an argument takes the rest of the cluster
+   or the next word. Long options must be GNU tar 1.35 names spelled in full. ``--`` ends
+   options. Exactly one operation mode; a write mode (``c r u A``, ``--delete``) is not
+   an extraction. Fails closed: no mode, two modes, two ``-f``, an unknown or abbreviated
+   option, and a forcing tar whose archive holds ``$``.
+7. wget and curl. The output option and curl's per-transfer pairing are read as the
+   #507 review rounds settled. Fails closed: any word holding ``$``.
+8. Verdict. Writes are recorded in file order and the last write to a path wins. A
+   forcing read-mode tar is reported when its archive held a moving download, or when
+   it shares its RUN with a moving download and its archive is unknown (none, ``-``,
+   ``/dev/stdout``). Paths are normalised; a relative path matches by basename.
+
+An unparseable instruction is reported as ``unparseable command '…': <reason> — needs
+review``. A human who reviewed it lists its exact text under its template in
+``_REVIEWED_UNPARSEABLE``, with a comment saying why it is safe.
 """
 
+import posixpath
 import re
 from typing import NamedTuple
 
@@ -33,12 +82,10 @@ import pytest
 from src.cli.managers.base_image_preflight import service_templates
 
 # EVERY tar option that forces a compression program, not just the one this defect
-# happened to involve. Two-step token scan: walk the command's tokens to find each
-# ``tar`` invocation bounded by shell separators (``&&``, ``||``, ``;``, ``|``); then
-# inspect that invocation's option tokens (those beginning with ``-``). Long forms are
-# matched whole after stripping ``=PROG`` — so ``--no-auto-compress`` and
-# ``--exclude=*.gz`` stay clean. Short clusters are matched case-sensitively — ``-i``
-# (``--ignore-zeros``) differs from ``-I`` (``--use-compress-program``) by case alone.
+# happened to involve. Long forms are matched whole after stripping ``=PROG`` — so
+# ``--no-auto-compress`` and ``--exclude=*.gz`` stay clean. Short letters are matched
+# case-sensitively — ``-i`` (``--ignore-zeros``) differs from ``-I``
+# (``--use-compress-program``) by case alone.
 _FORCING_LONG = frozenset(
     {
         "--gzip",
@@ -58,92 +105,77 @@ _FORCING_LONG = frozenset(
 _FORCING_SHORT = frozenset("zjJZI")
 _STDOUT_SINKS = frozenset({"-", "/dev/stdout", "/dev/null"})
 
+# tar's operation modes. A read mode is judged; a write mode names its ``-f`` archive as
+# an output, so it is not an extraction (#519 row 2).
+_READ_MODES = frozenset("xtd") | {"--test-label"}
+_MODE_OF = {
+    "--extract": "x",
+    "--get": "x",
+    "--list": "t",
+    "--diff": "d",
+    "--compare": "d",
+    "--test-label": "--test-label",
+    "--create": "c",
+    "--append": "r",
+    "--update": "u",
+    "--catenate": "A",
+    "--concatenate": "A",
+    "--delete": "--delete",
+}
+_SHORT_MODES = frozenset("xtdcruA")
 
-class _Operator(str):
-    """A token the shell reads as an operator, as opposed to a word that spells one.
-
-    ``echo ';'`` passes a word to echo; the ``;`` in ``a;b`` ends a command. Both are
-    the string ``;`` once the quotes are resolved, so the lexer marks the operator.
-    """
-
-
-# A redirection operator: ``>``, ``>>``, ``<``, ``>&``, ``&>`` and the rest, with an
-# optional descriptor in front (``2>``) and, for the dup forms, a descriptor or ``-``
-# behind (``2>&1``, ``>&-``). A dup form has no target word; every other form consumes
-# the word that follows it.
-_REDIRECTION = re.compile(r"^(?:\d*(?:>>|>&|>\||<<<|<<|<&|<>|>|<)(?:\d+|-)?|&>>?)$")
-_REDIRECTION_DUP = re.compile(r"&(?:\d+|-)$")
-
-# tar's short options that consume an argument: the rest of their own cluster when one
-# is attached, otherwise the next token. ``-f`` names the archive; ``-I`` names a
-# compression program and is a forcing option as well. Review on 2026-09-19: without
-# this set, ``tar -xf/tmp/firefox.tar.xz`` read the ``z`` in the FILENAME as a forcing
-# option, so a correct auto-detecting extraction was reported as forcing xz.
+# GNU tar 1.35's options, measured from ``tar --help``. A short letter in
+# ``_SHORT_WITH_ARGUMENT`` takes the rest of its cluster or the next word; ``-f`` names
+# the archive and ``-I`` names a compression program. Review on 2026-09-19: without
+# this set, ``tar -xf/tmp/firefox.tar.xz`` read the ``z`` in the FILENAME as forcing.
 _SHORT_WITH_ARGUMENT = frozenset("bCfFgHIKLNTVX")
+_SHORT_OPTIONS = _SHORT_WITH_ARGUMENT | frozenset("?ABGJMOPRSUWZacdhijklmnoprstuvwxz")
 
-# The long options that name the archive. ``--file=PATH`` and ``--file PATH`` both.
-_ARCHIVE_LONG = frozenset({"--file"})
-
-# tar's long options whose argument is REQUIRED, so it is the next token when no ``=``
-# is attached. Measured on GNU tar 1.35 (``tar --help``, every ``--name=ARG`` entry).
-# The six ``[=ARG]`` entries — ``--atime-preserve``, ``--backup``, ``--checkpoint``,
-# ``--occurrence``, ``--one-top-level``, ``--totals`` — take a value only when it is
-# attached, so they are deliberately absent. Review on 2026-09-20: without this set,
-# ``tar --exclude --gzip -xf /tmp/moving`` read the exclusion PATTERN as a forcing
-# option and rejected a correct template.
+# Long options whose argument is REQUIRED, so it is the next word when no ``=`` is
+# attached. Review on 2026-09-20: without this set, ``tar --exclude --gzip -xf
+# /tmp/moving`` read the exclusion PATTERN as a forcing option.
 _LONG_WITH_ARGUMENT = frozenset(
-    {
-        "--add-file",
-        "--after-date",
-        "--blocking-factor",
-        "--checkpoint-action",
-        "--directory",
-        "--exclude",
-        "--exclude-from",
-        "--exclude-ignore",
-        "--exclude-ignore-recursive",
-        "--exclude-tag",
-        "--exclude-tag-all",
-        "--exclude-tag-under",
-        "--file",
-        "--files-from",
-        "--format",
-        "--group",
-        "--group-map",
-        "--hole-detection",
-        "--index-file",
-        "--info-script",
-        "--label",
-        "--level",
-        "--listed-incremental",
-        "--mode",
-        "--mtime",
-        "--newer",
-        "--newer-mtime",
-        "--new-volume-script",
-        "--no-quote-chars",
-        "--owner",
-        "--owner-map",
-        "--quote-chars",
-        "--quoting-style",
-        "--record-size",
-        "--rmt-command",
-        "--rsh-command",
-        "--sort",
-        "--sparse-version",
-        "--starting-file",
-        "--strip-components",
-        "--suffix",
-        "--tape-length",
-        "--to-command",
-        "--transform",
-        "--use-compress-program",
-        "--volno-file",
-        "--warning",
-        "--xattrs-exclude",
-        "--xattrs-include",
-        "--xform",
-    }
+    """
+    --add-file --after-date --blocking-factor --checkpoint-action --directory --exclude
+    --exclude-from --exclude-ignore --exclude-ignore-recursive --exclude-tag
+    --exclude-tag-all --exclude-tag-under --file --files-from --format --group
+    --group-map --hole-detection --index-file --info-script --label --level
+    --listed-incremental --mode --mtime --new-volume-script --newer --newer-mtime
+    --no-quote-chars --owner --owner-map --pax-option --quote-chars --quoting-style
+    --record-size --rmt-command --rsh-command --sort --sparse-version --starting-file
+    --strip-components --suffix --tape-length --to-command --transform
+    --use-compress-program --volno-file --warning --xattrs-exclude --xattrs-include
+    --xform
+    """.split()
+)
+# These take a value only when it is attached (``[=ARG]``).
+_LONG_WITH_OPTIONAL_ARGUMENT = frozenset(
+    "--atime-preserve --backup --checkpoint --occurrence --one-top-level --totals".split()
+)
+_LONG_FLAGS = frozenset(
+    """
+    --absolute-names --acls --anchored --append --auto-compress --block-number --bzip2
+    --catenate --check-device --check-links --clamp-mtime --compare --compress
+    --concatenate --confirmation --create --delay-directory-restore --delete
+    --dereference --diff --exclude-backups --exclude-caches --exclude-caches-all
+    --exclude-caches-under --exclude-vcs --exclude-vcs-ignores --extract --force-local
+    --full-time --get --gunzip --gzip --hard-dereference --help --ignore-case
+    --ignore-command-error --ignore-failed-read --ignore-zeros --incremental
+    --interactive --keep-directory-symlink --keep-newer-files --keep-old-files --list
+    --lzip --lzma --lzop --multi-volume --no-acls --no-anchored --no-auto-compress
+    --no-check-device --no-delay-directory-restore --no-ignore-case
+    --no-ignore-command-error --no-null --no-overwrite-dir --no-recursion
+    --no-same-owner --no-same-permissions --no-seek --no-selinux --no-unquote
+    --no-verbatim-files-from --no-wildcards --no-wildcards-match-slash --no-xattrs --null
+    --numeric-owner --old-archive --one-file-system --overwrite --overwrite-dir
+    --portability --posix --preserve-order --preserve-permissions --read-full-records
+    --recursion --recursive-unlink --remove-files --restrict --same-order --same-owner
+    --same-permissions --seek --selinux --show-defaults --show-omitted-dirs
+    --show-snapshot-field-ranges --show-stored-names --show-transformed-names
+    --skip-old-files --sparse --test-label --to-stdout --touch --uncompress --ungzip
+    --unlink-first --unquote --update --usage --utc --verbatim-files-from --verbose
+    --verify --version --wildcards --wildcards-match-slash --xattrs --xz --zstd
+    """.split()
 )
 
 # The tools whose saved-output option tells the guard where a download landed, with the
@@ -235,6 +267,78 @@ _CURL_LONG_FLAGS = frozenset(
 # without one — an unmodelled option's argument — means the guard cannot pair outputs
 # with transfers and reads the invocation whole.
 _URL_LIKE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+# A download URL that names no version, so its payload can change under us.
+_MOVING_DOWNLOAD = re.compile(r"download\.mozilla\.org|[?&]product=[^\s\"']*latest")
+
+_NEEDS_REVIEW = "needs review"
+
+# Instructions a human reviewed and that the guard does not read. Keyed by template file
+# name; each entry is the instruction exactly as ``_commands`` returns it (continuation
+# lines joined), so any edit to it needs a new review. Every entry carries a comment
+# saying why it is safe. An entry must not hold a moving URL, and a stale entry fails
+# ``test_every_reviewed_entry_is_live_and_holds_no_moving_url``.
+#
+# Reviewed 2026-10-09 (#519): the geckodriver step. It fetches the version-pinned
+# geckodriver v0.36.0 (the version is set in the same RUN) and extracts that file with
+# ``-xzf``, which is correct for a pinned payload. The ``if`` only picks the CPU
+# architecture. It is unparseable because of the ``if`` and the ``$`` in the wget URL.
+_GECKODRIVER_BY_ARCHITECTURE = (
+    'RUN GECKO_VERSION="v0.36.0" && if [ "$TARGETARCH" = "arm64" ]; then '
+    'GECKO_ARCH="linux-aarch64"; else GECKO_ARCH="linux64"; fi && wget -q '
+    '"https://github.com/mozilla/geckodriver/releases/download/${GECKO_VERSION}/'
+    'geckodriver-${GECKO_VERSION}-${GECKO_ARCH}.tar.gz" && tar -xzf '
+    '"geckodriver-${GECKO_VERSION}-${GECKO_ARCH}.tar.gz" -C /usr/local/bin && '
+    'chmod +x /usr/local/bin/geckodriver && rm "geckodriver-${GECKO_VERSION}-'
+    '${GECKO_ARCH}.tar.gz"'
+)
+_REVIEWED_UNPARSEABLE: dict[str, tuple[str, ...]] = {
+    "Dockerfile-chat": (_GECKODRIVER_BY_ARCHITECTURE,),
+    "Dockerfile-data-manager": (_GECKODRIVER_BY_ARCHITECTURE,),
+    "Dockerfile-data-manager-gpu": (_GECKODRIVER_BY_ARCHITECTURE,),
+}
+
+_DOCKERFILE_KEYWORDS = frozenset(
+    """
+    ADD ARG CMD COPY ENTRYPOINT ENV EXPOSE FROM HEALTHCHECK LABEL MAINTAINER ONBUILD RUN
+    SHELL STOPSIGNAL USER VOLUME WORKDIR
+    """.split()
+)
+# A RUN is read when it could fetch or extract through the programs the guard knows.
+_READ_RUN = re.compile(r"\b(?:tar|wget|curl)\b|TAR_OPTIONS|\bTAPE\b", re.IGNORECASE)
+# Variables that change what tar reads or how; the guard does not follow them.
+_TAR_ENVIRONMENT = re.compile(r"TAR_OPTIONS|\bTAPE\b")
+_RUN_PREFIX = re.compile(r"^\s*RUN\b(?:\s+--\S+)*\s*", re.IGNORECASE)
+
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_RESERVED_WORDS = frozenset(
+    """
+    if then else elif fi for while until do done case esac select function coproc time
+    in { } ! [[ ]]
+    """.split()
+)
+_SHELLS = frozenset({"sh", "bash", "dash", "ash", "zsh"})
+_RUNS_A_SCRIPT = _SHELLS | {"eval", "source", "."}
+# A word with one of these names, given to any other command, may be run by it.
+_PROGRAM_WORDS = frozenset({"tar", "wget", "curl"}) | _SHELLS
+# Commands that only print or install their arguments, so a program name there is data.
+_PRINTS_OR_INSTALLS = frozenset(
+    {"echo", "printf", "apt-get", "apt", "apk", "dnf", "yum", "microdnf"}
+)
+_OUTPUT_REDIRECTION = re.compile(r"^(?:\d*(?:>>|>\||>&|>)(?:\d+|-)?|&>>?)$")
+_REDIRECTION_DUP = re.compile(r"&(?:\d+|-)$")
+_SEPARATORS = frozenset({"&&", ";", "|"})
+
+
+class _Unreadable(ValueError):
+    """A form outside the contract. The message says which form."""
+
+
+class _Operator(str):
+    """A token the shell reads as an operator, as opposed to a word that spells one.
+
+    ``echo ';'`` passes a word to echo; the ``;`` in ``a;b`` ends a command. Both are
+    the string ``;`` once the quotes are resolved, so the lexer marks the operator.
+    """
 
 
 class _Download(NamedTuple):
@@ -376,188 +480,170 @@ def _shell_tokens(command: str) -> list[str]:
     return tokens
 
 
-def _simple_commands(command: str) -> list[list[str]]:
-    """``command`` as the shell's simple commands: one argv each, redirections removed.
+def _simple_commands(command: str) -> list[tuple[list[str], bool]]:
+    """``command`` as the shell's simple commands: ``(argv, has an output redirection)``.
 
-    Control operators bound the commands. A redirection operator and its target word
-    are the shell's business and never reach the program's argv, so
-    ``tar -xzf /tmp/moving>/dev/null`` hands tar exactly ``-xzf /tmp/moving``.
+    Only ``&&``, ``;`` and ``|`` separate commands, and only output redirections are
+    read; their target never reaches the program's argv, so ``tar -xzf
+    /tmp/moving>/dev/null`` hands tar exactly ``-xzf /tmp/moving``. Every other operator,
+    and a command substitution, is outside the contract.
     """
-    commands: list[list[str]] = []
+    try:
+        tokens = _shell_tokens(command)
+    except ValueError as exc:
+        raise _Unreadable(str(exc)) from exc
+    commands: list[tuple[list[str], bool]] = []
     argv: list[str] = []
-    tokens = _shell_tokens(command)
+    redirected = False
     i = 0
     while i < len(tokens):
         token = tokens[i]
         if not isinstance(token, _Operator):
+            if "$(" in token or "`" in token:
+                raise _Unreadable(f"command substitution in {token!r}")
             argv.append(token)
-        elif _REDIRECTION.match(token):
+        elif token in _SEPARATORS:
+            if argv:
+                commands.append((argv, redirected))
+            argv, redirected = [], False
+        elif _OUTPUT_REDIRECTION.match(token):
+            redirected = True
             if not _REDIRECTION_DUP.search(token):
                 i += 1  # the target word
         else:
-            if argv:
-                commands.append(argv)
-            argv = []
+            raise _Unreadable(f"shell operator {str(token)!r}")
         i += 1
     if argv:
-        commands.append(argv)
+        commands.append((argv, redirected))
     return commands
 
 
 def _basename(token: str) -> str:
     """The command name of ``token``, so ``/bin/tar`` is recognised as ``tar``."""
-    return token.strip("\"'").rsplit("/", 1)[-1]
+    return token.rsplit("/", 1)[-1]
 
 
 def _parse_tar_span(span: list[str]) -> tuple[list[str], str | None]:
-    """One tar invocation's forcing options and the archive it reads.
+    """One tar invocation's forcing options and the archive it reads (contract item 6).
 
-    The archive comes from ``-f``/``--file`` only. An operand is never read as the
-    archive: without ``-f`` tar reads its default device or stdin, and the operands
-    are member names.
+    The archive comes from ``-f``/``--file`` only; without it tar reads stdin or its
+    default device. A write mode returns ``([], None)``: its archive is an output.
+    Raises :class:`_Unreadable` for a form outside the contract.
     """
-    forcing = []
-    archive = None
+    words = list(span)
+    forcing: list[str] = []
+    archives: list[str] = []
+    modes: set[str] = set()
+
+    def read_letters(token: str, letters: str, take) -> None:
+        for position, letter in enumerate(letters):
+            if letter not in _SHORT_OPTIONS:
+                raise _Unreadable(
+                    f"tar option -{letter} in {token!r} is not a tar option"
+                )
+            if letter in _SHORT_MODES:
+                modes.add(letter)
+            if letter in _FORCING_SHORT and token not in forcing:
+                forcing.append(token)
+            if letter in _SHORT_WITH_ARGUMENT:
+                value = take(letters[position + 1 :])
+                if letter == "f":
+                    archives.append(value)
+                if token.startswith("-"):
+                    return  # the rest of a dash cluster is this option's argument
+
+    def next_word(attached: str = "") -> str:
+        if attached:
+            return attached
+        if not words:
+            raise _Unreadable("a tar option is missing its argument")
+        return words.pop(0)
+
+    if words and not words[0].startswith("-"):
+        # A traditional option word: its letters' arguments follow it in letter order.
+        token = words.pop(0)
+        if not token.isalpha() or not token.isascii():
+            raise _Unreadable(f"tar's first argument {token!r} is not an option word")
+        read_letters(token, token, lambda _rest: next_word())
     end_of_options = False
-    i = 0
-    while i < len(span):
-        token = span[i]
-        if end_of_options or not token.startswith("-") or token == "-":
-            i += 1
+    while words:
+        token = words.pop(0)
+        if end_of_options or token == "-" or not token.startswith("-"):
             continue
         if token == "--":
-            # Everything after tar's end-of-options marker is an operand, including a
-            # member literally named ``--gzip``.
+            # Everything after tar's end-of-options marker is an operand.
             end_of_options = True
-            i += 1
-            continue
-        if token.startswith("--"):
-            name, separator, attached = token.partition("=")
+        elif token.startswith("--"):
+            name, separator, value = token.partition("=")
+            if name in _LONG_WITH_ARGUMENT:
+                value = value if separator else next_word()
+            elif name not in _LONG_WITH_OPTIONAL_ARGUMENT and (
+                name not in _LONG_FLAGS or separator
+            ):
+                raise _Unreadable(f"tar option {token!r} is not a full GNU tar name")
+            if name in _MODE_OF:
+                modes.add(_MODE_OF[name])
             if name in _FORCING_LONG:
                 forcing.append(token)
-            if name in _ARCHIVE_LONG:
-                if separator:
-                    archive = attached
-                elif i + 1 < len(span):
-                    i += 1
-                    archive = span[i]
-            elif name in _LONG_WITH_ARGUMENT and not separator and i + 1 < len(span):
-                # The next token is this option's argument, not another option.
-                i += 1
-            i += 1
-            continue
-        cluster = token[1:]
-        forces = False
-        for position, character in enumerate(cluster):
-            if character in _FORCING_SHORT:
-                forces = True
-            if character in _SHORT_WITH_ARGUMENT:
-                attached = cluster[position + 1 :]
-                if character == "f":
-                    if attached:
-                        archive = attached
-                    elif i + 1 < len(span):
-                        i += 1
-                        archive = span[i]
-                elif not attached and i + 1 < len(span):
-                    i += 1
-                # The rest of the cluster is this option's argument, not more flags.
-                break
-        if forces:
-            forcing.append(token)
-        i += 1
+            if name == "--file":
+                archives.append(value)
+        else:
+            read_letters(token, token[1:], next_word)
+    if len(modes) != 1:
+        raise _Unreadable(f"tar needs one operation mode, got {sorted(modes)}")
+    if len(archives) > 1:
+        raise _Unreadable("tar names more than one archive")
+    if not modes <= _READ_MODES:
+        return [], None
+    archive = archives[0] if archives else None
+    if forcing and archive is not None and "$" in archive:
+        raise _Unreadable(f"tar's archive {archive!r} is a variable")
     return forcing, archive
 
 
-# Words that stand in front of the command name without being it. A leading
-# ``NAME=value`` is an assignment; ``RUN`` is the Dockerfile instruction, whose own
-# ``--mount=…`` / ``--network=…`` flags precede the shell command; and each wrapper
-# runs the command that follows it. A shell given ``-c`` runs the string that follows.
-_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-_TRANSPARENT_WRAPPERS = frozenset(
-    {"sudo", "env", "exec", "command", "builtin", "nice", "nohup", "time"}
-)
-_SHELLS = frozenset({"sh", "bash", "dash", "ash", "zsh"})
-# The programs the guard reads. Behind a wrapper, one of these anywhere after the
-# wrapper's options is the command — see ``_command_name_position``.
-_KNOWN_PROGRAMS = frozenset({"tar", "wget", "curl"}) | _SHELLS
-# The name given to a command word the guard cannot resolve: a command substitution
-# (``$(which tar)``, `` `which tar` ``) or a variable (``$TAR``). Such a command is read
-# as a possible tar, so a forcing option on a moving archive is still reported.
-_UNRESOLVED_PROGRAM = "<unresolved>"
-
-
-def _command_name_position(argv: list[str]) -> int | None:
-    """Index of the word the shell runs as the command, or ``None`` when there is none.
-
-    Review on 2026-09-20: ``echo tar -xzf /tmp/moving`` was reported as a forced
-    extraction because every word whose basename was ``tar`` counted as an invocation.
-    A program is run only from the command position. Skipped to reach it: the
-    Dockerfile ``RUN`` instruction and its ``--flag`` options, leading assignments, and
-    the wrappers in ``_TRANSPARENT_WRAPPERS`` with their own ``-flag`` options.
-
-    Adversarial pass on 2026-09-20: a wrapper option with a separate argument
-    (``sudo -u root tar …``, ``nice -n 10 tar …``) left ``root`` or ``10`` as the
-    command and the tar behind it unseen. The guard does not know each wrapper's option
-    arity, so behind a wrapper it errs closed: when the word at the command position is
-    not a program the guard knows, a known program anywhere after it is the command.
-    Without a wrapper the rule stays strict, so ``echo root tar -xzf …`` is still data.
-    """
-    i = 0
-    if argv and argv[0].upper() == "RUN":
-        i = 1
-        while i < len(argv) and argv[i].startswith("--"):
-            i += 1
-    wrapped = False
-    while i < len(argv):
-        word = argv[i]
-        if _ASSIGNMENT.match(word):
-            i += 1
-        elif _basename(word) in _TRANSPARENT_WRAPPERS:
-            wrapped = True
-            i += 1
-            while i < len(argv) and argv[i].startswith("-"):
-                i += 1
-        else:
-            break
-    if i >= len(argv):
-        return None
-    if wrapped and _basename(argv[i]) not in _KNOWN_PROGRAMS:
-        for position in range(i + 1, len(argv)):
-            if _basename(argv[position]) in _KNOWN_PROGRAMS:
-                return position
-    return i
-
-
 def _named_commands(command: str):
-    """``(command name, its arguments)`` for every simple command the shell would run.
+    """``(name, arguments)`` for each tar, wget or curl the RUN's shell runs (item 5).
 
-    A ``sh -c '…'`` string is a command line of its own and is read as one, so the
-    tar or download inside it is seen exactly as if it stood in the RUN directly.
+    Raises :class:`_Unreadable` for a form outside the contract.
     """
-    for argv in _simple_commands(command):
-        position = _command_name_position(argv)
-        if position is None:
-            continue
-        word = argv[position]
+    command = _RUN_PREFIX.sub("", command, count=1)
+    for argv, redirected in _simple_commands(command):
+        position = 0
+        while position < len(argv) and _ASSIGNMENT.match(argv[position]):
+            position += 1
+        if position == len(argv):
+            continue  # assignments only
+        word, arguments = argv[position], argv[position + 1 :]
         name = _basename(word)
-        if word.startswith("$") or "$(" in word or "`" in word:
-            name = _UNRESOLVED_PROGRAM
-        rest = argv[position + 1 :]
-        if name in _SHELLS and "-c" in rest:
-            script = rest[rest.index("-c") + 1 :]
-            if script:
-                yield from _named_commands(script[0])
+        if "$" in word:
+            raise _Unreadable(f"the command {word!r} is a variable")
+        if word in _RESERVED_WORDS:
+            raise _Unreadable(f"the shell keyword {word!r}")
+        if name in _RUNS_A_SCRIPT:
+            raise _Unreadable(f"{name} runs a script the guard does not read")
+        if name in ("tar", "wget", "curl"):
+            if position:
+                raise _Unreadable(f"an assignment in front of {name}")
+            if name != "tar" and redirected:
+                raise _Unreadable(f"{name} with a redirection")
+            if name != "tar" and any("$" in argument for argument in arguments):
+                raise _Unreadable(f"{name} with a variable argument")
+            yield name, arguments
             continue
-        yield name, rest
+        if name not in _PRINTS_OR_INSTALLS and any(
+            _basename(argument) in _PROGRAM_WORDS for argument in arguments
+        ):
+            raise _Unreadable(f"{name} may run a program it is given")
+        if any(_MOVING_DOWNLOAD.search(argument) for argument in arguments):
+            raise _Unreadable(f"a moving URL given to {name}")
 
 
 def _tar_invocations(command: str) -> list:
-    """Every tar invocation in ``command``: one per simple command whose command is tar."""
+    """Every tar invocation in ``command`` as ``(forcing options, archive)``."""
     return [
         _parse_tar_span(arguments)
         for name, arguments in _named_commands(command)
-        if name in ("tar", _UNRESOLVED_PROGRAM)
+        if name == "tar"
     ]
 
 
@@ -572,8 +658,6 @@ class _ForcedDecompressorScanner:
 
 
 _FORCED_DECOMPRESSOR = _ForcedDecompressorScanner()
-# A download URL that names no version, so its payload can change under us.
-_MOVING_DOWNLOAD = re.compile(r"download\.mozilla\.org|[?&]product=[^\s\"']*latest")
 
 
 def _templates():
@@ -582,8 +666,8 @@ def _templates():
     return sorted(found)
 
 
-def _commands(text: str) -> list:
-    """``text`` split into shell commands, with backslash continuations joined.
+def _commands(text: str) -> list[str]:
+    """``text`` as Dockerfile instructions: comment lines dropped, continuations joined.
 
     The pairing matters and is why this is not a whole-file scan. Forcing a
     decompressor is only wrong on a MOVING download: these templates also fetch
@@ -592,8 +676,9 @@ def _commands(text: str) -> list:
     that legitimate line as soon as the decompressor check was widened past bzip2, so
     the check has to see which download each extraction belongs to.
     """
-    joined = re.sub(r"\\\s*\n\s*", " ", text)
-    return [line for line in joined.splitlines() if line.strip()]
+    lines = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+    joined = re.sub(r"[ \t]*\\[ \t]*\n\s*", " ", "\n".join(lines))
+    return [line.strip() for line in joined.splitlines() if line.strip()]
 
 
 def _parse_download(name: str, span: list[str]) -> _Download:
@@ -708,31 +793,57 @@ def _download_invocations(command: str) -> list:
     ]
 
 
-def _moving_saved_paths(command: str) -> set:
-    """Paths saved by the MOVING transfers of ``command``, and by no other download."""
-    return {
-        path
-        for download in _download_invocations(command)
-        for path, moving in download.writes.items()
-        if moving
-    }
-
-
-def _invocations(command: str):
+def _invocations(command: str) -> list:
     """Every tar and download invocation of ``command``, in the order the shell runs them.
 
     A tar invocation is its ``(forcing options, archive)`` pair; a download is a
-    :class:`_Download`.
+    :class:`_Download`. Raises :class:`_Unreadable` before returning anything, so a
+    command outside the contract contributes nothing.
     """
-    for name, arguments in _named_commands(command):
-        if name in ("tar", _UNRESOLVED_PROGRAM):
-            yield _parse_tar_span(arguments)
-        elif name in _DOWNLOAD_OUTPUT_OPTIONS:
-            yield _parse_download(name, arguments)
+    return [
+        (
+            _parse_tar_span(arguments)
+            if name == "tar"
+            else _parse_download(name, arguments)
+        )
+        for name, arguments in _named_commands(command)
+    ]
+
+
+def _instruction_invocations(instruction: str, keyword: str) -> list:
+    """The invocations an instruction runs (items 2 and 3); ``[]`` when it runs none."""
+    if keyword == "SHELL":
+        raise _Unreadable("SHELL changes the shell RUN uses")
+    if keyword == "ADD" and "://" in instruction:
+        raise _Unreadable("ADD fetches a URL")
+    if keyword in ("ENV", "ARG") and (
+        _MOVING_DOWNLOAD.search(instruction) or _TAR_ENVIRONMENT.search(instruction)
+    ):
+        raise _Unreadable(f"{keyword} sets a value the guard does not follow")
+    if keyword != "RUN":
+        return []
+    command = _RUN_PREFIX.sub("", instruction, count=1)
+    if command.startswith("["):
+        raise _Unreadable("exec-form RUN")
+    try:
+        # Relevance is decided on the words the shell reads, so ``t\ar`` and
+        # ``t'a'r`` name tar (PR #626). A RUN that cannot be split into words is read,
+        # and so fails closed.
+        words = [command] + _shell_tokens(command)
+    except ValueError as exc:
+        raise _Unreadable(str(exc)) from exc
+    if not any(_READ_RUN.search(w) or _MOVING_DOWNLOAD.search(w) for w in words):
+        return []
+    return _invocations(command)
+
+
+def _normalised(path: str) -> str:
+    return posixpath.normpath(path) if path else path
 
 
 def _archive_matches_saved(archive, saved: set) -> bool:
-    """True when the archive reference IS a saved path, by full path or by basename.
+    """True when the archive IS a saved path: equal once normalised, or, when either is
+    relative, equal by basename (#519 row 11: ``cd /tmp && wget -O a …``).
 
     Whole-value comparison, not containment. Review on 2026-09-19: ``path in token``
     made the saved ``/tmp/a`` match a pinned ``/tmp/archive-v1.tar.gz``, and the
@@ -740,31 +851,30 @@ def _archive_matches_saved(archive, saved: set) -> bool:
     """
     if archive is None:
         return False
-    reference = archive.strip("\"'")
+    reference = _normalised(archive)
     for path in saved:
         if reference == path:
             return True
-        if "/" not in reference and reference == path.rsplit("/", 1)[-1]:
+        relative = not reference.startswith("/") or not path.startswith("/")
+        if relative and posixpath.basename(reference) == posixpath.basename(path):
             return True
     return False
 
 
 def _archive_is_unresolvable(archive) -> bool:
-    """True when the guard cannot tell which file this tar reads.
-
-    Only the archive reference is consulted. Review on 2026-09-19: a ``$`` anywhere in
-    the invocation counted, so ``tar -xzf pinned-v1.tar.gz -C "$DEST"`` was called
-    unresolvable because its extraction DIRECTORY was a variable. No ``-f`` at all
-    means tar reads stdin or its default device, which is equally unresolvable.
-    """
-    if archive is None:
-        return True
-    reference = archive.strip("\"'")
-    return "$" in reference or reference in _STDOUT_SINKS
+    """True when the guard cannot tell which file this tar reads: no ``-f`` (stdin or
+    the default device) or a standard stream."""
+    return archive is None or archive in _STDOUT_SINKS
 
 
-def _offenders(text: str) -> list:
-    """Forcing options on tar invocations that extract a moving download.
+def _unparseable(instruction: str, reason: str) -> str:
+    return f"unparseable command {instruction!r}: {reason} — {_NEEDS_REVIEW}"
+
+
+def _offenders(text: str, reviewed=()) -> list:
+    """Forcing options on tar invocations that extract a moving download, and an
+    ``unparseable … needs review`` entry for each instruction outside the contract
+    that is not in ``reviewed``.
 
     Provenance follows Dockerfile order: each download's writes are recorded as the
     shell reaches them, a later write to the same path replaces the earlier one, and a
@@ -774,27 +884,46 @@ def _offenders(text: str) -> list:
 
     Three branches decide each forcing invocation:
     1. Its archive is a path a moving download had written by then — indict.
-    2. The invocation shares a command with a moving download and the guard
-       cannot resolve which file it reads — indict conservatively.
+    2. The invocation shares a RUN with a moving download and the guard cannot
+       resolve which file it reads — indict conservatively.
     3. Otherwise — clean.
     """
-    result = []
-    commands = []
-    for command in _commands(text):
+    result: list[str] = []
+    provenance: dict = {}  # normalised saved path -> True while it holds a moving file
+    stages = 0
+    for instruction in _commands(text):
+        if "<<" in instruction:
+            result.append(
+                _unparseable(
+                    instruction, "a heredoc or here-string; nothing after it is read"
+                )
+            )
+            break
+        keyword = instruction.split(None, 1)[0].upper()
+        stages += keyword == "FROM"
+        if instruction in reviewed:
+            continue
         try:
-            _shell_tokens(command)
-        except ValueError as exc:
-            # Fail closed: a command the guard cannot read is reported, never passed.
-            result.append(f"unparseable command {command.strip()!r}: {exc}")
-        else:
-            commands.append(command)
-    provenance: dict = {}  # saved path -> True while a moving download's file is there
-    for command in commands:
-        is_moving = bool(_MOVING_DOWNLOAD.search(command))
-        command_saved = _moving_saved_paths(command) if is_moving else set()
-        for invocation in _invocations(command):
+            if keyword not in _DOCKERFILE_KEYWORDS:
+                raise _Unreadable("not a Dockerfile instruction")
+            if keyword == "FROM" and stages > 1:
+                raise _Unreadable("a second FROM starts another build stage")
+            invocations = _instruction_invocations(instruction, keyword)
+        except _Unreadable as exc:
+            result.append(_unparseable(instruction, str(exc)))
+            continue
+        downloads = [found for found in invocations if isinstance(found, _Download)]
+        is_moving = any(_MOVING_DOWNLOAD.search(found.text) for found in downloads)
+        command_saved = {
+            path
+            for found in downloads
+            for path, moving in found.writes.items()
+            if moving
+        }
+        for invocation in invocations:
             if isinstance(invocation, _Download):
-                provenance.update(invocation.writes)
+                for path, moving in invocation.writes.items():
+                    provenance[_normalised(path)] = moving
                 continue
             forcing, archive = invocation
             if not forcing:
@@ -802,8 +931,7 @@ def _offenders(text: str) -> list:
             moving_paths = {path for path, moving in provenance.items() if moving}
             if _archive_matches_saved(archive, moving_paths):
                 result.extend(forcing)
-                continue
-            if is_moving and (not command_saved or _archive_is_unresolvable(archive)):
+            elif is_moving and (not command_saved or _archive_is_unresolvable(archive)):
                 result.extend(forcing)
     return result
 
@@ -815,7 +943,7 @@ def test_a_moving_download_is_not_extracted_with_a_forced_decompressor(template)
     if not _MOVING_DOWNLOAD.search(content):
         pytest.skip(f"{template.name} fetches no versionless archive")
 
-    forced = _offenders(content)
+    forced = _offenders(content, reviewed=_REVIEWED_UNPARSEABLE.get(template.name, ()))
     assert not forced, (
         f"{template.name} extracts a versionless download with {forced}, which forces "
         f"a compression program. The endpoint carries no version, so its payload can "
@@ -1483,7 +1611,8 @@ class TestTheScannerReadsTheCommandAsTheShellDoes:
         ],
     )
     def test_every_way_of_running_tar_is_still_a_command_position(self, spelling):
-        """Narrowing to the command position must keep every spelling that RUNS tar."""
+        """Every spelling that RUNS tar is reported: as a forcing option when the
+        contract reads it, as ``unparseable … needs review`` when it does not (D31)."""
         text = f"RUN wget -O /tmp/moving {self._MOVING}\n" f"RUN {spelling}\n"
         assert _offenders(text), (
             f"{spelling!r} runs tar on the saved moving download — after a control "
@@ -1605,6 +1734,198 @@ class TestProvenanceFollowsDockerfileOrder:
         )
 
 
+_M = (
+    "https://download.mozilla.org/?product=firefox-esr-latest-ssl&os=linux64&lang=en-US"
+)
+_P = "https://example.invalid/pinned-1.0.tar.gz"
+_SAVE_MOVING = f'RUN wget -O /tmp/a "{_M}"\n'
+
+
+def _is_unparseable(entry: str) -> bool:
+    return entry.startswith("unparseable command ") and entry.endswith(_NEEDS_REVIEW)
+
+
+class TestTheGuardReadsOnlyItsContract:
+    """Issue #519, operator decision of 2026-10-09 (design D31): narrow and fail closed.
+
+    The forms the module docstring names are read and judged. Every other form is
+    reported as ``unparseable … needs review`` and not read further, unless a reviewed
+    instruction is listed in ``_REVIEWED_UNPARSEABLE``. Each review round on PR #507 and
+    PR #626 found a new shell form the parser read wrongly; these tests pin the contract
+    instead of the next form.
+    """
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            # #519 row 1: a URL in a comment is not a word.
+            ("RUN tar -xzf pinned-v1.tar.gz # https://download.mozilla.org/\n", []),
+            # #519 row 5: a traditional option word.
+            (_SAVE_MOVING + "RUN tar xzf /tmp/a\n", ["xzf"]),
+            # PR #626: dash options after a traditional word are still read.
+            (_SAVE_MOVING + "RUN tar xf /tmp/a -z\n", ["-z"]),
+            # PR #626: d (compare) is a read mode.
+            (_SAVE_MOVING + "RUN tar dzf /tmp/a\n", ["dzf"]),
+            # #519 row 2 and PR #626: write modes are not extractions.
+            (_SAVE_MOVING + "RUN tar -czf /tmp/a /opt/data\n", []),
+            (_SAVE_MOVING + "RUN tar fcz /tmp/a /opt\n", []),
+            (_SAVE_MOVING + "RUN tar --delete -zf /tmp/a member\n", []),
+            # #519 row 11: a relative save matches an absolute read by basename.
+            (f'RUN cd /tmp && wget -O a "{_M}" && tar -xzf /tmp/a\n', ["-xzf"]),
+            # Paths are normalised.
+            (_SAVE_MOVING + "RUN tar -xzf /tmp//./a\n", ["-xzf"]),
+            # #519 row 13: curl's --referer takes an argument.
+            (
+                f'RUN curl -o /tmp/a --referer https://example.invalid/page "{_M}"\n'
+                "RUN tar -xzf /tmp/a\n",
+                ["-xzf"],
+            ),
+            # #519 control: the last write wins, and /tmp/b was never written.
+            (
+                f'RUN wget -O /tmp/a {_P} && wget -O /tmp/a "{_M}"\n'
+                "RUN true\nRUN tar -xzf /tmp/b\n",
+                [],
+            ),
+            # One wget -O collects every URL; a moving one makes the file moving.
+            (f'RUN wget -O /tmp/a {_P} "{_M}" && tar -xzf /tmp/a\n', ["-xzf"]),
+            # A pipe from a moving download into a forcing tar.
+            (f'RUN wget -O - "{_M}" | tar -xz\n', ["-xz"]),
+            # An assignment on its own is not in front of tar.
+            (_SAVE_MOVING + "RUN V=1 && tar -xzf /tmp/a\n", ["-xzf"]),
+            # PR #626: a quoted or escaped name is still tar once the shell reads it.
+            (_SAVE_MOVING + "RUN t\\ar -xzf /tmp/a\n", ["-xzf"]),
+            (_SAVE_MOVING + "RUN t'a'r -xzf /tmp/a\n", ["-xzf"]),
+            # Package installers and echo only take the program names as data.
+            (_SAVE_MOVING + "RUN apt-get install -y wget curl tar\n", []),
+            # A RUN that names neither tar, wget nor curl is not read.
+            ('RUN if [ -n "$X" ]; then echo hi; fi\n', []),
+        ],
+    )
+    def test_a_form_inside_the_contract_is_read(self, text, expected):
+        assert _offenders(text) == expected
+
+    @pytest.mark.parametrize(
+        "instruction",
+        [
+            # #519 rows 6, 7, 8, 9, 10, 12, 14, 15, 16.
+            "RUN if test -f /tmp/a; then tar -xzf /tmp/a; fi",
+            'RUN ["tar", "-xzf", "/tmp/a"]',
+            "RUN tar --gzi -xf /tmp/a",
+            "RUN TAR_OPTIONS=-z tar -xf /tmp/a",
+            "RUN sh -ec 'tar -xzf /tmp/a'",
+            f'RUN wget -O /tmp/b "{_M}" || wget -O /tmp/b {_P}',
+            'RUN wget -O /tmp/b "$FIREFOX_URL"',
+            "RUN sh -c -- 'tar -xzf /tmp/a'",
+            "RUN tar -xzf - </tmp/a",
+            # PR #626 review threads.
+            "RUN sh -- -c -- 'tar -xzf /tmp/a'",
+            "RUN tar -xzf - </tmp/pinned </tmp/a",
+            "RUN sh -c 'tar -xzf -' </tmp/a",
+            "RUN if test -f /tmp/a; then tar -xzf -; fi </tmp/a",
+            "RUN 'then' tar -xzf /tmp/a",
+            "RUN TAPE=/tmp/pinned.tar.gz tar -xz </tmp/a",
+            "RUN for tar in -xzf /tmp/a; do :; done",
+            "RUN f() { tar -xzf /tmp/a; }",
+            "RUN bash -c 'coproc tar -xzf /tmp/a; wait'",
+            # Other forms outside the contract.
+            "RUN sudo tar -xzf /tmp/a",
+            "RUN nice -n 10 tar -xzf /tmp/a",
+            "RUN echo /tmp/a | xargs tar -xzf",
+            "RUN eval 'tar -xzf /tmp/a'",
+            "RUN (cd /tmp && tar -xzf a)",
+            "RUN { tar -xzf /tmp/a; }",
+            "RUN tar -xzf /tmp/a &",
+            "RUN $TAR -xzf /tmp/a",
+            'RUN tar -xzf "$(echo /tmp/a)"',
+            'RUN tar -xzf "$ARCHIVE"',
+            "RUN tar -zf /tmp/a",
+            "RUN tar -xtzf /tmp/a",
+            "RUN tar -xzf /tmp/a -f /tmp/b",
+            "RUN tar -xzQf /tmp/a",
+            f'RUN curl "{_M}" > /tmp/b',
+            f'RUN python3 fetch.py "{_M}"',
+            "RUN tar -xzf '/tmp/a",
+            # A RUN the guard cannot split into words may name tar inside it.
+            "RUN echo 'unterminated",
+            "tar -xzf /tmp/a",
+            'SHELL ["/bin/bash", "-c"]',
+            "ADD https://example.invalid/x.tar.gz /tmp/",
+            f'ENV FIREFOX_URL="{_M}"',
+            "ENV TAR_OPTIONS=-z",
+            "ARG TAPE=/tmp/a",
+        ],
+    )
+    def test_a_form_outside_the_contract_fails_closed(self, instruction):
+        found = _offenders(_SAVE_MOVING + instruction + "\n")
+        assert len(found) == 1 and _is_unparseable(found[0]), found
+        assert repr(instruction) in found[0]
+
+    def test_a_second_from_fails_closed(self):
+        """#519 row 4: a multi-stage build is not modelled."""
+        text = (
+            "FROM debian AS one\n"
+            + _SAVE_MOVING
+            + "FROM debian AS two\nCOPY pinned.tar.gz /tmp/a\nRUN tar -xf /tmp/a\n"
+        )
+        found = _offenders(text)
+        assert len(found) == 1 and _is_unparseable(found[0]), found
+        assert "'FROM debian AS two'" in found[0]
+
+    @pytest.mark.parametrize(
+        "opener",
+        ["RUN <<EOF", "RUN cat <<EOF > /tmp/notes", "RUN cat <<- EOF", "RUN cat <<''"],
+    )
+    def test_a_heredoc_stops_the_scan(self, opener):
+        """#519 row 3 and PR #626: the guard does not look for the end of a body."""
+        text = _SAVE_MOVING + opener + "\ntar -xzf /tmp/a\nEOF\nRUN tar -xzf /tmp/a\n"
+        found = _offenders(text)
+        assert len(found) == 1 and _is_unparseable(found[0]), found
+        assert "nothing after it is read" in found[0]
+        # A heredoc cannot be allow-listed: its body would still be unread.
+        assert _offenders(text, reviewed={opener}) == found
+
+    def test_a_reviewed_instruction_is_skipped(self):
+        instruction = "RUN if test -f /tmp/a; then tar -xf /tmp/a; fi"
+        text = _SAVE_MOVING + instruction + "\n"
+        assert len(_offenders(text)) == 1
+        assert _offenders(text, reviewed={instruction}) == []
+        # The match is exact: an edited instruction needs a new review.
+        assert len(_offenders(text, reviewed={instruction + " "})) == 1
+
+    def test_traditional_words_take_arguments_in_letter_order(self):
+        assert _parse_tar_span(["xzCf", "/opt", "/tmp/a"]) == (["xzCf"], "/tmp/a")
+        assert _parse_tar_span(["xzfC", "/tmp/a", "/opt"]) == (["xzfC"], "/tmp/a")
+        assert _parse_tar_span(["-xfc"]) == ([], "c")
+        assert _parse_tar_span(["-xf", "/tmp/a", "xzf"]) == ([], "/tmp/a")
+
+
+@pytest.mark.parametrize("template", _templates(), ids=lambda p: p.name)
+def test_every_template_is_read_or_reviewed(template):
+    """Every service template passes the contract, with its reviewed entries only."""
+    content = template.read_text(encoding="utf-8")
+    found = _offenders(content, reviewed=_REVIEWED_UNPARSEABLE.get(template.name, ()))
+    assert found == [], (
+        f"{template.name}: {found}. A forced decompressor on a moving download is the "
+        f"defect; an 'unparseable' entry is a form the guard does not read. Rewrite it "
+        f"in the forms the module docstring lists, or review it and add the exact "
+        f"instruction to _REVIEWED_UNPARSEABLE with a comment saying why it is safe."
+    )
+
+
+def test_every_reviewed_entry_is_live_and_holds_no_moving_url():
+    """A stale entry hides nothing today but would hide an edit tomorrow."""
+    templates = {path.name: path for path in _templates()}
+    for name, entries in _REVIEWED_UNPARSEABLE.items():
+        assert name in templates, f"{name} is not a service template"
+        unreviewed = _offenders(templates[name].read_text(encoding="utf-8"))
+        for entry in entries:
+            assert not _MOVING_DOWNLOAD.search(entry), (name, entry)
+            assert any(
+                found.startswith(f"unparseable command {entry!r}")
+                for found in unreviewed
+            ), f"stale allow-list entry for {name}: {entry!r}"
+
+
 class TestTheGuardErrsClosedWhereItCannotSeeTheProgram:
     """Adversarial pass on 2026-09-20 over round 3's own fixes, three findings.
 
@@ -1629,7 +1950,7 @@ class TestTheGuardErrsClosedWhereItCannotSeeTheProgram:
     def test_a_wrapper_option_with_a_separate_argument_does_not_hide_tar(
         self, spelling
     ):
-        """Behind a wrapper, a known program anywhere after its options is the command."""
+        """A command that carries ``tar`` as a word may run it, so it fails closed (D31)."""
         text = f"RUN wget -O /tmp/moving {self._MOVING}\n" f"RUN {spelling}\n"
         assert _offenders(text), (
             f"{spelling!r} runs tar; the guard does not know the wrapper's option "

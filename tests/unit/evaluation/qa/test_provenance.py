@@ -33,9 +33,12 @@ READY = {
 }
 
 
+TAGS = {"embedding_model_tags": ["Qwen/Q"], "untagged_chunk_count": 0}
+
+
 @pytest.fixture
 def db(monkeypatch):
-    state = {"pools": 0, "digest": "sha256/v2:aaa", "ready": READY}
+    state = {"pools": 0, "digest": "sha256/v2:aaa", "ready": READY, "tags": TAGS}
 
     def pool_factory(config):
         state["pools"] += 1
@@ -51,9 +54,15 @@ def db(monkeypatch):
             raise state["digest"]
         return state["digest"]
 
+    def tag_state(pool, config):
+        if isinstance(state["tags"], Exception):
+            raise state["tags"]
+        return state["tags"]
+
     monkeypatch.setattr(provenance, "direct_pool", pool_factory)
     monkeypatch.setattr(provenance, "collection_readiness", readiness)
     monkeypatch.setattr(provenance, "live_corpus_fingerprint", fingerprint)
+    monkeypatch.setattr(provenance, "live_embedding_tag_state", tag_state)
     return state
 
 
@@ -82,6 +91,8 @@ def test_without_the_search_tool_nothing_is_read(db):
     assert provenance.end_readings(CONFIG, NO_SEARCH, None) == {
         "corpus_fingerprint": None,
         "corpus_unchanged_at_endpoints": None,
+        "embedding_tags_end": None,
+        "embedding_tags_unchanged_at_endpoints": None,
     }
     assert db["pools"] == 0
 
@@ -90,6 +101,8 @@ def test_end_compares_with_the_first_reading(db):
     assert provenance.end_readings(CONFIG, SEARCH, "sha256/v2:aaa") == {
         "corpus_fingerprint": "sha256/v2:aaa",
         "corpus_unchanged_at_endpoints": True,
+        "embedding_tags_end": TAGS,
+        "embedding_tags_unchanged_at_endpoints": None,
     }
     db["digest"] = "sha256/v2:bbb"
     assert (
@@ -123,6 +136,88 @@ def test_summary_fields_copy_the_manifest():
         "corpus_unchanged_at_endpoints": True,
     }
     assert provenance.summary_fields({}) == dict.fromkeys(provenance.PROVENANCE_KEYS)
+
+
+# --- #573: end-of-run embedding tags ---
+
+IDENTITY_BEFORE = {
+    **READY,
+    "collection": "fasrc_with_HuggingFaceEmbeddings",
+    "embedding_name": "HuggingFaceEmbeddings",
+    "embedding_model": "Qwen/Q",
+}
+
+
+def test_end_records_unchanged_tag_state(db):
+    readings = provenance.end_readings(
+        CONFIG, SEARCH, "sha256/v2:aaa", identity_before=IDENTITY_BEFORE
+    )
+    assert readings["embedding_tags_end"] == TAGS
+    assert readings["embedding_tags_unchanged_at_endpoints"] is True
+
+
+def test_end_records_changed_tag_state_with_foreign_model(db):
+    db["tags"] = {"embedding_model_tags": ["other-model"], "untagged_chunk_count": 0}
+    readings = provenance.end_readings(
+        CONFIG, SEARCH, "sha256/v2:aaa", identity_before=IDENTITY_BEFORE
+    )
+    assert readings["embedding_tags_unchanged_at_endpoints"] is False
+
+
+def test_a_failed_tag_read_is_a_marker_and_unknown_tag_stability(db):
+    db["tags"] = RuntimeError("tag-fail")
+    readings = provenance.end_readings(CONFIG, SEARCH, "sha256/v2:aaa")
+    assert readings["embedding_tags_end"].startswith("<unavailable:")
+    assert "tag-fail" in readings["embedding_tags_end"]
+    assert readings["embedding_tags_unchanged_at_endpoints"] is None
+
+
+def test_summary_fields_includes_tag_keys_when_present():
+    manifest = {
+        "retrieval_identity": {"collection": "c"},
+        "corpus_fingerprint_before": "sha256/v2:a",
+        "corpus_fingerprint": "sha256/v2:a",
+        "corpus_unchanged_at_endpoints": True,
+        "embedding_tags_end": TAGS,
+        "embedding_tags_unchanged_at_endpoints": True,
+    }
+    assert provenance.summary_fields(manifest) == {
+        "retrieval_identity": {"collection": "c"},
+        "corpus_fingerprint_before": "sha256/v2:a",
+        "corpus_fingerprint": "sha256/v2:a",
+        "corpus_unchanged_at_endpoints": True,
+        "embedding_tags_end": TAGS,
+        "embedding_tags_unchanged_at_endpoints": True,
+    }
+
+
+def test_summary_fields_omits_tag_keys_when_absent():
+    manifest = {
+        "retrieval_identity": {"collection": "c"},
+        "corpus_fingerprint_before": "sha256/v2:a",
+        "corpus_fingerprint": "sha256/v2:a",
+        "corpus_unchanged_at_endpoints": True,
+    }
+    result = provenance.summary_fields(manifest)
+    assert "embedding_tags_end" not in result
+    assert "embedding_tags_unchanged_at_endpoints" not in result
+
+
+def test_carried_readings_copies_tag_keys_when_present():
+    parent = {
+        "retrieval_identity": {"collection": "c"},
+        "embedding_tags_end": TAGS,
+        "embedding_tags_unchanged_at_endpoints": True,
+    }
+    assert provenance.carried_readings(parent) == {
+        "embedding_tags_end": TAGS,
+        "embedding_tags_unchanged_at_endpoints": True,
+    }
+
+
+def test_carried_readings_returns_empty_when_no_tag_keys():
+    parent = {"retrieval_identity": {"collection": "c"}}
+    assert provenance.carried_readings(parent) == {}
 
 
 def test_the_direct_pool_uses_the_connector_parameters(monkeypatch):

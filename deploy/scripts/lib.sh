@@ -109,7 +109,18 @@ esac
 # Secrets env (PG_PASSWORD, HUIT_API_KEY, ...). Override with ARCHI_ENV_FILE;
 # defaults to ~/.secrets/archi-secrets.env so the scripts aren't tied to one user.
 ENV_FILE="${ARCHI_ENV_FILE:-$HOME/.secrets/archi-secrets.env}"
-SERVICES="chatbot"                            # auto-pulls postgres + data-manager
+# Services each deployment runs (chatbot auto-pulls postgres + data-manager). A
+# tracked row per deployment, like the config pin below, so adding a service to
+# one host is a reviewed change and never moves another host. Not read from the
+# environment or host.env, for the same reason as the pin.
+# dev's slack needs SLACK_BOT_TOKEN and SLACK_APP_TOKEN in the secrets env
+# (archi create refuses without them) and /v1 on the chat app; dev's chat auth is
+# off, so its config sets openai_compat.local_only (openspec v1-local-only).
+# Pinned by tests/unit/test_deploy_services_per_deployment.py.
+case "$DEPLOYMENT" in
+  dev) SERVICES="chatbot,slack" ;;
+  *)   SERVICES="chatbot" ;;
+esac
 # GPU(s) to reserve for the data-manager embedding pass. Default OFF — and the
 # reason is the containers, not the host: both are deliberately configured
 # `device: cpu` (the chatbot ships CPU-only torch and would crash-loop on
@@ -147,8 +158,8 @@ GPU_IDS="${GPU_IDS-}"
 # Contract pinned by test_ensure_config.sh cases 14-18.
 CONFIG_REPO="${CONFIG_REPO:-git@github.com:fasrc/archi-config.git}"
 case "$DEPLOYMENT" in
-  dev)  _pin_ref=deploy-pin-2026-09f; _pin_sha=5b5982c03347d83be5d4e8593dd46da3d7c340d2 ;;
-  claw) _pin_ref=deploy-pin-2026-09j; _pin_sha=a4c711209d73a7c75a1134ed31eaf905b5728fef ;;
+  dev)  _pin_ref=deploy-pin-2026-10g; _pin_sha=431a96f516c37de994597d776e54454ebb5410d3 ;;
+  claw) _pin_ref=deploy-pin-2026-10b; _pin_sha=4d85fc08e85770552802e42ff3d1ed2ddbf44524 ;;
   *)    _pin_ref=; _pin_sha= ;;
 esac
 # The environment override is a PAIR: one key alone never borrows the other from

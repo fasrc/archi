@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Convert the RAGAS golden-set bank into a ``qa-dataset-v2`` file for ``archi eval qa``.
+"""Convert the RAGAS golden-set bank into a ``qa-dataset-v2`` file for ``archi qa``.
 
 The #396 feature matrix wants the gold-atoms QA evaluator and the RAGAS harness
 to answer the SAME questions on the same stack, so their verdicts can be read
@@ -68,7 +68,7 @@ Usage:
     python scripts/benchmarking/ragas_bank_to_qa_dataset.py <bank.json> \\
         --no-anchors --status locked --out locked.qa-v2.json --json
 
-    archi eval qa --dataset fasrc.qa-v2.json --agent-config <agent.yaml> ...
+    archi qa --dataset fasrc.qa-v2.json --agent-config <agent.yaml> ...
 
 Exit codes: 0 converted, 1 the run cannot start (bad flags, a file that cannot be
 read, an ``--out`` that is not ``.json`` or that would overwrite an input),
@@ -298,7 +298,7 @@ def write_v2(normalized: Path, out: Path, scratch: Path) -> Tuple[int, str]:
     """Build the envelope in ``scratch``, publish it, return (items, sha256).
 
     The envelope is written and then re-read *in the scratch directory*, by the
-    same reader ``archi eval qa`` uses, from the bytes that were actually
+    same reader ``archi qa`` uses, from the bytes that were actually
     written. Only a file that reads back cleanly is published, so a bank the
     dataset reader refuses (a live row with no oracle, say) never lands at
     ``--out`` and never replaces a good dataset from an earlier run.
@@ -482,7 +482,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         description=(
             "Convert a RAGAS golden-set question bank (plus the anchor "
-            "questions) into a qa-dataset-v2 file that `archi eval qa` accepts."
+            "questions) into a qa-dataset-v2 file that `archi qa` accepts."
         )
     )
     parser.add_argument("bank", type=Path, help="RAGAS question bank (JSON array).")
