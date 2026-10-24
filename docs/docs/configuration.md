@@ -606,6 +606,15 @@ status board's ingest snapshot report the chunking values the ingest path actual
 applies — not the top-level `chunk_size`/`chunk_overlap` pair — under an
 `effective_chunking` field, derived from whichever strategy is active.
 
+The first two derive it from the configuration they hold. They say what an ingest under
+that configuration applies, not how the corpus already in the store was built. A
+benchmark run that reuses a corpus (`ingest_wall_seconds: null`) can therefore report a
+chunking that the corpus was not built with. For an ingest that recorded
+`effective_chunking`, the status board's ingest snapshot is the record of the chunking
+that ingest ran with. The board also shows the change when the running configuration
+differs from it (see [Deployment and Knowledge Base provenance](services.md#deployment-and-knowledge-base-provenance)).
+An ingest recorded before this field existed has no such record.
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `chunking.strategy` | string | `sentence` | `sentence` (hierarchical, sentence-aware), `markdown` (hierarchical, header-aware for Markdown files — see below), or `character` (legacy flat chunks) |
