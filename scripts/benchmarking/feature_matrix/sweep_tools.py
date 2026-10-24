@@ -48,6 +48,12 @@ from scripts.benchmarking.generate_prompt_sweep import (  # noqa: E402
     generate_sweep_configs,
 )
 from src.utils.benchmark_provenance import prompt_text_sha256  # noqa: E402
+from src.utils.judge_gates import (  # noqa: E402
+    IDENTITY_KEY,
+    judge_identity_of,
+    ledger_refusal,
+    pending_refusal,
+)
 
 UNAVAILABLE = "<unavailable:"
 ROUTING_HEADING = "## Category routing"
@@ -326,11 +332,20 @@ def archive(
     census: Optional[Path] = None,
     finished: Optional[str] = None,
     lock_sha256: Optional[str] = None,
+    dated_by: Optional[Path] = None,
 ) -> List[dict]:
     """Check every arm, then copy, pin and record the run in one ledger write.
 
     *lock_sha256* is the sweep lock file's sha256, the value the shell wrappers
     stamp stacks and ledger rows with; it defaults to a digest of *lock*.
+    *dated_by* is the file whose time dates the run, when it is not the
+    artifact: a judged file is copied back after its run, so its pending file
+    dates it (``judge_gates.select_result``).
+
+    The judge gates hold here too (judge offload D9): an arm with
+    ``judge_status: pending`` is refused (G11), and arms whose judge identity
+    differs from each other or from the campaign's earlier RAGAS rows are
+    refused (G12). Each row records its arm's identity.
     """
     artifact = Path(artifact)
     document = json.loads(artifact.read_text())
@@ -348,8 +363,19 @@ def archive(
         raise SweepError(
             "artifact arms do not match the sweep lock: " + "; ".join(problems)
         )
+    refusal = pending_refusal(
+        [(name, entry, artifact) for name, entry in zip(names, entries)]
+    )
+    if refusal:
+        raise SweepError(refusal)
 
     rows = json.loads(Path(ledger).read_text()) if Path(ledger).exists() else []
+    identities = [
+        (name, judge_identity_of(entry)) for name, entry in zip(names, entries)
+    ]
+    refusal = ledger_refusal(rows, identities)
+    if refusal:
+        raise SweepError(refusal)
     digest = _sha(artifact)
     if any(row.get("artifact_sha256") == digest for row in rows):
         raise SweepError(f"{artifact} is already archived")
@@ -365,7 +391,9 @@ def archive(
         raise SweepError(
             f"run {run} on {stack} is already archived; pick the next run number"
         )
-    written = dt.datetime.fromtimestamp(artifact.stat().st_mtime, tz=dt.timezone.utc)
+    written = dt.datetime.fromtimestamp(
+        Path(dated_by or artifact).stat().st_mtime, tz=dt.timezone.utc
+    )
     latest = _latest_start(rows, stack)
     if written < latest:
         raise SweepError(
@@ -436,7 +464,7 @@ def archive(
 
     out_rows: List[dict] = []
     map_digest = census_report.get("category_map_digest") if census_report else None
-    for name, entry in zip(names, entries):
+    for (name, entry), (_, judge_identity) in zip(zip(names, entries), identities):
         identity = entry.get("retrieval_identity")
         identity = identity if isinstance(identity, dict) else {}
         row = {
@@ -459,6 +487,7 @@ def archive(
             ),
             "category_map_file": entry.get("category_map_file"),
             "lock_sha256": lock_sha256 or lock_sha(lock),
+            IDENTITY_KEY: judge_identity,
         }
         if census_report is not None:
             first = next(
@@ -539,6 +568,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         ar.add_argument(flag, required=True)
     ar.add_argument("--census")
     ar.add_argument("--finished")
+    ar.add_argument("--dated-by")
     args = parser.parse_args(argv)
     try:
         if args.cmd == "lock":
@@ -584,6 +614,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 census=Path(args.census) if args.census else None,
                 finished=args.finished,
                 lock_sha256=_sha(Path(args.lock)),
+                dated_by=Path(args.dated_by) if args.dated_by else None,
             )
             print(f"archived run {args.run}: {len(rows)} arm rows")
     except SweepError as exc:

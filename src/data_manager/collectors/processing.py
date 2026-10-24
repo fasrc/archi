@@ -826,6 +826,13 @@ def _drop_source_markers(soup) -> None:
             tag.attrs.pop(name, None)
 
 
+def _drop_empty_headings(soup: BeautifulSoup) -> None:
+    """Remove ``h1``-``h6`` tags with no text and no ``img``/``code`` descendant (issue #400)."""
+    for heading in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+        if heading.get_text(strip=True) == "" and heading.find(["img", "code"]) is None:
+            heading.decompose()
+
+
 def _promote_block_code(html: str) -> str:
     """Promote bare multi-line ``<code>`` elements to ``<pre><code>`` blocks (issue #399).
 
@@ -839,9 +846,11 @@ def _promote_block_code(html: str) -> str:
     marked with ``_PROMOTED_ATTR`` so ``_promoted_fence_language`` labels only it.
     Source marker attributes are stripped before promotion so that only this module
     sets them (issue #713).
+    Also calls ``_drop_empty_headings`` on the freshly parsed soup (issue #400).
     """
     soup = BeautifulSoup(html, "html.parser")
     _drop_source_markers(soup)
+    _drop_empty_headings(soup)
     promoted = []
     for code in soup.find_all("code"):
         if code.find_parent("pre") is not None:

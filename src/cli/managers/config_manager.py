@@ -13,6 +13,7 @@ from src.cli.source_registry import (
     source_registry,
     split_prefixed_entry,
 )
+from src.cli.utils.torch_threads import configured_torch_threads
 from src.utils.evaluations_config import (
     resolve_agent_config_source,
     validate_evaluations_config,
@@ -182,6 +183,7 @@ class ConfigurationManager:
             self._validate_agent_specs_config(config, services)
             self._validate_benchmarking_config(config, services)
             self._validate_source_fields(config, sources)
+            configured_torch_threads(config)
 
         self._collect_embedding_metadata()
         self._collect_input_lists()

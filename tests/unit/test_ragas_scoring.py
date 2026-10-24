@@ -383,7 +383,7 @@ def test_build_uds_judge_llm_takes_model_then_socket_and_builds_a_chat_openai(
 
     monkeypatch.setenv("VLLM_API_KEY", "k-test")
     with _unix_chat_server() as (sock_path, requests):
-        llm = build_uds_judge_llm("llama", sock_path, max_retries=0)
+        llm = build_uds_judge_llm("llama", sock_path, timeout=10, max_retries=0)
         reply = llm.invoke("ping")
 
     assert isinstance(llm, ChatOpenAI)
@@ -400,7 +400,7 @@ def test_build_uds_judge_llm_sends_async_calls_through_the_socket(monkeypatch):
 
     monkeypatch.setenv("VLLM_API_KEY", "k-test")
     with _unix_chat_server() as (sock_path, requests):
-        llm = build_uds_judge_llm("llama", sock_path, max_retries=0)
+        llm = build_uds_judge_llm("llama", sock_path, timeout=10, max_retries=0)
         reply = asyncio.run(asyncio.wait_for(llm.ainvoke("ping"), timeout=10))
 
     assert reply.content == "ok"
@@ -414,7 +414,7 @@ def test_build_uds_judge_llm_reads_the_key_from_the_named_variable(monkeypatch):
     monkeypatch.setenv("JUDGE_KEY", "k-named")
     with _unix_chat_server() as (sock_path, requests):
         llm = build_uds_judge_llm(
-            "llama", sock_path, api_key_env="JUDGE_KEY", max_retries=0
+            "llama", sock_path, api_key_env="JUDGE_KEY", timeout=10, max_retries=0
         )
         llm.invoke("ping")
 
@@ -462,3 +462,16 @@ def test_build_uds_judge_llm_applies_the_timeout_to_each_request(monkeypatch):
         elapsed = time.monotonic() - started
 
     assert elapsed < 2.5
+
+
+def test_build_uds_judge_llm_defaults_are_the_production_values(monkeypatch):
+    """#739 (operator decision 2026-10-23): with no bound given, each judge
+    request may take 300 seconds (the inline judge timeout) and the openai client
+    retries twice. Unit tests pass their own bound."""
+    monkeypatch.setenv("VLLM_API_KEY", "k-test")
+
+    llm = build_uds_judge_llm("llama", "/nonexistent/vllm.sock")
+
+    assert llm.root_client.timeout == 300
+    assert llm.root_async_client.timeout == 300
+    assert llm.max_retries == 2

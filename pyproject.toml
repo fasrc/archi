@@ -97,7 +97,10 @@ dependencies = [
     "flask==3.0.3",
     "flask-login==0.6.3",
     "flask-session==0.8.0",
-    "flask-cors==5.0.0"
+    "flask-cors==5.0.0",
+    # issue #723: the chat service's WSGI server; not in requirements-base.txt,
+    # so the chat image gets it from `pip install .`
+    "gunicorn==26.2.0"
 ]
 
 [project.scripts]

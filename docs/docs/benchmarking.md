@@ -130,6 +130,33 @@ services:
 |-----|-------------|
 | `embedding_model` | `OpenAI` or `HuggingFace` |
 
+### Deferred judge (`judge_mode`)
+
+A run can skip the RAGAS judge and write each arm's judge input to disk, so that a later job scores it offline (judge offload, #729). Three optional keys in `mode_settings.ragas_settings` control this. A config that sets none of them renders and runs as before.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `judge_mode` | `inline` | `inline` scores each arm with the judge during the run. `deferred` writes a judge bundle for each arm and makes no judge call. Any other value, including `false` and `Deferred`, stops the run before the first question |
+| `judge_bundle_dir` | `judge_bundles` | Folder for the bundles, relative to `out_dir`. It must be a relative path with no `..` part, so that the bundles stay in the output folder that the container mounts |
+| `evaluator_model_revision` | — | Revision of the judge model (`evaluator_model`) that a deferred bundle asks for. Required when `judge_mode` is `deferred` |
+
+```yaml
+      ragas_settings:
+        judge_mode: deferred
+        judge_bundle_dir: judge_bundles  # the default
+        evaluator_model: <judge model id>
+        evaluator_model_revision: <judge model revision>
+```
+
+The run checks these keys once, before the ingest wait and before the first question. It stops, and the error names the configs, when:
+
+- the configs of one sweep do not all have the same `judge_mode` (an absent key counts as `inline`);
+- a deferred config has an empty `evaluator_model` or `evaluator_model_revision`;
+- the configs of a deferred sweep do not resolve to the same `judge_bundle_dir`;
+- a deferred run cannot compute its code digest or its package digest (`pip freeze`). Without them, no scorer can match the bundles.
+
+A deferred arm writes `<out_dir>/<judge_bundle_dir>/<result basename>-arm<N>/` (`N` starts at 0) with `rows.jsonl`, `manifest.json` and an empty `BUNDLE_COMPLETE`. An arm with no scorable answer still writes a bundle, with no rows. In the result JSON, the arm has `judge_status: pending`, `judge_bundle` (the folder name and the SHA-256 of `rows.jsonl`), and no RAGAS aggregates, so the leaderboard shows its metrics as missing. After the result JSON is written, the run creates `<result basename>.RESULT_COMPLETE` in `out_dir`. `python scripts/benchmarking/judge/publish.py --out-dir <out_dir> --queue <queue>` copies complete bundles and complete pending results to the queue folder. A Slurm GPU job scores the bundles, and a merge writes `<result basename>.judged.json`: see [Offloaded RAGAS judge on Slurm](#offloaded-ragas-judge-on-slurm). Until the judged file exists, the result has no RAGAS scores, and `compare_runs.py` and the campaign archiver refuse it (gate G11).
+
 ---
 
 ## Running
@@ -272,6 +299,193 @@ To analyze results, see `scripts/benchmarking/` which contains:
 
 ---
 
+## Offloaded RAGAS judge on Slurm
+
+A `judge_mode: deferred` run (see [Deferred judge](#deferred-judge-judge_mode)) writes a judge bundle for each arm and calls no judge. A FASRC Slurm GPU job then scores the bundles with an open-weights judge on vLLM, and a CPU job merges the scores into one judged result file for each run. These are the operator steps. The design is the OpenSpec change `offload-ragas-judge-to-slurm` (archived under `openspec/changes/archive/`), and the first cluster run is tracked in [#737](https://github.com/fasrc/archi/issues/737).
+
+The scripts are in `scripts/benchmarking/slurm/`, and each one has its settings at the top. The defaults are the design's first option: the `gpu_h200` partition, 2 GPUs, `bf16`, and the judge home `$HOME/archi-judge` with the queue folder `$HOME/archi-judge/queue`. The operator confirms them on [#729](https://github.com/fasrc/archi/issues/729). These environment variables change them for every script:
+
+| Variable | Default | What it is |
+|---|---|---|
+| `JUDGE_HOME` | `$HOME/archi-judge` | The judge home: `judge.env`, `archi-scorer.sif` and `scorer-identity.json` |
+| `JUDGE_QUEUE` | `$JUDGE_HOME/queue` | The queue folder. The dev host publishes to it and the jobs read it, so it must be on shared storage |
+| `JUDGE_LAB` or `JUDGE_SCRATCH` | — | Lab storage for the judge weights (about 140 GB), the Apptainer cache and the vLLM compile cache: `/n/netscratch/<lab>/Lab/$USER/archi-judge`, or a folder of your own. The judge job refuses to start without one of them |
+| `JUDGE_SECRETS` | `$JUDGE_HOME/secrets.env` | `KEY=VALUE` credentials the scorer needs, for example `OPENAI_API_KEY` for OpenAI embeddings. The file must have mode `0600`. The jobs pass each key into the containers as `APPTAINERENV_<KEY>`, because `--cleanenv` passes no other host variable |
+| `JUDGE_PYTHON` | `python3` | The Python on the login node, 3.8 or later (for example after `module load python`). The submitter uses the standard library only |
+| `JUDGE_VLLM_IMAGE` | `<lab storage>/vllm-openai.sif` | The vLLM image of the judge job, a local SIF file. A `docker://` tag is refused, because a tag can move to other bytes |
+
+### 1. Get the vLLM image and the judge weights
+
+Pull the vLLM image at a pinned tag to a SIF file in lab storage, and download the judge weights at their pinned revision, on a node with internet access. The judge job sets `HF_HUB_OFFLINE=1`, so it never downloads weights itself. For a gated model (Llama 3.3), accept its license on Hugging Face and give your token in `HF_TOKEN`:
+
+```bash
+LAB_DIR=/n/netscratch/<lab>/Lab/$USER/archi-judge
+apptainer pull $LAB_DIR/vllm-openai.sif docker://vllm/vllm-openai:<pinned tag>
+apptainer exec --env HF_HOME=$LAB_DIR/hf $LAB_DIR/vllm-openai.sif \
+  hf download <judge model id> --revision <judge model revision>
+```
+
+Each judge job hashes the SIF file it serves the judge from, and the judge identity records that SHA-256 as `server_image_digest`. A new SIF file is therefore a new judge identity.
+
+### 2. Write judge.env
+
+`$JUDGE_HOME/judge.env` names the judge of every job, one `KEY=VALUE` per line, with no shell expansion. A comment must be on its own line: text after a value is part of the value. The model id and the revision must equal the run's `evaluator_model` and `evaluator_model_revision`, or no bundle matches the job:
+
+```bash
+JUDGE_MODEL_ID=meta-llama/Llama-3.3-70B-Instruct
+JUDGE_MODEL_REVISION=<pinned revision>
+# bf16, fp16 or fp8
+JUDGE_PRECISION=bf16
+# The time budget's rate before the job has scored a row
+JUDGE_BOOTSTRAP_ROWS_PER_MINUTE=20
+# Optional: the vllm serve arguments that change output. The job refuses the flags
+# it sets itself (--model, --revision, --served-model-name, --dtype, --quantization,
+# --tensor-parallel-size), and --uds, --host, --port and --api-key.
+JUDGE_SERVER_ARGS=--max-model-len 16384
+# Optional: the SHA-256 of vllm-openai.sif (sha256sum); the job refuses another image
+JUDGE_IMAGE_DIGEST=sha256:<sha256 of vllm-openai.sif>
+```
+
+The precision, the vLLM image digest and the server arguments are part of each arm's `ragas_judge_identity_effective`, so a change of any of them starts a new baseline (gate G12). Set the bootstrap rate low, and correct it from the rows per minute of the first job.
+
+### 3. Build the scorer image
+
+The scorer runs in an Apptainer image built from the benchmark image that ran the deferred run. A bundle matches a scorer only when the run's code digest and package digest equal the scorer's, so build the scorer image from that benchmark image, and build it again after each change of archi's `src`. On the dev host, save the benchmark image and copy the file to the cluster:
+
+```bash
+docker save <benchmarking image>:<tag> -o archi-benchmark.tar
+```
+
+On the cluster:
+
+```bash
+bash scripts/benchmarking/slurm/build_scorer_image.sh --dry-run archi-benchmark.tar $HOME/archi-judge
+bash scripts/benchmarking/slurm/build_scorer_image.sh archi-benchmark.tar $HOME/archi-judge
+```
+
+The script builds `archi-scorer.sif` from `scripts/benchmarking/slurm/archi-scorer.def`, which adds only the three judge scripts to the benchmark image. It then writes `scorer-identity.json` beside the image with `score.py write-identity`: the code digest of the image's `src`, the package digest, the ragas version and the image digest (the SHA-256 of the SIF file). Each judge job hashes the image it runs and compares the digest with the sidecar's, so an image that the sidecar does not describe gives `SCORER_STALE`. A judge job reads the image and the sidecar once, when it starts, so a rebuild while it runs does not change them.
+
+### 4. Make a deferred run and publish it
+
+Set `judge_mode: deferred` and the judge revision in the run's config (see [Deferred judge](#deferred-judge-judge_mode)), and run the benchmark. Then publish the run's bundles to the queue:
+
+```bash
+python scripts/benchmarking/judge/publish.py --out-dir <out_dir> --queue <queue>
+```
+
+The publish step is idempotent, so a timer can run it every few minutes. The `archi-judge-publish.timer` units are an operator step in `fasrc/archi-config` ([#737](https://github.com/fasrc/archi/issues/737)).
+
+### 5. Submit the judge job
+
+`scripts/benchmarking/slurm/judge_submit.sh` submits one `archi-judge` job when a matching bundle is READY and no judge job exists, and one `archi-judge-merge` job when a result has all its arms SCORED and not MERGED. Every judge job has `--dependency=singleton`, so Slurm runs at most one at a time. The merge job runs in the scorer image and merges only the results of the image's own code, because it rebuilds the leaderboard and the A/B comparisons with that code: a result of an older run waits until a scorer image of its code is configured again. Run it from `scrontab`, every 15 minutes (`scrontab -e`):
+
+```bash
+#SCRON -p shared
+#SCRON -t 00:10:00
+*/15 * * * * JUDGE_LAB=<lab> /path/to/archi/scripts/benchmarking/slurm/judge_submit.sh
+```
+
+A person can run one tick by hand, and print the commands of each job without starting it:
+
+```bash
+bash scripts/benchmarking/slurm/judge_submit.sh
+bash scripts/benchmarking/slurm/archi_judge.sbatch --dry-run
+bash scripts/benchmarking/slurm/judge_merge.sbatch --dry-run
+```
+
+The judge job copies `judge.env` and pins its images once at its start, so an edit while it runs reaches neither the server nor the judge identity. The scorer image has no Slurm client, so the job also writes a snapshot of `squeue` and `sacct` for the claims and of its own time limit, and the scorer reads it to take over stale claims and to keep its time budget. The judge job checks its scorer image against `scorer-identity.json` and counts its work before it loads a model. With no work it exits in seconds. Then it starts vLLM on a Unix socket in a private folder, with a random per-job API key in the environment and no TCP listener, scores the bundles, and submits the merge job after itself (`--dependency=afterok`). Its log is `archi-judge-<job id>.out` in the repo folder.
+
+### 6. Read the queue
+
+```bash
+bash scripts/benchmarking/slurm/judge_submit.sh --status
+```
+
+prints one line for each READY bundle that has no `SCORED`, and then the records:
+
+| Line | What it means | What to do |
+|---|---|---|
+| `available` | A job can claim it | Nothing: the next tick submits a job |
+| `claimed by job <id>` | A job holds the claim | Nothing |
+| `stale claim of job <id>` | The job ended with no terminal marker | Nothing: the next job takes the claim over and resumes from the checkpoint |
+| `not matched: waits for judge <id>@<revision>` | `judge.env` names another judge | Score it with a job for that judge, or leave it |
+| `not matched: waits for a scorer with code digest ...` | No scorer image of the run's code | Build the scorer image from the benchmark image of the run (step 3) |
+| `FAILED: <reason>` | A problem of the bundle itself | Read the reason. The merge refuses that result |
+| `; READY for <n> hours` | READY for more than 24 hours | Check `scrontab -l` and `squeue -u $USER` |
+| `INCOMPATIBLE.<token>: ...` | A job found that its live scorer differs from the bundle | Build a scorer image that matches (step 3) |
+| `SCORER_STALE.<token>: ...` | `scorer-identity.json` does not describe the scorer image | Build the scorer image again (step 3) |
+
+`INCOMPATIBLE` and `SCORER_STALE` are not terminal: a new scorer image has a new identity digest, so the bundles become available again with no clean-up. In a bundle folder, `READY`, `claim.<gen>`, `scores.<identity digest>.partial.jsonl`, `judge_scores.json`, `SCORED` or `FAILED`, and `MERGED` show its progress. The merge writes `<queue>/results/<basename>.judged.json`, and a judged file is complete only when every arm of its result has `MERGED`.
+
+### 7. Copy the judged file into bench_out/
+
+When every arm of a result has `MERGED`, the publish step copies `<basename>.judged.json` back into the run's output folder, beside the pending `<basename>.json`. Copy the judged file into `bench_out/` and commit it in [`fasrc/archi-bench-out`](https://github.com/fasrc/archi-bench-out). Compare and archive the judged file, never the pending file:
+
+- `compare_runs.py` refuses an arm with `judge_status: pending` (G11), and arms or noise replicates whose `ragas_judge_identity_effective` differ (G12). See [Interpreting benchmark results](interpreting_benchmark_results.md#4-the-gate).
+- `scripts/benchmarking/feature_matrix/archive_run.sh` takes the judged file when it is beside the pending file, refuses a pending result and names the judged file to wait for, and records each arm's judge identity in its ledger row. It refuses a run whose judge differs from the campaign's earlier RAGAS rows. A campaign whose rows were archived before the rows recorded a judge identity cannot take a judged run: start a new campaign for the new judge.
+
+---
+
+## Lynx faithfulness (offline)
+
+[PatronusAI Lynx](https://huggingface.co/PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct) is an open-weights model that checks one answer against its retrieved context. For each row it gives one verdict: PASS if the answer is faithful to the context, and FAIL if the answer adds information that is not in the context or contradicts it. Lynx reads the question, the retrieved contexts and the answer. It does not read the reference answer. The Lynx verdict is a metric next to the RAGAS metrics. It is not a RAGAS metric, and Lynx is not the RAGAS judge.
+
+Lynx scores only `judge_mode: deferred` runs (see "Deferred judge" above), because only a deferred run writes a judge bundle. The input is one arm's bundle folder, `<out_dir>/<judge_bundle_dir>/<result basename>-arm<N>/`, with `BUNDLE_COMPLETE`.
+
+### Submit the job
+
+`scripts/benchmarking/slurm/lynx_score.sbatch` runs the scorer on a FASRC GPU node, inside the `vllm/vllm-openai` image at a pinned tag, with Lynx 8B at a pinned revision. The image, the model id, the model revision, the partition, the GPU count and the time limit are settings at the top of the script. The job asks for one full A100 on the `gpu` partition for 2 hours, and it is never requeued, because the scorer cannot resume a half-scored bundle.
+
+1. Set `LYNX_LAB` to your lab folder under `/n/netscratch`. The job keeps the model, the vLLM compile cache and the image cache in `/n/netscratch/<lab>/Lab/<user>/archi-lynx`, not in the home folder. Netscratch deletes files older than 90 days, so a later job can download the model again. To use a different folder, set `LYNX_SCRATCH`.
+2. From the repo root, check the command. The dry run prints the `apptainer exec` command, and it starts nothing:
+
+    ```bash
+    bash scripts/benchmarking/slurm/lynx_score.sbatch --dry-run <bundle folder> [<out dir>]
+    ```
+
+3. From the repo root, submit the job:
+
+    ```bash
+    LYNX_LAB=<lab> sbatch scripts/benchmarking/slurm/lynx_score.sbatch <bundle folder> [<out dir>]
+    ```
+
+The out dir is the folder of the result JSON. Without the second argument, the job uses the nearest folder above the bundle folder that holds `<result basename>.json`. The job refuses a missing bundle folder, a folder with no `BUNDLE_COMPLETE` (a `READY` queue copy too), and an existing Lynx file. The job log is `archi-lynx-<job id>.out` in the repo root. The first job also converts the image into the Apptainer cache, so it takes longer than later jobs.
+
+!!! note
+    The script also holds a commented Lynx 70B variant (`gpu_h200`, two GPUs). It cannot load the model yet, because the scorer puts the model on one GPU ([#755](https://github.com/fasrc/archi/issues/755)).
+
+### Run the scorer by hand
+
+The job runs this command. You can run it yourself where `vllm` is installed, or with `--backend stub` to test the file flow with no model:
+
+```bash
+python -m scripts.benchmarking.lynx.score <bundle folder> \
+    --model PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct \
+    --revision 5523f869eb5eecb4bca417b6e6d3532e746a9664 \
+    --out-dir <folder of the result JSON> [--backend vllm|stub]
+```
+
+Give the folder of the result JSON as `--out-dir`, outside the bundle folder: `compare_runs.py` looks for the Lynx file beside the result JSON. The scorer refuses an `--out-dir` that is the bundle folder or inside it, and it never changes a file in the bundle folder. It also accepts a `READY` queue copy of a bundle. It never replaces an existing Lynx file: to score a bundle again, remove the old file. The scorer exits 0 when it wrote the file, 1 when it refused, and 2 for a usage error.
+
+### Read the output
+
+The scorer writes `<basename>-arm<N>.lynx.json`, where `<basename>` is the result basename and `N` is the arm index, from 0. For each row, the file records the verdict, the status (`scored`, `skipped_overflow` or `parse_error`), the model's reasoning and the prompt token count. A `parse_error` row also keeps the reason and the raw model output. The file also records the model id, the model revision and the SHA-256 of the bundle's `rows.jsonl`.
+
+| Count | Meaning |
+|---|---|
+| `lynx_scored` | Rows with a PASS or a FAIL verdict |
+| `lynx_pass` | Rows with a PASS verdict |
+| `lynx_skipped_overflow` | Rows whose prompt plus 600 output tokens is more than 8,000 tokens. The scorer does not send these rows to the model, and it does not cut them |
+| `lynx_parse_errors` | Rows whose model output has no strict `PASS` or `FAIL` verdict |
+
+`lynx_faithfulness` is `lynx_pass / lynx_scored`, or `null` when no row was scored. The PASS rate is over scored rows only: skipped rows and parse errors are in neither part of the rate. So always read the rate beside the four counts. A run with many long answers can have a high rate over few rows.
+
+`compare_runs.py` finds the Lynx file of arm `@N` beside its result JSON, as `<basename>-arm<N-1>.lynx.json` (`@1` reads `-arm0`). The pending result `<basename>.json` and the judged result `<basename>.judged.json` find the same file. For each arm with a Lynx file, the report shows a "Lynx faithfulness (descriptive)" block with the rate and the four counts. A file that does not match its arm shows as refused, with the reason. For each arm against the baseline, the report also gives an exact McNemar test of PASS over the questions that both arms scored, paired on question text. For the rest of the report, see [Interpreting benchmark results](interpreting_benchmark_results.md).
+
+The PASS rate is descriptive, and it gates nothing: it is not in the leaderboard, the A/B winner, the Holm set or any regression gate. A refused Lynx file does not change the exit code of `compare_runs.py`.
+
+---
+
 ## Prompt sweep
 
 A *prompt sweep* runs N agent prompts through the RAGAS harness with everything
@@ -391,14 +605,16 @@ The dump JSON gains a `leaderboard` key:
     the drift reduction ignores `null` — so without it, one judged arm beside
     an unjudged one reported that arm's worker count as shared by both.
 
-    `judge_identity` records which RAGAS judge scored the arms: the JSON form
-    of each arm's `ragas_judge_identity_effective` (provider, model, endpoint,
-    and client mode), or a sorted list when the arms disagree. A difference
-    here also **withholds ranks**, and `shared_context.warnings` gets an
-    entry that starts `judge_identity differs across swept configs:` and
-    lists the identities. Scores from two judges are not on one scale. The
-    pairwise A/B winners are withheld too, and the log line names the reason
-    "the arms were scored by different RAGAS judges". The endpoint is compared as written, so the
+    `judge_identity` records which RAGAS judge scored the arms: the canonical
+    JSON form of each arm's `ragas_judge_identity_effective` (sorted keys, and
+    a whole-number float such as `0.0` written as `0`), or a sorted list when
+    the arms disagree. A difference in any field of the identity also
+    **withholds ranks**, and `shared_context.warnings` gets an entry that
+    starts `judge_identity differs across swept configs:` and lists the
+    identities. Scores from two judges are not on one scale. The pairwise A/B
+    winners are withheld too, and the log line says "the arms were scored by
+    different RAGAS judges" and names the identity fields that differ (for
+    example `precision`). The endpoint is compared as written, so the
     same server spelled two ways (for example with and without a trailing
     slash) also withholds. Arms with no identity (`null`, no judge ran) are
     left to the judge-pressure check, and result files written before the
@@ -568,7 +784,16 @@ There is no way to give this provider a credential: the client is built through 
         evaluator_provider_mode: ollama
 ```
 
-Each run record carries `ragas_judge_identity_effective`: the `provider`, `model`, `base_url`, and `mode` of the judge the run actually built, or `null` when no judge scored the arm. The endpoint is the one the client received, with the defaults filled in (`OLLAMA_HOST` or `http://127.0.0.1:11434` for an Ollama-mode judge with no URL, the local provider's OpenAI-compatible default for an `openai_compat` judge with no URL). In a sweep, arms scored by different judges are not ranked: every `rank` in the leaderboard is `null` and the difference is listed under `judge_identity` in `shared_context.warnings`. Result files written before this field existed still rank.
+Each run record carries `ragas_judge_identity_effective`, or `null` when no judge scored the arm. It starts with the `provider`, `model`, `base_url`, and `mode` of the judge the run actually built. The endpoint is the one the client received, with the defaults filled in (`OLLAMA_HOST` or `http://127.0.0.1:11434` for an Ollama-mode judge with no URL, the local provider's OpenAI-compatible default for an `openai_compat` judge with no URL). Result files written since #732 also record these fields:
+
+- `model_revision`, `precision`, `server_image_digest`, and `server_args`: the pinned model revision, the weight precision, the vLLM image, and the `vllm serve` arguments that change output, for the offline judge. An API judge such as `huit_bedrock` has none of these, so they are `null`.
+- `decoding`: the `temperature`, `top_p`, and `max_tokens` that the built judge object sends.
+- `timeout`, `max_workers`, and `batch_size`: the ragas call settings after defaults. `chunk_size` is the number of rows that the offline scorer gives to one ragas call (`null` for an inline run).
+- `embedding`: the `class`, `model`, `revision`, and `endpoint` (the base URL that the client sends to, `null` for a local model) of the embedding object that ragas used, read from the object and not from the config value.
+- `metrics`: the enabled RAGAS metrics.
+- `scorer`: the `code_digest` of the `src` package that scored, its `package_digest` (from `pip freeze`), the scorer `image_digest`, and the `ragas_version`. For an inline run, the scorer is the benchmark image.
+
+In a sweep, arms whose identities differ in any field are not ranked: every `rank` in the leaderboard is `null` and the difference is listed under `judge_identity` in `shared_context.warnings`. The comparison uses canonical JSON, so `temperature: 0` and `temperature: 0.0` are equal. Result files written before #618 have no identity and still rank. Result files written between #618 and #732 keep the four-field record.
 
 #### Tool calling and structured output on `huit_bedrock`
 

@@ -191,6 +191,7 @@ these to turn anything off or to hide anything:
 | `services.data_manager.enabled` | the data-manager service is registered `auto_enable=True`, and the service registry adds every auto-enable service unconditionally, so the container is deployed either way |
 | `data_manager.sources.links.enabled` | `ScraperManager` assigns `links_enabled = True` without reading the config, so link input lists are still crawled |
 | `data_manager.sources.links.html_scraper.reset_data` | no consumer reads it — `ScraperManager` extracts the `html_scraper` block but reads only `verify_urls` and `enable_warnings` when it builds link scrapers |
+| `services.chat_app.flask_debug_mode` | the chat service runs on gunicorn and always turns the Flask debugger off. The grader and the data manager still read their own `flask_debug_mode` keys |
 | `visible` on `links`, `indico`, `jira`, `redmine` and `elog` | citations are filtered by the `source_type` stored on each document, and these sources persist `source_type` values that are not their config keys — `web` for links, Indico and ELOG, `ticket` for Jira and Redmine. The lookup misses, so the document defaults to visible (and the service logs `Source type … not found in config`). Tracked as [issue #459](https://github.com/fasrc/archi/issues/459) |
 
 `visible: false` **does** work for `git`, `sso` and `local_files`, whose stored
@@ -284,9 +285,17 @@ The main chat interface.
 | `port` | int | `7861` | Internal container port |
 | `external_port` | int | `7861` | Host-mapped port |
 | `host` | string | `0.0.0.0` | Network binding |
+| `wsgi_threads` | int | `16` | Threads in the one gunicorn worker process. Each open chat stream holds one thread. Must be 1 or more |
 | `num_responses_until_feedback` | int | `3` | Responses before prompting for feedback |
+| `flask_debug_mode` | bool | `false` | No effect on the chat service (see below) |
 | `auth.enabled` | bool | `false` | Enable authentication |
 | `alerts.managers` | list | `[]` | Usernames allowed to create and delete alerts |
+
+The chat service runs on gunicorn with one worker process and the `gthread` worker, so
+`wsgi_threads` is the limit on requests that run at the same time. Each open chat stream
+holds one thread until it ends. A value that is not a whole number of 1 or more stops the
+chat service at start. The chat service never runs the Flask debugger: `flask_debug_mode`
+and the `FLASK_DEBUG` environment variable have no effect on it.
 
 #### `services.chat_app.auth`
 
@@ -540,6 +549,7 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 | `scrape_per_host_workers` | int | `4` | Cap on concurrent in-flight requests to any single host |
 | `reset_collection` | bool | `true` | Wipe collection on startup |
 | `distance_metric` | string | `cosine` | Similarity metric: `cosine`, `l2`, `ip` |
+| `torch_threads` | int | `8`, capped at the host's CPUs | CPU threads torch uses in the data-manager and chatbot containers, rendered into both as `OMP_NUM_THREADS` and `MKL_NUM_THREADS` (torch reads `MKL_NUM_THREADS` first, so both get the same value). Unset, torch starts one thread per host core; on a shared 32-core host that made each embedding call ~3 s instead of ~16 ms ([#721](https://github.com/fasrc/archi/issues/721)). Without this key, the default is 8, or fewer on a host where `archi create` can use fewer than 8 CPUs, and an `OMP_NUM_THREADS` or `MKL_NUM_THREADS` already in your `--env-file` is kept as it is. Like any other env-file value, a changed thread variable reaches only the services that are recreated: `archi restart -e` applies it to the one service it restarts. Must be a positive integer; anything else fails `archi create` and `archi restart`. `archi restart -c` refuses a change to it, like any other `data_manager` change |
 
 > **Note:** `scrape_workers` and `scrape_per_host_workers` control the **scrape
 > phase** only and are independent of `parallel_workers`, which governs the
@@ -719,7 +729,7 @@ data_manager:
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `html_to_markdown.enabled` | `true` | Convert string HTML content (suffix `html`/`htm`) to ATX Markdown via `markdownify`, flip the suffix and path fields to `.md`, and record `metadata.converted_from = "html"`. The `.md` file then loads through `TextLoader` instead of `BSHTMLLoader`, so headings, lists, tables, and links survive into chunks. For FASRC KB (Echo-KB) pages, the converted Markdown is additionally sliced to the article body between the page's `Table of Contents` and `Bookmarkable Links` (or, when absent, `Last Updated`) landmarks, dropping the surrounding category-filter nav and footer; pages without those landmarks (non-KB sources) keep the full-page conversion. |
+| `html_to_markdown.enabled` | `true` | Convert string HTML content (suffix `html`/`htm`) to ATX Markdown via `markdownify`, flip the suffix and path fields to `.md`, and record `metadata.converted_from = "html"`. The `.md` file then loads through `TextLoader` instead of `BSHTMLLoader`, so headings, lists, tables, and links survive into chunks. For FASRC KB (Echo-KB) pages, the converted Markdown is additionally sliced to the article body between the page's `Table of Contents` and `Bookmarkable Links` (or, when absent, `Last Updated`) landmarks, dropping the surrounding category-filter nav and footer; pages without those landmarks (non-KB sources) keep the full-page conversion. Empty headings (no text and no image or code) are dropped, so no bare `#` line reaches the Markdown. |
 | `categorization.enabled` | `false` | Assign one label from `categories` to each document via an LLM and store it under `metadata.llm_category`. Costs one LLM call per document; **measured at about +19 min per 1091-document ingest with no resolvable retrieval effect** — see "Measured cost" below. |
 | `categorization.provider` / `model` | — | Which chat model to use. `provider` is a key under `services.chat_app.providers`; that block (base_url / mode / models / extra_kwargs) supplies the model's `provider_config`, so a custom local/vLLM endpoint is honored. |
 | `categorization.max_chars` | `4000` | Document content is truncated to this length before the model call (bounds cost/latency). |

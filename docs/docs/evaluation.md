@@ -815,9 +815,18 @@ Authenticated deployments use:
 - `evaluations:manage` to import datasets and profiles, generate or review
   atoms, refresh live snapshots, and save reviewed datasets.
 
+Run detail keeps the answer key from callers without `evaluations:manage`.
+A view-only caller still gets scores, statuses, questions, judgment outcomes,
+latency, and tool calls, but not approved answers, gold atoms, live-oracle
+evidence, raw agent answers, judgment rationales, the text of error and
+live-validation diagnostics, or the manifest's artifact digests. Failed rows
+keep their status. A caller with `evaluations:manage` gets the full run. The
+run list and reports are the same for both.
+
 The wildcard administrator role grants all three. Add them explicitly to
 custom roles as needed. When authentication is disabled, evaluation routes
-retain the normal unrestricted local-development behavior.
+retain the normal unrestricted local-development behavior, and run detail
+includes the answer key.
 
 ### Usage
 
@@ -987,6 +996,10 @@ The console exposes both rendered results and their persisted evidence:
 | Historical comparisons                                       | Attempt-latency, pass-rate, and technical-failure charts  |
 | Immutable evidence                                           | The run workspace under the configured evaluation root    |
 | Reusable inputs and work state                               | Dataset/profile catalogs, atom drafts, and persisted jobs |
+
+Answers, gold atoms, and judgment rationales in run detail need
+`evaluations:manage`; a view-only caller sees the outcomes without them (see
+[Permissions](#permissions)).
 
 #### Compare history trends
 
