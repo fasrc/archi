@@ -76,7 +76,7 @@ Standing notes for every task:
       (`test_markdown_has_every_section`, `tests/unit/test_compare_runs.py:2356`) still passes
       unchanged. Gate green; commit.
 
-- [ ] 2.2 Update `docs/docs/interpreting_benchmark_results.md` per design D4. No test. Build
+- [x] 2.2 Update `docs/docs/interpreting_benchmark_results.md` per design D4. No test. Build
       check: `grep -n "447" docs/docs/interpreting_benchmark_results.md` prints nothing, and
       `grep -n "slice_exclusions" docs/docs/interpreting_benchmark_results.md` prints at least
       one line. Gate green; commit.
