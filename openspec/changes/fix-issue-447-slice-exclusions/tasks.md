@@ -61,7 +61,7 @@ Standing notes for every task:
 
 ## 2. Carry the count into the report and the renderer
 
-- [ ] 2.1 Add `"slice_exclusions"` to `build_report` and render from it (design D1 last
+- [x] 2.1 Add `"slice_exclusions"` to `build_report` and render from it (design D1 last
       paragraph, D3). RED first — append:
       (a) `test_report_json_carries_slice_exclusions_for_every_gated_field` — run the CLI with
       `--json` (or call `cr.build_report` the way the existing `--json` tests do; grep for
