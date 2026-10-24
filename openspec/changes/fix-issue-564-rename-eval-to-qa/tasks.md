@@ -156,7 +156,7 @@
 
 ## 4. Publish
 
-- [ ] 4.1 Run `bash scripts/gate.sh` on the final tip; it must exit 0. Push the branch. It
+- [x] 4.1 Run `bash scripts/gate.sh` on the final tip; it must exit 0. Push the branch. It
       was cut with `checkout -b`, so push with
       `git push -u origin fix/issue-564-rename-eval-to-qa`. Confirm the push landed on
       **fasrc/archi**: `git ls-remote --heads origin fix/issue-564-rename-eval-to-qa` must
@@ -172,6 +172,9 @@
       `gh pr edit <pr> --repo fasrc/archi --body-file /tmp/pr-body-564.md` instead.
       Verify the link: `gh pr view <pr> --repo fasrc/archi --json closingIssuesReferences`
       must list 564. Then STOP. Do not merge this PR. A human merges, in daylight.
+      Done 2026-10-23 by an interactive session at Austin's request. The pre-commit gate
+      ran on the tip that marks this task. The branch was pushed to PR #744, and the body
+      was rewritten with `Closes #564`.
 
 ## Commands
 
