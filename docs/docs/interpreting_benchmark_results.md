@@ -290,13 +290,21 @@ worth reading before you go and diff the bank:
   carry. That is deliberate — any arm can be the baseline, and a count that
   moved when you passed a different `--baseline` would not be a fact about the
   bank.
-- Two limits on that, both being tracked in issue #447. If the baseline arm
-  records **no value at all** for the field on a question, the tool skips that
-  question, so a disagreement between two other arms goes uncounted. And if
-  *every* question is re-labelled, no slice survives to carry the number, and the
-  report says no slice field is present instead. A zero is therefore weaker
-  evidence than a non-zero: read a count as a reason to diff the bank, never read
-  its absence as proof the bank held still.
+- The count does not depend on which arm is `--baseline`. A row with no value
+  for the field — the field absent, `null`, or `""` — is dropped from the
+  comparison before mismatches are counted, the baseline included, so a
+  disagreement between two other arms is still counted even when the baseline
+  itself carries no label for that question.
+- The count survives even when no slice does. It lives at the top level of the
+  report as `slice_exclusions`, one entry per bank field every arm carries,
+  independent of any slice row, and also as `excluded_mismatched` on each slice
+  row the report emits. The `--json` output lists every such field, zero
+  included; the Markdown report prints a sentence only for a non-zero count. If
+  every question is re-labelled, no slice group survives to carry a mean, but
+  the rendered report still names the re-labelling instead of saying no slice
+  field is present. A zero is still weaker evidence than a non-zero, because a
+  row that did not run or carries no label is never compared: read a count as a
+  reason to diff the bank, never read its absence as proof the bank held still.
 - So a non-zero `excluded_mismatched` means the label really moved between two
   arms that both ran the question to completion. Diff the bank.
 
