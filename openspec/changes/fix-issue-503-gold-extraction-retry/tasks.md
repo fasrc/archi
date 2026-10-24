@@ -1,7 +1,8 @@
 ## 0. Already done by Loop 1 — do NOT redo
 
-- [x] 0.1 The branch `fix/issue-503-gold-extraction-retry` exists, cut from `origin/dev` at
-      `db701852`. You are on it. Do not re-branch and do not rebase.
+- [x] 0.1 The branch `fix/issue-503-gold-extraction-retry` exists, re-cut from `origin/dev` at
+      `6b8afe98` on 2026-10-24 (PR #620 merged task 1.1 into `dev`; its old branch is
+      deleted). You are on it. Do not re-branch and do not rebase.
 - [x] 0.2 `openspec validate fix-issue-503-gold-extraction-retry --strict` passed on the host.
       The `openspec` CLI is **not usable in this container** — do not run it, and do not add
       a task that does. It is already green.
@@ -71,13 +72,16 @@
       fakes with `grep -rn OracleResolutionError tests/unit/evaluation/qa/`);
       (g) a valid first result → exactly 1 call and no `gold_extraction_attempts` key.
       Log one `WARNING` before the retry with the item id. Do not put answer text in the log.
+      `preparation.py` has no logger yet: add `logger = get_logger(__name__)` with
+      `from src.utils.logging import get_logger` (the repo idiom; it propagates, so
+      `caplog` sees it).
       All existing `test_preparation.py` tests must pass unchanged.
 
 ## 3. Coverage line in the summary and the report
 
 - [ ] 3.1 Add `items_total` and `scored_items` to `build_summary`, the report header line,
-      and pass `items_total` from both `build_summary` callers in `workflow.py` (`:858` score
-      phase, `:1213` retry phase) (design D5, D6). Tests first, then code, one commit
+      and pass `items_total` from both `build_summary` callers in `workflow.py` (`:868` score
+      phase, `:1226` retry phase) (design D5, D6). Tests first, then code, one commit
       (`feat: report scored items against total items`). Cover:
       (a) in `test_scoring.py`: `build_summary(..., items_total=3)` over 3 preparation
       records with 1 `preparation_failed` and scored results for the other 2 → `items_total`
@@ -87,7 +91,8 @@
       ``- Scored items: `2` / items: `3` ``; with a summary that has neither key it prints
       `unavailable` for each and does not raise;
       (c) in `test_workflow.py`: an end-to-end `QAWorkflow().composite(...)` run (copy the
-      fixture pattern near `test_workflow.py:600-644`) whose dataset has one item that fails
+      fixture pattern of `test_failure_accounting_preserves_slots_and_denominators`,
+      `test_workflow.py:601-648`) whose dataset has one item that fails
       preparation → `summary.json` has `items_total` equal to the dataset size and
       `scored_items` one less, and `report.md` contains the `Scored items:` line.
       Every existing summary key keeps its value; existing scoring and workflow tests pass
