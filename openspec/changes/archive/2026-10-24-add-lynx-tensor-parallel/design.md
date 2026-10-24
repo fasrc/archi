@@ -51,7 +51,9 @@ The settings block gets `GPUS="1"`, and the command passes `--tensor-parallel-si
 "$GPUS"`. The 70B variant adds `# GPUS="2"` to its commented settings, so the swap that
 the header describes covers it. Slurm reads `#SBATCH` lines before the script runs, so the
 `--gres=gpu:<N>` line cannot read `GPUS`; a unit test checks that the active
-`--gres=gpu:<N>` equals `GPUS`, and that the same holds after the 70B swap.
+`--gres=gpu:<N>` equals `GPUS`, and that the same holds after the 70B swap. The job
+refuses a `GPUS` that is not a whole number of 1 or more before it starts a container, also
+in the dry run, so a typo does not first wait for a GPU and convert the image.
 
 Alternative: count the GPUs at run time from `SLURM_GPUS_ON_NODE` or
 `CUDA_VISIBLE_DEVICES`. Rejected: the dry run, which runs outside Slurm, could not print

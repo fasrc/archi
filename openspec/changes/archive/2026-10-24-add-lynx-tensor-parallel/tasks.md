@@ -23,7 +23,8 @@ Rules for every task:
       `--tensor-parallel-size` and the `GPUS` setting; `GPUS` is 1 and equals the active
       `--gres=gpu:<N>`; after the 70B swap the dry run names the 70B model and
       `--tensor-parallel-size 2`, and `--gres=gpu:2` equals `GPUS`; the NOTE that the 70B
-      variant cannot load the model is gone. Then `lynx_score.sbatch` (D4).
+      variant cannot load the model is gone; a `GPUS` of `0`, `""`, `two` or `1.5` is
+      refused before the container starts. Then `lynx_score.sbatch` (D4).
 
 ## 4. Docs (Plan step 6)
 

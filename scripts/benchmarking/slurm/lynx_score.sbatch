@@ -68,6 +68,8 @@ if [ "${1:-}" = --dry-run ]; then
   shift
 fi
 [ $# -ge 1 ] && [ $# -le 2 ] || usage
+[[ "$GPUS" =~ ^[1-9][0-9]*$ ]] \
+  || die "GPUS=\"$GPUS\" is not a whole number of 1 or more; set it to the N of --gres=gpu:<N>"
 
 [ -d "$1" ] || die "$1 is not a folder"
 BUNDLE="$(cd "$1" && pwd -P)"

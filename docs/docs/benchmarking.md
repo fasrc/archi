@@ -449,7 +449,7 @@ Lynx scores only `judge_mode: deferred` runs (see "Deferred judge" above), becau
     LYNX_LAB=<lab> sbatch scripts/benchmarking/slurm/lynx_score.sbatch <bundle folder> [<out dir>]
     ```
 
-The out dir is the folder of the result JSON. Without the second argument, the job uses the nearest folder above the bundle folder that holds `<result basename>.json`. The job refuses a missing bundle folder, a folder with no `BUNDLE_COMPLETE` (a `READY` queue copy too), and an existing Lynx file. The job log is `archi-lynx-<job id>.out` in the repo root. The first job also converts the image into the Apptainer cache, so it takes longer than later jobs.
+The out dir is the folder of the result JSON. Without the second argument, the job uses the nearest folder above the bundle folder that holds `<result basename>.json`. The job refuses a missing bundle folder, a folder with no `BUNDLE_COMPLETE` (a `READY` queue copy too), an existing Lynx file, and a `GPUS` that is not a whole number of 1 or more. The job log is `archi-lynx-<job id>.out` in the repo root. The first job also converts the image into the Apptainer cache, so it takes longer than later jobs.
 
 !!! note "Lynx 70B"
     The script also holds a commented variant for `PatronusAI/Llama-3-Patronus-Lynx-70B-Instruct`. Its weights are 141 GB, more than one GPU holds, so the variant splits the model over two H200 GPUs. To use it, put the four commented `##SBATCH` lines (`-p gpu_h200`, `--gres=gpu:2`, `--mem=256G`, `-t 04:00:00`) in place of the active `#SBATCH` lines with the same options, and put the three commented settings (the 70B `MODEL_ID`, its `MODEL_REVISION`, and `GPUS="2"`) in place of the active ones. The dry run then shows `--tensor-parallel-size 2`.

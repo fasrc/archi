@@ -234,6 +234,23 @@ def test_a_bundle_with_no_bundle_complete_is_refused(tmp_path, marker):
     assert _called(calls) == []
 
 
+@pytest.mark.parametrize("gpus", ["0", "", "two", "1.5"])
+def test_a_gpu_count_that_is_not_a_whole_number_of_one_or_more_is_refused(
+    tmp_path, gpus
+):
+    variant = tmp_path / "scripts" / "benchmarking" / "slurm" / SCRIPT.name
+    variant.parent.mkdir(parents=True)
+    text = SCRIPT.read_text()
+    assert text.count('\nGPUS="1"\n') == 1
+    variant.write_text(text.replace('\nGPUS="1"\n', f'\nGPUS="{gpus}"\n'))
+    _, bundle = _run_bundle(tmp_path)
+    proc, calls = _run(tmp_path, "--dry-run", bundle, script=variant)
+    assert proc.returncode != 0
+    assert "GPUS" in proc.stderr
+    assert proc.stdout == ""
+    assert _called(calls) == []
+
+
 def test_a_folder_name_with_no_arm_index_is_refused(tmp_path):
     _, bundle = _run_bundle(tmp_path, name="run-a")
     proc, calls = _run(tmp_path, "--dry-run", bundle)
