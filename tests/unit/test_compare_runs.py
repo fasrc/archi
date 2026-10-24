@@ -3656,3 +3656,60 @@ def test_slice_exclusions_lists_every_gated_field_with_zero(_artifact):
         "anchor_type": 0,
         "difficulty": 0,
     }
+
+
+def test_report_json_carries_slice_exclusions_for_every_gated_field(
+    _artifact, tmp_path
+):
+    rows = [_row("q1", anchor_type="reasoning", difficulty="easy", faithfulness=0.5)]
+    base = str(_artifact(rows, fingerprint="corpus-1"))
+    treat = str(_artifact(rows, fingerprint="corpus-1"))
+    out_json = tmp_path / "report.json"
+
+    code = cr.main([base, treat, "--json", str(out_json)])
+
+    assert code == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    assert report["slice_exclusions"] == {"anchor_type": 0, "difficulty": 0}
+
+
+def test_rendered_report_names_the_relabelling_when_no_slice_survives(
+    _artifact, tmp_path
+):
+    base_rows = [
+        _row("q1", difficulty="hard", faithfulness=0.5),
+        _row("q2", difficulty="hard", faithfulness=0.6),
+    ]
+    treat_rows = [
+        _row("q1", difficulty="easy", faithfulness=0.7),
+        _row("q2", difficulty="easy", faithfulness=0.8),
+    ]
+    base = str(_artifact(base_rows, fingerprint="corpus-1"))
+    treat = str(_artifact(treat_rows, fingerprint="corpus-1"))
+    out_json = tmp_path / "report.json"
+
+    code = cr.main([base, treat, "--json", str(out_json)])
+
+    assert code == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    text = cr.render_markdown(report)
+    assert "carry a different `difficulty`" in text
+    assert "No slice field" not in text
+
+
+def test_rendered_report_says_no_slice_field_only_when_the_gate_excludes_all(
+    _artifact, tmp_path
+):
+    base_rows = [_row("q1", faithfulness=0.5)]
+    treat_rows = [_row("q1", faithfulness=0.6)]
+    base = str(_artifact(base_rows, fingerprint="corpus-1"))
+    treat = str(_artifact(treat_rows, fingerprint="corpus-1"))
+    out_json = tmp_path / "report.json"
+
+    code = cr.main([base, treat, "--json", str(out_json)])
+
+    assert code == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    assert report["slice_exclusions"] == {}
+    text = cr.render_markdown(report)
+    assert "No slice field" in text

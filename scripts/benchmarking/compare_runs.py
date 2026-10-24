@@ -2594,24 +2594,24 @@ def render_markdown(report: dict) -> str:
                 for row in report["slices"]
             ],
         )
-        dropped = {
-            row["field"]: row["excluded_mismatched"]
-            for row in report["slices"]
-            if row["excluded_mismatched"]
-        }
-        for name, count in sorted(dropped.items()):
+    else:
+        exclusions = report.get("slice_exclusions", {})
+        if not exclusions:
+            out.append(
+                "No slice field (`"
+                + "`, `".join(SLICE_FIELDS)
+                + "`) is present in every arm."
+            )
+        elif not any(exclusions.values()):
+            out.append("No slice group has a paired, scored question in every arm.")
+    for name, count in sorted(report.get("slice_exclusions", {}).items()):
+        if count:
             out.append("")
             out.append(
                 f"{count} question(s) carry a different `{name}` in different "
                 "arms and were dropped from every slice of that field — the arms "
                 "were scored against different labels for the same question."
             )
-    else:
-        out.append(
-            "No slice field (`"
-            + "`, `".join(SLICE_FIELDS)
-            + "`) is present in every arm."
-        )
     out.append("")
 
     out += ["## Timing", ""]
@@ -2929,6 +2929,7 @@ def build_report(
         "sources": source_block(arms),
         "anchors": anchor_entries,
         "slices": slice_block(baseline, arms, questions, sigmas),
+        "slice_exclusions": slice_exclusions(baseline, arms, questions),
         "timing": timing_block(arms),
         "qa": qa_block(baseline, arms, qa_runs or {}),
     }
