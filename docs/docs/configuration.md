@@ -192,10 +192,34 @@ these to turn anything off or to hide anything:
 | `data_manager.sources.links.enabled` | `ScraperManager` assigns `links_enabled = True` without reading the config, so link input lists are still crawled |
 | `data_manager.sources.links.html_scraper.reset_data` | no consumer reads it — `ScraperManager` extracts the `html_scraper` block but reads only `verify_urls` and `enable_warnings` when it builds link scrapers |
 | `services.chat_app.flask_debug_mode` | the chat service runs on gunicorn and always turns the Flask debugger off. The grader and the data manager still read their own `flask_debug_mode` keys |
-| `visible` on `links`, `indico`, `jira`, `redmine` and `elog` | citations are filtered by the `source_type` stored on each document, and these sources persist `source_type` values that are not their config keys — `web` for links, Indico and ELOG, `ticket` for Jira and Redmine. The lookup misses, so the document defaults to visible (and the service logs `Source type … not found in config`). Tracked as [issue #459](https://github.com/fasrc/archi/issues/459) |
 
-`visible: false` **does** work for `git`, `sso` and `local_files`, whose stored
-`source_type` matches the config key.
+`visible: false` works for all sources. The chat app maps each document's stored metadata
+to a config key using the following table, then reads `visible` from that config entry:
+
+| Stored `source_type` | Stored marker | Config key used |
+|---|---|---|
+| `git` | — | `git` |
+| `sso` | — | `sso` |
+| `local_files` | — | `local_files` |
+| `web` | `scraper=indico` | `indico` |
+| `web` | `scraper=elog` | `elog` |
+| `web` | any other `scraper`, or absent | `links` |
+| `ticket` | `ticket_provider=jira` | `jira` |
+| `ticket` | `ticket_provider=redmine` | `redmine` |
+| `links`, `elog`, `jira`, `redmine` (older ingests) | — | the same name |
+| anything else | — | *(no key — treated as visible)* |
+
+Older ingests stored some sources under their own name as `source_type`: `links`, `elog`,
+`jira`, and `redmine`. A document that has not been re-ingested since keeps that value, and it
+obeys the flag of the source with the same name.
+
+Two rows need care when a marker is absent:
+
+- A `web` document with no `scraper` marker maps to `links`. `links.visible: false` hides it,
+  even when it came from an Indico or ELOG source that is set to visible.
+- A `ticket` document with no `ticket_provider` marker maps to no key. It stays visible,
+  whatever the `jira` or `redmine` `visible` flag says. The ticket integrations write the
+  marker on every ticket that they store as `ticket`, so only a hand-made row can lack it.
 
 To keep a link source out of an ingest today, remove it from `input_lists` rather than
 setting `enabled: false`.
