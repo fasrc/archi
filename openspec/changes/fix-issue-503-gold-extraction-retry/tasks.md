@@ -79,7 +79,7 @@
 
 ## 3. Coverage line in the summary and the report
 
-- [ ] 3.1 Add `items_total` and `scored_items` to `build_summary`, the report header line,
+- [x] 3.1 Add `items_total` and `scored_items` to `build_summary`, the report header line,
       and pass `items_total` from both `build_summary` callers in `workflow.py` (`:868` score
       phase, `:1226` retry phase) (design D5, D6). Tests first, then code, one commit
       (`feat: report scored items against total items`). Cover:
