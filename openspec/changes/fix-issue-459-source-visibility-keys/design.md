@@ -56,6 +56,12 @@ def is_visible(metadata, sources_config) -> bool:
     return bool(entry.get("visible", True))
 ```
 
+Older ingests stored the source name itself as `source_type`: `jira` and `redmine` until
+`bfba6303`, `links` until `1121a059`, and `elog` from `d27bf43f` until `01104574`. The old
+direct lookup honoured `visible` for those rows. So that a row not re-ingested since does not
+become visible, these four values map to their own key too (`_LEGACY_KEYS` in the module;
+added by the 2026-10-24 review).
+
 The marker match uses `strip().lower()`, the same normalization `manager.py` applies to
 `scraper` for the Indico chunk prefix. A non-dict `entry` (malformed config) is treated as
 visible with the same WARNING, so the chat path never raises on a config shape.

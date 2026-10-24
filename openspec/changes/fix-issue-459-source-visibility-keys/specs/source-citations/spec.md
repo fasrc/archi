@@ -6,9 +6,10 @@ The chat wrapper SHALL map each retrieved document to its `data_manager.sources`
 The mapping SHALL be: `source_type` `web` with marker `scraper` `indico` → `indico`; `web`
 with `scraper` `elog` → `elog`; any other `web` → `links`; `ticket` with
 `ticket_provider` `jira` → `jira`; `ticket` with `ticket_provider` `redmine` → `redmine`;
-`git`, `sso`, and `local_files` → the same name. A document with no `source_type`, any other
-`source_type`, or a `ticket` with no known provider SHALL be visible. The stored
-`source_type` values SHALL NOT change.
+`git`, `sso`, and `local_files` → the same name. The legacy `source_type` values `links`,
+`elog`, `jira`, and `redmine`, which older ingests stored, SHALL map to the same name. A
+document with no `source_type`, any other `source_type`, or a `ticket` with no known
+provider SHALL be visible. The stored `source_type` values SHALL NOT change.
 
 A document with no mapped key SHALL NOT produce an ERROR log record. A mapped key that is
 absent from `sources_config` SHALL leave the document visible and log a WARNING.
@@ -30,6 +31,12 @@ absent from `sources_config` SHALL leave the document visible and log a WARNING.
 
 - **WHEN** `sources_config` has `links.visible: false`
 - **THEN** a `web` document with no `scraper` marker is not visible
+
+#### Scenario: A legacy source type obeys its own flag
+
+- **WHEN** `sources_config` has `jira.visible: false`
+- **AND** a document from an older ingest has `source_type` `jira` and no `ticket_provider`
+- **THEN** the document is not visible
 
 #### Scenario: Uploaded file is visible without an error log
 

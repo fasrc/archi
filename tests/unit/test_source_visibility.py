@@ -19,10 +19,24 @@ from src.interfaces.chat_app.source_visibility import is_visible, visibility_con
         ({"source_type": "ticket"}, None),
         ({}, None),
         ({"source_type": "uploaded"}, None),
+        # Older ingests stored the source name itself as `source_type`.
+        ({"source_type": "links"}, "links"),
+        ({"source_type": "elog"}, "elog"),
+        ({"source_type": "jira"}, "jira"),
+        ({"source_type": "redmine"}, "redmine"),
     ],
 )
 def test_visibility_config_key(metadata, expected_key):
     assert visibility_config_key(metadata) == expected_key
+
+
+def test_a_legacy_source_type_obeys_its_own_flag():
+    # Before bfba6303 (2026-01-29) Jira tickets were stored with `source_type`
+    # "jira" and no provider marker; the old direct lookup honoured the flag.
+    config = {"jira": {"visible": False}, "links": {"visible": False}}
+    assert not is_visible({"source_type": "jira"}, config)
+    assert not is_visible({"source_type": "links"}, config)
+    assert is_visible({"source_type": "redmine"}, {"redmine": {"visible": True}})
 
 
 def test_jira_hidden_redmine_visible():

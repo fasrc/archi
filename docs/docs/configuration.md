@@ -206,18 +206,20 @@ to a config key using the following table, then reads `visible` from that config
 | `web` | any other `scraper`, or absent | `links` |
 | `ticket` | `ticket_provider=jira` | `jira` |
 | `ticket` | `ticket_provider=redmine` | `redmine` |
+| `links`, `elog`, `jira`, `redmine` (older ingests) | — | the same name |
 | anything else | — | *(no key — treated as visible)* |
 
-A document can lack its `scraper` or `ticket_provider` marker, for example when an older
-ingest did not write it. The table above still applies, and the two cases differ:
+Older ingests stored some sources under their own name as `source_type`: `links`, `elog`,
+`jira`, and `redmine`. A document that has not been re-ingested since keeps that value, and it
+obeys the flag of the source with the same name.
+
+Two rows need care when a marker is absent:
 
 - A `web` document with no `scraper` marker maps to `links`. `links.visible: false` hides it,
   even when it came from an Indico or ELOG source that is set to visible.
 - A `ticket` document with no `ticket_provider` marker maps to no key. It stays visible,
-  whatever the `jira` or `redmine` `visible` flag says.
-
-A full re-ingest writes the markers again. After that, each document obeys the flag of its own
-source.
+  whatever the `jira` or `redmine` `visible` flag says. The ticket integrations write the
+  marker on every ticket that they store as `ticket`, so only a hand-made row can lack it.
 
 To keep a link source out of an ingest today, remove it from `input_lists` rather than
 setting `enabled: false`.

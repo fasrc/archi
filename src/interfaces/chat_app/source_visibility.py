@@ -3,6 +3,11 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 _DIRECT_KEYS = frozenset({"git", "sso", "local_files"})
+# Older ingests stored the source name itself as `source_type`: `jira`/`redmine`
+# until bfba6303, `links` until 1121a059, `elog` from d27bf43f until 01104574.
+# Rows that were not re-ingested still carry them, and the old direct lookup
+# honoured their flag, so they keep mapping to their own key.
+_LEGACY_KEYS = frozenset({"links", "elog", "jira", "redmine"})
 _WEB_SCRAPERS = {"indico": "indico", "elog": "elog"}
 _TICKET_PROVIDERS = {"jira": "jira", "redmine": "redmine"}
 
@@ -14,7 +19,7 @@ def _marker(metadata, name):
 
 def visibility_config_key(metadata) -> str | None:
     source_type = metadata.get("source_type")
-    if source_type in _DIRECT_KEYS:
+    if source_type in _DIRECT_KEYS or source_type in _LEGACY_KEYS:
         return source_type
     if source_type == "web":
         return _WEB_SCRAPERS.get(_marker(metadata, "scraper"), "links")
