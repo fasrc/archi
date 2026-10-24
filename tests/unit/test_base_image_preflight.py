@@ -2958,6 +2958,36 @@ def test_a_directory_symlink_cycle_under_src_refuses(tmp_path, monkeypatch):
     assert "has unreadable src/cli/loop" in str(excinfo.value)
 
 
+def test_a_directory_under_src_that_cannot_be_listed_is_named(tmp_path, monkeypatch):
+    """A listing failure that `os.access` cannot see must refuse, not pass.
+
+    `os.walk` drops a `scandir` error unless it is given `onerror`, and an I/O error
+    (here `EIO`) passes every `os.access` check. `copytree` would then fail on the same
+    listing below the teardown.
+    """
+    import errno
+
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    broken = checkout / "src" / "cli"
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    real_scandir = preflight.os.scandir
+
+    def fake_scandir(path="."):
+        if Path(path) == broken:
+            raise OSError(errno.EIO, "Input/output error", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(preflight.os, "scandir", fake_scandir)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_source_root()
+
+    assert "has unreadable src/cli" in str(excinfo.value)
+
+
 def test_a_recorded_checkout_whose_template_dir_is_a_file_refuses(
     tmp_path, monkeypatch
 ):

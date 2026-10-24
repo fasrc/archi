@@ -98,8 +98,17 @@ def _first_unreadable_under(src: Path, root: Path) -> Optional[str]:
     Directory symlinks are followed, because `copytree` follows them: an unreadable file
     behind a linked directory fails the copy all the same. A link to a directory already
     on its own walk path is reported too -- `copytree` follows it without end and fails.
+
+    A directory that cannot be listed is reported as well. `os.walk` drops a `scandir`
+    error unless it is given `onerror`, and an I/O error passes every `os.access` check,
+    so without this the walk would end early and pass a tree that `copytree` cannot copy.
     """
-    for dirpath, dirnames, filenames in os.walk(src, followlinks=True):
+    unlistable: List[str] = []
+    for dirpath, dirnames, filenames in os.walk(
+        src, onerror=lambda error: unlistable.append(error.filename), followlinks=True
+    ):
+        if unlistable:
+            break
         current = Path(dirpath)
         for filename in sorted(filenames):
             candidate = current / filename
@@ -113,6 +122,8 @@ def _first_unreadable_under(src: Path, root: Path) -> Optional[str]:
                 src, current
             ):
                 return candidate.relative_to(root).as_posix()
+    if unlistable:
+        return Path(unlistable[0]).relative_to(root).as_posix()
     return None
 
 
