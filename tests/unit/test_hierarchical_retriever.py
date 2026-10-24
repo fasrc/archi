@@ -514,3 +514,73 @@ def test_fetch_parents_select_includes_extra_json(mock_vectorstore):
     ]
     select_sql = next(sql for sql in statements if "FROM document_parent_nodes" in sql)
     assert "extra_json" in select_sql
+
+
+# =============================================================================
+# Matched span: where the ranking child sits inside the returned parent
+# =============================================================================
+
+
+def test_parent_records_span_of_its_ranking_child(mock_vectorstore):
+    parent_text = "Breadcrumb and intro. Large Data Transfer with Globus: use Globus."
+    child_text = "Large Data Transfer with Globus: use Globus."
+    mock_vectorstore.hybrid_search.return_value = [_child(child_text, parent_id=1)]
+    mock_vectorstore._mock_cursor.fetchall.return_value = [_parent_row(1, parent_text)]
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_IdentityRanker()
+    )
+
+    (doc,) = retriever.invoke("q")
+
+    start = parent_text.index(child_text)
+    assert doc.metadata["matched_start"] == start
+    assert doc.metadata["matched_end"] == start + len(child_text)
+    assert doc.page_content == parent_text
+
+
+def test_span_follows_the_best_ranked_child_of_a_shared_parent(mock_vectorstore):
+    mock_vectorstore.hybrid_search.return_value = [
+        _child("alpha passage", parent_id=1, score=0.9),
+        _child("beta passage", parent_id=1, score=0.8),
+    ]
+    mock_vectorstore._mock_cursor.fetchall.return_value = [
+        _parent_row(1, "alpha passage, then beta passage")
+    ]
+    # _ReverseRanker ranks the last candidate (beta) above alpha.
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_ReverseRanker()
+    )
+
+    (doc,) = retriever.invoke("q")
+
+    start, end = doc.metadata["matched_start"], doc.metadata["matched_end"]
+    assert doc.page_content[start:end] == "beta passage"
+
+
+def test_no_span_when_the_child_is_not_in_the_parent_text(mock_vectorstore):
+    mock_vectorstore.hybrid_search.return_value = [_child("not there", parent_id=1)]
+    mock_vectorstore._mock_cursor.fetchall.return_value = [
+        _parent_row(1, "something else entirely")
+    ]
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_IdentityRanker()
+    )
+
+    (doc,) = retriever.invoke("q")
+
+    assert "matched_start" not in doc.metadata
+    assert "matched_end" not in doc.metadata
+
+
+def test_passthrough_child_carries_no_span(mock_vectorstore):
+    legacy = (Document(page_content="legacy chunk", metadata={}), 0.5)
+    mock_vectorstore.hybrid_search.return_value = [legacy]
+    retriever = LlamaIndexHierarchicalRetriever(
+        vectorstore=mock_vectorstore, reranker=_IdentityRanker()
+    )
+
+    (doc,) = retriever.invoke("q")
+
+    assert doc.page_content == "legacy chunk"
+    assert "matched_start" not in doc.metadata
+    assert "matched_end" not in doc.metadata

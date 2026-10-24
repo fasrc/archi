@@ -4,7 +4,7 @@
 #   qa_prepare.sh --sweep <stack> --qa-dataset <qa-v2.json> --qa-profile <yaml> [--force]
 #
 # The converted bank supplies references rather than expected atoms, so every
-# `archi eval qa` run extracts atoms with the evaluator model
+# `archi qa` run extracts atoms with the evaluator model
 # (src/evaluation/qa/preparation.py:305-320) and two runs can grade the same item against
 # different atoms. Plan W8: "Prepare the gold atoms once and run every arm against that one
 # snapshot". This writes $FM_OUT/qa/<stack>-prepared; lock_campaign.sh --sweep pins its
@@ -36,5 +36,5 @@ if [ -e "$OUT" ]; then
 fi
 mkdir -p "$FM_OUT/qa"
 fm_log "preparing gold atoms for sweep $STACK → $OUT"
-"$FM_ARCHI" eval qa prepare "$DATASET" --evaluator-profile "$PROFILE" --output-dir "$OUT"
+"$FM_ARCHI" qa prepare "$DATASET" --evaluator-profile "$PROFILE" --output-dir "$OUT"
 fm_log "next: lock_campaign.sh --sweep <sweep_dir> --manifest <yaml> --stack $STACK --qa-dataset $DATASET --qa-profile $PROFILE"
