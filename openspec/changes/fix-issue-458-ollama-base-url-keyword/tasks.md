@@ -4,4 +4,4 @@
 
 ## 2. Publish
 
-- [ ] 2.1 Push with `git push -u origin fix/issue-458-ollama-base-url-keyword` and open the PR against `fasrc/archi:dev` with `gh pr create --repo fasrc/archi --base dev`. Put `Closes #458` in the PR **body** (not the title). In the body, give the red-then-green test result. No `Co-Authored-By` trailer. Do not merge.
+- [x] 2.1 Push with `git push -u origin fix/issue-458-ollama-base-url-keyword` and open the PR against `fasrc/archi:dev` with `gh pr create --repo fasrc/archi --base dev`. Put `Closes #458` in the PR **body** (not the title). In the body, give the red-then-green test result. No `Co-Authored-By` trailer. Do not merge.
