@@ -601,6 +601,11 @@ child nodes linked to larger parent context nodes (the parent text is what a
 hierarchical-rerank retriever returns). The legacy `character` strategy uses the flat
 `chunk_size`/`chunk_overlap` settings above.
 
+The benchmark artifact's `config_version.key_settings`, `GET /config/static`, and the
+status board's ingest snapshot report the chunking values the ingest path actually
+applies — not the top-level `chunk_size`/`chunk_overlap` pair — under an
+`effective_chunking` field, derived from whichever strategy is active.
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `chunking.strategy` | string | `sentence` | `sentence` (hierarchical, sentence-aware), `markdown` (hierarchical, header-aware for Markdown files — see below), or `character` (legacy flat chunks) |
