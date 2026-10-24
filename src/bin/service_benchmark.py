@@ -1,3 +1,4 @@
+import copy
 import json
 import math
 import os
@@ -8,10 +9,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
-from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -21,13 +21,22 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
-from src.archi.providers.local_provider import normalize_base_url
+from src.archi.providers.local_provider import LocalProvider
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
 from src.utils.benchmark_provenance import (
     asserted_config_divergence,
+    canonical_source_url,
+    category_map_text,
     collect_code_version,
+    collection_readiness,
     config_version,
-    corpus_fingerprint,
+    embedding_tags_unchanged,
+    live_category_map,
+    live_corpus_fingerprint,
+    live_embedding_tag_state,
+    prompt_text_sha256,
+    retrieval_identity,
+    retrieval_record,
 )
 from src.utils.benchmark_resilience import (
     OK,
@@ -41,16 +50,34 @@ from src.utils.benchmark_resilience import (
 )
 from src.utils.benchmark_schema import (
     DEFAULT_ENABLED_METRICS,
+    LOWER_IS_BETTER_METRICS,
+    RAGAS_METRIC_NAMES,
     json_safe,
+    metric_winner,
     normalize_bank,
+    ragas_effective_settings,
+    ragas_run_config_kwargs,
     required_fields_for_modes,
-    score_metrics_per_eligibility,
+    with_effective_ragas_settings,
 )
 from src.utils.config_access import get_static_config
 from src.utils.env import read_secret
 from src.utils.generate_benchmark_report import (
     format_markdown_output,
     parse_benchmark_results,
+)
+from src.utils.judge_bundle import (
+    is_deferred,
+    pending_arm_fields,
+    plan_judge_run,
+    write_judge_bundle,
+    write_result_complete,
+)
+from src.utils.judge_identity import (
+    canonical_identity,
+    differing_fields,
+    extended_identity,
+    inline_scorer_identity,
 )
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
@@ -74,56 +101,10 @@ EXTRA_METADATA_PATH = "/root/archi/git_info.yaml"
 PACKAGE_DIR = str(Path(__file__).resolve().parent.parent)
 OUTPUT_DIR = Path(OUTPUT_PATH)
 
-# The corpus's retrievable state, as opaque (key, value) pairs for
-# `corpus_fingerprint`. Every row is keyed by `documents.resource_hash`, never by
-# a SERIAL row id: two ingests of an identical corpus -- a rebuilt deployment, a
-# re-seeded database -- get different serials, so keying by `document_id` made the
-# cross-run comparison this field exists for impossible, rejecting runs that were
-# in fact comparable.
-#
-# Three kinds of row, because retrieval reads all three:
-#
-#   doc     the live document list and byte sizes.
-#   chunk   per-chunk content digests. `resource_hash` is `md5(url)`, an identity
-#           hash deliberately stable across content updates, so the document list
-#           alone would miss an edit that preserved the byte count. Hashing per
-#           chunk index also catches re-chunking.
-#   parent  `document_parent_nodes.parent_text`, plus the ordered list of child
-#           chunk indexes grouped under it. Under `hierarchical_rerank` -- enabled
-#           for every chunk in the FASRC deployment -- what reaches the agent is
-#           the parent text, not the leaf chunks, and parents are neither embedded
-#           nor indexed so no other part of this query sees them. Hashing leaves
-#           alone would certify two arms as having seen the same corpus while the
-#           context they were given differed. The child list is folded in because
-#           re-grouping children changes that context even when every individual
-#           text is untouched.
-#
-# Deleted documents are excluded from all three: soft-deleted rows stay in the
-# tables but are not part of the corpus.
-CORPUS_STATE_QUERY = """
-SELECT 'doc:' || d.resource_hash, d.size_bytes::text
-FROM documents d
-WHERE d.is_deleted = FALSE
-UNION ALL
-SELECT 'chunk:' || d.resource_hash || ':' || c.chunk_index::text,
-       md5(c.chunk_text)
-FROM document_chunks c
-JOIN documents d ON d.id = c.document_id
-WHERE d.is_deleted = FALSE
-UNION ALL
-SELECT 'parent:' || d.resource_hash || ':' || p.parent_index::text,
-       md5(
-           p.parent_text || '|' ||
-           COALESCE(
-               string_agg(c.chunk_index::text, ',' ORDER BY c.chunk_index), ''
-           )
-       )
-FROM document_parent_nodes p
-JOIN documents d ON d.id = p.document_id
-LEFT JOIN document_chunks c ON c.metadata->>'parent_id' = p.id::text
-WHERE d.is_deleted = FALSE
-GROUP BY d.resource_hash, p.parent_index, p.parent_text
-"""
+# The corpus fingerprint and the category map are read through the shared
+# routines in src.utils.benchmark_provenance (fingerprint v2, #570): scoped to
+# the collection the arm's running config searches, and identical to what the
+# QA workflow, the feature-matrix sweep, and the census compute.
 
 #: Distinguishes a provenance field that was never recorded (a result file
 #: written before provenance existed) from one recorded as undetermined.
@@ -174,8 +155,134 @@ class ABResult:
     llm_judge_pairwise: Dict[str, Any] = field(default_factory=dict)
 
 
+def _factory_pool():
+    """The pool `_init_runtime` installed on the factory, or a clear error."""
+    factory = PostgresServiceFactory.get_instance()
+    if factory is None:
+        raise RuntimeError(
+            "PostgresServiceFactory is not initialized; _init_runtime() "
+            "installs it when this module is run as a script"
+        )
+    return factory.connection_pool
+
+
+def ragas_judge_identity(config: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+    """Return (provider_lower, model) for the ragas judge from config (D7).
+
+    Mirrors the fallback rules in ``get_ragas_llm_evaluator``: explicit
+    ``evaluator_provider``/``evaluator_model`` in ``ragas_settings`` win; the
+    top-level benchmarking ``provider``/``model`` are the fallback.
+    """
+    benchmark_cfg = (config.get("services") or {}).get("benchmarking") or {}
+    ragas_settings = (benchmark_cfg.get("mode_settings") or {}).get(
+        "ragas_settings"
+    ) or {}
+    provider = ragas_settings.get("evaluator_provider") or benchmark_cfg.get("provider")
+    model = ragas_settings.get("evaluator_model") or benchmark_cfg.get("model")
+    return str(provider).lower(), model
+
+
+def ragas_judge_effective_identity(config: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """Return the effective RAGAS judge identity the evaluator builder will use.
+
+    Returns ``{"provider", "model", "base_url", "mode"}`` where:
+    - ``base_url`` is the configured endpoint, or ``None`` for providers that use
+      library defaults (openai, anthropic, and the unknown fallback).
+    - ``mode`` is the resolved local-provider mode for ``provider == "local"``,
+      else ``None``.
+
+    The values are the same as those ``get_ragas_llm_evaluator`` computes, so
+    storing this dict on the benchmarker and reading from it in the builder
+    guarantees the recorded identity equals the identity that selected the client.
+    """
+    provider, model = ragas_judge_identity(config)
+    benchmark_cfg = (config.get("services") or {}).get("benchmarking") or {}
+    ragas_configs = (benchmark_cfg.get("mode_settings") or {}).get(
+        "ragas_settings"
+    ) or {}
+
+    ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get(
+        "ollama_url"
+    )
+
+    match provider:
+        case "openai":
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": None,
+                "mode": None,
+            }
+        case "ollama":
+            resolved_url = (
+                ollama_url or os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
+            )
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": resolved_url,
+                "mode": None,
+            }
+        case "local":
+            evaluator_mode = ragas_configs.get("evaluator_provider_mode")
+            explicit_mode = (
+                evaluator_mode
+                if evaluator_mode not in (None, "")
+                else benchmark_cfg.get("provider_mode")
+            )
+            mode = resolve_local_mode(ollama_url, explicit_mode)
+            if not ollama_url and mode == "openai_compat":
+                base_url = LocalProvider.DEFAULT_OPENAI_COMPAT_BASE_URL
+            elif not ollama_url:
+                base_url = os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
+            else:
+                base_url = ollama_url
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": base_url,
+                "mode": mode,
+            }
+        case "huggingface":
+            base_url = ollama_url or "http://localhost:8000/v1"
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": base_url,
+                "mode": None,
+            }
+        case "anthropic":
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": None,
+                "mode": None,
+            }
+        case "huit_bedrock":
+            base_url = (
+                benchmark_cfg.get("base_url")
+                or "https://go.apis.huit.harvard.edu/ais-bedrock-llm/v2"
+            )
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": base_url,
+                "mode": None,
+            }
+        case _:
+            return {
+                "provider": provider,
+                "model": model,
+                "base_url": None,
+                "mode": None,
+            }
+
+
 class ResultHandler:
     results = []  # store the results for each config
+    # Parallel to `results`: each arm's end-reading category-map records, or None
+    # when that reading failed. Kept out of the JSON; dump_artifacts writes them.
+    category_map_records_by_arm: List[Optional[List[str]]] = []
     metadata = {}  # store the metadata about the benchmark run
     ab_comparison: Dict[str, Any] = (
         {}
@@ -214,8 +321,16 @@ class ResultHandler:
         )
 
     @staticmethod
-    def arms_comparable(records: List[Dict[str, Any]]) -> bool:
-        """Can these arms' scores be set against each other?
+    def arms_incomparability_reason(
+        records: List[Dict[str, Any]],
+    ) -> Optional[str]:
+        """Why these arms' scores cannot be set against each other, or None.
+
+        Returns the reason rather than a bare boolean so the operator-facing
+        warnings can name the predicate that actually failed: the A/B message
+        used to blame corpus provenance unconditionally, sending an operator
+        whose arms were withheld purely over judge pressure to inspect the
+        corpus.
 
         Only when, for every arm, the corpus provenance is established, they all
         observed the same corpus, and the arm actually ran the settings it was
@@ -238,16 +353,156 @@ class ResultHandler:
         comparable: historical sweeps are not retroactively invalidated.
         """
         fingerprints = set()
+        # How hard the judge was driven is a condition of the measurement, not a
+        # detail of it: `max_workers` decides how often the judge throttles into
+        # backoff, the backoff eats the per-row timeout budget, and the row is
+        # dropped unscored. Two arms judged at different concurrency therefore
+        # differ in score COVERAGE for reasons that have nothing to do with the
+        # arms. Recording the drift in the leaderboard's shared context is not a
+        # guard -- `rank` is what a consumer reads, and a warning it never sees
+        # cannot stop it -- so the pressure has to reach this predicate.
+        #
+        # `None` is a value here, not an absence: it says no judge ran, which is
+        # the starkest pressure difference there is against an arm that was
+        # judged. Only a wholly ABSENT key is skipped, and only because it
+        # predates the field.
+        judge_pressures = set()
+        # Which judge scored the arm (#618), extended with nested fields by
+        # #732. Compared by canonical JSON: a list or dict value cannot go into
+        # a set as a tuple of items. A None identity is skipped: an unjudged arm
+        # already fails the pressure check above, so counting it here adds
+        # nothing.
+        judge_identities: List[Dict[str, Any]] = []
         for record in records:
             stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is not _NOT_RECORDED and stability is not True:
-                return False
+                return "the corpus was not stable across an arm's own questions"
+            tag_stability = record.get(
+                "embedding_tags_unchanged_at_endpoints", _NOT_RECORDED
+            )
+            if tag_stability is not _NOT_RECORDED and tag_stability is not True:
+                return "the embedding model tags changed while an arm was running"
             if record.get("configuration_divergence"):
-                return False
+                return "an arm did not run the settings it was selected to run"
             fingerprint = record.get("corpus_fingerprint")
             if fingerprint is not None:
                 fingerprints.add(fingerprint)
-        return len(fingerprints) <= 1
+            identity = record.get("ragas_judge_identity_effective")
+            if identity is not None:
+                judge_identities.append(identity)
+            pressure = record.get("ragas_effective_settings", _NOT_RECORDED)
+            if pressure is _NOT_RECORDED:
+                continue
+            judge_pressures.add(
+                None
+                if pressure is None
+                else (pressure.get("max_workers"), pressure.get("timeout"))
+            )
+        if len(judge_pressures) > 1:
+            return (
+                "the arms were scored under different judge pressure "
+                "(concurrency, per-row budget, or one arm was not judged), "
+                "so their scored denominators are not comparable"
+            )
+        if len({canonical_identity(i) for i in judge_identities}) > 1:
+            return (
+                "the arms were scored by different RAGAS judges (these identity "
+                f"fields differ: {', '.join(differing_fields(judge_identities))}), "
+                "so their scores are not comparable"
+            )
+        if len(fingerprints) > 1:
+            return (
+                "corpus provenance does not establish that both arms were "
+                "scored against the same documents"
+            )
+        return None
+
+    @staticmethod
+    def arms_comparable(records: List[Dict[str, Any]]) -> bool:
+        """The boolean view of ``arms_incomparability_reason``.
+
+        One predicate, two shapes: callers that only gate use this, callers
+        that also report use the reason. They cannot drift apart.
+        """
+        return ResultHandler.arms_incomparability_reason(records) is None
+
+    @staticmethod
+    def leaderboard_rank_label(rank: Optional[int]) -> str:
+        """A rank rendered for the console table, withheld ranks included.
+
+        The table's positional was ``%-4d``. ``'%d' % None`` raises, and
+        ``logging`` catches that in ``handleError`` rather than aborting the
+        run, so a withheld rank did not crash -- it made every leaderboard row
+        DISAPPEAR from the console, in exactly the incomparable case the
+        withholding exists to report. ``ab_summary_line`` documents the same
+        failure mode for withheld winners; this is its leaderboard sibling.
+        """
+        return "-" if rank is None else str(rank)
+
+    # Console header per leaderboard metric; ``noise`` carries a down arrow
+    # because lower is better.
+    LEADERBOARD_COLUMN_LABELS: Dict[str, str] = {
+        "answer_relevancy": "ans_rel",
+        "faithfulness": "faith",
+        "context_precision": "ctx_prec",
+        "context_recall": "ctx_rec",
+        "answer_correctness": "ans_corr",
+        "factual_correctness_recall": "fc_rec",
+        "factual_correctness_precision": "fc_prec",
+        "noise_sensitivity": "noise(↓)",
+        "answer_accuracy": "ans_acc",
+        "response_groundedness": "grounded",
+    }
+
+    @staticmethod
+    def leaderboard_columns(leaderboard: Dict[str, Any]) -> List[str]:
+        """The metrics the console table shows, in registry order.
+
+        A metric is shown when any row scored it, and the primary metric is
+        always shown: a rank printed without the score it was ranked by gives
+        the operator nothing to check it against.
+        """
+        primary = leaderboard["primary_metric"]
+        rows = leaderboard["rows"]
+        return [
+            name
+            for name in RAGAS_METRIC_NAMES
+            if name == primary or any(r["metrics"].get(name) is not None for r in rows)
+        ]
+
+    @staticmethod
+    def leaderboard_table_lines(leaderboard: Dict[str, Any]) -> List[str]:
+        """The console leaderboard: a header, then one line per row.
+
+        A mean over fewer than the answered questions (judge timeouts) carries
+        ``@<n>``, so an under-sampled score cannot pass as fully backed.
+        """
+        columns = ResultHandler.leaderboard_columns(leaderboard)
+        labels = [ResultHandler.LEADERBOARD_COLUMN_LABELS[c] for c in columns]
+        lines = [
+            "  %-4s %-28s " % ("rank", "name")
+            + "".join(f"{label:<12} " for label in labels)
+            + "%-10s %s" % ("n_q", "prompt")
+        ]
+        for row in leaderboard["rows"]:
+            answered = row["query_count"]
+            scored = row.get("scored_counts", {})
+            cells = []
+            for column in columns:
+                value = row["metrics"].get(column)
+                if not isinstance(value, float):
+                    cells.append("    n/a")
+                    continue
+                n = scored.get(column, answered)
+                cells.append(f"{value:.4f}@{n}" if n < answered else f"{value:.4f}")
+            flag = "  (incomplete)" if row["incomplete"] else ""
+            lines.append(
+                "  %-4s %-28s "
+                % (ResultHandler.leaderboard_rank_label(row["rank"]), row["name"][:28])
+                + "".join(f"{cell:<12} " for cell in cells)
+                + "%-10d %s%s" % (answered, row["agent_md_file"], flag)
+            )
+        return lines
 
     @staticmethod
     def ab_summary_line(
@@ -276,46 +531,95 @@ class ResultHandler:
         )
 
     @staticmethod
-    def get_corpus_fingerprint() -> str:
-        """Digest of the live corpus, or a marker explaining why it is missing.
+    def get_corpus_fingerprint(config: Optional[Dict[str, Any]]) -> str:
+        """Digest of the searched corpus, or a marker explaining why it is missing.
 
         Unlike the per-invocation nonce above, equal digests mean equal corpora,
         so "these arms were scored against the same documents" becomes a
         checkable claim.
 
-        Covers the retrievable state, not just the document list -- see
-        ``CORPUS_STATE_QUERY`` for what is hashed and why. Re-embedding the same
-        text with a different model is NOT covered; that appears as a divergence
-        on ``data_manager.embedding_name`` in the recorded configuration.
+        *config* is the running config; it names the collection. The digest is
+        ``live_corpus_fingerprint``'s v2 digest -- see ``CORPUS_STATE_V2_QUERY``
+        for what is hashed and why. Re-embedding the same text with a different
+        model is NOT covered, on purpose: ``retrieval_identity.embedding_model``
+        records the model, checked against the chunks' tags.
 
         Reads through the pool the run actually opened -- the one `_init_runtime`
         installed on PostgresServiceFactory -- and NOT `ConnectionPool.get_instance`.
-        The two are unrelated singletons: the factory builds its pools directly
-        (`from_config`, and the lazy `connection_pool` property), so nothing ever
-        populates `ConnectionPool._instance`, and asking it for the pool raised
-        `ValueError` on every real run. Because provenance failure is swallowed
-        below, that filed an unavailable-marker instead of crashing, so the field
-        was inert wherever it was consumed while the unit tests stayed green --
-        they monkeypatched the very call that could not work (#273).
+        The two are unrelated singletons: nothing ever populates
+        `ConnectionPool._instance`, and asking it for the pool raised `ValueError`
+        on every real run while the unit tests stayed green (#273).
 
         Never raises: a finished benchmark must not lose its scores because
-        provenance could not be collected. It does now warn, because an artifact
-        key nobody thinks to check is how the inert version survived review.
+        provenance could not be collected. It warns, because an artifact key
+        nobody thinks to check is how the inert version survived review.
         """
         try:
-            factory = PostgresServiceFactory.get_instance()
-            if factory is None:
-                raise RuntimeError(
-                    "PostgresServiceFactory is not initialized; _init_runtime() "
-                    "installs it when this module is run as a script"
-                )
-            rows = factory.connection_pool.execute(CORPUS_STATE_QUERY)
-            return corpus_fingerprint(rows)
+            return live_corpus_fingerprint(_factory_pool(), config)
         except Exception as exc:  # noqa: BLE001 - provenance is never fatal
             logger.warning(
                 "Corpus provenance unavailable: %s. This run cannot be shown to "
                 "have scored against the same corpus as any other, so comparisons "
                 "involving it will be withheld.",
+                exc,
+            )
+            return f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
+
+    @staticmethod
+    def check_collection(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """The start guard: the arm's ``retrieval_identity``, or a fatal error.
+
+        Runs before the arm's first question. Raises ``CollectionNotReadyError``
+        when the searched collection is empty, has no vector, or holds chunks
+        another model embedded. Unlike the corpus readings this raises: no
+        question has run, so there are no scores to lose, and an arm scored
+        against the wrong vectors is worse than no arm.
+        """
+        identity = retrieval_identity(config)
+        readiness = collection_readiness(_factory_pool(), identity)
+        logger.info(
+            "Searching collection %s (embedding_model=%s, source=%s, %d chunks)",
+            identity.collection,
+            identity.embedding_model,
+            readiness["embedding_model_source"],
+            readiness["chunk_count"],
+        )
+        return retrieval_record(identity, readiness)
+
+    @staticmethod
+    def get_category_map(
+        config: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[List[str]], str]:
+        """The searched collection's URL -> category map as records and digest.
+
+        Reads through the same factory pool as ``get_corpus_fingerprint`` and,
+        like it, never raises: a failure returns ``(None, "<unavailable: …>")``,
+        which the endpoint comparison treats as "not observed" (#538 rule 2).
+        """
+        try:
+            _, records, digest = live_category_map(_factory_pool(), config)
+            return records, digest
+        except Exception as exc:  # noqa: BLE001 - provenance is never fatal
+            logger.warning(
+                "Category-map provenance unavailable: %s. This arm gets no "
+                "per-category slice.",
+                exc,
+            )
+            return None, f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
+
+    @staticmethod
+    def get_embedding_tag_state(config: Optional[Dict[str, Any]]):
+        """End-of-arm embedding tag state, or a marker explaining why it is missing.
+
+        Like ``get_corpus_fingerprint``: never raises, warns on failure.
+        """
+        try:
+            return live_embedding_tag_state(_factory_pool(), config)
+        except Exception as exc:  # noqa: BLE001 - provenance is never fatal
+            logger.warning(
+                "Embedding tag provenance unavailable: %s. This arm cannot be "
+                "shown to have been searched by the configured embedding model "
+                "throughout.",
                 exc,
             )
             return f"{ResultHandler.CORPUS_UNAVAILABLE} {exc}>"
@@ -346,12 +650,40 @@ class ResultHandler:
         *,
         running_config: Optional[Dict[str, Any]],
         corpus_before: Optional[str] = None,
+        category_map_before: Optional[str] = None,
+        agent_md_sha256: Optional[str] = None,
         ingest_wall_seconds: Optional[float] = None,
+        modes_executed: Optional[Set[str]] = None,
+        retrieval_identity: Optional[Dict[str, Any]] = None,
+        judge_usage: Optional[Dict[str, Any]] = None,
+        ragas_scored: Optional[bool] = None,
+        judge_identity: Optional[Dict[str, Any]] = None,
+        judge_bundle: Optional[Dict[str, str]] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
 
+        # `map_prompts` swaps each prompt path for that file's text in place.
+        # `selected_file_digest` must fingerprint the file as written, so keep
+        # an untouched copy before the swap (#521).
+        selected_file = copy.deepcopy(config)
         ResultHandler.map_prompts(config)
+
+        # What RAN, which in a sweep is not what this arm's file says. `run()`
+        # reads `modes_being_run` once from the FIRST config and reuses it for
+        # every arm, so a later SOURCES-only file is judged anyway. Deriving the
+        # judge provenance from the arm's own file then records "no judge ran"
+        # for a run that was judged, and the reverse ordering claims judge
+        # settings for an arm that was not. The caller passes what executed;
+        # the file is only the fallback for callers that do not know.
+        ragas_ran = "RAGAS" in (
+            modes_executed
+            if modes_executed is not None
+            else set(
+                ((config.get("services") or {}).get("benchmarking") or {}).get("modes")
+                or []
+            )
+        )
 
         # The file above is what the operator SELECTED. The agent reads its
         # configuration from Postgres, and load_new_configuration writes the
@@ -385,7 +717,7 @@ class ResultHandler:
                 ", ".join(divergence),
             )
 
-        corpus_after = ResultHandler.get_corpus_fingerprint()
+        corpus_after = ResultHandler.get_corpus_fingerprint(running_config)
         # None, not False, when either reading is missing or failed. A failure is
         # not an observation: get_corpus_fingerprint reports one as
         # "<unavailable: ...>", and two identical failures compare equal, so
@@ -405,6 +737,33 @@ class ResultHandler:
                 corpus_after,
             )
 
+        tags_end = ResultHandler.get_embedding_tag_state(running_config)
+        tags_unchanged = embedding_tags_unchanged(retrieval_identity, tags_end)
+        if tags_unchanged is False:
+            logger.warning(
+                "The embedding model tags changed while this arm was running; "
+                "some questions searched vectors of another model or of no "
+                "recorded model"
+            )
+
+        # The same three states for the URL -> category map (#538 rules 1-2).
+        category_map_end_records, category_map_after = ResultHandler.get_category_map(
+            running_config
+        )
+        if ResultHandler.corpus_reading_failed(
+            category_map_before
+        ) or ResultHandler.corpus_reading_failed(category_map_after):
+            category_map_unchanged = None
+        else:
+            category_map_unchanged = category_map_before == category_map_after
+        if category_map_unchanged is False:
+            logger.warning(
+                "The category map changed while this arm was running (%s -> %s); "
+                "it gets no per-category slice",
+                category_map_before,
+                category_map_after,
+            )
+
         current_results = {
             "single_question_results": results,
             "total_results": total_results,
@@ -417,9 +776,21 @@ class ResultHandler:
             # re-ingest and score different questions against different
             # corpora; a single reading taken afterwards would report the final
             # state as though it had covered the whole arm.
+            # What the arm searched, checked by the start guard (#570).
+            "retrieval_identity": retrieval_identity,
             "corpus_fingerprint_before": corpus_before,
             "corpus_fingerprint": corpus_after,
             "corpus_unchanged_at_endpoints": corpus_unchanged_at_endpoints,
+            "embedding_tags_end": tags_end,
+            "embedding_tags_unchanged_at_endpoints": tags_unchanged,
+            # The map a per-category slice may read, bound to this arm: the end
+            # records are written by dump_artifacts as `category_map_file`, whose
+            # sha256 equals `category_map_sha256_end` by construction.
+            "category_map_sha256_start": category_map_before,
+            "category_map_sha256_end": category_map_after,
+            "category_map_unchanged_at_endpoints": category_map_unchanged,
+            # The prompt this arm ran, as load_agent_spec parsed it.
+            "agent_md_sha256": agent_md_sha256,
             # What the corpus above COST to build, in harness-observed seconds.
             # Three readings, kept distinct on purpose: key absent = artifact
             # predates the field; null = no ingest was observed (the run reused
@@ -436,14 +807,78 @@ class ResultHandler:
             # hand. This digest answers the other question -- "was this the same
             # configuration as that other run?" -- from the finished artifact
             # alone, long after Postgres has moved on.
+            # What the judge ACTUALLY ran with, recorded BESIDE the configuration
+            # as written rather than folded into it. The validators substitute a
+            # default for an invalid setting, and that substitution reached
+            # RunConfig and nothing else -- so an artifact recorded `timeout: -1`
+            # for a run that used 180. Normalizing `configuration` in place would
+            # fix that by falsifying the other half of the record;
+            # asserted_config_divergence exists to keep "what was selected" and
+            # "what happened" separable, so both are kept. Recomputed from the
+            # file just read: the helper is pure, so nothing has to be plumbed
+            # through from the Benchmarker.
+            # None when no judge ran. A rendered configuration always carries a
+            # `ragas_settings` block, so the block's presence cannot stand in for
+            # "RAGAS was a mode": a SOURCES-only run would otherwise publish a
+            # timeout and a worker count as settings it used, when it never
+            # built a RunConfig at all. Null says "no judge ran" and is not the
+            # same claim as an absent key.
+            #
+            # Also None when RAGAS was a mode but every answer in the arm failed
+            # or was degraded, so `_process_config` never built a `RunConfig` and
+            # the judge never started (#518). `ragas_scored=False` is how the
+            # caller reports that; `None` means the caller does not know, which
+            # keeps today's behavior.
+            "ragas_effective_settings": (
+                ragas_effective_settings(
+                    (
+                        ((config.get("services") or {}).get("benchmarking") or {}).get(
+                            "mode_settings"
+                        )
+                        or {}
+                    ).get("ragas_settings")
+                )
+                if ragas_ran and ragas_scored is not False
+                else None
+            ),
+            # Per-arm token usage from the ragas judge LLM calls (D7). Null when
+            # no judge ran; always present on new artifacts so old/new are
+            # distinguishable by key presence only.
+            "judge_usage": judge_usage if ragas_ran else None,
+            # The effective judge identity (provider, model, endpoint, mode) for
+            # this arm (#618). Null mirrors ragas_effective_settings: no judge ran,
+            # or every answer failed so the judge never started.
+            "ragas_judge_identity_effective": (
+                judge_identity if ragas_ran and ragas_scored is not False else None
+            ),
+            # The digest is the identity of the settings the run EFFECTIVELY had,
+            # so the judge knobs are normalized in the BASIS while `configuration`
+            # above keeps the file verbatim. Recording the effective values in a
+            # sibling field is not enough on its own: the digest is what a later
+            # reader compares, and hashing the unnormalized file gave two runs
+            # that both fell back to the same defaults from different typos two
+            # different digests.
+            #
+            # Passed as `effective_selected`, NOT as `selected`. The latter also
+            # feeds `selected_file_digest` and the divergence list, which
+            # describe the file as written -- two files that differ must
+            # fingerprint differently even when they drive identical runs.
             "config_version": config_version(
                 running=running_config,
-                selected=config,
+                selected=selected_file,
+                effective_selected=with_effective_ragas_settings(
+                    config, modes_executed=modes_executed
+                ),
                 selected_file=str(config_path),
             ),
         }
+        # A deferred arm (#731, design D8): `judge_status: pending` and its
+        # bundle. An inline arm gets neither key.
+        if judge_bundle is not None:
+            current_results.update(pending_arm_fields(judge_bundle))
 
         ResultHandler.results.append(current_results)
+        ResultHandler.category_map_records_by_arm.append(category_map_end_records)
 
     @staticmethod
     def add_metadata():
@@ -506,13 +941,22 @@ class ResultHandler:
                 for record in ResultHandler.results
             ],
             "corpus_snapshot_id": ResultHandler.get_corpus_snapshot_id(),
-            "corpus_fingerprint": ResultHandler.get_corpus_fingerprint(),
+            # The collection the last arm searched: v2 is per collection.
+            "corpus_fingerprint": ResultHandler.get_corpus_fingerprint(
+                (ResultHandler.results[-1] if ResultHandler.results else {}).get(
+                    "running_configuration"
+                )
+            ),
         }
 
         ResultHandler.metadata.update(meta_data)
 
     @staticmethod
-    def dump_artifacts(benchmark_name: Path):
+    def result_timestamp() -> str:
+        return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    @staticmethod
+    def dump_artifacts(benchmark_name: Path, *, timestamp: Optional[str] = None):
         """Write the run's JSON artifact and its markdown report.
 
         The timestamp is captured ONCE so the report is always the JSON's
@@ -521,7 +965,9 @@ class ResultHandler:
         the source of truth); a report failure is logged and swallowed, and
         `--regenerate-md` on the backfill script rebuilds the report later.
         """
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        if timestamp is None:
+            timestamp = ResultHandler.result_timestamp()
+        ResultHandler.dump_category_maps(benchmark_name, timestamp)
         json_path = ResultHandler.dump(benchmark_name, timestamp)
         try:
             ResultHandler.dump_report(benchmark_name, timestamp)
@@ -535,6 +981,30 @@ class ResultHandler:
                 f"scripts/benchmarking/backfill_report_provenance.py "
                 f"--regenerate-md {json_path}"
             )
+
+    @staticmethod
+    def dump_category_maps(benchmark_name: Path, timestamp: str):
+        """Write each arm's end-reading map as ``<stem>_category_map_<N>.tsv``.
+
+        ``<N>`` is the arm's 1-based position, as ``compare_runs`` labels it.
+        The file is exactly the text that was hashed, so its sha256 equals the
+        arm's ``category_map_sha256_end``. An arm whose end reading failed gets
+        ``category_map_file: null``; a result recorded without the category keys
+        (none the current harness writes) is left untouched.
+        """
+        stem = f"{benchmark_name}-{timestamp}"
+        by_arm = ResultHandler.category_map_records_by_arm
+        for index, entry in enumerate(ResultHandler.results, 1):
+            if "category_map_sha256_end" not in entry:
+                continue
+            records = by_arm[index - 1] if index <= len(by_arm) else None
+            if records is None:
+                entry["category_map_file"] = None
+                continue
+            name = f"{stem}_category_map_{index}.tsv"
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            (OUTPUT_DIR / name).write_bytes(category_map_text(records).encode("utf-8"))
+            entry["category_map_file"] = name
 
     @staticmethod
     def dump_report(benchmark_name: Path, timestamp: str):
@@ -598,13 +1068,7 @@ class ResultHandler:
         results_a = ResultHandler.results[idx_a]["single_question_results"]
         results_b = ResultHandler.results[idx_b]["single_question_results"]
 
-        ragas_metrics = [
-            "answer_relevancy",
-            "faithfulness",
-            "context_precision",
-            "context_recall",
-            "answer_correctness",
-        ]
+        ragas_metrics = list(RAGAS_METRIC_NAMES)
 
         paired: List[ABResult] = []
         all_keys = list(results_a.keys()) + [k for k in results_b if k not in results_a]
@@ -641,17 +1105,9 @@ class ResultHandler:
             ragas_a = {m: qa.get(m, float("nan")) for m in shared_metrics}
             ragas_b = {m: qb.get(m, float("nan")) for m in shared_metrics}
 
-            winner_by_metric: Dict[str, str] = {}
-            for m in ragas_a:
-                sa, sb = ragas_a.get(m, float("nan")), ragas_b.get(m, float("nan"))
-                if math.isnan(sa) or math.isnan(sb):
-                    winner_by_metric[m] = "tie"
-                elif abs(sa - sb) < 1e-9:
-                    winner_by_metric[m] = "tie"
-                elif sa > sb:
-                    winner_by_metric[m] = "a"
-                else:
-                    winner_by_metric[m] = "b"
+            winner_by_metric: Dict[str, str] = {
+                m: metric_winner(m, ragas_a[m], ragas_b[m]) for m in ragas_a
+            }
 
             paired.append(
                 ABResult(
@@ -716,9 +1172,10 @@ class ResultHandler:
         # the two arms were measured under the same conditions. Guarding only
         # the leaderboard would still let a reader draw the unsupported
         # conclusion from this artifact.
-        comparable = ResultHandler.arms_comparable(
+        reason = ResultHandler.arms_incomparability_reason(
             [ResultHandler.results[idx_a], ResultHandler.results[idx_b]]
         )
+        comparable = reason is None
 
         wins_a: Optional[int] = 0
         wins_b: Optional[int] = 0
@@ -741,11 +1198,10 @@ class ResultHandler:
                 row["winner_by_metric"] = {}
             wins_a = wins_b = ties = None
             logger.warning(
-                "A/B winners withheld for '%s' vs '%s': corpus provenance does "
-                "not establish that both arms were scored against the same "
-                "documents",
+                "A/B winners withheld for '%s' vs '%s': %s",
                 config_a_meta["name"],
                 config_b_meta["name"],
+                reason,
             )
 
         mean_scores_a: Dict[str, float] = {}
@@ -790,14 +1246,23 @@ class ResultHandler:
         """Generate all pairwise index combinations for N configs."""
         return list(combinations(range(n_configs), 2))
 
+    @staticmethod
+    def build_comparisons(primary_metric: str) -> None:
+        """Every pairwise A/B comparison, then the leaderboard, of ``results``.
+
+        One path for the run (2+ arms) and for the judge merge (#732), which
+        rebuilds both from the judged arms of a deferred result.
+        """
+        pairs = ResultHandler.generate_pairwise_combinations(len(ResultHandler.results))
+        for idx_a, idx_b in pairs:
+            paired = ResultHandler.pair_ab_results(idx_a, idx_b)
+            ResultHandler.dump_ab_comparison(paired, idx_a, idx_b)
+        ResultHandler.build_leaderboard(primary_metric)
+
     # Leaderboard metric name -> the aggregate key the run loop writes onto
     # total_results (service_benchmark.py RAGAS block). Order is display order.
     LEADERBOARD_METRICS: List[Tuple[str, str]] = [
-        ("answer_relevancy", "aggregate_answer_relevancy"),
-        ("faithfulness", "aggregate_faithfulness"),
-        ("context_precision", "aggregate_context_precision"),
-        ("context_recall", "aggregate_context_recall"),
-        ("answer_correctness", "aggregate_answer_correctness"),
+        (name, f"aggregate_{name}") for name in RAGAS_METRIC_NAMES
     ]
 
     @staticmethod
@@ -845,6 +1310,21 @@ class ResultHandler:
             "model": set(),
             "provider": set(),
             "evaluator_model": set(),
+            # How hard the judge was pushed, and how long each row was given.
+            # Not cosmetic: concurrency drives the judge's throttling, throttling
+            # spends the one timeout budget that covers every retry, and a row
+            # that runs out of budget comes back unscored -- leaving the scored
+            # denominator. Arms judged under different pressure therefore carry
+            # aggregates over different question sets. Both knobs, not just the
+            # new one: singling out max_workers would leave the same hole open
+            # one field along.
+            "judge_max_workers": set(),
+            "judge_timeout": set(),
+            # Whether a judge ran at all, as a non-None token so the reduction
+            # cannot drop it: `None` is filtered before comparison, which is how
+            # a mixed sweep passed as "shared".
+            "judge_participation": set(),
+            "judge_identity": set(),
             "queries_path": set(),
             "corpus_fingerprint": set(),
         }
@@ -964,6 +1444,29 @@ class ResultHandler:
             ctx_fields["model"].add(bench.get("model"))
             ctx_fields["provider"].add(bench.get("provider"))
             ctx_fields["evaluator_model"].add(ragas_settings.get("evaluator_model"))
+            # From the RECORD, never recomputed from the block. The block is
+            # always rendered, so recomputing claimed judge pressure for a
+            # SOURCES-only sweep whose every record said no judge ran. The
+            # record already holds the effective values, defaults substituted,
+            # or None when no judge ran -- and None adds nothing, so an absent
+            # judge stays absent instead of turning into a default.
+            judge_pressure = record.get("ragas_effective_settings")
+            if judge_pressure is not None:
+                ctx_fields["judge_max_workers"].add(judge_pressure["max_workers"])
+                ctx_fields["judge_timeout"].add(judge_pressure["timeout"])
+            # Whether a judge ran at all is its own swept field. The reduction
+            # below drops None before comparing, so adding pressure only for the
+            # judged record let a mixed sweep -- a RAGAS arm beside a
+            # SOURCES-only one -- see a single worker count and report it as
+            # shared, when one arm never built a RunConfig. A non-None token on
+            # every record keeps that difference visible, and stays a single
+            # value (so silent) when every arm agrees.
+            ctx_fields["judge_participation"].add(
+                "none" if judge_pressure is None else "judged"
+            )
+            judge_identity = record.get("ragas_judge_identity_effective")
+            if judge_identity is not None:
+                ctx_fields["judge_identity"].add(canonical_identity(judge_identity))
             ctx_fields["queries_path"].add(bench.get("queries_path"))
             # The corpus is a swept-context field like any other: ranking arms
             # scored against different documents asserts controlled conditions
@@ -983,6 +1486,19 @@ class ResultHandler:
                     f"corpus stability is unknown for variant '{name}'; it was "
                     "not observed before and after the run"
                 )
+            tag_stability = record.get(
+                "embedding_tags_unchanged_at_endpoints", _NOT_RECORDED
+            )
+            if tag_stability is False:
+                corpus_warnings.append(
+                    f"the embedding model tags changed while variant '{name}' was "
+                    "running; some questions searched vectors of another model or "
+                    "of no recorded model"
+                )
+            elif tag_stability is None:
+                corpus_warnings.append(
+                    f"embedding tag stability is unknown for variant '{name}'"
+                )
             divergence = record.get("configuration_divergence") or []
             if divergence:
                 corpus_warnings.append(
@@ -990,11 +1506,16 @@ class ResultHandler:
                     f"to run; these differ: {', '.join(divergence)}"
                 )
 
-        # Complete rows first, then by descending primary score; incomplete last.
+        # Complete rows first, then rows that scored the primary metric, then
+        # best primary score first (descending, or ascending for a
+        # lower-is-better metric). A missing score sorts on its own key: any
+        # stand-in value is the best noise score, or ties a scored 0.0.
+        best_first = 1.0 if primary_metric in LOWER_IS_BETTER_METRICS else -1.0
         rows.sort(
             key=lambda r: (
                 1 if r["incomplete"] else 0,
-                -(r["primary_score"] if r["primary_score"] is not None else 0.0),
+                1 if r["primary_score"] is None else 0,
+                best_first * (r["primary_score"] or 0.0),
             )
         )
 
@@ -1089,25 +1610,64 @@ _INGEST_PROGRESS_STATES = frozenset({"running"})
 #: started.
 _INGEST_PRELOCK_STEP = "initializing"
 
+#: Steps a scheduled source refresh (``scheduled:<source>``) or an upload
+#: (``upload``) publishes. They change the corpus, so the wait blocks on them,
+#: but they are not the corpus build whose cost ``ingest_wall_seconds`` records.
+_INGEST_REFRESH_STEP_PREFIX = "scheduled:"
+_INGEST_UPLOAD_STEP = "upload"
 
-def _ingest_is_progressing(state: str, step: Any) -> bool:
+
+def _is_refresh_step(step: Any) -> bool:
+    step = str(step).strip().lower()
+    return step == _INGEST_UPLOAD_STEP or step.startswith(_INGEST_REFRESH_STEP_PREFIX)
+
+
+def _ingest_progress_done(payload: Dict[str, Any]) -> Optional[int]:
+    """Return `progress.done` from a status payload, or `None` if absent or malformed.
+
+    Malformed means: `progress` is not a dict, `done` is missing, is a bool,
+    is not an int, or is negative. A malformed counter is treated as absent so
+    an old data manager without the counter field falls back to the pre-counter
+    stall rule and is never falsely killed.
+    """
+    progress = payload.get("progress")
+    if not isinstance(progress, dict):
+        return None
+    done = progress.get("done")
+    if isinstance(done, bool) or not isinstance(done, int) or done < 0:
+        return None
+    return done
+
+
+def _ingest_is_progressing(
+    state: str,
+    step: Any,
+    done: Optional[int] = None,
+    last_done: Optional[int] = None,
+) -> bool:
     """Is this status payload evidence the ingest is actually doing work?
 
-    Only payloads this accepts restart the stall budget. Two shapes are
-    excluded on purpose, because both are indistinguishable from a healthy
-    long run if you look only at "did the endpoint answer":
+    Only payloads this accepts restart the stall budget. Rules applied in order:
 
-    - any state but "running" -- notably the initial "pending", which persists
-      forever if the ingestion thread never starts;
-    - "running" at step "initializing" -- published before `ingestion_lock` is
-      taken, so it is also exactly what a benchmark sees while its own ingest
-      is queued behind a scheduled task or an upload-triggered vectorstore
-      update, neither of which touches this status dict
-      (`service_data_manager.py:70-83`).
+    1. Any state but "running" → False. Notably the initial "pending", which
+       persists forever if the ingestion thread never starts.
+    2. Step "initializing" → False. Published before the ingest's work starts
+       (and before `ingestion_lock` is taken when no other run holds it), so it
+       never proves work. A scheduled refresh or an upload publishes its own
+       ``scheduled:<source>`` or ``upload`` step instead.
+    3. `done is None` → True. No counter present (older data manager, or a phase
+       outside the embedding loop); fall back to the pre-counter rule where any
+       running poll restarts the budget.
+    4. Otherwise → `done != last_done`. The counter advanced → True; frozen → False.
+       The first poll that carries a counter is always accepted (0 != None).
     """
     if state not in _INGEST_PROGRESS_STATES:
         return False
-    return str(step).strip().lower() != _INGEST_PRELOCK_STEP
+    if str(step).strip().lower() == _INGEST_PRELOCK_STEP:
+        return False
+    if done is None:
+        return True
+    return done != last_done
 
 
 def _ingest_wait_budgets() -> _IngestWaitBudgets:
@@ -1174,6 +1734,11 @@ class Benchmarker:
         self.required_fields = ["user_input"]
         self.benchmark_name = os.environ["container_name"]
         self.all_config_files = self.get_all_configs(configs)
+        self.judge_plan = plan_judge_run(
+            self.all_config_files,
+            package_dir=PACKAGE_DIR,
+            git_info_path=EXTRA_METADATA_PATH,
+        )
         self.all_config_files.append("FINISHED")
         self.previous_input_list = []
         self.chain = None
@@ -1251,6 +1816,9 @@ class Benchmarker:
         apply_sut_local_provider(benchmark_cfg, get_static_config())
 
         agent_spec = None
+        # Hashed at load time, from the text load_agent_spec parses, so the arm
+        # record names the prompt this chain was built with.
+        self.agent_md_sha256 = prompt_text_sha256(agent_md_file)
         try:
             agent_spec = load_agent_spec(Path(str(agent_md_file)))
         except AgentSpecError as exc:
@@ -1379,119 +1947,28 @@ class Benchmarker:
         return results
 
     def get_ragas_llm_evaluator(self):
-        ragas_configs = self.config["services"]["benchmarking"]["mode_settings"][
-            "ragas_settings"
-        ]
-        benchmark_cfg = self.config.get("services", {}).get("benchmarking", {})
-        # Judge/SUT config split: when ragas_settings.evaluator_* is set, the RAGAS judge
-        # uses an independent model from the system under test. Falls back to the SUT
-        # provider/model when the evaluator_* keys are absent.
-        provider = ragas_configs.get("evaluator_provider") or benchmark_cfg.get(
-            "provider"
+        from src.utils.ragas_scoring import build_ragas_judge_llm
+
+        identity = ragas_judge_effective_identity(self.config)
+        self._ragas_judge_identity = identity
+        return build_ragas_judge_llm(
+            identity,
+            chat_openai=ChatOpenAI,
+            get_model=get_model,
         )
-        model_name = ragas_configs.get("evaluator_model") or benchmark_cfg.get("model")
-        ollama_url = ragas_configs.get("evaluator_ollama_url") or benchmark_cfg.get(
-            "ollama_url"
-        )
-
-        match str(provider).lower():
-            case "openai":
-                return ChatOpenAI(model=model_name)
-            case "ollama":
-                from langchain_ollama import ChatOllama
-
-                base_url = ollama_url
-                return ChatOllama(
-                    model=model_name,
-                    base_url=base_url,
-                    num_predict=-2,
-                    model_kwargs={"format": "json"},
-                )
-            case "local":
-                # Mirror the SUT bridge (#73): a /v1 judge endpoint is
-                # OpenAI-compatible, so build a ChatOpenAI client instead of
-                # ChatOllama (which 404s against /v1). An explicit provider_mode
-                # (judge-specific or inherited from the SUT) overrides the
-                # /v1 auto-detection.
-                #
-                # Selected by presence, not by truthiness: YAML decodes
-                # `evaluator_provider_mode: false` to False and `: 0` to 0, and an
-                # `or` here discarded both in favour of the SUT's mode — so the
-                # judge scored in a dialect nobody configured and
-                # `resolve_local_mode`'s refusal of a non-string never fired on
-                # this path. The empty string stays the one "not configured"
-                # spelling that still inherits.
-                evaluator_mode = ragas_configs.get("evaluator_provider_mode")
-                explicit_mode = (
-                    evaluator_mode
-                    if evaluator_mode not in (None, "")
-                    else benchmark_cfg.get("provider_mode")
-                )
-                if resolve_local_mode(ollama_url, explicit_mode) == "openai_compat":
-                    # base_url twice: see the huggingface arm below — in openai_compat
-                    # mode LocalProvider now honors the configured base_url instead of
-                    # OLLAMA_HOST, so the keyword agrees with the config copy instead
-                    # of outranking it. Only when there is one, though: the keyword
-                    # lands last, so a None would erase the provider's own local
-                    # default and send the judge to the public OpenAI endpoint. An
-                    # override with nothing to override with is not an override.
-                    override = (
-                        {"base_url": normalize_base_url(ollama_url)}
-                        if ollama_url
-                        else {}
-                    )
-                    return get_model(
-                        "local",
-                        model_name,
-                        {"base_url": ollama_url, "mode": "openai_compat"},
-                        **override,
-                    )
-                from langchain_ollama import ChatOllama
-
-                return ChatOllama(
-                    model=model_name,
-                    base_url=ollama_url,
-                    num_predict=-2,
-                    model_kwargs={"format": "json"},
-                )
-            case "huggingface":
-                base_url = ollama_url or "http://localhost:8000/v1"
-                # base_url twice, on purpose. load_new_configuration exports the SUT
-                # url as OLLAMA_HOST, but in openai_compat mode LocalProvider now
-                # honors the configured base_url instead of OLLAMA_HOST, so the
-                # keyword agrees with the config copy instead of outranking it.
-                return get_model(
-                    "local",
-                    model_name,
-                    {"base_url": base_url, "mode": "openai_compat"},
-                    base_url=normalize_base_url(base_url),
-                )
-            case "anthropic":
-                from langchain_anthropic import ChatAnthropic
-
-                return ChatAnthropic(model=model_name)
-            case "huit_bedrock":
-                base_url = (
-                    benchmark_cfg.get("base_url")
-                    or "https://go.apis.huit.harvard.edu/ais-bedrock-llm/v2"
-                )
-                return get_model("huit_bedrock", model_name, {"base_url": base_url})
-            case _:
-                return ChatOpenAI(model=model_name)
 
     def get_ragas_embedding_model(self):
+        from src.utils.ragas_scoring import build_ragas_embeddings
+
         ragas_configs = self.config["services"]["benchmarking"]["mode_settings"][
             "ragas_settings"
         ]
         embedding_model = ragas_configs["embedding_model"]
-
-        match embedding_model.lower():
-            case "openai":
-                return OpenAIEmbeddings()
-            case "huggingface":
-                return HuggingFaceEmbeddings()
-            case _:
-                return OpenAIEmbeddings()
+        return build_ragas_embeddings(
+            embedding_model,
+            openai_embeddings=OpenAIEmbeddings,
+            huggingface_embeddings=HuggingFaceEmbeddings,
+        )
 
     def prepare_match_fields(self, question_item):
 
@@ -1590,14 +2067,11 @@ class Benchmarker:
         legitimately ends in ``/`` (e.g. ``...?redirect=/kb/foo/``) is preserved.
         A value with no scheme (e.g. a ``file_name`` match field) parses as a bare
         path, so the same one-trailing-slash rule applies without special-casing.
+
+        The rule lives in ``benchmark_provenance`` so the category-map records and
+        the category slice join canonicalize exactly as matching does.
         """
-        text = str(value).strip()
-        parts = urlsplit(text)
-        path = parts.path
-        if len(path) > 1 and path.endswith("/"):
-            path = path[:-1]
-            return urlunsplit(parts._replace(path=path))
-        return text
+        return canonical_source_url(value)
 
     def prepare_messages(self, raw_messages):
         """Format the langchain Messages into something we can store and view later."""
@@ -1713,67 +2187,70 @@ class Benchmarker:
         WARNING: mutates ``results_by_key`` in place (adds each metric's score to
         the matching question entry).
         """
-        # Lazy import: ragas (and its transitive `datasets` dep) is benchmark-only
-        # and absent from the unit-test environment. See the module-header note.
-        from ragas import EvaluationDataset, RunConfig, evaluate
-        from ragas.embeddings import LangchainEmbeddingsWrapper
-        from ragas.llms import LangchainLLMWrapper
-        from ragas.metrics import (
-            answer_correctness,
-            answer_relevancy,
-            context_precision,
-            context_recall,
-            faithfulness,
-        )
+        from src.utils.ragas_scoring import RagasScoreOutcome, score_ragas
 
-        # Use the PRE-INSTANTIATED ``answer_correctness`` rather than building a
-        # FactualCorrectness: scores are read back as ``to_pandas()[metric]``, and
-        # only the pre-instantiated object's result column is named exactly after
-        # the metric (FactualCorrectness's can carry a mode suffix).
-        all_metrics = {
-            "answer_relevancy": answer_relevancy,
-            "faithfulness": faithfulness,
-            "context_precision": context_precision,
-            "context_recall": context_recall,
-            "answer_correctness": answer_correctness,
-        }
         enabled_metrics = self.benchmarking_configs["mode_settings"]["ragas_settings"][
             "enabled_metrics"
         ]
-        metrics = [name for name in all_metrics if name in enabled_metrics]
-
         ragas_settings = self.config["services"]["benchmarking"]["mode_settings"][
             "ragas_settings"
         ]
-        # The archi config-render pipeline can strip global.verbosity; tolerate
-        # missing key (verbosity 4 enables tenacity retry logging in ragas).
-        log_tenacity = self.config.get("global", {}).get("verbosity", 0) >= 4
-        batch_size = ragas_settings["batch_size"] or None
-        runconfig = RunConfig(
-            timeout=ragas_settings["timeout"], log_tenacity=log_tenacity
-        )
-        llm = LangchainLLMWrapper(self.get_ragas_llm_evaluator())
-        embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
+        verbosity = self.config.get("global", {}).get("verbosity", 0)
+        judge_provider, judge_model = ragas_judge_identity(self.config)
 
-        def score_fn(metric, eligible_rows):
-            # One metric at a time over its own eligible subset: keeps a single
-            # bad metric from failing the batch and preserves per-metric
-            # denominators (the modern EvaluationDataset replaces the legacy
-            # datasets.Dataset + column names).
-            dataset = EvaluationDataset.from_list(eligible_rows)
-            evaluation = evaluate(
-                dataset,
-                metrics=[all_metrics[metric]],
-                llm=llm,
-                embeddings=embeddings,
-                run_config=runconfig,
-                batch_size=batch_size,
+        outcome = RagasScoreOutcome()
+        self._ragas_scored = False
+        try:
+            score_ragas(
+                rows,
+                keys,
+                results_by_key,
+                enabled_metrics=enabled_metrics,
+                ragas_settings=ragas_settings,
+                verbosity=verbosity,
+                judge_factory=self.get_ragas_llm_evaluator,
+                embeddings_factory=self.get_ragas_embedding_model,
+                judge_provider=judge_provider,
+                judge_model=judge_model,
+                outcome=outcome,
             )
-            return evaluation.to_pandas()[metric].tolist()
+            return outcome.aggregates
+        finally:
+            self._ragas_scored = outcome.scored
+            self._judge_usage = outcome.usage
+            # The D10 fields of this arm's judge (#732); run() merges them into
+            # the four-field identity it records. None when no judge was built.
+            self._ragas_judge_extension = (
+                None
+                if outcome.decoding is None
+                else {
+                    "model_revision": None,
+                    "precision": None,
+                    "server_image_digest": None,
+                    "server_args": None,
+                    "decoding": outcome.decoding,
+                    "run_config": ragas_run_config_kwargs(ragas_settings, verbosity),
+                    "batch_size": ragas_settings["batch_size"] or None,
+                    "chunk_size": None,
+                    "embedding": outcome.embedding,
+                    "metrics": [m for m in RAGAS_METRIC_NAMES if m in enabled_metrics],
+                }
+            )
 
-        return score_metrics_per_eligibility(
-            rows, keys, metrics, results_by_key, score_fn
-        )
+    def _recorded_judge_identity(self):
+        """The judge identity this arm records: #618's four fields plus D10's.
+
+        The four-field ``_ragas_judge_identity`` alone when no judge was built
+        or the arm has no extension. The scorer of an inline run is the
+        benchmark image; its identity is computed once per run (``pip freeze``).
+        """
+        base = getattr(self, "_ragas_judge_identity", None)
+        fields = getattr(self, "_ragas_judge_extension", None)
+        if base is None or fields is None:
+            return base
+        if getattr(self, "_inline_scorer", None) is None:
+            self._inline_scorer = inline_scorer_identity(PACKAGE_DIR)
+        return extended_identity(base, scorer=self._inline_scorer, **fields)
 
     def _source_scorable_count(self) -> int:
         """The source-accuracy denominator: questions that declare expected sources.
@@ -1849,7 +2326,37 @@ class Benchmarker:
             logger.info("")
 
         if "RAGAS" in modes_being_run:
-            if ragas_input:
+            # Whether the judge scored anything for this arm. `run()` passes it
+            # to `handle_results`, which records no judge settings when it is
+            # False (#518). get_ragas_results sets it True only when a metric
+            # invokes the judge. Left untouched when RAGAS is not a mode.
+            self._ragas_scored = False
+            if is_deferred(getattr(self, "judge_plan", None)):
+                # Deferred (#731, design D6): write this arm's judge bundle in
+                # place of the judge. No judge or embedding object is built and
+                # no aggregate is written; _ragas_scored stays False, so
+                # handle_results records the #518 null judge fields. An arm with
+                # no scorable row still writes a bundle: the merge waits for
+                # every arm.
+                plan = self.judge_plan
+                self._judge_bundle = write_judge_bundle(
+                    OUTPUT_DIR / plan.bundle_dir,
+                    result_basename=self.result_basename,
+                    arm_index=self._arm_index,
+                    arm_count=plan.arm_count,
+                    rows=ragas_input,
+                    keys=list(scorable_items(question_wise_results).keys()),
+                    enabled_metrics=self.benchmarking_configs["mode_settings"][
+                        "ragas_settings"
+                    ]["enabled_metrics"],
+                    ragas_settings=self.config["services"]["benchmarking"][
+                        "mode_settings"
+                    ]["ragas_settings"],
+                    verbosity=self.config.get("global", {}).get("verbosity", 0),
+                    code_version=plan.code_version,
+                    package_digest=plan.package_digest,
+                )
+            elif ragas_input:
                 logger.info("Starting to collect RAGAS results")
                 # scorable_items carries #92's per-question keys in ragas_input
                 # order; get_ragas_results scores each metric over its own
@@ -2014,6 +2521,9 @@ class Benchmarker:
             }
 
     def run(self):
+        _result_ts = ResultHandler.result_timestamp()
+        self.result_basename = f"{self.benchmark_name}-{_result_ts}"
+
         ingest_wall_seconds = self.wait_for_ingestion_completion()
 
         modes_being_run = set(self.benchmarking_configs["modes"])
@@ -2034,20 +2544,37 @@ class Benchmarker:
         )
         logger.info("")
 
+        # 0-based position of the arm in benchmarking_results; a deferred arm
+        # names its judge bundle with it (#731, design D5).
+        arm_index = 0
         while self.all_config_files:
             # Read the corpus BEFORE the arm's questions, so the report can show
             # whether they were all scored against the same documents.
-            corpus_before = ResultHandler.get_corpus_fingerprint()
+            arm_config = getattr(self.chain, "config", None)
+            arm_identity = ResultHandler.check_collection(arm_config)
+            corpus_before = ResultHandler.get_corpus_fingerprint(arm_config)
+            _, category_map_before = ResultHandler.get_category_map(arm_config)
+            self._judge_usage = None
+            self._ragas_judge_identity = None
+            self._ragas_judge_extension = None
+            self._ragas_scored = None
+            self._judge_bundle = None
+            self._arm_index = arm_index
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
                 Path(self.current_config),
                 question_wise_results,
                 total_results,
                 corpus_before=corpus_before,
+                category_map_before=category_map_before,
+                agent_md_sha256=getattr(self, "agent_md_sha256", None),
                 # The chain's own snapshot, taken by archi.__init__ before these
                 # questions ran -- not a fresh query, which would report the
                 # config as it stands now rather than as the arm used it.
                 running_config=getattr(self.chain, "config", None),
+                # What this invocation actually ran, not what this arm's file
+                # declares: one `modes_being_run` is applied to every arm.
+                modes_executed=modes_being_run,
                 # Measured once, before the sweep, and stamped on every arm --
                 # there is one ingest wait per invocation, not one per arm.
                 # Ingestion can continue in the background, so a later arm may
@@ -2056,86 +2583,44 @@ class Benchmarker:
                 # `corpus_unchanged_at_endpoints`: a re-ingest landing wholly
                 # between two arms leaves that boolean True on both sides.
                 ingest_wall_seconds=ingest_wall_seconds,
+                retrieval_identity=arm_identity,
+                judge_usage=getattr(self, "_judge_usage", None),
+                ragas_scored=getattr(self, "_ragas_scored", None),
+                judge_identity=self._recorded_judge_identity(),
+                judge_bundle=getattr(self, "_judge_bundle", None),
             )
             self.load_new_configuration()
+            arm_index += 1
 
         ResultHandler.add_metadata()
 
-        # A/B comparison: pair results across configs when 2+ were run.
-        # Auto-enabled — no explicit flag — because there's no useful "skip
-        # pairing" case when the user gave us multiple configs.
-        if len(ResultHandler.results) >= 2:
-            pairs = ResultHandler.generate_pairwise_combinations(
-                len(ResultHandler.results)
-            )
-            logger.info("Generating %d pairwise A/B comparisons...", len(pairs))
-            for idx_a, idx_b in pairs:
-                paired = ResultHandler.pair_ab_results(idx_a, idx_b)
-                ResultHandler.dump_ab_comparison(paired, idx_a, idx_b)
-                comp = ResultHandler.ab_comparisons[-1]
-                name_a = comp["config_a"].get("name", f"config_{idx_a}")
-                name_b = comp["config_b"].get("name", f"config_{idx_b}")
-                logger.info(
-                    ResultHandler.ab_summary_line(
-                        name_a, name_b, len(paired), comp["aggregate"]
-                    )
-                )
-
-        # Prompt-sweep leaderboard: rank every config by mean RAGAS metric.
-        # Independent of the pairwise block above (reads per-config aggregates
-        # directly). Only meaningful with 2+ variants.
+        # A/B comparison: pair results across configs when 2+ were run, then
+        # the prompt-sweep leaderboard, which ranks every config by mean RAGAS
+        # metric. Auto-enabled — no explicit flag — because there's no useful
+        # "skip pairing" case when the user gave us multiple configs.
         if len(ResultHandler.results) >= 2:
             primary_metric = str(
                 self.config.get("services", {})
                 .get("benchmarking", {})
                 .get("primary_metric", "faithfulness")
             )
-            leaderboard = ResultHandler.build_leaderboard(primary_metric)
+            ResultHandler.build_comparisons(primary_metric)
+            for comp in ResultHandler.ab_comparisons:
+                logger.info(
+                    ResultHandler.ab_summary_line(
+                        comp["config_a"]["name"],
+                        comp["config_b"]["name"],
+                        len(comp["per_question"]),
+                        comp["aggregate"],
+                    )
+                )
+            leaderboard = ResultHandler.leaderboard
             logger.info(
                 "Prompt-sweep leaderboard (ranked by %s):",
                 leaderboard["primary_metric"],
             )
-            logger.info(
-                "  %-4s %-28s %-10s %-10s %-10s %-10s %-10s %-10s %s",
-                "rank",
-                "name",
-                "ans_rel",
-                "faith",
-                "ctx_prec",
-                "ctx_rec",
-                "ans_corr",
-                "n_q",
-                "prompt",
-            )
-            for row in leaderboard["rows"]:
-                m = row["metrics"]
-                answered = row["query_count"]
-                scored = row.get("scored_counts", {})
-
-                # Annotate a metric with @<n> when its mean is over fewer than
-                # the answered questions (judge timeouts), so an under-sampled
-                # score can't masquerade as fully-backed.
-                def _fmt(metric_name: str) -> str:
-                    v = m[metric_name]
-                    if not isinstance(v, float):
-                        return "    n/a"
-                    n = scored.get(metric_name, answered)
-                    return f"{v:.4f}@{n}" if n < answered else f"{v:.4f}"
-
-                flag = "  (incomplete)" if row["incomplete"] else ""
-                logger.info(
-                    "  %-4d %-28s %-12s %-12s %-12s %-12s %-12s %-10d %s%s",
-                    row["rank"],
-                    row["name"][:28],
-                    _fmt("answer_relevancy"),
-                    _fmt("faithfulness"),
-                    _fmt("context_precision"),
-                    _fmt("context_recall"),
-                    _fmt("answer_correctness"),
-                    answered,
-                    row["agent_md_file"],
-                    flag,
-                )
+            for line in ResultHandler.leaderboard_table_lines(leaderboard):
+                logger.info("%s", line)
 
         # Push to Argilla when ARCHI_ARGILLA=1 in the benchmarks container env.
         # The CLI flag --argilla on `archi evaluate` sets this (see Task 2.5).
@@ -2229,7 +2714,9 @@ class Benchmarker:
                     "Argilla push failed — results were still dumped to disk."
                 )
 
-        ResultHandler.dump_artifacts(self.benchmark_name)
+        ResultHandler.dump_artifacts(self.benchmark_name, timestamp=_result_ts)
+        if is_deferred(getattr(self, "judge_plan", None)):
+            write_result_complete(OUTPUT_DIR, self.result_basename)
         return
 
     def _merge_anchor_questions(self) -> None:
@@ -2346,17 +2833,19 @@ class Benchmarker:
 
         Two judgement calls, both deliberate:
 
-        - Restart on any *running* poll, not on a **changing `step`**.
+        - Restart on *progress*, not on a **changing `step`**.
           `data_manager.py:108-109` emits "Updating vectorstore" once for the
           whole embedding phase, so the step string is constant for hours on a
           healthy run; a step-change rule would kill exactly the runs this
-          exists to protect.
+          exists to protect. When the data manager publishes a `progress`
+          counter, the budget instead restarts on each advancing `done` value.
         - Restart on *progress* only, not on any **answered** poll --
           `_ingest_is_progressing` decides. An endpoint stuck at `pending`, or
           at `running`/`initializing` because this ingest is queued behind
           another holder of `ingestion_lock`, is answering happily while
           nothing of ours is happening; the stall budget must end those,
-          exactly as the old absolute deadline did.
+          exactly as the old absolute deadline did. A `progress` counter on
+          those excluded payloads does not override the exclusion.
         """
         budgets = _ingest_wait_budgets()
         fetch = fetch or _fetch_ingestion_status
@@ -2392,14 +2881,20 @@ class Benchmarker:
         # campaign's cost table depend on what else the data-manager was doing.
         # Still None at the completed poll = no ingest was observed at all (#417).
         ingest_started_at: Optional[float] = None
+        # The first refresh or upload step seen after the ingest started. The
+        # data manager holds "completed" back while such a run is queued, so
+        # the ingest ended here, not at the completed poll.
+        ingest_ended_at: Optional[float] = None
+        last_done: Optional[int] = None
         attempt = 0
 
         logger.info(
             "Waiting for data-manager ingestion to complete before benchmarking..."
         )
         if not budgets.max_wait_seconds:
-            # The status payload carries no progress counter (only state/step,
-            # `ingestion_status.py:29-33`), so an ingest wedged *inside*
+            # When the data manager publishes a progress counter the stall
+            # budget catches a wedged ingest. Without it (older data manager,
+            # or phases outside the embedding loop), an ingest wedged inside
             # `update_vectorstore()` still answers "running" forever and only
             # the ceiling can end it. Disabling the ceiling is a legitimate
             # choice for a corpus larger than the default 6h -- but an
@@ -2426,12 +2921,14 @@ class Benchmarker:
 
                 state = str(payload.get("state", "")).lower()
                 step = payload.get("step")
+                done = _ingest_progress_done(payload)
                 logger.info(
-                    "Ingestion status check #%s via %s -> state=%s step=%s",
+                    "Ingestion status check #%s via %s -> state=%s step=%s progress=%s",
                     attempt,
                     status_url,
                     state,
                     step,
+                    done,
                 )
                 # THIS URL answered, so only ITS own recorded failure is stale.
                 # Another candidate's error is still that candidate's business
@@ -2442,16 +2939,22 @@ class Benchmarker:
                 last_ok_url = status_url
                 last_state = state
                 last_step = step
-                if _ingest_is_progressing(state, step):
+                if _ingest_is_progressing(state, step, done=done, last_done=last_done):
                     last_ok_at = clock()
-                    if ingest_started_at is None:
-                        ingest_started_at = last_ok_at
+                    last_done = done
+                    if not _is_refresh_step(step):
+                        if ingest_started_at is None:
+                            ingest_started_at = last_ok_at
+                    elif ingest_started_at is not None and ingest_ended_at is None:
+                        ingest_ended_at = last_ok_at
 
                 if state == "completed":
                     logger.info("Data-manager ingestion completed; starting benchmark.")
                     if ingest_started_at is None:
                         return None
-                    return clock() - ingest_started_at
+                    if ingest_ended_at is None:
+                        ingest_ended_at = clock()
+                    return ingest_ended_at - ingest_started_at
                 if state == "error":
                     raise RuntimeError(
                         f"Data-manager ingestion failed at step '{step}': "

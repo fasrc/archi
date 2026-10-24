@@ -963,3 +963,59 @@ class TestEdgeCases:
 
         assert len(results) == 1
         assert results[0].metadata is not None  # Should be empty dict, not None
+
+
+class TestEmbeddingModelTag:
+    """``add_texts`` tags each chunk with its model, as the data manager does."""
+
+    class _HF:
+        model_name = "Qwen/Q"
+
+        def embed_documents(self, texts):
+            return [[0.1, 0.2, 0.3] for _ in texts]
+
+    class _OpenAI:
+        model = "text-embedding-3-small"
+
+    class _Bare:
+        pass
+
+    def _store(self, pg_config, embedding_function, **kwargs):
+        return PostgresVectorStore(
+            pg_config=pg_config,
+            embedding_function=embedding_function,
+            collection_name="c_with_HF",
+            **kwargs,
+        )
+
+    def test_default_comes_from_model_name(self, pg_config):
+        assert self._store(pg_config, self._HF()).embedding_model == "Qwen/Q"
+
+    def test_default_comes_from_model(self, pg_config):
+        store = self._store(pg_config, self._OpenAI())
+        assert store.embedding_model == "text-embedding-3-small"
+
+    def test_default_falls_back_to_the_class_name(self, pg_config):
+        assert self._store(pg_config, self._Bare()).embedding_model == "_Bare"
+
+    def test_an_explicit_argument_wins(self, pg_config):
+        store = self._store(pg_config, self._HF(), embedding_model="configured")
+        assert store.embedding_model == "configured"
+
+    def test_add_texts_writes_the_tag_next_to_the_collection(
+        self, pg_config, mock_pg_connection
+    ):
+        conn, cursor = mock_pg_connection
+        cursor.fetchone.return_value = (1,)
+        store = self._store(pg_config, self._HF())
+        metadatas = [{"source": "a"}, {"source": "b"}]
+
+        with (
+            patch.object(store, "_get_connection", return_value=conn),
+            patch("psycopg2.extras.execute_values"),
+        ):
+            store.add_texts(["one", "two"], metadatas=metadatas)
+
+        for meta in metadatas:
+            assert meta["collection"] == "c_with_HF"
+            assert meta["embedding_model"] == "Qwen/Q"

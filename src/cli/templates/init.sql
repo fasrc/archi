@@ -601,7 +601,49 @@ CREATE INDEX IF NOT EXISTS idx_service_alerts_banner
     WHERE active = TRUE;
 
 -- ============================================================================
--- 11. GRAFANA ACCESS
+-- 11. DEPLOYMENT PROVENANCE
+-- ============================================================================
+
+-- One row per deploy, append-only; readers take the newest row by deployed_at.
+-- Deliberately NOT folded into static_config: that table's upsert omits
+-- created_at from its DO UPDATE list, so its timestamp records the first ever
+-- seed on the volume, not the latest deploy.
+CREATE TABLE IF NOT EXISTS deployment_record (
+    id SERIAL PRIMARY KEY,
+    config_ref VARCHAR(200),
+    config_sha VARCHAR(64),
+    config_head VARCHAR(64),
+    pin_matched BOOLEAN,
+    dirty_paths TEXT,
+    app_version VARCHAR(100),
+    deployed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_deployment_record_time
+    ON deployment_record (deployed_at DESC);
+
+-- One row per ingest run, append-only. config_snapshot holds the
+-- ingest-affecting flags that governed THAT run, so a later config change
+-- cannot misattribute the corpus it produced.
+CREATE TABLE IF NOT EXISTS ingest_run (
+    id SERIAL PRIMARY KEY,
+    started_at TIMESTAMPTZ NOT NULL,
+    completed_at TIMESTAMPTZ,
+    status VARCHAR(20) NOT NULL DEFAULT 'running',
+    documents_embedded INTEGER,
+    documents_failed INTEGER,
+    documents_pending INTEGER,
+    chunk_count INTEGER,
+    config_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    CONSTRAINT valid_ingest_run_status
+        CHECK (status IN ('running', 'updated', 'up_to_date', 'failed'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_run_completed
+    ON ingest_run (completed_at DESC);
+
+-- ============================================================================
+-- 12. GRAFANA ACCESS
 -- ============================================================================
 
 {% if use_grafana -%}

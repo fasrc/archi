@@ -47,6 +47,8 @@ from .preparation import (
     iter_preparation_records,
     prepare_dataset_item,
 )
+from . import provenance as corpus_provenance
+from .redaction import redact_agent_config
 from .runtime import (
     ArchiAgentRuntime,
     LangChainEvaluatorRuntime,
@@ -58,6 +60,7 @@ from .schema import AnswerAttempt
 from .scoring import build_summary, write_report, write_summary
 from .validation import dataset_source_format, iter_dataset_items
 from .workspace import EvaluationWorkspace
+from src.utils.llm_usage import phase_usage_totals
 
 
 class QAWorkflow:
@@ -349,6 +352,10 @@ class QAWorkflow:
             if _resolved_agent_inputs is not None
             else load_agent_inputs(agent_config, agent_spec)
         )
+        # D1: run, continue, and retry all execute from the redacted config; write
+        # the snapshot before any agent call so every phase sees identical content.
+        config = redact_agent_config(config)
+        readings = corpus_provenance.start_readings(config, spec)
         if overwrite:
             owned = RUN_FILES | SCORE_FILES
             if authorize_staged_invalid:
@@ -359,18 +366,28 @@ class QAWorkflow:
             manifest.pop("attempts", None)
             manifest.pop("agent", None)
             manifest.pop("attention_required", None)
-            for name in RUN_FILES | SCORE_FILES:
+            for key in corpus_provenance.PROVENANCE_KEYS:
+                manifest.pop(key, None)
+            for key in corpus_provenance.TAG_KEYS:
+                manifest.pop(key, None)
+            for name in owned:
                 manifest["artifacts"].pop(name, None)
+            manifest["status"] = "prepared"
         write_yaml(run_dir / "agent_config.resolved.yaml", config)
         write_text(run_dir / "agent_spec.resolved.md", spec_text)
         config_hash = sha256_file(run_dir / "agent_config.resolved.yaml")
         spec_hash = sha256_file(run_dir / "agent_spec.resolved.md")
+        if authorize_staged_invalid:
+            manifest["artifacts"]["agent_config.resolved.yaml"] = config_hash
+            manifest["artifacts"]["agent_spec.resolved.md"] = spec_hash
         chat = config["services"]["chat_app"]
         vectorstore = (
             LazyVectorstore(config)
             if "search_vectorstore_hybrid" in spec.tools
             else None
         )
+        # The start guard and the first corpus reading, before any question.
+        manifest.update(readings)
         started_at = utc_now()
         manifest["runtime_phase"] = (
             EvaluationRuntimePhase.CHECKING_LIVE_ANSWERS.value
@@ -411,7 +428,6 @@ class QAWorkflow:
                             "INSERT INTO authorized VALUES (?)", (prepared.item_id,)
                         )
                 authorized_connection.commit()
-                staged_checks_path.unlink()
             pre_checks_path = Path(live_staging_dir) / "pre-run.jsonl"
             try:
                 with AtomicJsonlWriter(pre_checks_path) as check_writer:
@@ -583,6 +599,14 @@ class QAWorkflow:
             "config_artifact": "agent_config.resolved.yaml",
             "spec_artifact": "agent_spec.resolved.md",
         }
+        manifest.update(
+            corpus_provenance.end_readings(
+                config,
+                spec,
+                manifest.get("corpus_fingerprint_before"),
+                identity_before=manifest.get("retrieval_identity"),
+            )
+        )
         manifest["artifacts"].update(artifact_hashes(run_dir, RUN_FILES))
         manifest["phases"]["run"] = {
             "status": "completed",
@@ -798,6 +822,7 @@ class QAWorkflow:
             manifest["phases"].pop("score", None)
             for name in SCORE_FILES:
                 manifest["artifacts"].pop(name, None)
+            manifest["status"] = "run_completed"
         started_at = utc_now()
         manifest["runtime_phase"] = EvaluationRuntimePhase.SCORING.value
         write_json(run_dir / "manifest.json", manifest)
@@ -857,6 +882,13 @@ class QAWorkflow:
                 "evaluator_profile_sha256": manifest["artifacts"][
                     "evaluator_profile.resolved.yaml"
                 ],
+                # Copied, not re-read: only the answering phase retrieved.
+                **corpus_provenance.summary_fields(manifest),
+                "usage": phase_usage_totals(
+                    iter_jsonl(run_dir / "preparation.jsonl"),
+                    iter_jsonl(run_dir / "answers.jsonl"),
+                    iter_jsonl(run_dir / "evaluation_results.jsonl"),
+                ),
             }
             write_summary(run_dir / "summary.json", summary, iter_jsonl(item_rows_path))
             manifest["status"] = "scored"
@@ -948,7 +980,7 @@ class QAWorkflow:
                 else None
             )
         else:
-            vectorstore = None
+            config = spec = vectorstore = None
 
         if plan["live_validation_attempt_count"]:
             resolver = OracleResolver(EvaluatorMCPRegistry.load(mcp_config_path))
@@ -962,6 +994,21 @@ class QAWorkflow:
                     parent_store.store_live_validation(prepared.item_id, validation)
                 else:
                     parent_store.promote_live_retry_to_execution(prepared.item_id)
+
+        # Fresh attempts retrieve, so they get their own guard and readings; a
+        # retry that only re-scores carries the parent's forward. Counted after
+        # the live pre-check, which can promote a live retry to an execution.
+        fresh_attempts = bool(
+            parent_store.execution_retry_count()
+        ) and corpus_provenance.uses_search(spec)
+        if fresh_attempts:
+            corpus_readings = corpus_provenance.start_readings(config, spec)
+        else:
+            corpus_readings = {
+                key: deepcopy(parent_manifest.get(key))
+                for key in corpus_provenance.PROVENANCE_KEYS
+            }
+            corpus_readings.update(corpus_provenance.carried_readings(parent_manifest))
 
         output_dir.mkdir(parents=True, exist_ok=True)
         snapshot = parent_manifest["input"]["snapshot"]
@@ -1098,6 +1145,16 @@ class QAWorkflow:
                     raise ValueError("retry could not produce a required agent answer")
                 answer_writer.write(answer)
                 parent_store.store_successor_answer(answer)
+        manifest.update(corpus_readings)
+        if fresh_attempts:
+            manifest.update(
+                corpus_provenance.end_readings(
+                    config,
+                    spec,
+                    corpus_readings["corpus_fingerprint_before"],
+                    identity_before=corpus_readings.get("retrieval_identity"),
+                )
+            )
         manifest["artifacts"].update(artifact_hashes(output_dir, RUN_FILES))
         manifest["phases"]["run"] = {
             "status": "completed",
@@ -1180,6 +1237,13 @@ class QAWorkflow:
                 "evaluator_profile_sha256": manifest["artifacts"][
                     "evaluator_profile.resolved.yaml"
                 ],
+                # Copied, not re-read: only the answering phase retrieved.
+                **corpus_provenance.summary_fields(manifest),
+                "usage": phase_usage_totals(
+                    iter_jsonl(output_dir / "preparation.jsonl"),
+                    iter_jsonl(output_dir / "answers.jsonl"),
+                    iter_jsonl(output_dir / "evaluation_results.jsonl"),
+                ),
             }
             write_summary(
                 output_dir / "summary.json", summary, iter_jsonl(item_rows_path)

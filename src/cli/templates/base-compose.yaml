@@ -51,6 +51,14 @@ services:
       PGUSER: archi
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
+      {% if torch_threads -%}
+      # Unset, torch starts one thread per host core; on a shared host each
+      # embedding call then takes ~3 s instead of ~16 ms (fasrc/archi#721).
+      # Set from data_manager.torch_threads (src/cli/utils/torch_threads.py).
+      # Torch reads MKL_NUM_THREADS ahead of OMP_NUM_THREADS, so set both.
+      OMP_NUM_THREADS: "{{ torch_threads }}"
+      MKL_NUM_THREADS: "{{ torch_threads }}"
+      {% endif %}
       {% if gpu_ids -%}
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
@@ -154,6 +162,17 @@ services:
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
       CONFIG_PATH: /rendered-config/config.yaml
+      # Config provenance, exported by ensure_config (deploy/scripts/lib.sh) and
+      # passed through from the deploy environment so config_seed can persist
+      # which config actually deployed. CONFIG_REF is otherwise a shell variable
+      # that never enters a container. Empty when `archi create` is run by hand
+      # rather than through the deploy scripts; the record then stores NULLs and
+      # the status board reports provenance as unavailable.
+      ARCHI_CONFIG_REF: ${ARCHI_CONFIG_REF:-}
+      ARCHI_CONFIG_SHA: ${ARCHI_CONFIG_SHA:-}
+      ARCHI_CONFIG_HEAD: ${ARCHI_CONFIG_HEAD:-}
+      ARCHI_CONFIG_PIN_MATCHED: ${ARCHI_CONFIG_PIN_MATCHED:-}
+      ARCHI_CONFIG_DIRTY_PATHS: ${ARCHI_CONFIG_DIRTY_PATHS:-}
     env_file:
       - .env
     volumes:
@@ -230,6 +249,11 @@ services:
       PGUSER: archi
       PG_PASSWORD: ${PG_PASSWORD}
       VERBOSITY: {{ verbosity }}
+      {% if torch_threads -%}
+      # Query embedding runs torch here too; see the data-manager block.
+      OMP_NUM_THREADS: "{{ torch_threads }}"
+      MKL_NUM_THREADS: "{{ torch_threads }}"
+      {% endif %}
       # Allow overriding Ollama host via env so containers can reach host daemon
       OLLAMA_HOST: ${OLLAMA_HOST:-}
       {{ dev_env() }}
@@ -258,7 +282,7 @@ services:
     volumes:
       - {{ data_manager_volume_name }}:/root/data/
       - ./configs:/root/archi/configs
-      {% if evaluation_mcp_configured | default(false) -%}
+      {% if evaluation_mcp_configured | default(false) or evaluation_agent_config_staged | default(false) -%}
       - ./evaluation_config:/root/archi/evaluation_config:ro
       {% endif -%}
       - ./data/prompts:/root/archi/data/prompts:ro
@@ -567,6 +591,54 @@ services:
     {%- endif %}
   {%- endif %}
 
+  {% if slack_enabled -%}
+  slack:
+    # A thin client of the chatbot's /v1 API: no models, no GPU, no data volume
+    # (openspec/changes/add-slack-service).
+    image: {{ slack_image }}:{{ slack_tag }}
+    build:
+      context: .
+      dockerfile: archi_code/cli/templates/dockerfiles/Dockerfile-slack
+    container_name: {{ slack_container_name }}
+    depends_on:
+      {% if postgres_enabled -%}
+      postgres:
+        condition: service_healthy
+      config-seed:
+        condition: service_completed_successfully
+      {% endif -%}
+      # The chatbot has no healthcheck; the bot retries GET /v1/models at start-up.
+      chatbot:
+        condition: service_started
+    environment:
+      OTEL_SERVICE_NAME: archi-slack
+      PGHOST: {{ 'localhost' if host_mode else 'postgres' }}
+      PGPORT: {{ postgres_port }}
+      PGDATABASE: archi-db
+      PGUSER: archi
+      {{ dev_env() }}
+      {% for secret in required_secrets | default([]) -%}
+      {{ secret.upper() }}_FILE: /run/secrets/{{ secret.lower() }}
+      {% endfor %}
+      VERBOSITY: {{ verbosity }}
+    env_file:
+      - .env
+    secrets:
+      {% for secret in required_secrets | default([]) -%}
+      - {{ secret.lower() }}
+      {% endfor %}
+    volumes:
+      - ./configs:/root/archi/configs
+      {{ dev_src_mount() }}
+    logging:
+      options:
+        max-size: 10m
+    restart: always
+    {% if host_mode -%}
+    network_mode: host
+    {% endif %}
+  {%- endif %}
+
   {% if redmine_mailer_enabled -%}
   redmine:
     image: {{ redmine_mailer_image }}-redmine:{{ redmine_mailer_tag }}
@@ -772,6 +844,7 @@ services:
       {% for prompt_file in prompt_files | default([]) -%}
       - ./{{ prompt_file }}:/root/archi/{{ prompt_file }}
       {% endfor %}
+      - ./configs:/root/archi/configs:ro
       {% if gpu_ids -%}
       - archi-models:/root/models/
       {%- endif %}
