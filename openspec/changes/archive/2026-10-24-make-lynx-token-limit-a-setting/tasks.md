@@ -54,7 +54,7 @@ Rules for every task:
 
 ## 7. Real-model check (dev host)
 
-- [ ] 7.1 Score a rebuilt golden-set bundle with Lynx 8B v1.1 at `--context-tokens
+- [x] 7.1 Score a rebuilt golden-set bundle with Lynx 8B v1.1 at `--context-tokens
       32000` on GPU 0 (`VLLM_FLASH_V100_DISABLE_PAGED_PREFILL=1`, memory share 0.85 through
       a host-local wrapper around `score.main`), and confirm that rows above 16,000 tokens
       are scored and `token_budget.context_tokens` is 32000.
