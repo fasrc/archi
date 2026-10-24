@@ -94,8 +94,12 @@ def _first_unreadable_under(src: Path, root: Path) -> Optional[str]:
     `os.walk` to raise on: that is what lets a test drive this branch by monkeypatching
     `os.access` without touching a real file mode (design D4), and it is cheap enough to
     run unconditionally (design, Risks).
+
+    Directory symlinks are followed, because `copytree` follows them: an unreadable file
+    behind a linked directory fails the copy all the same. A link to a directory already
+    on its own walk path is reported too -- `copytree` follows it without end and fails.
     """
-    for dirpath, dirnames, filenames in os.walk(src):
+    for dirpath, dirnames, filenames in os.walk(src, followlinks=True):
         current = Path(dirpath)
         for filename in sorted(filenames):
             candidate = current / filename
@@ -105,7 +109,21 @@ def _first_unreadable_under(src: Path, root: Path) -> Optional[str]:
             candidate = current / dirname
             if not (os.access(candidate, os.R_OK) and os.access(candidate, os.X_OK)):
                 return candidate.relative_to(root).as_posix()
+            if candidate.is_symlink() and candidate.resolve() in _walk_path(
+                src, current
+            ):
+                return candidate.relative_to(root).as_posix()
     return None
+
+
+def _walk_path(src: Path, current: Path) -> set:
+    """The real directories the walk passed through from ``src`` down to ``current``."""
+    step = src
+    real = {step.resolve()}
+    for part in current.relative_to(src).parts:
+        step = step / part
+        real.add(step.resolve())
+    return real
 
 
 def _unusable_source_paths(root: Path) -> tuple:

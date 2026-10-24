@@ -2907,6 +2907,57 @@ def test_a_file_under_src_reported_unreadable_by_os_access_is_named(
     assert "src/cli/probe.py" in str(excinfo.value)
 
 
+def test_a_file_behind_a_symlinked_directory_under_src_is_named(tmp_path, monkeypatch):
+    """`copytree` follows a directory symlink under `src`, so the walk must too.
+
+    Without that, an unreadable file behind the link passes the preflight and the copy
+    fails below the teardown -- the failure this check exists to prevent.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.py").write_text("pass\n")
+    (checkout / "src" / "linked").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    hidden = checkout / "src" / "linked" / "secret.py"
+    real_access = preflight.os.access
+
+    def fake_access(path, mode):
+        if Path(path) == hidden:
+            return False
+        return real_access(path, mode)
+
+    monkeypatch.setattr(preflight.os, "access", fake_access)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_source_root()
+
+    assert "has unreadable src/linked/secret.py" in str(excinfo.value)
+
+
+def test_a_directory_symlink_cycle_under_src_refuses(tmp_path, monkeypatch):
+    """A directory symlink back to its own ancestor makes `copytree` fail.
+
+    `copytree` follows the link without end and raises `shutil.Error`, below the
+    teardown. The walk must refuse it instead of looping or passing.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    (checkout / "src" / "cli" / "loop").symlink_to(
+        checkout / "src", target_is_directory=True
+    )
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_source_root()
+
+    assert "has unreadable src/cli/loop" in str(excinfo.value)
+
+
 def test_a_recorded_checkout_whose_template_dir_is_a_file_refuses(
     tmp_path, monkeypatch
 ):

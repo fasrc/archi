@@ -37,10 +37,13 @@ If `src` is missing or unreadable, report that and do not walk it. Otherwise wal
 path relative to the root (for example `src/cli/foo.py`). One entry is enough for the
 operator to act, and stopping early keeps the cost bounded.
 
-`os.walk` does not follow directory symlinks by default, but `copytree` does. A symlinked
-directory inside `src` therefore gets only the `os.access` check on the link target, not a
-walk of its contents. That is an accepted limit: the issue asks for the first unreadable
-entry under a plain tree, and the current tree has no directory symlinks under `src`.
+`copytree` follows directory symlinks, so the walk does too (`os.walk(src,
+followlinks=True)`). An unreadable file behind a linked directory fails the copy below the
+teardown, the same as one in a plain directory. A link to a directory that is already on
+its own walk path is a cycle: `copytree` follows it without end and raises `shutil.Error`.
+The walk reports that link as unreadable and stops, which also keeps the walk finite.
+(An earlier draft of this design accepted the symlink gap. The 2026-10-24 review showed
+that it leaves the exact failure this change exists to prevent.)
 
 ### D3. Two message lines, one frame
 
