@@ -53,8 +53,8 @@ class _Factory:
         self.backend = backend
         self.calls = []
 
-    def __call__(self, name, model, revision):
-        self.calls.append((name, model, revision))
+    def __call__(self, name, model, revision, *, tensor_parallel_size):
+        self.calls.append((name, model, revision, tensor_parallel_size))
         return self.backend
 
 
@@ -101,12 +101,13 @@ def test_a_bundle_from_the_writer_scores_with_the_stub(tmp_path):
     code, factory = _run(folder, tmp_path)
 
     assert code == 0
-    assert factory.calls == [("stub", "PatronusAI/Lynx-8B", "rev1")]
+    assert factory.calls == [("stub", "PatronusAI/Lynx-8B", "rev1", 1)]
     document = json.loads(_lynx_file(tmp_path).read_text())
     manifest = json.loads((folder / "manifest.json").read_text())
     assert document["model_id"] == "PatronusAI/Lynx-8B"
     assert document["model_revision"] == "rev1"
     assert document["backend"] == "stub"
+    assert document["tensor_parallel_size"] == 1
     assert document["result_basename"] == BASENAME
     assert document["arm_index"] == 0
     assert document["bundle_rows_sha256"] == manifest["rows_sha256"]
@@ -394,6 +395,36 @@ def test_an_empty_model_or_revision_is_refused(tmp_path, flag):
     code, factory = _run(folder, tmp_path, extra=(flag, " "))
     assert code == 1
     assert factory.calls == []
+
+
+def test_the_gpu_count_reaches_the_backend_and_the_lynx_file(tmp_path):
+    folder = _bundle(tmp_path)
+    code, factory = _run(folder, tmp_path, extra=("--tensor-parallel-size", "2"))
+    assert code == 0
+    assert factory.calls == [("stub", "PatronusAI/Lynx-8B", "rev1", 2)]
+    document = json.loads(_lynx_file(tmp_path).read_text())
+    assert document["tensor_parallel_size"] == 2
+
+
+@pytest.mark.parametrize("count", ["0", "-1"])
+def test_a_gpu_count_below_one_is_refused_before_any_backend(tmp_path, capsys, count):
+    folder = _bundle(tmp_path)
+    code, factory = _run(folder, tmp_path, extra=("--tensor-parallel-size", count))
+    assert code == 1
+    assert factory.calls == []
+    assert not _lynx_file(tmp_path).exists()
+    assert "--tensor-parallel-size" in capsys.readouterr().err
+
+
+def test_a_gpu_count_below_one_is_refused_before_the_bundle_is_read(tmp_path, capsys):
+    code, factory = _run(
+        tmp_path / "no-such-bundle", tmp_path, extra=("--tensor-parallel-size", "0")
+    )
+    assert code == 1
+    assert factory.calls == []
+    err = capsys.readouterr().err
+    assert "--tensor-parallel-size" in err
+    assert "not a folder" not in err
 
 
 def test_the_output_is_canonical_json(tmp_path):

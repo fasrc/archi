@@ -43,6 +43,9 @@ class StubBackend:
 class VllmBackend:
     """vLLM offline inference at a pinned revision, greedy, 600 new tokens.
 
+    ``tensor_parallel_size`` is the number of GPUs that vLLM splits the model
+    over; Lynx 70B does not fit on one GPU (#755).
+
     The model card trained Lynx on chat format and sends the prompt as one user
     message, so each prompt goes through the tokenizer's chat template. The
     template's token ids go to ``generate`` and are also what ``count_tokens``
@@ -51,10 +54,17 @@ class VllmBackend:
 
     name = "vllm"
 
-    def __init__(self, model: str, revision: str) -> None:
+    def __init__(
+        self, model: str, revision: str, *, tensor_parallel_size: int = 1
+    ) -> None:
         from vllm import LLM, SamplingParams
 
-        self._llm = LLM(model=model, revision=revision, tokenizer_revision=revision)
+        self._llm = LLM(
+            model=model,
+            revision=revision,
+            tokenizer_revision=revision,
+            tensor_parallel_size=tensor_parallel_size,
+        )
         self._params = SamplingParams(temperature=0, max_tokens=MAX_NEW_TOKENS)
         self._tokenizer = self._llm.get_tokenizer()
 
@@ -76,10 +86,15 @@ class VllmBackend:
         return [output.outputs[0].text for output in outputs]
 
 
-def make_backend(name: str, model: str, revision: str):
-    """The backend called *name* (``vllm`` or ``stub``)."""
+def make_backend(
+    name: str, model: str, revision: str, *, tensor_parallel_size: int = 1
+):
+    """The backend called *name* (``vllm`` or ``stub``).
+
+    The stub ignores ``tensor_parallel_size``.
+    """
     if name == "stub":
         return StubBackend()
     if name == "vllm":
-        return VllmBackend(model, revision)
+        return VllmBackend(model, revision, tensor_parallel_size=tensor_parallel_size)
     raise ValueError(f"unknown backend {name!r}; allowed: 'vllm', 'stub'")

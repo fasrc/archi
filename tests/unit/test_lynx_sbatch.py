@@ -65,7 +65,7 @@ def _run_bundle(tmp_path, name="run-a-arm0", marker="BUNDLE_COMPLETE", result=Tr
     return out.resolve(), bundle.resolve()
 
 
-def _run(tmp_path, *args, **env):
+def _run(tmp_path, *args, script=SCRIPT, **env):
     """Run the script with stubs first on PATH; an env value of None removes the key."""
     bin_dir, calls = _stub_bin(tmp_path)
     run_env = {
@@ -78,7 +78,7 @@ def _run(tmp_path, *args, **env):
     for key in [k for k, v in env.items() if v is None]:
         run_env.pop(key, None)
     proc = subprocess.run(
-        ["bash", str(SCRIPT), *map(str, args)],
+        ["bash", str(script), *map(str, args)],
         capture_output=True,
         text=True,
         env=run_env,
@@ -126,7 +126,40 @@ def _expected_command(bundle, out, scratch):
         str(out),
         "--backend",
         "vllm",
+        "--tensor-parallel-size",
+        _setting("GPUS"),
     ]
+
+
+def _swap_70b(text):
+    """The script with its commented Lynx 70B lines in place of the active ones.
+
+    This is the swap that the script's header tells the operator to make: each
+    ``##SBATCH`` line replaces the active ``#SBATCH`` line of the same option, and
+    each commented ``# NAME="value"`` setting replaces the active ``NAME=`` line.
+    """
+    lines = text.splitlines()
+    directives = [line[1:] for line in lines if line.startswith("##SBATCH ")]
+    settings = [line[2:] for line in lines if re.fullmatch(r'# [A-Z_]+="[^"]*"', line)]
+    used = []
+
+    def option(directive):
+        return re.split(r"[ =]", directive.split(" ", 1)[1], maxsplit=1)[0]
+
+    def swap(line, variants, key):
+        match = [v for v in variants if key(v) == key(line)]
+        used.extend(match)
+        return match[0] if match else line
+
+    swapped = []
+    for line in lines:
+        if line.startswith("#SBATCH "):
+            line = swap(line, directives, option)
+        elif re.fullmatch(r'[A-Z_]+="[^"]*"', line):
+            line = swap(line, settings, lambda x: x.split("=", 1)[0])
+        swapped.append(line)
+    assert sorted(used) == sorted(directives + settings), "a 70B line swaps nothing"
+    return "\n".join(swapped) + "\n"
 
 
 # --- 8.1 dry run -------------------------------------------------------------
@@ -147,6 +180,40 @@ def test_the_settings_name_the_8b_model_at_a_pinned_revision():
     assert re.fullmatch(r"[0-9a-f]{40}", _setting("MODEL_REVISION"))
 
 
+def test_the_8b_job_runs_the_model_on_one_gpu():
+    assert _setting("GPUS") == "1"
+
+
+@pytest.mark.parametrize("variant", ["8b", "70b"])
+def test_the_gres_line_asks_for_the_gpus_that_the_model_is_split_over(variant):
+    text = SCRIPT.read_text()
+    if variant == "70b":
+        text = _swap_70b(text)
+    gpus = re.search(r'^GPUS="(\d+)"$', text, re.MULTILINE).group(1)
+    assert f"#SBATCH --gres=gpu:{gpus}" in text.splitlines()
+
+
+def test_the_70b_variant_splits_the_model_over_two_gpus(tmp_path):
+    variant = tmp_path / "scripts" / "benchmarking" / "slurm" / SCRIPT.name
+    variant.parent.mkdir(parents=True)
+    variant.write_text(_swap_70b(SCRIPT.read_text()))
+    _, bundle = _run_bundle(tmp_path)
+    proc, calls = _run(tmp_path, "--dry-run", bundle, script=variant)
+    assert proc.returncode == 0, proc.stderr
+    printed = shlex.split(proc.stdout.strip())
+    model = printed[printed.index("--model") + 1]
+    assert model == "PatronusAI/Llama-3-Patronus-Lynx-70B-Instruct"
+    revision = printed[printed.index("--revision") + 1]
+    assert revision == "503b9b9469aec7be01144517e697a20bd966f27a"
+    assert printed[printed.index("--tensor-parallel-size") + 1] == "2"
+    directives = [
+        x for x in variant.read_text().splitlines() if x.startswith("#SBATCH ")
+    ]
+    assert "#SBATCH -p gpu_h200" in directives
+    assert "#SBATCH --gres=gpu:2" in directives
+    assert _called(calls) == []
+
+
 # --- 8.2 refusals ------------------------------------------------------------
 
 
@@ -163,6 +230,23 @@ def test_a_bundle_with_no_bundle_complete_is_refused(tmp_path, marker):
     proc, calls = _run(tmp_path, "--dry-run", bundle)
     assert proc.returncode != 0
     assert "BUNDLE_COMPLETE" in proc.stderr
+    assert proc.stdout == ""
+    assert _called(calls) == []
+
+
+@pytest.mark.parametrize("gpus", ["0", "", "two", "1.5"])
+def test_a_gpu_count_that_is_not_a_whole_number_of_one_or_more_is_refused(
+    tmp_path, gpus
+):
+    variant = tmp_path / "scripts" / "benchmarking" / "slurm" / SCRIPT.name
+    variant.parent.mkdir(parents=True)
+    text = SCRIPT.read_text()
+    assert text.count('\nGPUS="1"\n') == 1
+    variant.write_text(text.replace('\nGPUS="1"\n', f'\nGPUS="{gpus}"\n'))
+    _, bundle = _run_bundle(tmp_path)
+    proc, calls = _run(tmp_path, "--dry-run", bundle, script=variant)
+    assert proc.returncode != 0
+    assert "GPUS" in proc.stderr
     assert proc.stdout == ""
     assert _called(calls) == []
 
@@ -246,13 +330,16 @@ def test_the_active_directives_ask_for_one_full_gpu():
     assert any(re.fullmatch(r"#SBATCH -t \d\d:\d\d:\d\d", line) for line in lines)
 
 
-def test_the_70b_variant_is_commented_out_and_points_to_its_issue():
+def test_the_70b_variant_is_commented_out_and_can_load_the_model():
     text = SCRIPT.read_text()
     assert "##SBATCH -p gpu_h200" in text
     assert "##SBATCH --gres=gpu:2" in text
-    assert "PatronusAI/Llama-3-Patronus-Lynx-70B-Instruct" in text
-    assert "#755" in text
+    assert '# MODEL_ID="PatronusAI/Llama-3-Patronus-Lynx-70B-Instruct"' in text
+    assert '# GPUS="2"' in text
     assert not any("gpu_h200" in line for line in _sbatch_lines())
+    # The NOTE that the variant cannot load the model went away with #755.
+    assert "cannot load" not in text
+    assert "#755" not in text
 
 
 def test_the_image_is_pinned_to_an_exact_tag():
