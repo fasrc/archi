@@ -464,3 +464,52 @@ def test_a_non_string_per_call_mode_is_refused(monkeypatch):
     provider = _build(monkeypatch, None, None, "ollama")
     with pytest.raises(ValueError):
         provider.get_chat_model("some-model", local_mode=False)
+
+
+# === fasrc/archi#458: a base_url keyword must win in ollama mode ===
+
+
+class _ChatOllamaRecorder:
+    """Stands in for ``langchain_ollama.ChatOllama`` and records its kwargs."""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+def test_ollama_call_base_url_keyword_wins_over_configured_and_env(monkeypatch):
+    """Fails today: the configured base_url overwrites a caller's base_url= keyword."""
+    provider = _build(
+        monkeypatch,
+        "http://ollama-box:11434",
+        "http://configured:11434",
+        "ollama",
+    )
+    monkeypatch.setattr("langchain_ollama.ChatOllama", _ChatOllamaRecorder)
+    model = provider._get_ollama_model("m", base_url="http://other:11434")
+    assert model.kwargs["base_url"] == "http://other:11434"
+
+
+def test_ollama_no_keyword_uses_configured_base_url(monkeypatch):
+    provider = _build(
+        monkeypatch,
+        "http://ollama-box:11434",
+        "http://configured:11434",
+        "ollama",
+    )
+    monkeypatch.setattr("langchain_ollama.ChatOllama", _ChatOllamaRecorder)
+    model = provider._get_ollama_model("m")
+    assert model.kwargs["base_url"] == provider.config.base_url
+
+
+def test_ollama_extra_kwargs_base_url_yields_to_configured_base_url(monkeypatch):
+    """Prior behavior kept: an extra_kwargs base_url still loses to the configured one."""
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    config = ProviderConfig(
+        provider_type=ProviderType.LOCAL,
+        base_url="http://configured:11434",
+        extra_kwargs={"local_mode": "ollama", "base_url": "http://extra:1"},
+    )
+    provider = LocalProvider(config)
+    monkeypatch.setattr("langchain_ollama.ChatOllama", _ChatOllamaRecorder)
+    model = provider._get_ollama_model("m")
+    assert model.kwargs["base_url"] == provider.config.base_url
