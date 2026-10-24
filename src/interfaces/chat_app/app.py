@@ -98,6 +98,7 @@ from src.interfaces.chat_app.similarity_threshold import (
     normalize_similarity_threshold,
     order_and_filter_by_similarity,
 )
+from src.interfaces.chat_app.source_visibility import is_visible
 from src.interfaces.chat_app.utils import collapse_assistant_sequences
 from src.utils.config_access import (
     get_dynamic_config,
@@ -819,16 +820,7 @@ class ChatWrapper:
         From the metadata, check the source type.
         From the config, check if the source type is visible or not.
         """
-        source_type = metadata.get("source_type")
-        if not source_type:
-            return True  # default to True if not specified
-
-        if source_type not in self.sources_config:
-            logger.error(
-                f"Source type {source_type} not found in config, defaulting to visible"
-            )
-            return True
-        return bool(self.sources_config[source_type].get("visible", True))
+        return is_visible(metadata, self.sources_config)
 
     @staticmethod
     def _extract_link(metadata: dict) -> str | None:
