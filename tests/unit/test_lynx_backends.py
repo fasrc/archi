@@ -84,8 +84,17 @@ def test_the_vllm_backend_loads_the_pinned_revision(monkeypatch):
         "revision": "abc123",
         "tokenizer_revision": "abc123",
         "tensor_parallel_size": 1,
+        "max_model_len": 8000,
     }
     assert calls["sampling"] == {"temperature": 0, "max_tokens": 600}
+
+
+def test_the_vllm_backend_reserves_the_given_token_limit(monkeypatch):
+    calls = {}
+    module, _ = _fake_vllm(calls)
+    monkeypatch.setitem(sys.modules, "vllm", module)
+    backends.VllmBackend("PatronusAI/Lynx-v1.1", "abc123", context_tokens=32000)
+    assert calls["llm"]["max_model_len"] == 32000
 
 
 def test_the_vllm_backend_splits_the_model_over_the_given_gpus(monkeypatch):
@@ -132,10 +141,15 @@ def test_make_backend_builds_each_kind(monkeypatch):
     assert isinstance(backends.make_backend("stub", "m", "r"), backends.StubBackend)
     assert isinstance(backends.make_backend("vllm", "m", "r"), backends.VllmBackend)
     assert calls["llm"]["tensor_parallel_size"] == 1
+    assert calls["llm"]["max_model_len"] == 8000
     backends.make_backend("vllm", "m", "r", tensor_parallel_size=2)
     assert calls["llm"]["tensor_parallel_size"] == 2
+    backends.make_backend("vllm", "m", "r", context_tokens=32000)
+    assert calls["llm"]["max_model_len"] == 32000
     assert isinstance(
-        backends.make_backend("stub", "m", "r", tensor_parallel_size=2),
+        backends.make_backend(
+            "stub", "m", "r", tensor_parallel_size=2, context_tokens=32000
+        ),
         backends.StubBackend,
     )
     with pytest.raises(ValueError, match="unknown backend 'tgi'"):

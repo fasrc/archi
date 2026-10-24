@@ -43,10 +43,20 @@ MODEL_REVISION="5523f869eb5eecb4bca417b6e6d3532e746a9664"
 # The GPUs that vLLM splits the model over (--tensor-parallel-size): the N of
 # --gres=gpu:<N> above.
 GPUS="1"
+# The token limit (--context-tokens): a row whose prompt plus 600 new tokens is more
+# than this is skipped, never cut. vLLM reserves this limit, and refuses one above the
+# model's trained length. Lynx 8B and 70B read 8,192 tokens.
+CONTEXT_TOKENS="8000"
 # Lynx 70B (see the variant at the top):
 # MODEL_ID="PatronusAI/Llama-3-Patronus-Lynx-70B-Instruct"
 # MODEL_REVISION="503b9b9469aec7be01144517e697a20bd966f27a"
 # GPUS="2"
+# Lynx 8B v1.1 reads up to 128,000 tokens and runs on one GPU, so its swap needs no
+# ##SBATCH lines. 32,000 fits every golden-set row measured (the longest was 25,610
+# tokens) and keeps vLLM's KV cache near 4 GiB:
+# MODEL_ID="PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct-v1.1"
+# MODEL_REVISION="00de9f9062d93a95e4e359d3c92b8ea1d0114738"
+# CONTEXT_TOKENS="32000"
 LAB="${LYNX_LAB:-}"
 SCRATCH_DIR="${LYNX_SCRATCH:-${SCRATCH:-/n/netscratch}/${LAB}/Lab/${USER}/archi-lynx}"
 # -----------------------------------------------------------------------------
@@ -70,6 +80,8 @@ fi
 [ $# -ge 1 ] && [ $# -le 2 ] || usage
 [[ "$GPUS" =~ ^[1-9][0-9]*$ ]] \
   || die "GPUS=\"$GPUS\" is not a whole number of 1 or more; set it to the N of --gres=gpu:<N>"
+{ [[ "$CONTEXT_TOKENS" =~ ^[1-9][0-9]*$ ]] && [ "$CONTEXT_TOKENS" -gt 600 ]; } \
+  || die "CONTEXT_TOKENS=\"$CONTEXT_TOKENS\" is not a whole number above 600, the new tokens of each row"
 
 [ -d "$1" ] || die "$1 is not a folder"
 BUNDLE="$(cd "$1" && pwd -P)"
@@ -129,6 +141,7 @@ CMD=(
   python3 -m scripts.benchmarking.lynx.score "$BUNDLE"
   --model "$MODEL_ID" --revision "$MODEL_REVISION"
   --out-dir "$OUT_DIR" --backend vllm --tensor-parallel-size "$GPUS"
+  --context-tokens "$CONTEXT_TOKENS"
 )
 
 if [ "$DRY_RUN" = true ]; then

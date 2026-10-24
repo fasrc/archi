@@ -80,3 +80,15 @@ def test_the_section_shows_the_form_lynx_writes_and_the_parse_errors():
     assert "single-quoted" in section
     assert "cut off" in section
     assert "no strict" not in section
+
+
+def test_the_section_gives_the_token_limit_and_the_v11_settings():
+    section = _lynx_section()
+    assert "--context-tokens" in section
+    assert "`CONTEXT_TOKENS`" in section
+    assert "PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct-v1.1" in section
+    assert "00de9f9062d93a95e4e359d3c92b8ea1d0114738" in section
+    assert 'CONTEXT_TOKENS="32000"' in section
+    assert "VLLM_ALLOW_LONG_MAX_MODEL_LEN" in section
+    assert "`token_budget.context_tokens`" in section
+    assert "is more than 8,000 tokens" not in section

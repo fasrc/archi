@@ -52,9 +52,11 @@ class _Factory:
     def __init__(self, backend):
         self.backend = backend
         self.calls = []
+        self.limits = []
 
-    def __call__(self, name, model, revision, *, tensor_parallel_size):
+    def __call__(self, name, model, revision, *, tensor_parallel_size, context_tokens):
         self.calls.append((name, model, revision, tensor_parallel_size))
+        self.limits.append(context_tokens)
         return self.backend
 
 
@@ -102,6 +104,7 @@ def test_a_bundle_from_the_writer_scores_with_the_stub(tmp_path):
 
     assert code == 0
     assert factory.calls == [("stub", "PatronusAI/Lynx-8B", "rev1", 1)]
+    assert factory.limits == [8000]
     document = json.loads(_lynx_file(tmp_path).read_text())
     manifest = json.loads((folder / "manifest.json").read_text())
     assert document["model_id"] == "PatronusAI/Lynx-8B"
@@ -156,6 +159,26 @@ def test_a_row_that_does_not_fit_is_skipped_and_never_sent(tmp_path):
     }
     assert rows["question_2"]["status"] == "scored"
     assert rows["question_2"]["prompt_tokens"] == 7400
+
+
+def test_a_larger_token_limit_moves_the_skip_line(tmp_path):
+    folder = _bundle(
+        tmp_path, rows=[_row("BIG question"), _row("small question"), _row("Q3")]
+    )
+    stub = backends.StubBackend(
+        token_counter=lambda text: 15401 if "BIG" in text else 15400
+    )
+    code, _ = _run(folder, tmp_path, backend=stub, extra=("--context-tokens", "16000"))
+
+    assert code == 0
+    assert len(stub.received) == 2
+    assert not any("BIG" in prompt for prompt in stub.received)
+    document = json.loads(_lynx_file(tmp_path).read_text())
+    assert document["rows"]["question_1"]["status"] == "skipped_overflow"
+    assert document["rows"]["question_1"]["prompt_tokens"] == 15401
+    assert document["rows"]["question_2"]["status"] == "scored"
+    assert document["rows"]["question_2"]["prompt_tokens"] == 15400
+    assert document["token_budget"] == {"context_tokens": 16000, "max_new_tokens": 600}
 
 
 def test_the_rate_divides_by_scored_rows_only(tmp_path):
@@ -424,6 +447,40 @@ def test_a_gpu_count_below_one_is_refused_before_the_bundle_is_read(tmp_path, ca
     assert factory.calls == []
     err = capsys.readouterr().err
     assert "--tensor-parallel-size" in err
+    assert "not a folder" not in err
+
+
+def test_the_token_limit_reaches_the_backend_and_the_lynx_file(tmp_path):
+    folder = _bundle(tmp_path)
+    code, factory = _run(folder, tmp_path, extra=("--context-tokens", "32000"))
+    assert code == 0
+    assert factory.limits == [32000]
+    document = json.loads(_lynx_file(tmp_path).read_text())
+    assert document["token_budget"] == {"context_tokens": 32000, "max_new_tokens": 600}
+
+
+@pytest.mark.parametrize("limit", ["600", "0", "-1"])
+def test_a_token_limit_of_600_or_less_is_refused_before_any_backend(
+    tmp_path, capsys, limit
+):
+    folder = _bundle(tmp_path)
+    code, factory = _run(folder, tmp_path, extra=("--context-tokens", limit))
+    assert code == 1
+    assert factory.calls == []
+    assert not _lynx_file(tmp_path).exists()
+    assert "--context-tokens" in capsys.readouterr().err
+
+
+def test_a_token_limit_of_600_or_less_is_refused_before_the_bundle_is_read(
+    tmp_path, capsys
+):
+    code, factory = _run(
+        tmp_path / "no-such-bundle", tmp_path, extra=("--context-tokens", "600")
+    )
+    assert code == 1
+    assert factory.calls == []
+    err = capsys.readouterr().err
+    assert "--context-tokens" in err
     assert "not a folder" not in err
 
 

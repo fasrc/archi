@@ -434,7 +434,7 @@ Lynx scores only `judge_mode: deferred` runs (see "Deferred judge" above), becau
 
 ### Submit the job
 
-`scripts/benchmarking/slurm/lynx_score.sbatch` runs the scorer on a FASRC GPU node, inside the `vllm/vllm-openai` image at a pinned tag, with Lynx 8B at a pinned revision. The image, the model id, the model revision, the partition, the GPU count and the time limit are settings at the top of the script. `GPUS` is the number of GPUs that vLLM splits the model over, and the job passes it to the scorer as `--tensor-parallel-size`. It must equal the `N` of `#SBATCH --gres=gpu:<N>`. The job asks for one full A100 on the `gpu` partition for 2 hours, and it is never requeued, because the scorer cannot resume a half-scored bundle.
+`scripts/benchmarking/slurm/lynx_score.sbatch` runs the scorer on a FASRC GPU node, inside the `vllm/vllm-openai` image at a pinned tag, with Lynx 8B at a pinned revision. The image, the model id, the model revision, the partition, the GPU count, the token limit and the time limit are settings at the top of the script. `GPUS` is the number of GPUs that vLLM splits the model over, and the job passes it to the scorer as `--tensor-parallel-size`. It must equal the `N` of `#SBATCH --gres=gpu:<N>`. `CONTEXT_TOKENS` is the token limit, `8000` for Lynx 8B, and the job passes it to the scorer as `--context-tokens`. The job asks for one full A100 on the `gpu` partition for 2 hours, and it is never requeued, because the scorer cannot resume a half-scored bundle.
 
 1. Set `LYNX_LAB` to your lab folder under `/n/netscratch`. The job keeps the model, the vLLM compile cache and the image cache in `/n/netscratch/<lab>/Lab/<user>/archi-lynx`, not in the home folder. Netscratch deletes files older than 90 days, so a later job can download the model again. To use a different folder, set `LYNX_SCRATCH`.
 2. From the repo root, check the command. The dry run prints the `apptainer exec` command, and it starts nothing:
@@ -449,10 +449,13 @@ Lynx scores only `judge_mode: deferred` runs (see "Deferred judge" above), becau
     LYNX_LAB=<lab> sbatch scripts/benchmarking/slurm/lynx_score.sbatch <bundle folder> [<out dir>]
     ```
 
-The out dir is the folder of the result JSON. Without the second argument, the job uses the nearest folder above the bundle folder that holds `<result basename>.json`. The job refuses a missing bundle folder, a folder with no `BUNDLE_COMPLETE` (a `READY` queue copy too), an existing Lynx file, and a `GPUS` that is not a whole number of 1 or more. The job log is `archi-lynx-<job id>.out` in the repo root. The first job also converts the image into the Apptainer cache, so it takes longer than later jobs.
+The out dir is the folder of the result JSON. Without the second argument, the job uses the nearest folder above the bundle folder that holds `<result basename>.json`. The job refuses a missing bundle folder, a folder with no `BUNDLE_COMPLETE` (a `READY` queue copy too), an existing Lynx file, a `GPUS` that is not a whole number of 1 or more, and a `CONTEXT_TOKENS` that is not a whole number above 600. The job log is `archi-lynx-<job id>.out` in the repo root. The first job also converts the image into the Apptainer cache, so it takes longer than later jobs.
 
 !!! note "Lynx 70B"
-    The script also holds a commented variant for `PatronusAI/Llama-3-Patronus-Lynx-70B-Instruct`. Its weights are 141 GB, more than one GPU holds, so the variant splits the model over two H200 GPUs. To use it, put the four commented `##SBATCH` lines (`-p gpu_h200`, `--gres=gpu:2`, `--mem=256G`, `-t 04:00:00`) in place of the active `#SBATCH` lines with the same options, and put the three commented settings (the 70B `MODEL_ID`, its `MODEL_REVISION`, and `GPUS="2"`) in place of the active ones. The dry run then shows `--tensor-parallel-size 2`.
+    The script also holds a commented variant for `PatronusAI/Llama-3-Patronus-Lynx-70B-Instruct`. Its weights are 141 GB, more than one GPU holds, so the variant splits the model over two H200 GPUs. To use it, put the four commented `##SBATCH` lines (`-p gpu_h200`, `--gres=gpu:2`, `--mem=256G`, `-t 04:00:00`) in place of the active `#SBATCH` lines with the same options, and put the three commented settings (the 70B `MODEL_ID`, its `MODEL_REVISION`, and `GPUS="2"`) in place of the active ones. The dry run then shows `--tensor-parallel-size 2`. Lynx 70B reads 8,192 tokens, like Lynx 8B, so the variant keeps `CONTEXT_TOKENS="8000"`.
+
+!!! note "Lynx 8B v1.1: long rows"
+    Lynx 8B and 70B read at most 8,192 tokens, and a golden-set prompt (the question, every retrieved passage and the answer) is about 9,000 tokens at the median: on five past golden-set runs, only 69 of 425 rows fit the 8,000-token limit. `PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct-v1.1`, at revision `00de9f9062d93a95e4e359d3c92b8ea1d0114738`, reads up to 128,000 tokens. It is Lynx 8B trained again from Llama 3.1, with the same prompt and output form. The script holds it as a second commented variant on one GPU: put its three commented settings (its `MODEL_ID`, its `MODEL_REVISION` and `CONTEXT_TOKENS="32000"`) in place of the active ones. It needs no `##SBATCH` lines. The dry run then shows `--context-tokens 32000`. At 32,000 tokens every one of those 425 rows fits (the longest is 25,610), and vLLM's cache for the limit is about 4 GiB.
 
 ### Run the scorer by hand
 
@@ -463,22 +466,24 @@ python -m scripts.benchmarking.lynx.score <bundle folder> \
     --model PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct \
     --revision 5523f869eb5eecb4bca417b6e6d3532e746a9664 \
     --out-dir <folder of the result JSON> [--backend vllm|stub] \
-    [--tensor-parallel-size N]
+    [--tensor-parallel-size N] [--context-tokens N]
 ```
 
 `--tensor-parallel-size` is the number of GPUs that vLLM splits the model over, 1 by default. The scorer refuses a value below 1 before it reads the bundle.
+
+`--context-tokens` is the token limit, 8,000 by default: a row whose prompt plus 600 output tokens is more than the limit is skipped. The vLLM backend passes the same limit to vLLM as `max_model_len`, so vLLM sizes its cache for the limit and not for the model's whole window. The scorer refuses a limit of 600 or less before it reads the bundle. vLLM refuses a limit above the model's trained length (8,192 for Lynx 8B and 70B) when it starts, before any row is scored. Never set `VLLM_ALLOW_LONG_MAX_MODEL_LEN` to get past that: vLLM warns that positions past the trained length give wrong numbers. For long rows, use Lynx 8B v1.1 (see the note above).
 
 Give the folder of the result JSON as `--out-dir`, outside the bundle folder: `compare_runs.py` looks for the Lynx file beside the result JSON. The scorer refuses an `--out-dir` that is the bundle folder or inside it, and it never changes a file in the bundle folder. It also accepts a `READY` queue copy of a bundle. It never replaces an existing Lynx file: to score a bundle again, remove the old file. The scorer exits 0 when it wrote the file, 1 when it refused, and 2 for a usage error.
 
 ### Read the output
 
-The scorer writes `<basename>-arm<N>.lynx.json`, where `<basename>` is the result basename and `N` is the arm index, from 0. For each row, the file records the verdict, the status (`scored`, `skipped_overflow` or `parse_error`), the model's reasoning and the prompt token count. A `parse_error` row also keeps the reason and the raw model output. The file also records the model id, the model revision, the GPU count (`tensor_parallel_size`) and the SHA-256 of the bundle's `rows.jsonl`.
+The scorer writes `<basename>-arm<N>.lynx.json`, where `<basename>` is the result basename and `N` is the arm index, from 0. For each row, the file records the verdict, the status (`scored`, `skipped_overflow` or `parse_error`), the model's reasoning and the prompt token count. A `parse_error` row also keeps the reason and the raw model output. The file also records the model id, the model revision, the GPU count (`tensor_parallel_size`), the token limit (`token_budget.context_tokens`) and the SHA-256 of the bundle's `rows.jsonl`.
 
 | Count | Meaning |
 |---|---|
 | `lynx_scored` | Rows with a PASS or a FAIL verdict |
 | `lynx_pass` | Rows with a PASS verdict |
-| `lynx_skipped_overflow` | Rows whose prompt plus 600 output tokens is more than 8,000 tokens. The scorer does not send these rows to the model, and it does not cut them |
+| `lynx_skipped_overflow` | Rows whose prompt plus 600 output tokens is more than the token limit (`--context-tokens`, 8,000 by default). The scorer does not send these rows to the model, and it does not cut them |
 | `lynx_parse_errors` | Rows whose model output has no `PASS` or `FAIL` verdict that the scorer can read (see below) |
 
 Lynx writes its answer in a form that looks like JSON but is not: the reasoning items are single-quoted, and the verdict is a bare word.
@@ -491,7 +496,7 @@ The scorer reads this form and JSON (`"SCORE": "FAIL"`). An apostrophe inside a 
 
 `lynx_faithfulness` is `lynx_pass / lynx_scored`, or `null` when no row was scored. The PASS rate is over scored rows only: skipped rows and parse errors are in neither part of the rate. So always read the rate beside the four counts. A run with many long answers can have a high rate over few rows.
 
-`compare_runs.py` finds the Lynx file of arm `@N` beside its result JSON, as `<basename>-arm<N-1>.lynx.json` (`@1` reads `-arm0`). The pending result `<basename>.json` and the judged result `<basename>.judged.json` find the same file. For each arm with a Lynx file, the report shows a "Lynx faithfulness (descriptive)" block with the rate and the four counts. A file that does not match its arm shows as refused, with the reason. For each arm against the baseline, the report also gives an exact McNemar test of PASS over the questions that both arms scored, paired on question text. For the rest of the report, see [Interpreting benchmark results](interpreting_benchmark_results.md).
+`compare_runs.py` finds the Lynx file of arm `@N` beside its result JSON, as `<basename>-arm<N-1>.lynx.json` (`@1` reads `-arm0`). The pending result `<basename>.json` and the judged result `<basename>.judged.json` find the same file. For each arm with a Lynx file, the report shows a "Lynx faithfulness (descriptive)" block with the rate, the four counts and the token limit that the file records. Arms scored with different limits skip different rows, so read the limit beside the rate. A file that does not match its arm shows as refused, with the reason. For each arm against the baseline, the report also gives an exact McNemar test of PASS over the questions that both arms scored, paired on question text. For the rest of the report, see [Interpreting benchmark results](interpreting_benchmark_results.md).
 
 The PASS rate is descriptive, and it gates nothing: it is not in the leaderboard, the A/B winner, the Holm set or any regression gate. A refused Lynx file does not change the exit code of `compare_runs.py`.
 
