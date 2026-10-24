@@ -3,10 +3,14 @@
 # The LLM is used through OpenAI.
 #
 # run with:
-# archi create --name my-archi-openai --config examples/deployments/basic-openai/config.yaml --services chatbot --hostmode
+# archi create --name my-archi-openai --config examples/deployments/basic-openai/config.yaml --env-file ~/.secrets.env --services chatbot --hostmode
 #
-# required env var:
-# export OPENAI_API_KEY=your_api_key
+# required secrets in the --env-file (see docs/docs/secrets.md):
+# PG_PASSWORD=your_db_password
+# OPENAI_API_KEY=your_api_key
+# GIT_USERNAME=your_git_user
+# GIT_TOKEN=your_git_token
+# miscellanea.list has a git- entry, which enables the git source, so the git secrets are required.
 
 name: my_archi
 

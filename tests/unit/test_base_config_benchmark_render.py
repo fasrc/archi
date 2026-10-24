@@ -211,3 +211,91 @@ def test_sweep_generator_primary_metric_survives_rendering(tmp_path):
         assert cfg["services"]["benchmarking"]["primary_metric"] == (
             "noise_sensitivity"
         )
+
+
+# --- evaluator_provider_mode (judge's own local mode) -----------------------
+# Mirrors the services.benchmarking.provider_mode tests above, one level deeper
+# in the config tree: mode_settings.ragas_settings.evaluator_provider_mode.
+
+
+def _render_evaluator_mode(value):
+    return _ragas(
+        _render(
+            {
+                "benchmarking": {
+                    "provider": "local",
+                    "mode_settings": {
+                        "ragas_settings": {
+                            "evaluator_provider": "local",
+                            "evaluator_provider_mode": value,
+                        }
+                    },
+                }
+            }
+        )
+    )
+
+
+def test_evaluator_provider_mode_rendered_when_set():
+    ragas = _render_evaluator_mode("openai_compat")
+    assert ragas["evaluator_provider_mode"] == "openai_compat"
+
+
+def test_evaluator_provider_mode_false_survives_the_render():
+    ragas = _render_evaluator_mode(False)
+    assert ragas["evaluator_provider_mode"] is False
+
+
+def test_evaluator_provider_mode_zero_survives_the_render():
+    ragas = _render_evaluator_mode(0)
+    assert type(ragas["evaluator_provider_mode"]) is int
+    assert ragas["evaluator_provider_mode"] == 0
+
+
+def test_evaluator_provider_mode_absent_when_unset():
+    cfg = _render(
+        {
+            "benchmarking": {
+                "provider": "local",
+                "mode_settings": {"ragas_settings": {"evaluator_provider": "local"}},
+            }
+        }
+    )
+    assert "evaluator_provider_mode" not in _ragas(cfg)
+
+
+def test_evaluator_provider_mode_none_stays_absent():
+    ragas = _render_evaluator_mode(None)
+    assert "evaluator_provider_mode" not in ragas
+
+
+def test_evaluator_provider_mode_empty_string_survives_the_render():
+    ragas = _render_evaluator_mode("")
+    assert ragas["evaluator_provider_mode"] == ""
+
+
+@pytest.mark.parametrize("raw", YAML_SPECIAL_MODE_STRINGS)
+def test_evaluator_provider_mode_yaml_special_string_keeps_its_string_type(raw):
+    ragas = _render_evaluator_mode(raw)
+    assert ragas["evaluator_provider_mode"] == raw
+
+
+def test_rendered_false_evaluator_provider_mode_is_refused_downstream():
+    """The end the render serves: an unusable judge mode reaches resolve_local_mode."""
+    ragas = _render_evaluator_mode(False)
+    with pytest.raises(ValueError):
+        resolve_local_mode("http://gpu-vllm:8000", ragas["evaluator_provider_mode"])
+
+
+@pytest.mark.parametrize("raw", YAML_SPECIAL_MODE_STRINGS)
+def test_rendered_yaml_special_evaluator_provider_mode_is_refused_downstream(raw):
+    ragas = _render_evaluator_mode(raw)
+    with pytest.raises(ValueError):
+        resolve_local_mode("http://gpu-vllm:8000", ragas["evaluator_provider_mode"])
+
+
+def test_an_empty_evaluator_provider_mode_still_inherits_the_sut_mode():
+    """An empty judge mode still inherits — pins the presence guard against regression."""
+    ragas = _render_evaluator_mode("")
+    value = ragas["evaluator_provider_mode"]
+    assert resolve_local_mode("http://gpu-vllm:8000/v1", value) == "openai_compat"

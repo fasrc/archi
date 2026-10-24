@@ -19,6 +19,7 @@ import sys
 
 import yaml
 
+from src.utils.benchmark_provenance import DIVERGENCE_IGNORED_PATHS
 from src.utils.config_service import ConfigService
 from src.utils.deployment_record import record_deployment
 from src.utils.postgres_service_factory import PostgresServiceFactory
@@ -29,6 +30,24 @@ def load_config(path: str):
         return yaml.safe_load(f)
 
 
+def fallback_candidates(config_path: str) -> list:
+    """Return sorted ``*.yaml`` candidates when ``config_path`` is absent, else ``[]``.
+
+    Returns an empty list when ``config_path`` is an existing file (single-config
+    deployment). Otherwise returns the sorted ``*.yaml`` files in the same directory,
+    which are the arm files a multi-config deployment rendered instead of
+    ``config.yaml``.
+    """
+    if os.path.isfile(config_path):
+        return []
+    directory = (
+        config_path
+        if os.path.isdir(config_path)
+        else (os.path.dirname(config_path) or ".")
+    )
+    return sorted(glob.glob(os.path.join(directory, "*.yaml")))
+
+
 def resolve_config_path(config_path: str) -> str:
     """Resolve the config file to seed Postgres from.
 
@@ -37,21 +56,90 @@ def resolve_config_path(config_path: str) -> str:
     (e.g. ``fasrc-cannon-v1-strict.yaml``) instead, so the hardcoded
     ``config.yaml`` is absent — fall back to the first ``*.yaml`` in the
     rendered-config directory rather than aborting the whole deployment.
-    Seeding from any one config is harmless: the benchmarker reads the YAML
-    files directly and never consumes the seeded static_config. If nothing is
-    found, return the original path so ``load_config`` raises a clear error.
+    ``seed_entry`` refuses the deployment when the arm files disagree outside the
+    ignored paths, because the agent reads the seeded configuration for everything
+    else. If nothing is found, return the original path so ``load_config`` raises
+    a clear error.
     """
-    if os.path.isfile(config_path):
-        return config_path
-    directory = (
-        config_path
-        if os.path.isdir(config_path)
-        else (os.path.dirname(config_path) or ".")
-    )
-    candidates = sorted(glob.glob(os.path.join(directory, "*.yaml")))
+    candidates = fallback_candidates(config_path)
     if candidates:
         return candidates[0]
     return config_path
+
+
+def _arm_walk(left, right, prefix: str, found: list) -> None:
+    if prefix in DIVERGENCE_IGNORED_PATHS:
+        return
+    if isinstance(left, dict) and isinstance(right, dict):
+        for key in sorted(set(left) | set(right), key=str):
+            path = f"{prefix}.{key}" if prefix else str(key)
+            if (key in left) != (key in right):
+                if path not in DIVERGENCE_IGNORED_PATHS:
+                    found.append(path)
+                continue
+            _arm_walk(left[key], right[key], path, found)
+        return
+    # ``0 == False`` in Python; a numeric setting is not a boolean one.
+    if type(left) is not type(right) or left != right:
+        found.append(prefix or "<root>")
+
+
+def arm_config_divergence(paths: list) -> dict:
+    """Paths at which each arm file disagrees with the first, outside ignored paths.
+
+    Returns a dict mapping each differing file path to its sorted list of dotted
+    config paths. Files that agree with the first are absent from the dict. Fewer
+    than two paths, or an empty list, returns ``{}``.
+
+    Both sides are files, so key presence is a setting: an absent key, ``null``
+    and an empty container all differ. ``GitScraper`` reads ``code_suffixes``
+    with a default, so absent means its built-in list and ``[]`` means none.
+    """
+    if len(paths) < 2:
+        return {}
+    configs = [load_config(p) for p in paths]
+    first = configs[0]
+    result = {}
+    for path, cfg in zip(paths[1:], configs[1:]):
+        found = []
+        _arm_walk(first, cfg, "", found)
+        if found:
+            result[path] = sorted(found)
+    return result
+
+
+def format_arm_divergence(reference: str, divergence: dict) -> str:
+    """The refusal message for arm files that disagree with ``reference``."""
+    lines = [f"ARM CONFIG DIVERGENCE detected (reference: {reference}):"]
+    lines += [f"  {path}: {', '.join(diffs)}" for path, diffs in divergence.items()]
+    lines.append(
+        "The agent reads the seeded services block, so arms must agree outside"
+        " services.benchmarking, the deploy-rewritten paths and name;"
+        " run separate deployments to A/B such a setting."
+    )
+    return "\n".join(lines)
+
+
+def _is_config_file(path: str) -> bool:
+    try:
+        return isinstance(load_config(path), dict)
+    except (OSError, yaml.YAMLError):
+        return False
+
+
+def arm_divergence_refusal(paths: list):
+    """The refusal message when the arm files in ``paths`` disagree, else ``None``.
+
+    ``archi evaluate`` calls this on the operator's own files, before
+    ``ConfigurationManager`` drops a divergent arm and before ``--force`` tears
+    down the existing runtime. Files that are not YAML mappings are skipped; the
+    manager reports those.
+    """
+    arms = [p for p in paths if _is_config_file(p)]
+    divergence = arm_config_divergence(arms)
+    if not divergence:
+        return None
+    return format_arm_divergence(arms[0], divergence)
 
 
 def seed(config: dict, cs: ConfigService):
@@ -127,6 +215,15 @@ def main():
 
 
 def seed_entry(config_path: str, env: dict):
+    candidates = fallback_candidates(config_path)
+    if len(candidates) >= 2:
+        divergence = arm_config_divergence(candidates)
+        if divergence:
+            print(
+                "[config-seed] " + format_arm_divergence(candidates[0], divergence),
+                file=sys.stderr,
+            )
+            sys.exit(1)
     config_path = resolve_config_path(config_path)
     print(f"[config-seed] Loading config from {config_path}")
     config = load_config(config_path)

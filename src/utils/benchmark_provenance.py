@@ -35,6 +35,8 @@ run?" without either source still existing. ``code_version`` and
 import hashlib
 import json
 import os
+import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -600,6 +602,47 @@ def code_fingerprint(sources: Iterable[Tuple[str, bytes]]) -> str:
     return f"sha256:{digest}"
 
 
+def package_digest(freeze_text: str) -> str:
+    """Digest of a ``pip freeze`` listing, equal exactly when the package set is.
+
+    Lines are stripped, blank lines dropped and the rest sorted, so the digest
+    does not depend on the order or the spacing that one ``pip`` version prints.
+    The benchmark run and the offline scorer (#732) both call this, so both
+    sides hash the same way.
+    """
+    lines = sorted(line.strip() for line in freeze_text.splitlines() if line.strip())
+    digest = hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def collect_package_digest(run: Any = subprocess.run) -> Dict[str, Any]:
+    """The package digest of this interpreter's environment, from ``pip freeze``.
+
+    Never raises, like ``collect_code_version``: a failed or empty ``pip freeze``
+    gives ``digest: None`` and an ``<unavailable: ...>`` source with the reason.
+    """
+    try:
+        proc = run(
+            [sys.executable, "-m", "pip", "freeze"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {"digest": None, "source": f"<unavailable: pip freeze timed out: {exc}>"}
+    except OSError as exc:
+        return {"digest": None, "source": f"<unavailable: pip freeze failed: {exc}>"}
+    if proc.returncode != 0:
+        return {
+            "digest": None,
+            "source": f"<unavailable: pip freeze exited {proc.returncode}>",
+        }
+    if not (proc.stdout or "").strip():
+        return {"digest": None, "source": "<unavailable: pip freeze printed nothing>"}
+    return {"digest": package_digest(proc.stdout), "source": "pip freeze"}
+
+
 def package_module_files(package_dir: str) -> List[Tuple[str, str]]:
     """Every ``.py`` under *package_dir*, as ``(relative_path, absolute_path)``.
 
@@ -926,6 +969,48 @@ def live_category_map(pool: Any, config: Any) -> Tuple[list, List[str], str]:
     rows = _read_on_pool(pool, category_map_rows, _searched_collection(config))
     records = category_map_records(rows)
     return rows, records, category_map_digest(records)
+
+
+def live_embedding_tag_state(pool: Any, config: Any) -> Dict[str, Any]:
+    """The embedding tag state of the collection *config* searches, read on *pool*.
+
+    Returns ``{"embedding_model_tags": sorted(tags), "untagged_chunk_count": n}``.
+    Raises on failure, like ``live_corpus_fingerprint``.
+    """
+    _, _, untagged, tags = _read_on_pool(
+        pool, readiness_counts, _searched_collection(config)
+    )
+    return {"embedding_model_tags": sorted(tags), "untagged_chunk_count": untagged}
+
+
+def embedding_tags_unchanged(start: Any, end: Any) -> Optional[bool]:
+    """Whether the tag state at the end of an arm matches the start record.
+
+    Returns ``None`` when either record is missing required fields or is not a
+    dict. Returns ``False`` when a foreign tag appeared (D1 rule 1) or the
+    untagged count grew (D1 rule 2). Returns ``True`` otherwise.
+    """
+    if not isinstance(start, dict):
+        return None
+    embedding_model = start.get("embedding_model")
+    if not isinstance(embedding_model, str) or not embedding_model:
+        return None
+    start_untagged = start.get("untagged_chunk_count")
+    if not isinstance(start_untagged, int) or isinstance(start_untagged, bool):
+        return None
+    if not isinstance(end, dict):
+        return None
+    end_tags = end.get("embedding_model_tags")
+    end_untagged = end.get("untagged_chunk_count")
+    if not isinstance(end_tags, list):
+        return None
+    if not isinstance(end_untagged, int) or isinstance(end_untagged, bool):
+        return None
+    if any(tag != embedding_model for tag in end_tags):
+        return False
+    if end_untagged > start_untagged:
+        return False
+    return True
 
 
 def _container_factory_and_config() -> Tuple[Any, Any]:
