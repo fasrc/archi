@@ -1,6 +1,8 @@
 # Design — slice exclusions independent of emitted rows and of the baseline's label (#447)
 
-Anchors are on `origin/dev` `be42428b`, `scripts/benchmarking/compare_runs.py`.
+Anchors in D1 and D2 are on `origin/dev` `be42428b`, `scripts/benchmarking/compare_runs.py`
+(task 1.1 is done; they record the old tree). Anchors in D1's last paragraph, D3, and D4 were
+re-checked on 2026-10-24 on the merge of `origin/dev` `83d7bf31` into this branch (`140151d2`).
 
 ## D1. One membership helper, two consumers
 
@@ -27,8 +29,8 @@ top-level value cannot drift.
 it directly (`tests/unit/test_compare_runs.py:1945` onward); changing the return type would
 churn all of them for no gain. Rejected: returning a tuple from `slice_block`.
 
-`build_report` (`:2700`) adds `"slice_exclusions": slice_exclusions(baseline, arms, questions)`
-next to `"slices"` (`:2741`). The `--json` writer dumps the report dict, so the key reaches the
+`build_report` (`:2890`) adds `"slice_exclusions": slice_exclusions(baseline, arms, questions)`
+next to `"slices"` (`:2931`). The `--json` writer dumps the report dict, so the key reaches the
 JSON with no other change.
 
 ## D2. Labelled arms only
@@ -59,7 +61,7 @@ pass unchanged.
 
 ## D3. Renderer
 
-In `render_markdown`, the "## Slices" section (`:2389-2427`) becomes:
+In `render_markdown` (`:2382`), the "## Slices" section (`:2578-2615`) becomes:
 
 1. If `report["slices"]`: print the table as now.
 2. Then, for each `(name, count)` in `sorted(report.get("slice_exclusions", {}).items())` with
@@ -72,14 +74,14 @@ In `render_markdown`, the "## Slices" section (`:2389-2427`) becomes:
    - Else print nothing more — the step-2 sentences already explain the empty section.
 
 `.get(..., {})` keeps a hand-built report without the key renderable (there is one golden test
-at `tests/unit/test_compare_runs.py:2305` that builds the report through `build_report`; it
+`test_markdown_has_every_section`, `tests/unit/test_compare_runs.py:2356`, that builds the report through `build_report`; it
 must stay byte-identical unless its fixture triggers a non-zero exclusion, which it does not
 today).
 
 ## D4. Docs
 
 Rewrite the bullet that begins "Two limits on that, both being tracked in issue #447" in
-`docs/docs/interpreting_benchmark_results.md` (around line 290). State that:
+`docs/docs/interpreting_benchmark_results.md` (line 293). State that:
 
 - the count lives at the top level of the report (`slice_exclusions` in `--json`), one entry
   per field every arm carries, zero included, and also on each emitted slice row;

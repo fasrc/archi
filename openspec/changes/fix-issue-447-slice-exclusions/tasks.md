@@ -19,9 +19,10 @@ Standing notes for every task:
   under the banner `# --- issue #447: slice exclusions without a row or a baseline label ---`.
   The file's current last line, `        assert "cannot join" in err and expected in err`, must
   appear unchanged as context in `git diff origin/dev -- tests/unit/test_compare_runs.py`.
-- **No duplicate test names.** The file has 128 `def test_` functions today. After each task,
-  `grep -c "^def test_" tests/unit/test_compare_runs.py` must equal 128 plus the tests you
-  added, and `grep "^def test_" tests/unit/test_compare_runs.py | sort | uniq -d` must print
+- **No duplicate test names.** The file has 132 `def test_` functions on `origin/dev`
+  `83d7bf31`, and 137 after task 1.1 (merge `140151d2`). After each task,
+  `grep -c "^def test_" tests/unit/test_compare_runs.py` must equal 137 plus the tests you
+  added in tasks 2.x, and `grep "^def test_" tests/unit/test_compare_runs.py | sort | uniq -d` must print
   nothing.
 - Build arms with the `_artifact` fixture and `_row(...)` (`tests/unit/test_compare_runs.py:48`,
   `:114`); `_row` omits any field you do not pass, which is how you get an unlabelled row. Read
@@ -72,7 +73,8 @@ Standing notes for every task:
       (c) `test_rendered_report_says_no_slice_field_only_when_the_gate_excludes_all` — arms
       where one arm carries no slice field at all; assert "No slice field" is present.
       Watch (a) and (b) fail. Then implement. Confirm the golden render test
-      (`tests/unit/test_compare_runs.py:2305`) still passes unchanged. Gate green; commit.
+      (`test_markdown_has_every_section`, `tests/unit/test_compare_runs.py:2356`) still passes
+      unchanged. Gate green; commit.
 
 - [ ] 2.2 Update `docs/docs/interpreting_benchmark_results.md` per design D4. No test. Build
       check: `grep -n "447" docs/docs/interpreting_benchmark_results.md` prints nothing, and
