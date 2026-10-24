@@ -5,4 +5,4 @@
 
 ## 2. Publish
 
-- [ ] 2.1 Push with `git push -u origin fix/issue-459-source-visibility-keys` and open the PR against `fasrc/archi:dev` with `gh pr create --repo fasrc/archi --base dev`. Put `Closes #459` in the PR **body** (not the title). In the body, list the mapping table and the red-then-green test results. No `Co-Authored-By` trailer. Do not merge.
+- [x] 2.1 Push with `git push -u origin fix/issue-459-source-visibility-keys` and open the PR against `fasrc/archi:dev` with `gh pr create --repo fasrc/archi --base dev`. Put `Closes #459` in the PR **body** (not the title). In the body, list the mapping table and the red-then-green test results. No `Co-Authored-By` trailer. Do not merge.
