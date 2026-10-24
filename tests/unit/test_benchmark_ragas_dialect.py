@@ -377,3 +377,35 @@ def test_get_ragas_results_judge_usage_is_none_when_no_metric_scores(monkeypatch
     bench.get_ragas_results(rows, keys, results_by_key)
 
     assert bench._judge_usage is None
+
+
+def _draft_row():
+    return {
+        "user_input": "q1",
+        "retrieved_contexts": ["c1"],
+        "response": "a1",
+        "reference": "",
+    }
+
+
+def test_get_ragas_results_marks_the_arm_unscored_when_no_metric_is_eligible(
+    monkeypatch,
+):
+    """Input rows exist, but the only metric needs a reference: no judge ran (#518)."""
+    _install_ragas_stub(monkeypatch)
+    bench = _ragas_bench(["context_recall"])
+    bench._ragas_scored = None
+
+    bench.get_ragas_results([_draft_row()], ["question_1"], {"question_1": {}})
+
+    assert bench._ragas_scored is False
+
+
+def test_get_ragas_results_marks_the_arm_scored_when_the_judge_runs(monkeypatch):
+    _install_ragas_stub(monkeypatch)
+    bench = _ragas_bench(["faithfulness"])
+    bench._ragas_scored = None
+
+    bench.get_ragas_results([_draft_row()], ["question_1"], {"question_1": {}})
+
+    assert bench._ragas_scored is True

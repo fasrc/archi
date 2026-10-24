@@ -19,6 +19,7 @@ benchmark-only ragas dependency (absent from the unit-test env).
 from __future__ import annotations
 
 import json
+import logging
 import math
 
 from src.utils.benchmark_schema import (
@@ -705,6 +706,43 @@ def test_a_float_timeout_is_still_accepted():
             ragas_run_config_kwargs({"timeout": bad})["timeout"]
             == RAGAS_DEFAULT_TIMEOUT
         ), bad
+
+
+def test_an_oversized_integer_timeout_falls_back_without_raising():
+    """``math.isfinite`` raises ``OverflowError`` on an int too large to convert
+    to a float (e.g. ``10**309``), rather than returning ``False`` -- an
+    oversized ``timeout`` must still fall back to the default, not crash the
+    judge pass. ``max_workers`` has no such conversion step, so the same
+    oversized value is accepted as-is by ``_positive_int``.
+    """
+    kwargs = ragas_run_config_kwargs({"timeout": 10**309, "max_workers": 10**309})
+
+    assert kwargs["timeout"] == RAGAS_DEFAULT_TIMEOUT
+    assert kwargs["max_workers"] == 10**309
+
+
+def test_an_oversized_integer_timeout_logs_a_warning(caplog):
+    with caplog.at_level(logging.WARNING):
+        ragas_run_config_kwargs({"timeout": 10**309})
+
+    assert any("timeout" in record.message for record in caplog.records)
+
+
+def test_an_integral_float_timeout_is_the_same_setting_as_the_int():
+    """``600`` and ``600.0`` configure the same duration and must compare equal
+    and report the same effective type, or two arms that differ only in YAML's
+    int/float spelling of the same number would look like different runs.
+    """
+    as_int = ragas_effective_settings({"timeout": 600})
+    as_float = ragas_effective_settings({"timeout": 600.0})
+
+    assert as_int == as_float
+    assert type(as_int["timeout"]) is int and as_int["timeout"] == 600
+    assert type(as_float["timeout"]) is int and as_float["timeout"] == 600
+
+
+def test_a_fractional_timeout_stays_fractional():
+    assert ragas_effective_settings({"timeout": 120.5})["timeout"] == 120.5
 
 
 def _cfg(modes=("RAGAS",), **settings):

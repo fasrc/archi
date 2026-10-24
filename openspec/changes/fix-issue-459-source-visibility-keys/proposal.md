@@ -2,7 +2,7 @@
 
 `data_manager.sources.<name>.visible: false` hides a source's documents from chat citations
 only for `git`, `sso`, and `local_files`. `ChatWrapper._get_doc_visibility`
-(`src/interfaces/chat_app/app.py:813-828`) looks up the stored `source_type` directly in
+(`src/interfaces/chat_app/app.py:817-832`) looks up the stored `source_type` directly in
 `sources_config`. For `links`, `indico`, and `elog` the stored value is `web`; for `jira`
 and `redmine` it is `ticket`. Neither is a config key, so the lookup misses, logs an ERROR,
 and shows the citation (fasrc/archi#459).

@@ -214,11 +214,14 @@ See [Benchmarking](benchmarking.md) for full details on query format and evaluat
 
 ---
 
-### `archi eval qa`
+### `archi qa`
+
+> **Deprecated alias:** `archi eval qa …` still runs the same command for one
+> release and prints a deprecation notice to stderr. Use `archi qa`.
 
 Run source-neutral, atom-based evaluation without changing the legacy
 `archi evaluate` workflow. `archi evaluate` above measures RAGAS and
-source-retrieval benchmarking metrics; `archi eval qa` instead judges a
+source-retrieval benchmarking metrics; `archi qa` instead judges a
 complete agent answer against explicit gold-atom obligations. The composite
 command validates and prepares the dataset, runs the selected agent
 independently for every attempt, then scores each usable answer:
@@ -228,7 +231,7 @@ console usage, state semantics, scoring, and troubleshooting, see the
 [Evaluation Guide](evaluation.md).
 
 ```bash
-archi eval qa \
+archi qa \
   --dataset questions.jsonl \
   --agent-config agent.yaml \
   --agent-spec agent.md \
@@ -319,7 +322,7 @@ answers before scoring them.
 #### 1. Prepare the dataset
 
 ```bash
-archi eval qa prepare questions.jsonl \
+archi qa prepare questions.jsonl \
   --evaluator-profile evaluator.yaml \
   --mcp-config qa_evaluation_mcp.yaml \
   --output-dir evaluation-run/
@@ -346,7 +349,7 @@ workspace. It does not run Archi or generate tested-agent answers.
 #### 2. Run Archi
 
 ```bash
-archi eval qa run evaluation-run/ \
+archi qa run evaluation-run/ \
   --agent-config agent.yaml \
   --agent-spec agent.md \
   --mcp-config qa_evaluation_mcp.yaml \
@@ -370,7 +373,7 @@ rows with timing-only records remain supported by the evaluation console.
 #### 3. Score the answers
 
 ```bash
-archi eval qa score evaluation-run/ --score-workers 8
+archi qa score evaluation-run/ --score-workers 8
 ```
 
 The positional `evaluation-run/` argument is the same workspace directory used by the
@@ -448,11 +451,11 @@ Each atom must have a unique, non-empty `id`, non-empty `text`, and a boolean
 `required` value, and every row must contain at least one required atom.
 Supplying `expected_atoms` replaces automatic atom generation for that row:
 `prepare` validates and copies the supplied atoms without calling the atoms
-extractor. The composite `archi eval qa` command detects this automatically as
+extractor. The composite `archi qa` command detects this automatically as
 well, so no separate atom-generation command is needed. It still performs the
 preparation phase to validate and snapshot the dataset before running and
 scoring it. In the staged workflow, `run` still requires that prepared
-workspace, so `archi eval qa prepare` cannot be omitted entirely.
+workspace, so `archi qa prepare` cannot be omitted entirely.
 
 Across all three stages, `manifest.json` records phase state and SHA-256 hashes.
 Editing an artifact from a completed phase makes the next phase fail closed.
@@ -489,7 +492,7 @@ qa:
 Use `--evaluator-profile profile.yaml` on the composite command or `prepare`.
 If supplied again to `score`, its resolved content must match the prepared
 profile. Evaluator temperature is fixed at zero; selected evaluator models must
-accept `temperature=0`, otherwise the `archi eval qa` command fails.
+accept `temperature=0`, otherwise the `archi qa` command fails.
 
 ---
 

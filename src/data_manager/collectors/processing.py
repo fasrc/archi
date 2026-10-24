@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 import sys
 import threading
+from bisect import bisect_left
 from typing import (
     Any,
     Callable,
@@ -30,7 +31,14 @@ from typing import (
 )
 
 from bs4 import BeautifulSoup, Comment, Doctype, NavigableString, Tag
-from markdownify import STRIP, STRIP_ONE, MarkdownConverter, strip1_pre, strip_pre
+from markdownify import (
+    STRIP,
+    STRIP_ONE,
+    MarkdownConverter,
+    chomp,
+    strip1_pre,
+    strip_pre,
+)
 
 from src.data_manager.collectors.resource_base import BaseResource
 from src.utils.local_mode import LOCAL_PROVIDER_KEY, apply_local_mode
@@ -297,13 +305,299 @@ _BR_LEADING_WS = re.compile(r"^(?:[ \t]*\r?\n)+")
 # converting byte-identically to the output before #399. Only promoted blocks are ours
 # to label.
 _PROMOTED_ATTR = "data-archi-promoted"
-# Marks the link that ``_hoist_out_of_inline`` keeps for an emptied anchor (issue
-# #430), so ``_ArchiMarkdownConverter.convert_a`` can give it explicit link syntax.
-_KEPT_LINK_ATTR = "data-archi-kept-link"
 # Marks the head half of an anchor whose split-off tail already shows the link, so
 # a later block that empties the head half does not add a second link.
 _LINK_SHOWN_ATTR = "data-archi-link-shown"
 _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+# Matches an ``&`` that a CommonMark reader would decode as the start of a
+# character reference (issue #605 review): ``&name;``, ``&#NNN;``, ``&#xHHH;``.
+_ENTITY_LEAD = re.compile(r"&(?=#[0-9]+;|#[xX][0-9A-Fa-f]+;|[A-Za-z][A-Za-z0-9]*;)")
+# A backslash that a CommonMark reader would consume as an escape (issue #605 review).
+_ESCAPED_PUNCT = re.compile(r"\\[!-/:-@\[-`{-~]")
+# Characters that are active inside CommonMark link text (issue #605 review).
+_LABEL_ACTIVE = re.compile(r"[\\\[\]<>`*_]")
+
+
+def _link_destination(href: str) -> str:
+    """Return ``href`` as a CommonMark 0.31 link destination (issue #605).
+
+    A bare destination cannot start with ``<``, hold whitespace or a control
+    character, or have parentheses that don't balance. A DOM ``href`` has no
+    escapes of its own, so a bare destination also cannot hold a ``\\`` before
+    ASCII punctuation or at its end (where it would escape the link's closing
+    ``)``), or a ``&`` that leads a character reference: a CommonMark reader
+    would consume the backslash or decode the reference. When ``href``
+    violates any of these rules, wrap it in angle brackets: double every literal
+    backslash first (so a reader's own backslash-unescaping recovers it rather
+    than consuming the character after it), then backslash-escape ``<`` and
+    ``>`` (forbidden bare inside an angle-bracket destination) and any ``&``
+    that leads a character reference.
+    An ``href`` with a line ending is returned unchanged: no destination form
+    can hold one (design Non-Goals), so the angle-bracket form would not help.
+    """
+    if "\n" in href or "\r" in href:
+        return href
+    bare_ok = (
+        not href.startswith("<")
+        and not any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in href)
+        and not _ESCAPED_PUNCT.search(href)
+        and not _ENTITY_LEAD.search(href)
+        # A trailing backslash would escape the link's closing ``)``.
+        and not href.endswith("\\")
+    )
+    if bare_ok:
+        depth = 0
+        for ch in href:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth < 0:
+                    bare_ok = False
+                    break
+        bare_ok = bare_ok and depth == 0
+    if bare_ok:
+        return href
+    wrapped = href.replace("\\", "\\\\")
+    wrapped = wrapped.replace("<", "\\<").replace(">", "\\>")
+    wrapped = _ENTITY_LEAD.sub(lambda m: "\\" + m.group(0), wrapped)
+    # A reader replaces a literal NUL with U+FFFD before it parses, so write the
+    # percent-encoded form instead; it parses as the text ``%00`` (PR #686 review).
+    wrapped = wrapped.replace("\x00", "%00")
+    return "<" + wrapped + ">"
+
+
+def _escape_link_label(label: str) -> str:
+    """Escape ``label`` for use as literal CommonMark link text (issue #605 review).
+
+    A backslash, bracket, angle bracket, backtick, ``*``, ``_``, or a ``&`` that
+    leads a character reference would alter the parsed text (escape, end the
+    label, inline HTML, code span, emphasis, entity), so each is escaped. This is
+    only safe for text written byte-for-byte from a non-Markdown source such as
+    an ``href``.
+    """
+    return _ENTITY_LEAD.sub(
+        lambda m: "\\" + m.group(0), _LABEL_ACTIVE.sub(r"\\\g<0>", label)
+    )
+
+
+# CommonMark 0.31 inline constructs that bind tighter than link brackets and that
+# start at a ``<``: an autolink, then an HTML open or closing tag (PR #709 review).
+_AUTOLINK_AT = re.compile(
+    r"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\x00-\x20\x7f]*"
+    r"|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>"
+)
+# Tag whitespace is only a space, tab, or line ending, not Python's ``\s``
+# (PR #709 review round 3).
+_HTML_TAG_AT = re.compile(
+    r"<[A-Za-z][A-Za-z0-9-]*"
+    r"(?:[ \t\r\n]+[A-Za-z_:][A-Za-z0-9_.:-]*"
+    r"""(?:[ \t\r\n]*=[ \t\r\n]*(?:[^ \t\r\n"'=<>`]+|'[^']*'|"[^"]*"))?)*"""
+    r"[ \t\r\n]*/?>"
+    r"|</[A-Za-z][A-Za-z0-9-]*[ \t\r\n]*>"
+)
+# Raw HTML forms that run to a fixed terminator: (start, terminator).
+_HTML_RUNS = (
+    ("<!-->", ""),
+    ("<!--->", ""),
+    ("<!--", "-->"),
+    ("<?", "?>"),
+    ("<![CDATA[", "]]>"),
+)
+_MAX_DEST_NESTING = 32
+_ASCII_ALPHA = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+_ASCII_PUNCT = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+
+
+class _Finder:
+    """Find the next ``needle`` at or after a position, rescanning only on a miss.
+
+    A scanner asks for terminators at rising positions, so caching the last hit
+    (or the last miss) keeps the total work linear in the text.
+    """
+
+    def __init__(self, text: str):
+        self._text = text
+        self._hits: dict[str, int] = {}
+
+    def find(self, needle: str, start: int) -> int:
+        hit = self._hits.get(needle)
+        if hit is None or (hit != -1 and hit < start):
+            hit = self._text.find(needle, start)
+            self._hits[needle] = hit
+        return hit
+
+
+def _raw_html_end(text: str, i: int, finder: _Finder) -> int:
+    """End of the autolink or raw inline HTML that starts at ``text[i]``, or -1."""
+    m = _AUTOLINK_AT.match(text, i) or _HTML_TAG_AT.match(text, i)
+    if m:
+        return m.end()
+    for lead, close in _HTML_RUNS:
+        if text.startswith(lead, i):
+            if not close:
+                return i + len(lead)
+            k = finder.find(close, i + len(lead))
+            return -1 if k == -1 else k + len(close)
+    # A declaration starts with an ASCII letter, not any Unicode letter.
+    if text.startswith("<!", i) and i + 2 < len(text) and text[i + 2] in _ASCII_ALPHA:
+        k = finder.find(">", i + 2)
+        return -1 if k == -1 else k + 1
+    return -1
+
+
+def _skip_space(text: str, j: int) -> int:
+    while j < len(text) and text[j] in " \t\r\n":
+        j += 1
+    return j
+
+
+def _escapes_next(text: str, j: int) -> bool:
+    """True when ``text[j]`` is a backslash that escapes the next character.
+
+    CommonMark escapes ASCII punctuation only, so a backslash before a space or
+    a line ending stays literal (PR #709 review round 5).
+    """
+    return text[j] == "\\" and j + 1 < len(text) and text[j + 1] in _ASCII_PUNCT
+
+
+def _link_tail_end(text: str, i: int) -> int:
+    """End of the inline link tail ``(dest "title")`` at ``text[i]``, or -1.
+
+    Brackets and backticks in a destination or title take no part in label
+    balancing, so the scanner copies the tail as it is (PR #709 review).
+    """
+    n = len(text)
+    j = _skip_space(text, i + 1)
+    if j < n and text[j] == "<":
+        j += 1
+        while j < n and text[j] not in "<>\r\n":
+            j += 2 if _escapes_next(text, j) else 1
+        if j >= n or text[j] != ">":
+            return -1
+        j += 1
+    else:
+        depth = 0
+        # A space or an ASCII control character ends a bare destination.
+        while j < n and ord(text[j]) > 0x20 and text[j] != "\x7f":
+            if _escapes_next(text, j):
+                j += 2
+                continue
+            if text[j] == "(":
+                # Readers stop at 32 nested ``(``; the cap also keeps each failed
+                # scan short (PR #709 review round 2).
+                if depth == _MAX_DEST_NESTING:
+                    return -1
+                depth += 1
+            elif text[j] == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            j += 1
+        if depth:
+            return -1
+    k = _skip_space(text, j)
+    if k > j and k < n and text[k] in "\"'(":
+        close = ")" if text[k] == "(" else text[k]
+        # A parenthesized title holds no unescaped ``(``.
+        stop = close + "(" if close == ")" else close
+        k += 1
+        while k < n and text[k] not in stop:
+            k += 2 if text[k] == "\\" and k + 1 < n else 1
+        if k >= n or text[k] != close:
+            return -1
+        j = _skip_space(text, k + 1)
+    else:
+        j = k
+    return j + 1 if j < n and text[j] == ")" else -1
+
+
+def _escape_unbalanced_brackets(text: str) -> str:
+    """Escape unbalanced ``[`` and ``]`` in Markdown link text (issue #691).
+
+    The text is scanned left to right as CommonMark 0.31 reads it: a backslash
+    escape, a code span, an autolink, raw inline HTML, or the ``(dest "title")``
+    tail of a nested image is copied as it is, and each remaining ``[`` or ``]``
+    that is not paired gets a ``\\`` before it. A nested link gets both of its
+    brackets escaped, since CommonMark does not let a link hold a link. A lone backslash at the
+    end of the label is doubled so it cannot escape the closing ``]`` (PR #709
+    review). Returns ``text`` unchanged (same object) when nothing needs escaping.
+    """
+    n = len(text)
+    end = len(text.rstrip())
+    finder = _Finder(text)
+    # Start positions of each backtick run, by run length, for closer lookup.
+    runs: dict[int, list[int]] = {}
+    for run in _BACKTICK_RUNS.finditer(text):
+        runs.setdefault(run.end() - run.start(), []).append(run.start())
+    stack: list[tuple[int, bool]] = []  # unmatched '[': (position, opens an image)
+    mark: list[int] = []  # positions that need a '\' prepended
+    escaped_to = -1  # end of the last backslash escape
+    i = 0
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            if i + 1 < n and text[i + 1] in _ASCII_PUNCT:
+                i += 2
+                escaped_to = i
+                continue
+            if i == end - 1:
+                mark.append(i)
+            i += 1
+        elif ch == "`":
+            j = i
+            while j < n and text[j] == "`":
+                j += 1
+            starts = runs.get(j - i, [])
+            k = bisect_left(starts, j)
+            i = starts[k] + (j - i) if k < len(starts) else j
+        elif ch == "<":
+            k = _raw_html_end(text, i, finder)
+            i = k if k != -1 else i + 1
+        elif ch == "[":
+            stack.append((i, i > 0 and text[i - 1] == "!" and escaped_to != i))
+            i += 1
+        elif ch == "]":
+            i += 1
+            if not stack:
+                mark.append(i - 1)
+                continue
+            opener, image = stack.pop()
+            if i < n and text[i] == "(":
+                k = _link_tail_end(text, i)
+                if k != -1 and image:
+                    i = k
+                elif k != -1:
+                    # Links may not hold links, so an inner link would stop the
+                    # outer one from parsing: write it as text (PR #709 review).
+                    mark.extend((opener, i - 1))
+        else:
+            i += 1
+    mark.extend(pos for pos, _ in stack)
+    if not mark:
+        return text
+    out: list[str] = []
+    last = 0
+    for pos in sorted(mark):
+        out.append(text[last:pos])
+        out.append("\\")
+        last = pos
+    out.append(text[last:])
+    return "".join(out)
+
+
+def _autolink_needs_explicit_form(href: str) -> bool:
+    """True when ``href`` cannot sit inside CommonMark's ``<href>`` autolink form.
+
+    False for a line ending: no link form can hold one, so the autolink stays as
+    markdownify writes it (design Non-Goals).
+    """
+    if "\n" in href or "\r" in href:
+        return False
+    return any(
+        ch.isspace() or ch in "<>" or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in href
+    )
 
 
 def _edge_text(br, *, forward: bool, stop_at) -> NavigableString | None:
@@ -374,13 +668,42 @@ def _has_content(tag) -> bool:
     return False
 
 
-# The tags that ``markdownify`` converts to output that has no text in it.
-_RENDERS_WITHOUT_TEXT: frozenset = frozenset({"img", "hr", "video"})
+# Tags that markdownify writes characters for even when they hold no text
+# (issue #713: q, h1–h6, td, th, tr added; img, hr, video were already here).
+_RENDERS_WITHOUT_TEXT: frozenset = frozenset(
+    {"h1", "h2", "h3", "h4", "h5", "h6", "hr", "img", "q", "td", "th", "tr", "video"}
+)
+
+_HEADING_TAGS: frozenset = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+
+# The ancestors that set markdownify's ``_noformat`` context, where an anchor writes
+# its text but no href, and its ``_inline`` context, where a heading writes no hashes.
+_NOFORMAT_TAGS: frozenset = frozenset({"pre", "code", "kbd", "samp"})
+_INLINE_CONTEXT_TAGS: frozenset = _HEADING_TAGS | {"td", "th"}
+
+# The issue #713 tags count only where they make the anchor show its href, so they
+# do not hide the synthesized target anywhere else (Codex review on PR #716).
+_LINK_TEXT_TAGS_NOFORMAT: frozenset = frozenset({"hr", "img", "video"})
+_LINK_TEXT_TAGS_INLINE: frozenset = _RENDERS_WITHOUT_TEXT - _HEADING_TAGS
 
 
-def _renders_link_text(tag) -> bool:
+def _link_text_tags(anchor) -> frozenset:
+    """Return the tags that give *anchor* link text with no text in them (PR #716).
+
+    The ancestors of *anchor* set the context. The hoist splits only inline markup,
+    so both halves keep these ancestors.
+    """
+    context = {tag.name for tag in anchor.parents}
+    if context & _NOFORMAT_TAGS:
+        return _LINK_TEXT_TAGS_NOFORMAT
+    if context & _INLINE_CONTEXT_TAGS:
+        return _LINK_TEXT_TAGS_INLINE
+    return _RENDERS_WITHOUT_TEXT
+
+
+def _renders_link_text(tag, counted: frozenset = _RENDERS_WITHOUT_TEXT) -> bool:
     """True when *tag* gives ``markdownify`` link text: visible text, or a tag in
-    ``_RENDERS_WITHOUT_TEXT``.
+    *counted* (issue #430, #713).
 
     ``_has_content`` counts any child tag, but an empty ``<span>`` or a ``<br>``
     renders no text, and ``markdownify`` drops an anchor with no text (issue #430).
@@ -390,7 +713,7 @@ def _renders_link_text(tag) -> bool:
     """
     for node in tag.descendants:
         if isinstance(node, Tag):
-            if node.name in _RENDERS_WITHOUT_TEXT:
+            if node.name in counted:
                 return True
         elif type(node) is NavigableString and node.strip():
             return True
@@ -465,14 +788,15 @@ def _hoist_out_of_inline(pre, soup) -> None:
         _trim_cut_whitespace(parent, trailing=True)
         _trim_cut_whitespace(tail, trailing=False)
         is_link = parent.name == "a" and bool(parent.get("href"))
-        tail_has_text = is_link and _renders_link_text(tail)
+        counted = _link_text_tags(parent) if is_link else _RENDERS_WITHOUT_TEXT
+        tail_has_text = is_link and _renders_link_text(tail, counted)
         if (
             is_link
             and not tail_has_text
             and not parent.has_attr(_LINK_SHOWN_ATTR)
-            and not _renders_link_text(parent)
+            and not _renders_link_text(parent, counted)
         ):
-            link = soup.new_tag("a", href=parent["href"], attrs={_KEPT_LINK_ATTR: ""})
+            link = soup.new_tag("a", href=parent["href"])
             link.string = (parent.get("title") or "").strip() or parent["href"]
             parent.replace_with(link)
             continue
@@ -486,6 +810,29 @@ def _hoist_out_of_inline(pre, soup) -> None:
             parent.decompose()
 
 
+# The attributes that only this module may set (issue #713).
+_HOIST_MARKER_ATTRS: tuple = (_PROMOTED_ATTR, _LINK_SHOWN_ATTR)
+
+
+def _drop_source_markers(soup) -> None:
+    """Remove the hoist's marker attributes from every tag of the source HTML.
+
+    ``_promoted_fence_language`` and ``_hoist_out_of_inline`` read the markers as
+    their own state, so a marker in the scraped HTML would label a native ``<pre>``
+    or hide a link target (issue #713).
+    """
+    for tag in soup.find_all(True):
+        for name in _HOIST_MARKER_ATTRS:
+            tag.attrs.pop(name, None)
+
+
+def _drop_empty_headings(soup: BeautifulSoup) -> None:
+    """Remove ``h1``-``h6`` tags with no text and no ``img``/``code`` descendant (issue #400)."""
+    for heading in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+        if heading.get_text(strip=True) == "" and heading.find(["img", "code"]) is None:
+            heading.decompose()
+
+
 def _promote_block_code(html: str) -> str:
     """Promote bare multi-line ``<code>`` elements to ``<pre><code>`` blocks (issue #399).
 
@@ -497,8 +844,13 @@ def _promote_block_code(html: str) -> str:
     ``class`` attribute of the ``<code>`` (if present) so that downstream language
     detection by ``_fence_language`` can fire on the ``<pre>``. The new ``<pre>`` is
     marked with ``_PROMOTED_ATTR`` so ``_promoted_fence_language`` labels only it.
+    Source marker attributes are stripped before promotion so that only this module
+    sets them (issue #713).
+    Also calls ``_drop_empty_headings`` on the freshly parsed soup (issue #400).
     """
     soup = BeautifulSoup(html, "html.parser")
+    _drop_source_markers(soup)
+    _drop_empty_headings(soup)
     promoted = []
     for code in soup.find_all("code"):
         if code.find_parent("pre") is not None:
@@ -661,8 +1013,8 @@ class _ArchiMarkdownConverter(MarkdownConverter):
     This is the one place project-specific ``MarkdownConverter`` overrides live.
     ``convert_pre`` sizes the fence delimiter past any backtick run inside the
     block (issue #407); ``convert_list`` keeps a newline after a nested list
-    (issue #410); ``convert_a`` gives a kept link with a relative target explicit
-    link syntax (issue #430).
+    (issue #410); ``convert_a`` gives every self-link without a URI scheme
+    explicit link syntax (issues #430 and #604).
 
     markdownify binds ``convert_ul`` and ``convert_ol`` to the base
     ``convert_list`` at class-definition time, so overriding ``convert_list``
@@ -693,18 +1045,53 @@ class _ArchiMarkdownConverter(MarkdownConverter):
         return "\n\n%s%s\n%s\n%s\n\n" % (fence, code_language, text, fence)
 
     def convert_a(self, el, text, parent_tags):
-        """Give a kept link with a relative or fragment target explicit link syntax.
+        """Give every scheme-less self-link explicit link syntax.
 
         markdownify writes ``<href>`` when the text equals the ``href``, but a
         CommonMark autolink needs a URI scheme: ``</docs>`` reads as an HTML end
-        tag. Only the link that ``_hoist_out_of_inline`` keeps is changed here;
-        other self-links convert as markdownify writes them (issue #604).
+        tag. An ``href`` with a URI scheme keeps the ``<href>`` autolink (issues
+        #430 and #604) unless the autolink form cannot hold it. Every link
+        destination is then escaped so it round-trips through CommonMark 0.31
+        when its ``href`` has whitespace, a control character, or unbalanced
+        parentheses (issue #605). Unbalanced brackets in explicit link text are
+        backslash-escaped so CommonMark 0.31 parses the link correctly (issue
+        #691). A literal, non-Markdown ``href`` used as link text has its
+        brackets escaped so it can't end the label early, and a ``_noformat``
+        context (inside a code span or block) is left untouched, matching the
+        base converter's own early return.
         """
         out = super().convert_a(el, text, parent_tags)
+        if "_noformat" in parent_tags:
+            return out
         href = el.get("href") or ""
-        if el.has_attr(_KEPT_LINK_ATTR) and out == f"<{href}>":
-            if not _URI_SCHEME.match(href):
-                return f"[{href}]({href})"
+        if not href:
+            # The base converter writes no link, so its text needs no label escape.
+            return out
+        if out == f"<{href}>":
+            if not _URI_SCHEME.match(href) or _autolink_needs_explicit_form(href):
+                prefix, suffix, _ = chomp(text)
+                label = _escape_link_label(href)
+                return f"{prefix}[{label}]({_link_destination(href)}){suffix}"
+            return out
+        safe = _escape_unbalanced_brackets(text)
+        if safe is not text:
+            out = super().convert_a(el, safe, parent_tags)
+            if out == f"<{href}>":
+                # The escaped label equals the href, so the base converter wrote an
+                # autolink, which would show the escapes as text (PR #709 review).
+                prefix, suffix, label = chomp(safe)
+                return f"{prefix}[{label}]({_link_destination(href)}){suffix}"
+        dest = _link_destination(href)
+        if dest != href:
+            # The outer destination is the one followed by the base converter's
+            # title part and the closing paren, so a link text or title that
+            # repeats ``](href`` is not mistaken for it.
+            title = el.get("title")
+            title_part = ' "%s"' % title.replace('"', r"\"") if title else ""
+            marker = "](" + href + title_part + ")"
+            idx = out.rfind(marker)
+            if idx != -1:
+                out = out[:idx] + "](" + dest + out[idx + 2 + len(href) :]
         return out
 
     def convert_list(self, el, text, parent_tags):

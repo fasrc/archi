@@ -20,7 +20,7 @@
 #    services.benchmarking.{agent_class,provider,model}. An evaluate stack renders the
 #    template defaults into chat_app (CMSCompOpsAgent / local / llama3.2); the QA CLI reads
 #    chat_app, so without this step it scores the wrong agent against a nonexistent Ollama.
-# 2. Runs `archi eval qa` against the stack's Postgres and data-manager (host network),
+# 2. Runs `archi qa` against the stack's Postgres and data-manager (host network),
 #    with the production spec, the campaign judge profile, one attempt per question, one
 #    run worker (matches the harness's sequential calls, so duration_ms ~ time_elapsed).
 # Never run concurrently with a RAGAS run on the same stack: latency would be shared.
@@ -43,7 +43,7 @@ print(json.dumps({"collection": i.get("collection"), "embedding_model": i.get("e
 
 # Sweep mode: qa_arm.sh --sweep <sweep_dir> --stack <name> --arm <prompt-stem> [--run N]
 # One arm of a locked prompt sweep, with that arm's own prompt, on a COPY of the prepared
-# gold atoms (qa_prepare.sh --sweep): `archi eval qa run` then `score`, between two corpus
+# gold atoms (qa_prepare.sh --sweep): `archi qa run` then `score`, between two corpus
 # pin checks and two category-map readings written to category_map_readings.json.
 if [ "${1:-}" = --sweep ]; then
   SWEEP_DIR="${2:?--sweep needs the sweep directory}"; shift 2
@@ -84,12 +84,13 @@ if [ "${1:-}" = --sweep ]; then
   export PG_PASSWORD_FILE="$STACK_DIR/secrets/pg_password.txt"
   export HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}"
   export OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1
-  "$FM_ARCHI" eval qa run "$OUT_DIR" --agent-config "$AGENT_CFG" --agent-spec "$SPEC" --attempts 1 --run-workers 1
-  "$FM_ARCHI" eval qa score "$OUT_DIR" --evaluator-profile "$PROFILE" --score-workers "${FM_SCORE_WORKERS:-4}"
+  "$FM_ARCHI" qa run "$OUT_DIR" --agent-config "$AGENT_CFG" --agent-spec "$SPEC" --attempts 1 --run-workers 1
+  "$FM_ARCHI" qa score "$OUT_DIR" --evaluator-profile "$PROFILE" --score-workers "${FM_SCORE_WORKERS:-4}"
   MAP_END="$(fm_category_map_digest "$STACK")"
   fm_write_map_readings "$OUT_DIR" "$MAP_START" "$MAP_END"
   AFTER="$(fm_fingerprint "$STACK")"
-  [ "$AFTER" = "$FINGERPRINT" ] || fm_die "corpus changed during the QA run (pin $FINGERPRINT, now $AFTER); output kept at $OUT_DIR but NOT recorded — the run is void"
+  [ "$AFTER" = "$FINGERPRINT" ] || fm_die_paged "stack $STACK arm $STEM" "corpus changed during the QA run (pin $FINGERPRINT, now $AFTER); output kept at $OUT_DIR but NOT recorded — the run is void"
+  fm_require_scored "$OUT_DIR"
   fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","sweep":true,"stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","spec":"%s","spec_sha256":"%s","corpus_fingerprint":"%s","category_map_sha256_start":"%s","category_map_sha256_end":"%s","lock_sha256":"%s","code_sha":"%s",%s}' \
     "$STEM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$SPEC" "$(fm_sha256 "$SPEC")" "$FINGERPRINT" "$MAP_START" "$MAP_END" "$(fm_sha256 "$LOCK")" "$(fm_code_sha)" "$(qa_identity "$OUT_DIR")")"
   fm_log "done; join with: compare_runs.py <artifact> --qa-run $STEM=$OUT_DIR"
@@ -155,7 +156,7 @@ MAP_START="$(fm_category_map_digest "$STACK")"
 PG_PASSWORD_FILE="$STACK_DIR/secrets/pg_password.txt" \
 HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}" \
 OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
-"$FM_ARCHI" eval qa \
+"$FM_ARCHI" qa \
   --dataset "$DATASET" \
   --agent-config "$AGENT_CFG" \
   --agent-spec "$SPEC" \
@@ -168,7 +169,8 @@ OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
 MAP_END="$(fm_category_map_digest "$STACK")"
 fm_write_map_readings "$OUT_DIR" "$MAP_START" "$MAP_END"
 AFTER="$(fm_fingerprint "$STACK")"
-[ "$AFTER" = "$FINGERPRINT" ] || fm_die "corpus changed during the QA run (pin $FINGERPRINT, now $AFTER); output kept at $OUT_DIR but NOT recorded — the run is void"
+[ "$AFTER" = "$FINGERPRINT" ] || fm_die_paged "stack $STACK arm $ARM" "corpus changed during the QA run (pin $FINGERPRINT, now $AFTER); output kept at $OUT_DIR but NOT recorded — the run is void"
+fm_require_scored "$OUT_DIR"
 fm_ledger_append "$(printf '{"arm":"%s","kind":"qa","stack":"%s","run":%s,"started":"%s","finished":"%s","output_dir":"%s","dataset":"%s","profile":"%s","spec":"%s","arm_config":"%s","rendered_config_sha256":"%s","corpus_fingerprint":"%s","fingerprint_source":"live-stack-equals-pin","dataset_sha256":"%s","profile_sha256":"%s","spec_sha256":"%s","lock_sha256":"%s","code_sha":"%s","category_map_sha256_start":"%s","category_map_sha256_end":"%s",%s}' \
   "$ARM" "$STACK" "$RUN" "$STARTED" "$(fm_now)" "$OUT_DIR" "$DATASET" "$PROFILE" "$SPEC" "$YAML" "$CFG_SHA" "$FINGERPRINT" \
   "$(fm_sha256 "$DATASET")" "$(fm_sha256 "$PROFILE")" "$(fm_sha256 "$SPEC")" "$(fm_lock_sha)" "$(fm_code_sha)" "$MAP_START" "$MAP_END" "$(qa_identity "$OUT_DIR")")"

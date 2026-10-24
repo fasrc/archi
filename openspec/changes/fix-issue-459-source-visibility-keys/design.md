@@ -1,7 +1,7 @@
 ## Context
 
-`get_top_sources` (`src/interfaces/chat_app/app.py:673-700`) calls
-`self._get_doc_visibility(self, metadata)` at `:690`. `_get_doc_visibility` (`:813-828`) is a
+`get_top_sources` (`src/interfaces/chat_app/app.py:676-714`) calls
+`self._get_doc_visibility(self, metadata)` at `:693`. `_get_doc_visibility` (`:817-832`) is a
 `@staticmethod` that takes `self` as its first argument and does
 `self.sources_config[source_type].get("visible", True)`.
 
@@ -62,7 +62,7 @@ visible with the same WARNING, so the chat path never raises on a config shape.
 
 `_get_doc_visibility` keeps its signature (`@staticmethod`, `self` first) and its body
 becomes `return is_visible(metadata, self.sources_config)`. Fixing the odd call shape is
-not needed for this issue, so the call at `:690` does not change.
+not needed for this issue, so the call at `:693` does not change.
 
 ## Tests
 

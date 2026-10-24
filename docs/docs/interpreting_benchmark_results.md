@@ -340,6 +340,41 @@ An arm whose corpus reading failed, or whose corpus differs from the others', is
 withheld from the leaderboard and the A/B winner rather than ranked, because
 ranking it would assert a controlled comparison that did not happen.
 
+**The embedding model tags at the end of the run.** Every chunk carries an
+`embedding_model` tag naming the model that made its vector. The start check
+refuses to run when a tag names another model. Newer RAGAS arms and QA runs also
+read the tags again at the end, and record two fields (per arm in the results
+file; in `manifest.json` and `summary.json` `provenance` for a QA run):
+
+- `embedding_tags_end` — the tags found at the end (`embedding_model_tags`) and
+  the number of chunks with no tag (`untagged_chunk_count`). A value beginning
+  `<unavailable:` means the read failed; the text after it says why.
+- `embedding_tags_unchanged_at_endpoints` — the end state compared with the
+  start:
+    - `true`: no tag other than the run's own model appeared, and the untagged
+      count did not grow. Ordinary ingestion with the same model is still `true`;
+      the corpus fingerprint reports that content change.
+    - `false`: the collection was re-embedded during the run. A tag of another
+      model appeared, or more chunks lost their tag, so some questions searched
+      vectors of another model or of no recorded model. The fingerprint cannot
+      see this, because it reads the text and not the vectors: it stays equal and
+      `corpus_unchanged_at_endpoints` stays `true`.
+    - `null`: not observed. The end read failed, or the start record was
+      missing. (A QA run whose agent had no search tool also records `null`,
+      with null corpus readings; it searched nothing, so nothing refuses it.)
+    - absent: the run predates the field. That is unknown, not unstable, and
+      nothing refuses it.
+
+A `false` or `null` value withholds the arm's rank on the leaderboard (the
+warning names the variant), puts an alert in the per-arm report, makes
+`compare_runs.py` refuse the arm, noise replicate, or QA run, and makes
+`archive_run.sh` refuse the artifact, in single-arm and `--sweep` mode. No flag
+admits it; `--corpus-differs-by-design` does not apply, because the change is a
+different model, not different content. **The remedy is to re-run the arm**:
+wait until the re-embed has finished, confirm every chunk carries the configured
+model's tag (the start check reports this), and run again. A `null` from a
+failed read also needs a re-run once the database can be read.
+
 ### 3.4 Denominator drift — the quiet one
 
 The harness protects a run from a single bad question: if a question crashes or
@@ -431,7 +466,7 @@ Our currently *sensitive* metrics — the ones with room to move in both directi
 ## 4. The gate
 
 A benchmark result **may not be reported as an improvement**, and **may not be
-used to justify shipping a change**, unless all eight items below pass. For
+used to justify shipping a change**, unless all ten items below pass. For
 exploratory runs where no decision is being made, the gate is advisory — but say
 so explicitly when you circulate the numbers.
 
@@ -445,6 +480,8 @@ so explicitly when you circulate the numbers.
 | **G6** | Only questions scored cleanly **in both arms** are compared | Guards denominator drift. §3.4 |
 | **G7** | The improvement exceeds **2× the noise floor** *and* 2× its own standard error | One threshold for "bigger than the wobble", one for "not a fluke of these 73 questions" |
 | **G8** | The **anchors** hold, and no other metric regressed by more than one noise-floor unit | Catches the classic trap: raising `faithfulness` by teaching the model to hedge, while quietly tanking `answer_relevancy` |
+| **G11** | Every arm is **judged**: no arm has `judge_status: pending` | A deferred run writes its result before its judge runs, so its arms have no RAGAS scores yet. Use the judged file `<basename>.judged.json` ([offloaded judge](benchmarking.md#offloaded-ragas-judge-on-slurm)) |
+| **G12** | **One RAGAS judge** scored every arm and every noise replicate: equal `ragas_judge_identity_effective` | Two judges, or one judge at two precisions or with two scorer images, give different scores to the same answer. A delta between them measures the judges, not the arms |
 
 ### On G5: why paired comparison, and why it is free
 
@@ -563,7 +600,7 @@ pre-reg that the corpora differ by design. Worked example:
 
 ### Procedure C: compare two arms
 
-`scripts/benchmarking/compare_runs.py` does this. It implements G3–G10 in one
+`scripts/benchmarking/compare_runs.py` does this. It implements G3–G12 in one
 tested place, so a comparison cannot skip a gate by accident:
 
 ```bash
@@ -579,13 +616,13 @@ it is compared against the first. `path@2` picks one arm out of a sweep, and
 | Flag | What it is for |
 |---|---|
 | `--noise-floor METRIC=SIGMA,...` | the noise floor from [Procedure A](#procedure-a-measure-the-noise-floor). Without one, nothing is ever called SIGNIFICANT (G2) |
-| `--noise-runs FILE ...` | measure sigma here instead: every arm of every file is one replicate, and sigma is the standard deviation of the **recomputed** means (needs two or more). Replicates face the same bank, corpus, code/config identity and divergence checks as the arms, and sigma is measured over the *same* questions the paired table uses — sigma *is* the G7 threshold, so a stale or foreign replicate would move the bar rather than describe it |
+| `--noise-runs FILE ...` | measure sigma here instead: every arm of every file is one replicate, and sigma is the standard deviation of the **recomputed** means (needs two or more). Replicates face the same bank, corpus, code/config identity, divergence and judge (G11, G12) checks as the arms, and sigma is measured over the *same* questions the paired table uses — sigma *is* the G7 threshold, so a stale or foreign replicate would move the bar rather than describe it |
 | `--corpus-differs-by-design` | the only way past the G3 corpus gate; prints both fingerprints and the Procedure B warning |
 | `--config-differs-by-design DOTTED.PATH` | the only way past the G10 answer-path gate for one named setting; accepts only `services.chat_app.context_editing` and `services.chat_app.recursion_limit`; repeatable; prints both values and marks the row OVERRIDDEN; never hides the difference |
 | `--ignore-config-divergence` | the only way past a non-empty `divergence_from_selected_file` |
 | `--anchors PATH` | the anchors file (default `examples/benchmarking/anchor_questions.json`). Required: the default is tracked, so a missing file means a broken checkout rather than a run without anchors. For a deliberately anchor-free comparison, point it at a file holding `[]` |
 | `--include-anchors-in-bank` | average the five anchors into the bank aggregates. Off by default — see [Gap 3](#gap-3-anchors-are-averaged-into-the-bank-aggregates) |
-| `--qa-run LABEL=RUN_DIR` | join an `archi eval qa` run to an arm, by derived item id (repeatable). This is the one flag that needs the project's evaluation dependencies installed — the id is derived by the QA stack's own `derive_item_id`, so the two sides cannot drift apart |
+| `--qa-run LABEL=RUN_DIR` | join an `archi qa` run to an arm, by derived item id (repeatable). This is the one flag that needs the project's evaluation dependencies installed — the id is derived by the QA stack's own `derive_item_id`, so the two sides cannot drift apart |
 | `--json PATH` | write the same report as JSON |
 
 Exit codes: `0` ok, `1` usage or I/O, `2` a gate refused, `3` a config-divergence
@@ -610,6 +647,15 @@ files are.
   questions against two of them even when it started and finished on the same
   one. `--corpus-differs-by-design` continues and prints the Procedure B
   warning; it does not make the arms comparable.
+- **An arm, a `--noise-runs` replicate, or a `--qa-run` recorded
+  `embedding_tags_unchanged_at_endpoints: false`** — the collection was
+  re-embedded while it ran, so some questions searched vectors of another model
+  or of no recorded model. The corpus fingerprint is model-neutral and cannot
+  see this. A recorded `null` (not observed) is refused the same way; a missing
+  key (an older artifact) is not. No flag admits it, including
+  `--corpus-differs-by-design`; re-run the arm
+  ([section 3.3](#33-the-corpus-changed)). `archive_run.sh` refuses the same
+  artifact.
 - **The arms recorded different answer-path settings, or an arm recorded no
   `configuration` at all** — the bound (`services.chat_app.context_editing`)
   and the limit (`services.chat_app.recursion_limit`) decide which questions the
@@ -621,6 +667,24 @@ files are.
   refused — prompt arms vary it on purpose.
 - **`divergence_from_selected_file` is non-empty** — the run did not use the
   settings you selected (Procedure E), so its scores belong to neither arm.
+- **An arm or a `--noise-runs` replicate has `judge_status: pending`** — a
+  `judge_mode: deferred` run writes its result before the Slurm judge scores
+  it, so the arm has no RAGAS scores, and a comparison would read the missing
+  values as a result (G11). The refusal names the judged file
+  `<basename>.judged.json` to wait for. No flag overrides this.
+- **The arms, or a `--noise-runs` replicate and the baseline, recorded
+  different `ragas_judge_identity_effective`** — another judge model, revision,
+  precision, server or decoding setting, embedding, judge pressure or scorer
+  image gives different scores to the same answer (G12). The refusal names the
+  fields that differ and each arm's value. An artifact from before the key
+  existed is compared on `(evaluator_provider, evaluator_model)` from its
+  recorded configuration, and only with another such artifact: a missing field
+  never equals a recorded one, so an older artifact never matches a newer one,
+  and a four-field record (#618) never matches an extended one. The replicates
+  set the G7 sigma, so a replicate that another judge scored would move the
+  threshold for these arms. No flag overrides this. `archive_run.sh` holds
+  campaign runs to the same two gates, through the same shared check
+  (`src/utils/judge_gates.py`).
 
 **What it prints.** Run provenance including the three question counts (asked /
 anchors / bank rows, so the denominator is visible); the gate results; the paired
@@ -744,6 +808,8 @@ bench_out/benchmarking-<name>-<timestamp>.json
 ├── metadata
 │   ├── corpus_snapshot_id     # shared => ran together (see §3.3)
 │   ├── git_info.last_commit   # the DEPLOY's commit, NOT this run's code (§5.E)
+│   ├── git_info.git_diff      # uncommitted changes at DEPLOY; capped at 256 KB, top-level bench_out/ excluded
+│   ├── git_info.git_diff_stat # git diff --stat of the same changes, at most 200 files
 │   ├── code_version           # which code produced this (§5.E)
 │   ├── host                   # machine that ran the deploy (§5.E)
 │   └── config_versions[]      # one config digest per arm, in run order
@@ -788,7 +854,10 @@ fields.
 **Do not use `git_info.last_commit` for this.** `archi create` writes
 `git_info.yaml` once at deploy and then freezes it. Every run between 2026-08-11
 and 2026-08-17 reports the same commit (`0a157cdce0`) with an empty diff, because
-they shared one deployment — even though they ran different code. The field names
+they shared one deployment — even though they ran different code. Since #514 the diff
+is bounded: `git_diff` holds at most 256 KB (also once JSON-escaped in the artifact),
+`git_diff_truncated` says whether it was cut, `git_diff_original_bytes` gives the full
+size, and top-level `bench_out/` is excluded. The field names
 the deploy, not the image. It is kept, and labelled, for exactly that reason.
 `metadata.host` does not share this freeze trap: a container cannot move to another
 machine, so the host recorded at deploy is the host every run in that deployment

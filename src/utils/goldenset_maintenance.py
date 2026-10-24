@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 from urllib.parse import urlparse
 
+from src.cli.source_registry import INPUT_LIST_PREFIXES as _INPUT_LIST_PREFIXES
 from src.data_manager.collectors.processing import html_to_markdown
 from src.data_manager.collectors.scrapers.sitemap_source import (
     FetchText,
@@ -579,7 +580,7 @@ def filter_docs(
 
 
 SITEMAP_PREFIX = "sitemap-"
-SSO_PREFIX = "sso-"
+SSO_PREFIX = next(k for k, v in _INPUT_LIST_PREFIXES.items() if v == "sso")
 
 # Source types that fan out into MANY sub-documents at ingest: a git source
 # ingests one document per file, and elog/indico expand into per-entry pages.
@@ -588,7 +589,9 @@ SSO_PREFIX = "sso-"
 # inventory. `find_orphans` scopes itself to hosts the inventory actually
 # contains, so bank rows on those hosts are reported out-of-scope instead of
 # being proposed for prune. Mirrors `ScraperManager._collect_urls_from_lists_by_type`.
-FANOUT_PREFIXES = ("git-", "elog-", "indico-")
+FANOUT_PREFIXES = tuple(
+    k for k, v in _INPUT_LIST_PREFIXES.items() if v in ("git", "elog", "indico")
+)
 
 
 def _is_fanout_url(url: str) -> bool:
