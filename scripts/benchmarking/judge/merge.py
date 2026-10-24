@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """Merge scored judge bundles into one judged result per run (judge offload D8).
 
-    python scripts/benchmarking/judge/merge.py --queue <dir>
+    python scripts/benchmarking/judge/merge.py --queue <dir> [--own-code-only]
+
+With ``--own-code-only`` (the merge job, ``judge_merge.sbatch``), a result
+whose bundles record another code digest than the ``src`` of this process
+waits: the comparisons are rebuilt with this process's ResultHandler, so only
+the run's own code merges a result.
 
 The unit of a merge is one result JSON, because the leaderboard and the A/B
 comparisons need every arm. For each result basename of the READY bundles in
@@ -43,9 +48,14 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.bin.service_benchmark import ResultHandler  # noqa: E402
+from src.utils import judge_scorer  # noqa: E402
+from src.utils.benchmark_provenance import collect_code_version  # noqa: E402
 from src.utils.benchmark_schema import json_safe  # noqa: E402
 from src.utils.exclusive_link import link_exclusive  # noqa: E402
 from src.utils.judge_scorer import NULLABLE_SCORES_KEYS, SCORES_KEYS  # noqa: E402
+
+# The `src` package this process imported (src/utils/judge_scorer.py -> src/).
+PACKAGE_DIR = str(Path(judge_scorer.__file__).resolve().parents[1])
 
 TEMPORARY_MAX_AGE_SECONDS = 3600
 # The temporary-file prefix of link_exclusive.
@@ -195,8 +205,39 @@ def _group_bundles(queue: Path) -> Dict[str, Dict[str, Any]]:
     return groups
 
 
-def merge_one(queue: Path, basename: str, group: Dict[str, Any]) -> int:
-    """Merge one result; 0 when merged or still waiting, 1 on any refusal."""
+def live_code_digest() -> Optional[str]:
+    """The code digest of the ``src`` this process runs (the run's ``code_version``)."""
+    return collect_code_version(PACKAGE_DIR, None)["digest"]
+
+
+def _other_code(arms: Dict[Any, Path], live: Optional[str]) -> Optional[str]:
+    """The result's code digest when it is not *live*, else None."""
+    digests = set()
+    for folder in arms.values():
+        try:
+            manifest = json.loads((folder / "manifest.json").read_bytes())
+        except (OSError, ValueError):
+            manifest = {}
+        digests.add((manifest.get("code_version") or {}).get("digest"))
+    if digests == {live} and live is not None:
+        return None
+    return ", ".join(sorted(str(d) for d in digests))
+
+
+def merge_one(
+    queue: Path,
+    basename: str,
+    group: Dict[str, Any],
+    *,
+    own_code: Optional[str] = None,
+    own_code_only: bool = False,
+) -> int:
+    """Merge one result; 0 when merged or still waiting, 1 on any refusal.
+
+    With *own_code_only*, a result whose bundles record another code digest
+    than *own_code* (the ``src`` of this process) waits: the comparisons are
+    rebuilt with this process's ResultHandler, so only the run's code merges it.
+    """
     count, arms = group["count"], group["arms"]
     failed = [i for i in sorted(arms) if (arms[i] / "FAILED").exists()]
     if failed:
@@ -218,6 +259,14 @@ def merge_one(queue: Path, basename: str, group: Dict[str, Any]) -> int:
     if not pending_path.is_file():
         print(f"merge: {basename}: the pending result is not yet published")
         return 0
+    if own_code_only:
+        other = _other_code(arms, own_code)
+        if other is not None:
+            print(
+                f"merge: {basename}: waits for a merge in a scorer image with code "
+                f"digest {other}; this image has code digest {own_code}"
+            )
+            return 0
     try:
         pending = _load_json(pending_path)
         records = pending.get("benchmarking_results")
@@ -282,10 +331,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         description="Merge scored judge bundles into judged results."
     )
     parser.add_argument("--queue", required=True, type=Path)
+    parser.add_argument(
+        "--own-code-only",
+        action="store_true",
+        help="merge only the results of the code this process runs (the merge job)",
+    )
     args = parser.parse_args(argv)
+    own_code = live_code_digest() if args.own_code_only else None
     status = 0
     for basename, group in sorted(_group_bundles(args.queue).items()):
-        status = max(status, merge_one(args.queue, basename, group))
+        status = max(
+            status,
+            merge_one(
+                args.queue,
+                basename,
+                group,
+                own_code=own_code,
+                own_code_only=args.own_code_only,
+            ),
+        )
     return status
 
 

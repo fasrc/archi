@@ -598,6 +598,40 @@ def test_a_stale_sidecar_claims_nothing_and_loads_no_model(tmp_path, queue, jq, 
     )
 
 
+def test_a_job_on_another_image_than_the_sidecar_is_stale(tmp_path, queue, jq, judge):
+    # The judge scripts in the image are outside the code digest, so a rebuild
+    # from the same benchmark image keeps the code and package digests (#733).
+    bundle = make_bundle(queue)
+    built = []
+    ctx = make_ctx(
+        tmp_path,
+        queue,
+        jq,
+        live={
+            "code_digest": CODE,
+            "package_digest": PACKAGE,
+            "image_digest": "sha256:rebuilt-image",
+        },
+        judge_built=built,
+    )
+    assert preflight(ctx) == "stale"
+    record = (queue / f"SCORER_STALE.{ctx.sidecar.token}").read_text()
+    assert "sha256:scorer-image" in record and "sha256:rebuilt-image" in record
+    assert run_job(ctx) == 2
+    assert built == [] and not list(bundle.glob("claim.*"))
+
+
+def test_a_job_on_the_sidecars_image_has_work(tmp_path, queue, jq, judge):
+    make_bundle(queue)
+    live = {
+        "code_digest": CODE,
+        "package_digest": PACKAGE,
+        "image_digest": "sha256:scorer-image",
+    }
+    assert preflight(make_ctx(tmp_path, queue, jq, live=live)) == "work"
+    assert not list(queue.glob("SCORER_STALE.*"))
+
+
 def test_a_live_mismatch_after_a_claim_marks_the_bundle_incompatible(
     tmp_path, queue, jq, judge
 ):

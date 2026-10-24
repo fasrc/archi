@@ -21,6 +21,7 @@ import pytest
 from src.bin.service_benchmark import ResultHandler
 from src.utils.judge_scorer import score_bundle
 from tests.unit.test_judge_scorer import (
+    CODE,
     METRICS,
     StubJudge,
     load_queue,
@@ -186,6 +187,38 @@ def test_the_merge_waits_for_every_arm_and_then_writes_one_file(merge, run, caps
         "scored",
     ]
     assert all((bundle / "MERGED").exists() for bundle in run.bundles)
+
+
+def test_own_code_only_waits_for_a_result_of_other_code(
+    merge, run, monkeypatch, capsys
+):
+    # The merge rebuilds the comparisons with the ResultHandler of the src it
+    # runs, so on the cluster it merges only results of that code (#733).
+    run.score(0)
+    run.score(1)
+    monkeypatch.setattr(merge, "live_code_digest", lambda: "sha256:other-code")
+    assert merge.main(["--queue", str(run.queue), "--own-code-only"]) == 0
+    assert not run.judged_path.exists()
+    assert not any((bundle / "MERGED").exists() for bundle in run.bundles)
+    out = capsys.readouterr().out
+    assert CODE in out and "sha256:other-code" in out
+
+
+def test_own_code_only_merges_a_result_of_this_code(merge, run, monkeypatch):
+    run.score(0)
+    run.score(1)
+    monkeypatch.setattr(merge, "live_code_digest", lambda: CODE)
+    assert merge.main(["--queue", str(run.queue), "--own-code-only"]) == 0
+    assert run.judged_path.exists()
+
+
+def test_the_live_code_digest_is_the_digest_of_the_imported_src(merge):
+    from src.utils.benchmark_provenance import collect_code_version
+
+    assert (
+        merge.live_code_digest()
+        == collect_code_version(str(REPO / "src"), None)["digest"]
+    )
 
 
 def test_a_failed_arm_writes_nothing_and_exits_non_zero(merge, run, capsys):

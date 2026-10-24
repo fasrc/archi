@@ -1,7 +1,7 @@
 """The judge queue: match rule, claims, stale-claim recovery, budget (#732).
 
 Tasks 3.0, 3.1, 3.1a and the budget half of 3.2 of
-openspec/changes/offload-ragas-judge-to-slurm. The module runs on a login node
+openspec/changes/archive/2026-10-23-offload-ragas-judge-to-slurm. The module runs on a login node
 with the standard library only, so the tests load it by path, as the submitter
 does, and replace ``squeue`` and ``sacct`` with stub executables on ``PATH``.
 """
@@ -593,3 +593,190 @@ def test_the_module_imports_nothing_outside_the_standard_library():
             if top == "__future__":
                 continue
             assert top in stdlib, line
+
+
+# --- 4.1: what the submitter reads (#733) -----------------------------------------
+
+
+def test_status_flags_a_ready_bundle_older_than_24_hours(setup, jq):
+    queue, env, sidecar = setup
+    import time
+
+    make_bundle(queue, "old-20261023_120000-arm0", mtime=time.time() - 30 * 3600)
+    make_bundle(queue, "new-20261023_120000-arm0")
+    lines = jq.status_lines(queue, env, sidecar)
+    old = [line for line in lines if line.startswith("old-")]
+    new = [line for line in lines if line.startswith("new-")]
+    assert "READY for 30 hours" in old[0]
+    assert "READY for" not in new[0]
+
+
+def test_status_lists_incompatible_records_of_other_sidecars(setup, jq):
+    queue, env, sidecar = setup
+    bundle = make_bundle(queue, "x-20261023_120000-arm0")
+    (bundle / "INCOMPATIBLE.0ld").write_text("an older scorer: live pkg Y")
+    text = "\n".join(jq.status_lines(queue, env, sidecar))
+    assert (
+        "x-20261023_120000-arm0: INCOMPATIBLE.0ld: an older scorer: live pkg Y" in text
+    )
+
+
+def _result(queue, basename, arms, *, scored=(), merged=(), failed=(), pending=True):
+    """Bundles of one result with markers, and its pending JSON when *pending*."""
+    for index in range(arms):
+        folder = make_bundle(queue, f"{basename}-arm{index}")
+        manifest = json.loads((folder / "manifest.json").read_text())
+        manifest["arm_count"] = arms
+        (folder / "manifest.json").write_text(json.dumps(manifest))
+        for marker, indices in (
+            ("SCORED", scored),
+            ("MERGED", merged),
+            ("FAILED", failed),
+        ):
+            if index in indices:
+                (folder / marker).write_text("")
+    if pending:
+        (queue / "results").mkdir(exist_ok=True)
+        (queue / "results" / f"{basename}.json").write_text("{}")
+
+
+def test_merge_ready_names_results_whose_arms_are_all_scored(setup, jq):
+    queue = setup[0]
+    _result(queue, "ready-20261023_120000", 2, scored=(0, 1))
+    _result(queue, "half-20261023_120000", 2, scored=(0,))
+    _result(queue, "merged-20261023_120000", 2, scored=(0, 1), merged=(0, 1))
+    _result(queue, "unpublished-20261023_120000", 1, scored=(0,), pending=False)
+    _result(queue, "failed-20261023_120000", 2, scored=(0,), failed=(1,))
+    assert jq.merge_ready(queue) == ["ready-20261023_120000"]
+
+
+def test_a_result_with_one_arm_not_merged_is_ready_again(setup, jq):
+    # A merge killed between two MERGED writes; the merge is idempotent.
+    queue = setup[0]
+    _result(queue, "r-20261023_120000", 2, scored=(0, 1), merged=(0,))
+    assert jq.merge_ready(queue) == ["r-20261023_120000"]
+
+
+def test_merge_ready_with_a_code_digest_keeps_only_results_of_that_code(setup, jq):
+    queue = setup[0]
+    _result(queue, "ready-20261023_120000", 1, scored=(0,))
+    assert jq.merge_ready(queue, code_digest="sha256:code") == ["ready-20261023_120000"]
+    assert jq.merge_ready(queue, code_digest="sha256:other") == []
+
+
+def test_the_merge_ready_cli_filters_by_the_sidecars_code(tmp_path, setup, jq, capsys):
+    queue = setup[0]
+    _result(queue, "ready-20261023_120000", 1, scored=(0,))
+    other = write_sidecar(tmp_path, code="sha256:other", name="other.json")
+    argv = ["--queue", str(queue), "--merge-ready", "--sidecar"]
+    assert jq.main(argv + [str(other)]) == 0
+    assert capsys.readouterr().out.split() == []
+    assert jq.main(argv + [str(tmp_path / "scorer-identity.json")]) == 0
+    assert capsys.readouterr().out.split() == ["ready-20261023_120000"]
+
+
+def test_the_merge_ready_cli_needs_no_judge_env_or_sidecar(setup, jq, capsys):
+    queue = setup[0]
+    _result(queue, "ready-20261023_120000", 1, scored=(0,))
+    assert jq.main(["--queue", str(queue), "--merge-ready"]) == 0
+    assert capsys.readouterr().out.split() == ["ready-20261023_120000"]
+
+
+def test_status_and_count_still_need_the_judge_env_and_sidecar(setup, jq, capsys):
+    queue = setup[0]
+    assert jq.main(["--queue", str(queue), "--count"]) == 2
+    assert "--judge-env" in capsys.readouterr().err
+
+
+# --- the Slurm snapshot: claim recovery inside the scorer container (#733) --------
+# The scorer image has no Slurm client, so the judge job writes one snapshot on the
+# host at its start, and judge_queue reads it in the container (JUDGE_SLURM_STATE).
+
+
+def _state(tmp_path, monkeypatch, **state):
+    path = tmp_path / "slurm-state.json"
+    path.write_text(json.dumps({"written": 1.0, **state}))
+    monkeypatch.setenv("JUDGE_SLURM_STATE", str(path))
+    # No squeue or sacct exists in the container.
+    monkeypatch.setenv("PATH", "/nonexistent")
+    return path
+
+
+def test_a_stale_claim_is_taken_over_from_the_snapshot(
+    tmp_path, setup, jq, monkeypatch
+):
+    queue, env, sidecar = setup
+    bundle = make_bundle(queue)
+    (bundle / "claim.1").write_text("1002\n")
+    _state(tmp_path, monkeypatch, squeue={"1002": False}, sacct={"1002": "TIMEOUT"})
+    assert jq.available(queue, env, sidecar) == [bundle]
+    assert jq.try_claim(bundle, "2001")
+    assert (bundle / "claim.2").read_text().strip() == "2001"
+
+
+def test_a_claim_of_a_running_job_in_the_snapshot_is_not_stale(
+    tmp_path, setup, jq, monkeypatch
+):
+    queue, env, sidecar = setup
+    bundle = make_bundle(queue)
+    (bundle / "claim.1").write_text("1002\n")
+    _state(tmp_path, monkeypatch, squeue={"1002": True}, sacct={"1002": "RUNNING"})
+    assert jq.available(queue, env, sidecar) == []
+
+
+def test_a_job_the_snapshot_does_not_know_is_not_stale(
+    tmp_path, setup, jq, monkeypatch
+):
+    queue, env, sidecar = setup
+    bundle = make_bundle(queue)
+    (bundle / "claim.1").write_text("1003\n")
+    _state(tmp_path, monkeypatch, squeue={}, sacct={})
+    assert jq.available(queue, env, sidecar) == []
+
+
+def test_an_unreadable_snapshot_knows_nothing(tmp_path, setup, jq, monkeypatch):
+    queue, env, sidecar = setup
+    bundle = make_bundle(queue)
+    (bundle / "claim.1").write_text("1002\n")
+    path = _state(
+        tmp_path, monkeypatch, squeue={"1002": False}, sacct={"1002": "TIMEOUT"}
+    )
+    path.write_text("{half")
+    assert jq.available(queue, env, sidecar) == []
+    assert jq.time_left("2001") is None
+
+
+def test_time_left_comes_from_the_snapshot_deadline(tmp_path, jq, monkeypatch):
+    import time as clock
+
+    _state(
+        tmp_path,
+        monkeypatch,
+        deadline={"2001": clock.time() + 600, "2002": "UNLIMITED"},
+    )
+    assert 590 < jq.time_left("2001") <= 600
+    assert jq.time_left("2002") == math.inf
+    assert jq.time_left("2003") is None
+
+
+def test_the_host_writes_the_snapshot_for_the_claims_and_the_job(
+    tmp_path, setup, jq, slurm, capsys
+):
+    queue = setup[0]
+    stale = make_bundle(queue, "a-20261023_120000-arm0")
+    (stale / "claim.1").write_text("1002\n")
+    slurm.ended("1002")
+    live = make_bundle(queue, "b-20261023_120000-arm0")
+    (live / "claim.1").write_text("1003\n")
+    slurm.running("1003")
+    slurm.running("2001", time_left="1:00:00")
+    out = tmp_path / "state" / "slurm-state.json"
+    out.parent.mkdir()
+    argv = ["--queue", str(queue), "--slurm-state", str(out), "--job-id", "2001"]
+    assert jq.main(argv) == 0
+    state = json.loads(out.read_text())
+    assert state["squeue"] == {"1002": False, "1003": True, "2001": True}
+    assert state["sacct"]["1002"] == "TIMEOUT"
+    import time as clock
+
+    assert 3590 < state["deadline"]["2001"] - clock.time() <= 3600

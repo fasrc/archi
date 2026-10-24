@@ -1,5 +1,8 @@
-## ADDED Requirements
+# offline-judge-scoring Specification
 
+## Purpose
+Deferred RAGAS judging of a benchmark run on a FASRC Slurm GPU job, with an open-weights judge on vLLM. It covers the judge bundle and its publish step, the queue folder's state markers, the submitter's one-job rule, the match rule between a bundle and a judge job, claim-at-start and stale-claim recovery, the fail-closed scorer identity, the time budget, per-row checkpoints and resume, the merge into a judged result JSON, and the comparison gates G11 (judged) and G12 (one judge) in `compare_runs.py` and the campaign archiver.
+## Requirements
 ### Requirement: A deferred run writes a judge bundle instead of calling the judge
 When `ragas_settings.judge_mode` is `deferred`, the benchmark SHALL answer every question and write a judge bundle for each arm, and it SHALL NOT make any RAGAS judge call. The bundle has two files. `rows.jsonl` has one line per scorable row, with the row's key and the full `user_input`, `retrieved_contexts`, `response` and `reference` that the inline path gives to ragas. `manifest.json` records the enabled metrics, the resolved ragas call settings (the output of `ragas_run_config_kwargs`, including `timeout` and `max_workers`, and the `batch_size` that the inline path passes to `evaluate`), the embedding model, the judge model id and revision, the run's `code_version`, the SHA-256 of the run environment's sorted `pip freeze`, the result basename, the arm index, the arm count of the result, and the SHA-256 of `rows.jsonl`. The run SHALL fix the result basename once, before its first arm, and SHALL use it for both the bundles and the result JSON. The bundle writer writes a `BUNDLE_COMPLETE` marker after every other bundle file. When `judge_mode` is absent or `inline`, the run SHALL score inline exactly as before.
 
@@ -128,6 +131,10 @@ The judge job and the submitter SHALL treat a bundle's current claim (the `claim
 - **THEN** the submitter counts the bundle as available
 - **AND** the next job takes over the claim and scores only the pairs that are not saved
 
+#### Scenario: Recovery inside the scorer container
+- **WHEN** the scorer runs in a container with no Slurm client, and a claim's job is gone from `squeue` and `TIMEOUT` in `sacct`
+- **THEN** the scorer reads the Slurm snapshot that the job wrote on the host at its start, and takes over the claim
+
 #### Scenario: Claimant is still running
 - **WHEN** a bundle's current claim names a job that `squeue` lists as running
 - **THEN** the claim is not stale, and no other job takes it
@@ -152,6 +159,14 @@ The scorer SHALL NOT score a bundle when the manifest's code digest (`code_versi
 - **WHEN** `scorer-identity.json` matches a bundle's manifest, but the job's live scorer environment differs from the sidecar
 - **THEN** the job creates `SCORER_STALE.<sidecar digest>`, claims nothing, loads no model, and exits non-zero
 - **AND** the submitter submits no job for that sidecar until the sidecar changes
+
+#### Scenario: Scorer image rebuilt with the same code
+- **WHEN** the SHA-256 of the scorer image that the job runs differs from the sidecar's `image_digest`, and the code and package digests are equal
+- **THEN** the job creates `SCORER_STALE.<sidecar digest>` with both image digests, claims nothing, and loads no model
+
+#### Scenario: Rebuild while a job runs
+- **WHEN** `build_scorer_image.sh` replaces the image and the sidecar while a judge job runs
+- **THEN** the job scores with the image and the sidecar that it read when it started
 
 #### Scenario: Deferred run with no code digest
 - **WHEN** `judge_mode` is `deferred`, and the run's `code_version.digest` is unavailable
@@ -221,6 +236,10 @@ Each judged arm SHALL record a `judge_identity`, stored under the existing per-a
 - **WHEN** two arms were scored by two different jobs with identical model, precision, image, server, decoding and scorer settings
 - **THEN** their `ragas_judge_identity_effective` records are equal, and their `judge_execution` records differ
 
+#### Scenario: The vLLM image is measured
+- **WHEN** a judge job serves the judge from a vLLM SIF file
+- **THEN** the identity's `server_image_digest` is the SHA-256 of that file, and a `JUDGE_IMAGE_DIGEST` in `judge.env` that names another image stops the job before the server starts
+
 #### Scenario: Precision differs
 - **WHEN** one arm was scored with `bf16` weights and the other with `fp8` weights of the same model revision
 - **THEN** their `ragas_judge_identity_effective` records differ in the precision field
@@ -274,6 +293,10 @@ The merge step SHALL write one new judged result JSON beside the pending one in 
 - **WHEN** a judged file exists and a new merge computes different bytes
 - **THEN** the merge exits non-zero and leaves the existing file unchanged
 
+#### Scenario: Merge job in a scorer image of other code
+- **WHEN** every arm of a result is `SCORED`, and the configured scorer image has another code digest than the result's bundles
+- **THEN** the submitter submits no merge job for the result, and a merge job (`merge.py --own-code-only`) writes nothing for it and exits 0
+
 #### Scenario: Digest mismatch is refused
 - **WHEN** the scores' bundle SHA-256 differs from the digest recorded in the pending result
 - **THEN** the merge exits non-zero and writes no judged file
@@ -288,6 +311,14 @@ The merge step SHALL write one new judged result JSON beside the pending one in 
 #### Scenario: Campaign archiver and a pending run
 - **WHEN** `archive_run.sh` selects an artifact with `judge_status: pending`
 - **THEN** it exits non-zero, names the judged file to wait for, and appends nothing to the campaign ledger
+
+#### Scenario: Campaign archiver and a judged file beside its pending file
+- **WHEN** the output folder holds the pending `<basename>.json` and its `<basename>.judged.json`
+- **THEN** `archive_run.sh` archives the judged file, dates the run by the pending file, and writes each arm's `ragas_judge_identity_effective` into its ledger row
+
+#### Scenario: Noise replicate scored by another judge
+- **WHEN** a `--noise-runs` replicate records a `ragas_judge_identity_effective` that differs from the baseline's
+- **THEN** `compare_runs.py` exits non-zero and names the replicate and the fields that differ
 
 #### Scenario: Pending run
 - **WHEN** one arm has `judge_status: pending`
@@ -304,3 +335,4 @@ The merge step SHALL write one new judged result JSON beside the pending one in 
 #### Scenario: Two old inline artifacts
 - **WHEN** two artifacts written before this change both record `huit_bedrock` and the same Sonnet model
 - **THEN** `compare_runs.py` compares them as before
+

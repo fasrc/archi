@@ -1,6 +1,6 @@
 """RAGAS scoring helpers extracted from service_benchmark (design D2, D4).
 
-The parent design of record is openspec/changes/offload-ragas-judge-to-slurm/.
+The parent design of record is openspec/changes/archive/2026-10-23-offload-ragas-judge-to-slurm/.
 """
 
 from __future__ import annotations

@@ -31,9 +31,9 @@ The dev host (`holygpu7c0717`) cannot host the judge, because the two Qwen serve
 - **Code:**
   - `src/bin/service_benchmark.py`: a thin call site in `_process_config` for the deferred path, and the scoring extracted into a module function.
   - A new helper package for the bundle, queue, scorer and merge, with tests that need no GPU.
-  - `scripts/benchmarking/compare_runs.py`: two new gates.
+  - `scripts/benchmarking/compare_runs.py`: two new gates, G11 and G12, in `src/utils/judge_gates.py`, which the campaign archiver (`scripts/benchmarking/feature_matrix/archive_run.sh`) also calls.
   - `src/cli/templates/base-config.yaml`: render `judge_mode`.
-  - New Slurm scripts under `scripts/benchmarking/slurm/`.
+  - New Slurm scripts under `scripts/benchmarking/slurm/`: the submitter, the judge job, the merge job, and the scorer image recipe with its build script.
 - **Config:** new optional `ragas_settings` keys `judge_mode` (default `inline`), `judge_bundle_dir`, and `evaluator_model_revision` (the judge revision that a deferred bundle asks for). Nothing changes for existing configs.
 - **Artifacts:** additive only. Old result JSONs have no `judge_status` key, and they load as `inline`.
 - **Cluster:** needs `scrontab` and GPU partition access (`gpu_h200` for a 70B judge, or `gpu_requeue`). It also needs one download of the judge weights to shared storage, and a vLLM Apptainer image built for the target GPUs. None of this runs on the dev host's GPUs.

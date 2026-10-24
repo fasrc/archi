@@ -3,6 +3,19 @@
 
     python scripts/benchmarking/judge/judge_queue.py --queue <dir> \
         --judge-env <judge.env> --sidecar <scorer-identity.json> (--status | --count)
+    python scripts/benchmarking/judge/judge_queue.py --queue <dir> --merge-ready \
+        [--sidecar <scorer-identity.json>]
+    python scripts/benchmarking/judge/judge_queue.py --queue <dir> \
+        --slurm-state <file> --job-id <id>
+
+``--slurm-state`` writes the Slurm snapshot that the judge job hands to the
+scorer container, which has no Slurm client: with ``JUDGE_SLURM_STATE`` set,
+the claim and time-budget rules read it in place of ``squeue`` and ``sacct``.
+
+``--merge-ready`` prints the result basenames whose arms are all ``SCORED`` and
+not all ``MERGED``, with the pending result published; with ``--sidecar``, only
+the results of the sidecar's code digest. The submitter
+(``scripts/benchmarking/slurm/judge_submit.sh``) submits the merge job for them.
 
 Standard library only: the submitter runs this on a login node with no project
 environment. ``src/utils/exclusive_link.py`` is loaded by path for the same
@@ -21,8 +34,10 @@ quotes around a value is removed. No shell expansion is done. Required keys:
   budget uses before the job has scored a row (D5).
 
 Optional keys, recorded in the judge identity (D10) and ``None`` when absent:
-``JUDGE_IMAGE_DIGEST`` (the vLLM image) and ``JUDGE_SERVER_ARGS`` (the
-output-relevant ``vllm serve`` arguments, for example ``--max-model-len``).
+``JUDGE_IMAGE_DIGEST`` (the vLLM image; the judge job measures the SHA-256 of
+the SIF it serves from, records that, and refuses a value that differs) and
+``JUDGE_SERVER_ARGS`` (the output-relevant ``vllm serve`` arguments, for
+example ``--max-model-len``). A comment must be on its own line.
 
 **scorer-identity.json** (the sidecar) is written beside the scorer image by
 ``score.py write-identity``. It holds at least ``code_digest`` and
@@ -46,9 +61,11 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple, TypeVar
 
@@ -62,6 +79,11 @@ REQUIRED_ENV_KEYS = (
 )
 OPTIONAL_ENV_KEYS = ("JUDGE_IMAGE_DIGEST", "JUDGE_SERVER_ARGS")
 TERMINAL_MARKERS = ("SCORED", "FAILED")
+#: ``--status`` flags a bundle READY for longer than this with no score.
+#: The environment variable that names the host's Slurm snapshot (see
+#: ``_slurm_state``).
+SLURM_STATE_ENV = "JUDGE_SLURM_STATE"
+STALE_READY_HOURS = 24
 # sacct states after which a job can never run again under its id.
 TERMINAL_JOB_STATES = frozenset(
     {
@@ -223,8 +245,41 @@ def _run(command: Sequence[str]) -> Optional[subprocess.CompletedProcess]:
         return None
 
 
+def _slurm_state() -> Optional[Dict[str, object]]:
+    """The Slurm snapshot named by ``JUDGE_SLURM_STATE``, or None to ask Slurm.
+
+    The scorer image has no Slurm client, so ``archi_judge.sbatch`` writes one
+    snapshot on the host when the job starts (``--slurm-state``) and the scorer
+    reads it in the container. Its answers stay safe for the whole job: a
+    terminal ``sacct`` state is final, a claim it saw as live stays untouched,
+    and a job id it does not know is unknown. A snapshot that does not load
+    knows nothing (an empty dict), so no claim is stale and no time is known.
+    """
+    name = os.environ.get(SLURM_STATE_ENV)
+    if not name:
+        return None
+    try:
+        state = json.loads(Path(name).read_text())
+    except (OSError, ValueError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _section(state: Dict[str, object], name: str) -> Dict[str, object]:
+    value = state.get(name)
+    return value if isinstance(value, dict) else {}
+
+
 def job_in_squeue(job_id: str) -> Optional[bool]:
     """True when squeue lists the job, False when it does not, None when unknown."""
+    state = _slurm_state()
+    if state is not None:
+        known = _section(state, "squeue").get(job_id)
+        return known if isinstance(known, bool) else None
+    return _live_in_squeue(job_id)
+
+
+def _live_in_squeue(job_id: str) -> Optional[bool]:
     proc = _run(["squeue", "-h", "-j", job_id, "-o", "%i"])
     if proc is None:
         return None
@@ -237,13 +292,22 @@ def job_in_squeue(job_id: str) -> Optional[bool]:
 
 def job_ended(job_id: str) -> bool:
     """True only when sacct reports the job in a terminal state."""
+    state = _slurm_state()
+    if state is not None:
+        recorded = _section(state, "sacct").get(job_id)
+        return str(recorded or "").upper() in TERMINAL_JOB_STATES
+    return (_live_job_state(job_id) or "") in TERMINAL_JOB_STATES
+
+
+def _live_job_state(job_id: str) -> Optional[str]:
+    """The job's first sacct state, upper case, or None when sacct cannot tell."""
     proc = _run(["sacct", "-n", "-X", "-P", "-j", job_id, "-o", "State"])
     if proc is None or proc.returncode != 0:
-        return False
+        return None
     for line in proc.stdout.splitlines():
         if line.strip():
-            return line.split()[0].upper() in TERMINAL_JOB_STATES
-    return False
+            return line.split()[0].upper()
+    return None
 
 
 def claim_is_stale(bundle: Path, claim: Claim) -> bool:
@@ -303,37 +367,96 @@ def own_work(queue: Path, job_id: str) -> List[Path]:
     return found
 
 
+def _state_line(
+    bundle: Path, judge_env: Dict[str, Optional[str]], sidecar: Sidecar, queue: Path
+) -> str:
+    if (bundle / "FAILED").exists():
+        return f"{bundle.name}: FAILED: {(bundle / 'FAILED').read_text().strip()}"
+    reason = match_reason(bundle, judge_env, sidecar, queue)
+    claim = current_claim(bundle)
+    if reason is not None:
+        return f"{bundle.name}: not matched: {reason}"
+    if claim is None:
+        return f"{bundle.name}: available"
+    if claim_is_stale(bundle, claim):
+        owner = claim.job_id or "<no job id>"
+        return (
+            f"{bundle.name}: stale claim of job {owner} (claim.{claim.gen}); available"
+        )
+    return f"{bundle.name}: claimed by job {claim.job_id} (claim.{claim.gen})"
+
+
 def status_lines(
-    queue: Path, judge_env: Dict[str, Optional[str]], sidecar: Sidecar
+    queue: Path,
+    judge_env: Dict[str, Optional[str]],
+    sidecar: Sidecar,
+    *,
+    now: Optional[float] = None,
 ) -> List[str]:
-    """One line for each READY bundle without SCORED, then each SCORER_STALE record."""
+    """One line for each READY bundle without SCORED, then the records.
+
+    A bundle READY for more than 24 hours says so: a lost scrontab entry or a
+    crashed submitter leaves bundles with no job (design, Risks). Every
+    ``INCOMPATIBLE`` record of a bundle is listed, also for an older sidecar,
+    and then every ``SCORER_STALE`` record of the queue.
+    """
+    now = time.time() if now is None else now
     lines = []
     for bundle in ready_bundles(queue):
         if (bundle / "SCORED").exists():
             continue
-        if (bundle / "FAILED").exists():
-            reason = (bundle / "FAILED").read_text().strip()
-            lines.append(f"{bundle.name}: FAILED: {reason}")
-            continue
-        reason = match_reason(bundle, judge_env, sidecar, queue)
-        claim = current_claim(bundle)
-        if reason is not None:
-            lines.append(f"{bundle.name}: not matched: {reason}")
-        elif claim is None:
-            lines.append(f"{bundle.name}: available")
-        elif claim_is_stale(bundle, claim):
-            owner = claim.job_id or "<no job id>"
-            lines.append(
-                f"{bundle.name}: stale claim of job {owner} (claim.{claim.gen}); "
-                f"available"
-            )
-        else:
-            lines.append(
-                f"{bundle.name}: claimed by job {claim.job_id} (claim.{claim.gen})"
-            )
+        line = _state_line(bundle, judge_env, sidecar, queue)
+        hours = (now - (bundle / "READY").stat().st_mtime) / 3600
+        if hours > STALE_READY_HOURS:
+            line += f"; READY for {int(hours)} hours"
+        lines.append(line)
+        for record in sorted(bundle.glob("INCOMPATIBLE.*")):
+            if record.name != f"INCOMPATIBLE.{sidecar.token}":
+                lines.append(
+                    f"{bundle.name}: {record.name}: {record.read_text().strip()}"
+                )
     for record in sorted(Path(queue).glob("SCORER_STALE.*")):
         lines.append(f"{record.name}: {record.read_text().strip()}")
     return lines
+
+
+def merge_ready(queue: Path, code_digest: Optional[str] = None) -> List[str]:
+    """Result basenames the merge can write now (design D4, step 4).
+
+    Every arm of the result has a READY bundle with ``SCORED``, no arm is
+    ``FAILED``, the pending result is in ``<queue>/results/``, and some arm has
+    no ``MERGED`` yet. The merge is idempotent, so a result that a killed merge
+    left half marked is ready again. With *code_digest* (the configured
+    scorer's), only results whose bundles record that code digest: the merge
+    job runs the scorer image, which merges only results of its own code.
+    """
+    counts: Dict[str, object] = {}
+    arms: Dict[str, Dict[object, Path]] = {}
+    for bundle in ready_bundles(queue):
+        manifest = read_manifest(bundle) or {}
+        basename = str(manifest.get("result_basename"))
+        counts.setdefault(basename, manifest.get("arm_count"))
+        arms.setdefault(basename, {})[manifest.get("arm_index")] = bundle
+    ready = []
+    for basename in sorted(arms):
+        count = counts[basename]
+        if not isinstance(count, int) or set(arms[basename]) != set(range(count)):
+            continue
+        folders = list(arms[basename].values())
+        codes = {
+            ((read_manifest(folder) or {}).get("code_version") or {}).get("digest")
+            for folder in folders
+        }
+        if code_digest is not None and codes != {code_digest}:
+            continue
+        if (
+            all((folder / "SCORED").exists() for folder in folders)
+            and not any((folder / "FAILED").exists() for folder in folders)
+            and not all((folder / "MERGED").exists() for folder in folders)
+            and (Path(queue) / "results" / f"{basename}.json").is_file()
+        ):
+            ready.append(basename)
+    return ready
 
 
 def parse_time_left(text: str) -> Optional[float]:
@@ -356,11 +479,59 @@ def time_left(job_id: Optional[str]) -> Optional[float]:
     when squeue cannot tell (no job id, a failed query, an unreadable answer)."""
     if not job_id:
         return None
+    state = _slurm_state()
+    if state is not None:
+        deadline = _section(state, "deadline").get(job_id)
+        if deadline == "UNLIMITED":
+            return math.inf
+        if isinstance(deadline, (int, float)) and not isinstance(deadline, bool):
+            return max(0.0, deadline - time.time())
+        return None
+    return _live_time_left(job_id)
+
+
+def _live_time_left(job_id: str) -> Optional[float]:
     proc = _run(["squeue", "-h", "-j", job_id, "-o", "%L"])
     if proc is None or proc.returncode != 0:
         return None
     lines = proc.stdout.strip().splitlines()
     return parse_time_left(lines[0]) if lines else None
+
+
+def write_slurm_state(queue: Path, out: Path, job_id: str) -> Dict[str, object]:
+    """Write the Slurm snapshot of *job_id* and of every current claim, on the host.
+
+    For each job id: whether squeue lists it (only a known answer), its sacct
+    state, and for *job_id* its deadline (an epoch second, or ``UNLIMITED``).
+    The file is replaced in one rename, so a reader never sees half of it.
+    """
+    ids = {job_id}
+    for bundle in ready_bundles(queue):
+        claim = current_claim(bundle)
+        if claim is not None and claim.job_id:
+            ids.add(claim.job_id)
+    squeue: Dict[str, bool] = {}
+    sacct: Dict[str, str] = {}
+    for one in sorted(ids):
+        listed = _live_in_squeue(one)
+        if listed is not None:
+            squeue[one] = listed
+        recorded = _live_job_state(one)
+        if recorded is not None:
+            sacct[one] = recorded
+    deadline: Dict[str, object] = {}
+    left = _live_time_left(job_id)
+    now = time.time()
+    if left == math.inf:
+        deadline[job_id] = "UNLIMITED"
+    elif left is not None:
+        deadline[job_id] = now + left
+    state = {"written": now, "squeue": squeue, "sacct": sacct, "deadline": deadline}
+    out = Path(out)
+    tmp = out.with_name(f".{out.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(state, sort_keys=True))
+    os.replace(tmp, out)
+    return state
 
 
 def plan_claims(
@@ -398,12 +569,38 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         description="List or count the judge bundles a judge job can take."
     )
     parser.add_argument("--queue", required=True, type=Path)
-    parser.add_argument("--judge-env", required=True, type=Path)
-    parser.add_argument("--sidecar", required=True, type=Path)
+    parser.add_argument("--judge-env", type=Path)
+    parser.add_argument("--sidecar", type=Path)
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--status", action="store_true")
     action.add_argument("--count", action="store_true")
+    action.add_argument("--merge-ready", action="store_true")
+    action.add_argument("--slurm-state", type=Path)
+    parser.add_argument("--job-id")
     args = parser.parse_args(argv)
+    if args.slurm_state is not None:
+        if not args.job_id:
+            print("judge_queue: --slurm-state needs --job-id", file=sys.stderr)
+            return 2
+        write_slurm_state(args.queue, args.slurm_state, args.job_id)
+        return 0
+    if args.merge_ready:
+        code = None
+        if args.sidecar is not None:
+            try:
+                code = str(read_sidecar(args.sidecar).identity["code_digest"])
+            except (OSError, ValueError) as exc:
+                print(f"judge_queue: {exc}", file=sys.stderr)
+                return 2
+        for basename in merge_ready(args.queue, code):
+            print(basename)
+        return 0
+    if args.judge_env is None or args.sidecar is None:
+        print(
+            "judge_queue: --status and --count need --judge-env and --sidecar",
+            file=sys.stderr,
+        )
+        return 2
     try:
         judge_env = read_judge_env(args.judge_env)
         sidecar = read_sidecar(args.sidecar)

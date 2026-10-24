@@ -13,6 +13,11 @@ compares identities through ``canonical_identity`` instead:
 Numbers are normalized first: plain ``json.dumps`` writes ``0`` and ``0.0``
 differently, and a configured ``temperature: 0`` against an effective default of
 ``0.0`` must not withhold ranks.
+
+The comparison helpers (``normalize_numbers``, ``canonical_identity``,
+``differing_fields``) live in ``src/utils/judge_gates.py``, which is standard
+library only so that ``compare_runs.py`` can load it by path; this module
+re-exports them.
 """
 
 from __future__ import annotations
@@ -23,9 +28,14 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence
 
 from src.utils.benchmark_provenance import collect_code_version, collect_package_digest
+from src.utils.judge_gates import (  # noqa: F401  (re-exported)
+    canonical_identity,
+    differing_fields,
+    normalize_numbers,
+)
 
 #: The fields #732 adds to #618's four (provider, model, base_url, mode). An
 #: API judge has no revision, precision, image or server: those are None.
@@ -45,52 +55,10 @@ IDENTITY_FIELDS = (
 )
 
 
-def normalize_numbers(value: Any) -> Any:
-    """A copy of *value* in which every integral float is the equal ``int``.
-
-    Goes into dicts, lists and tuples. A ``bool`` stays a ``bool``: it is a
-    subclass of ``int``, but ``True`` is not the setting ``1``. A NaN or an
-    infinity is left as it is.
-    """
-    if isinstance(value, dict):
-        return {key: normalize_numbers(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [normalize_numbers(item) for item in value]
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    return value
-
-
-def canonical_identity(identity: Any) -> str:
-    """The one comparable text of a judge identity: sorted keys, normalized numbers.
-
-    The separators are the ``json.dumps`` defaults, so a #618 identity (four
-    strings) reads the same as the ``json.dumps(identity, sort_keys=True)`` that
-    the leaderboard showed before this helper existed.
-    """
-    return json.dumps(normalize_numbers(identity), sort_keys=True, default=str)
-
-
 def identity_digest(identity: Any) -> str:
     """``sha256:<hex>`` of the canonical identity; names a checkpoint file (D7)."""
     digest = hashlib.sha256(canonical_identity(identity).encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
-
-
-def differing_fields(identities: Sequence[Mapping[str, Any]]) -> List[str]:
-    """The top-level fields whose values are not equal in all *identities*.
-
-    A field that one identity has and another lacks differs too: a missing field
-    never equals a recorded one, also when the recorded value is ``None``.
-    """
-    names = sorted({name for identity in identities for name in identity})
-    found: List[str] = []
-    for name in names:
-        if any(name not in identity for identity in identities):
-            found.append(name)
-        elif len({canonical_identity(identity[name]) for identity in identities}) > 1:
-            found.append(name)
-    return found
 
 
 def _scalar(value: Any) -> Any:

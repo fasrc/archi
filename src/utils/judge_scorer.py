@@ -248,6 +248,24 @@ def _scorer_mismatch(expected: Mapping[str, Any], live: Mapping[str, Any]) -> st
     )
 
 
+def _image_mismatch(sidecar: Mapping[str, Any], live: Mapping[str, Any]) -> str:
+    """Both image digests when the job runs another image than the sidecar's, else ``""``.
+
+    The job passes the SHA-256 of the scorer image it runs (#733). The judge
+    scripts in the image are outside the code digest, so an image rebuilt from
+    the same benchmark image keeps the code and package digests, and only the
+    image digest shows that the sidecar no longer describes the image. A live
+    identity with no image digest is not checked.
+    """
+    running = live.get("image_digest")
+    if running is None or sidecar.get("image_digest") == running:
+        return ""
+    return (
+        f"the sidecar records image digest {sidecar.get('image_digest')}; the job "
+        f"runs the image with digest {running}"
+    )
+
+
 def other_judge(
     manifest: Optional[Mapping[str, Any]], judge_env: Mapping[str, Any]
 ) -> str:
@@ -488,12 +506,15 @@ def score_bundle(bundle: Path, ctx: JobContext) -> str:
 def preflight(ctx: JobContext) -> str:
     """``stale``, ``work`` or ``none``, before any model is loaded (D5, D10).
 
-    A live identity that differs from the sidecar creates
+    A live identity that differs from the sidecar (the code or package digest,
+    or the image digest that the job passes) creates
     ``<queue>/SCORER_STALE.<sidecar token>``, so the match rule stops offering
     this sidecar's bundles. The work counts the bundles this job already claims
     for its own judge (a requeued job) and the available ones.
     """
-    mismatch = _scorer_mismatch(ctx.sidecar.identity, ctx.live)
+    mismatch = _scorer_mismatch(ctx.sidecar.identity, ctx.live) or _image_mismatch(
+        ctx.sidecar.identity, ctx.live
+    )
     if mismatch:
         link_exclusive(
             Path(ctx.queue) / f"SCORER_STALE.{ctx.sidecar.token}",
