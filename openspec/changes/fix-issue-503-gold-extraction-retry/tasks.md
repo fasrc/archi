@@ -100,7 +100,7 @@
 
 ## 4. Publish
 
-- [ ] 4.1 Run `bash scripts/gate.sh` on the tip and confirm it exits 0 with patch coverage
+- [x] 4.1 Run `bash scripts/gate.sh` on the tip and confirm it exits 0 with patch coverage
       ≥ 80 %. Confirm `git diff origin/dev --stat -- docs/` prints nothing. Push with
       `git push -u origin fix/issue-503-gold-extraction-retry`. Write the PR body to
       `/tmp/pr-503.md` with `Closes #503` in the body (never the title) and a per-task
