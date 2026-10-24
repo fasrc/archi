@@ -42,6 +42,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
+from src.utils.ingest_provenance import effective_chunking
+
 __all__ = [
     "ARM_OVERRIDE_PATHS",
     "DEPLOY_REWRITTEN_PATHS",
@@ -796,11 +798,21 @@ def config_version(
     ``selected_file_digest`` or the divergence list: those two describe the file
     as it was written, and that is their whole audit purpose. Two files that
     differ must fingerprint differently even when they drive identical runs.
+
+    When the basis has a ``data_manager`` section, ``key_settings`` also carries
+    ``effective_chunking`` -- the chunking parameters the ingest path actually
+    applies (see ``ingest_provenance.effective_chunking``), derived rather than a
+    dotted config path. It is omitted with no ``data_manager`` section: the
+    defaults would claim a chunking nobody configured.
     """
     have_running = running is not None
     basis = effective_config(
         running, selected if effective_selected is None else effective_selected
     )
+
+    key_settings = settings_at_paths(basis, KEY_SETTING_PATHS)
+    if isinstance(basis, dict) and isinstance(basis.get("data_manager"), dict):
+        key_settings["effective_chunking"] = effective_chunking(basis["data_manager"])
 
     return {
         "digest": config_fingerprint(basis),
@@ -819,7 +831,7 @@ def config_version(
         "divergence_from_selected_file": (
             asserted_config_divergence(selected, running) if have_running else None
         ),
-        "key_settings": settings_at_paths(basis, KEY_SETTING_PATHS),
+        "key_settings": key_settings,
     }
 
 
