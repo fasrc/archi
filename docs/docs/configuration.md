@@ -625,6 +625,21 @@ child nodes linked to larger parent context nodes (the parent text is what a
 hierarchical-rerank retriever returns). The legacy `character` strategy uses the flat
 `chunk_size`/`chunk_overlap` settings above.
 
+The benchmark artifact's `config_version.key_settings`, `GET /config/static`, and the
+status board's ingest snapshot report the chunking values the ingest path actually
+applies — not the top-level `chunk_size`/`chunk_overlap` pair — under an
+`effective_chunking` field, derived from whichever strategy is active.
+
+All three describe a configuration, not the chunks in the store. The benchmark artifact and
+`GET /config/static` derive the field from the configuration they hold. The status board's
+snapshot holds the configuration of the latest ingest run. An ingest run embeds only new or
+changed documents, so a chunking change re-chunks nothing that is already in the store (see
+the note at the end of [The `markdown` strategy](#the-markdown-strategy)). A run that finds
+no changed document still records the new settings, and the board then shows no change. A
+benchmark run that reuses a corpus (`ingest_wall_seconds: null`) can report a chunking that
+its corpus was not built with in the same way. To make the store match a new chunking, force
+a re-ingest as that note describes.
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `chunking.strategy` | string | `sentence` | `sentence` (hierarchical, sentence-aware), `markdown` (hierarchical, header-aware for Markdown files — see below), or `character` (legacy flat chunks) |
