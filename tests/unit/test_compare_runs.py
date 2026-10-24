@@ -2169,7 +2169,7 @@ def test_source_block_reports_and_recomputes_source_accuracy(_artifact):
 def _qa_run(
     directory, item_id, *, item_pass_rate=1.0, atom_score=0.8, durations=(1000,)
 ):
-    """Write the three artifacts ``archi eval qa`` leaves in a run directory."""
+    """Write the three artifacts ``archi qa`` leaves in a run directory."""
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "summary.json").write_text(
         json.dumps(

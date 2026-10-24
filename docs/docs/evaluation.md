@@ -15,7 +15,7 @@ This guide covers the complete evaluation workflow:
 
 Evaluation is separate from the legacy `archi evaluate` benchmarking
 workflow. The legacy workflow measures RAGAS and source-retrieval metrics; see
-[Benchmarking](benchmarking.md). `archi eval qa` evaluates complete agent
+[Benchmarking](benchmarking.md). `archi qa` evaluates complete agent
 answers against explicit obligations and preserves reproducible run artifacts.
 
 ## What the evaluator does
@@ -42,7 +42,7 @@ inspection between phases, or use the browser console.
 
 | Interface                                      | Best for                                                                                           | Important behavior                                                                          |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| [CLI Guide](#cli-guide)                         | Automation, CI, local experiments, and exact control over workspaces                               | `archi eval qa` accepts file paths directly and can run all phases or one phase at a time |
+| [CLI Guide](#cli-guide)                         | Automation, CI, local experiments, and exact control over workspaces                               | `archi qa` accepts file paths directly and can run all phases or one phase at a time |
 | [Browser Console Guide](#browser-console-guide) | Importing shared datasets/profiles, manually reviewing atoms, launching runs, and browsing history | `/evaluations` uses persistent catalogs and background jobs in the chat service           |
 
 Both interfaces use the same validation, preparation, agent runtime, scoring,
@@ -67,7 +67,7 @@ workspace paths and individual phases.
 The output directory is not a config file and does not need to exist in
 advance. Before running:
 
-1. [Install Archi](install.md) and confirm `archi eval qa --help` works.
+1. [Install Archi](install.md) and confirm `archi qa --help` works.
 2. Make the tested agent's model provider and selected tool dependencies
    reachable from the CLI process.
 3. Provide credentials for the tested agent and evaluator models. See
@@ -508,7 +508,7 @@ empty.
 The composite command prepares, runs, and scores in one operation:
 
 ```bash
-archi eval qa \
+archi qa \
   --dataset questions.json \
   --agent-config agent.yaml \
   --agent-spec agent.md \
@@ -541,7 +541,7 @@ the approved baseline are scored.
 Omit `--evaluator-profile` to use the built-in profile:
 
 ```bash
-archi eval qa \
+archi qa \
   --dataset questions.json \
   --agent-config agent.yaml \
   --agent-spec agent.md \
@@ -559,7 +559,7 @@ before paying for evaluator calls.
 ##### 1. Prepare
 
 ```bash
-archi eval qa prepare questions.json \
+archi qa prepare questions.json \
   --evaluator-profile evaluator.yaml \
   --mcp-config qa_evaluation_mcp.yaml \
   --output-dir evaluation-run/
@@ -580,7 +580,7 @@ the tested agent. If no row is prepared, the subsequent run refuses to start.
 ##### 2. Run the agent
 
 ```bash
-archi eval qa run evaluation-run/ \
+archi qa run evaluation-run/ \
   --agent-config agent.yaml \
   --agent-spec agent.md \
   --mcp-config qa_evaluation_mcp.yaml \
@@ -609,14 +609,14 @@ omits unavailable response and duration fields.
 ##### 3. Score
 
 ```bash
-archi eval qa score evaluation-run/ --score-workers 8
+archi qa score evaluation-run/ --score-workers 8
 ```
 
 You may pass `--evaluator-profile evaluator.yaml`, but it must match the
 profile already snapshotted during preparation:
 
 ```bash
-archi eval qa score evaluation-run/ \
+archi qa score evaluation-run/ \
   --evaluator-profile evaluator.yaml
 ```
 
@@ -698,11 +698,11 @@ a RAGAS 0.3.5 question bank and normalized at the import boundary:
   [Evaluator MCP registry](#evaluator-mcp-registry).
 
 The same adapter is reachable from the command line, for a bank you want to run
-through `archi eval qa` rather than upload:
+through `archi qa` rather than upload:
 `python scripts/benchmarking/ragas_bank_to_qa_dataset.py <bank.json> --out <dataset.json>`
 converts a bank — plus the anchor questions the RAGAS harness stages beside it on
 every run, deduped on exact `user_input` with the bank row winning — into a
-`qa-dataset-v2` file that `archi eval qa --dataset <dataset.json>` accepts. It
+`qa-dataset-v2` file that `archi qa --dataset <dataset.json>` accepts. It
 calls this same normalizer and reads the bank with the same strict parser, so for
 a modern-dialect bank the mapping, the carried fields and the ids are identical
 whichever door it comes through. A **legacy** bank is the one difference: the
@@ -1177,7 +1177,7 @@ Existing evaluator-owned files are not overwritten by default:
   artifacts;
 - `run --overwrite` replaces run artifacts and invalidates score artifacts;
 - `score --overwrite` replaces only results, summary, and report;
-- composite `archi eval qa --overwrite` rebuilds the complete workspace.
+- composite `archi qa --overwrite` rebuilds the complete workspace.
 
 Use a new output directory when comparing agents, prompts, providers, models,
 attempt counts, datasets, or evaluator profiles. Reusing and overwriting one
@@ -1365,6 +1365,6 @@ evaluation. A `cancel_requested` job remains active until its process exits. If
 the service restarted, refresh the catalog and verify that the old job was
 marked `interrupted`.
 
-For exact command flags, see [`archi eval qa` in the CLI
-reference](cli_reference.md#archi-eval-qa). For deployment-level paths and
+For exact command flags, see [`archi qa` in the CLI
+reference](cli_reference.md#archi-qa). For deployment-level paths and
 authentication settings, see [Configuration](configuration.md).

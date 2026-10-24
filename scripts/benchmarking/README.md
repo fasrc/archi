@@ -2,7 +2,7 @@
 
 Helpers to run and analyze the `archi evaluate` benchmark, read-only maintenance
 for the RAGAS golden-set bank, and one converter that hands the same bank to
-`archi eval qa`.
+`archi qa`.
 
 ## Golden-set maintenance
 
@@ -43,7 +43,7 @@ lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
 ## QA dataset conversion
 
 - **`ragas_bank_to_qa_dataset.py`** — converts the golden-set bank (plus the
-  anchor questions) into a `qa-dataset-v2` file that `archi eval qa --dataset`
+  anchor questions) into a `qa-dataset-v2` file that `archi qa --dataset`
   accepts, so the gold-atoms QA evaluator and the RAGAS harness can score the
   *same* questions on the same stack and be read side by side. The QA dataset
   loader refuses RAGAS-dialect rows outright and only the browser import path
@@ -84,7 +84,7 @@ lives in [`docs/docs/benchmarking.md`](../../docs/docs/benchmarking.md) under
   ```bash
   python scripts/benchmarking/ragas_bank_to_qa_dataset.py \
       config/benchmarking/fasrc_ragas_queries.json --out fasrc.qa-v2.json
-  archi eval qa --dataset fasrc.qa-v2.json --agent-config <agent.yaml> --output-dir <run>
+  archi qa --dataset fasrc.qa-v2.json --agent-config <agent.yaml> --output-dir <run>
   ```
 
 ## Feature-matrix runbook wrappers (`feature_matrix/`)
@@ -116,7 +116,7 @@ One thin wrapper per step of the #396 campaign protocol
   re-seeds only — the way to restore the baseline without an unplanned run). Refuses an arm
   whose change is ingest-side (chunking, processing, stemming) — a re-seed cannot re-chunk
   what is already stored.
-- **`qa_arm.sh <arm> <arm.yaml> [--stack …]`** — `archi eval qa` against the same stack.
+- **`qa_arm.sh <arm> <arm.yaml> [--stack …]`** — `archi qa` against the same stack.
   Refuses unless the stack's rendered config agrees with the arm YAML on every factor key,
   overwrites the rendered config's `chat_app` SUT fields from `services.benchmarking` (an
   evaluate stack renders the template defaults there), uses the campaign judge profile,
@@ -197,7 +197,7 @@ not) writes `category_map_readings.json`, which `compare_runs.py --qa-run` requi
   resolved by precedence, because sigma *is* the significance threshold). The five
   anchors are reported as their own track — matched by question text, because the
   FASRC bank sets `anchor_type` on every row — and are kept out of the bank
-  aggregates. `--qa-run LABEL=DIR` optionally joins an `archi eval qa` run by
+  aggregates. `--qa-run LABEL=DIR` optionally joins an `archi qa` run by
   derived item id — the one path that needs the project's evaluation
   dependencies, because the id comes from the QA stack's own `derive_item_id`.
   Everything else is standard library and reads finished artifacts, so it runs on

@@ -347,7 +347,7 @@ print(max(runs, default=0) + 1)'
 fm_lock_sha() { fm_sha256 "$(fm_lock_file)"; }
 
 # The code the campaign runs is locked too: `archi evaluate` builds the stack images from
-# the cwd's tree and `archi eval qa` runs it in-process, so a checkout that advanced or
+# the cwd's tree and `archi qa` runs it in-process, so a checkout that advanced or
 # carries uncommitted source changes after the lock would run different code while every
 # wrapper still succeeded. What is pinned is the RUNTIME tree — the git tree ids of src/,
 # scripts/ and deploy/ — not HEAD itself: the pre-registration is committed AFTER the lock
@@ -504,7 +504,7 @@ $dirty"
   fi
 }
 
-# A secret-free agent config for `archi eval qa` from a stack's rendered config, with
+# A secret-free agent config for `archi qa` from a stack's rendered config, with
 # services.chat_app.{agent_class,default_provider,default_model} overwritten from
 # services.benchmarking (an evaluate stack renders the template defaults into chat_app, and
 # the QA CLI reads chat_app) and the evaluations block dropped.

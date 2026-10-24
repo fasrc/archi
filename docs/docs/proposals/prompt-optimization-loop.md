@@ -14,7 +14,7 @@ Let Claude improve the agent's system prompt on its own: read why answers failed
 change the prompt, re-measure, keep or revert, repeat. It stops when it finds a change
 that improves accuracy **by a statistically significant margin**.
 
-The loop itself is easy, and most of it already exists (`archi eval qa`,
+The loop itself is easy, and most of it already exists (`archi qa`,
 `qa_prepare.sh`, the `lib.sh` stack and corpus guards, the exact McNemar test in
 `paired_tests.py`). The one piece that does not fit is the sweep runner: it runs a fixed,
 pre-locked set of prompts at one attempt, so the loop gets its own runner (§3.4). Three findings shape the
@@ -57,14 +57,14 @@ exists to keep the measurement honest.
 
 | Need | Existing piece | Where |
 |---|---|---|
-| Score one prompt against a question set, fact by fact | `archi eval qa` (prepare → run → score): the judge marks each reference fact ("atom") entailed / missing / contradicted; an answer passes only if every required atom is entailed | `src/cli/qa_eval.py`, `src/evaluation/qa/`, `docs/docs/evaluation.md` |
+| Score one prompt against a question set, fact by fact | `archi qa` (prepare → run → score): the judge marks each reference fact ("atom") entailed / missing / contradicted; an answer passes only if every required atom is entailed | `src/cli/qa_eval.py`, `src/evaluation/qa/`, `docs/docs/evaluation.md` |
 | Test a prompt with no redeploy | `--agent-spec <file.md>` reads the prompt file directly | `src/cli/qa_eval.py` |
-| Grade every run against the *same* atoms | `archi eval qa prepare` extracts atoms once into a run directory; each run copies that snapshot (the pattern `qa_prepare.sh --sweep` and `qa_arm.sh --sweep` use) | `scripts/benchmarking/feature_matrix/qa_prepare.sh`, `qa_arm.sh:80` |
+| Grade every run against the *same* atoms | `archi qa prepare` extracts atoms once into a run directory; each run copies that snapshot (the pattern `qa_prepare.sh --sweep` and `qa_arm.sh --sweep` use) | `scripts/benchmarking/feature_matrix/qa_prepare.sh`, `qa_arm.sh:80` |
 | Stack, corpus and code guards | `fm_require_stack_name`, `fm_require_pinned_corpus`, `fm_code_tree`, `fm_fingerprint`, `fm_ledger_append` | `scripts/benchmarking/feature_matrix/lib.sh` |
 | Hash-and-verify inputs | `sweep_tools.py lock / verify` hashes every input of a **fixed** arm set | `scripts/benchmarking/feature_matrix/sweep_tools.py` |
 | Paired significance test | `paired_tests.paired_binary`: exact McNemar over two pass/fail maps keyed by question. `compare_runs.py` is **not** reused for the verdict: it needs benchmark artifacts as positional arms (this loop makes none), and its `completion` test pairs `status == "ok"`, not QA pass outcomes | `scripts/benchmarking/paired_tests.py:47` |
-| Per-question QA pass outcome | `summary.json` → `items[].item_pass_rate` (1.0 or 0.0 at one attempt) | `archi eval qa` run directory |
-| Repeat each question | `archi eval qa --attempts N` | `src/cli/qa_eval.py` |
+| Per-question QA pass outcome | `summary.json` → `items[].item_pass_rate` (1.0 or 0.0 at one attempt) | `archi qa` run directory |
+| Repeat each question | `archi qa --attempts N` | `src/cli/qa_eval.py` |
 | Answer-side RAGAS metrics | `factual_correctness_recall`, `factual_correctness_precision`, `noise_sensitivity`, `answer_accuracy`, `response_groundedness` (added alongside this proposal) | `src/utils/benchmark_schema.py` |
 
 **Not reusable as is: `qa_arm.sh --sweep`.** It hard-codes `--attempts 1`
@@ -76,7 +76,7 @@ arm changes the lock's hash and breaks the stamp, which costs a redeploy. The lo
 therefore has its own runner (§3.4, §4) built from the same `lib.sh` guards.
 
 One `archi evaluate` stack is ingested once (about 50–67 minutes); after that, every
-prompt arm is just an `archi eval qa` run against that stack's database. Cost per arm
+prompt arm is just an `archi qa` run against that stack's database. Cost per arm
 is dominated by answer time: about 48 s per question (`categories-action-plan.md:67`).
 
 ---
@@ -221,9 +221,9 @@ metrics move, the prompt changed retrieval too, and the report must say so.
 - Host eval environment pinned: `transformers==4.57.6`, `sentence-transformers==5.1.2`.
   Without them every attempt silently fails with exit code 0.
 - Judge key present (`HUIT_API_KEY_FILE`). Atoms prepared once per set: one
-  `archi eval qa prepare` on the 10-item tuning dataset and one on the 99-item holdout
+  `archi qa prepare` on the 10-item tuning dataset and one on the 99-item holdout
   dataset. The sets do not overlap, so each question's atoms are extracted exactly once.
-  `archi eval qa run` has no item filter, and a prepared directory carries its item
+  `archi qa run` has no item filter, and a prepared directory carries its item
   count in its manifest, so a full-bank snapshot cannot be cut down to a subset.
 - No RAGAS run and no other QA run on the same stack for the duration.
 
@@ -241,7 +241,7 @@ Small and test-first. Everything in §2 is reused as is.
 | `scripts/benchmarking/prompt_opt/decide.py` | §3.4/§3.5: the keep/revert rule, the confirmation trigger and the stop rules, reading `summary.json` and the ledger |
 | `scripts/benchmarking/prompt_opt/dossier.py` | §3.4 step 1: one failure dossier per tuning question from `evaluation_results.jsonl` |
 | `scripts/benchmarking/prompt_opt/lock_campaign.py` | §3.6: write the campaign lock once (code tree, stack, corpus pin, judge profile, baseline prompt, both prepared snapshots); `verify` re-hashes all of it |
-| `scripts/benchmarking/prompt_opt/run_arm.sh` | §3.4: one QA run of one prompt file: `--campaign <dir> --prompt <file> --set tuning\|holdout --attempts N`. It uses the `lib.sh` guards as `qa_arm.sh --sweep` does, verifies the campaign lock, copies the chosen prepared snapshot, and passes `--attempts N` to `archi eval qa run`. It also applies the append-only prompt rule of §3.6 |
+| `scripts/benchmarking/prompt_opt/run_arm.sh` | §3.4: one QA run of one prompt file: `--campaign <dir> --prompt <file> --set tuning\|holdout --attempts N`. It uses the `lib.sh` guards as `qa_arm.sh --sweep` does, verifies the campaign lock, copies the chosen prepared snapshot, and passes `--attempts N` to `archi qa run`. It also applies the append-only prompt rule of §3.6 |
 | `scripts/benchmarking/prompt_opt/run_campaign.sh` | Driver: preconditions → step 0 → iterate → confirm, calling `run_arm.sh` |
 | Optimizer brief (skill `archi-prompt-optimize`) | The instructions the Claude session follows each iteration: read the dossier, write one hypothesis, edit the prompt, log it, never read the holdout |
 

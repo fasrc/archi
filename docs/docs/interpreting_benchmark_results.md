@@ -622,7 +622,7 @@ it is compared against the first. `path@2` picks one arm out of a sweep, and
 | `--ignore-config-divergence` | the only way past a non-empty `divergence_from_selected_file` |
 | `--anchors PATH` | the anchors file (default `examples/benchmarking/anchor_questions.json`). Required: the default is tracked, so a missing file means a broken checkout rather than a run without anchors. For a deliberately anchor-free comparison, point it at a file holding `[]` |
 | `--include-anchors-in-bank` | average the five anchors into the bank aggregates. Off by default — see [Gap 3](#gap-3-anchors-are-averaged-into-the-bank-aggregates) |
-| `--qa-run LABEL=RUN_DIR` | join an `archi eval qa` run to an arm, by derived item id (repeatable). This is the one flag that needs the project's evaluation dependencies installed — the id is derived by the QA stack's own `derive_item_id`, so the two sides cannot drift apart |
+| `--qa-run LABEL=RUN_DIR` | join an `archi qa` run to an arm, by derived item id (repeatable). This is the one flag that needs the project's evaluation dependencies installed — the id is derived by the QA stack's own `derive_item_id`, so the two sides cannot drift apart |
 | `--json PATH` | write the same report as JSON |
 
 Exit codes: `0` ok, `1` usage or I/O, `2` a gate refused, `3` a config-divergence

@@ -111,7 +111,7 @@ the stage in mind: most of the "disagreements" below are the two stages disagree
 | Is the answer grounded in the retrieved text (no invented claims)? | `faithfulness` | RAGAS | the answer (what came *out*) |
 | Does the answer address the question asked? | `answer_relevancy` — **advisory only** (see 6.2) | RAGAS | the answer |
 | Is the page the reference cites among the documents the agent retrieved? | source accuracy (URL match against the metadata of the retrieved documents, not the links in the answer; 106 of 109 questions carry a reference URL) | harness | retrieved sources |
-| Does the answer contain the specific required facts? | gold atoms: attempt pass rate, atom score, required-atom recall | `archi eval qa`, same judge model | the answer |
+| Does the answer contain the specific required facts? | gold atoms: attempt pass rate, atom score, required-atom recall | `archi qa`, same judge model | the answer |
 | How long did a question take; how often did the agent give up? | seconds per question (warm mean, first question dropped); blowouts; searches per question | harness traces | cost |
 | How long did the corpus take to ingest; how big is the index? | ingest wall seconds; chunk count | harness / ledger | cost |
 
