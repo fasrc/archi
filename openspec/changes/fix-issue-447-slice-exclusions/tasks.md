@@ -83,7 +83,7 @@ Standing notes for every task:
 
 ## 3. Close out
 
-- [ ] 3.1 Verify, push, and open the PR. Steps, in order:
+- [x] 3.1 Verify, push, and open the PR. Steps, in order:
       1. `bash scripts/gate.sh` exits 0. `git status` is empty.
       2. `git diff origin/dev --stat` lists only the three files in the scope note and this
          change's `openspec/changes/fix-issue-447-slice-exclusions/` files.
@@ -101,3 +101,6 @@ Standing notes for every task:
          repository, and stop.
       6. Record the PR URL under this task, tick it, and commit that edit through the gate.
          Do not merge.
+
+      PR: https://github.com/fasrc/archi/pull/765 (the review gate opened it after task 2.1;
+      the wrap-up set its title and body to the step 5 form).
