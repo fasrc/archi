@@ -621,6 +621,29 @@ override the `port` beside it. Preflight checks the key the deployment will real
 deployment starts on the `external_port` value. Leaving `external_port` empty is not a value: it
 means "do not override", and host mode falls back to checking `port`.
 
+### Refused source tree
+
+`archi create` and `archi evaluate` build the deployment from a source tree. That tree is the
+checkout that `pip install .` recorded, or the installed package root when no checkout is
+recorded. The copy step reads `src`, `pyproject.toml`, `LICENSE`, and
+`src/cli/templates/dockerfiles` out of that tree below the teardown. Preflight therefore
+checks, before a `--force` run removes the existing deployment, that all of these exist and
+that the user who runs `archi` can read them.
+
+The refusal starts with `Base image check failed:` and names each bad path on one of two
+lines:
+
+| Line | Meaning | Remedy |
+|------|---------|--------|
+| `... is missing <paths>.` | The path does not exist in the tree. | Restore the path, or run `pip install .` again from the checkout you intend to deploy. |
+| `... has unreadable <paths>.` | The path exists, but the user cannot read it. A directory must also be searchable (`x`). | Give that user read access to the named path, for example `chmod -R u+rX <path>` when that user owns it. |
+
+Under `src`, the check names only the first unreadable file or directory that it finds, by its
+path relative to the tree. Fix that path and run the command again: the next run names the
+next one, if there is one. The check follows directory symlinks, as the copy step does. A
+symlink that points back to a directory above it is refused as unreadable, because the copy
+step would follow it without end.
+
 ### GPU Issues
 
 GPU access requires NVIDIA drivers and the NVIDIA Container Toolkit.
