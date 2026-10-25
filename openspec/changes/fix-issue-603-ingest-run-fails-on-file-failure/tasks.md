@@ -115,7 +115,7 @@
 
 ## 4. Publish
 
-- [ ] 4.1 Tick this box, commit the tick, then push the branch:
+- [x] 4.1 Tick this box, commit the tick, then push the branch:
       `git push -u origin fix/issue-603-ingest-run-fails-on-file-failure`. Open the PR:
       `gh pr create --repo fasrc/archi --base dev --head
       fix/issue-603-ingest-run-fails-on-file-failure` with the title `fix(ingest): record
