@@ -694,3 +694,17 @@ class TestGoldExtractionRetry:
 
         assert extractor.calls == 1
         assert "gold_extraction_attempts" not in record.to_dict()
+
+    def test_retry_that_raises_keeps_attempts_and_both_usages(self):
+        extractor = _QueueExtractor(
+            [{"atoms": "not a list"}, TimeoutError("provider timeout")],
+            usages=[_RETRY_FIRST_USAGE, _RETRY_SECOND_USAGE],
+        )
+
+        record = prepare_dataset_item(_item("retry8"), extractor)
+
+        assert record.status == "preparation_failed"
+        assert extractor.calls == 2
+        assert record.gold_extraction_attempts == 2
+        assert record.usage["input_tokens"] == 150
+        assert record.usage["calls"] == 2

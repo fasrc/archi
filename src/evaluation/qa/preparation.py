@@ -357,11 +357,13 @@ def prepare_dataset_item(
                     item.id,
                 )
                 first_usage = getattr(extractor, "last_usage", None)
-                raw_gold = extractor.extract_gold(item.question, extraction_input)
                 _gold_extraction_attempts = 2
-                _extractor_usage = sum_usage(
-                    [first_usage, getattr(extractor, "last_usage", None)]
-                )
+                try:
+                    raw_gold = extractor.extract_gold(item.question, extraction_input)
+                finally:
+                    _extractor_usage = sum_usage(
+                        [first_usage, getattr(extractor, "last_usage", None)]
+                    )
                 gold_atoms = validate_gold_output(
                     raw_gold, context=f"gold extraction for item {item.id}"
                 )
