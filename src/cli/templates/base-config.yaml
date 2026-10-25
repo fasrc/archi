@@ -354,11 +354,13 @@ data_manager:
     # Target parent/child node sizes for hierarchical chunking. Only emitted when
     # set so VectorStoreManager falls back to its built-in defaults (2048/512)
     # otherwise — keeping the default a single source of truth in code.
+    # tojson keeps the configured type: a bare "2048" would reload as an int
+    # and slip past the manager's type check.
 {%- if data_manager.chunking.parent_chunk_size is defined %}
-    parent_chunk_size: {{ data_manager.chunking.parent_chunk_size }}
+    parent_chunk_size: {{ data_manager.chunking.parent_chunk_size | tojson }}
 {%- endif %}
 {%- if data_manager.chunking.child_chunk_size is defined %}
-    child_chunk_size: {{ data_manager.chunking.child_chunk_size }}
+    child_chunk_size: {{ data_manager.chunking.child_chunk_size | tojson }}
 {%- endif %}
 {%- if data_manager.chunking.chunk_overlap is defined and data_manager.chunking.chunk_overlap is not none %}
     # tojson keeps the configured type: a bare "20" or "null" would reload as an
