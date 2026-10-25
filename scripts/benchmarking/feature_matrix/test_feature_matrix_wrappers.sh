@@ -105,6 +105,8 @@
 #   101. with FM_PAGE_MAIL_TO empty the qa-score failure sends no mail and exits with the same status
 #   102. a failed ledger append in qa_arm.sh arm mode pages once and names the failed command and its file:line
 #   103. a QA run that scored nothing pages once with the refusal in the body
+#   104. a SIGTERM to qa_arm.sh's process group during the QA run pages once, and the wrapper dies of SIGTERM
+#   105. the same for SIGHUP
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -149,6 +151,7 @@ prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && { mkdir -p "\$a"; O
 # the run manifest records the retrieval identity when the test provides one
 [ -n "\$OUTDIR" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$OUTDIR/manifest.json"
 # a corpus that drifts WHILE the QA run is in flight
+[ "\$1" = "qa" ] && [ -f "$T/qa-slow" ] && { touch "$T/qa-started"; sleep 30; }
 [ "\$1" = "qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
 # touch fp-broken after qa when fp-fail-after-qa exists, so fm_fingerprint fails
 [ "\$1" = "qa" ] && [ -f "$T/fp-fail-after-qa" ] && touch "$T/fp-broken"
@@ -1285,6 +1288,44 @@ if [ "$RC" = 2 ] && grep -q 'QA run scored nothing' "$T/stderr" && [ "$(grep -c 
    && grep -q "qa_arm.sh exited 2: feature_matrix: QA run scored nothing" "$T/mail.calls" \
    && [ "$(ledger_rows)" = "$BEFORE" ]; then
   ok "a QA run that scored nothing pages once with the refusal in the body"; else notok "qa_arm scored-0 page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# signal launcher (checks 104-105): starts the command in its own session (its own process
+# group), waits for the ready file, signals the whole group, and prints the wait status
+# (negative = killed by that signal) and whether any process of the group was left.
+cat > "$T/bin/signal-launch.py" <<'PY'
+import os, signal, subprocess, sys, time
+signame, ready, out, err, cmd = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
+p = subprocess.Popen(cmd, start_new_session=True, stdout=open(out, "w"), stderr=open(err, "w"))
+deadline = time.monotonic() + 30
+while not os.path.exists(ready) and p.poll() is None and time.monotonic() < deadline:
+    time.sleep(0.05)
+if p.poll() is None:
+    os.killpg(p.pid, getattr(signal, "SIG" + signame))
+try:
+    rc = p.wait(timeout=30)
+except subprocess.TimeoutExpired:
+    rc = "hung"
+try:
+    os.killpg(p.pid, signal.SIGKILL)
+    left = "leftover"
+except ProcessLookupError:
+    left = "clean"
+print(rc, left)
+PY
+
+# 104-105: a SIGTERM or SIGHUP to qa_arm.sh arm mode during the QA run pages once, and the
+# wrapper then dies of that signal (so a calling shell sees a signal death, not an exit)
+for SIGCASE in "104 TERM 143 -15" "105 HUP 129 -1"; do
+  read -r N SIG CODE WANT <<<"$SIGCASE"
+  touch "$T/qa-slow"; rm -f "$T/qa-started"
+  : > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+  OUT="$(env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org "$REAL_PY" "$T/bin/signal-launch.py" "$SIG" "$T/qa-started" "$T/stdout" "$T/stderr" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml")"
+  rm -f "$T/qa-slow" "$T/qa-started"
+  if [ "$OUT" = "$WANT clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+     && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit $CODE)" "$T/mail.calls" \
+     && [ "$(ledger_rows)" = "$BEFORE" ]; then
+    ok "a SIG$SIG during the QA run pages once and the wrapper dies of SIG$SIG ($N)"; else notok "qa_arm SIG$SIG page ($N: launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+done
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

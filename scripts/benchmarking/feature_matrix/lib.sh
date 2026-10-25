@@ -92,21 +92,22 @@ fm_die_paged() { # $1 = subject context (e.g. "stack fm-01 arm 01"), $2 = messag
 # Arm a page-on-failure trap for a wrapper that has just started long work. Call this
 # directly before the long-running command. The EXIT trap pages once on any non-zero exit
 # that did not already page (FM_PAGED=1); the page body carries the fm_die message or the
-# failed command with its file:line. HUP/INT/TERM each page and re-exit with the
-# conventional status (129/130/143). set -E makes the ERR trap fire inside functions so
-# the failed command and line are recorded for the page body.
+# failed command with its file:line. A HUP, INT or TERM signal pages and then ends the
+# wrapper by the same signal, so a chain that runs it stops too. set -E makes the ERR trap
+# fire inside functions so the failed command and line are recorded for the page body.
 fm_arm_page_on_failure() { # $1 = subject context, e.g. "stack fm-00 arm 00"
   FM_PAGE_CONTEXT="$1"
   set -E
   trap 'fm__failed_cmd="$BASH_COMMAND"; fm__failed_line="${BASH_SOURCE[0]##*/}:$LINENO"' ERR
   trap 'fm__page_on_exit $?' EXIT
-  trap 'fm__page_on_signal 129' HUP
-  trap 'fm__page_on_signal 130' INT
-  trap 'fm__page_on_signal 143' TERM
+  trap 'fm__page_on_signal 129 HUP' HUP
+  trap 'fm__page_on_signal 130 INT' INT
+  trap 'fm__page_on_signal 143 TERM' TERM
 }
-fm__page_on_signal() { # $1 = 128 + the signal number
+fm__page_on_signal() { # $1 = 128 + the signal number, $2 = the signal name
   fm__page_on_exit "$1"
-  trap - EXIT
+  trap - EXIT "$2"
+  kill -s "$2" "$$"
   exit "$1"
 }
 fm__page_on_exit() { # $1 = the exit status
