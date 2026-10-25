@@ -1,6 +1,6 @@
 ## 1. Count system-error files in `_add_to_postgres` (red tests and fix in one task each)
 
-- [ ] 1.1 Process stage and return contract (design D1, D2). In
+- [x] 1.1 Process stage and return contract (design D1, D2). In
       `tests/unit/test_vectorstore_manager_batch_commit.py`, add these tests right AFTER
       `test_embedding_progress_callback_exception_does_not_abort` and BEFORE
       `def _tagging_config` — NOT at the end of the file. Grep each test name first; a
@@ -41,7 +41,7 @@
       `bash scripts/gate.sh` in the foreground and commit only when it is green
       (message: `count system-error files in _add_to_postgres (#603)`).
 
-- [ ] 1.2 Store stage (design D1, D2). In the same test file, add these tests right AFTER
+- [x] 1.2 Store stage (design D1, D2). In the same test file, add these tests right AFTER
       the tests of task 1.1 and BEFORE `def _tagging_config`, with unique names (grep
       first):
       - `test_add_to_postgres_counts_an_embed_error`: `embed_fn` raises on its first call;
