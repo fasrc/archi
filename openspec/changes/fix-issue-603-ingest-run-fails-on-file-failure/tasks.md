@@ -67,7 +67,7 @@
 
 ## 2. Record the run as failed (red tests and fix in one task)
 
-- [ ] 2.1 Run status (design D3, D4). In the same test file, add a helper and tests right
+- [x] 2.1 Run status (design D3, D4). In the same test file, add a helper and tests right
       AFTER the tests of task 1.2 and BEFORE `def _tagging_config`, with unique names
       (grep first). The helper `_run_update_vectorstore(monkeypatch, manager, files)`
       sets `manager.data_path = "/tmp"` and monkeypatches: `manager.fetch_collection` to

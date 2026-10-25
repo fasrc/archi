@@ -602,6 +602,171 @@ def test_add_to_postgres_counts_every_file_when_all_fail_to_store(monkeypatch):
     assert manager._add_to_postgres(files) == 2
 
 
+def _run_update_vectorstore(monkeypatch, manager, files):
+    manager.data_path = "/tmp"
+    monkeypatch.setattr(
+        manager, "fetch_collection", lambda: SimpleNamespace(count=lambda: 0)
+    )
+    monkeypatch.setattr(
+        manager_module.PostgresCatalogService,
+        "load_sources_catalog",
+        staticmethod(lambda data_path, pg: {}),
+    )
+    monkeypatch.setattr(manager, "_collect_postgres_hashes", lambda: set())
+    monkeypatch.setattr(manager, "_collect_indexed_documents", lambda sources: files)
+    monkeypatch.setattr(
+        manager, "_collect_stale_hashes", lambda files_in_data, hashes_in_vstore: set()
+    )
+    recorded_statuses = []
+    monkeypatch.setattr(
+        manager,
+        "_record_ingest_run",
+        lambda started_at, status: recorded_statuses.append(status),
+    )
+    return manager.update_vectorstore(), recorded_statuses
+
+
+def test_update_vectorstore_records_failed_when_one_of_two_files_fails_to_store(
+    monkeypatch,
+):
+    manager, fake_conn, _ = _setup_flat_manager(monkeypatch)
+    call_count = [0]
+
+    def execute_values_fn(cursor, sql, rows, *a, **k):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("store error")
+
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", execute_values_fn
+    )
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result, statuses = _run_update_vectorstore(monkeypatch, manager, files)
+    assert result == "failed"
+    assert statuses == ["failed"]
+
+    # _sync_vectorstore builds files_to_add from a set, so the store-stage
+    # order is not deterministic — one of the two hashes is marked embedded.
+    cursor = fake_conn.cursor.return_value.__enter__.return_value
+    embedded_calls = [
+        call
+        for call in cursor.execute.call_args_list
+        if "ingestion_status = 'embedded'" in str(call.args[0])
+        and len(call.args) > 1
+        and call.args[1] in (("hash-0",), ("hash-1",))
+    ]
+    assert len(embedded_calls) == 1
+
+
+def test_update_vectorstore_records_updated_when_every_file_is_stored(monkeypatch):
+    manager, _, _ = _setup_flat_manager(monkeypatch)
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result, statuses = _run_update_vectorstore(monkeypatch, manager, files)
+    assert result == "updated"
+    assert statuses == ["updated"]
+
+
+def test_update_vectorstore_records_failed_on_a_load_error(monkeypatch):
+    call_count = [0]
+
+    def loader_fn(path):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("load error")
+        split_doc = SimpleNamespace(page_content="hello", metadata={})
+        return SimpleNamespace(load=lambda: [split_doc])
+
+    manager, _, _ = _setup_flat_manager(monkeypatch, loader_fn=loader_fn)
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result, statuses = _run_update_vectorstore(monkeypatch, manager, files)
+    assert result == "failed"
+    assert statuses == ["failed"]
+
+
+def test_update_vectorstore_records_failed_on_an_embed_error(monkeypatch):
+    call_count = [0]
+
+    def embed_fn(chunks):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("embed error")
+        return [[0.1, 0.2, 0.3] for _ in chunks]
+
+    manager, _, _ = _setup_flat_manager(monkeypatch, embed_fn=embed_fn)
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result, statuses = _run_update_vectorstore(monkeypatch, manager, files)
+    assert result == "failed"
+    assert statuses == ["failed"]
+
+
+def test_update_vectorstore_records_failed_when_every_file_fails(monkeypatch):
+    manager, _, _ = _setup_flat_manager(monkeypatch)
+
+    def execute_values_fn(cursor, sql, rows, *a, **k):
+        raise RuntimeError("store error")
+
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", execute_values_fn
+    )
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result, statuses = _run_update_vectorstore(monkeypatch, manager, files)
+    assert result == "failed"
+    assert statuses == ["failed"]
+
+
+def test_update_vectorstore_hierarchical_records_failed_on_a_store_error(monkeypatch):
+    manager = _setup_hierarchical_manager(monkeypatch)
+    call_count = [0]
+
+    def _failing_insert(cursor, document_id, parents):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("db error")
+        return 1
+
+    manager._insert_hierarchical_file = _failing_insert
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result, statuses = _run_update_vectorstore(monkeypatch, manager, files)
+    assert result == "failed"
+    assert statuses == ["failed"]
+
+
+def test_update_vectorstore_records_updated_for_an_unsupported_format(monkeypatch):
+    call_count = [0]
+
+    def loader_fn(path):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return None
+        split_doc = SimpleNamespace(page_content="hello", metadata={})
+        return SimpleNamespace(load=lambda: [split_doc])
+
+    manager, _, _ = _setup_flat_manager(monkeypatch, loader_fn=loader_fn)
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result, statuses = _run_update_vectorstore(monkeypatch, manager, files)
+    assert result == "updated"
+    assert statuses == ["updated"]
+
+
+def test_update_vectorstore_records_updated_for_a_file_with_no_text(monkeypatch):
+    call_count = [0]
+    blank_chunk = SimpleNamespace(page_content="   ", metadata={})
+    good_chunk = SimpleNamespace(page_content="hello world", metadata={})
+
+    def split_fn(docs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return [blank_chunk]
+        return [good_chunk]
+
+    manager, _, _ = _setup_flat_manager(monkeypatch)
+    manager.text_splitter = SimpleNamespace(split_documents=split_fn)
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result, statuses = _run_update_vectorstore(monkeypatch, manager, files)
+    assert result == "updated"
+    assert statuses == ["updated"]
+
+
 def _tagging_config(embedding_name="HuggingFaceEmbeddings", kwargs=None):
     return {
         "stemming": {"enabled": False},

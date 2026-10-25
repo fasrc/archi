@@ -387,7 +387,7 @@ class VectorStoreManager:
             if files_to_add:
                 logger.info(f"Adding {len(files_to_add)} new documents")
                 try:
-                    self._add_to_postgres(
+                    failed_files = self._add_to_postgres(
                         files_to_add, embedding_progress=embedding_progress
                     )
                 except Exception as e:
@@ -396,6 +396,17 @@ class VectorStoreManager:
                     # did not do what it set out to do. Recording it as
                     # "updated" would present a partial corpus as a good one.
                     run_status = "failed"
+                else:
+                    if failed_files:
+                        # A system error on any file leaves the corpus partial (#603).
+                        # Content outcomes (unsupported format, no text) are not counted.
+                        logger.error(
+                            "%d of %d files failed with a system error; "
+                            "recording the ingest run as failed",
+                            failed_files,
+                            len(files_to_add),
+                        )
+                        run_status = "failed"
             logger.info("Vectorstore update has been completed")
 
         logger.info(f"N Collection: {store.count()}")
