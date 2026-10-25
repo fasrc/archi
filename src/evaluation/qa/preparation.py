@@ -356,7 +356,13 @@ def prepare_dataset_item(
                     "Gold extraction for item %s failed shape validation (%s); "
                     "retrying once",
                     item.id,
-                    bounded_diagnostic(exc),
+                    # Same rule as the failure record below: a live item's
+                    # validation text can echo model output, so withhold it.
+                    (
+                        "detail withheld for a live item"
+                        if item.is_live
+                        else bounded_diagnostic(exc)
+                    ),
                 )
                 first_usage = getattr(extractor, "last_usage", None)
                 _gold_extraction_attempts = 2

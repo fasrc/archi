@@ -554,7 +554,7 @@ class _RaisingResolver:
         raise OracleResolutionError("evaluator unavailable", calls=())
 
 
-def _live_item(item_id):
+def _live_item(item_id, answer=None):
     recipe = parse_oracle_recipe(
         {
             "kind": "mcp",
@@ -571,7 +571,7 @@ def _live_item(item_id):
     return DatasetItem(
         id=item_id,
         question=f"Question {item_id}",
-        answer=None,
+        answer=answer,
         time_sensitive=True,
         category="category",
         answer_mode="direct_answer",
@@ -721,3 +721,24 @@ class TestGoldExtractionRetry:
         assert len(warnings) == 1
         assert "gold extraction for item retry9.atoms must be a list" in warnings[0]
         assert "Answer retry9" not in warnings[0]
+
+    def test_retry_warning_withholds_model_output_for_a_live_item(self, caplog):
+        valid_atoms = [{"id": "A1", "text": "answer", "required": True}]
+        extractor = _QueueExtractor(
+            [
+                {"atoms": valid_atoms, "capacity is 42 nodes": True},
+                {"atoms": valid_atoms},
+            ]
+        )
+
+        with caplog.at_level("WARNING", logger="src.evaluation.qa.preparation"):
+            record = prepare_dataset_item(
+                _live_item("retry10", answer={"capacity": 42}), extractor
+            )
+
+        assert record.status == "prepared"
+        assert record.gold_extraction_attempts == 2
+        warnings = [r.getMessage() for r in caplog.records]
+        assert len(warnings) == 1
+        assert "retry10" in warnings[0]
+        assert "capacity is 42 nodes" not in warnings[0]
