@@ -7,7 +7,7 @@
 
 ## 1. Run identity in the ingestion status (D1)
 
-- [ ] 1.1 In `tests/unit/test_ingestion_status_lock.py`, write the failing tests, watch them fail, then make them pass in `src/utils/ingestion_status.py` in the same commit. Tests (pass a fixed `now` seam that returns known aware UTC datetimes, so the asserted strings are exact):
+- [x] 1.1 In `tests/unit/test_ingestion_status_lock.py`, write the failing tests, watch them fail, then make them pass in `src/utils/ingestion_status.py` in the same commit. Tests (pass a fixed `now` seam that returns known aware UTC datetimes, so the asserted strings are exact):
       (a) before any run, `run_id`, `started_at`, and `finished_at` are present and `None`;
       (b) inside a fake `run_ingestion_fn` of `run_initial_ingestion_async`, the status has a UUID4 `run_id` (`uuid.UUID(run_id).version == 4`), `started_at` equal to the seam's time in `isoformat()`, and `finished_at` `None`;
       (c) after `completed`, `finished_at` is set, is not earlier than `started_at`, and `run_id` is unchanged;

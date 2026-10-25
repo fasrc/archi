@@ -16,6 +16,16 @@ import time
 import pytest
 
 
+def _fixed_now(times):
+    """A now() seam that yields each of `times` once, in order."""
+    iterator = iter(times)
+
+    def _now():
+        return next(iterator)
+
+    return _now
+
+
 def test_status_endpoint_responds_during_ingestion():
     """The status endpoint must return within 1s even while ingestion holds its lock."""
     from src.utils.ingestion_status import build_ingestion_helpers
@@ -861,3 +871,238 @@ def test_run_source_refresh_error_write_failure_does_not_mask_the_original_excep
         helpers["run_source_refresh"](
             "git", func, fake_update_vectorstore, fake_set_source_status
         )
+
+
+def test_initial_status_has_run_identity_keys_none():
+    """Before any run, run_id/started_at/finished_at are present and None."""
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock())
+    status = helpers["get_ingestion_status"]()
+
+    assert status["run_id"] is None
+    assert status["started_at"] is None
+    assert status["finished_at"] is None
+
+
+def test_run_initial_ingestion_sets_uuid4_run_id_and_started_at():
+    """Inside the run, run_id is a UUID4, started_at is the now() seam's time, finished_at is None."""
+    import uuid
+    from datetime import datetime, timezone
+
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    start = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    finish = datetime(2026, 1, 1, 0, 5, 0, tzinfo=timezone.utc)
+    now = _fixed_now([start, finish])
+    status_inside = {}
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        status_inside.update(helpers["get_ingestion_status"]())
+
+    helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock(), now=now)
+    helpers["run_initial_ingestion_async"]()
+
+    assert uuid.UUID(status_inside["run_id"]).version == 4
+    assert status_inside["started_at"] == start.isoformat()
+    assert status_inside["finished_at"] is None
+
+
+def test_run_initial_ingestion_sets_finished_at_on_completion():
+    """After completed, finished_at is set, not earlier than started_at, run_id unchanged."""
+    from datetime import datetime, timezone
+
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    start = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    finish = datetime(2026, 1, 1, 0, 5, 0, tzinfo=timezone.utc)
+    now = _fixed_now([start, finish])
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock(), now=now)
+    helpers["run_initial_ingestion_async"]()
+    status = helpers["get_ingestion_status"]()
+
+    assert status["run_id"] is not None
+    assert status["started_at"] == start.isoformat()
+    assert status["finished_at"] == finish.isoformat()
+    assert datetime.fromisoformat(status["finished_at"]) >= datetime.fromisoformat(
+        status["started_at"]
+    )
+
+
+def test_run_initial_ingestion_failure_sets_finished_at_and_error():
+    """After a failing run, state is error, error carries the message, finished_at is set."""
+    from datetime import datetime, timezone
+
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    start = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    finish = datetime(2026, 1, 1, 0, 5, 0, tzinfo=timezone.utc)
+    now = _fixed_now([start, finish])
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        raise RuntimeError("disk full")
+
+    helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock(), now=now)
+    helpers["run_initial_ingestion_async"]()
+    status = helpers["get_ingestion_status"]()
+
+    assert status["state"] == "error"
+    assert "disk full" in status["error"]
+    assert status["finished_at"] == finish.isoformat()
+
+
+def test_progress_callback_step_update_keeps_run_identity():
+    """A progress_callback step update inside the run keeps run_id/started_at; finished_at stays None."""
+    from datetime import datetime, timezone
+
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    start = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    finish = datetime(2026, 1, 1, 0, 5, 0, tzinfo=timezone.utc)
+    now = _fixed_now([start, finish])
+    status_during_step = {}
+
+    def fake_run_ingestion(progress_callback=None, **_kwargs):
+        progress_callback("embedding")
+        status_during_step.update(helpers["get_ingestion_status"]())
+
+    helpers = build_ingestion_helpers(fake_run_ingestion, threading.RLock(), now=now)
+    helpers["run_initial_ingestion_async"]()
+
+    assert status_during_step["step"] == "embedding"
+    assert status_during_step["run_id"] is not None
+    assert status_during_step["started_at"] == start.isoformat()
+    assert status_during_step["finished_at"] is None
+
+
+def test_second_run_gets_a_different_run_id():
+    """A first run completes, then a second run starts: the two run_ids differ."""
+    from datetime import datetime, timezone
+
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    start1 = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    finish1 = datetime(2026, 1, 1, 0, 5, 0, tzinfo=timezone.utc)
+    start2 = datetime(2026, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
+    finish2 = datetime(2026, 1, 1, 1, 5, 0, tzinfo=timezone.utc)
+    now = _fixed_now([start1, finish1, start2, finish2])
+
+    helpers = build_ingestion_helpers(lambda **_: None, threading.RLock(), now=now)
+    helpers["run_initial_ingestion_async"]()
+    first_run_id = helpers["get_ingestion_status"]()["run_id"]
+
+    helpers["run_initial_ingestion_async"]()
+    second_status = helpers["get_ingestion_status"]()
+
+    assert second_status["run_id"] != first_run_id
+    assert second_status["started_at"] == start2.isoformat()
+
+
+def test_queued_run_keeps_the_first_runs_identity_until_it_completes():
+    """A run_tracked run that queues behind a running run and gets the lock after that
+    run's completed keeps the first run's run_id and started_at; finished_at stays
+    None until the queued run publishes completed."""
+    from datetime import datetime, timezone
+
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    start = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    finish = datetime(2026, 1, 1, 0, 5, 0, tzinfo=timezone.utc)
+    now = _fixed_now([start, finish])
+
+    lock = _RecordingLock()
+    helpers = build_ingestion_helpers(lambda **_: None, lock, now=now)
+    first_inside = threading.Event()
+    release_first = threading.Event()
+    at_release = []
+
+    def first_fn():
+        first_inside.set()
+        release_first.wait(timeout=5)
+
+    first = threading.Thread(
+        target=lambda: helpers["run_tracked"]("scheduled:git", first_fn),
+        daemon=True,
+    )
+    first.start()
+    assert first_inside.wait(timeout=5)
+
+    second = threading.Thread(
+        target=lambda: helpers["run_tracked"]("upload", lambda: None), daemon=True
+    )
+    second.start()
+    time.sleep(0.2)
+
+    lock.on_release = lambda: at_release.append(helpers["get_ingestion_status"]())
+    release_first.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert at_release[0]["state"] == "running"
+    assert at_release[0]["started_at"] == start.isoformat()
+    assert at_release[0]["finished_at"] is None
+    first_run_id = at_release[0]["run_id"]
+
+    final_status = helpers["get_ingestion_status"]()
+    assert final_status["state"] == "completed"
+    assert final_status["run_id"] == first_run_id
+    assert final_status["started_at"] == start.isoformat()
+    assert final_status["finished_at"] == finish.isoformat()
+
+
+def test_queued_run_gets_new_identity_after_a_published_error():
+    """A run publishes error while another run is queued; when the queued run gets
+    the lock, it has a new run_id and a new started_at, and finished_at is None."""
+    from datetime import datetime, timezone
+
+    from src.utils.ingestion_status import build_ingestion_helpers
+
+    start1 = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    finish1 = datetime(2026, 1, 1, 0, 5, 0, tzinfo=timezone.utc)
+    start2 = datetime(2026, 1, 1, 0, 6, 0, tzinfo=timezone.utc)
+    finish2 = datetime(2026, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
+    now = _fixed_now([start1, finish1, start2, finish2])
+
+    lock = _RecordingLock()
+    helpers = build_ingestion_helpers(lambda **_: None, lock, now=now)
+    first_inside = threading.Event()
+    release_first = threading.Event()
+    at_release = []
+    second_inside = {}
+
+    def first_fn():
+        first_inside.set()
+        release_first.wait(timeout=5)
+        raise RuntimeError("embed down")
+
+    def run_first():
+        with pytest.raises(RuntimeError):
+            helpers["run_tracked"]("scheduled:git", first_fn)
+
+    first = threading.Thread(target=run_first, daemon=True)
+    first.start()
+    assert first_inside.wait(timeout=5)
+
+    def second_fn():
+        second_inside.update(helpers["get_ingestion_status"]())
+
+    second = threading.Thread(
+        target=lambda: helpers["run_tracked"]("upload", second_fn), daemon=True
+    )
+    second.start()
+    time.sleep(0.2)
+
+    lock.on_release = lambda: at_release.append(helpers["get_ingestion_status"]())
+    release_first.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert at_release[0]["state"] == "error"
+    assert at_release[0]["started_at"] == start1.isoformat()
+    assert at_release[0]["finished_at"] == finish1.isoformat()
+    first_run_id = at_release[0]["run_id"]
+
+    assert second_inside["run_id"] != first_run_id
+    assert second_inside["started_at"] == start2.isoformat()
+    assert second_inside["finished_at"] is None
