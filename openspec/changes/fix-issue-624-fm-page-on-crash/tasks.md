@@ -58,9 +58,24 @@ write the pin after the ledger row. No task.
 
 - [x] 3.1 In `docs/docs/proposals/feature-matrix-campaign-2026.md`, make 3 edits in the same plain style. (a) In the "**Paging (#504).**" paragraph, insert new sentences directly AFTER "The exit code (2) and the terminal message do not change." (about line 181), not before it, because that sentence is about refusals only. Say: after long work starts (the QA run in `qa_arm.sh`, the artifact found in `archive_run.sh`), any other failure exit also pages once ([#624](https://github.com/fasrc/archi/issues/624)); that page's subject ends with `failed after long work (exit N)` and keeps the exit status N; its body names the wrapper and the exit status, and then the refusal message, or else the `file:line` and the command that failed; a SIGHUP, SIGINT or SIGTERM to the wrapper also pages once, and the wrapper then ends by that signal, so a chain that runs it stops too; a refusal that already paged does not page again. (b) In the same paragraph, replace "comes after long work but does not page either; it exits 2 with no ledger row." (it spans lines 184-185) with a sentence that says this refusal comes after long work, so it pages once through that failure page, with the refusal in the body (#624), and that it still exits 2 with no ledger row. (c) In the `qa_arm.sh` step that reads `summary.json` (about line 294), replace "and does **not** page" with "and pages once (see Paging above)", and keep the #434 link. Then confirm `grep -n "not\*\* page\|page either" docs/docs/proposals/feature-matrix-campaign-2026.md` prints nothing (before the edits it prints lines 185 and 295). If `mkdocs` is installed, run `mkdocs build --config-file docs/mkdocs.yml --strict --site-dir /tmp/mkdocs-624` and confirm it prints no WARNING; if it is not installed, say so in the commit body. Gate green, commit (`docs(#624): name the failure page in the feature-matrix runbook`).
 
+## 3b. Post-PR verification findings (wrap-up, 2026-10-25)
+
+The ultracode check over PR #782 at `1687614b` confirmed 3 gaps in the test proof. The code
+at the head is correct; each gap lets a later regression pass the gate. Do these 3 boxes in
+order (3.2, 3.3, 3.4), before 4.1. Wrap-up ran each block below in a scratch copy of
+`1687614b`: with all three tasks applied, `119 passed, 0 failed` (also with the self-test
+run under `trap '' INT`), and each red step below failed exactly the named checks. Each
+red step is a TEMPORARY change to `qa_arm.sh`, `archive_run.sh` or `lib.sh`: put it back
+before you commit, and confirm that `git diff -- scripts/benchmarking/feature_matrix/qa_arm.sh scripts/benchmarking/feature_matrix/archive_run.sh scripts/benchmarking/feature_matrix/lib.sh`
+prints nothing. Section 0's "Do not edit `qa_arm.sh`" still holds for the commit.
+
+- [ ] 3.2 Red then green: a precondition before each arm point never pages (spec: "A refusal before the arm point MUST NOT page"; finding 1). Before this task, only checks 64 and 107 cover this, both in `archive_run.sh` arm mode. Add checks 108-111 from appendix block D directly above the final `printf '\n%d passed, %d failed\n'` line, and add their 4 header lines from block D (108-111 only) after the `#   107.` line. Self-test `118 passed, 0 failed`. Then show that each new check guards its arm point, one at a time, and put each line back: (a) in `qa_arm.sh`, move `fm_arm_page_on_failure "stack $STACK arm $ARM"` to directly above the arm-mode line `[ ! -e "$OUT_DIR" ] || fm_die "output dir exists: ...` → `117 passed, 1 failed` (109); (b) move `  fm_arm_page_on_failure "stack $STACK arm $STEM"` to directly above `  [ -n "$SPEC" ] || fm_die "arm '$STEM' is not in the sweep lock $LOCK"` → `117 passed, 1 failed` (110); (c) in `archive_run.sh`, move `  fm_arm_page_on_failure "stack $STACK sweep"` to directly above `  fm_require_sweep_lock "$STACK" --stamped` → `117 passed, 1 failed` (111). Copy the three `not ok` lines into the commit body. Gate green, commit (`test(#624): prove that no precondition pages, at every arm point`).
+- [ ] 3.3 Red then green: checks 102 and 106 pin the line number (spec scenario "Ledger append fails in qa_arm": the body names `lib.sh`, the line, and the command; design D2; finding 2). Now `lib.sh:[0-9]*:` also matches an empty line number or the caller's line. Directly above the `# 102:` comment line, add the 2 lines of appendix block E1. In check 102, replace the line `   && grep -q "qa_arm.sh exited 1 at lib.sh:[0-9]*: FM_LEDGER=" "$T/mail.calls" \` with the first line of block E2; in check 106, replace `   && grep -q "archive_run.sh exited 1 at lib.sh:[0-9]*: FM_LEDGER=" "$T/mail.calls" \` with its second line. Self-test `118 passed, 0 failed`. Red: temporarily change the `ERR` trap in `lib.sh` from `fm__failed_line="${BASH_SOURCE[0]##*/}:$LINENO"` to `fm__failed_line="${BASH_SOURCE[0]##*/}:${BASH_LINENO[0]}"` → `116 passed, 2 failed` (102 and 106; before this task the same change gave `114 passed, 0 failed`). Put it back. Gate green, commit (`test(#624): pin the lib.sh line in the failure page checks`).
+- [ ] 3.4 Red then green: a SIGINT check (spec requirement: a SIGHUP, SIGINT or SIGTERM MUST page once and end the wrapper by that signal; finding 3). In the launcher heredoc (`cat > "$T/bin/signal-launch.py"`), replace the `p = subprocess.Popen(...)` line with the 2 lines of appendix block F1: the child starts with SIGINT at its default, so the check holds even when the self-test runs with SIGINT ignored. In the 104-105 loop, replace `for SIGCASE in "104 TERM 143 -15" "105 HUP 129 -1"; do` with block F2. Add the `#   112.` header line from block D after the `#   111.` line. Self-test `119 passed, 0 failed`. Red: temporarily delete the line `  trap 'fm__page_on_signal 130 INT' INT` in `lib.sh` → `118 passed, 1 failed` with `not ok - qa_arm SIGINT page (112: launcher=-2 clean: )`. Put it back. In `design.md` D6, replace the sentence "SIGINT has no check: a background job of a non-interactive shell starts with SIGINT ignored, and bash cannot trap a signal that was ignored at entry." with: "Check 112 sends SIGINT the same way. A background job of a non-interactive shell starts with SIGINT ignored, and bash cannot trap a signal that was ignored at entry, so the launcher sets SIGINT to the default in the child (`preexec_fn`). Measured: 119 passed with the self-test run under `trap '' INT`." Run `openspec validate fix-issue-624-fm-page-on-crash --strict` if the CLI is there. Gate green, commit (`test(#624): check that a SIGINT pages and ends the wrapper`).
+
 ## 4. Verify, push, and open the PR
 
-- [ ] 4.1 Run `timeout 600 bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh` and confirm `114 passed, 0 failed`. Run `bash scripts/gate.sh` on the branch tip and confirm it is green. If `command -v openspec` finds the CLI, run `openspec validate fix-issue-624-fm-page-on-crash --strict` and confirm it passes; if not, skip it (Loop 1 validated the change on the host). Run `git diff origin/dev...HEAD --stat -- docs/` (three dots: only this branch's own changes) and confirm it lists ONLY `docs/docs/proposals/feature-matrix-campaign-2026.md`; remove any other file under `docs/` that this branch added or changed. Tick this box, commit the tick through the hook, then confirm `git status --porcelain` is empty. Then push with `git push -u origin fix/issue-624-fm-page-on-crash`. Write the PR body to a file OUTSIDE the repository (for example `/tmp/pr-body-624.md`; never under `docs/`), then run `gh pr create --repo fasrc/archi --base dev --head fix/issue-624-fm-page-on-crash --title "fix(feature-matrix): page on any failure after long work (#624)" --body-file /tmp/pr-body-624.md`. In the PR **body** (not the title) put `Closes #624` on its own line; list each acceptance criterion of #624 with the check that proves it (98-107, plus the existing paging checks 60-72); give the self-test count (67 at `7730d086`, 108 after the dev merge, 114 at the tip); state the scope change (the pin work was done by #661, so this PR is paging only); state the behavior changes (the "scored nothing" refusal now pages, design D5; a signal to the wrapper pages and then ends it by that signal, design D7; the page body carries the refusal or the failed `file:line` and command, design D2); state the deviations from the issue text (no stderr capture, the `fm_die` message instead, design D2; a Python launcher instead of `timeout` for the signal checks, design D6; no SIGINT check, design D6; the sweep-mode `archive_run.sh` arm point has no check, design D3); and list design "Risks / Trade-offs". No `Co-Authored-By` trailer. Do not merge.
+- [ ] 4.1 Run `timeout 600 bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh` and confirm `119 passed, 0 failed`. Run `bash scripts/gate.sh` on the branch tip and confirm it is green. If `command -v openspec` finds the CLI, run `openspec validate fix-issue-624-fm-page-on-crash --strict` and confirm it passes; if not, skip it (Loop 1 validated the change on the host). Run `git diff origin/dev...HEAD --stat -- docs/` (three dots: only this branch's own changes) and confirm it lists ONLY `docs/docs/proposals/feature-matrix-campaign-2026.md`; remove any other file under `docs/` that this branch added or changed. Tick this box, commit the tick through the hook, then confirm `git status --porcelain` is empty. Then push with `git push -u origin fix/issue-624-fm-page-on-crash`. PR #782 is already open on this branch (the harness opened it), so do NOT run `gh pr create`. Write the PR body to a file OUTSIDE the repository (for example `/tmp/pr-body-624.md`; never under `docs/`), then run `gh pr edit 782 --repo fasrc/archi --title "fix(feature-matrix): page on any failure after long work (#624)" --body-file /tmp/pr-body-624.md`. In the PR **body** (not the title) put `Closes #624` on its own line; list each acceptance criterion of #624 with the check that proves it (98-112, plus the existing paging checks 60-72); give the self-test count (67 at `7730d086`, 108 after the dev merge, 119 at the tip); state the scope change (the pin work was done by #661, so this PR is paging only); state the behavior changes (the "scored nothing" refusal now pages, design D5; a signal to the wrapper pages and then ends it by that signal, design D7; the page body carries the refusal or the failed `file:line` and command, design D2); state the deviations from the issue text (no stderr capture, the `fm_die` message instead, design D2; a Python launcher instead of `timeout` for the signal checks, design D6; the sweep-mode `archive_run.sh` arm point has no failure check, only the precondition check 111, design D3); list design "Risks / Trade-offs"; and list the 3 post-PR verification findings with the task that fixed each (3.2-3.4). No `Co-Authored-By` trailer. Do not merge.
 
 ## Appendix: check bodies (run red and green by Loop 1)
 
@@ -169,4 +184,75 @@ run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-bas
 run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-noart
 if [ "$RC" = 2 ] && grep -q "nothing archived for stack fm-noart" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
   ok "no artifact with paging on sends nothing"; else notok "no-artifact no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+```
+
+### D. Checks 108-111 and the header lines 108-112 (tasks 3.2 and 3.4)
+
+Header lines (108-111 in task 3.2; 112 in task 3.4):
+
+```bash
+#   108. a missing agent spec in qa_arm.sh arm mode with paging on sends nothing (a precondition)
+#   109. an existing output dir in qa_arm.sh arm mode with paging on sends nothing (the last precondition)
+#   110. an arm missing from the sweep lock in qa_arm.sh --sweep with paging on sends nothing
+#   111. archive_run.sh --sweep with no sweep lock and paging on sends nothing
+#   112. a SIGINT to qa_arm.sh's process group during the QA run pages once, and the wrapper dies of SIGINT (in the 104-105 loop)
+```
+
+Check bodies (task 3.2):
+
+```bash
+# 108: a precondition refusal in qa_arm.sh arm mode (agent spec not found) with paging on sends nothing
+: > "$T/mail.calls"
+run env FM_AGENT_SPEC="$T/cfg/no-such-spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+if [ "$RC" = 2 ] && grep -q "agent spec not found" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "a missing agent spec in qa_arm.sh with paging on sends nothing"; else notok "qa_arm missing-spec no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 109: the last precondition before the qa_arm.sh arm point (output dir exists) with paging on sends nothing
+: > "$T/mail.calls"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml" --run 1
+if [ "$RC" = 2 ] && grep -q "output dir exists" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "an existing output dir in qa_arm.sh with paging on sends nothing"; else notok "qa_arm outdir-exists no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 110: an arm missing from the sweep lock in qa_arm.sh --sweep with paging on sends nothing
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm no-such-arm
+if [ "$RC" = 2 ] && grep -q "not in the sweep lock" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "an arm missing from the sweep lock with paging on sends nothing"; else notok "qa_arm sweep bad-arm no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 111: archive_run.sh --sweep on a stack with no sweep lock, with paging on, sends nothing
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" --sweep "$SW/configs" --stack r0-noart --run 1
+if [ "$RC" = 2 ] && grep -q "no sweep lock" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "archive_run.sh --sweep with no sweep lock and paging on sends nothing"; else notok "archive sweep no-lock no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+```
+
+### E. Line-number pin (task 3.3)
+
+E1 (directly above the `# 102:` comment line):
+
+```bash
+# The line of the ledger-append command in lib.sh; checks 102 and 106 expect it in the page body.
+LEDGER_LINE="$(grep -n 'FM_LEDGER="\$ledger" FM_ENTRY' "$HERE/lib.sh" | cut -d: -f1)"
+```
+
+E2 (line 1 replaces check 102's `lib.sh:[0-9]*:` line; line 2 replaces check 106's):
+
+```bash
+   && [[ "$LEDGER_LINE" =~ ^[0-9]+$ ]] && grep -q "qa_arm.sh exited 1 at lib.sh:$LEDGER_LINE: FM_LEDGER=" "$T/mail.calls" \
+   && [[ "$LEDGER_LINE" =~ ^[0-9]+$ ]] && grep -q "archive_run.sh exited 1 at lib.sh:$LEDGER_LINE: FM_LEDGER=" "$T/mail.calls" \
+```
+
+### F. SIGINT (task 3.4)
+
+F1 (replaces the `p = subprocess.Popen(...)` line in the launcher heredoc):
+
+```python
+p = subprocess.Popen(cmd, start_new_session=True, stdout=open(out, "w"), stderr=open(err, "w"),
+                     preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+```
+
+F2 (replaces the 104-105 loop's `for SIGCASE ...` line):
+
+```bash
+for SIGCASE in "104 TERM 143 -15" "105 HUP 129 -1" "112 INT 130 -2"; do
 ```
