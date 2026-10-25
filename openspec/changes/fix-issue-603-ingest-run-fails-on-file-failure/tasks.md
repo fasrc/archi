@@ -108,7 +108,7 @@
 
 ## 3. Docs
 
-- [ ] 3.1 In `docs/docs/services.md`, add the two sentences of design D5 at the end of the
+- [x] 3.1 In `docs/docs/services.md`, add the two sentences of design D5 at the end of the
       bullet that starts with `**⚠ the most recent ingest attempt failed at …**`, and
       change nothing else. Run `bash scripts/gate.sh` in the foreground and commit when it
       is green (message: `document when an ingest run is failed (#603)`).
