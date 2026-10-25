@@ -18,9 +18,10 @@ from src.utils.llm_usage import phase_usage_totals
 
 
 class _EvaluatorFactory:
-    def __init__(self, not_mentioned_questions=None):
+    def __init__(self, not_mentioned_questions=None, shape_violation_questions=None):
         self.calls = Counter()
         self.not_mentioned_questions = set(not_mentioned_questions or [])
+        self.shape_violation_questions = set(shape_violation_questions or [])
 
     def __call__(self, profile):
         factory = self
@@ -28,6 +29,8 @@ class _EvaluatorFactory:
         class Evaluator:
             def extract_gold(self, question, answer):
                 factory.calls["gold"] += 1
+                if question in factory.shape_violation_questions:
+                    return {"atoms": "not a list"}
                 return {
                     "atoms": [
                         {"id": "required", "text": answer, "required": True},
@@ -644,6 +647,56 @@ def test_failure_accounting_preserves_slots_and_denominators(
     assert summary["quality_accounted_attempts"] == 2
     assert summary["overall_attempt_pass_rate"] == 0.5
     assert summary["item_macro_exclusion_count"] == 1
+
+
+def test_items_total_and_scored_items_report_a_preparation_failure(
+    agent_inputs, monkeypatch, tmp_path
+):
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "inferred",
+                    "question": "inferred question",
+                    "answer": "expected",
+                    "time_sensitive": False,
+                },
+                {
+                    "id": "supplied",
+                    "question": "supplied question",
+                    "answer": "expected",
+                    "time_sensitive": False,
+                    "expected_atoms": [
+                        {"id": "required", "text": "expected", "required": True}
+                    ],
+                },
+                {
+                    "id": "bad",
+                    "question": "bad question",
+                    "answer": "expected",
+                    "time_sensitive": False,
+                },
+            ]
+        )
+    )
+    evaluator = _EvaluatorFactory(shape_violation_questions={"bad question"})
+    agent = _AgentFactory()
+    run_dir = tmp_path / "run"
+
+    monkeypatch.setattr(workflow_module, "ArchiAgentRuntime", agent)
+    monkeypatch.setattr(workflow_module, "LangChainEvaluatorRuntime", evaluator)
+    QAWorkflow().composite(
+        dataset, tmp_path / "agent.yaml", tmp_path / "agent.md", run_dir, attempts=1
+    )
+
+    summary = read_json(run_dir / "summary.json")
+    assert summary["item_lifecycle_counts"]["preparation_failed"] == 1
+    assert summary["items_total"] == 3
+    assert summary["scored_items"] == 2
+
+    report = (run_dir / "report.md").read_text()
+    assert "- Scored items: `2` / items: `3`" in report
 
 
 def test_run_persists_agent_duration_for_success_and_failure(

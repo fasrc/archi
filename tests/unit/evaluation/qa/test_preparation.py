@@ -2,6 +2,7 @@
 import pytest
 
 from src.evaluation.qa.artifacts import write_jsonl
+from src.evaluation.qa.oracle import OracleResolutionError, parse_oracle_recipe
 from src.evaluation.qa.preparation import (
     PreparationRecord,
     iter_preparation_records,
@@ -10,7 +11,11 @@ from src.evaluation.qa.preparation import (
     prepare_dataset_items,
     preparation_record_from_dict,
 )
-from src.evaluation.qa.validation import Atom, DatasetItem
+from src.evaluation.qa.validation import (
+    Atom,
+    DatasetItem,
+    DatasetSchemaVersion,
+)
 
 # isort: on
 
@@ -523,3 +528,217 @@ class TestGoldExtractionAttempts:
         loaded = preparation_record_from_dict(_failed_row("ga5"))
 
         assert loaded.gold_extraction_attempts is None
+
+
+class _QueueExtractor:
+    """Returns one queued result (or raises it, if it is an exception) per call."""
+
+    def __init__(self, results, usages=None):
+        self._results = list(results)
+        self._usages = list(usages) if usages is not None else None
+        self.calls = 0
+        self.last_usage = None
+
+    def extract_gold(self, question, answer):
+        result = self._results[self.calls]
+        if self._usages is not None:
+            self.last_usage = self._usages[self.calls]
+        self.calls += 1
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+
+class _RaisingResolver:
+    def resolve(self, recipe):
+        raise OracleResolutionError("evaluator unavailable", calls=())
+
+
+def _live_item(item_id, answer=None):
+    recipe = parse_oracle_recipe(
+        {
+            "kind": "mcp",
+            "calls": [
+                {
+                    "id": "capacity",
+                    "server": "fixture",
+                    "tool": "current_capacity",
+                    "arguments": {},
+                }
+            ],
+        }
+    )
+    return DatasetItem(
+        id=item_id,
+        question=f"Question {item_id}",
+        answer=answer,
+        time_sensitive=True,
+        category="category",
+        answer_mode="direct_answer",
+        answer_source="source",
+        expected_atoms=None,
+        oracle=recipe,
+        schema_version=DatasetSchemaVersion.V2,
+    )
+
+
+_RETRY_FIRST_USAGE = {
+    "input_tokens": 100,
+    "output_tokens": 20,
+    "calls": 1,
+    "unreported_calls": 0,
+    "by_model": [
+        {
+            "provider": "test",
+            "model": "m",
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "calls": 1,
+            "unreported_calls": 0,
+        }
+    ],
+}
+_RETRY_SECOND_USAGE = {
+    "input_tokens": 50,
+    "output_tokens": 10,
+    "calls": 1,
+    "unreported_calls": 0,
+    "by_model": [
+        {
+            "provider": "test",
+            "model": "m",
+            "input_tokens": 50,
+            "output_tokens": 10,
+            "calls": 1,
+            "unreported_calls": 0,
+        }
+    ],
+}
+
+
+class TestGoldExtractionRetry:
+    def test_retries_once_after_a_shape_violation_then_succeeds(self):
+        extractor = _QueueExtractor(
+            [
+                {"atoms": "not a list"},
+                {"atoms": [{"id": "A1", "text": "answer", "required": True}]},
+            ]
+        )
+
+        record = prepare_dataset_item(_item("retry1"), extractor)
+
+        assert record.status == "prepared"
+        assert record.atom_source == "inferred"
+        assert record.gold_extraction_attempts == 2
+        assert extractor.calls == 2
+
+    def test_two_shape_violations_fail_preparation(self):
+        extractor = _QueueExtractor(
+            [{"atoms": "not a list"}, {"atoms": "still not a list"}]
+        )
+
+        record = prepare_dataset_item(_item("retry2"), extractor)
+
+        assert record.status == "preparation_failed"
+        assert record.gold_extraction_attempts == 2
+        assert extractor.calls == 2
+
+    def test_extractor_raise_on_first_call_does_not_retry(self):
+        extractor = _QueueExtractor([RuntimeError("extraction failed")])
+
+        record = prepare_dataset_item(_item("retry3"), extractor)
+
+        assert record.status == "preparation_failed"
+        assert extractor.calls == 1
+        assert "gold_extraction_attempts" not in record.to_dict()
+
+    def test_extractor_value_error_on_first_call_does_not_retry(self):
+        extractor = _QueueExtractor([ValueError("bad provider response")])
+
+        record = prepare_dataset_item(_item("retry4"), extractor)
+
+        assert record.status == "preparation_failed"
+        assert extractor.calls == 1
+
+    def test_retry_usage_merges_both_calls(self):
+        extractor = _QueueExtractor(
+            [
+                {"atoms": "not a list"},
+                {"atoms": [{"id": "A1", "text": "answer", "required": True}]},
+            ],
+            usages=[_RETRY_FIRST_USAGE, _RETRY_SECOND_USAGE],
+        )
+
+        record = prepare_dataset_item(_item("retry5"), extractor)
+
+        assert record.usage["input_tokens"] == 150
+        assert record.usage["calls"] == 2
+
+    def test_live_resolver_error_does_not_call_extractor(self):
+        extractor = _QueueExtractor([])
+
+        record = prepare_dataset_item(
+            _live_item("retry6"), extractor, _RaisingResolver()
+        )
+
+        assert record.status == "preparation_failed"
+        assert extractor.calls == 0
+        assert "gold_extraction_attempts" not in record.to_dict()
+
+    def test_valid_first_result_calls_extractor_once(self):
+        extractor = _QueueExtractor(
+            [{"atoms": [{"id": "A1", "text": "answer", "required": True}]}]
+        )
+
+        record = prepare_dataset_item(_item("retry7"), extractor)
+
+        assert extractor.calls == 1
+        assert "gold_extraction_attempts" not in record.to_dict()
+
+    def test_retry_that_raises_keeps_attempts_and_both_usages(self):
+        extractor = _QueueExtractor(
+            [{"atoms": "not a list"}, TimeoutError("provider timeout")],
+            usages=[_RETRY_FIRST_USAGE, _RETRY_SECOND_USAGE],
+        )
+
+        record = prepare_dataset_item(_item("retry8"), extractor)
+
+        assert record.status == "preparation_failed"
+        assert extractor.calls == 2
+        assert record.gold_extraction_attempts == 2
+        assert record.usage["input_tokens"] == 150
+        assert record.usage["calls"] == 2
+
+    def test_retry_warning_names_the_first_validation_error(self, caplog):
+        extractor = _QueueExtractor(
+            [{"atoms": "not a list"}, TimeoutError("provider timeout")]
+        )
+
+        with caplog.at_level("WARNING", logger="src.evaluation.qa.preparation"):
+            prepare_dataset_item(_item("retry9"), extractor)
+
+        warnings = [r.getMessage() for r in caplog.records]
+        assert len(warnings) == 1
+        assert "gold extraction for item retry9.atoms must be a list" in warnings[0]
+        assert "Answer retry9" not in warnings[0]
+
+    def test_retry_warning_withholds_model_output_for_a_live_item(self, caplog):
+        valid_atoms = [{"id": "A1", "text": "answer", "required": True}]
+        extractor = _QueueExtractor(
+            [
+                {"atoms": valid_atoms, "capacity is 42 nodes": True},
+                {"atoms": valid_atoms},
+            ]
+        )
+
+        with caplog.at_level("WARNING", logger="src.evaluation.qa.preparation"):
+            record = prepare_dataset_item(
+                _live_item("retry10", answer={"capacity": 42}), extractor
+            )
+
+        assert record.status == "prepared"
+        assert record.gold_extraction_attempts == 2
+        warnings = [r.getMessage() for r in caplog.records]
+        assert len(warnings) == 1
+        assert "retry10" in warnings[0]
+        assert "capacity is 42 nodes" not in warnings[0]
