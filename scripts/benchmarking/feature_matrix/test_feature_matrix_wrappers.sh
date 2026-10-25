@@ -103,6 +103,8 @@
 #   99. a fingerprint-read failure after qa in qa_arm.sh --sweep pages exactly once
 #   100. a qa-score failure in qa_arm.sh --sweep exits non-zero and pages exactly once
 #   101. with FM_PAGE_MAIL_TO empty the qa-score failure sends no mail and exits with the same status
+#   102. a failed ledger append in qa_arm.sh arm mode pages once and names the failed command and its file:line
+#   103. a QA run that scored nothing pages once with the refusal in the body
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -1261,6 +1263,28 @@ STATUS101=$RC; rm -f "$T/qa-score-fail"
 if [ "$STATUS101" = "$STATUS100" ] && [ ! -s "$T/mail.calls" ] \
    && [ "$(ledger_rows)" = "$BEFORE" ]; then
   ok "with FM_PAGE_MAIL_TO empty the score failure sends no mail and exits with the same status"; else notok "qa_arm sweep trap on score fail no-page (rc=$STATUS101 vs $STATUS100: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 102: a failed ledger append in qa_arm.sh arm mode pages once, and the body names the failed command and its file:line
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+FM_PYTHON="$T/bin/python-ledger-fail"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+FM_PYTHON="$REAL_PY"
+if [ "$RC" = 1 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit 1)" "$T/mail.calls" \
+   && grep -q "qa_arm.sh exited 1 at lib.sh:[0-9]*: FM_LEDGER=" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a failed ledger append in qa_arm.sh arm mode pages once and names the failed command"; else notok "qa_arm ledger-fail page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 103: a QA run that scored nothing pages once through the failure trap, and the body carries the refusal
+printf '{"attempt_lifecycle_counts": {"scored": 0, "execution_failed": 0, "evaluation_failed": 0}}' > "$T/qa-summary"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/qa-summary"
+if [ "$RC" = 2 ] && grep -q 'QA run scored nothing' "$T/stderr" && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit 2)" "$T/mail.calls" \
+   && grep -q "qa_arm.sh exited 2: feature_matrix: QA run scored nothing" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a QA run that scored nothing pages once with the refusal in the body"; else notok "qa_arm scored-0 page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

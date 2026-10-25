@@ -27,10 +27,11 @@ FM_PAGE_MAIL_TO="${FM_PAGE_MAIL_TO:-}"
 FM_MAIL="${FM_MAIL:-mail}"
 FM_MAIL_TIMEOUT="${FM_MAIL_TIMEOUT:-60}"
 FM_PAGED=0
+FM_DIE_MSG=""
 
 fm_require_run_number() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] || fm_die "run number must be a positive integer, got '${1:-}'"; }
 
-fm_die() { printf 'feature_matrix: %s\n' "$*" >&2; exit 2; }
+fm_die() { FM_DIE_MSG="$*"; printf 'feature_matrix: %s\n' "$*" >&2; exit 2; }
 fm_log() { printf '==> %s\n' "$*"; }
 
 # Pages the operator by mail when a run stops after long work at a point that needs a
@@ -90,13 +91,14 @@ fm_die_paged() { # $1 = subject context (e.g. "stack fm-01 arm 01"), $2 = messag
 
 # Arm a page-on-failure trap for a wrapper that has just started long work. Call this
 # directly before the long-running command. The EXIT trap pages once on any non-zero exit
-# that did not already page (FM_PAGED=1); HUP/INT/TERM each page and re-exit with the
+# that did not already page (FM_PAGED=1); the page body carries the fm_die message or the
+# failed command with its file:line. HUP/INT/TERM each page and re-exit with the
 # conventional status (129/130/143). set -E makes the ERR trap fire inside functions so
 # the failed command and line are recorded for the page body.
 fm_arm_page_on_failure() { # $1 = subject context, e.g. "stack fm-00 arm 00"
   FM_PAGE_CONTEXT="$1"
   set -E
-  trap 'fm__failed_cmd="$BASH_COMMAND"; fm__failed_line="$LINENO"' ERR
+  trap 'fm__failed_cmd="$BASH_COMMAND"; fm__failed_line="${BASH_SOURCE[0]##*/}:$LINENO"' ERR
   trap 'fm__page_on_exit $?' EXIT
   trap 'fm__page_on_signal 129' HUP
   trap 'fm__page_on_signal 130' INT
@@ -109,8 +111,13 @@ fm__page_on_signal() { # $1 = 128 + the signal number
 }
 fm__page_on_exit() { # $1 = the exit status
   [ "$1" != 0 ] && [ "$FM_PAGED" != 1 ] || return 0
-  fm_page "$FM_PAGE_CONTEXT: failed after long work (exit $1)" \
-    "$(basename "$0") exited $1 at line ${fm__failed_line:-?}: ${fm__failed_cmd:-unknown}"
+  local body
+  if [ -n "$FM_DIE_MSG" ]; then
+    body="$(basename "$0") exited $1: feature_matrix: $FM_DIE_MSG"
+  else
+    body="$(basename "$0") exited $1 at ${fm__failed_line:-?}: ${fm__failed_cmd:-unknown}"
+  fi
+  fm_page "$FM_PAGE_CONTEXT: failed after long work (exit $1)" "$body"
 }
 
 # Arm labels are two digits with an optional letter: 00, 05a. Anything else is refused
