@@ -427,6 +427,113 @@ def test_embedding_progress_callback_exception_does_not_abort(monkeypatch, caplo
     )
 
 
+def test_add_to_postgres_returns_zero_for_an_empty_batch(monkeypatch):
+    manager, _, _ = _setup_flat_manager(monkeypatch)
+    assert manager._add_to_postgres({}) == 0
+
+
+def test_add_to_postgres_returns_zero_when_every_file_is_stored(monkeypatch):
+    manager, _, _ = _setup_flat_manager(monkeypatch)
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    assert manager._add_to_postgres(files) == 0
+
+
+def test_add_to_postgres_counts_a_loader_error(monkeypatch):
+    call_count = [0]
+
+    def loader_fn(path):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("load boom")
+        split_doc = SimpleNamespace(page_content="hello", metadata={})
+        return SimpleNamespace(load=lambda: [split_doc])
+
+    manager, _, catalog = _setup_flat_manager(monkeypatch, loader_fn=loader_fn)
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result = manager._add_to_postgres(files)
+    assert result == 1
+    catalog.update_ingestion_status.assert_any_call("hash-0", "failed", "load boom")
+
+
+def test_add_to_postgres_counts_a_load_error(monkeypatch):
+    call_count = [0]
+
+    def loader_fn(path):
+        call_count[0] += 1
+        if call_count[0] == 1:
+
+            def _raising_load():
+                raise RuntimeError("read boom")
+
+            return SimpleNamespace(load=_raising_load)
+        split_doc = SimpleNamespace(page_content="hello", metadata={})
+        return SimpleNamespace(load=lambda: [split_doc])
+
+    manager, _, catalog = _setup_flat_manager(monkeypatch, loader_fn=loader_fn)
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result = manager._add_to_postgres(files)
+    assert result == 1
+
+
+def test_add_to_postgres_counts_a_processing_error(monkeypatch):
+    call_count = [0]
+
+    def splitting_fn(docs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("split boom")
+        return docs
+
+    manager, _, _ = _setup_flat_manager(monkeypatch)
+    manager.text_splitter = SimpleNamespace(split_documents=splitting_fn)
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result = manager._add_to_postgres(files)
+    assert result == 1
+
+
+def test_add_to_postgres_does_not_count_an_unsupported_format(monkeypatch):
+    call_count = [0]
+
+    def loader_fn(path):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return None
+        split_doc = SimpleNamespace(page_content="hello", metadata={})
+        return SimpleNamespace(load=lambda: [split_doc])
+
+    manager, _, _ = _setup_flat_manager(monkeypatch, loader_fn=loader_fn)
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result = manager._add_to_postgres(files)
+    assert result == 0
+
+
+def test_add_to_postgres_does_not_count_a_file_with_no_text(monkeypatch):
+    call_count = [0]
+
+    def splitting_fn(docs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return [SimpleNamespace(page_content="   ", metadata={})]
+        return docs
+
+    manager, _, catalog = _setup_flat_manager(monkeypatch)
+    manager.text_splitter = SimpleNamespace(split_documents=splitting_fn)
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result = manager._add_to_postgres(files)
+    assert result == 0
+    catalog.update_ingestion_status.assert_any_call(
+        "hash-0", "failed", "No text chunks could be extracted"
+    )
+
+
+def test_add_to_postgres_hierarchical_does_not_count_a_file_with_no_text(monkeypatch):
+    manager = _setup_hierarchical_manager(monkeypatch)
+    monkeypatch.setattr(manager_module, "build_hierarchical_nodes", lambda *a, **k: [])
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    result = manager._add_to_postgres(files)
+    assert result == 0
+
+
 def _tagging_config(embedding_name="HuggingFaceEmbeddings", kwargs=None):
     return {
         "stemming": {"enabled": False},
