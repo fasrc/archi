@@ -94,7 +94,7 @@ If no record exists, the panel says "Deployment provenance unavailable — recor
 Unknown and failure states:
 
 - **Current configuration unavailable — drift not evaluated.** The running config could not be read, so no drift check was done. This does not mean there is no drift.
-- **⚠ the most recent ingest attempt failed at …** — a failed run is newer than the run shown. The counts and config are from the last successful run, but the failed attempt may have changed the live corpus (deletions and partial additions are committed as they happen).
+- **⚠ the most recent ingest attempt failed at …** — a failed run is newer than the run shown. The counts and config are from the last successful run, but the failed attempt may have changed the live corpus (deletions and partial additions are committed as they happen). A run is failed when the sync stops with an error, or when one or more documents hit a system error (an error when the file is loaded, processed, or embedded, or a store failure). A document with an unsupported format or with no text is marked failed in the catalog, but it does not fail the run.
 - **No successful ingest run recorded** — no successful run exists yet. If a failed attempt exists, its time is shown below.
 
 Values are recorded when a deploy or ingest runs. A row written before a rule above existed keeps its old value until the next deploy or ingest.
