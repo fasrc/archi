@@ -16,7 +16,10 @@ from src.data_manager.collectors.utils.catalog_reconcile import (
     ReconcileReport,
     find_uncollected,
     log_reconcile_report,
+    record_url_failure,
     scope_for,
+    scope_host,
+    ticket_scope_key,
 )
 
 # ---------------------------------------------------------------------------
@@ -359,3 +362,157 @@ class TestLogReconcileReport:
             "Candidate: h1 file1.py (git)",
             "Candidate: h2 file2.py (git)",
         ]
+
+
+# ---------------------------------------------------------------------------
+# D1/D2 task 3.2: scope_host
+# ---------------------------------------------------------------------------
+
+
+class TestScopeHost:
+    def test_url_with_port_drops_port(self):
+        assert scope_host("https://Docs.Example.org:8443/x") == "docs.example.org"
+
+    def test_bare_host_lowercased(self):
+        assert scope_host("Docs.Example.org") == "docs.example.org"
+
+    def test_empty_returns_none(self):
+        assert scope_host("") is None
+
+
+# ---------------------------------------------------------------------------
+# D1 task 3.2: scope_for uses scope_host for web and sso
+# ---------------------------------------------------------------------------
+
+
+class TestScopeForUsesHostKey:
+    def test_web_url_with_port_drops_port(self):
+        md = {"source_type": "web", "url": "https://Docs.Example.org:8443/x"}
+        assert scope_for(md) == ("web", "docs.example.org")
+
+    def test_sso_url_with_port_drops_port(self):
+        md = {"source_type": "sso", "url": "https://Docs.Example.org:8443/x"}
+        assert scope_for(md) == ("sso", "docs.example.org")
+
+
+# ---------------------------------------------------------------------------
+# D1 task 3.2: ELOG / Indico shape detection without scraper marker
+# ---------------------------------------------------------------------------
+
+
+class TestScopeForElogIndicoShape:
+    def test_elog_shape_no_marker(self):
+        md = {"source_type": "web", "url": "https://example.org/elog/something"}
+        assert scope_for(md) == ("web", "elog")
+
+    def test_indico_shape_no_marker(self):
+        md = {"source_type": "web", "url": "https://indico.cern.ch/event/123"}
+        assert scope_for(md) == ("web", "indico")
+
+    def test_elog_marker_maps_as_before(self):
+        md = {
+            "source_type": "web",
+            "url": "https://example.org/elog/123",
+            "scraper": "elog",
+        }
+        assert scope_for(md) == ("web", "elog")
+
+    def test_indico_marker_maps_as_before(self):
+        md = {
+            "source_type": "web",
+            "url": "https://indico.cern.ch/event/1",
+            "scraper": "indico",
+        }
+        assert scope_for(md) == ("web", "indico")
+
+
+# ---------------------------------------------------------------------------
+# D1/D3 task 3.2: ticket_scope_key and scope_for for tickets
+# ---------------------------------------------------------------------------
+
+
+class TestTicketScopeKey:
+    def test_jira_with_project(self):
+        assert ticket_scope_key("jira", "A") == "jira:A"
+
+    def test_jira_without_project(self):
+        assert ticket_scope_key("jira", None) == "jira"
+
+    def test_redmine(self):
+        assert ticket_scope_key("redmine", None) == "redmine"
+
+
+class TestScopeForTicketWithProject:
+    def test_jira_with_project_metadata(self):
+        md = {"source_type": "ticket", "ticket_provider": "jira", "project": "B"}
+        assert scope_for(md) == ("ticket", "jira:B")
+
+    def test_jira_with_parent_fallback(self):
+        md = {"source_type": "ticket", "ticket_provider": "jira", "parent": "C"}
+        assert scope_for(md) == ("ticket", "jira:C")
+
+
+def test_find_uncollected_jira_project_b_skipped_names_scope(caplog):
+    """Collecting project A leaves project B rows skipped with jira:B in the warning."""
+    cp = CollectionPass()
+    cp.record_collected(
+        "ta1",
+        {"source_type": "ticket", "ticket_provider": "jira", "project": "A"},
+    )
+    rows = [
+        ("tb1", {"source_type": "ticket", "ticket_provider": "jira", "project": "B"}),
+    ]
+    with caplog.at_level(logging.WARNING):
+        report = find_uncollected(rows, cp)
+        log_reconcile_report(report)
+    assert report.candidates == []
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "jira:B" in warnings[0].getMessage()
+
+
+# ---------------------------------------------------------------------------
+# D2 task 3.2: record_url_failure
+# ---------------------------------------------------------------------------
+
+
+class _FakePersistence:
+    def __init__(self, collection_pass=None):
+        self.collection_pass = collection_pass
+
+
+class TestRecordUrlFailure:
+    def test_with_open_pass_normalises_host_and_skips_row(self, caplog):
+        cp = CollectionPass()
+        # A page collected on the same host, so the "collected 0" rule cannot
+        # hide a failure that was recorded under the wrong key.
+        cp.record_collected(
+            "h0", {"source_type": "web", "url": "https://Docs.Example.org:8443/z"}
+        )
+        fake = _FakePersistence(cp)
+        record_url_failure(fake, "web", "https://docs.example.org/x", "reason r")
+
+        rows = [
+            ("h0", {"source_type": "web", "url": "https://Docs.Example.org:8443/z"}),
+            ("h1", {"source_type": "web", "url": "https://Docs.Example.org:8443/y"}),
+        ]
+        with caplog.at_level(logging.WARNING):
+            report = find_uncollected(rows, cp)
+            log_reconcile_report(report)
+
+        assert report.candidates == []
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "reason r" in warnings[0].getMessage()
+        assert "docs.example.org" in warnings[0].getMessage()
+
+    def test_url_with_no_host_records_whole_type(self):
+        cp = CollectionPass()
+        cp.ran.add("web")
+        fake = _FakePersistence(cp)
+        record_url_failure(fake, "web", "", "reason")
+        assert "web" in cp.failed_types
+
+    def test_no_open_pass_records_nothing(self):
+        fake = _FakePersistence(None)
+        record_url_failure(fake, "web", "https://docs.example.org/x", "reason")

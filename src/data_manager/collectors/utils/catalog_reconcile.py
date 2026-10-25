@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
+from src.cli.source_registry import is_elog_url
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -20,6 +21,33 @@ logger = get_logger(__name__)
 _Scope = Tuple[str, Optional[str]]
 
 _INDICO_ELOG = {"indico", "elog"}
+
+
+def scope_host(url_or_host: str) -> Optional[str]:
+    """Return the lowercased hostname from a URL or bare host string, port dropped.
+
+    Returns None when no host can be derived. Accepts bare hosts by prepending ``//``.
+    """
+    if not url_or_host:
+        return None
+    parsed = urlparse(url_or_host)
+    hostname = parsed.hostname
+    if hostname is None:
+        hostname = urlparse("//" + url_or_host).hostname
+    return hostname.lower() if hostname else None
+
+
+def _is_indico_shape(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+    return "/event/" in parsed.path.lower() and "indico" in hostname
+
+
+def ticket_scope_key(provider: str, project: Optional[str] = None) -> str:
+    """Return the scope key string for a ticket provider and optional project."""
+    if provider == "jira":
+        return f"jira:{project}" if project else "jira"
+    return provider
 
 
 def scope_for(metadata: dict) -> _Scope:
@@ -35,15 +63,22 @@ def scope_for(metadata: dict) -> _Scope:
         if source_type == "web" and scraper in _INDICO_ELOG:
             return ("web", scraper)
         url = metadata.get("url", "") or ""
-        netloc = urlparse(url).netloc.lower() if url else None
-        return (source_type, netloc or None)
+        if source_type == "web" and not scraper:
+            if is_elog_url(url):
+                return ("web", "elog")
+            if _is_indico_shape(url):
+                return ("web", "indico")
+        return (source_type, scope_host(url))
 
     if source_type == "local_files":
         return ("local_files", "*")
 
     if source_type == "ticket":
-        key = metadata.get("ticket_provider") or None
-        return ("ticket", key)
+        provider = metadata.get("ticket_provider") or None
+        if provider is None:
+            return ("ticket", None)
+        project = metadata.get("project") or metadata.get("parent") or None
+        return ("ticket", ticket_scope_key(provider, project))
 
     return (source_type, None)
 
@@ -88,6 +123,23 @@ def record_failure(
     cp: Optional[CollectionPass] = getattr(persistence, "collection_pass", None)
     if cp is not None:
         cp.record_failure(source_type, scope_key, reason)
+
+
+def record_url_failure(
+    persistence: Any,
+    source_type: str,
+    url_or_host: str,
+    reason: str,
+) -> None:
+    """Record a web/SSO failure keyed by host. No-op when no pass is open.
+
+    When the URL yields no host, records a whole-type failure (scope_key=None).
+    """
+    cp: Optional[CollectionPass] = getattr(persistence, "collection_pass", None)
+    if cp is None:
+        return
+    key = scope_host(url_or_host)
+    cp.record_failure(source_type, key, reason)
 
 
 # Candidate tuple: (resource_hash, path_or_url, source_type, suffix, scope)

@@ -67,7 +67,7 @@ code, run `bash scripts/gate.sh`, and commit. Do not end a task on a red test. R
   switch (a `threading.Barrier` inside a patched `setdefault` path, or similar) so it fails
   with `_lock` replaced by `contextlib.nullcontext()`. Check each one red against a broken
   variant, then restore. Run the gate and commit.
-- [ ] 3.2 Scope keys (pure module, `catalog_reconcile.py`; `design.md` D1 and D2). Write the
+- [x] 3.2 Scope keys (pure module, `catalog_reconcile.py`; `design.md` D1 and D2). Write the
   tests first in `tests/unit/test_catalog_reconcile.py`, see them fail, then implement:
   `scope_host("https://Docs.Example.org:8443/x")` and `scope_host("Docs.Example.org")` both
   return `docs.example.org`, and `scope_host("")` returns `None`; `scope_for` uses
