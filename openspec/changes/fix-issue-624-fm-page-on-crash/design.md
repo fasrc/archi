@@ -170,9 +170,11 @@ both, so a launcher that reads the real wait status is necessary anyway. The lau
 also gives the bound and the group cleanup that the issue asked `timeout` for. Why not
 `setsid` from bash: when the calling shell has job control, `setsid` forks, `$!` names a
 process that already exited, and the wrapper runs on as an orphan (measured in Loop 1).
-`ps` is not in the `archi-loop` image, so no check may use it. SIGINT has no check: a
-background job of a non-interactive shell starts with SIGINT ignored, and bash cannot trap
-a signal that was ignored at entry.
+`ps` is not in the `archi-loop` image, so no check may use it. Check 112 sends SIGINT the
+same way. A background job of a non-interactive shell starts with SIGINT ignored, and bash
+cannot trap a signal that was ignored at entry, so the launcher sets SIGINT to the default
+in the child (`preexec_fn`). Measured: 119 passed with the self-test run under
+`trap '' INT`.
 
 ### D7. A signal ends the wrapper as that signal (task 1.4)
 

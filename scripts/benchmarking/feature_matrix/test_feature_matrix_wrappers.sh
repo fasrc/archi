@@ -113,6 +113,7 @@
 #   109. an existing output dir in qa_arm.sh arm mode with paging on sends nothing (the last precondition)
 #   110. an arm missing from the sweep lock in qa_arm.sh --sweep with paging on sends nothing
 #   111. archive_run.sh --sweep with no sweep lock and paging on sends nothing
+#   112. a SIGINT to qa_arm.sh's process group during the QA run pages once, and the wrapper dies of SIGINT (in the 104-105 loop)
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -1305,7 +1306,8 @@ if [ "$RC" = 2 ] && grep -q 'QA run scored nothing' "$T/stderr" && [ "$(grep -c 
 cat > "$T/bin/signal-launch.py" <<'PY'
 import os, signal, subprocess, sys, time
 signame, ready, out, err, cmd = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
-p = subprocess.Popen(cmd, start_new_session=True, stdout=open(out, "w"), stderr=open(err, "w"))
+p = subprocess.Popen(cmd, start_new_session=True, stdout=open(out, "w"), stderr=open(err, "w"),
+                     preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
 deadline = time.monotonic() + 30
 while not os.path.exists(ready) and p.poll() is None and time.monotonic() < deadline:
     time.sleep(0.05)
@@ -1325,7 +1327,7 @@ PY
 
 # 104-105: a SIGTERM or SIGHUP to qa_arm.sh arm mode during the QA run pages once, and the
 # wrapper then dies of that signal (so a calling shell sees a signal death, not an exit)
-for SIGCASE in "104 TERM 143 -15" "105 HUP 129 -1"; do
+for SIGCASE in "104 TERM 143 -15" "105 HUP 129 -1" "112 INT 130 -2"; do
   read -r N SIG CODE WANT <<<"$SIGCASE"
   touch "$T/qa-slow"; rm -f "$T/qa-started"
   : > "$T/mail.calls"; BEFORE="$(ledger_rows)"
