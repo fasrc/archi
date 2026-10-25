@@ -1274,6 +1274,9 @@ if [ "$STATUS101" = "$STATUS100" ] && [ ! -s "$T/mail.calls" ] \
    && [ "$(ledger_rows)" = "$BEFORE" ]; then
   ok "with FM_PAGE_MAIL_TO empty the score failure sends no mail and exits with the same status"; else notok "qa_arm sweep trap on score fail no-page (rc=$STATUS101 vs $STATUS100: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
+# The line of the ledger-append command in lib.sh; checks 102 and 106 expect it in the page body.
+LEDGER_LINE="$(grep -n 'FM_LEDGER="\$ledger" FM_ENTRY' "$HERE/lib.sh" | cut -d: -f1)"
+
 # 102: a failed ledger append in qa_arm.sh arm mode pages once, and the body names the failed command and its file:line
 : > "$T/mail.calls"; BEFORE="$(ledger_rows)"
 FM_PYTHON="$T/bin/python-ledger-fail"
@@ -1281,7 +1284,7 @@ run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HE
 FM_PYTHON="$REAL_PY"
 if [ "$RC" = 1 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
    && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit 1)" "$T/mail.calls" \
-   && grep -q "qa_arm.sh exited 1 at lib.sh:[0-9]*: FM_LEDGER=" "$T/mail.calls" \
+   && [[ "$LEDGER_LINE" =~ ^[0-9]+$ ]] && grep -q "qa_arm.sh exited 1 at lib.sh:$LEDGER_LINE: FM_LEDGER=" "$T/mail.calls" \
    && [ "$(ledger_rows)" = "$BEFORE" ]; then
   ok "a failed ledger append in qa_arm.sh arm mode pages once and names the failed command"; else notok "qa_arm ledger-fail page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
@@ -1344,7 +1347,7 @@ run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 1 "$T/arm
 FM_PYTHON="$REAL_PY"
 if [ "$RC" = 1 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
    && grep -q "ARGS: -s feature_matrix: stack fm-pin624 arm 00: failed after long work (exit 1)" "$T/mail.calls" \
-   && grep -q "archive_run.sh exited 1 at lib.sh:[0-9]*: FM_LEDGER=" "$T/mail.calls" \
+   && [[ "$LEDGER_LINE" =~ ^[0-9]+$ ]] && grep -q "archive_run.sh exited 1 at lib.sh:$LEDGER_LINE: FM_LEDGER=" "$T/mail.calls" \
    && [ ! -e "$FM_OUT/corpus-pin-fm-pin624" ] && [ "$(ledger_rows)" = "$BEFORE" ]; then
   ok "a failed ledger append in archive_run.sh pages once and leaves no pin"; else notok "archive ledger-fail page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
