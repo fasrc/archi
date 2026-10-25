@@ -351,10 +351,12 @@ def prepare_dataset_item(
                     raw_gold, context=f"gold extraction for item {item.id}"
                 )
                 _extractor_usage = getattr(extractor, "last_usage", None)
-            except ValueError:
+            except ValueError as exc:
                 logger.warning(
-                    "Gold extraction for item %s failed shape validation; retrying once",
+                    "Gold extraction for item %s failed shape validation (%s); "
+                    "retrying once",
                     item.id,
+                    bounded_diagnostic(exc),
                 )
                 first_usage = getattr(extractor, "last_usage", None)
                 _gold_extraction_attempts = 2

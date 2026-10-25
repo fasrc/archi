@@ -708,3 +708,16 @@ class TestGoldExtractionRetry:
         assert record.gold_extraction_attempts == 2
         assert record.usage["input_tokens"] == 150
         assert record.usage["calls"] == 2
+
+    def test_retry_warning_names_the_first_validation_error(self, caplog):
+        extractor = _QueueExtractor(
+            [{"atoms": "not a list"}, TimeoutError("provider timeout")]
+        )
+
+        with caplog.at_level("WARNING", logger="src.evaluation.qa.preparation"):
+            prepare_dataset_item(_item("retry9"), extractor)
+
+        warnings = [r.getMessage() for r in caplog.records]
+        assert len(warnings) == 1
+        assert "gold extraction for item retry9.atoms must be a list" in warnings[0]
+        assert "Answer retry9" not in warnings[0]
