@@ -409,7 +409,7 @@ class BaseReActAgent:
         rather than silently bind to ``callbacks``.
         """
         logger.debug("Invoking %s", self.__class__.__name__)
-        agent_inputs = self._prepare_agent_inputs(**kwargs)
+        agent_inputs = self._prepare_agent_inputs(callbacks=callbacks, **kwargs)
         if self.agent is None:
             self.refresh_agent(force=True)
         logger.debug("Agent refreshed, invoking now")
@@ -437,6 +437,7 @@ class BaseReActAgent:
                 recursion_limit=recursion_limit,
                 latest_messages=[],
                 agent_inputs=agent_inputs,
+                callbacks=callbacks,
             )
         except Exception as exc:
             # A context-window overflow must degrade gracefully rather than crash,
@@ -453,6 +454,7 @@ class BaseReActAgent:
                 error=exc,
                 agent_inputs=agent_inputs,
                 latest_messages=[],
+                callbacks=callbacks,
             )
 
     def _effective_provider_model(self) -> Tuple[Optional[str], Optional[str]]:
@@ -1710,7 +1712,9 @@ class BaseReActAgent:
                     compression_round += 1
                     logger.debug("Compression round %d triggered.", compression_round)
 
-                    history_messages = self._compress_history(history_messages)
+                    history_messages = self._compress_history(
+                        history_messages, callbacks=kwargs.get("callbacks")
+                    )
                     token_count = self.agent_llm.get_num_tokens_from_messages(
                         history_messages
                     )
@@ -1905,7 +1909,9 @@ class BaseReActAgent:
 
         return None
 
-    def _compress_history(self, history_messages):
+    def _compress_history(
+        self, history_messages, *, callbacks: Optional[Sequence[Any]] = None
+    ):
         """
         Compress older conversation messages into a summary.
         Keeps the last few messages intact.
@@ -1926,13 +1932,15 @@ class BaseReActAgent:
         chunk_size = max(1, len(older) // 2)
         chunk = older[:chunk_size]
 
-        summary = self._summarize_messages(chunk)
+        summary = self._summarize_messages(chunk, callbacks=callbacks)
         summary_message = AIMessage(
             content="Summary of earlier conversation:\n" + summary
         )
         return [summary_message] + older[chunk_size:] + recent
 
-    def _summarize_messages(self, messages):
+    def _summarize_messages(
+        self, messages, *, callbacks: Optional[Sequence[Any]] = None
+    ):
 
         texts = []
         for m in messages:
@@ -1953,7 +1961,8 @@ class BaseReActAgent:
                         "preserving important facts and decisions."
                     ),
                     HumanMessage(content=combined_text),
-                ]
+                ],
+                config=self._callbacks_config(callbacks),
             )
 
             if isinstance(response, BaseMessage):
@@ -2143,6 +2152,11 @@ class BaseReActAgent:
         return metadata
 
     @staticmethod
+    def _callbacks_config(callbacks: Optional[Sequence[Any]]) -> Dict[str, Any]:
+        """The runnable-config entry that forwards a caller's callbacks (#597)."""
+        return {} if callbacks is None else {"callbacks": list(callbacks)}
+
+    @staticmethod
     def _is_context_overflow_error(exc: Exception) -> bool:
         """Return True if *exc* is a context-window / token-limit overflow error."""
         exc_type = type(exc).__name__
@@ -2165,6 +2179,7 @@ class BaseReActAgent:
         error: Exception,
         agent_inputs: Optional[Dict[str, Any]] = None,
         latest_messages: Optional[Sequence[BaseMessage]] = None,
+        callbacks: Optional[Sequence[Any]] = None,
     ) -> "PipelineOutput":
         """Build a graceful response after a context-window overflow.
 
@@ -2194,7 +2209,8 @@ class BaseReActAgent:
                 try:
                     trimmed_inputs = {**agent_inputs, "messages": trimmed}
                     answer_output = self.agent.invoke(
-                        trimmed_inputs, {"recursion_limit": 10}
+                        trimmed_inputs,
+                        {"recursion_limit": 10, **self._callbacks_config(callbacks)},
                     )
                     messages_out: List[BaseMessage] = list(
                         answer_output.get("messages", [])
@@ -2254,6 +2270,7 @@ class BaseReActAgent:
         recursion_limit: int,
         latest_messages: Sequence[BaseMessage],
         agent_inputs: Optional[Dict[str, Any]] = None,
+        callbacks: Optional[Sequence[Any]] = None,
     ) -> PipelineOutput:
         """Build a best-effort response after recursion exhaustion."""
         metadata = self._recursion_metadata(recursion_limit, error)
@@ -2262,6 +2279,7 @@ class BaseReActAgent:
             error=error,
             latest_messages=latest_messages,
             agent_inputs=agent_inputs,
+            callbacks=callbacks,
         )
         messages: List[BaseMessage] = list(latest_messages) if latest_messages else []
         if wrap_message:
@@ -2326,6 +2344,7 @@ class BaseReActAgent:
         error: Exception,
         latest_messages: Sequence[BaseMessage],
         agent_inputs: Optional[Dict[str, Any]],
+        callbacks: Optional[Sequence[Any]] = None,
     ) -> Optional[BaseMessage]:
         """Perform a single LLM-only wrap-up to summarize steps and answer."""
         prompt = self._build_wrap_up_prompt(
@@ -2336,7 +2355,8 @@ class BaseReActAgent:
                 [
                     SystemMessage(content=prompt),
                     HumanMessage(content="Provide the final response now."),
-                ]
+                ],
+                config=self._callbacks_config(callbacks),
             )
             if isinstance(response, BaseMessage):
                 return response
@@ -2358,6 +2378,7 @@ class BaseReActAgent:
         error: Exception,
         latest_messages: Sequence[BaseMessage],
         agent_inputs: Optional[Dict[str, Any]],
+        callbacks: Optional[Sequence[Any]] = None,
     ) -> Optional[BaseMessage]:
         """Async LLM-only wrap-up to summarize steps and answer."""
         prompt = self._build_wrap_up_prompt(
@@ -2369,14 +2390,16 @@ class BaseReActAgent:
                     [
                         SystemMessage(content=prompt),
                         HumanMessage(content="Provide the final response now."),
-                    ]
+                    ],
+                    config=self._callbacks_config(callbacks),
                 )
             else:
                 response = self.agent_llm.invoke(
                     [
                         SystemMessage(content=prompt),
                         HumanMessage(content="Provide the final response now."),
-                    ]
+                    ],
+                    config=self._callbacks_config(callbacks),
                 )
             if isinstance(response, BaseMessage):
                 return response
