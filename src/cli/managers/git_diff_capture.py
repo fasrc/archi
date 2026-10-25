@@ -5,6 +5,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from src.cli.managers.git_env import git_env
+
 GIT_DIFF_MAX_BYTES = 256_000
 GIT_DIFF_STAT_WIDTH = 120
 GIT_DIFF_STAT_MAX_FILES = 200
@@ -79,6 +81,7 @@ def capture_git_diff(wd: Path) -> Dict[str, Any]:
         ["git", "diff", "--no-ext-diff", "--no-color"] + pathspec,
         cwd=wd,
         encoding="UTF-8",
+        env=git_env(),
     )
     # quotePath=true makes git escape bytes above 0x80, and the escapes count
     # as columns, so --stat's width bounds each line's bytes on any checkout.
@@ -95,6 +98,7 @@ def capture_git_diff(wd: Path) -> Dict[str, Any]:
         + pathspec,
         cwd=wd,
         encoding="UTF-8",
+        env=git_env(),
     )
     git_diff, git_diff_truncated, git_diff_original_bytes = bound_serialized_text(
         diff_raw, GIT_DIFF_MAX_BYTES

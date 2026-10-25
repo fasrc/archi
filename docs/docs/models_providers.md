@@ -149,6 +149,8 @@ In **`openai_compat`** mode, in order:
    at an Ollama daemon would send requests to a route it does not serve.
 2. `http://localhost:8000/v1`.
 
+A `base_url=` keyword on the model call beats every entry in both lists, in both modes.
+
 An endpoint with no scheme gets `http://` prefixed in both modes, so `gpu-host:8000/v1`
 resolves to `http://gpu-host:8000/v1`.
 

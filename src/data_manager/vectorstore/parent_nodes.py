@@ -4,6 +4,8 @@ Exported helpers run their SQL on a caller-supplied cursor.  The caller owns the
 transaction; none of these helpers call commit.
 """
 
+from .schema import ensure_chunks_parent_id_index
+
 PARENT_TABLE_EXISTS = "SELECT to_regclass('document_parent_nodes') IS NOT NULL"
 
 DELETE_UNREFERENCED_PARENTS_FOR_DOCUMENT = """
@@ -48,6 +50,18 @@ def delete_unreferenced_parents_for_resource(cursor, resource_hash) -> int:
         DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE, (resource_hash, resource_hash)
     )
     return max(0, cursor.rowcount)
+
+
+def delete_unreferenced_parents_for_resources(cursor, resource_hashes) -> int:
+    hashes = list(resource_hashes or ())
+    if not hashes:
+        return 0
+    if not parent_table_exists(cursor):
+        return 0
+    # An upgraded volume can lack this index; without it each NOT EXISTS below
+    # scans all of document_chunks. Callers commit, so the build persists.
+    ensure_chunks_parent_id_index(cursor)
+    return sum(delete_unreferenced_parents_for_resource(cursor, h) for h in hashes)
 
 
 def truncate_parent_nodes(cursor) -> None:

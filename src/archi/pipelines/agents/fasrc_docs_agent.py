@@ -206,10 +206,18 @@ class FASRCDocsAgent(MessageContentMixin, BaseReActAgent):
         returns the ``LlamaIndexHierarchicalRetriever``; otherwise it falls back
         to ``HybridRetriever``. Either way the retriever is wired into the same
         ``search_vectorstore_hybrid`` tool with an unchanged name/contract.
+
+        The same retriever also backs ``_forced_vector_tool``, the instance the
+        forced initial round runs through. It carries no budget hook: the
+        per-turn ``search_vectorstore_hybrid`` budget counts the model's own
+        searches, so the forced round must not spend one of them. It also skips
+        the runtime-input record, because ``_inject_forced_retrieval`` registers
+        the forced call under its own id instead.
         """
         if not self.enable_vector_tools:
             self._vector_retrievers = None
             self._vector_tools = None
+            self._forced_vector_tool = None
             return
         retrievers_cfg = self.dm_config.get("retrievers", {})
 
@@ -233,6 +241,12 @@ class FASRCDocsAgent(MessageContentMixin, BaseReActAgent):
                 ),
             )
         )
+        self._forced_vector_tool = create_retriever_tool(
+            retriever,
+            name="search_vectorstore_hybrid",
+            description=hybrid_description,
+            store_docs=self._store_documents,
+        )
 
     def _inject_forced_retrieval(
         self, messages: List[BaseMessage]
@@ -244,13 +258,16 @@ class FASRCDocsAgent(MessageContentMixin, BaseReActAgent):
         unavailable"). To enforce retrieval, prefill a completed tool round —
         an ``AIMessage`` carrying the tool call plus the matching ``ToolMessage``
         result — so the ReAct loop starts with real chunks already in context.
-        Invoking the existing retriever tool also runs its ``store_docs``
-        callback, so retrieved documents flow into ``source_documents``/links
-        exactly as a model-initiated search would. The model may still search
-        again. Gated by ``services.chat_app.force_initial_retrieval`` (default
-        on); this flag is read from the seeded configuration, so it cannot vary
-        per arm inside one multi-config deployment — to A/B it, run separate
-        deployments (or re-seed) per value.
+        Invoking the retriever tool also runs its ``store_docs`` callback, so
+        retrieved documents flow into ``source_documents``/links exactly as a
+        model-initiated search would. The round runs through
+        ``_forced_vector_tool``, which has no budget hook, so the model keeps
+        its full per-turn search budget; the forced call is then registered in
+        run memory under its own id, so streamed model calls resolve their own
+        arguments. Gated by ``services.chat_app.force_initial_retrieval``
+        (default on); this flag is read from the seeded configuration, so it
+        cannot vary per arm inside one multi-config deployment — to A/B it, run
+        separate deployments (or re-seed) per value.
         """
         if not getattr(self, "enable_vector_tools", False):
             logger.debug("Forced retrieval skipped: vector tools disabled")
@@ -272,8 +289,17 @@ class FASRCDocsAgent(MessageContentMixin, BaseReActAgent):
             logger.debug("Forced retrieval skipped: empty query")
             return messages
 
+        forced_tool = getattr(self, "_forced_vector_tool", None)
+        if forced_tool is None:
+            logger.warning(
+                "Forced retrieval has no unbudgeted retriever tool; the forced "
+                "round consumes one of the model's search_vectorstore_hybrid "
+                "calls for this turn"
+            )
+            forced_tool = tools[0]
+
         try:
-            result = tools[0].invoke({"query": query})
+            result = forced_tool.invoke({"query": query})
         except Exception:
             # Fail open: a retrieval error must not break the chat turn.
             logger.warning("Forced initial retrieval failed", exc_info=True)
@@ -286,6 +312,14 @@ class FASRCDocsAgent(MessageContentMixin, BaseReActAgent):
         )
 
         call_id = f"forced_search_{uuid.uuid4().hex}"
+        memory = self.active_memory
+        if memory is not None:
+            # Claim any runtime input the tool queued (only the budgeted fallback
+            # does), so the model's first streamed call resolves its own args.
+            memory.resolve_tool_input(call_id, "search_vectorstore_hybrid", {})
+            memory.record_tool_call(
+                call_id, "search_vectorstore_hybrid", {"query": query}
+            )
         ai = AIMessage(
             content="",
             tool_calls=[

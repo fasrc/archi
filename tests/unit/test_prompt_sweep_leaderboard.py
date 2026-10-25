@@ -14,6 +14,8 @@ import pytest
 from src.bin.service_benchmark import ResultHandler
 from src.utils.benchmark_schema import RAGAS_METRIC_NAMES
 
+_NOT_SET = object()
+
 
 def _make_record(
     name,
@@ -33,6 +35,7 @@ def _make_record(
     include_name=True,
     ragas_effective_settings=None,
     judge_block=None,
+    ragas_judge_identity_effective=_NOT_SET,
 ):
     """Build a ResultHandler.results record shaped like handle_results writes.
 
@@ -67,13 +70,16 @@ def _make_record(
     if include_name:
         benchmarking["name"] = name
 
-    return {
+    record = {
         "single_question_results": {f"q{i}": {} for i in range(n_questions)},
         "total_results": total_results,
         "configuration_file": f"/tmp/{name}.yaml",
         "configuration": {"services": {"benchmarking": benchmarking}},
         "ragas_effective_settings": ragas_effective_settings,
     }
+    if ragas_judge_identity_effective is not _NOT_SET:
+        record["ragas_judge_identity_effective"] = ragas_judge_identity_effective
+    return record
 
 
 @pytest.fixture(autouse=True)
@@ -429,6 +435,87 @@ def test_ranks_survive_when_judge_concurrency_matches():
     lb = ResultHandler.build_leaderboard()
 
     assert all(row["rank"] is not None for row in lb["rows"])
+
+
+_PRESSURE = {"timeout": 600, "max_workers": 4}
+
+
+def _judge_identity(**overrides):
+    identity = {
+        "provider": "local",
+        "model": "qwen",
+        "base_url": "http://judge:11434",
+        "mode": "ollama",
+    }
+    identity.update(overrides)
+    return identity
+
+
+def _judged_record(name, identity=_NOT_SET):
+    return _make_record(
+        name,
+        f"p/{name}.md",
+        ragas_effective_settings=dict(_PRESSURE),
+        ragas_judge_identity_effective=identity,
+    )
+
+
+def test_judge_identity_mode_difference_is_incomparable():
+    records = [
+        _judged_record("a", _judge_identity(mode="ollama")),
+        _judged_record("b", _judge_identity(mode="openai_compat")),
+    ]
+    assert ResultHandler.arms_comparable(records) is False
+    assert "judge" in ResultHandler.arms_incomparability_reason(records)
+
+
+def test_judge_identity_provider_difference_is_incomparable():
+    records = [
+        _judged_record("a", _judge_identity(provider="local")),
+        _judged_record("b", _judge_identity(provider="ollama")),
+    ]
+    assert ResultHandler.arms_comparable(records) is False
+    assert "judge" in ResultHandler.arms_incomparability_reason(records)
+
+
+def test_records_without_judge_identity_stay_comparable():
+    """Old result files predate the field and still rank."""
+    records = [_judged_record("a"), _judged_record("b")]
+    assert ResultHandler.arms_comparable(records) is True
+
+
+def test_null_judge_identity_is_not_a_judge_difference():
+    """A None identity is skipped; the pressure check owns the unjudged arm."""
+    records = [
+        _judged_record("a", _judge_identity()),
+        _judged_record("b", None),
+    ]
+    reason = ResultHandler.arms_incomparability_reason(records) or ""
+    assert "different RAGAS judges" not in reason
+
+
+def test_ranks_are_withheld_when_judge_identity_differs():
+    ResultHandler.results = [
+        _judged_record("a", _judge_identity(model="qwen")),
+        _judged_record("b", _judge_identity(model="llama")),
+    ]
+    lb = ResultHandler.build_leaderboard()
+
+    assert all(row["rank"] is None for row in lb["rows"])
+    assert any(
+        w.startswith("judge_identity differs") for w in lb["shared_context"]["warnings"]
+    )
+
+
+def test_ranks_survive_when_judge_identity_matches():
+    ResultHandler.results = [
+        _judged_record("a", _judge_identity()),
+        _judged_record("b", _judge_identity()),
+    ]
+    lb = ResultHandler.build_leaderboard()
+
+    assert all(row["rank"] is not None for row in lb["rows"])
+    assert not any("judge_identity" in w for w in lb["shared_context"]["warnings"])
 
 
 def test_mixed_judge_participation_warns_and_withholds():

@@ -4,7 +4,12 @@
 #   archive_run.sh <arm> <run> <arm.yaml> [--stack <name>] [--wait] [--new-corpus]
 #
 # Waits (with --wait) for benchmarking-<stack> to exit, takes the newest artifact
-# benchmarking-<stack>-*.json in FM_OUT, and REFUSES when
+# benchmarking-<stack>-*.json in FM_OUT (its <basename>.judged.json once a deferred judge
+# scored it; Lynx files are not artifacts), and REFUSES when
+#   - the artifact's judge is pending and its judged file is not there yet (G11; the judged
+#     file to wait for is named), or the arm's ragas_judge_identity_effective differs from
+#     the campaign's earlier RAGAS rows (G12; the fields are named, and a row with no
+#     identity never equals a recorded one); each row records the arm's identity,
 #   - the arm YAML's `name` is not fm-<arm>, or the artifact's recorded running
 #     configuration disagrees with the arm YAML on any factor key (the artifact itself
 #     proves which arm ran — the operator's label alone never does),
@@ -59,12 +64,12 @@ if [ "${1:-}" = --sweep ]; then
     while [ "$(fm_container_state "benchmarking-$STACK")" = "running" ]; do sleep "${FM_POLL_SECONDS:-30}"; done
   fi
   [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "benchmarking-$STACK is still running (use --wait)"
-  ARTIFACT="$(ls -t "$FM_OUT"/benchmarking-"$STACK"-*.json 2>/dev/null | head -1 || true)"
-  [ -n "$ARTIFACT" ] || fm_die "no artifact benchmarking-$STACK-*.json under $FM_OUT"
+  FM_SELECTED="$(fm_select_result "$STACK")" || fm_die "nothing archived for stack $STACK (see above)"
+  ARTIFACT="${FM_SELECTED%%$'\n'*}"; DATED_BY="${FM_SELECTED#*$'\n'}"
   FM_ERRF="$(mktemp)"
   if ! fm_sweep_tools archive --lock "$(fm_sweep_lock_file "$STACK")" --artifact "$ARTIFACT" --stack "$STACK" \
     --run "$RUN" --ledger "$(fm_ledger)" --pins-dir "$FM_OUT" --dest "$FM_OUT/archive/$STACK" \
-    ${CENSUS:+--census "$CENSUS"} --finished "$(fm_now)" 2>"$FM_ERRF"; then
+    ${CENSUS:+--census "$CENSUS"} --finished "$(fm_now)" --dated-by "$DATED_BY" 2>"$FM_ERRF"; then
     cat "$FM_ERRF" >&2
     FM_REASON="$(cat "$FM_ERRF")"; rm -f "$FM_ERRF"
     fm_die_paged "stack $STACK sweep" "refusing to archive $ARTIFACT (see above)" "$FM_REASON"
@@ -94,13 +99,15 @@ if [ "$WAIT" = true ]; then
 fi
 [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "benchmarking-$STACK is still running (use --wait)"
 
-ARTIFACT="$(ls -t "$FM_OUT"/benchmarking-"$STACK"-*.json 2>/dev/null | head -1 || true)"
-[ -n "$ARTIFACT" ] || fm_die "no artifact benchmarking-$STACK-*.json under $FM_OUT"
+# The newest result, or its judged file once a deferred judge scored it; a pending result
+# is refused here (G11). The run is dated by the file it wrote, not by a later judged copy.
+FM_SELECTED="$(fm_select_result "$STACK")" || fm_die "nothing archived for stack $STACK arm $ARM (see above)"
+ARTIFACT="${FM_SELECTED%%$'\n'*}"; DATED_BY="${FM_SELECTED#*$'\n'}"
 
 # One artifact, one ledger row: refuse a file already archived, and a file that predates
 # this stack's latest ragas-start (the re-run produced nothing; this is run 1's file).
 FM_ERRF="$(mktemp)"
-if ! FM_LEDGER="$(fm_ledger)" FM_ARTIFACT="$ARTIFACT" FM_STACK="$STACK" FM_ARM="$ARM" FM_RUN="$RUN" FM_PIN_FILE="$(fm_pin_file "$STACK")" FM_ACTIVE_LOCK_SHA="$(fm_lock_sha)" "$FM_PYTHON" - 2>"$FM_ERRF" <<'EOF'
+if ! FM_LEDGER="$(fm_ledger)" FM_ARTIFACT="$ARTIFACT" FM_DATED_BY="$DATED_BY" FM_STACK="$STACK" FM_ARM="$ARM" FM_RUN="$RUN" FM_PIN_FILE="$(fm_pin_file "$STACK")" FM_ACTIVE_LOCK_SHA="$(fm_lock_sha)" "$FM_PYTHON" - 2>"$FM_ERRF" <<'EOF'
 import datetime as dt, json, os, sys
 ledger, artifact, stack = os.environ["FM_LEDGER"], os.environ["FM_ARTIFACT"], os.environ["FM_STACK"]
 arm, run = os.environ["FM_ARM"], int(os.environ["FM_RUN"])
@@ -128,7 +135,7 @@ if True:
     # which is the oldest, and a stale row from before a --relock decides the lock check.
     latest_row = max(enumerate(start_rows), key=lambda p: (p[1]["started"], p[0]))[1]
     latest = dt.datetime.fromisoformat(latest_row["started"].replace("Z", "+00:00"))
-    mtime = dt.datetime.fromtimestamp(os.path.getmtime(artifact), tz=dt.timezone.utc)
+    mtime = dt.datetime.fromtimestamp(os.path.getmtime(os.environ["FM_DATED_BY"]), tz=dt.timezone.utc)
     if mtime < latest:
         print(f"artifact written {mtime:%Y-%m-%dT%H:%M:%SZ}, before the latest ragas-start for {stack} at {latest:%Y-%m-%dT%H:%M:%SZ} — the run produced no new artifact", file=sys.stderr); sys.exit(1)
     # A run started under an earlier lock (a --relock happened since) may have used the
@@ -154,10 +161,14 @@ PIN_FILE="$(fm_pin_file "$STACK")"
 # Their REFUSED line is the whole terminal message: page it and keep the validator's exit
 # code, with no generic refusal line added (stderr is the same as with paging off).
 FM_ERRF="$(mktemp)"
-ENTRY="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \
-  FM_LEDGER="$(fm_ledger)" FM_LOCK_SHA="$(fm_lock_sha)" \
+FM_VALIDATED="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \
+  FM_LEDGER="$(fm_ledger)" FM_LOCK_SHA="$(fm_lock_sha)" FM_JUDGE_GATES="$(fm_judge_gates)" \
   FM_PIN_FILE="$PIN_FILE" FM_NEW_CORPUS="$NEW_CORPUS" FM_FINISHED="$(fm_now)" "$FM_PYTHON" - 2>"$FM_ERRF" <<'EOF'
-import json, math, os, sys, yaml
+import importlib.util, json, math, os, sys, yaml
+# The shared judge gates, loaded by path (see fm_judge_gates in lib.sh).
+spec = importlib.util.spec_from_file_location("judge_gates", os.environ["FM_JUDGE_GATES"])
+gates = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gates)
 p = os.environ["FM_ARTIFACT"]
 d = json.loads(open(p).read().replace("NaN", "null"))          # pre-#279 artifacts carry bare NaN
 arms = d["benchmarking_results"]
@@ -190,6 +201,15 @@ cv = arm.get("config_version") or {}
 div = cv.get("divergence_from_selected_file")
 if div:
     print(f"REFUSED: the run did not use the selected settings — divergence_from_selected_file = {div}", file=sys.stderr); sys.exit(2)
+# G12 across runs: the campaign's runs are compared through the ledger, so a run scored by
+# another judge than the earlier RAGAS rows must not enter it. A row with no identity
+# never equals a recorded one.
+judge = gates.judge_identity_of(arm)
+ledger_path = os.environ["FM_LEDGER"]
+refusal = gates.ledger_refusal(json.load(open(ledger_path)) if os.path.exists(ledger_path) else [],
+                               [(f"{os.environ['FM_STACK']} {os.environ['FM_ARM']} run {os.environ['FM_RUN']}", judge)])
+if refusal:
+    print(refusal, file=sys.stderr); sys.exit(2)
 fp = arm.get("corpus_fingerprint")
 fp_before = arm.get("corpus_fingerprint_before")
 # The digest prefix names its version (v1 "sha256:", v2 "sha256/v2:"); readings of two
@@ -210,6 +230,9 @@ if "embedding_tags_unchanged_at_endpoints" in arm and arm["embedding_tags_unchan
     print(f"REFUSED: the embedding model tags changed during the run (embedding_tags_unchanged_at_endpoints={arm['embedding_tags_unchanged_at_endpoints']!r}, end={arm.get('embedding_tags_end')!r}); the arm is void", file=sys.stderr); sys.exit(2)
 pin_file, run = os.environ["FM_PIN_FILE"], int(os.environ["FM_RUN"])
 previous_pin = None
+new_pin = None
+if os.path.isdir(pin_file):
+    print(f"REFUSED: the corpus pin path {pin_file} is a directory; remove it so the pin can be written there", file=sys.stderr); sys.exit(2)
 if os.path.exists(pin_file):
     pin = open(pin_file).read().strip()
     # A version change is a re-pin: it takes the closing-baseline path below, like a new corpus.
@@ -228,9 +251,9 @@ if os.path.exists(pin_file):
         if not starts or starts[-1].get("rerun") is not False:
             print("REFUSED: --new-corpus needs a fresh deploy (run_arm.sh <arm> <yaml>) as this stack's latest ragas-start; the latest was a re-run or re-seed", file=sys.stderr); sys.exit(2)
         previous_pin = pin
-        open(pin_file, "w").write(fp + "\n")
+        new_pin = fp
 else:
-    open(pin_file, "w").write(fp + "\n")
+    new_pin = fp
 rows = arm.get("single_question_results") or {}
 def finite(x): return isinstance(x, (int, float)) and math.isfinite(x)
 metrics = sorted({k for r in rows.values() for k in r if k in ("answer_relevancy", "faithfulness", "context_precision", "context_recall", "answer_correctness")})
@@ -254,8 +277,10 @@ entry = {
     "questions": len(rows), "degraded": sum(1 for r in rows.values() if r.get("status") == "degraded"),
     "scored": scored,
     "aggregates": {m: arm.get("total_results", {}).get(f"aggregate_{m}") for m in metrics},
+    gates.IDENTITY_KEY: judge,
 }
 print(json.dumps(entry))
+print(new_pin or "")
 EOF
 )" || {
   FM_RC=$?
@@ -264,7 +289,25 @@ EOF
   rm -f "$FM_ERRF"; exit "$FM_RC"
 }
 rm -f "$FM_ERRF"
+ENTRY="${FM_VALIDATED%%$'\n'*}"
+# $(...) strips ALL trailing newlines, so an empty second line (no new pin) leaves
+# FM_VALIDATED with no newline at all; without this guard the `#*$'\n'` below would then
+# return the whole (unmatched) string, turning the ENTRY json itself into "the new pin".
+if [[ "$FM_VALIDATED" == *$'\n'* ]]; then
+  NEW_PIN="${FM_VALIDATED#*$'\n'}"
+else
+  NEW_PIN=""
+fi
 fm_ledger_append "$ENTRY"
+if [ -n "$NEW_PIN" ]; then
+  # Two standalone commands: set -e ignores a failure on the left of `&&`, so a failed
+  # temp write would skip the move and still log success with no pin.
+  # os.replace is an atomic rename on POSIX and raises IsADirectoryError when the target
+  # is a directory; a plain mv -f moves the pin inside the directory and exits 0.
+  # set -e makes the failed call fail the archive before fm_log "archived arm ...".
+  printf '%s\n' "$NEW_PIN" > "$PIN_FILE.tmp.$$"
+  "$FM_PYTHON" -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' "$PIN_FILE.tmp.$$" "$PIN_FILE"
+fi
 fm_log "archived arm $ARM run $RUN: $ARTIFACT"
 FM_ENTRY="$ENTRY" "$FM_PYTHON" - <<'EOF'
 import json, os

@@ -272,6 +272,91 @@ def test_judged_ragas_arm_records_settings_when_told_it_was_scored(tmp_path):
     }
 
 
+# --- #618: ragas_judge_identity_effective on the arm record ---
+
+_JUDGE_IDENTITY = {
+    "provider": "openai",
+    "model": "gpt-4o",
+    "base_url": None,
+    "mode": "openai_compat",
+}
+
+
+def test_judge_identity_is_recorded_when_ragas_scored(tmp_path):
+    """handle_results records judge_identity_effective when the judge ran."""
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        ragas_scored=True,
+        judge_identity=_JUDGE_IDENTITY,
+    )
+    assert ResultHandler.results[0]["ragas_judge_identity_effective"] == _JUDGE_IDENTITY
+
+
+def test_judge_identity_is_none_when_not_scored(tmp_path):
+    """When ragas_scored=False, ragas_judge_identity_effective is None."""
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        ragas_scored=False,
+        judge_identity=_JUDGE_IDENTITY,
+    )
+    assert ResultHandler.results[0]["ragas_judge_identity_effective"] is None
+
+
+def test_judge_identity_is_none_on_sources_only_run(tmp_path):
+    """A SOURCES-only run records None for ragas_judge_identity_effective."""
+    ResultHandler.handle_results(
+        _write(tmp_path, _ragas_config(modes=("SOURCES",), timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"SOURCES"},
+        judge_identity=_JUDGE_IDENTITY,
+    )
+    assert ResultHandler.results[0]["ragas_judge_identity_effective"] is None
+
+
+def test_config_version_digest_unchanged_when_judge_identity_changes(tmp_path):
+    """judge_identity does not feed the config_version digest."""
+    identity_a = {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "base_url": None,
+        "mode": "openai_compat",
+    }
+    identity_b = {
+        "provider": "anthropic",
+        "model": "claude-3",
+        "base_url": None,
+        "mode": "openai_compat",
+    }
+    ResultHandler.handle_results(
+        _write(tmp_path / "a", _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        judge_identity=identity_a,
+    )
+    ResultHandler.handle_results(
+        _write(tmp_path / "b", _ragas_config(timeout=600, max_workers=4)),
+        {},
+        {},
+        running_config=None,
+        modes_executed={"RAGAS"},
+        judge_identity=identity_b,
+    )
+    first, second = ResultHandler.results
+    assert first["config_version"]["digest"] == second["config_version"]["digest"]
+
+
 def test_omitting_ragas_scored_keeps_recording_settings(tmp_path):
     """A caller that does not know whether the judge scored keeps today's behavior."""
     ResultHandler.handle_results(

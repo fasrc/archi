@@ -53,6 +53,7 @@ def test_snapshot_reads_every_flag_from_a_full_config():
         },
         "embedding_model": "OpenAIEmbeddings",
         "embedding_dimensions": 1536,
+        "embedding_dimensions_explicit": True,
         "chunk_size": 800,
         "chunk_overlap": 120,
         "distance_metric": "l2",
@@ -85,6 +86,7 @@ def test_snapshot_applies_the_ingest_paths_own_defaults_when_keys_are_absent():
         },
         "embedding_model": "HuggingFaceEmbeddings",
         "embedding_dimensions": 384,
+        "embedding_dimensions_explicit": False,
         "chunk_size": 1000,
         "chunk_overlap": 150,
         "distance_metric": "cosine",
@@ -462,6 +464,7 @@ def test_compare_no_embedding_dimensions_drift_for_pre_fix_row_with_old_default(
     """
     at_ingest = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
     at_ingest = dict(at_ingest, embedding_dimensions=384)
+    at_ingest.pop("embedding_dimensions_explicit")
     current = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
 
     drift = compare_ingest_config(current, at_ingest)
@@ -473,6 +476,7 @@ def test_compare_embedding_dimensions_drift_when_current_is_not_model_default():
     """If current dimensions differ from the model default, it is real drift."""
     at_ingest = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
     at_ingest = dict(at_ingest, embedding_dimensions=384)
+    at_ingest.pop("embedding_dimensions_explicit")
     current = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
     current = dict(current, embedding_dimensions=768)
 
@@ -484,6 +488,7 @@ def test_compare_embedding_dimensions_drift_when_current_is_not_model_default():
 def test_compare_embedding_dimensions_drift_when_model_changed():
     """A model change means both embedding_model and embedding_dimensions drift."""
     at_ingest = build_ingest_config_snapshot({})  # HuggingFaceEmbeddings, 384
+    at_ingest.pop("embedding_dimensions_explicit")
     current = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
 
     drift = compare_ingest_config(current, at_ingest)
@@ -491,3 +496,84 @@ def test_compare_embedding_dimensions_drift_when_model_changed():
     drift_keys = {entry["key"] for entry in drift}
     assert "embedding_model" in drift_keys
     assert "embedding_dimensions" in drift_keys
+
+
+def test_snapshot_embedding_dimensions_explicit_marker():
+    """embedding_dimensions_explicit is True when dimensions is set, False otherwise."""
+    snap_with_dim = build_ingest_config_snapshot(
+        {
+            "embedding_name": "OpenAIEmbeddings",
+            "embedding_class_map": {"OpenAIEmbeddings": {"dimensions": 384}},
+        }
+    )
+    assert snap_with_dim["embedding_dimensions_explicit"] is True
+
+    snap_without_dim = build_ingest_config_snapshot(
+        {
+            "embedding_name": "OpenAIEmbeddings",
+            "embedding_class_map": {"OpenAIEmbeddings": {}},
+        }
+    )
+    assert snap_without_dim["embedding_dimensions_explicit"] is False
+
+    snap_empty = build_ingest_config_snapshot({})
+    assert snap_empty["embedding_dimensions_explicit"] is False
+
+    snap_null_dim = build_ingest_config_snapshot(
+        {
+            "embedding_name": "OpenAIEmbeddings",
+            "embedding_class_map": {"OpenAIEmbeddings": {"dimensions": None}},
+        }
+    )
+    assert snap_null_dim["embedding_dimensions_explicit"] is True
+
+
+def test_compare_issue_654_repro_reports_drift_when_explicit_dimension_removed():
+    """Removing an explicit dimensions setting must surface as drift (issue #654)."""
+    at_ingest = build_ingest_config_snapshot(
+        {
+            "embedding_name": "OpenAIEmbeddings",
+            "embedding_class_map": {"OpenAIEmbeddings": {"dimensions": 384}},
+        }
+    )
+    current = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
+
+    drift = compare_ingest_config(current, at_ingest)
+
+    dim_entries = [e for e in drift if e["key"] == "embedding_dimensions"]
+    assert len(dim_entries) == 1
+    assert dim_entries[0] == {
+        "key": "embedding_dimensions",
+        "current": 1536,
+        "at_ingest": 384,
+    }
+
+
+def test_compare_no_drift_when_only_marker_changes():
+    """Removing explicit flag while keeping the same resolved dimension is not drift."""
+    at_ingest = build_ingest_config_snapshot(
+        {
+            "embedding_name": "OpenAIEmbeddings",
+            "embedding_class_map": {"OpenAIEmbeddings": {"dimensions": 1536}},
+        }
+    )
+    current = build_ingest_config_snapshot(
+        {
+            "embedding_name": "OpenAIEmbeddings",
+            "embedding_class_map": {"OpenAIEmbeddings": {}},
+        }
+    )
+
+    assert compare_ingest_config(current, at_ingest) == []
+
+
+def test_compare_legacy_row_with_non_default_dimensions_still_drifts():
+    """A marker-free snapshot with non-384 dimensions still reports drift."""
+    at_ingest = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
+    at_ingest = dict(at_ingest, embedding_dimensions=768)
+    at_ingest.pop("embedding_dimensions_explicit")
+    current = build_ingest_config_snapshot({"embedding_name": "OpenAIEmbeddings"})
+
+    drift = compare_ingest_config(current, at_ingest)
+
+    assert "embedding_dimensions" in {entry["key"] for entry in drift}

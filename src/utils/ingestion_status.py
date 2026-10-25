@@ -120,15 +120,22 @@ def build_ingestion_helpers(
     ) -> None:
         def body() -> None:
             logger.info("Running ingestion task: %s", name)
-            set_source_status(name, state="running")
-            func()
-            logger.info("Updating vectorstore after scheduled task: %s", name)
-            _update_or_raise(update_vectorstore)
-            set_source_status(
-                name,
-                state="idle",
-                last_run=datetime.now(timezone.utc).isoformat(),
-            )
+            try:
+                set_source_status(name, state="running")
+                func()
+                logger.info("Updating vectorstore after scheduled task: %s", name)
+                _update_or_raise(update_vectorstore)
+                set_source_status(
+                    name,
+                    state="idle",
+                    last_run=datetime.now(timezone.utc).isoformat(),
+                )
+            except Exception:
+                try:
+                    set_source_status(name, state="error")
+                except Exception:
+                    logger.exception("Failed to record error status for %s", name)
+                raise
 
         run_tracked(f"scheduled:{name}", body)
 

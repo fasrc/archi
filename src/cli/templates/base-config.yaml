@@ -127,6 +127,18 @@ services:
         # interpolation (see provider_mode above; design.md Decision 1).
         evaluator_provider_mode: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_provider_mode | tojson }}
         {%- endif %}
+        {%- if services.benchmarking.mode_settings.ragas_settings.judge_mode is defined and services.benchmarking.mode_settings.ragas_settings.judge_mode is not none %}
+        # Deferred or inline judge execution; guarded by presence and tojson so false reaches parse_judge_mode's refusal.
+        judge_mode: {{ services.benchmarking.mode_settings.ragas_settings.judge_mode | tojson }}
+        {%- endif %}
+        {%- if services.benchmarking.mode_settings.ragas_settings.judge_bundle_dir is defined and services.benchmarking.mode_settings.ragas_settings.judge_bundle_dir is not none %}
+        # Output-relative directory for deferred judge bundles (default: judge_bundles).
+        judge_bundle_dir: {{ services.benchmarking.mode_settings.ragas_settings.judge_bundle_dir | tojson }}
+        {%- endif %}
+        {%- if services.benchmarking.mode_settings.ragas_settings.evaluator_model_revision is defined and services.benchmarking.mode_settings.ragas_settings.evaluator_model_revision is not none %}
+        # Revision of the judge model (evaluator_model) that a deferred bundle requests; tojson guards against YAML 1.1 retyping.
+        evaluator_model_revision: {{ services.benchmarking.mode_settings.ragas_settings.evaluator_model_revision | tojson }}
+        {%- endif %}
 
 
   piazza:
@@ -150,6 +162,15 @@ services:
     max_workers: {{ v_slack_workers if v_slack_workers is defined and v_slack_workers is not none else 4 }}
     {%- set v_slack_history = services.slack.history_limit %}
     history_limit: {{ v_slack_history if v_slack_history is defined and v_slack_history is not none else 20 }}
+    {#- Pass the access keys through unconverted: the bot validates them at start-up,
+        so a malformed value stops it instead of becoming a policy (#702 follow-up). -#}
+    {%- set v_slack_internal = services.slack.internal_users_only %}
+    internal_users_only: {{ v_slack_internal | tojson if v_slack_internal is defined and v_slack_internal is not none else 'false' }}
+    {%- set v_slack_channels = services.slack.allowed_channels %}
+    allowed_channels: {{ v_slack_channels | tojson if v_slack_channels is defined and v_slack_channels is not none else '[]' }}
+    {#- Keep the default equal to DEFAULT_EXTERNAL_USER_TEXT in src/interfaces/slack_bot.py. -#}
+    {%- set v_slack_notice = services.slack.external_user_text or "This assistant is available only to internal users. Guests and users from other organizations cannot use it." %}
+    external_user_text: {{ v_slack_notice | tojson }}
   redmine_mailbox:
     agent_class: {{ services.redmine_mailbox.agent_class | default('CMSCompOpsAgent', true) }}
     agents_dir: "{{ services.redmine_mailbox.agents_dir | default('', true) }}"
@@ -180,6 +201,16 @@ services:
     # needs no change here.
     context_editing: {{ services.chat_app.context_editing | tojson }}
     {% endif %}
+    {#- Agent knobs (#670): emitted only when declared, so the defaults stay in the
+        agents (forced retrieval on; DEFAULT_TOOL_BUDGETS). A null counts as
+        undeclared: rendered, it would reach .get("force_initial_retrieval", True)
+        as None and turn forced retrieval off. tojson keeps false a boolean. #}
+    {% if services.chat_app.force_initial_retrieval is defined and services.chat_app.force_initial_retrieval is not none %}
+    force_initial_retrieval: {{ services.chat_app.force_initial_retrieval | tojson }}
+    {% endif %}
+    {% if services.chat_app.tool_budgets is defined and services.chat_app.tool_budgets is not none %}
+    tool_budgets: {{ services.chat_app.tool_budgets | tojson }}
+    {% endif %}
     default_provider: {{ services.chat_app.default_provider | default("local", true) }}
     default_model: {{ services.chat_app.default_model | default("llama3.2", true) }}
     skills_dir: "{{ services.chat_app.skills_dir | default('', true) }}"
@@ -190,13 +221,15 @@ services:
     port: {{ services.chat_app.port | default(7861, true) }}
     external_port: {{ services.chat_app.external_port | default(7861, true) }}
     host: {{ services.chat_app.host | default("0.0.0.0", true) }}
+    {%- set v_chat_wsgi_threads = services.chat_app.wsgi_threads %}
+    wsgi_threads: {{ v_chat_wsgi_threads if v_chat_wsgi_threads is defined and v_chat_wsgi_threads is not none else 16 }}
     hostname: {{ services.chat_app.hostname | default("localhost", true) }}
     template_folder: "{{ services.chat_app.template_folder | default('/root/archi/src/interfaces/chat_app/templates', true) }}"
     static_folder: "{{ services.chat_app.static_folder | default('/root/archi/src/interfaces/chat_app/static', true) }}"
     num_responses_until_feedback: {{ services.chat_app.num_responses_until_feedback | default(3, true) }}
     include_copy_button: {{ services.chat_app.include_copy_button | default(false, true) }}
     {%- set v_chat_flask_debug = services.chat_app.flask_debug_mode %}
-    flask_debug_mode: {{ v_chat_flask_debug if v_chat_flask_debug is defined and v_chat_flask_debug is not none else true }}
+    flask_debug_mode: {{ v_chat_flask_debug if v_chat_flask_debug is defined and v_chat_flask_debug is not none else false }}
     evaluations:
       enabled: {{ services.chat_app.evaluations.enabled is sameas true }}
       # tojson, not a raw scalar inside double quotes: the value is loaded once
@@ -287,6 +320,9 @@ data_manager:
       kwargs:
         model: {{ data_manager.embedding_class_map.OpenAIEmbeddings.kwargs.model | default('text-embedding-3-small', true) }}
       similarity_score_reference: {{ data_manager.embedding_class_map.OpenAIEmbeddings.similarity_score_reference | default(0.0, true) }}
+{%- if data_manager.embedding_class_map.OpenAIEmbeddings.dimensions is defined and data_manager.embedding_class_map.OpenAIEmbeddings.dimensions is not none %}
+      dimensions: {{ data_manager.embedding_class_map.OpenAIEmbeddings.dimensions | int }}
+{%- endif %}
     HuggingFaceEmbeddings:
       class: HuggingFaceEmbeddings
       kwargs:
@@ -298,6 +334,9 @@ data_manager:
           normalize_embeddings: {{ v_normalize_embeddings if v_normalize_embeddings is defined and v_normalize_embeddings is not none else true }}
       similarity_score_reference: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.similarity_score_reference | default(0.0, true) }}
       query_embedding_instructions: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.query_embedding_instructions | default("null", true) }}
+{%- if data_manager.embedding_class_map.HuggingFaceEmbeddings.dimensions is defined and data_manager.embedding_class_map.HuggingFaceEmbeddings.dimensions is not none %}
+      dimensions: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.dimensions | int }}
+{%- endif %}
   chunk_size: {{ data_manager.chunk_size | default(1000, true) }}
   chunk_overlap: {{ data_manager.chunk_overlap | default(0, true) }}
   chunking:
@@ -315,11 +354,13 @@ data_manager:
     # Target parent/child node sizes for hierarchical chunking. Only emitted when
     # set so VectorStoreManager falls back to its built-in defaults (2048/512)
     # otherwise — keeping the default a single source of truth in code.
+    # tojson keeps the configured type: a bare "2048" would reload as an int
+    # and slip past the manager's type check.
 {%- if data_manager.chunking.parent_chunk_size is defined %}
-    parent_chunk_size: {{ data_manager.chunking.parent_chunk_size }}
+    parent_chunk_size: {{ data_manager.chunking.parent_chunk_size | tojson }}
 {%- endif %}
 {%- if data_manager.chunking.child_chunk_size is defined %}
-    child_chunk_size: {{ data_manager.chunking.child_chunk_size }}
+    child_chunk_size: {{ data_manager.chunking.child_chunk_size | tojson }}
 {%- endif %}
 {%- if data_manager.chunking.chunk_overlap is defined and data_manager.chunking.chunk_overlap is not none %}
     # tojson keeps the configured type: a bare "20" or "null" would reload as an
@@ -327,6 +368,11 @@ data_manager:
     chunk_overlap: {{ data_manager.chunking.chunk_overlap | tojson }}
 {%- endif %}
   parallel_workers: {{ data_manager.parallel_workers | default(32, true) }}
+  # Rendered into compose as OMP_NUM_THREADS, not read here. Recorded only when set,
+  # so `archi restart -c` sees a change to it as a data_manager change (#721).
+{%- if data_manager.torch_threads is defined and data_manager.torch_threads is not none %}
+  torch_threads: {{ data_manager.torch_threads }}
+{%- endif %}
   # Scrape-phase concurrency (issue #136), independent of the embedding-phase
   # `parallel_workers` above. `scrape_workers` bounds how many seed URLs are crawled
   # in parallel; `scrape_per_host_workers` caps concurrent in-flight requests to any

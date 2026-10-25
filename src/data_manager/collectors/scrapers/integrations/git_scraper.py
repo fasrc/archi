@@ -124,6 +124,10 @@ class GitScraper:
 
             try:
                 harvested.extend(self._harvest_repository(repo_info))
+            except Exception as exc:
+                logger.error(f"Failed to harvest {url}: {exc}")
+                self.last_failures.append((repo_name, str(exc)))
+                continue
             finally:
                 shutil.rmtree(repo_info["repo_path"], ignore_errors=True)
 

@@ -191,10 +191,35 @@ these to turn anything off or to hide anything:
 | `services.data_manager.enabled` | the data-manager service is registered `auto_enable=True`, and the service registry adds every auto-enable service unconditionally, so the container is deployed either way |
 | `data_manager.sources.links.enabled` | `ScraperManager` assigns `links_enabled = True` without reading the config, so link input lists are still crawled |
 | `data_manager.sources.links.html_scraper.reset_data` | no consumer reads it — `ScraperManager` extracts the `html_scraper` block but reads only `verify_urls` and `enable_warnings` when it builds link scrapers |
-| `visible` on `links`, `indico`, `jira`, `redmine` and `elog` | citations are filtered by the `source_type` stored on each document, and these sources persist `source_type` values that are not their config keys — `web` for links, Indico and ELOG, `ticket` for Jira and Redmine. The lookup misses, so the document defaults to visible (and the service logs `Source type … not found in config`). Tracked as [issue #459](https://github.com/fasrc/archi/issues/459) |
+| `services.chat_app.flask_debug_mode` | the chat service runs on gunicorn and always turns the Flask debugger off. The grader and the data manager still read their own `flask_debug_mode` keys |
 
-`visible: false` **does** work for `git`, `sso` and `local_files`, whose stored
-`source_type` matches the config key.
+`visible: false` works for all sources. The chat app maps each document's stored metadata
+to a config key using the following table, then reads `visible` from that config entry:
+
+| Stored `source_type` | Stored marker | Config key used |
+|---|---|---|
+| `git` | — | `git` |
+| `sso` | — | `sso` |
+| `local_files` | — | `local_files` |
+| `web` | `scraper=indico` | `indico` |
+| `web` | `scraper=elog` | `elog` |
+| `web` | any other `scraper`, or absent | `links` |
+| `ticket` | `ticket_provider=jira` | `jira` |
+| `ticket` | `ticket_provider=redmine` | `redmine` |
+| `links`, `elog`, `jira`, `redmine` (older ingests) | — | the same name |
+| anything else | — | *(no key — treated as visible)* |
+
+Older ingests stored some sources under their own name as `source_type`: `links`, `elog`,
+`jira`, and `redmine`. A document that has not been re-ingested since keeps that value, and it
+obeys the flag of the source with the same name.
+
+Two rows need care when a marker is absent:
+
+- A `web` document with no `scraper` marker maps to `links`. `links.visible: false` hides it,
+  even when it came from an Indico or ELOG source that is set to visible.
+- A `ticket` document with no `ticket_provider` marker maps to no key. It stays visible,
+  whatever the `jira` or `redmine` `visible` flag says. The ticket integrations write the
+  marker on every ticket that they store as `ticket`, so only a hand-made row can lack it.
 
 To keep a link source out of an ingest today, remove it from `input_lists` rather than
 setting `enabled: false`.
@@ -284,9 +309,17 @@ The main chat interface.
 | `port` | int | `7861` | Internal container port |
 | `external_port` | int | `7861` | Host-mapped port |
 | `host` | string | `0.0.0.0` | Network binding |
+| `wsgi_threads` | int | `16` | Threads in the one gunicorn worker process. Each open chat stream holds one thread. Must be 1 or more |
 | `num_responses_until_feedback` | int | `3` | Responses before prompting for feedback |
+| `flask_debug_mode` | bool | `false` | No effect on the chat service (see below) |
 | `auth.enabled` | bool | `false` | Enable authentication |
 | `alerts.managers` | list | `[]` | Usernames allowed to create and delete alerts |
+
+The chat service runs on gunicorn with one worker process and the `gthread` worker, so
+`wsgi_threads` is the limit on requests that run at the same time. Each open chat stream
+holds one thread until it ends. A value that is not a whole number of 1 or more stops the
+chat service at start. The chat service never runs the Flask debugger: `flask_debug_mode`
+and the `FLASK_DEBUG` environment variable have no effect on it.
 
 #### `services.chat_app.auth`
 
@@ -517,7 +550,7 @@ PostgreSQL database settings.
 
 - **`services.piazza`**: Requires `network_id`, `agent_class`, `provider`, `model`
 - **`services.mattermost`**: Requires `update_time`
-- **`services.slack`**: Optional `chat_url`, `timeout_seconds`, `max_workers`, `history_limit`; needs `services.chat_app.openai_compat.enabled: true` (in host mode with authentication off, `local_only: true` instead; see [Local callers only](api-reference-v1.md#local-callers-only)). See [Slack Interface](services.md#slack-interface)
+- **`services.slack`**: Optional `chat_url`, `timeout_seconds`, `max_workers`, `history_limit`, `internal_users_only`, `allowed_channels`, `external_user_text`; needs `services.chat_app.openai_compat.enabled: true` (in host mode with authentication off, `local_only: true` instead; see [Local callers only](api-reference-v1.md#local-callers-only)). See [Slack Interface](services.md#slack-interface)
 - **`services.redmine_mailbox`**: Requires `url`, `project`, `redmine_update_time`, `mailbox_update_time`
 - **`services.benchmarking`**: See [Benchmarking](benchmarking.md)
 
@@ -540,6 +573,7 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 | `scrape_per_host_workers` | int | `4` | Cap on concurrent in-flight requests to any single host |
 | `reset_collection` | bool | `true` | Wipe collection on startup |
 | `distance_metric` | string | `cosine` | Similarity metric: `cosine`, `l2`, `ip` |
+| `torch_threads` | int | `8`, capped at the host's CPUs | CPU threads torch uses in the data-manager and chatbot containers, rendered into both as `OMP_NUM_THREADS` and `MKL_NUM_THREADS` (torch reads `MKL_NUM_THREADS` first, so both get the same value). Unset, torch starts one thread per host core; on a shared 32-core host that made each embedding call ~3 s instead of ~16 ms ([#721](https://github.com/fasrc/archi/issues/721)). Without this key, the default is 8, or fewer on a host where `archi create` can use fewer than 8 CPUs, and an `OMP_NUM_THREADS` or `MKL_NUM_THREADS` already in your `--env-file` is kept as it is. Like any other env-file value, a changed thread variable reaches only the services that are recreated: `archi restart -e` applies it to the one service it restarts. Must be a positive integer; anything else fails `archi create` and `archi restart`. `archi restart -c` refuses a change to it, like any other `data_manager` change |
 
 > **Note:** `scrape_workers` and `scrape_per_host_workers` control the **scrape
 > phase** only and are independent of `parallel_workers`, which governs the
@@ -591,6 +625,21 @@ child nodes linked to larger parent context nodes (the parent text is what a
 hierarchical-rerank retriever returns). The legacy `character` strategy uses the flat
 `chunk_size`/`chunk_overlap` settings above.
 
+The benchmark artifact's `config_version.key_settings`, `GET /config/static`, and the
+status board's ingest snapshot report the chunking values the ingest path actually
+applies — not the top-level `chunk_size`/`chunk_overlap` pair — under an
+`effective_chunking` field, derived from whichever strategy is active.
+
+All three describe a configuration, not the chunks in the store. The benchmark artifact and
+`GET /config/static` derive the field from the configuration they hold. The status board's
+snapshot holds the configuration of the latest ingest run. An ingest run embeds only new or
+changed documents, so a chunking change re-chunks nothing that is already in the store (see
+the note at the end of [The `markdown` strategy](#the-markdown-strategy)). A run that finds
+no changed document still records the new settings, and the board then shows no change. A
+benchmark run that reuses a corpus (`ingest_wall_seconds: null`) can report a chunking that
+its corpus was not built with in the same way. To make the store match a new chunking, force
+a re-ingest as that note describes.
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `chunking.strategy` | string | `sentence` | `sentence` (hierarchical, sentence-aware), `markdown` (hierarchical, header-aware for Markdown files — see below), or `character` (legacy flat chunks) |
@@ -614,6 +663,9 @@ data_manager:
 > 10 for a size of 20), so re-ingest such a collection to apply the change. The keys
 > exist so a benchmark can sweep chunk sizes and recommend defaults from data — see
 > [Benchmarking → Hierarchical-rerank A/B](benchmarking.md#hierarchical-rerank-ab).
+> Give `parent_chunk_size` and `child_chunk_size` as plain integers; a quoted value
+> such as `"512"` stays a string after the render, and the hierarchical parser cannot
+> use it.
 
 #### The `markdown` strategy
 
@@ -719,7 +771,7 @@ data_manager:
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `html_to_markdown.enabled` | `true` | Convert string HTML content (suffix `html`/`htm`) to ATX Markdown via `markdownify`, flip the suffix and path fields to `.md`, and record `metadata.converted_from = "html"`. The `.md` file then loads through `TextLoader` instead of `BSHTMLLoader`, so headings, lists, tables, and links survive into chunks. For FASRC KB (Echo-KB) pages, the converted Markdown is additionally sliced to the article body between the page's `Table of Contents` and `Bookmarkable Links` (or, when absent, `Last Updated`) landmarks, dropping the surrounding category-filter nav and footer; pages without those landmarks (non-KB sources) keep the full-page conversion. |
+| `html_to_markdown.enabled` | `true` | Convert string HTML content (suffix `html`/`htm`) to ATX Markdown via `markdownify`, flip the suffix and path fields to `.md`, and record `metadata.converted_from = "html"`. The `.md` file then loads through `TextLoader` instead of `BSHTMLLoader`, so headings, lists, tables, and links survive into chunks. For FASRC KB (Echo-KB) pages, the converted Markdown is additionally sliced to the article body between the page's `Table of Contents` and `Bookmarkable Links` (or, when absent, `Last Updated`) landmarks, dropping the surrounding category-filter nav and footer; pages without those landmarks (non-KB sources) keep the full-page conversion. Empty headings (no text and no image or code) are dropped, so no bare `#` line reaches the Markdown. |
 | `categorization.enabled` | `false` | Assign one label from `categories` to each document via an LLM and store it under `metadata.llm_category`. Costs one LLM call per document; **measured at about +19 min per 1091-document ingest with no resolvable retrieval effect** — see "Measured cost" below. |
 | `categorization.provider` / `model` | — | Which chat model to use. `provider` is a key under `services.chat_app.providers`; that block (base_url / mode / models / extra_kwargs) supplies the model's `provider_config`, so a custom local/vLLM endpoint is honored. |
 | `categorization.max_chars` | `4000` | Document content is truncated to this length before the model call (bounds cost/latency). |
@@ -785,14 +837,43 @@ data_manager:
   copy of the same tag with the same attributes. A link therefore renders as two links
   with the same `href` around the fence, a bold or italic run resumes after it, and an
   ancestor left with no content is dropped. The exception is a link left with no text,
-  image, rule, or video on any side of the fences (issue #430): it is replaced by one link before the
+  image, rule, video, quotation, heading, or table cell on any side of the fences (issue #430)
+  (issue #713): it is replaced by one link before the
   fence, whose text is the link's `title` or, if there is none, its `href` — so
   `<a href="https://x/y">` around a lone block becomes `<https://x/y>` above the fence and
-  the target stays in the knowledge base. A relative or fragment target, such as `/docs`,
-  becomes `[/docs](/docs)`. Whitespace that touches the cut is removed,
+  the target stays in the knowledge base. A quotation, heading, or table cell does not
+  count when the link is inside `<kbd>`, `<samp>`, `<code>`, or `<pre>`, where the link
+  shows no target, and a heading does not count inside a heading or table cell, where it
+  shows no `#` (PR #716 review). A relative or fragment target, such as `/docs`,
+  becomes `[/docs](/docs)`. The conversion ignores a `data-archi-link-shown` or
+  `data-archi-promoted` attribute in the page HTML (issue #713): these names are its own
+  markers. Whitespace that touches the cut is removed,
   so no line beside the fence begins or ends with a stray space. The shape is rare in the
   FASRC KB (0 of 25 sampled multi-line code elements) and, like every item in this list,
   it reaches disk only for new or force-overwritten documents.
+- **A link target that Markdown would misread is escaped.** A link is written as
+  `[text](<target>)` so the target survives (issue #605) when its target has any of
+  these: whitespace or a control character, an unbalanced parenthesis, a leading `<`,
+  a `\` before punctuation or at the end, or an `&` that starts a character reference
+  (such as `&amp;`). A target with a line ending is left as before, because no
+  Markdown link form can hold one. Inside the angle brackets, `\`, `<`, `>`, and that `&` are
+  backslash-escaped, and a NUL is written as `%00`. A self-link (text equal to the
+  target) that cannot be an autolink (whitespace, `<`, `>`, or a control character)
+  becomes an explicit link whose text is the target with its Markdown characters
+  escaped. Other links convert
+  as before; like every item in this list, it reaches disk only for new or
+  force-overwritten documents.
+- **Link text with an unbalanced bracket is escaped.** Link text that contains an
+  unbalanced `[` or `]`, and not already backslash-escaped, gets a `\` inserted before
+  that bracket so the link survives CommonMark parsing (issue #691). Brackets inside a
+  code span, an autolink, raw inline HTML, or a nested image's destination or title do
+  not count, and a lone `\` at the end of the link text is doubled so it cannot escape
+  the closing `]`. Link syntax inside the link text, such as `[a](b)` or the empty link
+  that `markdownify` writes for a `<video>`, has its brackets escaped, because
+  CommonMark does not let a link hold a link. Balanced brackets and nested images are
+  unchanged, and an `<a>`
+  without an `href` (written as plain text) is not escaped; like every item in this
+  list, it reaches disk only for new or force-overwritten documents.
 - **Content after a nested list starts on its own line.** `markdownify` drops the newline
   after a list nested inside a list item, so the text, inline element, or sibling item
   that followed it was glued onto the nested list's last line — onto a closing code fence
@@ -801,6 +882,11 @@ data_manager:
   paragraph, code block, heading, or list is unchanged; like the body slice, the change
   reaches disk only for new or force-overwritten documents — see *Applying to an existing
   corpus* below.
+- **A relative or fragment self-link becomes a Markdown link.** A link whose text equals
+  a relative or fragment `href`, such as `/docs`, becomes `[/docs](/docs)`, because a
+  CommonMark autolink needs a URI scheme and `</docs>` reads as an HTML end tag
+  (issue #604); absolute URLs stay `<https://...>`; like the other items, it reaches disk
+  only for new or force-overwritten documents.
 - **Cost.** Categorization issues one LLM call per document — expensive on large
   crawls, hence off by default.
 - **Local `.html` uploads are not converted.** Uploaded local files arrive as `bytes`

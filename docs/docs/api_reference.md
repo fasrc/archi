@@ -729,6 +729,24 @@ Trigger schedule reload from database.
 
 Get current schedule status.
 
+```json
+{"jobs": [{"name": "links", "cron": "0 3 * * *",
+           "next_run": "2026-10-14T03:00:00+00:00",
+           "last_run": "2026-10-13T03:04:12+00:00", "state": "idle"}]}
+```
+
+`state` is the last state recorded for that source. A scheduled refresh writes it. A manual ingest through the uploader writes the same entry for `git`, `jira`, and `local_files`: the last writer wins.
+
+A URL upload writes its status under `web`, not `links`. As a result, a URL upload does not change the `state` or `last_run` of the `links` job.
+
+| `state` | Meaning |
+|---|---|
+| `idle` | The last scheduled refresh or manual ingest completed. `last_run` is its completion time. This is also the value for a source that has not run; then `last_run` is `null`. |
+| `running` | A refresh is in progress. |
+| `error` | The last scheduled refresh failed. `last_run` keeps the time of the last success. The next scheduled run tries again. A later successful manual ingest of a shared key (`git`, `jira`, `local_files`) sets `idle` again. |
+
+The cause of a failure is in the data-manager log. `GET /api/ingestion/status` also shows it, but only for a short time: that endpoint keeps one status in memory, so the next ingestion run or a service restart clears the error. The `error` state on this endpoint stays until a later write for that source.
+
 ---
 
 ## Health & Info

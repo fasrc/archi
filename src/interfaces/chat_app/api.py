@@ -19,6 +19,7 @@ from flask import Blueprint, current_app, g, jsonify, request
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.utils.config_access import get_full_config
 from src.utils.env import read_secret
+from src.utils.ingest_provenance import effective_chunking
 from src.utils.logging import get_logger
 from src.utils.postgres_service_factory import PostgresServiceFactory
 
@@ -392,6 +393,9 @@ def get_static_config():
                     "embedding_dimensions": config.embedding_dimensions,
                     "chunk_size": config.chunk_size,
                     "chunk_overlap": config.chunk_overlap,
+                    "effective_chunking": effective_chunking(
+                        config.data_manager_config
+                    ),
                     "distance_metric": config.distance_metric,
                     "available_pipelines": config.available_pipelines,
                     "available_models": config.available_models,

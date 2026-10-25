@@ -68,6 +68,7 @@ from src.archi.utils.output_dataclass import PipelineOutput
 
 # from src.data_manager.data_manager import DataManager
 from src.data_manager.data_viewer_service import DataViewerService
+from src.data_manager.vectorstore import parent_nodes
 from src.data_manager.vectorstore.manager import VectorStoreManager
 from src.interfaces.chat_app.config_fingerprint import (
     build_health_payload,
@@ -97,6 +98,7 @@ from src.interfaces.chat_app.similarity_threshold import (
     normalize_similarity_threshold,
     order_and_filter_by_similarity,
 )
+from src.interfaces.chat_app.source_visibility import is_visible
 from src.interfaces.chat_app.utils import collapse_assistant_sequences
 from src.utils.config_access import (
     get_dynamic_config,
@@ -253,6 +255,8 @@ def _build_request_local_pipeline(
         view._vector_tools = None
     if hasattr(view, "_vector_retrievers"):
         view._vector_retrievers = None
+    if hasattr(view, "_forced_vector_tool"):
+        view._forced_vector_tool = None
     view.refresh_agent(force=True)
     return view
 
@@ -816,16 +820,7 @@ class ChatWrapper:
         From the metadata, check the source type.
         From the config, check if the source type is visible or not.
         """
-        source_type = metadata.get("source_type")
-        if not source_type:
-            return True  # default to True if not specified
-
-        if source_type not in self.sources_config:
-            logger.error(
-                f"Source type {source_type} not found in config, defaulting to visible"
-            )
-            return True
-        return bool(self.sources_config[source_type].get("visible", True))
+        return is_visible(metadata, self.sources_config)
 
     @staticmethod
     def _extract_link(metadata: dict) -> str | None:
@@ -6191,11 +6186,19 @@ class FlaskAppWrapper(object):
                         logger.info(
                             f"Deleted {chunks_deleted} chunks for {len(hashes_to_delete)} documents"
                         )
+                        parents_deleted = (  # pragma: no cover
+                            parent_nodes.delete_unreferenced_parents_for_resources(
+                                cursor, hashes_to_delete
+                            )
+                        )
+                        logger.info(  # pragma: no cover
+                            f"Deleted {parents_deleted} unreferenced parent nodes"
+                        )
 
                     # Mark documents as deleted
                     cursor.execute(
                         """
-                        UPDATE documents 
+                        UPDATE documents
                         SET is_deleted = TRUE, deleted_at = NOW()
                         WHERE source_type = 'git' 
                           AND NOT is_deleted
@@ -6824,6 +6827,14 @@ class FlaskAppWrapper(object):
                         chunks_deleted = cursor.rowcount
                         logger.info(
                             f"Deleted {chunks_deleted} chunks for {len(hashes_to_delete)} Jira documents"
+                        )
+                        parents_deleted = (  # pragma: no cover
+                            parent_nodes.delete_unreferenced_parents_for_resources(
+                                cursor, hashes_to_delete
+                            )
+                        )
+                        logger.info(  # pragma: no cover
+                            f"Deleted {parents_deleted} unreferenced parent nodes"
                         )
 
                     # Mark documents from this Jira project as deleted

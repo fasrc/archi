@@ -20,6 +20,11 @@ import psycopg2
 from flask import Blueprint, Response, g, jsonify, request, stream_with_context
 
 from src.archi.utils.citation_formatter import format_citations
+from src.interfaces.slack_trace_tags import (
+    slack_trace_attributes,
+    tag_current_span,
+    with_trace_attributes,
+)
 from src.utils.logging import get_logger
 from src.utils.rbac import Permission, get_registry, has_permission
 from src.utils.rbac.audit import (
@@ -344,10 +349,16 @@ def chat_completions():
 
     request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
 
+    # Slack bot requests carry slack:<team>:<channel>:<thread_ts>; tag their spans.
+    trace_attributes = slack_trace_attributes(external_chat_id)
+    tag_current_span(trace_attributes)
+
     if stream:
-        return _streaming_response(request_id, model, stream_kwargs)
+        return _streaming_response(request_id, model, stream_kwargs, trace_attributes)
     else:
-        return _non_streaming_response(request_id, model, stream_kwargs)
+        return _non_streaming_response(
+            request_id, model, stream_kwargs, trace_attributes
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +383,7 @@ def _extract_delta(content, accumulated):
 # ---------------------------------------------------------------------------
 
 
-def _streaming_response(request_id, model, stream_kwargs):
+def _streaming_response(request_id, model, stream_kwargs, trace_attributes=None):
     """Return an SSE streaming response."""
 
     def generate():
@@ -381,7 +392,9 @@ def _streaming_response(request_id, model, stream_kwargs):
         source_scores = []
 
         try:
-            for event in _chat_wrapper.stream(**stream_kwargs):
+            for event in with_trace_attributes(
+                _chat_wrapper.stream(**stream_kwargs), trace_attributes
+            ):
                 event_type = event.get("type", "")
 
                 if event_type == "chunk":
@@ -455,15 +468,18 @@ def _streaming_response(request_id, model, stream_kwargs):
 # ---------------------------------------------------------------------------
 
 
-def _non_streaming_response(request_id, model, stream_kwargs):
+def _non_streaming_response(request_id, model, stream_kwargs, trace_attributes=None):
     """Accumulate from stream() and return a complete JSON response."""
     final_content = ""
     source_documents = []
     source_scores = []
     append_citations = False
+    archi_message_id = None
 
     try:
-        for event in _chat_wrapper.stream(**stream_kwargs):
+        for event in with_trace_attributes(
+            _chat_wrapper.stream(**stream_kwargs), trace_attributes
+        ):
             event_type = event.get("type", "")
 
             if event_type == "final":
@@ -486,6 +502,9 @@ def _non_streaming_response(request_id, model, stream_kwargs):
                 if docs:
                     source_documents = docs
                     source_scores = scores_list
+                raw_id = event.get("message_id")
+                if isinstance(raw_id, int) and not isinstance(raw_id, bool):
+                    archi_message_id = raw_id
 
             elif event_type == "error":
                 error_msg = event.get("message", "Unknown error")
@@ -523,6 +542,7 @@ def _non_streaming_response(request_id, model, stream_kwargs):
                 "completion_tokens": 0,
                 "total_tokens": 0,
             },
+            "archi_message_id": archi_message_id,
         }
     )
 

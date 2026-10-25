@@ -260,8 +260,14 @@ class ScraperManager:
         # order-preserving) before standard link collection. A below-floor /
         # over-cap SitemapExpansionError is intentionally NOT caught here: it
         # propagates out and fails the ingest rather than shipping a bad corpus.
-        self._sitemap_lastmod_map: Dict[str, str] = {}
-        if sitemap_urls:
+        if not sitemap_urls:
+            # Guarded on a COMPLETE read, as in schedule_collect_links: an
+            # unreadable list can hide every sitemap source (PR #689 review).
+            if getattr(self, "_input_lists_complete", True):
+                self._sitemap_lastmod_map: Dict[str, str] = {}
+        else:
+            # The refresh replaces the map itself, or keeps the previous one when it
+            # is incomplete, so it is not cleared here first (PR #689 review).
             # Dedup expanded pages against the NORMALIZED hand-list keys, not the
             # raw strings, so a hand-listed `/x/` and a sitemap-derived `/x` are the
             # same page. LinkScraper does not dedup across seeds, so without this a
@@ -679,7 +685,14 @@ class ScraperManager:
                 self._input_lists_complete = False
                 continue
 
-            urls.extend(self._extract_urls_from_file(list_path))
+            try:
+                urls.extend(self._extract_urls_from_file(list_path))
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.warning(
+                    f"Input list {list_path} could not be read, skipping: {exc}"
+                )
+                self._input_lists_complete = False
+                continue
 
         return urls
 
@@ -814,7 +827,12 @@ class ScraperManager:
                 new_urls.append(url)
                 if lastmod is not None:
                     new_map[url] = lastmod
-        incomplete = getattr(self, "_sitemap_expansion_incomplete", False)
+        # An unreadable input list hides its sitemap sources, so a map built from
+        # the readable lists alone is truncated in the same way (PR #689 review).
+        lists_complete = getattr(self, "_input_lists_complete", True)
+        incomplete = (
+            getattr(self, "_sitemap_expansion_incomplete", False) or not lists_complete
+        )
         # Keyed on PROVENANCE (did a complete refresh ever publish?), never on the
         # map's contents. A fully successful expansion publishes {} when every page
         # omits the optional <lastmod>, so `if previous:` would read a valid empty
@@ -824,9 +842,10 @@ class ScraperManager:
             previous = getattr(self, "_sitemap_lastmod_map", {})
             logger.warning(
                 "sitemap expansion was incomplete (%d document(s) failed to fetch or "
-                "parse); retaining the previous lastmod map of %d entry(ies) rather "
+                "parse%s); retaining the previous lastmod map of %d entry(ies) rather "
                 "than publishing a truncated one of %d",
                 len(getattr(self, "_sitemap_expansion_failures", ()) or ()),
+                "" if lists_complete else ", and an input list could not be read",
                 len(previous),
                 len(new_map),
             )
