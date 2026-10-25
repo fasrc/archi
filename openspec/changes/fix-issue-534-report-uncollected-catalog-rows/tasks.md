@@ -83,7 +83,7 @@ code, run `bash scripts/gate.sh`, and commit. Do not end a task on a red test. R
   `("web", "elog")`, and one with `/event/` on a host that contains `indico` maps to
   `("web", "indico")`; rows with the marker still map as before. Run the gate and commit
   (`feat(#534): harden reconcile scope keys`).
-- [ ] 3.3 Input lists and sitemaps in `ScraperManager.collect_all_from_config` (`design.md`
+- [x] 3.3 Input lists and sitemaps in `ScraperManager.collect_all_from_config` (`design.md`
   D3 "Input lists" and "Sitemaps"). Tests with the collect steps patched out
   (`collect_links`, `collect_sso`, `collect_git`, `collect_elog`, `collect_indico`) and an
   open pass on a fake persistence: a missing input list (a temp `weblists/` dir under a

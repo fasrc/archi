@@ -25,6 +25,9 @@ from src.data_manager.collectors.scrapers.sitemap_source import (
 from src.data_manager.collectors.utils.catalog_reconcile import (
     record_failure as _record_failure,
 )
+from src.data_manager.collectors.utils.catalog_reconcile import (
+    record_url_failure as _record_url_failure,
+)
 from src.utils.config_access import get_global_config
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
@@ -241,6 +244,15 @@ class ScraperManager:
             self._collect_urls_from_lists_by_type(self.input_lists)
         )
 
+        if not getattr(self, "_input_lists_complete", True):
+            _reason = "input list missing or unreadable"
+            if self.links_enabled:
+                _record_failure(persistence, "web", None, _reason)
+            if self.sso_enabled:
+                _record_failure(persistence, "sso", None, _reason)
+            if self.git_enabled:
+                _record_failure(persistence, "git", None, _reason)
+
         git_urls = self._apply_input_list_flag(
             "git", getattr(self, "_git_flag", True), git_urls
         )
@@ -278,6 +290,22 @@ class ScraperManager:
             link_urls.extend(
                 self._refresh_sitemap_lastmod_map(sitemap_urls, existing_keys)
             )
+            sitemap_failures = getattr(self, "_sitemap_expansion_failures", None) or []
+            if sitemap_failures:
+                for top_url in sitemap_urls:
+                    _record_url_failure(
+                        persistence, "web", top_url, "sitemap expansion failed"
+                    )
+                cfg = (
+                    self.sitemap_config if isinstance(self.sitemap_config, dict) else {}
+                )
+                raw_hosts = cfg.get("allowed_hosts", []) or []
+                if isinstance(raw_hosts, str):
+                    raw_hosts = [raw_hosts]
+                for host in raw_hosts:
+                    _record_url_failure(
+                        persistence, "web", str(host), "sitemap expansion failed"
+                    )
 
         self.collect_links(persistence, link_urls=link_urls)
         self.collect_sso(persistence, sso_urls=sso_urls)
