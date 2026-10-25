@@ -109,6 +109,10 @@
 #   105. the same for SIGHUP
 #   106. a failed ledger append in archive_run.sh arm mode pages once and leaves no pin
 #   107. no artifact with paging on sends nothing (a precondition)
+#   108. a missing agent spec in qa_arm.sh arm mode with paging on sends nothing (a precondition)
+#   109. an existing output dir in qa_arm.sh arm mode with paging on sends nothing (the last precondition)
+#   110. an arm missing from the sweep lock in qa_arm.sh --sweep with paging on sends nothing
+#   111. archive_run.sh --sweep with no sweep lock and paging on sends nothing
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -1351,6 +1355,30 @@ run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-bas
 run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-noart
 if [ "$RC" = 2 ] && grep -q "nothing archived for stack fm-noart" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
   ok "no artifact with paging on sends nothing"; else notok "no-artifact no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 108: a precondition refusal in qa_arm.sh arm mode (agent spec not found) with paging on sends nothing
+: > "$T/mail.calls"
+run env FM_AGENT_SPEC="$T/cfg/no-such-spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+if [ "$RC" = 2 ] && grep -q "agent spec not found" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "a missing agent spec in qa_arm.sh with paging on sends nothing"; else notok "qa_arm missing-spec no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 109: the last precondition before the qa_arm.sh arm point (output dir exists) with paging on sends nothing
+: > "$T/mail.calls"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml" --run 1
+if [ "$RC" = 2 ] && grep -q "output dir exists" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "an existing output dir in qa_arm.sh with paging on sends nothing"; else notok "qa_arm outdir-exists no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 110: an arm missing from the sweep lock in qa_arm.sh --sweep with paging on sends nothing
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm no-such-arm
+if [ "$RC" = 2 ] && grep -q "not in the sweep lock" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "an arm missing from the sweep lock with paging on sends nothing"; else notok "qa_arm sweep bad-arm no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 111: archive_run.sh --sweep on a stack with no sweep lock, with paging on, sends nothing
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" --sweep "$SW/configs" --stack r0-noart --run 1
+if [ "$RC" = 2 ] && grep -q "no sweep lock" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "archive_run.sh --sweep with no sweep lock and paging on sends nothing"; else notok "archive sweep no-lock no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
