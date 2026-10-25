@@ -13,7 +13,7 @@
 
 ## 2. Docs
 
-- [ ] 2.1 In ONE commit, add the one sentence of design E3 to the `chunking` section of `docs/docs/configuration.md`. Do not claim a clear error or a refusal (design D2). If `mkdocs` is installed, run `mkdocs build --config-file docs/mkdocs.yml --strict --site-dir /tmp/mkdocs-596` and confirm it prints no WARNING; if it is not installed, say so in the commit body. Gate green, commit.
+- [x] 2.1 In ONE commit, add the one sentence of design E3 to the `chunking` section of `docs/docs/configuration.md`. Do not claim a clear error or a refusal (design D2). If `mkdocs` is installed, run `mkdocs build --config-file docs/mkdocs.yml --strict --site-dir /tmp/mkdocs-596` and confirm it prints no WARNING; if it is not installed, say so in the commit body. Gate green, commit.
 
 ## 3. Verify, push, and open the PR
 
