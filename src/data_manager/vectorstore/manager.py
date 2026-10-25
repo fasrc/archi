@@ -843,6 +843,7 @@ class VectorStoreManager:
                                 (str(exc), filehash),
                             )
                             cursor.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                            failed_hashes.add(filehash)
 
                         files_since_commit += 1
                         if files_since_commit >= commit_batch_size:
@@ -877,6 +878,7 @@ class VectorStoreManager:
                             (str(exc), filehash),
                         )
                         cursor.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                        failed_hashes.add(filehash)
                         files_since_commit += 1
                         if files_since_commit >= commit_batch_size:
                             conn.commit()
@@ -954,6 +956,7 @@ class VectorStoreManager:
                             (str(exc), filehash),
                         )
                         cursor.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                        failed_hashes.add(filehash)
 
                     files_since_commit += 1
                     if files_since_commit >= commit_batch_size:

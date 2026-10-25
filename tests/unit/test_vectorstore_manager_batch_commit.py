@@ -534,6 +534,74 @@ def test_add_to_postgres_hierarchical_does_not_count_a_file_with_no_text(monkeyp
     assert result == 0
 
 
+def test_add_to_postgres_counts_an_embed_error(monkeypatch):
+    call_count = [0]
+
+    def embed_fn(chunks):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("embed error")
+        return [[0.1, 0.2, 0.3] for _ in chunks]
+
+    manager, _, _ = _setup_flat_manager(monkeypatch, embed_fn=embed_fn)
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    assert manager._add_to_postgres(files) == 1
+
+
+def test_add_to_postgres_counts_a_store_error(monkeypatch):
+    manager, fake_conn, _ = _setup_flat_manager(monkeypatch)
+    call_count = [0]
+
+    def execute_values_fn(cursor, sql, rows, *a, **k):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("store error")
+
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", execute_values_fn
+    )
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    assert manager._add_to_postgres(files) == 1
+
+    cursor = fake_conn.cursor.return_value.__enter__.return_value
+    embedded_calls = [
+        call
+        for call in cursor.execute.call_args_list
+        if "ingestion_status = 'embedded'" in str(call.args[0])
+        and len(call.args) > 1
+        and call.args[1] == ("hash-1",)
+    ]
+    assert embedded_calls
+
+
+def test_add_to_postgres_hierarchical_counts_a_store_error(monkeypatch):
+    manager = _setup_hierarchical_manager(monkeypatch)
+    call_count = [0]
+
+    def _failing_insert(cursor, document_id, parents):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("db error")
+        return 1
+
+    manager._insert_hierarchical_file = _failing_insert
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    assert manager._add_to_postgres(files) == 1
+
+
+def test_add_to_postgres_counts_every_file_when_all_fail_to_store(monkeypatch):
+    manager, _, _ = _setup_flat_manager(monkeypatch)
+
+    def execute_values_fn(cursor, sql, rows, *a, **k):
+        raise RuntimeError("store error")
+
+    monkeypatch.setattr(
+        manager_module.psycopg2.extras, "execute_values", execute_values_fn
+    )
+    files = {"hash-0": "/tmp/file-0.txt", "hash-1": "/tmp/file-1.txt"}
+    assert manager._add_to_postgres(files) == 2
+
+
 def _tagging_config(embedding_name="HuggingFaceEmbeddings", kwargs=None):
     return {
         "stemming": {"enabled": False},
