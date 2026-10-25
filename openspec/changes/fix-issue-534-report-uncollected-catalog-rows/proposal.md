@@ -20,12 +20,18 @@ As a result, the candidate computation must already be safe now: "not collected"
 - `PersistenceService` gets an optional collection-pass recorder. `persist_resource` records
   each persisted `resource_hash` with its scope while a pass is open.
 - The collectors record a failure for a scope at each place where they swallow an error
-  today (git clone, walk, and file reads; link seed crawl, per-page crawl error, crawl
-  stopped at `max_pages`, failed SSO login, failed child sitemap; SSO preconditions; local
-  file discovery, read, and persist; ticket provider init, login, iteration, and dropped
-  tickets). Ticket rows are scoped per provider (`jira` or `redmine`).
-- `run_ingestion` discards the pass when a collection step raises, so the pass never
-  outlives the ingest in the long-running data-manager service.
+  today (git clone, walk, and file reads; a missing or unreadable input list; link seed
+  crawl, per-page crawl error and its redirect target, crawl stopped at `max_pages`, failed
+  or unconfirmed SSO login, SSO link extraction, failed child sitemap; SSO preconditions;
+  local staging directory, file discovery, read, and persist; ticket provider init, login,
+  empty Jira token, iteration, short or capped Jira fetch, and dropped tickets).
+- Scope keys are safe by construction: web and SSO hosts use one helper on both sides
+  (lowercased hostname, port dropped); Jira rows are scoped per project, so a project added
+  through the uploader is never a candidate; Redmine rows are scoped per provider; ELOG and
+  Indico rows that lost their `scraper` marker are still recognized by URL shape and skipped.
+- `run_ingestion` discards the pass when a collection step, the index flush, or the catalog
+  refresh raises, so the pass never outlives the ingest in the long-running data-manager
+  service.
 - `DataManager.run_ingestion` opens a pass before the three collection steps and calls the
   report after the catalog refresh, before `delete_existing_collection_if_reset()`.
 - The pass logs one INFO summary line, the full candidate list at DEBUG, and one WARNING
@@ -41,6 +47,20 @@ As a result, the candidate computation must already be safe now: "not collected"
 - Config-repo changes, `deploy/**`, suffix allowlists, and
   `src/interfaces/chat_app/app.py`.
 
+## Known false candidates (for #555)
+
+A report-only pass can list rows that are not relics. #555 must handle each class before it
+deletes anything; `design.md` "Risks" gives the detail.
+
+- Pages added through the uploader's `upload_url` on a host that the input lists crawl.
+- Git repos added through the uploader's `add_git_repo` whose short name matches a listed
+  repo.
+- Any uploader write made during the ingest window (the uploader does not take the ingestion
+  lock to collect).
+- Git rows of a directory that the clone lacks but upstream still has. `fasrc/User_Codes`
+  master still holds `Training/Checkpointing/` (checked 2026-10-24), the directory of the 6
+  git rows that the issue calls relics.
+
 ## Impact
 
 - Code: `src/data_manager/collectors/utils/catalog_reconcile.py` (new),
@@ -48,6 +68,7 @@ As a result, the candidate computation must already be safe now: "not collected"
   `src/data_manager/collectors/scrapers/scraper_manager.py`,
   `src/data_manager/collectors/scrapers/scraper.py`,
   `src/data_manager/collectors/scrapers/integrations/git_scraper.py`,
+  `src/data_manager/collectors/scrapers/integrations/sso_scraper.py`,
   `src/data_manager/collectors/localfile_manager.py`,
   `src/data_manager/collectors/tickets/ticket_manager.py`,
   `src/data_manager/collectors/tickets/integrations/jira.py`,

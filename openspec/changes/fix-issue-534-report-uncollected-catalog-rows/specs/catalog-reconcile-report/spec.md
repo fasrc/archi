@@ -2,7 +2,7 @@
 
 ### Requirement: A full ingestion pass SHALL report catalog rows that a successful scope did not collect
 
-After `DataManager.run_ingestion` refreshes the catalog and before it resets or updates the vectorstore, the data manager MUST compute and log the catalog rows whose scope reported success in this pass but whose `resource_hash` this pass did not persist. A scope is the pair of the row's `source_type` and its scope key (git: repo name; web and sso: URL host; local_files: the whole source type; ticket: the ticket provider).
+After `DataManager.run_ingestion` refreshes the catalog and before it resets or updates the vectorstore, the data manager MUST compute and log the catalog rows whose scope reported success in this pass but whose `resource_hash` this pass did not persist. A scope is the pair of the row's `source_type` and its scope key (git: repo name; web and sso: the lowercased URL hostname without port or userinfo; local_files: the whole source type; ticket: the Jira project, or `redmine` for Redmine).
 
 #### Scenario: Rows absent from a successful scope are candidates
 
@@ -13,6 +13,17 @@ After `DataManager.run_ingestion` refreshes the catalog and before it resets or 
 
 - **WHEN** a resource is persisted and a catalog row has the same metadata
 - **THEN** both map to the same scope
+
+#### Scenario: Host keys ignore case and port
+
+- **WHEN** a crawl records a failure for `https://docs.example.org/x` and the catalog holds a row for `https://Docs.Example.org:8443/y`
+- **THEN** the row is not a candidate
+
+#### Scenario: A Jira project added through the uploader
+
+- **WHEN** the configured Jira project `A` succeeds in this pass and the catalog also holds rows of project `B` that the uploader added
+- **THEN** no row of project `B` is a candidate
+- **AND** one WARNING names the `ticket` scope `jira:B`
 
 ### Requirement: A scope without a recorded success SHALL yield zero candidates
 
@@ -36,6 +47,18 @@ The pass MUST yield zero candidates for a scope when its collection recorded a f
 - **THEN** no `sso` row of host `h` is a candidate
 - **AND** one WARNING names host `h`
 
+#### Scenario: An SSO login that does not reach the seed host
+
+- **WHEN** the SSO login returns cookies but the seed fetch ends on the identity-provider host, not on seed host `h`
+- **THEN** no `sso` row of host `h` is a candidate
+- **AND** one WARNING names host `h`
+
+#### Scenario: An unreadable input list
+
+- **WHEN** link, SSO, and git collection are enabled, one configured input list is missing, and a seed from another list collects pages on host `h`
+- **THEN** no `web`, `sso`, or `git` row is a candidate
+- **AND** the WARNING of each skipped scope of those types gives the missing or unreadable input list as the reason
+
 #### Scenario: One ticket provider fails while the other succeeds
 
 - **WHEN** the Jira client has no connection and Redmine persists tickets in this pass
@@ -51,6 +74,22 @@ The pass MUST yield zero candidates for a scope when its collection recorded a f
 
 - **WHEN** one child sitemap of a sitemap index fails to fetch and the other pages of its host are crawled
 - **THEN** no row of that host is a candidate
+
+#### Scenario: A failed child sitemap on another allowed host
+
+- **WHEN** a sitemap index on host `A` lists a child sitemap on allowed host `B`, that child fails, and other pages of host `A` are crawled
+- **THEN** no row of host `A` or host `B` is a candidate
+
+#### Scenario: A redirected page that errors
+
+- **WHEN** a page on host `h1` redirects to host `h2`, the `h2` response is an HTTP error, and another seed collects pages on host `h2`
+- **THEN** no row of host `h2` is a candidate
+
+#### Scenario: An ELOG row without its marker
+
+- **WHEN** a `web` row has no `scraper` marker, its URL has the ELOG shape, and a link crawl collects other pages on the same host
+- **THEN** the row is not a candidate
+- **AND** the ELOG scope is skipped with a WARNING
 
 #### Scenario: A swallowed per-page error
 
@@ -96,7 +135,7 @@ The pass MUST log one INFO line with the total candidate count, the counts by so
 
 #### Scenario: An aborted ingest discards its pass
 
-- **WHEN** a collection step in `run_ingestion` raises
+- **WHEN** a collection step, the index flush, or the catalog refresh in `run_ingestion` raises
 - **THEN** the exception still propagates
 - **AND** no pass stays open, so a later scheduled collection records nothing
 
