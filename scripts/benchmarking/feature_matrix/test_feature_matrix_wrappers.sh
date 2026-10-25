@@ -107,6 +107,8 @@
 #   103. a QA run that scored nothing pages once with the refusal in the body
 #   104. a SIGTERM to qa_arm.sh's process group during the QA run pages once, and the wrapper dies of SIGTERM
 #   105. the same for SIGHUP
+#   106. a failed ledger append in archive_run.sh arm mode pages once and leaves no pin
+#   107. no artifact with paging on sends nothing (a precondition)
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -844,8 +846,9 @@ assert "collection" in old and old["collection"] is None and "embedding_model" i
 PY2
 then ok "qa_arm copies collection and embedding_model from the run manifest, null when unrecorded"; else notok "qa_arm ledger identity fields (rc=$RC: $(cat "$T/stderr"))"; fi
 
-# --- operator paging (#504): archive_run.sh and qa_arm.sh page by mail on the four refusals
-# that follow long unattended work; preconditions and paging-off never run the mail binary.
+# --- operator paging (#504, #624): archive_run.sh and qa_arm.sh page by mail on the four refusals
+# that follow long unattended work; after long work starts, any other failure exit, and a
+# SIGHUP, SIGINT or SIGTERM, pages once (#624). Preconditions and paging-off never run the mail binary.
 
 # 60: a refused arm-mode archive (the duplicate-artifact guard at archive_run.sh's archive
 # site) pages once, with the stack and arm in the subject and the refusal reason in the body
@@ -1326,6 +1329,28 @@ for SIGCASE in "104 TERM 143 -15" "105 HUP 129 -1"; do
      && [ "$(ledger_rows)" = "$BEFORE" ]; then
     ok "a SIG$SIG during the QA run pages once and the wrapper dies of SIG$SIG ($N)"; else notok "qa_arm SIG$SIG page ($N: launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 done
+
+# 106: a failed ledger append in archive_run.sh arm mode pages once and leaves no pin
+mkdir -p "$ARCHI_DIR/archi-fm-pin624"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-pin624
+artifact "$FM_OUT/benchmarking-fm-pin624-20260903_000040.json" '[]' pin624 5
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+FM_PYTHON="$T/bin/python-ledger-fail"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin624
+FM_PYTHON="$REAL_PY"
+if [ "$RC" = 1 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-pin624 arm 00: failed after long work (exit 1)" "$T/mail.calls" \
+   && grep -q "archive_run.sh exited 1 at lib.sh:[0-9]*: FM_LEDGER=" "$T/mail.calls" \
+   && [ ! -e "$FM_OUT/corpus-pin-fm-pin624" ] && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a failed ledger append in archive_run.sh pages once and leaves no pin"; else notok "archive ledger-fail page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 107: "nothing archived" (no artifact) with paging on still sends nothing: it is a precondition
+mkdir -p "$ARCHI_DIR/archi-fm-noart"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-noart
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-noart
+if [ "$RC" = 2 ] && grep -q "nothing archived for stack fm-noart" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "no artifact with paging on sends nothing"; else notok "no-artifact no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
