@@ -180,3 +180,63 @@ def format_plan(plan: RepairPlan) -> List[str]:
         lines.append(f"unresolved {u.resource_hash} {u.url}: {u.reason}")
     lines.append(f"{len(plan.repairs)} repair(s), {len(plan.unresolved)} unresolved")
     return lines
+
+
+SELECT_UNMARKED_WEB_ROWS_SQL = """
+    SELECT resource_hash, url
+    FROM documents
+    WHERE NOT is_deleted
+      AND source_type = 'web'
+      AND COALESCE(jsonb_typeof(extra_json -> 'scraper'), 'null') = 'null'
+    ORDER BY resource_hash
+"""
+
+UPDATE_MARKER_SQL = """
+    UPDATE documents
+    SET extra_json = COALESCE(extra_json, '{}'::jsonb)
+        || jsonb_build_object('scraper', %s::text)
+    WHERE resource_hash = %s
+      AND NOT is_deleted
+      AND COALESCE(jsonb_typeof(extra_json -> 'scraper'), 'null') = 'null'
+"""
+
+
+def read_unmarked_web_rows(conn) -> List[Tuple[str, Optional[str]]]:
+    """Return all non-deleted web rows that have no scraper marker."""
+    with conn.cursor() as cur:
+        cur.execute(SELECT_UNMARKED_WEB_ROWS_SQL)
+        return [(row[0], row[1]) for row in cur.fetchall()]
+
+
+def apply_marker_repairs(conn, repairs: Sequence[MarkerRepair]) -> int:
+    """Write scraper markers for each repair; commit once. Return count of rows written.
+
+    The UPDATE guard skips any row that already has a marker since the read.
+    On any exception, rolls back and re-raises without committing.
+    """
+    try:
+        with conn.cursor() as cur:
+            written = 0
+            for repair in repairs:
+                cur.execute(UPDATE_MARKER_SQL, (repair.source, repair.resource_hash))
+                written += cur.rowcount
+        conn.commit()
+        return written
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def run_repair(conn, entries: ListEntries, apply: bool) -> List[str]:
+    """Plan and optionally apply marker repairs; return lines for printing.
+
+    If apply is False (dry run), no UPDATE is executed and commit is never called.
+    """
+    plan = plan_marker_repairs(read_unmarked_web_rows(conn), entries)
+    lines = format_plan(plan)
+    if apply:
+        written = apply_marker_repairs(conn, plan.repairs)
+        lines.append(f"wrote {written} of {len(plan.repairs)} marker(s)")
+    else:
+        lines.append("dry run: nothing written; rerun with --apply to write")
+    return lines
