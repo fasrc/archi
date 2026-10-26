@@ -35,7 +35,7 @@
 
 ## 1. The data-manager endpoint
 
-- [ ] 1.1 Add `POST /document_index/embed` to the uploader app (design D1). One commit
+- [x] 1.1 Add `POST /document_index/embed` to the uploader app (design D1). One commit
       (`feat(#652): data-manager embed endpoint runs the tracked upload update`).
       (a) Create `tests/unit/test_uploader_embed_endpoint.py` with the body of **Appendix
       A**, verbatim. Run
@@ -53,7 +53,7 @@
 
 ## 2. The chat-side proxy and the thin call site
 
-- [ ] 2.1 Add `src/interfaces/chat_app/embed_proxy.py` and route `trigger_embedding` through
+- [x] 2.1 Add `src/interfaces/chat_app/embed_proxy.py` and route `trigger_embedding` through
       it (design D2, D4). One commit
       (`fix(#652): route /api/upload/embed through the data manager`).
       (a) Create `tests/unit/test_chat_embed_proxy.py` with the body of **Appendix B**,
