@@ -76,7 +76,7 @@
 
 ## 3. Docs
 
-- [ ] 3.1 Update `docs/docs/api_reference.md` as design D6 says, and no other file under
+- [x] 3.1 Update `docs/docs/api_reference.md` as design D6 says, and no other file under
       `docs/`. One commit (`docs(#652): document the embed endpoints`).
       Write the `POST /api/upload/embed` section with its answers: 200 `success` (and
       `partial` + `failed`), 500 (the data manager's message), 502 (auth redirect, or a

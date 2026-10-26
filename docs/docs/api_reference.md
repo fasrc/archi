@@ -667,6 +667,39 @@ Get document statistics (total, enabled, disabled, by source type).
 
 ---
 
+## Uploads
+
+### `POST /api/upload/embed`
+
+Trigger the vectorstore embed update from the chat app. Requires the `Upload.EMBED`
+permission.
+
+The request runs the update in the data manager, which takes the ingestion lock and
+waits behind any running ingest or scheduled refresh before it starts. While the update
+runs, the data manager's [`GET /api/ingestion/status`](#get-apiingestionstatus) reports
+`step` as `"upload"`.
+
+**200 answers:**
+
+| Body field | Value | Meaning |
+|------------|-------|---------|
+| `success` | `true` | The update completed. |
+| `message` | `"Embedding complete. Documents are now searchable."` | Present when all files embedded without errors. |
+| `partial` | `true` | Present when some files could not be embedded. |
+| `failed` | `[{"file": "<name>", "error": "<reason>"}, ...]` | Present with `partial`; lists files that failed. |
+
+**Error answers:**
+
+| Status | Body | Meaning |
+|--------|------|---------|
+| 500 | `{"error": "<data manager detail>"}` | The data manager reported a failure; the error field carries the data manager's `detail` or `error` message. |
+| 502 | `{"error": "Data manager authentication failed"}` | The data manager returned a redirect; check that `DM_API_TOKEN` is correct. |
+| 502 | `{"error": "Data manager error (HTTP <code>)"}` | The data manager returned a non-JSON or unexpected response. |
+| 503 | `{"error": "data_manager_unavailable"}` | The data manager could not be reached. |
+| 504 | `{"error": "The data manager did not answer in time. The update can still be running: reload this page later to see the document status."}` | The read timed out. The update can still be running; `GET /api/ingestion/status` shows when it ends. |
+
+---
+
 ## Analytics
 
 ### `GET /api/analytics/model-usage`
@@ -705,7 +738,8 @@ ingest ends, `progress` keeps its last value.
 **Scheduled refreshes and upload runs** also move through this endpoint. While a
 scheduled source refresh is running, `state` is `running` and `step` is
 `scheduled:<source>` (for example `scheduled:git`). While a file upload is being
-ingested, `step` is `upload`. In both cases `progress` is `null` for the duration of
+ingested, or when the chat app's Process Documents action (`POST /api/upload/embed`) is
+running, `step` is `upload`. In both cases `progress` is `null` for the duration of
 the run. When the run ends, `state` becomes `completed` and `step` becomes `done`; on
 failure, `state` becomes `error` and `step` becomes `failed`. A run whose vectorstore
 sync could not add its documents also ends in `error`. If another run is queued for the
@@ -720,6 +754,22 @@ refreshes and upload runs.
 {"state": "running", "step": "Updating vectorstore", "error": null,
  "progress": {"done": 150, "total": 412}}
 ```
+
+### `POST /document_index/embed`
+
+Run the tracked upload update synchronously.
+
+**Auth:** With `services.data_manager.auth.enabled` false, the endpoint is open. With it
+true, the request needs an admin session or the header
+`Authorization: Bearer <DM_API_TOKEN>`, else the answer is a 302 redirect to `/login`.
+Accepts POST only. While the update runs, `step` is `"upload"` on
+`GET /api/ingestion/status`.
+
+| Status | Body | Meaning |
+|--------|------|---------|
+| 200 | `{"status": "ok"}` | Update completed successfully. |
+| 500 | `{"error": "embed_failed", "detail": "<message>"}` | The update raised an exception (`detail` has the message) or the vectorstore sync reported a failure. |
+| 503 | `{"error": "embed_unavailable"}` | The data manager has no embed hook configured. |
 
 ### `POST /api/reload-schedules`
 
