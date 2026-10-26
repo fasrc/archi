@@ -53,7 +53,8 @@ Replace `catalog_postgres.py:335` with exactly this clause (same indentation as 
 
 ```sql
                         extra_json = CASE
-                            WHEN COALESCE(jsonb_typeof(EXCLUDED.extra_json -> 'scraper'), 'null') = 'null'
+                            WHEN EXCLUDED.source_type = 'web'
+                                AND COALESCE(jsonb_typeof(EXCLUDED.extra_json -> 'scraper'), 'null') = 'null'
                                 AND COALESCE(jsonb_typeof(documents.extra_json -> 'scraper'), 'null') <> 'null'
                             THEN COALESCE(EXCLUDED.extra_json, '{}'::jsonb)
                                 || jsonb_build_object('scraper', documents.extra_json -> 'scraper')
@@ -69,6 +70,14 @@ Replace `catalog_postgres.py:335` with exactly this clause (same indentation as 
 - An incoming marker always wins (the `ELSE` branch), so a scraper can still re-own a row.
 - Only the `scraper` key is carried over. Every other key still comes from the incoming
   payload, as before.
+- The marker carries over only into an incoming `web` row (`EXCLUDED.source_type = 'web'`;
+  added in review round 1 on PR #783, 2026-10-26). The hash is `md5(url)`
+  (`scraped_resource.py:29-32`), so an `sso` ingest of an Indico URL hits the same row.
+  Without the guard, the `sso` row kept `scraper: indico`, and `schedule_collect_indico`
+  and `schedule_collect_elog` (`scraper_manager.py:476-478`, `:499-501`) select by marker
+  alone, as does the Indico chunk prefix (`vectorstore/manager.py:652`). Only the incoming
+  type is checked: Indico and ELOG rows are always `web`, and no other collector writes a
+  marker.
 - Update the `upsert_resource` docstring: one paragraph that says the stored `scraper`
   marker is kept when the incoming metadata has none (absent or `None`), and why (#640).
 
@@ -194,6 +203,8 @@ UPDATE_MARKER_SQL = """
     SET extra_json = COALESCE(extra_json, '{}'::jsonb)
         || jsonb_build_object('scraper', %s::text)
     WHERE resource_hash = %s
+      AND url = %s
+      AND source_type = 'web'
       AND NOT is_deleted
       AND COALESCE(jsonb_typeof(extra_json -> 'scraper'), 'null') = 'null'
 """
@@ -202,11 +213,12 @@ UPDATE_MARKER_SQL = """
 - `read_unmarked_web_rows(conn)`: one `cursor.execute(SELECT_UNMARKED_WEB_ROWS_SQL)`, return
   `[(row[0], row[1]) for row in cursor.fetchall()]`.
 - `apply_marker_repairs(conn, repairs)`: one cursor; for each repair
-  `execute(UPDATE_MARKER_SQL, (repair.source, repair.resource_hash))` and add
+  `execute(UPDATE_MARKER_SQL, (repair.source, repair.resource_hash, repair.url))` and add
   `cursor.rowcount`; then `conn.commit()` once and return the sum. On any exception:
-  `conn.rollback()`, then re-raise. The `WHERE` guard means a row that gained a marker
-  since the read is not overwritten (its `rowcount` is 0, so the sum can be less than
-  `len(repairs)`).
+  `conn.rollback()`, then re-raise. The `WHERE` guard rechecks the row that the plan read:
+  same URL, still `web`, still live, still unmarked (the URL and `source_type` checks were
+  added in review round 1 on PR #783). A row that an ingest changed since the read is not
+  written (its `rowcount` is 0, so the sum can be less than `len(repairs)`).
 - `run_repair(conn, entries, apply)`: `plan = plan_marker_repairs(read_unmarked_web_rows(conn),
   entries)`; `lines = format_plan(plan)`; if `apply`: append
   `f"wrote {written} of {len(plan.repairs)} marker(s)"`, else append
@@ -277,3 +289,26 @@ a JSON-`null` marker). `UPDATE_MARKER_SQL` with `("indico", "A")` → rowcount 1
 `("elog", "B")` → rowcount 1, `("elog", "C")` → rowcount 0 (C already has a marker; it
 stayed `{"scraper": "indico"}`). After: A `{"scraper": "indico", "title": "plain"}`,
 B `{"scraper": "elog"}`; the unmarked set became D, E, F, G.
+
+## Appendix B — review round 1 proof (PR #783, 2026-10-26)
+
+Setup as in Appendix A (`postgres:17.11`, the `init.sql:207-258` DDL, one database per
+stage, the real `upsert_resource` and `apply_marker_repairs`, `module:` path printed).
+`old` = PR head `b86bfcf2` (the D1 clause without the source-type guard); `new` = the D1
+clause and the D7 `UPDATE` of this file.
+
+Upsert: cases A–F of Appendix A gave the same `extra_json` on `new` as the green column
+above. Two new cases, each a first `web` upsert and then an `sso` upsert of the same hash:
+
+| Case | First payload | Second payload | old row | new row |
+|---|---|---|---|---|
+| H | `web`, `scraper: indico, event_id: 1` | `sso`, `title: s` | `sso {"scraper": "indico", "title": "s"}` | `sso {"title": "s"}` |
+| I | `web`, `scraper: elog` | `sso`, no extras | `sso {"scraper": "elog"}` | `sso null` |
+
+`get_metadata_by_filter("scraper", scraper="indico")`: old `['A', 'C', 'H']`, new
+`['A', 'C']`. With `scraper="elog"`: old `['B', 'F', 'I']`, new `['B', 'F']`.
+
+Repair write guard: three unmarked `web` rows P, Q, R under `elog-https://x/lb` were
+planned (3 repairs). Before the write, Q became `sso` and R's URL changed. Old `UPDATE`:
+`wrote 3 of 3`, so Q (`sso`) and R got `scraper: elog`. New `UPDATE`: `wrote 1 of 3`; only
+P has a marker, Q and R are unchanged.

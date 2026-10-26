@@ -281,10 +281,13 @@ class PostgresCatalogService:
         current ingest, where absence legitimately means "not set".
 
         The stored ``scraper`` marker (``extra_json -> 'scraper'``) is kept on
-        conflict-update when the incoming metadata has no marker (absent or
-        ``None``).  A plain link re-fetch carries no marker, so a row previously
-        identified as ELOG or Indico by its scraper retains that identity (#640).
-        An incoming marker always wins, so a scraper can still re-own a row.
+        conflict-update when the incoming row is a ``web`` row and its metadata
+        has no marker (absent or ``None``).  A plain link re-fetch carries no
+        marker, so a row previously identified as ELOG or Indico by its scraper
+        retains that identity (#640).  An incoming marker always wins, so a
+        scraper can still re-own a row.  An incoming row of another source type
+        (for example ``sso``: the hash is the URL's, so it hits the same row)
+        does not inherit the marker.
 
         Returns:
             The document ID (for linking to document_chunks)
@@ -339,7 +342,8 @@ class PostgresCatalogService:
                         ingested_at = EXCLUDED.ingested_at,
                         last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified),
                         extra_json = CASE
-                            WHEN COALESCE(jsonb_typeof(EXCLUDED.extra_json -> 'scraper'), 'null') = 'null'
+                            WHEN EXCLUDED.source_type = 'web'
+                                AND COALESCE(jsonb_typeof(EXCLUDED.extra_json -> 'scraper'), 'null') = 'null'
                                 AND COALESCE(jsonb_typeof(documents.extra_json -> 'scraper'), 'null') <> 'null'
                             THEN COALESCE(EXCLUDED.extra_json, '{}'::jsonb)
                                 || jsonb_build_object('scraper', documents.extra_json -> 'scraper')

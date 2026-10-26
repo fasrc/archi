@@ -18,7 +18,8 @@ from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogSe
 
 _MARKER_CLAUSE = """
     extra_json = CASE
-        WHEN COALESCE(jsonb_typeof(EXCLUDED.extra_json -> 'scraper'), 'null') = 'null'
+        WHEN EXCLUDED.source_type = 'web'
+            AND COALESCE(jsonb_typeof(EXCLUDED.extra_json -> 'scraper'), 'null') = 'null'
             AND COALESCE(jsonb_typeof(documents.extra_json -> 'scraper'), 'null') <> 'null'
         THEN COALESCE(EXCLUDED.extra_json, '{}'::jsonb)
             || jsonb_build_object('scraper', documents.extra_json -> 'scraper')
@@ -79,6 +80,21 @@ def test_conflict_clause_has_no_unconditional_extra_json_assignment():
     assert not re.search(r"extra_json\s*=\s*EXCLUDED\.extra_json\s*,", conflict), (
         "the unconditional form erases the scraper marker on every link re-fetch; "
         f"got {conflict!r}"
+    )
+
+
+def test_conflict_clause_carries_the_marker_only_into_a_web_row():
+    """The hash is md5(url), so an sso ingest of an Indico URL hits the same row.
+
+    The marker must not follow it: schedule_collect_indico selects rows by marker
+    alone, and the vectorstore adds the Indico chunk prefix by marker alone.
+    """
+    sql, _params = _upsert_sql_and_params({"source_type": "sso", "url": "https://x/a"})
+    conflict = _normalized(sql.split("ON CONFLICT", 1)[1])
+    when = conflict.split("extra_json = CASE WHEN", 1)[1].split(" THEN ", 1)[0]
+    assert "EXCLUDED.source_type = 'web'" in when, (
+        "the marker may carry over only when the incoming row is a web row; "
+        f"got WHEN {when!r}"
     )
 
 

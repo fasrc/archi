@@ -196,6 +196,8 @@ UPDATE_MARKER_SQL = """
     SET extra_json = COALESCE(extra_json, '{}'::jsonb)
         || jsonb_build_object('scraper', %s::text)
     WHERE resource_hash = %s
+      AND url = %s
+      AND source_type = 'web'
       AND NOT is_deleted
       AND COALESCE(jsonb_typeof(extra_json -> 'scraper'), 'null') = 'null'
 """
@@ -211,14 +213,18 @@ def read_unmarked_web_rows(conn) -> List[Tuple[str, Optional[str]]]:
 def apply_marker_repairs(conn, repairs: Sequence[MarkerRepair]) -> int:
     """Write scraper markers for each repair; commit once. Return count of rows written.
 
-    The UPDATE guard skips any row that already has a marker since the read.
+    The UPDATE guard rechecks the row that the plan read (same URL, still a live,
+    unmarked web row), so a row that an ingest changed since the read is skipped.
     On any exception, rolls back and re-raises without committing.
     """
     try:
         with conn.cursor() as cur:
             written = 0
             for repair in repairs:
-                cur.execute(UPDATE_MARKER_SQL, (repair.source, repair.resource_hash))
+                cur.execute(
+                    UPDATE_MARKER_SQL,
+                    (repair.source, repair.resource_hash, repair.url),
+                )
                 written += cur.rowcount
         conn.commit()
         return written

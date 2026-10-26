@@ -58,10 +58,28 @@ def test_update_sql_matches_the_proven_text():
         "SET extra_json = COALESCE(extra_json, '{}'::jsonb) "
         "|| jsonb_build_object('scraper', %s::text) "
         "WHERE resource_hash = %s "
+        "AND url = %s "
+        "AND source_type = 'web' "
         "AND NOT is_deleted "
         "AND COALESCE(jsonb_typeof(extra_json -> 'scraper'), 'null') = 'null'"
     )
     assert " ".join(UPDATE_MARKER_SQL.split()) == expected
+
+
+def test_update_guard_rechecks_the_row_that_the_plan_read():
+    """An ingest between the read and the write must not get a marker it never had.
+
+    The plan reads unmarked, live web rows and picks the source from each URL. The
+    write must check the same row: same URL, still web, still live, still unmarked.
+    """
+    where = " ".join(UPDATE_MARKER_SQL.split()).split(" WHERE ", 1)[1]
+    for condition in (
+        "url = %s",
+        "source_type = 'web'",
+        "NOT is_deleted",
+        "COALESCE(jsonb_typeof(extra_json -> 'scraper'), 'null') = 'null'",
+    ):
+        assert condition in where, f"the UPDATE guard lacks {condition!r}"
 
 
 def test_apply_marker_repairs_executes_one_update_per_repair_and_commits_once():
@@ -75,8 +93,8 @@ def test_apply_marker_repairs_executes_one_update_per_repair_and_commits_once():
     result = apply_marker_repairs(conn, repairs)
     assert result == 2
     assert cursor.execute.call_args_list == [
-        call(UPDATE_MARKER_SQL, ("elog", "h1")),
-        call(UPDATE_MARKER_SQL, ("indico", "h2")),
+        call(UPDATE_MARKER_SQL, ("elog", "h1", "https://x/a")),
+        call(UPDATE_MARKER_SQL, ("indico", "h2", "https://indico.h/event/1/")),
     ]
     conn.commit.assert_called_once()
 

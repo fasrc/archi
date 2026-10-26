@@ -179,7 +179,7 @@
       Write the body to a file under `/tmp`; never commit a PR-body file to the repository.
       The body has `Closes #640` (in the BODY, not the title) and states:
       - what changed (the D1 clause; the repair module and script; the docs paragraph);
-      - the proof: copy the Appendix A table from `design.md`;
+      - the proof: copy the Appendix A table and the Appendix B table from `design.md`;
       - the behavior change: a marker is now sticky — a URL moved from an `indico-` entry to a
         plain link entry stays an Indico row until the row is deleted;
       - that `schedule_collect_links` did not change (operator decision), so its comment at
@@ -190,6 +190,17 @@
       - tests: the new files and their counts, and the gate result.
       Then confirm the link: `gh pr view <number> --repo fasrc/archi --json
       closingIssuesReferences` lists `640`. STOP at the open PR — do not merge.
+
+## 5. Review round 1 fixes (PR #783, 2026-10-26; done by the review run)
+
+- [x] 5.1 The marker carries over only into an incoming `web` row (design D1, last bullet;
+      Appendix B cases H and I). Tests:
+      `test_conflict_clause_carries_the_marker_only_into_a_web_row` and the updated
+      `_MARKER_CLAUSE` in `tests/unit/test_catalog_postgres_upsert_scraper_marker.py`.
+- [x] 5.2 The repair `UPDATE` rechecks the row that the plan read: `url = %s` and
+      `source_type = 'web'` (design D7; Appendix B, rows P, Q, R). Tests:
+      `test_update_guard_rechecks_the_row_that_the_plan_read` and the updated SQL-text and
+      call-parameter tests in `tests/unit/test_scraper_marker_repair_db.py`.
 
 ## Appendix (no checkboxes; copy these bodies exactly in task 1.1)
 

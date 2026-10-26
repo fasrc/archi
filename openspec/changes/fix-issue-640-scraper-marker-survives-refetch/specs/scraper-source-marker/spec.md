@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: The catalog upsert SHALL keep a stored scraper marker when the incoming metadata has none
-When `PostgresCatalogService.upsert_resource` updates an existing row and the incoming metadata has no `scraper` key, or has it with the value `None`, the stored non-null `scraper` value SHALL remain in `extra_json`, and every other `extra_json` key SHALL come from the incoming metadata. An incoming non-null `scraper` value SHALL replace the stored one.
+When `PostgresCatalogService.upsert_resource` updates an existing row with an incoming `source_type` of `web`, and the incoming metadata has no `scraper` key, or has it with the value `None`, the stored non-null `scraper` value SHALL remain in `extra_json`, and every other `extra_json` key SHALL come from the incoming metadata. An incoming non-null `scraper` value SHALL replace the stored one. An incoming row of another `source_type` SHALL take the incoming `extra_json` unchanged.
 
 #### Scenario: A plain link re-fetch of an Indico row
 - **WHEN** a row is stored with `scraper: indico` and the same `resource_hash` is upserted again with metadata that has no `scraper` key
@@ -18,6 +18,10 @@ When `PostgresCatalogService.upsert_resource` updates an existing row and the in
 #### Scenario: A None marker counts as no marker
 - **WHEN** a row is stored with `scraper: elog` and the same `resource_hash` is upserted again with `scraper: None`
 - **THEN** the row's `extra_json` has `scraper: elog`
+
+#### Scenario: A re-ingest under another source type
+- **WHEN** a `web` row is stored with `scraper: indico` and the same `resource_hash` is upserted again with `source_type` `sso` and no `scraper` key
+- **THEN** the row's `extra_json` has no `scraper` key, and `get_metadata_by_filter("scraper", scraper="indico")` does not return the row
 
 #### Scenario: The conflict clause is pinned
 - **WHEN** the unit tests read the SQL that `upsert_resource` executes
@@ -62,7 +66,7 @@ When `elog.enabled` or `indico.enabled` is explicitly `false`, `schedule_collect
 - **THEN** the plan neither repairs nor reports the row
 
 ### Requirement: The marker repair script SHALL write nothing unless --apply is given
-`scripts/maintenance/repair_scraper_markers.py` SHALL default to a dry run that executes no `UPDATE`, SHALL write only with `--apply`, and SHALL write each marker with an `UPDATE` whose `WHERE` clause skips a row that already has a non-null marker. It SHALL refuse with exit code 2, before it connects to the database, when an input list cannot be read.
+`scripts/maintenance/repair_scraper_markers.py` SHALL default to a dry run that executes no `UPDATE`, SHALL write only with `--apply`, and SHALL write each marker with an `UPDATE` whose `WHERE` clause skips a row that already has a non-null marker, or that is no longer the live `web` row with the URL that the plan read. It SHALL refuse with exit code 2, before it connects to the database, when an input list cannot be read.
 
 #### Scenario: Default dry run
 - **WHEN** the script runs with `--pg-dsn` and `--input-list` only
@@ -71,6 +75,10 @@ When `elog.enabled` or `indico.enabled` is explicitly `false`, `schedule_collect
 #### Scenario: Apply
 - **WHEN** the script runs with `--apply` and the plan holds one repair
 - **THEN** it executes the guarded `UPDATE` once, commits once, and prints `wrote 1 of 1 marker(s)`
+
+#### Scenario: A row changed after the read
+- **WHEN** a planned row becomes an `sso` row, or gets another URL, before the `UPDATE`
+- **THEN** the `UPDATE` does not write that row, and the printed count of written markers does not include it
 
 #### Scenario: Missing input list
 - **WHEN** an `--input-list` path does not exist
