@@ -88,7 +88,7 @@
       foreground (the hook runs the gate; never background it). Message:
       `feat(#640): plan scraper marker repairs from explicit list entries`.
 
-- [ ] 2.2 Database half, red tests and code in one task. Create the NEW file
+- [x] 2.2 Database half, red tests and code in one task. Create the NEW file
       `tests/unit/test_scraper_marker_repair_db.py` (a separate file, so that nothing is
       appended after the last test of 2.1) with these 8 tests. Use `MagicMock`
       connections: `conn.cursor.return_value.__enter__.return_value` is the cursor.
