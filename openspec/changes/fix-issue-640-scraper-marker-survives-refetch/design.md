@@ -249,8 +249,10 @@ In `docs/docs/configuration.md`, after the bullet list under "Two rows need care
 marker is absent" (`:216-222`), add one paragraph: a plain link re-fetch keeps a stored
 `scraper` marker (#640); rows that lost it before this change still map to `links`; repair
 them with the script (dry run by default, `--apply` to write); it restores a marker only
-from an explicit `elog-` or `indico-` entry in the given lists and reports the rows it
-cannot place.
+from an explicit `elog-` or `indico-` entry in the given lists and reports the
+ELOG-shaped and Indico-shaped rows that it cannot place. Do not say that it reports every
+row that it cannot place: a row whose URL looks like a plain link gets no output (see
+Risks, "The repair cannot see every erased Indico row").
 
 ## Risks / Trade-offs
 
@@ -261,6 +263,15 @@ cannot place.
   later edit of the clause needs a new proof.
 - **Indico category entries cannot be repaired** (their events sit under other URLs). The
   script reports Indico-shaped rows that no entry covers.
+- **The repair cannot see every erased Indico row** (review round 2 on PR #783,
+  2026-10-26). A timetable can link a material on any host (`indico_scraper.py:644-660`),
+  and that row's URL then looks like a plain link: no entry scope covers it and D6 rule 5
+  gives it no output. The old overwrite removed the marker and all Indico metadata
+  together (Appendix A case A: `event_id` is gone; both date from `1cd8a595`), so no
+  stored field can identify it. The next full ingest (`run_ingestion` →
+  `collect_all_from_config`) collects each `indico-` entry again and gives the marker
+  back to each material that the Indico scraper still collects (D1: an incoming marker
+  wins). To report every unmarked row would list every plain link of the deployment.
 
 ## Appendix A — throwaway Postgres proof (Loop 1, 2026-10-26)
 

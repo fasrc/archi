@@ -25,9 +25,10 @@ The operator decided the mechanism and the repair on 2026-10-20 (issue body, "De
   is already `JSONB`, `init.sql:235`).
 - New module `src/data_manager/collectors/utils/scraper_marker_repair.py`: reads the
   explicit `elog-` and `indico-` entries of the given input lists, finds unmarked `web`
-  rows that those entries cover, and plans a marker repair for each. A row that the
-  entries cannot place (no entry, two sources, or also listed as a plain link) is reported,
-  never guessed.
+  rows that those entries cover, and plans a marker repair for each. An ELOG-shaped or
+  Indico-shaped row that the entries cannot place (no entry, two sources, or also listed
+  as a plain link) is reported, never guessed. A row whose URL looks like a plain link
+  gets no output (design D9, Risks).
 - New one-off script `scripts/maintenance/repair_scraper_markers.py`: a dry run is the
   default; `--apply` writes the planned markers in one transaction with a guarded `UPDATE`
   that never overwrites a marker.

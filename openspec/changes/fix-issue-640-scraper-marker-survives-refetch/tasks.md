@@ -156,7 +156,8 @@
       ingest today", add the paragraph of design D9. Name the command exactly:
       `python scripts/maintenance/repair_scraper_markers.py --pg-dsn <dsn> --input-list
       <path>`. Say that it runs a dry run by default and writes only with `--apply`, and
-      that it reports rows that it cannot place. Do not claim anything that the code does
+      that it reports the ELOG-shaped and Indico-shaped rows that it cannot place (not every
+      row: design D9 and Risks). Do not claim anything that the code does
       not do (for example, the script does not read the deployment config; the operator
       names each list file). Run `python -m pytest -q
       tests/unit/test_input_list_precedence_docs.py tests/unit/test_restart_source_flags_docs.py

@@ -4,8 +4,10 @@
 Before #640, a plain link re-fetch replaced a row's whole `extra_json` and erased its
 `scraper` marker, so ELOG and Indico rows fell back to the `links` source. This script
 gives those rows their marker back, but only from an explicit `elog-` or `indico-`
-entry in the input lists that you name. It never guesses from URL shape; it reports
-the rows that it cannot place.
+entry in the input lists that you name. It never guesses from URL shape. It reports
+the ELOG-shaped and Indico-shaped rows that it cannot place; a row whose URL looks like
+a plain link gets no output, so an Indico material linked from a timetable on another
+host is not reported.
 
 Usage:
     python scripts/maintenance/repair_scraper_markers.py --pg-dsn <dsn> \\
