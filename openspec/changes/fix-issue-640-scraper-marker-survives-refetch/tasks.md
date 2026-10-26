@@ -27,7 +27,7 @@
 
 ## 2. Repair markers erased before the fix (design D4–D8)
 
-- [ ] 2.1 Pure planning, red tests and code in one task. Create the NEW file
+- [x] 2.1 Pure planning, red tests and code in one task. Create the NEW file
       `tests/unit/test_scraper_marker_repair.py` with these 14 tests (grep each name
       first; names must be unique). Use `tmp_path` for list files. Expected values come
       from design D5 and D6.
