@@ -123,7 +123,7 @@
       `black` and `isort` BEFORE `git add`. Commit in the foreground. Message:
       `feat(#640): read and write scraper markers for the repair`.
 
-- [ ] 2.3 The one-off script, red tests and code in one task. Create the NEW file
+- [x] 2.3 The one-off script, red tests and code in one task. Create the NEW file
       `tests/unit/test_repair_scraper_markers_script.py`. Load the script by path with
       `importlib.util.spec_from_file_location` (pattern:
       `tests/unit/test_goldenset_maintenance_script.py:15,36-37`). Patch
