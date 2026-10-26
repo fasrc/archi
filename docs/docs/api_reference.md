@@ -684,9 +684,9 @@ runs, the data manager's [`GET /api/ingestion/status`](#get-apiingestionstatus) 
 | Body field | Value | Meaning |
 |------------|-------|---------|
 | `success` | `true` | The update completed. |
-| `message` | `"Embedding complete. Documents are now searchable."` | Present when all files embedded without errors. |
+| `message` | `"Embedding complete. Documents are now searchable."`, or `"<n> document(s) failed to process."` | Always present. The second form comes with `partial`; `<n>` is the number of entries in `failed`. |
 | `partial` | `true` | Present when some files could not be embedded. |
-| `failed` | `[{"file": "<name>", "error": "<reason>"}, ...]` | Present with `partial`; lists files that failed. |
+| `failed` | `[{"file": "<name>", "error": "<reason>"}, ...]` | Present with `partial`; lists up to 20 failed files, newest first. |
 
 **Error answers:**
 

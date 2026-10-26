@@ -180,6 +180,7 @@ def test_trigger_embedding_keeps_the_partial_answer():
     assert status == 200
     assert body["success"] is True
     assert body["partial"] is True
+    assert body["message"] == "2 document(s) failed to process."
     assert body["failed"] == [
         {"file": "a.pdf", "error": "bad pdf"},
         {"file": "b.txt", "error": "Unknown error"},

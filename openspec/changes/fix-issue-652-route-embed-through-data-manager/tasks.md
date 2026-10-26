@@ -109,7 +109,7 @@
 
 ## 5. Post-PR verification finding (added at wrap-up, 2026-10-26)
 
-- [ ] 5.1 Fix the `message` row of the `POST /api/upload/embed` 200 table, and pin the
+- [x] 5.1 Fix the `message` row of the `POST /api/upload/embed` 200 table, and pin the
       partial `message` in its test. One commit
       (`docs(#652): the partial embed answer also carries message`).
       The finding: `docs/docs/api_reference.md:687` says `message` is
