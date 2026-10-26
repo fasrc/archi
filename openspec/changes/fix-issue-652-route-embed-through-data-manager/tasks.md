@@ -93,7 +93,7 @@
 
 ## 4. Publish
 
-- [ ] 4.1 Tick this box, commit the tick through the hook (the gate runs on that commit;
+- [x] 4.1 Tick this box, commit the tick through the hook (the gate runs on that commit;
       `chore(#652): mark the publish task done`), then push and open the PR — in that order,
       so the tick rides the push. Before the push, confirm
       `git diff origin/dev --stat -- docs/` lists only `docs/docs/api_reference.md`, and
