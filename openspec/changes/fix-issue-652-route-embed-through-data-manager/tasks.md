@@ -107,6 +107,35 @@
       The task is complete when `gh pr view --repo fasrc/archi fix/issue-652-route-embed-through-data-manager`
       prints the PR.
 
+## 5. Post-PR verification finding (added at wrap-up, 2026-10-26)
+
+- [ ] 5.1 Fix the `message` row of the `POST /api/upload/embed` 200 table, and pin the
+      partial `message` in its test. One commit
+      (`docs(#652): the partial embed answer also carries message`).
+      The finding: `docs/docs/api_reference.md:687` says `message` is
+      `"Embedding complete. Documents are now searchable."` and is present only when all
+      files embedded. But `trigger_embedding` (`src/interfaces/chat_app/app.py:6451-6459`)
+      also sends `message` on the partial answer, as
+      `f"{len(failed_docs)} document(s) failed to process."`, and the query has
+      `LIMIT 20` (`app.py:6431-6437`).
+      (a) In `tests/unit/test_chat_embed_proxy.py`, in
+      `test_trigger_embedding_keeps_the_partial_answer`, add the line
+      `    assert body["message"] == "2 document(s) failed to process."` directly after the
+      line `    assert body["partial"] is True`. Do not change or rename any other test. Run
+      `python -m pytest -q tests/unit/test_chat_embed_proxy.py`: expect `13 passed`.
+      (b) In `docs/docs/api_reference.md`, replace the whole `message` row (the line that
+      starts with ``| `message` |``) with exactly this line:
+      ``| `message` | `"Embedding complete. Documents are now searchable."`, or `"<n> document(s) failed to process."` | Always present. The second form comes with `partial`; `<n>` is the number of entries in `failed`. |``
+      and replace the whole `failed` row (the line that starts with ``| `failed` |``)
+      with exactly this line:
+      ``| `failed` | `[{"file": "<name>", "error": "<reason>"}, ...]` | Present with `partial`; lists up to 20 failed files, newest first. |``
+      Change no other line under `docs/`.
+      (c) Tick this box, commit through the hook (the gate runs on that commit), then push
+      with `git push origin fix/issue-652-route-embed-through-data-manager`. After the push,
+      `git status --porcelain` must be empty and `git rev-parse HEAD` must equal
+      `git rev-parse origin/fix/issue-652-route-embed-through-data-manager`. Do not open a
+      new PR: PR #784 is already open.
+
 ## Appendix — exact file bodies (no checkboxes; copy verbatim)
 
 These ran on a scratch copy of `origin/dev` `bbc52059` and are black- and isort-clean.
