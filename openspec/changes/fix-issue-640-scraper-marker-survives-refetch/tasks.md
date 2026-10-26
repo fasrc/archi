@@ -1,6 +1,6 @@
 ## 1. Keep the marker in the catalog upsert (fasrc/archi#640, design D1–D3)
 
-- [ ] 1.1 Red tests and the fix in one task. Create two NEW test files with the exact
+- [x] 1.1 Red tests and the fix in one task. Create two NEW test files with the exact
       bodies in the Appendix of this file (copy them, do not rewrite them):
       `tests/unit/test_catalog_postgres_upsert_scraper_marker.py` (Appendix A, 3 tests)
       and `tests/unit/test_scraper_marker_links_schedule.py` (Appendix B, 3 tests). Run
