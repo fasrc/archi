@@ -4,9 +4,11 @@
 
 **Two locks.**
 1. **Design lock:** this file, with date and commit filled in once the operator approves it.
-2. **Material lock:** one later commit holding the planted-edit ledger, the 20-donor control set,
-   the type-5 and general-advice sentence lists, the frozen mode-b prompt with its sha256, and
-   D's record list. It must exist before any judge scores any new item.
+2. **Material lock:** one later commit holding the recovery ledger (which missing questions came
+   back, which stayed out and why), the planted-edit ledger, the 20-donor control set, the type-5
+   and general-advice sentence lists, the Lynx variant inputs (kept passages per row, sentence
+   units per answer, exact token counts), the frozen mode-b prompt with its sha256, and D's
+   record list. It must exist before any judge scores any new item.
 
 The incumbent's and both Lynx versions' verdicts on the 425 real rows already exist and pre-date
 both locks. D's sample is drawn mechanically from the seed using only the incumbent's October
@@ -76,7 +78,7 @@ here; the human grades and the planted errors are.
 | Date locked | `<YYYY-MM-DD>` |
 | Commit at lock | `<sha>` |
 | Source runs | Golden-set runs of 2026-10-12 on corpus `…a67f2ac54f8` (7,006 chunks): retrieval A/B `012746`, `054355` (new code), `034614`, `081227` (old code); `130451` (new code, Qwen3.8) |
-| Real answers | 425 rebuilt rows (every passage = the full parent text RAGAS judged; 120 of 545 questions left out because a source had no parent passage). Bundles: `/scratch/a2rchi/bench-runs/lynx-vs-ragas/runs/*/judge_bundles/*/rows.jsonl`, sha256 `64d46793…`, `7a1f263c…`, `809ddd0d…`, `b2574494…`, `dfc5b83b…` (full digests at lock) |
+| Real answers | 425 rebuilt rows, plus any of the 120 missing questions recovered under A's exactness test (every passage = the full parent text RAGAS judged; 120 of 545 questions left out because a source had no parent passage). Bundles: `/scratch/a2rchi/bench-runs/lynx-vs-ragas/runs/*/judge_bundles/*/rows.jsonl`, sha256 `64d46793…`, `7a1f263c…`, `809ddd0d…`, `b2574494…`, `dfc5b83b…` (full digests at lock) |
 | Existing scores | RAGAS faithfulness per row from the original runs (`rebuild.jsonl`); Lynx v1.1 (`v11/out/`), Lynx v1.0 (`v10/out/`); joined in `v11/per_question.csv` |
 | Incumbent judge | RAGAS `faithfulness`, Claude Sonnet 4.5 via HUIT Bedrock (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`; confirm against the original result files at lock), same `ragas` package version as the October runs |
 | Human grader | Austin Swinney (Argilla user `aswinney`), single grader |
@@ -88,6 +90,9 @@ here; the human grades and the planted errors are.
 | S | **Incumbent:** RAGAS faithfulness, Sonnet 4.5 | HUIT Bedrock | paid | 0–1 score |
 | L0 | Lynx 8B v1.0, rev `5523f869eb5eecb4bca417b6e6d3532e746a9664`, 8,000 tokens | local V100, existing scorer CLI | $0 | PASS/FAIL; reads short rows only |
 | L1 | Lynx 8B v1.1, rev `00de9f9062d93a95e4e359d3c92b8ea1d0114738`, 32,000 tokens | local V100, existing scorer CLI | $0 | PASS/FAIL; real-row verdicts already exist |
+| L0t | Lynx v1.0, **trimmed documents** (top 3 passages, see "Lynx input variants") | local V100 | $0 | PASS/FAIL |
+| L0s | Lynx v1.0, **one sentence at a time**, each against its own top 3 passages | local V100 | $0 | PASS/FAIL per sentence → per answer |
+| L1s | Lynx v1.1, **one sentence at a time**, all passages | local V100 | $0 | PASS/FAIL per sentence → per answer |
 | Ga | RAGAS faithfulness prompt, `openai/gpt-oss-120b` | OpenRouter | cents/run | 0–1 score |
 | Na | RAGAS faithfulness prompt, `nvidia/nemotron-3-ultra-550b-a55b:free` | OpenRouter free tier | $0 | 0–1 score |
 | Ma | RAGAS faithfulness prompt, `meta-llama/llama-3.3-70b-instruct` | OpenRouter | cents/run | 0–1 score |
@@ -108,10 +113,23 @@ Every item has the bundle row shape (`key`, `user_input`, `retrieved_contexts`, 
 `reference`) so every judge reads identical input. New items are written as extra judge bundles
 (`rows.jsonl` + `manifest.json`) so the existing Lynx scorer reads them unchanged.
 
-### A. Real answers (425 rows)
+### A. Real answers (425 rows, up to 545 after recovery)
 
-All judges score all 425. The **decision** uses only the 40 human-graded rows (D); the rest feed
-secondary analyses.
+All judges score every real row. The **decision** uses only the 40 human-graded rows (D); the
+rest feed secondary analyses.
+
+**Recovery of the 120 missing questions (operator decision, 2026-10-27).** These were left out
+because at least one source was a whole document (a web page or git file returned by a
+whole-document tool) with no parent passage, so the exact text RAGAS judged was not rebuilt. Each
+such source records its file path (for example `websites/221502198541.md`), and the run's data
+volume `archi-data-ragas-retrieval-ab` was kept (root-owned; read it with `docker run … :ro`).
+A question is recovered only if **every** one of its whole-document sources is shown to be the
+exact text RAGAS judged: the file's text must start with the 300 characters the result file
+stored, and its length must be within the tool's character cap in that run's config (otherwise
+the tool truncated it at an unknown point and the source cannot be rebuilt exactly). Questions
+that fail either test stay out, with the count recorded per run. Recovery happens before the
+material lock, so recovered rows join D's sampling pool and every analysis. RAGAS scores for them
+already exist in the October result files.
 
 ### B. Planted-error set (70 items, by construction)
 
@@ -184,6 +202,32 @@ comparability with the recorded Lynx results, but does not gate.
 - Expected time: about 3–4 hours, in as many sittings as wanted. Browser find (Ctrl+F) on the
   documents is the intended way to check each specific.
 
+### Lynx input variants (operator decision, 2026-10-27)
+
+Lynx's prompt text stays exactly the model-card text; only what fills its QUESTION, DOCUMENT and
+ANSWER slots changes.
+
+- **Trimmed documents (L0t).** archi retrieves 5 passages per question, which is what overflows
+  v1.0's window. Rank the row's passages by word overlap with the answer being judged (BM25,
+  implemented in a few lines, no new dependency), keep the top 3 in their original order, and
+  drop to the top 2 or 1 only if 3 still do not fit; record how many were kept. Estimate on the
+  425 rows: keeping 3 fits essentially all of them, against 69 today (the estimate runs slightly
+  high: it predicts 82 fit today where 69 do; exact counts at the material lock). Risk: an answer
+  that relied on a dropped passage is wrongly failed; the planted benign items, D, and the
+  trim-check below measure this.
+- **One sentence at a time (L0s, L1s).** archi's answers are long (median 11 sentences, p90 19);
+  Lynx was trained on short answers. Split the answer into units: a sentence, a bullet, or a whole
+  code block (a command is a specific); drop headings and fragments under 20 characters. Each
+  unit goes in the ANSWER slot with the original question. DOCUMENT is the unit's own top 3
+  passages by the same overlap ranking (L0s) or all passages (L1s). **Answer verdict:** FAIL if any
+  unit FAILs; PASS if every unit PASSes; otherwise no verdict. Risk: a unit read alone can lose
+  context ("it", "that partition"); the question is always present to limit this.
+- **Coverage** for these variants is the share of rows where every prompt fits the model's
+  limit after trimming.
+- **Early stop:** each Lynx variant (L0t, L0s, L1, L1s) scores C first. A variant that flags
+  fewer than 16 of 20 unrelated answers meets a reject condition, is recorded as rejected, and is
+  not run on A, B or D.
+
 ### Prompt development split (excluded from all results)
 
 The mode-b prompt may be tuned only on a dev split: 10 real rows from run `130451` not used in D,
@@ -194,7 +238,7 @@ scored. Mode a uses RAGAS's own prompt untouched. No judge sees the reference an
 
 ## Definitions
 
-- **Flag, binary judges** (L0, L1, Gb, Nb, Mb): FAIL, on every item.
+- **Flag, binary judges** (L0, L1, L0t, L0s, L1s, Gb, Nb, Mb): FAIL, on every item.
 - **Flag, score judges** (S, Ga, Na, Ma), **on B: paired.** A planted item is flagged when its
   score is at least **0.05 below the same judge's score on the original** base row. Reason:
   base rows rarely score exactly 1.0 (7 of the 28 short ones), so a fixed cutoff would flag the
@@ -216,7 +260,7 @@ scored. Mode a uses RAGAS's own prompt untouched. No judge sees the reference an
 - **False-alarm rate** = share of clean items flagged, where clean = the 30 benign planted items
   plus the real rows in D the human graded "No". Reported separately for each half and pooled;
   the decision uses the pooled value.
-- **Coverage** = share of the 425 real rows the judge can read at all (L0: 69/425).
+- **Coverage** = share of the real rows (425, or more after recovery) the judge can read at all (L0: 69/425).
 
 ## Primary outcome (the metric that decides)
 
@@ -233,9 +277,8 @@ and against the incumbent S on the same items.
 
 Notes fixed in advance:
 
-- L0 cannot be adopted (coverage 16%). It is scored to learn whether it is accurate on the rows
-  it reads, which decides whether a follow-up that trims documents to fit 8,000 tokens is worth
-  proposing.
+- L0 cannot be adopted (coverage 16%). It is scored as the reference for its trimmed and
+  sentence-level variants (L0t, L0s), which can read essentially every row and so can be adopted.
 - S is held to the same absolute bars and the result reported. If S itself fails them (likely on
   false alarms, given the rule), that is a finding about the paid judge, not a reason to relax the
   bars.
@@ -263,6 +306,12 @@ Notes fixed in advance:
 - [ ] Cost: tokens and dollars per item for every judge; S's faithfulness-only cost per
       109-question run (October artifacts do not record judge usage, so this is the only
       measurement of faithfulness's share of the ~$28).
+- [ ] Trim check: on the 69 real rows L0 reads in full, how often L0t's verdict differs from L0's,
+      and in which direction.
+- [ ] Sentence-level: which unit failed, per FAILed answer, and whether it holds the planted edit
+      (B) or the specific the human pasted (D).
+- [ ] Recovered questions: count per run, and the old-vs-new comparison on the full set next to
+      the 72-question subset.
 - [ ] Exploratory, only if cheap: L0's probability on "PASS" as a score instead of the verdict.
 
 ## Stopping rule
@@ -297,22 +346,30 @@ Notes fixed in advance:
 | Na, Nb (free) | ~1,500 total | $0; about 2 days at 1,000 requests/day |
 | L0 on B-short + C-short | ~45 | $0, minutes on one V100 |
 | L1 on B + C | ~90 | $0, about 20 minutes on one V100 |
+| L0t on A + B + C | ~640 | $0, about 1–2 hours |
+| L0s on A + B + C | ~7,000 sentence prompts | $0, several hours |
+| L1s on A + B + C | ~7,000 sentence prompts | $0, roughly overnight on two idle V100s |
+| Recovery, re-scoring recovered rows with every judge | up to 120 rows per judge | ≈ +25% on each row above |
 
 Well under $20 in all. The operator's time (D) is the largest cost.
 
 ## What gets built (left to the builder unless stated)
 
-1. **Planted-set builder:** picks base rows by the rule in B, writes the edits and the ledger,
+1. **Recovery script:** rebuilds the missing questions from the kept data volume under the
+   exactness test in A, writes them into the run bundles' format, and records what stayed out.
+2. **Planted-set builder:** picks base rows by the rule in B, writes the edits and the ledger,
    verifies each edit, emits the planted and control bundles.
-2. **OpenRouter scorer** (script, not product code): for mode a, a short script reusing
+3. **Lynx variant builder:** turns any bundle into trimmed (L0t) and per-unit (L0s, L1s) bundles
+   the existing Lynx scorer reads unchanged, plus the per-unit → per-answer roll-up.
+4. **OpenRouter scorer** (script, not product code): for mode a, a short script reusing
    `judge_scorer.load_bundle` and `ragas_scoring.build_ragas_scorer` with
    `enabled_metrics=["faithfulness"]` and a `ChatOpenAI` judge pointed at
    `https://openrouter.ai/api/v1` (the offline judge in `scripts/benchmarking/judge/` only talks
    to a local vLLM socket, so it cannot be reused directly). For mode b, the frozen rule prompt
    with a JSON verdict. Checkpointed and resumable; respects the free tier's daily cap. The same
    script scores S on new items with the existing HUIT Bedrock judge factory.
-3. **Argilla loader and export** for D.
-4. **Analysis and report:** numbers recomputed in R and shown in the team's report-and-slide-deck
+5. **Argilla loader and export** for D.
+6. **Analysis and report:** numbers recomputed in R and shown in the team's report-and-slide-deck
    format, with the decision table first.
 
 Code and outputs live in `fasrc/archi-bench-out` under `checks/2026-10-free-faithfulness-judge/`,
@@ -325,8 +382,9 @@ not in archi's `src/`, so no product code changes. Large inputs stay under
   records; if done, report kappa.
 - **Short questions are few.** L0's planted items come from at most 14 distinct questions (15
   with the fallback), and the cleanliness check may shrink that further.
-- **Rebuilt rows only.** 120 of 545 questions (22%) are absent because archi answered from a
-  whole document with no parent passage; judges are never tested on those.
+- **Rebuilt rows only, unless recovery works.** 120 of 545 questions (22%) are absent because a
+  source was a whole document with no parent passage. Recovery (A) brings back those it can prove
+  exact; the rest stay untested, and the old-code runs lose more than the new.
 - **Free-tier data handling.** OpenRouter does not state whether the free Nemotron host keeps or
   trains on prompts. Inputs are public FASRC documentation and golden-set questions.
 - **Paraphrases are written by Claude**, the same model family as the incumbent S; all other
