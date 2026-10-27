@@ -133,7 +133,8 @@ stored, and its length must be within the tool's character cap in that run's con
 the tool truncated it at an unknown point and the source cannot be rebuilt exactly). Questions
 that fail either test stay out, with the count recorded per run. Recovery happens before the
 material lock, so recovered rows join D's sampling pool and every analysis. RAGAS scores for them
-already exist in the October result files.
+already exist in the October result files. **[The length test above is superseded by Amendment 1:
+the cut point is known.]**
 
 ### B. Planted-error set (70 items, by construction)
 
@@ -339,7 +340,8 @@ Notes fixed in advance:
       scores.
 - [ ] Cost: tokens and dollars per item for every judge; S's faithfulness-only cost per
       109-question run (October artifacts do not record judge usage, so this is the only
-      measurement of faithfulness's share of the ~$28).
+      measurement of faithfulness's share of the ~$28). **[Corrected by Amendment 1: they record
+      it, summed over all metrics.]**
 - [ ] Trim check: on the 69 real rows L0 reads in full, how often L0t's verdict differs from L0's,
       and in which direction.
 - [ ] Sentence-level: which unit failed, per FAILed answer, and whether it holds the planted edit
@@ -427,3 +429,42 @@ not in archi's `src/`, so no product code changes. Large inputs stay under
   human read.
 - **Same-family bias** no longer matters for the referee (the human is the referee), so Llama 3.3
   is a fair candidate even though Lynx is a fine-tuned Llama 3.
+
+## Amendment 1 (2026-10-27, before the material lock; operator-approved)
+
+Made after the design lock (`e2c1f113`) and before any material was built or any judge scored
+a new item. Two statements in the locked text were factually wrong. The original wording stays
+above with a marker; this section governs.
+
+**1. The whole-document cut point is known.** The design assumed a whole-document source longer
+than the tool's limit had been cut "at an unknown point". The code shows otherwise:
+
+- Parent-less sources come only from `search_local_files` and `search_metadata_index`. Both call
+  `catalog.get_document(resource_hash, max_chars=4000)`
+  (`src/archi/pipelines/agents/tools/local_files.py:324` and `:423`).
+- That limit is a code constant, not a config setting, and it is identical at both October
+  commits, `cd9658ba` and `7406721b`.
+- The server returns the document's text cut to that limit, with no marker
+  (`uploader_app/app.py:783-791`, `load_text_from_path(path)[:limit]`).
+- `fetch_catalog_document` adds no sources.
+- Under the original rule (length within the cap), **0 of the 120** missing questions are
+  recoverable, because every one has a source of 6,021 bytes or more.
+
+**The recovery test becomes:** a whole-document source's text is `load_text_from_path(file)[:4000]`.
+It is accepted only if **all** of the following hold:
+
+- (a) The file is `.md` or `.yml`. These are read raw as UTF-8, so the result is deterministic.
+  `.py`, `.c`, `.cpp` and `.pdf` go through format-specific loaders and are not accepted.
+- (b) The file's modification time is earlier than the run's start, so the file has not changed
+  since.
+- (c) Its first 300 characters equal the `sources_trunc_content` the result file stored.
+
+The loader is taken from the archi tree the scripts are pinned to, after confirming the function
+is unchanged since `cd9658ba`; otherwise it is imported from that commit. A question is recovered
+only when every one of its parent-less sources passes. The rest stay out, and the reason for each
+is recorded.
+
+**2. The October result files do record judge usage.** Each result file carries `judge_usage`
+(input and output tokens, calls, by model), summed over all five RAGAS metrics, not per metric.
+The cost analysis reports that total next to S's faithfulness-only usage, which is measured
+on the new items.
