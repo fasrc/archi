@@ -51,12 +51,12 @@ Paths used below:
 
 Two statements in the locked design are factually wrong. Both are found before any scoring, so they are fixed by a dated amendment section, not silently.
 
-- [ ] **Step 1: Add a section `## Amendment 1 (<date>, before the material lock)` stating:**
+- [x] **Step 1: Add a section `## Amendment 1 (2026-10-27, before the material lock)` stating:** (done on branch `docs/prereg-amendment-1-recovery`, commit `35b60320`)
   - The whole-document cut point is known, not unknown. The two search tools that add parent-less sources call `catalog.get_document(resource_hash, max_chars=4000)` (`src/archi/pipelines/agents/tools/local_files.py:324`, `:423`). That is a code constant, identical at both October commits `cd9658ba` and `7406721b`. The server returns `load_text_from_path(path)[:4000]` with no marker.
   - The recovery test therefore becomes: the source's text is `load_text_from_path(file)[:4000]`, and it is accepted only if (a) the file is `.md` or `.yml` (read raw, so deterministic), (b) its mtime is earlier than the run's start, and (c) its first 300 characters equal the stored `sources_trunc_content`. Any other source keeps its question out.
   - The old rule ("length within the cap") recovers 0 of 120 questions, because every one has a source over 4,000 characters.
   - The October result files do record `judge_usage`, aggregated over the 5 metrics and not per metric. The cost analysis uses that aggregate and S's measured faithfulness-only usage.
-- [ ] **Step 2: Commit, push the branch and open a PR to `dev` after the operator says to.** Merging it is the operator's approval. Task 3 uses the amended rule only after that merge.
+- [x] **Step 2: Commit, push the branch and open a PR to `dev` after the operator says to.** Opened as https://github.com/fasrc/archi/pull/787 (operator approved 2026-10-27). Merging it is the operator's approval. Task 3 uses the amended rule only after that merge.
 
 ---
 
