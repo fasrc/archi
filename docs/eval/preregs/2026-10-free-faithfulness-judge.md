@@ -5,14 +5,16 @@
 **Two locks.**
 1. **Design lock:** this file, with date and commit filled in once the operator approves it.
 2. **Material lock:** one later commit holding the recovery ledger (which missing questions came
-   back, which stayed out and why), the planted-edit ledger, the 20-donor control set, the type-5
+   back, which stayed out and why), the base-row support ledger, the planted-edit ledger, the
+   20-donor control set, the type-5
    and general-advice sentence lists, the Lynx variant inputs (kept passages per row, sentence
    units per answer, exact token counts), the frozen mode-b prompt with its sha256, and D's
    record list. It must exist before any judge scores any new item.
 
 The incumbent's and both Lynx versions' verdicts on the 425 real rows already exist and pre-date
 both locks. D's sample is drawn mechanically from the seed using only the incumbent's October
-scores and prompt length; no other judge's verdict is consulted when drawing it.
+scores, prompt length and B's base-row list; no other judge's verdict is consulted when drawing
+it.
 
 Related: [#583](https://github.com/fasrc/archi/issues/583) (Lynx faithfulness metric, closed),
 [#737](https://github.com/fasrc/archi/issues/737) (judge-offload and Lynx cluster steps; step 5 is
@@ -138,7 +140,13 @@ already exist in the October result files.
 Base rows: real rows with RAGAS faithfulness ≥ 0.8 **that also pass a cleanliness check**: every
 specific in the answer (numbers, paths, hostnames, partition names, `code` spans, command-line
 flags, quoted commands) occurs in the documents (case-insensitive; the builder fixes the exact
-extraction and lists exclusions such as step numbers). Pool before the check: 155 rows; 28 short
+extraction and lists exclusions such as step numbers), **and** a support ledger shows each of
+them stated the same way: for every specific, a verbatim quote from the documents (checked
+mechanically to occur there) that ties it to the same thing the answer ties it to — the limit to
+the same partition, the flag to the same command, the policy to the same group of users. A row
+with any specific that has no such quote is not a base row. Occurrence alone is not enough: an
+answer can use only documented values and still pair them wrongly. The ledger is part of the
+material lock, so the operator can audit it. Pool before the check: 155 rows; 28 short
 enough for L0, covering only **14** distinct questions (127 long rows, 49 questions). If the clean
 short pool runs out, fall back to short rows with RAGAS ≥ 0.5 that pass the check (15 questions).
 Short targets are 20 harmful and 15 benign, with a floor of 10 and 8; any shortfall is filled from
@@ -151,6 +159,12 @@ twice).
 **Truth labels for B come from the construction**, not from any grader: harmful = should flag,
 benign = should not. If the human grades a hidden planted item differently, that is reported as
 a human miss or human false alarm, never a relabel.
+
+**Contamination check and exclusion.** D's ≥ 0.8 stratum is drawn from B's base rows (see D), so
+the human grades about 12 base answers in their original, unedited form. If the human finds a
+made-up or wrong specific in a base original, every B item built on that base is **excluded for
+every judge** (an exclusion applied to all judges alike, not a relabel), and the share of
+graded bases found contaminated is reported as an estimate for the ungraded rest.
 
 **Who writes the edits (builder decision, to avoid tilting the comparison toward any judge's
 model family):** harmful types 1–4 are mechanical one-token substitutions (another number;
@@ -189,6 +203,11 @@ comparability with the recorded Lynx results, but does not gate.
 
 - **40 real rows**, seeded and stratified by incumbent score: 16 with RAGAS < 0.5, 12 with
   0.5–0.8, 12 with ≥ 0.8; half short where the stratum allows; at most one row per question.
+  The ≥ 0.8 stratum is drawn from B's base rows (other than the bases of the 6 hidden planted
+  items), which gives the contamination check in B at no extra grading time.
+- **Top-up, only if needed:** if the 40 real rows hold fewer than 8 graded "Yes", the operator
+  grades one more batch of 20 real rows from the RAGAS < 0.5 stratum (seeded, questions not yet
+  in D, about 1.5 hours), where real failures are likeliest. See the real-error criterion.
 - **6 hidden planted items** (3 harmful, 3 benign) drawn from B. They check that the human
   catches planted errors; they also count in B.
 - Shuffled. The grader sees the question, the answer and the documents; never a judge's score or
@@ -259,6 +278,11 @@ scored. Mode a uses RAGAS's own prompt untouched. No judge sees the reference an
   timeout). Counted against the judge: a miss on a harmful or unrelated item, a false alarm on a
   clean item. The no-verdict rate is also reported.
 - **Catch rate** = share of the 40 harmful planted items flagged.
+- **Real-error catch rate** = share of D's real rows the human graded "Yes" that the judge flags
+  (score judges at their chosen cutoff). Planted errors are written by us and may be easier or
+  harder than the ones archi actually makes, so the decision also checks real ones.
+- **"Can't tell"** grades are left out of both the real-error catch rate and the false-alarm
+  rate, and their count is reported.
 - **False-alarm rate** = share of clean items flagged, where clean = the 30 benign planted items
   plus the real rows in D the human graded "No". Reported separately for each half and pooled;
   the decision uses the pooled value.
@@ -273,9 +297,17 @@ and against the incumbent S on the same items.
 
 | Outcome | Threshold | Action |
 |---|---|---|
-| **Adopt** | All of: catch rate ≥ 0.80 and ≥ S's − 0.10; false-alarm rate ≤ 0.20 and ≤ S's + 0.05; flags ≥ 18 of 20 unrelated answers; verdict on ≥ 95% of items; coverage ≥ 90% | Recommend it as the golden-set faithfulness judge; wiring it into the benchmark is a separate issue judged by the release plan's gate bar |
-| **Reject** | Any of: catch rate < 0.70; false-alarm rate > 0.35; flags < 16 of 20 unrelated answers; verdict on < 90% of items; coverage < 90% | Record the negative; keep S for faithfulness |
+| **Adopt** | All of: catch rate ≥ 0.80 and ≥ S's − 0.10; real-error catch rate meets its bar (below); false-alarm rate ≤ 0.20 and ≤ S's + 0.05; flags ≥ 18 of 20 unrelated answers; verdict on ≥ 95% of items; coverage ≥ 90% | Recommend it as the golden-set faithfulness judge; wiring it into the benchmark is a separate issue judged by the release plan's gate bar |
+| **Reject** | Any of: catch rate < 0.70; real-error catch rate below its reject line (below); false-alarm rate > 0.35; flags < 16 of 20 unrelated answers; verdict on < 90% of items; coverage < 90% | Record the negative; keep S for faithfulness |
 | **Inconclusive** | Anything in between | Double B (another 40 harmful + 30 benign, new seed) and re-read once; if still in between, keep S |
+
+**Real-error criterion**, set by how many real rows the human graded "Yes" (after any top-up):
+
+| "Yes" rows in D | Adopt needs | Reject when |
+|---|---|---|
+| 8 or more | real-error catch rate ≥ 0.60 and ≥ S's − 0.15 | real-error catch rate < 0.40 |
+| 4 to 7 | at least half of them caught | none of them caught |
+| fewer than 4 | waived; the report states the judge is untested on real failures and lists them | — |
 
 Notes fixed in advance:
 
@@ -318,7 +350,8 @@ Notes fixed in advance:
 
 ## Stopping rule
 
-- **Target N:** B = 70 items, C = 20, D = 46 records, each submitted once.
+- **Target N:** B = 70 items (fewer if the contamination check excludes some), C = 20, D = 46
+  records plus the 20-row top-up only if D holds fewer than 8 "Yes", each submitted once.
 - **Minimum submissions per record:** 1 (single grader; see deviations).
 - **Hard deadline:** material-lock date + 14 days. If D is not finished by then, analyze with the graded
   rows, report the false-alarm rate from the benign half of B alone, and flag the shortfall.
