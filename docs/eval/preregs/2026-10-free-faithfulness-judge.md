@@ -75,8 +75,8 @@ here; the human grades and the planted errors are.
 |---|---|
 | Round ID | `2026-10-free-faithfulness-judge` |
 | Operator | Austin Swinney |
-| Date locked | `<YYYY-MM-DD>` |
-| Commit at lock | `<sha>` |
+| Date locked | Design lock = the date this file's PR merges to `dev` (merging is the operator's approval) |
+| Commit at lock | Design lock = that merge commit on `dev`; the material lock records it |
 | Source runs | Golden-set runs of 2026-10-12 on corpus `…a67f2ac54f8` (7,006 chunks): retrieval A/B `012746`, `054355` (new code), `034614`, `081227` (old code); `130451` (new code, Qwen3.8) |
 | Real answers | 425 rebuilt rows, plus any of the 120 missing questions recovered under A's exactness test (every passage = the full parent text RAGAS judged; 120 of 545 questions left out because a source had no parent passage). Bundles: `/scratch/a2rchi/bench-runs/lynx-vs-ragas/runs/*/judge_bundles/*/rows.jsonl`, sha256 `64d46793…`, `7a1f263c…`, `809ddd0d…`, `b2574494…`, `dfc5b83b…` (full digests at lock) |
 | Existing scores | RAGAS faithfulness per row from the original runs (`rebuild.jsonl`); Lynx v1.1 (`v11/out/`), Lynx v1.0 (`v10/out/`); joined in `v11/per_question.csv` |
@@ -99,6 +99,8 @@ here; the human grades and the planted errors are.
 | Gb | Rule prompt, `openai/gpt-oss-120b` | OpenRouter | cents/run | PASS/FAIL |
 | Nb | Rule prompt, Nemotron 3 Ultra free | OpenRouter free tier | $0 | PASS/FAIL |
 | Mb | Rule prompt, Llama 3.3 70B | OpenRouter | cents/run | PASS/FAIL |
+
+Both modes are kept (operator decision, 2026-10-27).
 
 - **Mode a** asks "does RAGAS's own faithfulness check give the same answers with a cheaper
   model?" It keeps the golden-set history comparable.
