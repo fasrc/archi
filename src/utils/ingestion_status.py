@@ -4,10 +4,17 @@ The ingestion status dict is written by the ingestion thread and read by
 Flask's request thread (``/api/ingestion/status``).  A dedicated lock
 protects the status dict so the reader never blocks on the ingestion
 mutual-exclusion lock, which is held for the entire ingest (22–64 min).
+
+The status dict also carries a run identity: ``run_id``, ``started_at``, and
+``finished_at``. A visible run starts when the state becomes ``running`` from
+a non-``running`` state, and ends at the next terminal publish (``completed``
+or ``error``). Runs that queue behind a running run share its ``run_id`` and
+``started_at``; see ``_set_running`` and ``_finish``.
 """
 
 import logging
 import threading
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
@@ -17,6 +24,8 @@ logger = logging.getLogger(__name__)
 def build_ingestion_helpers(
     run_ingestion_fn: Callable[..., Any],
     ingestion_lock: threading.RLock,
+    *,
+    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ):
     """Build the ingestion lifecycle functions used by service_data_manager.
 
@@ -29,6 +38,10 @@ def build_ingestion_helpers(
       - ``run_source_refresh(name, func, update_vectorstore, set_source_status)``
       - ``run_upload_update(update_vectorstore)``
       - ``ingestion_lock`` — the caller's ingestion mutual-exclusion lock
+
+    ``now`` is a keyword-only seam, a callable returning an aware UTC
+    ``datetime``, used to stamp ``started_at``/``finished_at``. It defaults to
+    ``datetime.now(timezone.utc)`` and exists so tests can fix the clock.
     """
     _status_lock = threading.Lock()
     _status: Dict[str, object] = {
@@ -36,6 +49,9 @@ def build_ingestion_helpers(
         "step": None,
         "error": None,
         "progress": None,
+        "run_id": None,
+        "started_at": None,
+        "finished_at": None,
     }
 
     def set_ingestion_status(
@@ -58,9 +74,18 @@ def build_ingestion_helpers(
     _inflight = 0
 
     def _set_running(step: str) -> None:
-        _status.update(
-            {"state": "running", "step": step, "error": None, "progress": None}
-        )
+        """Publish running, assigning a fresh run identity if a new run started.
+
+        A new run_id/started_at is assigned only when the previous state was
+        not already "running"; a queued run that gets the lock after an
+        earlier run's "running" keeps that run's identity.
+        """
+        update = {"state": "running", "step": step, "error": None, "progress": None}
+        if _status["state"] != "running":
+            update["run_id"] = str(uuid.uuid4())
+            update["started_at"] = now().isoformat()
+            update["finished_at"] = None
+        _status.update(update)
 
     def _join(step: str) -> None:
         """Count a run in, and publish its step if no other run is shown running.
@@ -85,7 +110,14 @@ def build_ingestion_helpers(
         with _status_lock:
             _inflight -= 1
             if state == "error" or _inflight == 0:
-                _status.update({"state": state, "step": step, "error": error})
+                _status.update(
+                    {
+                        "state": state,
+                        "step": step,
+                        "error": error,
+                        "finished_at": now().isoformat(),
+                    }
+                )
 
     def run_tracked(step: str, fn: Callable[[], Any]) -> Any:
         _join(step)
