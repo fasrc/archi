@@ -2,6 +2,16 @@
 
 > **Lock this file (commit it) BEFORE scoring any judge on the test material.** The whole point of pre-reg is to time-stamp the decision rule so we can't quietly cherry-pick the metric that flatters the preferred judge after the fact.
 
+**Two locks.**
+1. **Design lock:** this file, with date and commit filled in once the operator approves it.
+2. **Material lock:** one later commit holding the planted-edit ledger, the 20-donor control set,
+   the type-5 and general-advice sentence lists, the frozen mode-b prompt with its sha256, and
+   D's record list. It must exist before any judge scores any new item.
+
+The incumbent's and both Lynx versions' verdicts on the 425 real rows already exist and pre-date
+both locks. D's sample is drawn mechanically from the seed using only the incumbent's October
+scores and prompt length; no other judge's verdict is consulted when drawing it.
+
 Related: [#583](https://github.com/fasrc/archi/issues/583) (Lynx faithfulness metric, closed),
 [#737](https://github.com/fasrc/archi/issues/737) (judge-offload and Lynx cluster steps; step 5 is
 the judge comparison against Sonnet), [#773](https://github.com/fasrc/archi/issues/773) (Lynx token
@@ -29,9 +39,11 @@ Measured 2026-10-24 on the five rebuilt runs below (`RESULTS.md`):
   (9 of 10 short rows, 4 of 10 long rows, with no shared documents), and its reasoning describes
   the answer the documents imply, not the answer it was given. Reproduced in plain Hugging Face
   transformers, so it is the model, not this host's vLLM build. Our prompt matches the v1.1 model
-  card, sent as one user message as the card says. **But** that control reused one donor answer
-  (question_109's) in 13 of 20 items, 9 of the 10 short ones, so the evidence is narrower than it
-  looks. v1.1 stays in as a candidate (L1) and is re-tested on the rebuilt control (C).
+  card, sent as one user message as the card says. That control reused one donor answer
+  (question_109's) in 13 of 20 items, but the failure is not tied to it: on the 7 items with
+  other donors (4 different donor answers) v1.1 passed 4. It stays in as a candidate (L1) only so
+  the record is clean on the rebuilt control (C), at about 20 GPU minutes; **it is expected to
+  fail C's gate.**
 - **Lynx 8B v1.0** (8,000-token window) failed every unrelated answer it could read (3 of 3) and
   caught one real invented claim, but reads only 69 of 425 questions (16%). Lynx 70B has the
   same 8,000-token window.
@@ -112,7 +124,9 @@ short pool runs out, fall back to short rows with RAGAS ≥ 0.5 that pass the ch
 Short targets are 20 harmful and 15 benign, with a floor of 10 and 8; any shortfall is filled from
 long rows so the totals stay 40 and 30. Record the achieved split. One base row may carry one
 harmful and one benign variant, as separate items. Seeded selection (`seed 20261027`), preferring
-distinct questions, and no planted item built on a question used in D's real rows.
+distinct questions. B's items may reuse questions that appear in D; only the 6 planted items
+hidden in D must not share a question with D's 40 real rows (the grader never sees one question
+twice).
 
 **Truth labels for B come from the construction**, not from any grader: harmful = should flag,
 benign = should not. If the human grades a hidden planted item differently, that is reported as
@@ -122,7 +136,7 @@ a human miss or human false alarm, never a relabel.
 model family):** harmful types 1–4 are mechanical one-token substitutions (another number;
 another real-looking path, host or partition absent from the documents; another flag; inserting
 or removing a negation). Type 5 (invented step) and the benign general-advice sentences come from
-fixed lists written once and committed with the lock. Only the 15 paraphrases are written by a
+fixed lists written once and committed in the material lock. Only the 15 paraphrases are written by a
 model (Claude, the same family as S); that confound is accepted and visible in the per-type
 results.
 
@@ -180,10 +194,17 @@ scored. Mode a uses RAGAS's own prompt untouched. No judge sees the reference an
 
 ## Definitions
 
-- **Flag.** Binary judges flag on FAIL. Score judges (S, Ga, Na, Ma) are read at two cutoffs
-  declared now — flag when score < 1.0, and flag when score < 0.5 — and each score judge is
-  decided on whichever of its two cutoffs has the higher balanced accuracy on B. Both are
-  reported.
+- **Flag, binary judges** (L0, L1, Gb, Nb, Mb): FAIL, on every item.
+- **Flag, score judges** (S, Ga, Na, Ma), **on B: paired.** A planted item is flagged when its
+  score is at least **0.05 below the same judge's score on the original** base row. Reason:
+  base rows rarely score exactly 1.0 (7 of the 28 short ones), so a fixed cutoff would flag the
+  original and every variant alike (< 1.0) or none of them (< 0.5), and score judges would fail
+  by construction. One wrong specific in a 10-claim answer moves the score by about 0.1. If the
+  judge has no score for the original, the planted item counts as no verdict.
+- **Flag, score judges, on C and D's real rows** (no original to pair with): two cutoffs declared
+  now, score < 1.0 and score < 0.5. Each score judge is decided on whichever cutoff has the higher
+  balanced accuracy against the human grades on D's 40 real rows, and that cutoff is then used on
+  C. Both cutoffs are reported.
 - **Decision items** = the 130 items the decision reads: B (70) + C (20) + D's 40 real rows.
   "Verdict on ≥ 95% of items" means 95% of these 130.
 - **Retries.** Transport errors, timeouts and rate-limit refusals are retried up to 3 times with
@@ -226,7 +247,9 @@ Notes fixed in advance:
 ## Secondary analyses (planned)
 
 - [ ] Per-type catch rate (the five harmful types) and per-length band (short / long), per judge.
-- [ ] Paired catch rate on B (flagged the planted version, not the original).
+- [ ] Binary judges, paired reading on B (FAIL on the planted version, PASS on the original);
+      score judges, B read at the two fixed cutoffs. Reported, not decisive.
+- [ ] Score judges: sensitivity of the B result to the 0.05 margin (0.02 and 0.10 shown).
 - [ ] Human vs each judge on the 40 real rows: agreement, kappa, and the rows where they differ.
 - [ ] Human catch rate on the 6 hidden planted items.
 - [ ] Arm-level, **descriptive only**: new − old code on the 72 questions scored in all four A/B
@@ -246,13 +269,13 @@ Notes fixed in advance:
 
 - **Target N:** B = 70 items, C = 20, D = 46 records, each submitted once.
 - **Minimum submissions per record:** 1 (single grader; see deviations).
-- **Hard deadline:** lock date + 14 days. If D is not finished by then, analyze with the graded
+- **Hard deadline:** material-lock date + 14 days. If D is not finished by then, analyze with the graded
   rows, report the false-alarm rate from the benign half of B alone, and flag the shortfall.
 
 ## Pins and reproducibility
 
 - OpenRouter: one host per model, `provider: {order: [<host>], allow_fallbacks: false}`, chosen
-  at lock among full-precision hosts that serve ≥ 128k context (2026-10-27 listing: gpt-oss-120b
+  at the material lock among full-precision hosts that serve ≥ 128k context (2026-10-27 listing: gpt-oss-120b
   bf16 on DeepInfra or Crusoe; Llama 3.3 70B fp16 on CoreWeave; Nemotron free has one host,
   Nvidia). `temperature 0`, `seed 20261027`, default reasoning effort. Record the host, model id,
   tokens, cost and latency returned with every response; OpenRouter does not pin weight
