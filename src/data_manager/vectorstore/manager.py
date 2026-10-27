@@ -47,6 +47,10 @@ def _report_embedding_progress(embedding_progress, done, total):
         logger.warning("Embedding progress callback failed", exc_info=True)
 
 
+# process_file's result for a file that hit a system error (#603). A content
+# outcome (unsupported format, no text) returns None and does not fail the run.
+_FILE_SYSTEM_ERROR = object()
+
 SUPPORTED_DISTANCE_METRICS = ["l2", "cosine", "ip"]
 
 
@@ -383,7 +387,7 @@ class VectorStoreManager:
             if files_to_add:
                 logger.info(f"Adding {len(files_to_add)} new documents")
                 try:
-                    self._add_to_postgres(
+                    failed_files = self._add_to_postgres(
                         files_to_add, embedding_progress=embedding_progress
                     )
                 except Exception as e:
@@ -392,6 +396,17 @@ class VectorStoreManager:
                     # did not do what it set out to do. Recording it as
                     # "updated" would present a partial corpus as a good one.
                     run_status = "failed"
+                else:
+                    if failed_files:
+                        # A system error on any file leaves the corpus partial (#603).
+                        # Content outcomes (unsupported format, no text) are not counted.
+                        logger.error(
+                            "%d of %d files failed with a system error; "
+                            "recording the ingest run as failed",
+                            failed_files,
+                            len(files_to_add),
+                        )
+                        run_status = "failed"
             logger.info("Vectorstore update has been completed")
 
         logger.info(f"N Collection: {store.count()}")
@@ -574,10 +589,10 @@ class VectorStoreManager:
 
     def _add_to_postgres(
         self, files_to_add: Dict[str, str], embedding_progress=None
-    ) -> None:
-        """Add files to PostgreSQL vectorstore."""
+    ) -> int:
+        """Add files to PostgreSQL vectorstore. Returns the count of files that hit a system error (#603)."""
         if not files_to_add:
-            return
+            return 0
         commit_batch_size = 25
 
         # Mark all documents as 'embedding' before starting
@@ -603,7 +618,7 @@ class VectorStoreManager:
                     f"Failed to load file: {file_path}. Skipping. Exception: {exc}"
                 )
                 self._catalog.update_ingestion_status(filehash, "failed", str(exc))
-                return None
+                return _FILE_SYSTEM_ERROR
 
             if loader is None:
                 self._catalog.update_ingestion_status(
@@ -619,7 +634,7 @@ class VectorStoreManager:
                     "Failed to read file %s. Skipping. Exception: %s", file_path, exc
                 )
                 self._catalog.update_ingestion_status(filehash, "failed", str(exc))
-                return None
+                return _FILE_SYSTEM_ERROR
 
             # Structural parent-child path: build hierarchical nodes instead of
             # fixed-character chunks. The Indico chunk-prefix below is NOT applied
@@ -720,6 +735,7 @@ class VectorStoreManager:
             return filename, chunks, metadatas
 
         processed_results: Dict[str, tuple] = {}
+        failed_hashes: set = set()
         max_workers = max(1, self.parallel_workers)
         logger.info(f"Processing files with up to {max_workers} parallel workers")
 
@@ -749,8 +765,11 @@ class VectorStoreManager:
                         exc,
                     )
                     self._catalog.update_ingestion_status(filehash, "failed", str(exc))
+                    failed_hashes.add(filehash)
                     continue
-                if result:
+                if result is _FILE_SYSTEM_ERROR:
+                    failed_hashes.add(filehash)
+                elif result:
                     processed_results[filehash] = result
 
         logger.info("Finished processing files; adding to vectorstore")
@@ -835,6 +854,7 @@ class VectorStoreManager:
                                 (str(exc), filehash),
                             )
                             cursor.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                            failed_hashes.add(filehash)
 
                         files_since_commit += 1
                         if files_since_commit >= commit_batch_size:
@@ -869,6 +889,7 @@ class VectorStoreManager:
                             (str(exc), filehash),
                         )
                         cursor.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                        failed_hashes.add(filehash)
                         files_since_commit += 1
                         if files_since_commit >= commit_batch_size:
                             conn.commit()
@@ -946,6 +967,7 @@ class VectorStoreManager:
                             (str(exc), filehash),
                         )
                         cursor.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                        failed_hashes.add(filehash)
 
                     files_since_commit += 1
                     if files_since_commit >= commit_batch_size:
@@ -981,6 +1003,7 @@ class VectorStoreManager:
             conn.close()
 
         logger.info("All files have been added to the vectorstore")
+        return len(failed_hashes)
 
     def _build_hierarchical_payload(
         self,

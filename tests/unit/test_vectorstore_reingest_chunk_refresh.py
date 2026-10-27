@@ -133,7 +133,7 @@ def test_stale_hash_is_removed_and_re_added(monkeypatch):
     )
 
     removed = MagicMock()
-    added = MagicMock()
+    added = MagicMock(return_value=0)
     monkeypatch.setattr(mgr, "_remove_from_postgres", removed)
     monkeypatch.setattr(mgr, "_add_to_postgres", added)
 
@@ -193,7 +193,7 @@ def test_sync_vectorstore_threads_embedding_progress_to_add_to_postgres(monkeypa
     monkeypatch.setattr(mgr, "_collect_postgres_hashes", lambda: set())
     monkeypatch.setattr(mgr, "_collect_embedded_filenames", lambda: {})
 
-    added = MagicMock()
+    added = MagicMock(return_value=0)
     monkeypatch.setattr(mgr, "_add_to_postgres", added)
 
     cb = object()
