@@ -20,6 +20,7 @@ from a FASRC login node as yourself; the archi service account cannot run `sbatc
 | `reference/<run>.sonnet.jsonl` | Sonnet 4.5's per-row scores for the five RAGAS metrics (from the October result files), joined by row key. `reference/<run>.meta.json`: the run's judge identity, token usage and ragas settings. `reference/control.jsonl`: each control row's donor and the original row's Sonnet scores. |
 | `judges/<judge>.env` | One file per candidate: model id, **pinned revision**, precision, card count, memory, time limit, the vLLM server flags from its model card, reasoning settings, seed. |
 | `images/vllm-openai-v0.32.0-cu129.sif` | `vllm/vllm-openai:v0.32.0-cu129` as a SIF, fetched from Docker Hub as an OCI layout by `scripts/oci_fetch.py` (singularity's own pull crawled on this host) and built with `singularity build`. Every scores file records its SHA-256. |
+| `images/SHA256SUMS` | Both image digests; `sha256sum -c SHA256SUMS` in `images/` verifies them. The scorer's digest also stands in `scorer-identity.json`. |
 | `images/archi-scorer.sif` + `scorer-identity.json` | The archi benchmark image (the code that scores inline, ragas 0.3.5) plus the judge scripts, built by `scripts/build_scorer_sandbox.sh`: the production recipe `scripts/benchmarking/slurm/build_scorer_image.sh` needs `--fakeroot`, which the dev host lacks, so the same steps run as a sandbox build. |
 | `scripts/` | `judge_trial.sbatch` (the job), `submit.sh`, `status.sh`, `trial_score.py` (runs inside the scorer image), `compare.py` (the report), `package.py` (how the bundles were built). The same files live in archi under `scripts/benchmarking/judge_trial/`. `oci_fetch.py` and `build_scorer_sandbox.sh` (how the two images were made) live only here, beside the images. |
 | `scores/<judge>/` | Written by the jobs: `<bundle>.judge_scores.json` per bundle, and `*.partial.jsonl` checkpoints while a bundle is in progress. |
@@ -55,6 +56,11 @@ bash scripts/judge_trial.sbatch --dry-run gpt-oss-120b     # prints the commands
 The dry run must print one `vllm serve … --uds …` line and one `trial_score.py` line and
 exit 0. `all-mpnet-base-v2` is the embedding model ragas needs for answer_relevancy and
 answer_correctness; the job runs fully offline (`HF_HUB_OFFLINE=1`).
+
+The package is owned by the archi service account; the jobs run as you. `scores/`, `logs/`
+and `.cache/` are group-writable (group `jharvard_lab`, setgid), which is all a job writes
+to, plus a socket folder under the node's `$TMPDIR`. If `sbatch` reports a permission
+error on one of those folders, you are not in the group.
 
 **1b. Llama 3.3 70B only (optional).** The weights are gated. With your own Hugging Face
 account, accept the license on the model page, then on a node with internet:

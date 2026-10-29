@@ -37,9 +37,12 @@ value_of() { # $1 = env file, $2 = key
 }
 
 mkdir -p "$PKG/logs"
+# A judge that cannot go (no judge file, weights missing or still downloading) is reported
+# and skipped; the others are still submitted. The exit code is 1 when any was skipped.
+failed=0
 for judge in "${JUDGES[@]}"; do
   env_file="$PKG/judges/$judge.env"
-  [ -f "$env_file" ] || { echo "submit: no $env_file" >&2; exit 1; }
+  [ -f "$env_file" ] || { echo "submit: no $env_file" >&2; failed=1; continue; }
   gpus="$(value_of "$env_file" JUDGE_GPUS)"; gpus="${gpus:-1}"
   mem="$(value_of "$env_file" JUDGE_MEM)"; mem="${mem:-200G}"
   time_limit="$(value_of "$env_file" JUDGE_TIME)"; time_limit="${time_limit:-08:00:00}"
@@ -49,7 +52,8 @@ for judge in "${JUDGES[@]}"; do
   # A download in progress already has the snapshot folder; its blobs end in .incomplete.
   if [ ! -f "$snapshot/config.json" ] || [ -n "$(find "$repo_dir/blobs" -name '*.incomplete' -print -quit 2>/dev/null)" ]; then
     echo "submit: $judge: weights at $snapshot are missing or still downloading (README step 1)" >&2
-    exit 1
+    failed=1
+    continue
   fi
   cmd=(sbatch --job-name "archi-judge-trial-$judge" --gres="gpu:$gpus" --mem="$mem" -t "$time_limit"
     --output "logs/archi-judge-trial-$judge-%j.out")
@@ -61,3 +65,4 @@ for judge in "${JUDGES[@]}"; do
   fi
   (cd "$PKG" && "${cmd[@]}")
 done
+exit "$failed"

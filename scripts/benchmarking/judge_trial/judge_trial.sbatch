@@ -199,7 +199,7 @@ score_cmd() { # $1 = bundle folder
   SCORE=("$RUNTIME" exec --cleanenv
     --bind "$PKG" --bind "$SOCK_DIR" --bind "$HF_HOME_DIR"
     --env "HF_HOME=$HF_HOME_DIR" --env HF_HUB_OFFLINE=1 --env TRANSFORMERS_OFFLINE=1
-    --env "ARCHI_ROOT=$ARCHI_ROOT" --env "PYTHONPATH=$ARCHI_ROOT"
+    --env "ARCHI_ROOT=$ARCHI_ROOT"
     --env "SLURM_JOB_ID=${SLURM_JOB_ID:-}" --env "SLURM_RESTART_COUNT=${SLURM_RESTART_COUNT:-0}"
     "$PINNED_SCORER"
     python3 "$PKG/scripts/trial_score.py"

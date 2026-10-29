@@ -203,6 +203,7 @@ def test_scores_every_pair_and_writes_the_document(tmp_path):
         job_id="4242",
         build_scorer=builder,
         live_identity=LIVE,
+        transport={"mode": "openai_compatible", "base_url": "http://127.0.0.1:8001/v1"},
     )
 
     assert target == out / "run-20261012_000000-arm0.judge_scores.json"
@@ -222,6 +223,8 @@ def test_scores_every_pair_and_writes_the_document(tmp_path):
     assert identity["model_revision"] == "b5c939de"
     assert identity["precision"] == "checkpoint"
     assert identity["server_image_digest"] == "sha256:vllm"
+    assert identity["mode"] == "openai_compatible"
+    assert identity["base_url"] == "http://127.0.0.1:8001/v1"
     assert identity["scorer"]["image_digest"] == "sha256:scorer"
     assert identity["scorer"]["code_digest"] == LIVE["code_digest"]
     assert identity["decoding"]["request_options"]["reasoning_effort"] == "medium"

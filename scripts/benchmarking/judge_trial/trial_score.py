@@ -221,10 +221,14 @@ def score_trial_bundle(
     job_id: Optional[str] = None,
     build_scorer=None,
     live_identity: Optional[Dict[str, Any]] = None,
+    transport: Optional[Dict[str, Optional[str]]] = None,
 ) -> Path:
     """Score *bundle* and write ``<out_dir>/<bundle name>.judge_scores.json``.
 
     Resumes from ``<out_dir>/<bundle name>.scores.<identity digest>.partial.jsonl``.
+    ``transport`` records how the judge was reached: ``{"mode": "unix_socket",
+    "base_url": None}`` (the job) or ``{"mode": "openai_compatible", "base_url": ...}``
+    (a smoke test over TCP); the job's form is the default.
     """
     from src.utils.ragas_scoring import build_ragas_scorer
 
@@ -265,12 +269,13 @@ def score_trial_bundle(
         judge_model=env["JUDGE_MODEL_ID"],
     )
     live = live_identity if live_identity is not None else _live_identity()
+    reached = transport or {"mode": "unix_socket", "base_url": None}
     identity = extended_identity(
         {
             "provider": "vllm",
             "model": env["JUDGE_MODEL_ID"],
-            "base_url": None,
-            "mode": "unix_socket",
+            "base_url": reached.get("base_url"),
+            "mode": reached.get("mode") or "unix_socket",
         },
         model_revision=env["JUDGE_MODEL_REVISION"],
         precision=env["JUDGE_PRECISION"],
@@ -445,6 +450,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             server_image_digest=args.server_image_digest,
             scorer_image_digest=args.scorer_image_digest,
             job_id=args.job_id,
+            transport={
+                "mode": "unix_socket" if args.socket else "openai_compatible",
+                "base_url": args.base_url,
+            },
         )
     except Refused as exc:
         print(f"trial_score: refused: {exc}", file=sys.stderr)
