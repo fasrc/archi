@@ -155,3 +155,8 @@ from the trial file.
   pre-registration do not exist yet (fasrc/archi#786 material lock pending); that
   calibration check is deferred and is not part of this package.
 - Nothing in the job needs a secret: no OpenAI embeddings, no gated download at run time.
+- `.cache/` keeps the inputs the two images were built from — the OCI layout of
+  `vllm/vllm-openai:v0.32.0-cu129` (11 GB) and the docker archive of
+  `benchmarking-embtrial-a:2000` (5 GB) — plus the dev-host smoke bundle and its scores.
+  They are provenance, not used by the jobs; delete them once the images are verified
+  against `images/SHA256SUMS`.
