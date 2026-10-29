@@ -240,13 +240,16 @@ def write_judge_bundle(
     verbosity: int,
     code_version: Mapping[str, Any],
     package_digest: str,
+    judge_mode: str = MODE_DEFERRED,
 ) -> Dict[str, str]:
-    """Write the judge bundle of one deferred arm (design D5).
+    """Write the judge bundle of one bundle-writing arm (design D5).
 
     Makes ``<bundle_root>/<result_basename>-arm<arm_index>/`` with
     ``rows.jsonl``, ``manifest.json`` and an empty ``BUNDLE_COMPLETE``, in that
     order. The folder must not exist: a bundle is never overwritten. Zero rows
     still give a complete bundle, because the merge waits for every arm.
+    ``judge_mode`` is recorded in the manifest: the publish step queues only
+    ``deferred`` bundles (add-inline-bundle-judge-mode, D5).
     Returns ``{"folder": <folder name>, "digest": <rows_sha256>}``.
     """
     if len(rows) != len(keys):
@@ -270,6 +273,7 @@ def write_judge_bundle(
     rows_sha256 = "sha256:" + hashlib.sha256(rows_bytes).hexdigest()
     manifest = {
         "bundle_format": BUNDLE_FORMAT,
+        "judge_mode": judge_mode,
         "result_basename": result_basename,
         "arm_index": arm_index,
         "arm_count": arm_count,
@@ -314,6 +318,30 @@ def pending_arm_fields(judge_bundle: Mapping[str, str]) -> Dict[str, Any]:
             "folder": judge_bundle["folder"],
             "digest": judge_bundle["digest"],
         },
+    }
+
+
+def judge_arm_fields(
+    mode: str, judge_bundle: Optional[Mapping[str, str]]
+) -> Dict[str, Any]:
+    """The judge keys an arm's result record gets, by mode (D6).
+
+    ``inline``: none. ``deferred``: ``judge_status: pending`` and the bundle.
+    ``inline+bundle``: the bundle alone, so the arm still reads as inline and
+    keeps its scores. No bundle (an inline arm, or a plan without one): none.
+    """
+    if mode not in _MODES:
+        allowed = ", ".join(repr(m) for m in _MODES)
+        raise ValueError(f"judge mode {mode!r} is not one of {allowed}")
+    if judge_bundle is None or mode == MODE_INLINE:
+        return {}
+    if mode == MODE_DEFERRED:
+        return pending_arm_fields(judge_bundle)
+    return {
+        "judge_bundle": {
+            "folder": judge_bundle["folder"],
+            "digest": judge_bundle["digest"],
+        }
     }
 
 
