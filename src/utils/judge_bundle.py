@@ -94,13 +94,23 @@ def _read_mode(config_path: str, ragas: Dict[str, Any]) -> str:
     return parse_judge_mode()
 
 
-def _check_judge_model(config_path: str, ragas: Dict[str, Any]) -> None:
-    """Refuse a deferred config that does not name the judge model and its revision."""
-    for key in ("evaluator_model", "evaluator_model_revision"):
+def _check_judge_model(
+    config_path: str, ragas: Dict[str, Any], *, mode: str = MODE_DEFERRED
+) -> None:
+    """Refuse a bundle-writing config that does not name its judge.
+
+    A deferred bundle is matched to a judge job by model id AND revision, so both
+    are required. An ``inline+bundle`` run judges with the inline (hosted) model,
+    which has no revision, so only the model id is required (D3).
+    """
+    keys = ("evaluator_model", "evaluator_model_revision")
+    if mode != MODE_DEFERRED:
+        keys = ("evaluator_model",)
+    for key in keys:
         value = ragas.get(key)
         if not isinstance(value, str) or not value.strip():
             raise JudgeRunRefused(
-                f"{config_path}: judge_mode 'deferred' needs a non-empty string "
+                f"{config_path}: judge_mode {mode!r} needs a non-empty string "
                 f"{key}, but found {value!r}"
             )
 
@@ -159,13 +169,15 @@ def plan_judge_run(
             f"mixed modes: {detail}"
         )
 
-    mode = modes[0] if modes else "inline"
-    if mode == "inline":
+    mode = modes[0] if modes else MODE_INLINE
+    if mode == MODE_INLINE:
         return JudgePlan(mode=mode, arm_count=len(config_paths))
 
+    # deferred and inline+bundle both write bundles, so both need the digests
+    # and one bundle folder; only deferred needs the judge revision (D3).
     bundle_dirs: List[str] = []
     for path, ragas in zip(config_paths, settings):
-        _check_judge_model(path, ragas)
+        _check_judge_model(path, ragas, mode=mode)
         bundle_dirs.append(_resolve_bundle_dir(path, ragas))
     if len(set(bundle_dirs)) > 1:
         detail = ", ".join(
