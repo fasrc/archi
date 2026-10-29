@@ -337,6 +337,19 @@ data_manager:
 {%- if data_manager.embedding_class_map.HuggingFaceEmbeddings.dimensions is defined and data_manager.embedding_class_map.HuggingFaceEmbeddings.dimensions is not none %}
       dimensions: {{ data_manager.embedding_class_map.HuggingFaceEmbeddings.dimensions | int }}
 {%- endif %}
+{%- if data_manager.embedding_class_map.RemoteEmbeddings is defined and data_manager.embedding_class_map.RemoteEmbeddings is not none %}
+    # Opt-in: an OpenAI-compatible embedding server (e.g. a GPU model server). The
+    # server applies each model's prompts, selected by `model` (documents) and
+    # `query_model` (queries). kwargs pass through as-is, typed via tojson.
+    RemoteEmbeddings:
+      class: RemoteEmbeddings
+      kwargs: {{ data_manager.embedding_class_map.RemoteEmbeddings.kwargs | tojson }}
+      {%- set v_remote_score_ref = data_manager.embedding_class_map.RemoteEmbeddings.similarity_score_reference %}
+      similarity_score_reference: {{ v_remote_score_ref if v_remote_score_ref is defined and v_remote_score_ref is not none else 0.0 }}
+{%- if data_manager.embedding_class_map.RemoteEmbeddings.dimensions is defined and data_manager.embedding_class_map.RemoteEmbeddings.dimensions is not none %}
+      dimensions: {{ data_manager.embedding_class_map.RemoteEmbeddings.dimensions | int }}
+{%- endif %}
+{%- endif %}
   chunk_size: {{ data_manager.chunk_size | default(1000, true) }}
   chunk_overlap: {{ data_manager.chunk_overlap | default(0, true) }}
   chunking:
@@ -418,8 +431,17 @@ data_manager:
       # Number of (deduplicated) parent nodes returned after reranking.
       num_documents_to_retrieve: {{ data_manager.retrievers.hierarchical_rerank.num_documents_to_retrieve | default(5, true) }}
       reranker:
-        # FlashRank ONNX cross-encoder (CPU). See flashrank model_file_map.
+        # flashrank: FlashRank ONNX cross-encoder on CPU (model from flashrank
+        # model_file_map). http: a remote reranker at `url` (POST {url}/rerank),
+        # `model` naming the server-side model; failures raise, never fall back.
+        backend: {{ data_manager.retrievers.hierarchical_rerank.reranker.backend | default('flashrank', true) }}
         model: {{ data_manager.retrievers.hierarchical_rerank.reranker.model | default('ms-marco-MiniLM-L-12-v2', true) }}
+{%- if data_manager.retrievers.hierarchical_rerank.reranker.url is defined and data_manager.retrievers.hierarchical_rerank.reranker.url is not none %}
+        url: {{ data_manager.retrievers.hierarchical_rerank.reranker.url | tojson }}
+{%- endif %}
+{%- if data_manager.retrievers.hierarchical_rerank.reranker.timeout is defined and data_manager.retrievers.hierarchical_rerank.reranker.timeout is not none %}
+        timeout: {{ data_manager.retrievers.hierarchical_rerank.reranker.timeout | tojson }}
+{%- endif %}
   sources:
     local_files:
       {%- set v_local_files_enabled = data_manager.sources.local_files.enabled %}
