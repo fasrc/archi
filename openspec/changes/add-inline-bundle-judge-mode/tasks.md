@@ -49,4 +49,4 @@ Rules for every task:
 
 ## 8. Gate and finish
 
-- [ ] 8.1 `bash scripts/gate.sh` green on the branch; `openspec validate add-inline-bundle-judge-mode --strict` passes; commit. Ask the operator before any push or PR.
+- [x] 8.1 `bash scripts/gate.sh` green on the branch; `openspec validate add-inline-bundle-judge-mode --strict` passes; commit. Ask the operator before any push or PR.
