@@ -90,6 +90,11 @@ class _Publisher:
         except (OSError, ValueError) as exc:
             self.conflict(f"{folder}: manifest.json does not load: {exc}")
             return
+        # Only a deferred bundle waits for the queue. An inline+bundle run already
+        # has its scores; its bundle stays in place for trials and Lynx. A manifest
+        # written before the key existed is a deferred one.
+        if manifest.get("judge_mode", "deferred") != "deferred":
+            return
         basename = manifest.get("result_basename")
         arm_index = manifest.get("arm_index")
         arm_count = manifest.get("arm_count")
