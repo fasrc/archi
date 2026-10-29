@@ -24,6 +24,13 @@ _ABSENT = object()
 DEFAULT_BUNDLE_DIR = "judge_bundles"
 BUNDLE_FORMAT = 1
 _ROW_FIELDS = ("user_input", "retrieved_contexts", "response", "reference")
+#: The three ``judge_mode`` values. ``inline`` scores during the run; ``deferred``
+#: writes the judge bundle and makes no judge call; ``inline+bundle`` writes the
+#: bundle first and then scores inline (add-inline-bundle-judge-mode, D1).
+MODE_INLINE = "inline"
+MODE_DEFERRED = "deferred"
+MODE_INLINE_BUNDLE = "inline+bundle"
+_MODES = (MODE_INLINE, MODE_DEFERRED, MODE_INLINE_BUNDLE)
 
 
 class JudgeRunRefused(ValueError):
@@ -34,18 +41,15 @@ def parse_judge_mode(value=_ABSENT) -> str:
     """Parse a judge_mode config value.
 
     Call with no argument when the key is absent from the config; returns
-    'inline'.  Raises ValueError for any value that is not 'inline' or
-    'deferred', naming the value and both allowed values.
+    'inline'.  Raises ValueError for any value that is not one of the three
+    modes, naming the value and every allowed value.
     """
     if value is _ABSENT:
-        return "inline"
-    if value == "inline":
-        return "inline"
-    if value == "deferred":
-        return "deferred"
-    raise ValueError(
-        f"judge_mode {value!r} is not valid; allowed values are 'inline' and 'deferred'"
-    )
+        return MODE_INLINE
+    if isinstance(value, str) and value in _MODES:
+        return value
+    allowed = ", ".join(repr(mode) for mode in _MODES)
+    raise ValueError(f"judge_mode {value!r} is not valid; allowed values are {allowed}")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -59,7 +63,17 @@ class JudgePlan:
 
 def is_deferred(plan: Optional[JudgePlan]) -> bool:
     """True for a deferred plan. ``None`` (a bench built without ``__init__``) is inline."""
-    return plan is not None and plan.mode == "deferred"
+    return plan is not None and plan.mode == MODE_DEFERRED
+
+
+def writes_bundle(plan: Optional[JudgePlan]) -> bool:
+    """True when the run writes a judge bundle: ``deferred`` or ``inline+bundle`` (D2)."""
+    return plan is not None and plan.mode in (MODE_DEFERRED, MODE_INLINE_BUNDLE)
+
+
+def scores_inline(plan: Optional[JudgePlan]) -> bool:
+    """True when the run calls the judge itself: ``inline`` or ``inline+bundle`` (D2)."""
+    return plan is None or plan.mode in (MODE_INLINE, MODE_INLINE_BUNDLE)
 
 
 def _read_ragas_settings(config_path: str) -> Dict[str, Any]:
