@@ -57,10 +57,12 @@ The dry run must print one `vllm serve … --uds …` line and one `trial_score.
 exit 0. `all-mpnet-base-v2` is the embedding model ragas needs for answer_relevancy and
 answer_correctness; the job runs fully offline (`HF_HUB_OFFLINE=1`).
 
-The package is owned by the archi service account; the jobs run as you. `scores/`, `logs/`
-and `.cache/` are group-writable (group `jharvard_lab`, setgid), which is all a job writes
-to, plus a socket folder under the node's `$TMPDIR`. If `sbatch` reports a permission
-error on one of those folders, you are not in the group.
+The package is owned by the archi service account; the jobs run as you, and you need no
+group membership. `scores/`, `logs/` and `.cache/` are world-writable with the group
+inherited (the same mode as the `Everyone` folder above the package), which is all a job
+writes to, plus a socket folder under the node's `$TMPDIR`. Everything else is read-only
+for you by design. A permission error from `sbatch` or inside a job therefore points at a
+path outside those three folders; report it rather than changing modes on the weights.
 
 **1b. Llama 3.3 70B only (optional).** The weights are gated. With your own Hugging Face
 account, accept the license on the model page, then on a node with internet:
