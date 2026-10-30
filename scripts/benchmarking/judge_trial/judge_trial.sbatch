@@ -169,8 +169,13 @@ else
   [ "${#SOCK_DIR}" -le 90 ] || die "the socket folder $SOCK_DIR is too long for a Unix socket path; set TMPDIR shorter"
   # Pin both images for the whole job (a hard link keeps one inode even if the file is
   # replaced), and record what was served: the digests go into every scores file.
-  PINNED_VLLM="$(dirname "$VLLM_IMAGE")/.vllm.$SLURM_JOB_ID.sif"
-  PINNED_SCORER="$(dirname "$SCORER_IMAGE")/.scorer.$SLURM_JOB_ID.sif"
+  # Pins live under the writable cache, not beside the images: the operator owns neither
+  # images/ nor the SIFs, so the hard link usually fails and the copy must go somewhere
+  # the job may write. cleanup removes them.
+  PIN_DIR="$CACHE_DIR/pins"
+  mkdir -p "$PIN_DIR"
+  PINNED_VLLM="$PIN_DIR/vllm.$SLURM_JOB_ID.sif"
+  PINNED_SCORER="$PIN_DIR/scorer.$SLURM_JOB_ID.sif"
   ln "$VLLM_IMAGE" "$PINNED_VLLM" 2>/dev/null || cp "$VLLM_IMAGE" "$PINNED_VLLM"
   ln "$SCORER_IMAGE" "$PINNED_SCORER" 2>/dev/null || cp "$SCORER_IMAGE" "$PINNED_SCORER"
   SERVER_IMAGE_DIGEST="sha256:$(sha256sum "$PINNED_VLLM" | cut -d' ' -f1)"
