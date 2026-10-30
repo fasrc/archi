@@ -62,6 +62,10 @@ SCORER_IMAGE="${TRIAL_SCORER_IMAGE:-$PKG/images/archi-scorer.sif}"
 # The Hugging Face cache that holds every judge's weights at its pinned revision, and the
 # ragas embedding model (sentence-transformers/all-mpnet-base-v2). Offline in the job.
 HF_HOME_DIR="${TRIAL_HF_HOME:-$PKG/hf}"
+# Bind the real folder: hf is a symlink to ../huggingface, and the compute nodes' container
+# runtime refuses a symlink as a bind source ("not a directory"); newer releases accept it,
+# which is why a dev-host check passes. Outside the package (dry run elsewhere) keep the name.
+HF_HOME_DIR="$(cd "$HF_HOME_DIR" 2>/dev/null && pwd -P || echo "$HF_HOME_DIR")"
 CACHE_DIR="$PKG/.cache"
 OUT_DIR="$PKG/scores/$JUDGE"
 BUNDLES_DIR="$PKG/bundles"
