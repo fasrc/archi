@@ -157,6 +157,14 @@ from the trial file.
   pre-registration do not exist yet (fasrc/archi#786 material lock pending); that
   calibration check is deferred and is not part of this package.
 - Nothing in the job needs a secret: no OpenAI embeddings, no gated download at run time.
+- The vLLM image `v0.32.0-cu129` ships `torchcodec` 0.17.0 built for CUDA 13; its import
+  fails with an `OSError` for `libnvrtc.so.13`, which vLLM does not catch, so the server
+  dies at start. The job binds an empty folder over the `torchcodec` package, vLLM then
+  runs with audio decoding off (irrelevant for a text judge). `TRIAL_HIDE_TORCHCODEC_AT=`
+  (empty) disables the workaround for an image that does not need it.
+- Compute nodes refuse a symlink as a bind source, so the job binds the resolved weights
+  folder, not `hf`; and pins the images under `.cache/pins/` because `images/` is read-only
+  for the operator. Both bit the first submissions (2026-10-30).
 - `.cache/` keeps the inputs the two images were built from — the OCI layout of
   `vllm/vllm-openai:v0.32.0-cu129` (11 GB) and the docker archive of
   `benchmarking-embtrial-a:2000` (5 GB) — plus the dev-host smoke bundle and its scores.

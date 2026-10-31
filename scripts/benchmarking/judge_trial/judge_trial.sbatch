@@ -59,6 +59,12 @@ fi
 JUDGE_ENV="$PKG/judges/$JUDGE.env"
 VLLM_IMAGE="${TRIAL_VLLM_IMAGE:-$PKG/images/vllm-openai-v0.32.0-cu129.sif}"
 SCORER_IMAGE="${TRIAL_SCORER_IMAGE:-$PKG/images/archi-scorer.sif}"
+# vllm/vllm-openai:v0.32.0-cu129 ships torchcodec 0.17.0 built for CUDA 13, whose image
+# library needs libnvrtc.so.13 (absent from a CUDA 12.9 image). vLLM imports it at start
+# and only catches ImportError, so the OSError kills the server before it serves. An empty
+# folder bound over the package makes the import a ModuleNotFoundError, which vLLM
+# tolerates (audio decoding off; a text judge never needs it). Empty = do not hide.
+HIDE_TORCHCODEC_AT="${TRIAL_HIDE_TORCHCODEC_AT-/usr/local/lib/python3.12/dist-packages/torchcodec}"
 # The Hugging Face cache that holds every judge's weights at its pinned revision, and the
 # ragas embedding model (sentence-transformers/all-mpnet-base-v2). Offline in the job.
 HF_HOME_DIR="${TRIAL_HF_HOME:-$PKG/hf}"
@@ -168,6 +174,7 @@ else
   [ -d "$BUNDLES_DIR" ] || die "no bundles folder at $BUNDLES_DIR"
   mkdir -p "$OUT_DIR" "$PKG/logs" "$CACHE_DIR/apptainer" "$CACHE_DIR/xdg"
   SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/archi-judge-trial.$SLURM_JOB_ID.XXXXXX")"
+  mkdir -p "$SOCK_DIR/no-torchcodec"
   trap cleanup EXIT
   chmod 700 "$SOCK_DIR"
   [ "${#SOCK_DIR}" -le 90 ] || die "the socket folder $SOCK_DIR is too long for a Unix socket path; set TMPDIR shorter"
@@ -194,8 +201,10 @@ else
 fi
 
 SOCK="$SOCK_DIR/vllm.sock"
+HIDE_BIND=()
+[ -z "$HIDE_TORCHCODEC_AT" ] || HIDE_BIND=(--bind "$SOCK_DIR/no-torchcodec:$HIDE_TORCHCODEC_AT")
 SERVE=("$RUNTIME" exec --nv --cleanenv
-  --bind "$SOCK_DIR" --bind "$HF_HOME_DIR" --bind "$CACHE_DIR"
+  --bind "$SOCK_DIR" --bind "$HF_HOME_DIR" --bind "$CACHE_DIR" ${HIDE_BIND[@]+"${HIDE_BIND[@]}"}
   --env "HF_HOME=$HF_HOME_DIR" --env HF_HUB_OFFLINE=1 --env TRANSFORMERS_OFFLINE=1
   --env "XDG_CACHE_HOME=$CACHE_DIR/xdg" --env "VLLM_CACHE_ROOT=$CACHE_DIR/vllm"
   "$PINNED_VLLM"
