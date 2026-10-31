@@ -194,8 +194,16 @@ def load_scores(package: Path, judge: str) -> Dict[str, Dict[str, Any]]:
 
 
 def judges_in(package: Path) -> List[str]:
+    """Judges with at least one scores file. A job that died before scoring leaves an
+    empty folder (or only a checkpoint); that is not a judge to report on."""
     root = package / "scores"
-    return sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
+    if not root.is_dir():
+        return []
+    return sorted(
+        p.name
+        for p in root.iterdir()
+        if p.is_dir() and any(p.glob("*.judge_scores.json"))
+    )
 
 
 def compare_judge(package: Path, judge: str, reference, ledger) -> Dict[str, Any]:
