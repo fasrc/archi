@@ -172,7 +172,7 @@ else
   [ -f "$SCORER_IMAGE" ] || die "no scorer image at $SCORER_IMAGE"
   [ -d "$HF_HOME_DIR/hub" ] || die "no Hugging Face cache at $HF_HOME_DIR/hub"
   [ -d "$BUNDLES_DIR" ] || die "no bundles folder at $BUNDLES_DIR"
-  mkdir -p "$OUT_DIR" "$PKG/logs" "$CACHE_DIR/apptainer" "$CACHE_DIR/xdg"
+  mkdir -p "$OUT_DIR" "$PKG/logs" "$CACHE_DIR/apptainer" "$CACHE_DIR/xdg" "$CACHE_DIR/hf-modules"
   SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/archi-judge-trial.$SLURM_JOB_ID.XXXXXX")"
   mkdir -p "$SOCK_DIR/no-torchcodec"
   trap cleanup EXIT
@@ -207,6 +207,7 @@ SERVE=("$RUNTIME" exec --nv --cleanenv
   --bind "$SOCK_DIR" --bind "$HF_HOME_DIR" --bind "$CACHE_DIR" ${HIDE_BIND[@]+"${HIDE_BIND[@]}"}
   --env "HF_HOME=$HF_HOME_DIR" --env HF_HUB_OFFLINE=1 --env TRANSFORMERS_OFFLINE=1
   --env "XDG_CACHE_HOME=$CACHE_DIR/xdg" --env "VLLM_CACHE_ROOT=$CACHE_DIR/vllm"
+  --env "HF_MODULES_CACHE=$CACHE_DIR/hf-modules"
   "$PINNED_VLLM"
   vllm serve "$MODEL_ID" --revision "$MODEL_REVISION" --served-model-name "$MODEL_ID"
   --tensor-parallel-size "$GPUS" "${PRECISION_ARGS[@]}" ${SERVER_ARGS[@]+"${SERVER_ARGS[@]}"}
