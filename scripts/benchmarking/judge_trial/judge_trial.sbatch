@@ -208,6 +208,7 @@ SERVE=("$RUNTIME" exec --nv --cleanenv
   --env "HF_HOME=$HF_HOME_DIR" --env HF_HUB_OFFLINE=1 --env TRANSFORMERS_OFFLINE=1
   --env "XDG_CACHE_HOME=$CACHE_DIR/xdg" --env "VLLM_CACHE_ROOT=$CACHE_DIR/vllm"
   --env "HF_MODULES_CACHE=$CACHE_DIR/hf-modules"
+  --env "NCCL_DEBUG=${TRIAL_NCCL_DEBUG:-INFO}" --env "NCCL_CUMEM_ENABLE=${TRIAL_NCCL_CUMEM_ENABLE:-0}"
   "$PINNED_VLLM"
   vllm serve "$MODEL_ID" --revision "$MODEL_REVISION" --served-model-name "$MODEL_ID"
   --tensor-parallel-size "$GPUS" "${PRECISION_ARGS[@]}" ${SERVER_ARGS[@]+"${SERVER_ARGS[@]}"}
