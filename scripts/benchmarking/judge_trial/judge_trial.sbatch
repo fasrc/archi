@@ -209,6 +209,7 @@ SERVE=("$RUNTIME" exec --nv --cleanenv
   --env "XDG_CACHE_HOME=$CACHE_DIR/xdg" --env "VLLM_CACHE_ROOT=$CACHE_DIR/vllm"
   --env "HF_MODULES_CACHE=$CACHE_DIR/hf-modules"
   --env "NCCL_DEBUG=${TRIAL_NCCL_DEBUG:-INFO}" --env "NCCL_CUMEM_ENABLE=${TRIAL_NCCL_CUMEM_ENABLE:-0}"
+  --env "NCCL_P2P_DISABLE=${TRIAL_NCCL_P2P_DISABLE:-0}"
   "$PINNED_VLLM"
   vllm serve "$MODEL_ID" --revision "$MODEL_REVISION" --served-model-name "$MODEL_ID"
   --tensor-parallel-size "$GPUS" "${PRECISION_ARGS[@]}" ${SERVER_ARGS[@]+"${SERVER_ARGS[@]}"}
@@ -251,6 +252,14 @@ fi
 
 log "job $SLURM_JOB_ID on $(hostname): judge $JUDGE = $MODEL_ID@$MODEL_REVISION ($PRECISION, $GPUS GPU)"
 log "vLLM image $SERVER_IMAGE_DIGEST; scorer image $SCORER_IMAGE_DIGEST"
+# The GPUs as the job finds them: compute mode, and memory already in use before anything
+# of ours runs (a non-zero value means a leftover process holds the card; NCCL then fails
+# with "CUDA-capable device(s) is/are busy or unavailable" — resubmit with
+# SBATCH_EXCLUDE=<node>).
+if [ "$DRY_RUN" = false ] && command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi --query-gpu=index,name,compute_mode,memory.used,driver_version --format=csv,noheader 2>/dev/null \
+    | sed 's/^/judge_trial: gpu /' >&2 || true
+fi
 "${SERVE[@]}" > "$PKG/logs/vllm-$JUDGE-$SLURM_JOB_ID.log" 2>&1 &
 VLLM_PID=$!
 
