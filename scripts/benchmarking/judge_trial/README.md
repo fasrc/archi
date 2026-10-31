@@ -144,6 +144,14 @@ with the numbers. The adopted judge then goes into `judge.env` of the production
 (`docs/docs/benchmarking.md`, "Offloaded RAGAS judge on Slurm"), with its precision value
 from the trial file.
 
+## Result of the first run (2026-10-30/31)
+
+gpt-oss-120b (1 card, 174 min): 0 of 2125 pairs unscored, Spearman 0.66–0.83 against Sonnet, every
+swapped answer rejected. Nemotron 3 Super (thinking on, 2 cards, 332 min): agreement as good or better
+where it scores, but 119 pairs unscored (14 % of faithfulness rows). Mistral Small 4 (reasoning off,
+2 cards, 75 min): lenient, below 0.5 rank agreement on three metrics. Verdict: gpt-oss-120b. The
+report is `report.md` in the package and `checks/2026-10-judge-trial/` in archi-bench-out.
+
 ## Notes and limits
 
 - The trial scores only the 425 rebuilt rows; the 120 parent-less rows are a known gap.
