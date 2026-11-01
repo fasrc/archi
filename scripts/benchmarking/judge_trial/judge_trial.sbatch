@@ -73,10 +73,33 @@ HF_HOME_DIR="${TRIAL_HF_HOME:-$PKG/hf}"
 # which is why a dev-host check passes. Outside the package (dry run elsewhere) keep the name.
 HF_HOME_DIR="$(cd "$HF_HOME_DIR" 2>/dev/null && pwd -P || echo "$HF_HOME_DIR")"
 CACHE_DIR="$PKG/.cache"
-OUT_DIR="$PKG/scores/$JUDGE"
-BUNDLES_DIR="$PKG/bundles"
+# Which bundles, and where their scores go. TRIAL_BUNDLES_DIR names a folder of the package
+# (bundles, or bundles-unscored for rows no inline judge has scored); its scores land in
+# scores/<judge> for "bundles" and scores-<suffix>/<judge> otherwise (TRIAL_OUT_ROOT
+# overrides). TRIAL_BUNDLES = space- or comma-separated bundle names or globs under that
+# folder, to split one judge's work across several jobs (data parallel); empty = all.
+BUNDLES_SUBDIR="${TRIAL_BUNDLES_DIR:-bundles}"
+case "$BUNDLES_SUBDIR" in
+  */* | .* | "") die "TRIAL_BUNDLES_DIR=$BUNDLES_SUBDIR must be a folder name under the package, such as bundles or bundles-unscored" ;;
+esac
+BUNDLES_DIR="$PKG/$BUNDLES_SUBDIR"
+[ -d "$BUNDLES_DIR" ] || die "no bundles folder at $BUNDLES_DIR"
+if [ -n "${TRIAL_OUT_ROOT:-}" ]; then
+  OUT_ROOT="$TRIAL_OUT_ROOT"
+elif [ "$BUNDLES_SUBDIR" = bundles ]; then
+  OUT_ROOT=scores
+else
+  OUT_ROOT="scores-${BUNDLES_SUBDIR#bundles-}"
+fi
+OUT_DIR="$PKG/$OUT_ROOT/$JUDGE"
+BUNDLES="${TRIAL_BUNDLES:-}"
 METRICS="${TRIAL_METRICS:-manifest}"
-CHUNK_SIZE="${TRIAL_CHUNK_SIZE:-8}"
+# ragas concurrency and the scorer's chunk size. The trial ran the October settings (6
+# workers, chunks of 8) and left the card nearly idle (5 requests in flight, KV cache under
+# 1 %, 33 calls a minute), so 32/32 is the default now. TRIAL_MAX_WORKERS= (empty) keeps the
+# bundle manifest's value. The effective value is recorded in every scores file.
+CHUNK_SIZE="${TRIAL_CHUNK_SIZE:-32}"
+MAX_WORKERS="${TRIAL_MAX_WORKERS-32}"
 READY_TIMEOUT_SECONDS="${TRIAL_READY_TIMEOUT:-3600}"
 READY_POLL_SECONDS="${TRIAL_READY_POLL_SECONDS:-15}"
 # Inside the scorer image, archi lives at /root/archi (archi-scorer.def).
@@ -225,7 +248,7 @@ score_cmd() { # $1 = bundle folder
     "$PINNED_SCORER"
     python3 "$PKG/scripts/trial_score.py"
     --bundle "$1" --out-dir "$OUT_DIR" --judge-env "$JUDGE_ENV" --socket "$SOCK"
-    --metrics "$METRICS" --chunk-size "$CHUNK_SIZE"
+    --metrics "$METRICS" --chunk-size "$CHUNK_SIZE" ${MAX_WORKERS:+--max-workers "$MAX_WORKERS"}
     --server-image-digest "$SERVER_IMAGE_DIGEST" --scorer-image-digest "$SCORER_IMAGE_DIGEST"
     --job-id "$JOB_ID")
 }
@@ -237,6 +260,35 @@ show() {
   printf '\n'
 }
 
+# The bundles this job scores: every complete folder under $BUNDLES_DIR, or those matching
+# the TRIAL_BUNDLES names/globs. A pattern that matches nothing is a refusal: a typo must
+# not silently leave part of the work undone.
+select_bundles() {
+  local pat d found
+  if [ -z "$BUNDLES" ]; then
+    for d in "$BUNDLES_DIR"/*/; do
+      [ -f "$d/BUNDLE_COMPLETE" ] && printf '%s\n' "${d%/}"
+    done
+    return 0
+  fi
+  for pat in ${BUNDLES//,/ }; do
+    found=false
+    for d in "$BUNDLES_DIR"/$pat/; do
+      [ -d "$d" ] || continue
+      found=true
+      [ -f "$d/BUNDLE_COMPLETE" ] && printf '%s\n' "${d%/}"
+    done
+    [ "$found" = true ] || die "no bundle matches $pat under $BUNDLES_DIR"
+  done
+}
+SELECTED_TEXT="$(select_bundles)" || exit 1
+SELECTED=()
+while IFS= read -r line; do
+  [ -n "$line" ] && SELECTED+=("$line")
+done < <(printf '%s\n' "$SELECTED_TEXT" | sort -u)
+SELECTED_NAMES=()
+for b in ${SELECTED[@]+"${SELECTED[@]}"}; do SELECTED_NAMES+=("$(basename "$b")"); done
+
 if [ "$DRY_RUN" = true ]; then
   echo "# judge $JUDGE: $MODEL_ID@$MODEL_REVISION, precision $PRECISION, $GPUS GPU(s)"
   echo "# 1. pin and hash $VLLM_IMAGE and $SCORER_IMAGE; export VLLM_API_KEY=<random> into the containers"
@@ -244,7 +296,7 @@ if [ "$DRY_RUN" = true ]; then
   show "${SERVE[@]}"
   echo "# 3. wait for HTTP 200 (up to ${READY_TIMEOUT_SECONDS}s)"
   show "${PROBE[@]}"
-  echo "# 4. score each bundle under $BUNDLES_DIR into $OUT_DIR"
+  echo "# 4. score ${#SELECTED[@]} bundle(s) under $BUNDLES_DIR into $OUT_DIR: ${SELECTED_NAMES[*]-}"
   score_cmd "$BUNDLES_DIR/<bundle>"
   show "${SCORE[@]}"
   exit 0
@@ -277,9 +329,8 @@ done
 log "vLLM ready after ${waited}s"
 
 status=0
-for bundle in "$BUNDLES_DIR"/*/; do
-  bundle="${bundle%/}"
-  [ -f "$bundle/BUNDLE_COMPLETE" ] || { log "skip $bundle: no BUNDLE_COMPLETE"; continue; }
+log "scoring ${#SELECTED[@]} bundle(s) under $BUNDLES_DIR into $OUT_DIR (ragas workers ${MAX_WORKERS:-manifest}, chunks of $CHUNK_SIZE): ${SELECTED_NAMES[*]-}"
+for bundle in ${SELECTED[@]+"${SELECTED[@]}"}; do
   if [ -f "$OUT_DIR/$(basename "$bundle").judge_scores.json" ]; then
     log "skip $(basename "$bundle"): already scored"
     continue

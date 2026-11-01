@@ -222,6 +222,7 @@ def score_trial_bundle(
     build_scorer=None,
     live_identity: Optional[Dict[str, Any]] = None,
     transport: Optional[Dict[str, Optional[str]]] = None,
+    max_workers: Optional[int] = None,
 ) -> Path:
     """Score *bundle* and write ``<out_dir>/<bundle name>.judge_scores.json``.
 
@@ -254,7 +255,15 @@ def score_trial_bundle(
     started = _utc_now()
     t0 = time.monotonic()
     enabled = pick_metrics(manifest, metrics)
-    run_config = manifest["ragas_run_config_kwargs"]
+    # The ragas call settings are the run's (from the manifest) except the concurrency,
+    # which the operator may raise: the trial ran at the October value of 6 and left the
+    # card nearly idle. The effective value is recorded below and in the identity.
+    run_config = dict(manifest["ragas_run_config_kwargs"])
+    if max_workers is not None:
+        if max_workers < 1:
+            raise Refused("--max-workers must be 1 or more")
+        run_config["max_workers"] = max_workers
+    max_workers_source = "manifest" if max_workers is None else "override"
     scorer = build_scorer(
         enabled_metrics=enabled,
         ragas_settings={
@@ -374,6 +383,7 @@ def score_trial_bundle(
         "ragas_effective_settings": {
             "timeout": run_config["timeout"],
             "max_workers": run_config["max_workers"],
+            "max_workers_source": max_workers_source,
         },
         "judge_execution": {
             "job_id": job_id,
@@ -424,12 +434,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument("--metrics", default="manifest", help="manifest, all or a list")
     parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        help="ragas concurrency; default: the bundle manifest's value",
+    )
     parser.add_argument("--server-image-digest")
     parser.add_argument("--scorer-image-digest")
     parser.add_argument("--job-id", default=os.environ.get("SLURM_JOB_ID"))
     args = parser.parse_args(argv)
     if args.chunk_size < 1:
         print("trial_score: --chunk-size must be 1 or more", file=sys.stderr)
+        return 2
+    if args.max_workers is not None and args.max_workers < 1:
+        print("trial_score: --max-workers must be 1 or more", file=sys.stderr)
         return 2
     try:
         env = read_judge_env(args.judge_env)
@@ -450,6 +468,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             server_image_digest=args.server_image_digest,
             scorer_image_digest=args.scorer_image_digest,
             job_id=args.job_id,
+            max_workers=args.max_workers,
             transport={
                 "mode": "unix_socket" if args.socket else "openai_compatible",
                 "base_url": args.base_url,

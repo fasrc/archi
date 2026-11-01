@@ -101,6 +101,36 @@ Expected scoring time once the server is up: roughly 1–2 hours per judge for t
 rows × 5 metrics (about 6,900 judge calls; Sonnet needed 1,697 calls for 109 rows). Time
 limits are 8–10 h per job to leave room for queue preemption and requeues.
 
+### Speed: concurrency and data-parallel jobs
+
+The trial ran with the October ragas settings (6 workers, chunks of 8 rows) and left the
+H200 nearly idle: 5 requests in flight, KV cache under 1 %, about 33 judge calls a minute,
+the same pace as Sonnet through Bedrock. The job now defaults to `TRIAL_MAX_WORKERS=32`
+and `TRIAL_CHUNK_SIZE=32`; `TRIAL_MAX_WORKERS=` (empty) keeps the bundle manifest's value.
+The effective value is recorded in every scores file, and because the judge identity
+includes it, a bundle resumed under a different worker count starts a new checkpoint.
+Slurm passes these variables from your shell into the job:
+
+```bash
+TRIAL_MAX_WORKERS=32 TRIAL_CHUNK_SIZE=32 bash scripts/submit.sh gpt-oss-120b
+```
+
+To split one judge's work across several single-card jobs (data parallel, no inter-GPU
+traffic), give each job a disjoint bundle list: names or globs under the bundles folder,
+space- or comma-separated. A pattern that matches nothing is refused.
+
+```bash
+TRIAL_BUNDLES="*_012746* *_034614*" bash scripts/submit.sh gpt-oss-120b
+TRIAL_BUNDLES="*_054355* *_081227* *_130451* control-*" bash scripts/submit.sh gpt-oss-120b
+```
+
+To score the rows no inline judge has scored, point the job at `bundles-unscored/`; the
+scores go to `scores-unscored/<judge>/`, which `compare.py` ignores (no Sonnet reference):
+
+```bash
+TRIAL_BUNDLES_DIR=bundles-unscored bash scripts/submit.sh gpt-oss-120b
+```
+
 ## 3. Watch
 
 ```bash
