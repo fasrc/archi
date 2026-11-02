@@ -119,3 +119,61 @@ def test_chunk_overlap_absent_when_none():
     # None (key present but empty in YAML) → same as absent; manager uses default.
     cfg = _render({"chunking": {"chunk_overlap": None}})
     assert "chunk_overlap" not in cfg["data_manager"]["chunking"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2048",
+        "512",
+        "null",
+        "Null",
+        "NULL",
+        "~",
+        "on",
+        "off",
+        "yes",
+        "no",
+        "true",
+    ],
+)
+def test_chunk_sizes_string_keeps_its_type(value):
+    # A bare interpolation lets YAML retype these strings (e.g. "2048" -> 2048,
+    # "null" -> None, "on" -> True); they must reach the manager as strings.
+    cfg = _render(
+        {
+            "chunking": {
+                "parent_chunk_size": value,
+                "child_chunk_size": value,
+            }
+        }
+    )
+    chunking = cfg["data_manager"]["chunking"]
+    assert chunking["parent_chunk_size"] == value
+    assert type(chunking["parent_chunk_size"]) is str
+    assert chunking["child_chunk_size"] == value
+    assert type(chunking["child_chunk_size"]) is str
+
+
+def test_chunk_sizes_int_keeps_int_type():
+    cfg = _render(
+        {
+            "chunking": {
+                "parent_chunk_size": 1024,
+                "child_chunk_size": 256,
+            }
+        }
+    )
+    chunking = cfg["data_manager"]["chunking"]
+    assert chunking["parent_chunk_size"] == 1024
+    assert type(chunking["parent_chunk_size"]) is int
+    assert chunking["child_chunk_size"] == 256
+    assert type(chunking["child_chunk_size"]) is int
+
+
+def test_chunk_sizes_mixed_set_and_unset():
+    cfg = _render({"chunking": {"child_chunk_size": "512"}})
+    chunking = cfg["data_manager"]["chunking"]
+    assert chunking["child_chunk_size"] == "512"
+    assert type(chunking["child_chunk_size"]) is str
+    assert "parent_chunk_size" not in chunking

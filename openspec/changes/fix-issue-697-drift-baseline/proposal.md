@@ -2,7 +2,7 @@
 
 The status board compares the live ingest config against the snapshot of the newest successful ingest run, and an `up_to_date` run also records a snapshot. So the board hides real config drift after one ingest that embeds nothing (issue #697, from the Codex P1 finding on PR #695).
 
-On `origin/dev` at `c2e885ca`:
+On `origin/dev` at `18698cb3` (the same lines as at `c2e885ca`, where this plan was first written):
 
 - `VectorStoreManager.update_vectorstore()` (`src/data_manager/vectorstore/manager.py:311-325`) records an `ingest_run` row with `build_ingest_config_snapshot()` of the running config after every sync, also for a sync that returns `up_to_date`.
 - `_sync_vectorstore()` returns `up_to_date` when the document hash sets match and no hash is stale (`manager.py:357-359`). A change of `chunk_size`, `chunking.strategy`, or `embedding_dimensions` does not cause a re-embed.
@@ -32,6 +32,13 @@ None.
 - `deployment-status-board`: the config table and the drift check use the newest `updated` run; an `up_to_date` run alone gives no config baseline.
 
 The `deployment-status-board` capability lives only in the unarchived changes `add-ssb-deployment-provenance` and `fix-issue-565-status-provenance-honesty`, so this change's delta uses `ADDED` requirements, not `MODIFIED`.
+
+**Supersedes (reconcile at archive time):** this change replaces two clauses in those older, unarchived deltas. They are not edited here, so that this change's diff stays inside its own folder.
+
+- `fix-issue-565-status-provenance-honesty/specs/deployment-status-board/spec.md:4`, "The corpus panel uses only a successful ingest run": the **configuration** part. The counts still come from the newest `updated` or `up_to_date` run; the configuration now comes from the newest `updated` run.
+- `add-ssb-deployment-provenance/specs/deployment-status-board/spec.md:36-37` and `:40`: "the last completed run's snapshot" as the source of the flag values and of the drift comparison. It is now the newest completed `updated` run's snapshot.
+
+Whoever archives these three changes into `openspec/specs/deployment-status-board/` must narrow those two requirements to match this change. Once the capability is in `openspec/specs/`, a later change uses `MODIFIED` for them.
 
 ## Impact
 

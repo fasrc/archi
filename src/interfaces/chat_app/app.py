@@ -75,6 +75,7 @@ from src.interfaces.chat_app.config_fingerprint import (
     resolve_provider_boot_summary,
 )
 from src.interfaces.chat_app.document_utils import *
+from src.interfaces.chat_app.embed_proxy import request_embed
 from src.interfaces.chat_app.evaluation_console import (
     build_authorize_request,
     build_evaluation_service,
@@ -98,6 +99,7 @@ from src.interfaces.chat_app.similarity_threshold import (
     normalize_similarity_threshold,
     order_and_filter_by_similarity,
 )
+from src.interfaces.chat_app.source_visibility import is_visible
 from src.interfaces.chat_app.utils import collapse_assistant_sequences
 from src.utils.config_access import (
     get_dynamic_config,
@@ -819,16 +821,7 @@ class ChatWrapper:
         From the metadata, check the source type.
         From the config, check if the source type is visible or not.
         """
-        source_type = metadata.get("source_type")
-        if not source_type:
-            return True  # default to True if not specified
-
-        if source_type not in self.sources_config:
-            logger.error(
-                f"Source type {source_type} not found in config, defaulting to visible"
-            )
-            return True
-        return bool(self.sources_config[source_type].get("visible", True))
+        return is_visible(metadata, self.sources_config)
 
     @staticmethod
     def _extract_link(metadata: dict) -> str | None:
@@ -6425,7 +6418,10 @@ class FlaskAppWrapper(object):
         """
         try:
             logger.info("Triggering vectorstore update...")
-            self.chat.vector_manager.update_vectorstore()
+            failure = request_embed(self.data_manager_url, self._dm_headers)
+            if failure is not None:
+                body, status = failure
+                return jsonify(body), status
             logger.info("Vectorstore update completed")
 
             # Check for failed documents after processing

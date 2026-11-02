@@ -125,3 +125,26 @@ class TestGetTopSourcesThreshold:
         ]
         result = wrapper.get_top_sources(docs, [0.9, -1.0])
         assert len(result) == 2
+
+
+def test_ticket_provider_visibility():
+    """Jira docs are hidden when jira.visible is False; redmine docs remain visible."""
+    wrapper = _make_wrapper()
+    wrapper.sources_config = {"jira": {"visible": False}, "redmine": {"visible": True}}
+    docs = [
+        _Doc(
+            metadata={
+                "display_name": "JIRA-1",
+                "source_type": "ticket",
+                "ticket_provider": "jira",
+            }
+        ),
+        _Doc(
+            metadata={
+                "display_name": "RM-2",
+                "source_type": "ticket",
+                "ticket_provider": "redmine",
+            }
+        ),
+    ]
+    assert [r["display"] for r in wrapper.get_top_sources(docs, [0.9, 0.8])] == ["RM-2"]

@@ -108,6 +108,14 @@ class TestReconstructedConfigVersion:
         assert config["digest"] is None
         assert "not recorded" in config["source"].lower()
 
+    def test_reconstructed_key_settings_never_get_effective_chunking(self):
+        """Today's chunking defaults can differ from the ones in force back then."""
+        config = _stamp(
+            config=dict(RECORDED_CONFIG, data_manager={"chunk_size": 1000})
+        )["config_version"]
+
+        assert "effective_chunking" not in config["key_settings"]
+
 
 class TestBackfillIsAdditive:
     def test_existing_metadata_keys_are_not_part_of_the_stamp(self):

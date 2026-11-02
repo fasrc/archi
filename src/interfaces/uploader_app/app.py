@@ -148,6 +148,12 @@ class FlaskAppWrapper:
             methods=["POST"],
         )
         self.add_endpoint(
+            "/document_index/embed",
+            "embed",
+            protected(self.embed),
+            methods=["POST"],
+        )
+        self.add_endpoint(
             "/document_index/update_schedule",
             "update_schedule",
             protected(self.update_schedule),
@@ -483,6 +489,21 @@ class FlaskAppWrapper:
                 "title": "Not found",
             }
         )
+
+    def embed(self):
+        """Run the tracked vectorstore update now and answer with its outcome.
+
+        Unlike _notify_update, a failed update is not swallowed: the caller
+        gets a non-2xx answer, never a silent success.
+        """
+        if not self.post_update_hook:
+            return jsonify({"error": "embed_unavailable"}), 503
+        try:
+            self.post_update_hook()
+        except Exception as exc:
+            logger.error("Embed update failed: %s", exc)
+            return jsonify({"error": "embed_failed", "detail": str(exc)}), 500
+        return jsonify({"status": "ok"})
 
     def _notify_update(self) -> None:
         if not self.post_update_hook:

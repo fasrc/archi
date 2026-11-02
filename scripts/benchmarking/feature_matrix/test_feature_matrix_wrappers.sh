@@ -16,7 +16,7 @@
 #   10. reseed_arm.sh copies the retrieval key into the rendered config, backs the
 #       original up OUTSIDE configs/, and recreates config-seed
 #   11. qa_arm.sh overwrites chat_app's SUT fields from services.benchmarking, drops the
-#       evaluations block, and calls `archi eval qa` with one attempt and one run worker
+#       evaluations block, and calls `archi qa` with one attempt and one run worker
 #   12. qa_arm.sh refuses when the converted QA dataset is missing
 #   13. archive_run.sh refuses a later run whose fingerprint differs from the pin; --new-corpus
 #       is refused after a re-run and re-pins only after a fresh arm-00 deploy, recording the old pin
@@ -59,8 +59,8 @@
 #   57. archive_run.sh copies collection and embedding_model from the artifact's retrieval_identity
 #       into the ledger row, and writes nulls when the artifact recorded none
 #   58. qa_arm.sh copies collection and embedding_model from the QA run manifest into the ledger
-#   59. the closing baseline with --new-corpus moves a v1 pin to v2 and records the old pin
 #       row, and writes nulls when the manifest recorded none
+#   59. the closing baseline with --new-corpus moves a v1 pin to v2 and records the old pin
 #   60. a refused arm-mode archive pages once with the refusal reason in the body
 #   61. paging off sends no mail on the same refusal
 #   62. a failing mail binary still refuses and reports "page failed"
@@ -91,6 +91,14 @@
 #   84. without `timeout`, watchdog kills a SIGTERM-immune hung mail binary and reports "page failed"
 #   85. without `timeout`, a fast mail command completes quickly with no leaked watchdog sleep
 #   86. without `timeout`, a mail binary that exits non-zero reports "page failed"
+#   90. qa_arm refuses scored: 0 in summary.json (single-arm)
+#   91. qa_arm refuses when summary.json is missing (single-arm)
+#   92. qa_arm refuses when summary.json is not valid JSON (single-arm)
+#   93. qa_arm accepts scored: 3 with execution_failed: 2 (single-arm)
+#   94. qa_arm --sweep refuses scored: 0 with no ledger row, then accepts the next --run
+#   95. archive_run.sh refuses an artifact whose judge is pending (G11) and names the judged file
+#   96. archive_run.sh takes the judged file beside it and records the arm's judge identity
+#   97. archive_run.sh refuses a run whose judge identity differs from the campaign's rows (G12)
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -129,12 +137,31 @@ EOF
 cat > "$T/bin/archi" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$T/archi.calls"
-# like the real CLI, \`eval qa\` creates its --output-dir
-prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && mkdir -p "\$a"; prev="\$a"; done
+# like the real CLI, \`qa\` creates its --output-dir
+OUTDIR=""
+prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && { mkdir -p "\$a"; OUTDIR="\$a"; }; prev="\$a"; done
 # the run manifest records the retrieval identity when the test provides one
-prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$a/manifest.json"; prev="\$a"; done
+[ -n "\$OUTDIR" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$OUTDIR/manifest.json"
 # a corpus that drifts WHILE the QA run is in flight
-[ "\$1 \$2" = "eval qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
+[ "\$1" = "qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
+# summary.json is written only by the scoring phase: the single-arm combined call
+# (qa --output-dir <dir>, no subcommand) and the sweep score call (qa score
+# <dir>) — never qa run or qa prepare.
+write_summary() {
+  [ -f "$T/qa-no-summary" ] && return 0
+  if [ -f "$T/qa-summary" ]; then
+    cp "$T/qa-summary" "\$1/summary.json"
+  else
+    printf '{"attempt_lifecycle_counts": {"scored": 3, "execution_failed": 0, "evaluation_failed": 0}}' > "\$1/summary.json"
+  fi
+}
+if [ "\$1" = "qa" ]; then
+  case "\${2:-}" in
+    run|prepare) : ;;
+    score) write_summary "\$3" ;;
+    *) [ -n "\$OUTDIR" ] && write_summary "\$OUTDIR" ;;
+  esac
+fi
 exit 0
 EOF
 cat > "$T/bin/git" <<EOF
@@ -376,10 +403,10 @@ run bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profi
 mkdir -p "$FM_OUT/qa"; printf '{"format":"qa-dataset-v2","items":[]}\n' > "$FM_OUT/qa/fasrc_ragas_queries.qa-v2.json"
 : > "$T/archi.calls"
 run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 01 "$T/arms/01-rerank-off.yaml" --stack fm-00 --profile "$T/cfg/qa/profile.yaml"
-if [ "$RC" = 0 ] && grep -q -- "eval qa --dataset $FM_OUT/qa/fasrc_ragas_queries.qa-v2.json --agent-config $FM_OUT/qa/01.agent-config.yaml --agent-spec $T/cfg/spec.md --evaluator-profile $T/cfg/qa/profile.yaml --output-dir $FM_OUT/qa/fm-00-arm01-r1 --attempts 1 --run-workers 1 --score-workers 4" "$T/archi.calls" \
+if [ "$RC" = 0 ] && grep -q -- "qa --dataset $FM_OUT/qa/fasrc_ragas_queries.qa-v2.json --agent-config $FM_OUT/qa/01.agent-config.yaml --agent-spec $T/cfg/spec.md --evaluator-profile $T/cfg/qa/profile.yaml --output-dir $FM_OUT/qa/fm-00-arm01-r1 --attempts 1 --run-workers 1 --score-workers 4" "$T/archi.calls" \
    && "$FM_PYTHON" -c "import yaml,sys; c=yaml.safe_load(open('$FM_OUT/qa/01.agent-config.yaml'))['services']['chat_app']; sys.exit(0 if (c['agent_class'],c['default_provider'],c['default_model'])==('FASRCDocsAgent','openai','palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4') and 'evaluations' not in c and c['providers']['openai']['api_key']=='EMPTY' else 1)" \
    && "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e['kind']=='qa' and e['arm']=='01' and e['stack']=='fm-00' else 1)"; then
-  ok "qa_arm overwrites the SUT fields, drops evaluations, calls archi eval qa serially"; else notok "qa_arm agent config + call (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+  ok "qa_arm overwrites the SUT fields, drops evaluations, calls archi qa serially"; else notok "qa_arm agent config + call (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
 EXPECT_SHA="$(sha256sum "$S/configs/config.yaml" | cut -d' ' -f1)"
 if "$FM_PYTHON" -c "import json,sys; e=json.load(open('$FM_OUT/ledger.json'))[-1]; sys.exit(0 if e.get('rendered_config_sha256')=='$EXPECT_SHA' and e.get('corpus_fingerprint')=='sha256:abc' and e.get('arm_config')=='$T/arms/01-rerank-off.yaml' else 1)"; then ok "qa_arm records the rendered config sha256, the arm config, and the corpus fingerprint"; else notok "qa_arm ledger identity fields"; fi
 
@@ -662,7 +689,7 @@ printf 'running\n' > "$T/state/postgres-r0"; printf 'running\n' > "$T/state/data
 # 48: qa_prepare prepares the gold atoms once, before the lock
 : > "$T/archi.calls"
 run bash "$HERE/qa_prepare.sh" --sweep r0 --qa-dataset "$SW/qa/dataset.json" --qa-profile "$SW/qa/profile.yaml"
-if [ "$RC" = 0 ] && grep -qx "eval qa prepare $SW/qa/dataset.json --evaluator-profile $SW/qa/profile.yaml --output-dir $FM_OUT/qa/r0-prepared" "$T/archi.calls"; then ok "qa_prepare --sweep prepares the gold atoms into the stack's prepared workspace"; else notok "qa_prepare (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
+if [ "$RC" = 0 ] && grep -qx "qa prepare $SW/qa/dataset.json --evaluator-profile $SW/qa/profile.yaml --output-dir $FM_OUT/qa/r0-prepared" "$T/archi.calls"; then ok "qa_prepare --sweep prepares the gold atoms into the stack's prepared workspace"; else notok "qa_prepare (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
 printf '{"item_id": "x"}\n' > "$FM_OUT/qa/r0-prepared/preparation.jsonl"
 
 # 49: lock_campaign --sweep writes the sweep lock once; prepare is refused after it
@@ -697,8 +724,8 @@ if [ "$R1" = 2 ] && [ "$R1M" = 1 ] && [ "$R1U" = 0 ] && [ "$RC" = 0 ] && grep -q
 : > "$T/archi.calls"
 run bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl
 QA="$FM_OUT/qa/r0-fasrc-docs-r0b-icl-r1"
-if [ "$RC" = 0 ] && grep -q "eval qa run $QA --agent-config .* --agent-spec $SW/prompts/fasrc-docs-r0b-icl.md --attempts 1 --run-workers 1" "$T/archi.calls" \
-   && grep -q "eval qa score $QA --evaluator-profile $SW/qa/profile.yaml" "$T/archi.calls" \
+if [ "$RC" = 0 ] && grep -q "qa run $QA --agent-config .* --agent-spec $SW/prompts/fasrc-docs-r0b-icl.md --attempts 1 --run-workers 1" "$T/archi.calls" \
+   && grep -q "qa score $QA --evaluator-profile $SW/qa/profile.yaml" "$T/archi.calls" \
    && [ -f "$QA/preparation.jsonl" ] \
    && "$FM_PYTHON" -c "import json,sys; r=json.load(open('$QA/category_map_readings.json')); sys.exit(0 if r=={'start':'sha256:map1','end':'sha256:map1'} else 1)"; then
   ok "qa_arm --sweep runs and scores one arm on the prepared atoms and writes its map readings"; else notok "qa_arm --sweep (rc=$RC: $(cat "$T/archi.calls" "$T/stderr"))"; fi
@@ -1095,6 +1122,98 @@ FM_PYTHON="$REAL_PY"
 if [ "$RC" != 0 ] && ! grep -q 'archived arm' "$T/stdout" && [ -z "$(ls -A "$FM_OUT/corpus-pin-fm-pin82")" ]; then
   ok "a directory that appears at the pin path after the ledger append fails the archive"; else notok "late pin-directory guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
 rm -rf "$FM_OUT/corpus-pin-fm-pin82" "$FM_OUT"/corpus-pin-fm-pin82.tmp.*
+
+# 90: qa_arm refuses when summary.json records scored: 0 (single-arm)
+printf '{"attempt_lifecycle_counts": {"scored": 0, "execution_failed": 0, "evaluation_failed": 0}}' > "$T/qa-summary"
+BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/qa-summary"
+if [ "$RC" = 2 ] && grep -q 'summary.json' "$T/stderr" && grep -q 'NOT recorded' "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "qa_arm refuses when scored: 0 in summary.json"; else notok "scored-0 refusal (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 91: qa_arm refuses when summary.json is missing (single-arm)
+touch "$T/qa-no-summary"
+BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/qa-no-summary"
+if [ "$RC" = 2 ] && grep -q 'summary.json' "$T/stderr" && grep -q 'NOT recorded' "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "qa_arm refuses when summary.json is missing"; else notok "missing-summary refusal (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 92: qa_arm refuses when summary.json is not valid JSON (single-arm)
+printf 'not json{' > "$T/qa-summary"
+BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/qa-summary"
+if [ "$RC" = 2 ] && grep -q 'summary.json' "$T/stderr" && grep -q 'NOT recorded' "$T/stderr" && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "qa_arm refuses when summary.json is not valid JSON"; else notok "invalid-json refusal (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 93: qa_arm accepts scored: 3 with execution_failed: 2 (single-arm)
+printf '{"attempt_lifecycle_counts": {"scored": 3, "execution_failed": 2, "evaluation_failed": 0}}' > "$T/qa-summary"
+BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/qa-summary"
+if [ "$RC" = 0 ] && [ "$(ledger_rows)" = "$((BEFORE + 1))" ]; then
+  ok "qa_arm accepts scored: 3 with execution_failed: 2"; else notok "scored-3 accept (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 94: qa_arm --sweep refuses scored: 0 with no ledger row; then the same arm with the next
+# --run and the default summary (scored: 3) succeeds and adds one row
+printf '{"attempt_lifecycle_counts": {"scored": 0, "execution_failed": 0, "evaluation_failed": 0}}' > "$T/qa-summary"
+BEFORE="$(ledger_rows)"
+run bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl --run 7
+RC94="$RC"; STDERR94="$(cat "$T/stderr")"; ROWS94="$(ledger_rows)"
+rm -f "$T/qa-summary"
+run bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl --run 8
+if [ "$RC94" = 2 ] && printf '%s' "$STDERR94" | grep -q 'summary.json' && printf '%s' "$STDERR94" | grep -q 'NOT recorded' \
+   && [ "$ROWS94" = "$BEFORE" ] && [ "$RC" = 0 ] && [ "$(ledger_rows)" = "$((BEFORE + 1))" ]; then
+  ok "qa_arm --sweep refuses scored: 0 with no ledger row, then accepts the next run with a valid summary"; else notok "sweep scored refusal and accept (rc7=$RC94 rc8=$RC: $(cat "$T/stderr"))"; fi
+
+# --- judge gates G11/G12 (judge offload, #733) -------------------------------------------
+# A fresh campaign: every row of the shared ledger above records the legacy judge identity,
+# and a recorded identity never equals it, so a judged run must start its own campaign.
+JO="$T/out-judge"; mkdir -p "$JO/qa" "$ARCHI_DIR/archi-fm-judge"
+printf '{"format":"qa-dataset-v2","items":[]}\n' > "$JO/qa/fasrc_ragas_queries.qa-v2.json"
+run env FM_OUT="$JO" bash "$HERE/lock_campaign.sh" "$T/arms/00-baseline.yaml" --arms-dir "$T/arms" --qa-dataset "$JO/qa/fasrc_ragas_queries.qa-v2.json" --qa-profile "$T/cfg/qa/profile.yaml"
+run env FM_OUT="$JO" RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-judge
+judge_rows() { "$FM_PYTHON" -c "import json,sys,os; p=sys.argv[1]; print(len(json.load(open(p))) if os.path.exists(p) else 0)" "$JO/ledger.json"; }
+judge_fields() { # $1 = artifact, $2 = judge_status, $3 = ragas_judge_identity_effective JSON
+  "$FM_PYTHON" - "$1" "$2" "$3" <<'PY'
+import json, sys
+d = json.loads(open(sys.argv[1]).read().replace("NaN", "null"))
+for arm in d["benchmarking_results"]:
+    arm["judge_status"] = sys.argv[2]
+    arm["ragas_judge_identity_effective"] = json.loads(sys.argv[3])
+open(sys.argv[1], "w").write(json.dumps(d))
+PY
+}
+SONNET_ID='{"provider": "huit_bedrock", "model": "sonnet", "base_url": null, "mode": null}'
+JP="$JO/benchmarking-fm-judge-20260903_000030.json"
+
+# 95: a pending artifact is refused, the judged file to wait for is named, nothing is written
+artifact "$JP" '[]' def 5; judge_fields "$JP" pending null
+BEFORE="$(judge_rows)"
+run env FM_OUT="$JO" bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-judge
+if [ "$RC" = 2 ] && grep -q "G11 refused" "$T/stderr" && grep -qF "${JP%.json}.judged.json" "$T/stderr" \
+   && [ "$(judge_rows)" = "$BEFORE" ] && [ ! -e "$JO/corpus-pin-fm-judge" ]; then
+  ok "archive refuses a pending artifact and names the judged file"; else notok "archive G11 pending (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 96: its judged file beside it is archived, and the row records the arm's judge identity
+cp "$JP" "${JP%.json}.judged.json"; judge_fields "${JP%.json}.judged.json" scored "$SONNET_ID"
+run env FM_OUT="$JO" bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-judge
+if [ "$RC" = 0 ] && "$FM_PYTHON" - "$JO/ledger.json" "${JP%.json}.judged.json" <<'PY'
+import json, sys
+e = json.load(open(sys.argv[1]))[-1]
+assert e["kind"] == "ragas" and e["artifact"] == sys.argv[2], e
+assert e["ragas_judge_identity_effective"]["model"] == "sonnet", e
+PY
+then ok "archive takes the judged file and records its judge identity"; else notok "archive G11 judged (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 97: a later run scored by another judge is refused with the field named; nothing is written
+JQ="$JO/benchmarking-fm-judge-20260903_000031.json"
+artifact "$JQ" '[]' def 5; judge_fields "$JQ" inline '{"provider": "huit_bedrock", "model": "haiku", "base_url": null, "mode": null}'
+BEFORE="$(judge_rows)"
+run env FM_OUT="$JO" bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --stack fm-judge
+if [ "$RC" = 2 ] && grep -q "G12 refused" "$T/stderr" && grep -q "model (" "$T/stderr" && [ "$(judge_rows)" = "$BEFORE" ]; then
+  ok "archive refuses a run whose judge differs from the campaign's rows"; else notok "archive G12 (rc=$RC: $(cat "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

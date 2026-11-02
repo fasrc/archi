@@ -1384,3 +1384,216 @@ def test_event_deduper_forget_lets_a_key_through_again():
     deduper.forget("C1", "1.0")
     deduper.forget("C1", "missing")
     assert deduper.first_time("C1", "1.0")
+
+
+# ---------------------------------------------------------------------------
+# AC 2: view_submission idempotency across ambiguous commit (task 2.1)
+# ---------------------------------------------------------------------------
+
+
+def _pk_pool(conn_specs):
+    """Primary-key-aware fake pool (copy of test_slack_feedback._pk_pool).
+
+    conn_specs: list of "working" | "ambiguous" | "down".
+    Returns (pool, rows) where rows is keyed by (message_id, feedback_ts).
+    """
+    from contextlib import contextmanager
+
+    import psycopg2
+    import psycopg2.errors
+
+    rows = {}
+    connections = []
+
+    for spec in conn_specs:
+        pending = {}
+        cur = mock.Mock()
+        cur.__enter__ = mock.Mock(return_value=cur)
+        cur.__exit__ = mock.Mock(return_value=False)
+
+        if spec == "down":
+            cur.execute.side_effect = psycopg2.OperationalError("down")
+        else:
+
+            def _make_execute(_pending=pending):
+                def _execute(sql, params):
+                    key = (params[0], params[1])
+                    if key in rows:
+                        raise psycopg2.errors.UniqueViolation("duplicate key")
+                    _pending[key] = params
+
+                return _execute
+
+            cur.execute.side_effect = _make_execute()
+
+        conn = mock.Mock()
+        conn.closed = 0
+        conn.cursor.return_value = cur
+        conn.rollback.return_value = None
+
+        if spec == "ambiguous":
+
+            def _make_commit(_pending=pending):
+                def _commit():
+                    rows.update(_pending)
+                    _pending.clear()
+                    raise psycopg2.OperationalError("connection lost after commit")
+
+                return _commit
+
+            conn.commit.side_effect = _make_commit()
+        else:
+
+            def _make_commit(_pending=pending):
+                def _commit():
+                    rows.update(_pending)
+                    _pending.clear()
+
+                return _commit
+
+            conn.commit.side_effect = _make_commit()
+
+        connections.append(conn)
+
+    state = {"idx": 0}
+    pool = mock.Mock()
+
+    @contextmanager
+    def get_connection():
+        conn = connections[state["idx"]]
+        state["idx"] += 1
+        yield conn
+
+    pool.get_connection = get_connection
+    return pool, rows
+
+
+def test_handle_interactive_view_submission_idempotent_across_ambiguous_commit():
+    from src.interfaces.slack_feedback import (
+        FEEDBACK_FORM_CALLBACK_ID,
+        SlackFeedbackStore,
+    )
+
+    pool, rows = _pk_pool(["ambiguous"] + ["down"] * 5 + ["working"])
+    store = SlackFeedbackStore(pool)
+    bot = _bot(feedback_store=store)
+    payload = _view_sub_payload(
+        FEEDBACK_FORM_CALLBACK_ID, "42:1700000000.123456", flags=("incorrect",)
+    )
+    payload["view"]["id"] = "V1"
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1"))
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1-retry"))
+    assert len(rows) == 1
+    row = next(iter(rows.values()))
+    assert row[2] == "dislike"
+
+
+# ---------------------------------------------------------------------------
+# AC 1 / AC 3 / E6: click idempotency and bot wiring (task 3.1)
+# ---------------------------------------------------------------------------
+
+
+def test_handle_interactive_click_idempotent_across_ambiguous_commit():
+    from src.interfaces.slack_feedback import (
+        HELPFUL_ACTION_ID,
+        SlackFeedbackStore,
+    )
+
+    pool, rows = _pk_pool(["ambiguous"] + ["down"] * 5 + ["working"])
+    store = SlackFeedbackStore(pool)
+    bot = _bot(feedback_store=store)
+    payload = _block_action_payload(HELPFUL_ACTION_ID, "42")
+    payload["actions"][0]["action_ts"] = "1700000000.123456"
+
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1"))
+    bot.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1-retry"))
+
+    assert len(rows) == 1
+    bot.web.chat_postEphemeral.assert_called_once()
+
+
+def test_handle_interactive_click_idempotent_on_restart():
+    from src.interfaces.slack_feedback import (
+        HELPFUL_ACTION_ID,
+        SlackFeedbackStore,
+    )
+
+    pool, rows = _pk_pool(["working"] * 5)
+    store = SlackFeedbackStore(pool)
+    payload = _block_action_payload(HELPFUL_ACTION_ID, "42")
+    payload["actions"][0]["action_ts"] = "1700000000.123456"
+
+    bot1 = _bot(feedback_store=store)
+    bot2 = _bot(feedback_store=store)
+
+    bot1.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1"))
+    bot2.handle_request(mock.Mock(), _interactive_req(payload, envelope="E1"))
+
+    assert len(rows) == 1
+    bot1.web.chat_postEphemeral.assert_called_once()
+    bot2.web.chat_postEphemeral.assert_called_once()
+
+
+def test_handle_interactive_duplicate_click_no_error_posts_ephemeral(caplog):
+    import logging
+
+    from src.interfaces.slack_feedback import (
+        HELPFUL_ACTION_ID,
+        SlackFeedbackStore,
+        parse_action_ts,
+    )
+
+    pool, rows = _pk_pool(["working"])
+    ts = parse_action_ts("1700000000.123456")
+    rows[(42, ts)] = (42, ts, "like", None, None, None, None)
+
+    store = SlackFeedbackStore(pool)
+    bot = _bot(feedback_store=store)
+    payload = _block_action_payload(HELPFUL_ACTION_ID, "42")
+    payload["actions"][0]["action_ts"] = "1700000000.123456"
+
+    with caplog.at_level(logging.DEBUG):
+        bot.handle_request(mock.Mock(), _interactive_req(payload))
+
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+    bot.web.chat_postEphemeral.assert_called_once()
+
+
+def test_handle_interactive_not_helpful_passes_action_ts_to_modal():
+    from src.interfaces.slack_feedback import NOT_HELPFUL_ACTION_ID
+
+    bot = _bot(feedback_store=mock.Mock())
+    payload = _block_action_payload(NOT_HELPFUL_ACTION_ID, "42", trigger_id="T1")
+    payload["actions"][0]["action_ts"] = "1700000000.123456"
+
+    bot.handle_request(mock.Mock(), _interactive_req(payload))
+
+    kw = bot.web.views_open.call_args.kwargs
+    assert kw["view"]["private_metadata"] == "42:1700000000.123456"
+
+
+def test_handle_interactive_helpful_fallback_timestamps_are_recent():
+    from datetime import datetime, timezone
+
+    from src.interfaces.slack_feedback import (
+        HELPFUL_ACTION_ID,
+        SlackFeedbackStore,
+    )
+
+    pool, rows = _pk_pool(["working"] * 5)
+    store = SlackFeedbackStore(pool)
+    bot = _bot(feedback_store=store)
+
+    payload_no_ts = _block_action_payload(HELPFUL_ACTION_ID, "42", user_id="U1")
+    payload_bad_ts = _block_action_payload(HELPFUL_ACTION_ID, "43", user_id="U2")
+    payload_bad_ts["actions"][0]["action_ts"] = "abc"
+
+    bot.handle_request(mock.Mock(), _interactive_req(payload_no_ts, envelope="E1"))
+    bot.handle_request(mock.Mock(), _interactive_req(payload_bad_ts, envelope="E2"))
+
+    assert len(rows) == 2
+    now = datetime.now(timezone.utc)
+    for params in rows.values():
+        ts = params[1]
+        assert ts.tzinfo is not None
+        assert abs((now - ts).total_seconds()) < 60

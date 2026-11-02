@@ -2169,7 +2169,7 @@ def test_source_block_reports_and_recomputes_source_accuracy(_artifact):
 def _qa_run(
     directory, item_id, *, item_pass_rate=1.0, atom_score=0.8, durations=(1000,)
 ):
-    """Write the three artifacts ``archi eval qa`` leaves in a run directory."""
+    """Write the three artifacts ``archi qa`` leaves in a run directory."""
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "summary.json").write_text(
         json.dumps(
@@ -2503,6 +2503,24 @@ def test_the_anchors_reader_works_without_importing_the_src_package(
     path = anchors_file([_anchor("tripwire", "easy_retrieve")])
 
     assert list(cr.anchor_questions(path)) == ["tripwire"]
+
+
+def test_the_embedding_model_fallback_works_without_importing_the_src_package(
+    _artifact, monkeypatch
+):
+    # An arm with no `retrieval_identity` derives its model from the recorded
+    # configuration through `benchmark_provenance.retrieval_identity`, loaded
+    # from its own file like the bank normalizer above. A module-level import of
+    # another `src.utils` module would re-enter the package `__init__` from that
+    # file load, and with it psycopg2.
+    path = _artifact([_row("q")], configuration=_config_for("model-a"))
+    arm = cr.load_arms([str(path)])[0]
+    for name in ("src.utils.benchmark_provenance", "src.utils.ingest_provenance"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.setitem(sys.modules, "src.utils", None)
+
+    assert arm.retrieval_identity is None
+    assert cr._embedding_model(arm) == "model-a"
 
 
 def test_anchors_do_not_reach_the_qa_join_without_a_qa_run(
@@ -3518,3 +3536,198 @@ def test_a_qa_run_joins_only_on_the_arms_corpus(
         assert code == cr.EXIT_GATE
         err = capsys.readouterr().err
         assert "cannot join" in err and expected in err
+
+
+# --- issue #447: slice exclusions without a row or a baseline label ---
+
+
+def test_slice_exclusions_counts_when_every_question_is_relabelled(_artifact):
+    base_rows = [
+        _row("q1", difficulty="hard", faithfulness=0.5),
+        _row("q2", difficulty="hard", faithfulness=0.6),
+    ]
+    treat_rows = [
+        _row("q1", difficulty="easy", faithfulness=0.7),
+        _row("q2", difficulty="easy", faithfulness=0.8),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+    questions = ["q1", "q2"]
+
+    block = cr.slice_block(arms[0], arms, questions, {})
+
+    assert not [row for row in block if row["field"] == "difficulty"]
+    assert cr.slice_exclusions(arms[0], arms, questions)["difficulty"] == 2
+
+
+def test_slice_exclusions_counts_when_a_group_scores_nothing(_artifact):
+    base_rows = [
+        _row("agreed", difficulty="easy", faithfulness=0.5),
+        _row("relabelled", difficulty="easy", faithfulness=0.5),
+    ]
+    treat_rows = [
+        # No finite metric for "agreed", so its pair scores n == 0.
+        _row("agreed", difficulty="easy"),
+        _row("relabelled", difficulty="hard", faithfulness=0.9),
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+    questions = ["agreed", "relabelled"]
+
+    block = [
+        row
+        for row in cr.slice_block(arms[0], arms, questions, {})
+        if row["field"] == "difficulty"
+    ]
+
+    assert not block, "the only surviving group scores nothing, so no row is emitted"
+    assert cr.slice_exclusions(arms[0], arms, questions)["difficulty"] == 1
+
+
+def test_an_unlabelled_baseline_does_not_hide_a_relabelling(_artifact):
+    arm_a_rows = [
+        _row("q1", faithfulness=0.5),  # no difficulty on the focus question
+        _row("q2", difficulty="easy", faithfulness=0.5),
+    ]
+    arm_b_rows = [
+        _row("q1", difficulty="easy", faithfulness=0.7),
+        _row("q2", difficulty="easy", faithfulness=0.7),
+    ]
+    arm_c_rows = [
+        _row("q1", difficulty="hard", faithfulness=0.9),
+        _row("q2", difficulty="easy", faithfulness=0.9),
+    ]
+    all_arms = cr.load_arms(
+        [
+            str(_artifact(arm_a_rows)),
+            str(_artifact(arm_b_rows)),
+            str(_artifact(arm_c_rows)),
+        ]
+    )
+    questions = ["q1", "q2"]
+
+    for index in range(len(all_arms)):
+        reordered = [all_arms[index]] + [
+            arm for i, arm in enumerate(all_arms) if i != index
+        ]
+        baseline = reordered[0]
+
+        exclusions = cr.slice_exclusions(baseline, reordered, questions)
+
+        assert exclusions["difficulty"] == 1, (
+            f"baseline {index} got {exclusions['difficulty']}, want 1 -- the count "
+            "must not move with the choice of baseline"
+        )
+
+
+def test_an_unlabelled_row_is_not_a_disagreement(_artifact):
+    """A clean row's label absent, ``None``, or ``""`` is not a disagreement.
+
+    D2 step 2 drops each of these three unlabelled representations before the
+    mismatch test runs, so two arms both labelling "hard" alongside a clean arm
+    that recorded no label for the field is zero mismatches, not one.
+    """
+
+    def count_for(focus_third_row):
+        base_rows = [
+            _row("focus", difficulty="hard", faithfulness=0.5),
+            _row("filler", difficulty="easy", faithfulness=0.5),
+        ]
+        agrees_hard = [
+            _row("focus", difficulty="hard", faithfulness=0.7),
+            _row("filler", difficulty="easy", faithfulness=0.7),
+        ]
+        third_rows = [
+            focus_third_row,
+            _row("filler", difficulty="easy", faithfulness=0.9),
+        ]
+        arms = cr.load_arms(
+            [
+                str(_artifact(base_rows)),
+                str(_artifact(agrees_hard)),
+                str(_artifact(third_rows)),
+            ]
+        )
+        return cr.slice_exclusions(arms[0], arms, ["focus", "filler"])["difficulty"]
+
+    absent = _row("focus", faithfulness=0.9)
+    assert "difficulty" not in absent
+    assert count_for(absent) == 0
+
+    none_valued = _row("focus", faithfulness=0.9)
+    none_valued["difficulty"] = None
+    assert count_for(none_valued) == 0
+
+    empty_valued = _row("focus", faithfulness=0.9)
+    empty_valued["difficulty"] = ""
+    assert count_for(empty_valued) == 0
+
+
+def test_slice_exclusions_lists_every_gated_field_with_zero(_artifact):
+    base_rows = [
+        _row("q1", anchor_type="reasoning", difficulty="easy", faithfulness=0.5)
+    ]
+    treat_rows = [
+        _row("q1", anchor_type="reasoning", difficulty="easy", faithfulness=0.6)
+    ]
+    arms = cr.load_arms([str(_artifact(base_rows)), str(_artifact(treat_rows))])
+
+    assert cr.slice_exclusions(arms[0], arms, ["q1"]) == {
+        "anchor_type": 0,
+        "difficulty": 0,
+    }
+
+
+def test_report_json_carries_slice_exclusions_for_every_gated_field(
+    _artifact, tmp_path
+):
+    rows = [_row("q1", anchor_type="reasoning", difficulty="easy", faithfulness=0.5)]
+    base = str(_artifact(rows, fingerprint="corpus-1"))
+    treat = str(_artifact(rows, fingerprint="corpus-1"))
+    out_json = tmp_path / "report.json"
+
+    code = cr.main([base, treat, "--json", str(out_json)])
+
+    assert code == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    assert report["slice_exclusions"] == {"anchor_type": 0, "difficulty": 0}
+
+
+def test_rendered_report_names_the_relabelling_when_no_slice_survives(
+    _artifact, tmp_path
+):
+    base_rows = [
+        _row("q1", difficulty="hard", faithfulness=0.5),
+        _row("q2", difficulty="hard", faithfulness=0.6),
+    ]
+    treat_rows = [
+        _row("q1", difficulty="easy", faithfulness=0.7),
+        _row("q2", difficulty="easy", faithfulness=0.8),
+    ]
+    base = str(_artifact(base_rows, fingerprint="corpus-1"))
+    treat = str(_artifact(treat_rows, fingerprint="corpus-1"))
+    out_json = tmp_path / "report.json"
+
+    code = cr.main([base, treat, "--json", str(out_json)])
+
+    assert code == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    text = cr.render_markdown(report)
+    assert "carry a different `difficulty`" in text
+    assert "No slice field" not in text
+
+
+def test_rendered_report_says_no_slice_field_only_when_the_gate_excludes_all(
+    _artifact, tmp_path
+):
+    base_rows = [_row("q1", faithfulness=0.5)]
+    treat_rows = [_row("q1", faithfulness=0.6)]
+    base = str(_artifact(base_rows, fingerprint="corpus-1"))
+    treat = str(_artifact(treat_rows, fingerprint="corpus-1"))
+    out_json = tmp_path / "report.json"
+
+    code = cr.main([base, treat, "--json", str(out_json)])
+
+    assert code == cr.EXIT_OK
+    report = json.loads(out_json.read_text())
+    assert report["slice_exclusions"] == {}
+    text = cr.render_markdown(report)
+    assert "No slice field" in text

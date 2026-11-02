@@ -10,9 +10,22 @@ from src.evaluation.qa import console as console_module
 from src.evaluation.qa.catalog import EvaluationCatalog
 from src.evaluation.qa.console import EvaluationConsoleService
 from src.evaluation.qa.history import EvaluationHistory
+from src.evaluation.qa.run_visibility import redact_run_for_viewer
 from src.interfaces.chat_app import evaluation_routes
 from src.interfaces.chat_app.evaluation_routes import register_evaluations
 from src.utils.rbac.permission_enum import Permission
+
+_FULL_RUN = {
+    "id": "h",
+    "preparation": [
+        {
+            "item_id": "i1",
+            "question": "Q",
+            "answer": "secret-answer",
+            "answer_sha256": "deadbeef",
+        }
+    ],
+}
 
 
 class _Jobs:
@@ -29,6 +42,7 @@ class _Service:
         self._history = EvaluationHistory(self._catalog.runs_dir)
         self._jobs = _Jobs()
         self.started = []
+        self.get_run_requests = []
 
     def list_agents(self):
         return [{"id": "agent.md", "name": "Agent"}]
@@ -71,8 +85,9 @@ class _Service:
     def list_runs(self, *, cutoff):
         return self._history.list_runs(cutoff=cutoff)
 
-    def get_run(self, history_id):
-        return self._history.get_run(history_id)
+    def get_run(self, history_id, *, include_hidden=False):
+        self.get_run_requests.append((history_id, include_hidden))
+        return _FULL_RUN if include_hidden else redact_run_for_viewer(_FULL_RUN)
 
     def get_report(self, history_id):
         return self._history.get_report(history_id)
@@ -665,7 +680,7 @@ def test_json_request_is_bounded_by_observed_bytes(tmp_path, monkeypatch):
 
 def test_run_detail_bounds_actual_serialized_response(tmp_path, monkeypatch):
     app, service, _permissions = _app(tmp_path)
-    service.get_run = lambda _history_id: {"answer": "selected truth"}
+    service.get_run = lambda _history_id, **_kwargs: {"answer": "selected truth"}
     payload = app.json.dumps({"run": service.get_run("run")}).encode("utf-8")
     monkeypatch.setattr(evaluation_routes, "MAX_IMPORT_BYTES", len(payload) - 1)
 
@@ -772,3 +787,76 @@ def test_attention_refresh_route_uses_manage_permission_without_run_permission(
         ("attention-refresh", "job-manager-attention", "builtin")
     ]
     assert permissions == [Permission.Evaluations.MANAGE]
+
+
+def test_run_detail_hides_hidden_fields_for_view_only_callers(tmp_path, monkeypatch):
+    app, service, _permissions = _app(tmp_path)
+    app.secret_key = "test-only"
+    client = app.test_client()
+    with client.session_transaction() as browser_session:
+        browser_session["logged_in"] = True
+        browser_session["user"] = {"email": "viewer@example.test"}
+    monkeypatch.setattr(evaluation_routes, "has_permission", lambda _permission: False)
+
+    response = client.get("/api/evaluations/runs/h")
+
+    assert response.get_json()["run"] == redact_run_for_viewer(_FULL_RUN)
+    assert service.get_run_requests == [("h", False)]
+
+
+def test_run_detail_restores_hidden_fields_for_managers(tmp_path, monkeypatch):
+    app, service, _permissions = _app(tmp_path)
+    app.secret_key = "test-only"
+    client = app.test_client()
+    with client.session_transaction() as browser_session:
+        browser_session["logged_in"] = True
+        browser_session["user"] = {"email": "manager@example.test"}
+    monkeypatch.setattr(
+        evaluation_routes,
+        "has_permission",
+        lambda permission: permission == Permission.Evaluations.MANAGE,
+    )
+
+    response = client.get("/api/evaluations/runs/h")
+
+    assert response.get_json()["run"] == _FULL_RUN
+    assert service.get_run_requests == [("h", True)]
+
+
+def test_run_detail_includes_hidden_fields_when_auth_is_off(tmp_path):
+    app, service, _permissions = _app(tmp_path)
+
+    response = app.test_client().get("/api/evaluations/runs/h")
+
+    assert response.get_json()["run"] == _FULL_RUN
+    assert service.get_run_requests == [("h", True)]
+
+
+def test_run_list_and_report_responses_match_for_view_and_manage_callers(
+    tmp_path, monkeypatch
+):
+    app, service, _permissions = _app(tmp_path)
+    _write_trend_run(service)
+    app.secret_key = "test-only"
+    client = app.test_client()
+    with client.session_transaction() as browser_session:
+        browser_session["logged_in"] = True
+        browser_session["user"] = {"email": "runner@example.test"}
+    allowed = set()
+    monkeypatch.setattr(
+        evaluation_routes, "has_permission", lambda permission: permission in allowed
+    )
+
+    view_list = client.get("/api/evaluations/runs").get_json()
+    view_report = client.get("/api/evaluations/runs/trend-run/report").get_data(
+        as_text=True
+    )
+
+    allowed.add(Permission.Evaluations.MANAGE)
+    manage_list = client.get("/api/evaluations/runs").get_json()
+    manage_report = client.get("/api/evaluations/runs/trend-run/report").get_data(
+        as_text=True
+    )
+
+    assert view_list == manage_list
+    assert view_report == manage_report

@@ -491,3 +491,149 @@ def test_ledger_rows_carry_the_retrieval_identity(sweep):
         "all-MiniLM",
     )
     assert (rows[1]["collection"], rows[1]["embedding_model"]) == (None, None)
+
+
+# --- G11 and G12 in the sweep archiver (judge offload design D9) ------------------
+
+JUDGE = {
+    "provider": "vllm",
+    "model": "meta-llama/Llama-3.3-70B-Instruct",
+    "base_url": None,
+    "mode": "unix_socket",
+    "precision": "bf16",
+    "scorer": {"code_digest": "sha256:c", "package_digest": "sha256:p"},
+}
+
+
+def _judged(artifact, *, status="scored", identities=None):
+    """Mark every arm of *artifact* with a judge status and an identity."""
+    data = json.loads(artifact.read_text())
+    for index, entry in enumerate(data["benchmarking_results"]):
+        entry["judge_status"] = status
+        entry["ragas_judge_identity_effective"] = (
+            (identities or {}).get(index, JUDGE) if status == "scored" else None
+        )
+    artifact.write_text(json.dumps(data))
+    return artifact
+
+
+def test_a_pending_artifact_is_refused_and_names_the_judged_file(sweep):
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep)
+    _judged(artifact, status="pending")
+    ledger = _ledger(sweep)
+    before = ledger.read_text()
+    with pytest.raises(st.SweepError, match="G11 refused") as info:
+        _archive(sweep, lock, artifact, 1, _census(sweep, digest, lock))
+    assert str(artifact.with_name(artifact.stem + ".judged.json")) in str(info.value)
+    assert ledger.read_text() == before
+
+
+def test_a_judged_artifact_records_each_arm_identity(sweep):
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep)
+    _judged(artifact)
+    _ledger(sweep)
+    rows = _archive(sweep, lock, artifact, 1, _census(sweep, digest, lock))
+    assert [row["ragas_judge_identity_effective"] for row in rows] == [JUDGE] * 3
+
+
+def test_an_artifact_whose_arms_had_two_judges_is_refused(sweep):
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep)
+    _judged(artifact, identities={2: dict(JUDGE, precision="fp8")})
+    _ledger(sweep)
+    with pytest.raises(st.SweepError, match="G12 refused.*precision"):
+        _archive(sweep, lock, artifact, 1, _census(sweep, digest, lock))
+
+
+def test_a_run_whose_judge_differs_from_the_campaign_rows_is_refused(sweep):
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep)
+    _judged(artifact)
+    _ledger(sweep)
+    _archive(sweep, lock, artifact, 1, _census(sweep, digest, lock))
+
+    second, _ = _artifact(sweep)
+    _judged(second, identities={i: dict(JUDGE, precision="fp8") for i in range(3)})
+    rows = json.loads((sweep / "out/ledger.json").read_text())
+    rows.append(
+        {"kind": "ragas-start", "stack": "r0", "started": "2026-09-24T11:30:00Z"}
+    )
+    (sweep / "out/ledger.json").write_text(json.dumps(rows))
+    before = (sweep / "out/ledger.json").read_text()
+    with pytest.raises(st.SweepError, match="G12 refused.*precision"):
+        _archive(sweep, lock, second, 2)
+    assert (sweep / "out/ledger.json").read_text() == before
+
+
+def test_an_earlier_row_with_no_identity_refuses_a_judged_run(sweep):
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep)
+    _judged(artifact)
+    ledger = _ledger(sweep)
+    rows = json.loads(ledger.read_text())
+    rows.insert(0, {"kind": "ragas", "stack": "fm-00", "arm": "00", "run": 1})
+    ledger.write_text(json.dumps(rows))
+    with pytest.raises(st.SweepError, match="new campaign"):
+        _archive(sweep, lock, artifact, 1, _census(sweep, digest, lock))
+
+
+def test_the_run_is_dated_by_its_pending_file_not_its_judged_copy(sweep):
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep)
+    pending = artifact.with_name("pending.json")
+    pending.write_text("{}")
+    old = dt.datetime(2026, 9, 24, 10, tzinfo=dt.timezone.utc).timestamp()
+    os.utime(pending, (old, old))
+    _judged(artifact)
+    _ledger(sweep, started="2026-09-24T11:00:00Z")
+    with pytest.raises(st.SweepError, match="no new artifact"):
+        st.archive(
+            lock=lock,
+            artifact=artifact,
+            stack="r0",
+            run=1,
+            ledger=sweep / "out/ledger.json",
+            pins_dir=sweep / "out",
+            dest=sweep / "out/archive",
+            census=_census(sweep, digest, lock),
+            dated_by=pending,
+        )
+
+
+def test_the_cli_passes_the_dating_file(sweep, capsys):
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep)
+    pending = artifact.with_name("pending.json")
+    pending.write_text("{}")
+    old = dt.datetime(2026, 9, 24, 10, tzinfo=dt.timezone.utc).timestamp()
+    os.utime(pending, (old, old))
+    _ledger(sweep, started="2026-09-24T11:00:00Z")
+    lock_file = sweep / "out/sweep-r0.lock"
+    lock_file.write_text(json.dumps(lock))
+    code = st.main(
+        [
+            "archive",
+            "--lock",
+            str(lock_file),
+            "--artifact",
+            str(artifact),
+            "--stack",
+            "r0",
+            "--run",
+            "1",
+            "--ledger",
+            str(sweep / "out/ledger.json"),
+            "--pins-dir",
+            str(sweep / "out"),
+            "--dest",
+            str(sweep / "out/archive"),
+            "--census",
+            str(_census(sweep, digest, lock)),
+            "--dated-by",
+            str(pending),
+        ]
+    )
+    assert code == 2
+    assert "no new artifact" in capsys.readouterr().err

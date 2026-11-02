@@ -16,6 +16,7 @@ nav:
   - Benchmarking: benchmarking.md
   - Evaluation: evaluation.md
   - Interpreting Results: interpreting_benchmark_results.md
+  - Feature-Matrix Results (2026-09): feature_matrix_results_2026_09.md
   - Advanced Setup: advanced_setup_deploy.md
   - Adding Providers: adding_providers.md
   - Developer Guide: developer_guide.md

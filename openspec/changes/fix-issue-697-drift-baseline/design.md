@@ -1,6 +1,6 @@
 ## Context
 
-The Knowledge Base panel on `/ssb/status` is built by `src/interfaces/chat_app/status_provenance.py`. `load_status_provenance()` runs four reads in this order (`status_provenance.py:265-300` on `origin/dev` `c2e885ca`):
+The Knowledge Base panel on `/ssb/status` is built by `src/interfaces/chat_app/status_provenance.py`. `load_status_provenance()` runs four reads in this order (`status_provenance.py:265-300` on `origin/dev` `18698cb3`; the file is unchanged since `c2e885ca`):
 
 1. `_SQL_LATEST_DEPLOYMENT` → the deployment row.
 2. `_SQL_LATEST_INGEST_RUN` → the newest completed run with status `updated` or `up_to_date`.
@@ -97,15 +97,17 @@ In `src/interfaces/chat_app/templates/status.html`, inside `{% if kb and kb.avai
 
 ### D5: Docs
 
-In `docs/docs/services.md`, Knowledge Base panel section (lines 86-99 on `c2e885ca`):
+In `docs/docs/services.md`, Knowledge Base panel section (lines 86-99 on `18698cb3`):
 - Line 86, the section lead: say that the times, status and counts come from the newest successful run (`updated` or `up_to_date`), and the configuration and the drift check come from the newest `updated` run.
 - Line 91, the **Ingest configuration (as used at ingest)** bullet: add one sentence: the settings come from the newest `updated` run, because an `up_to_date` run embeds nothing; if that run is older than the last ingest, its completion time is shown. In the same bullet, change "still does not show as drift until the next ingest" to "still does not show as drift until the next ingest that embeds documents (an `updated` run)".
 - Line 92: rename the bullet to **⚠ configuration changed after the corpus was built** and say the running config is compared with the config of the last run that embedded documents.
 - Line 97, the failed-attempt bullet: "The counts and config are from the last successful run" becomes "The counts are from the last successful run and the config is from the last run that embedded documents".
 - Under "Unknown and failure states", add a bullet for "Configuration at ingest unknown — no run that embedded documents could be read; drift not evaluated." Say that it shows when every recorded successful run is `up_to_date`, or when that run could not be read, and that it does not mean there is no drift.
-- Add one sentence that a run which embeds only some documents (an `updated` run that re-embeds a few documents, or a `failed` run) does not make the board treat the rest of the corpus as rebuilt; this case is not detected yet (#703).
+- Line 100 (the closing paragraph of the section): "keeps its old value until the next deploy or ingest." becomes "keeps its old value until the next deploy or ingest; for the ingest configuration, until the next ingest that embeds documents (an `updated` run)." After this change an `up_to_date` run no longer replaces the config shown, so the old sentence is false for the config table.
+- Add one sentence: a run that embeds only some documents is not detected yet (#703). After a partial `updated` run the board treats the whole corpus as built under that run's config, and the config shown does not reflect a `failed` run that embedded some documents before a later successful run. (Do NOT write that the board "does not treat the rest of the corpus as rebuilt": for a partial `updated` run it does.)
 
 ## Risks / Trade-offs
 
 - [A host whose `ingest_run` history starts with `up_to_date` rows (the corpus predates the record)] → the panel shows "configuration at ingest unknown" until the next `updated` run. That is honest: the config that built those vectors was never recorded.
 - [Partial `updated` runs] → still treated as the corpus run. Out of scope, #703.
+- [Two older unarchived deltas still say the config comes from the newest successful run (`fix-issue-565-status-provenance-honesty` spec.md:4) or "the last completed run's snapshot" (`add-ssb-deployment-provenance` spec.md:36-40)] → this change supersedes those clauses; proposal.md "Supersedes" names them so the archive step narrows them. They are not edited here: the implementer must not touch other change folders.

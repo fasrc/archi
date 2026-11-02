@@ -33,6 +33,7 @@ from src.utils.benchmark_provenance import (
     read_module_sources,
     settings_at_paths,
 )
+from src.utils.ingest_provenance import effective_chunking
 
 
 class TestConfigFingerprint:
@@ -476,3 +477,27 @@ class TestConfigVersion:
 
     def test_the_effective_configuration_is_the_named_source(self):
         assert "effective" in self._stamp()["source"]
+
+    def test_key_settings_reports_effective_chunking_beside_the_raw_paths(self):
+        running = dict(
+            self.RUNNING,
+            data_manager={"chunk_size": 1000, "chunk_overlap": 150},
+        )
+        key = self._stamp(running=running)["key_settings"]
+
+        assert key["data_manager.chunk_size"] == 1000
+        assert key["data_manager.chunk_overlap"] == 150
+        assert key["effective_chunking"] == effective_chunking(running["data_manager"])
+
+    def test_key_settings_omits_effective_chunking_without_a_data_manager_section(self):
+        key = self._stamp()["key_settings"]
+
+        assert "effective_chunking" not in key
+
+    def test_key_settings_omits_effective_chunking_when_data_manager_is_not_a_mapping(
+        self,
+    ):
+        running = dict(self.RUNNING, data_manager="not-a-mapping")
+        key = self._stamp(running=running)["key_settings"]
+
+        assert "effective_chunking" not in key

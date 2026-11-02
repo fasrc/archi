@@ -50,7 +50,9 @@ def ensure_hierarchical_schema(cursor) -> None:
 
     The chat retrieval path calls this without committing, so it must stay
     cheap: the ``idx_chunks_parent_id`` build lives in
-    ``ensure_chunks_parent_id_index``, which only committed write paths call.
+    ``ensure_chunks_parent_id_index``, which only the data-manager start calls
+    (``build_parent_id_index_at_startup`` in ``src/bin/service_data_manager.py``,
+    issue #667).
     """
     cursor.execute(_CREATE_PARENT_NODES_TABLE)
     cursor.execute(_CREATE_PARENT_NODES_INDEX)
@@ -61,7 +63,7 @@ def ensure_chunks_parent_id_index(cursor) -> None:
 
     Mirrors ``init.sql:346-347`` for volumes that predate it, so the ``NOT
     EXISTS`` predicate in the parent-delete helpers uses the index instead of a
-    full scan of ``document_chunks``. Call it only from a path that commits;
-    a rolled-back ``CREATE INDEX`` is rebuilt on the next call.
+    full scan of ``document_chunks``. Only the data-manager start calls it,
+    in its own committed transaction; no request or ingest path runs DDL.
     """
     cursor.execute(_CREATE_CHUNKS_PARENT_ID_INDEX)

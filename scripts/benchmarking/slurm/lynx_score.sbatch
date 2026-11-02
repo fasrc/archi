@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+#SBATCH -J archi-lynx
+#SBATCH -p gpu
+#SBATCH --gres=gpu:1
+#SBATCH -c 4
+#SBATCH --mem=64G
+#SBATCH -t 02:00:00
+#SBATCH --no-requeue
+#SBATCH -o archi-lynx-%j.out
+#
+# Lynx 70B variant: two H200 GPUs. Use these lines in place of the -p, --gres, --mem
+# and -t lines above, and the 70B MODEL_ID, MODEL_REVISION and GPUS below. The 70B
+# weights are 141 GB, more than one GPU holds, so vLLM splits the model over the GPUs.
+##SBATCH -p gpu_h200
+##SBATCH --gres=gpu:2
+##SBATCH --mem=256G
+##SBATCH -t 04:00:00
+
+# Score one run's judge bundle with PatronusAI Lynx, in a pinned vLLM container
+# (#735; design D11 in openspec/changes/archive/2026-10-23-add-lynx-faithfulness-scorer).
+#
+#   sbatch scripts/benchmarking/slurm/lynx_score.sbatch <bundle folder> [<out dir>]
+#   bash scripts/benchmarking/slurm/lynx_score.sbatch --dry-run <bundle folder> [<out dir>]
+#
+# Submit from the repo root: in a job, Slurm runs a copy of this file, so the repo is
+# $SLURM_SUBMIT_DIR. The bundle folder is <out_dir>/<judge_bundle_dir>/<basename>-arm<N>/
+# of a judge_mode: deferred run, with BUNDLE_COMPLETE. The out dir is the folder of the
+# result JSON, where compare_runs.py looks for <basename>-arm<N>.lynx.json. Without the
+# second argument it is the nearest folder above the bundle folder that holds
+# <basename>.json. --dry-run prints the container command and starts nothing.
+#
+# Set LYNX_LAB to your lab folder under $SCRATCH (/n/netscratch), or LYNX_SCRATCH to a
+# folder of your own. The model, the image cache and the vLLM compile cache (which
+# follows XDG_CACHE_HOME) go there, not to the home folder that Apptainer binds in.
+# The scorer cannot resume a half-scored bundle, so the job never runs on a partition
+# that preempts and requeues it.
+set -euo pipefail
+
+# --- Settings ---------------------------------------------------------------
+IMAGE="docker://vllm/vllm-openai:v0.31.0-cu129"
+MODEL_ID="PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct"
+MODEL_REVISION="5523f869eb5eecb4bca417b6e6d3532e746a9664"
+# The GPUs that vLLM splits the model over (--tensor-parallel-size): the N of
+# --gres=gpu:<N> above.
+GPUS="1"
+# The token limit (--context-tokens): a row whose prompt plus 600 new tokens is more
+# than this is skipped, never cut. vLLM reserves this limit, and refuses one above the
+# model's trained length. Lynx 8B and 70B read 8,192 tokens.
+CONTEXT_TOKENS="8000"
+# Lynx 70B (see the variant at the top):
+# MODEL_ID="PatronusAI/Llama-3-Patronus-Lynx-70B-Instruct"
+# MODEL_REVISION="503b9b9469aec7be01144517e697a20bd966f27a"
+# GPUS="2"
+# Lynx 8B v1.1 reads up to 128,000 tokens and runs on one GPU, so its swap needs no
+# ##SBATCH lines. 32,000 fits every golden-set row measured (the longest was 25,610
+# tokens) and keeps vLLM's KV cache near 4 GiB:
+# MODEL_ID="PatronusAI/Llama-3-Patronus-Lynx-8B-Instruct-v1.1"
+# MODEL_REVISION="00de9f9062d93a95e4e359d3c92b8ea1d0114738"
+# CONTEXT_TOKENS="32000"
+LAB="${LYNX_LAB:-}"
+SCRATCH_DIR="${LYNX_SCRATCH:-${SCRATCH:-/n/netscratch}/${LAB}/Lab/${USER}/archi-lynx}"
+# -----------------------------------------------------------------------------
+
+die() {
+  echo "lynx_score: refused: $*" >&2
+  exit 1
+}
+
+usage() {
+  echo "usage: sbatch lynx_score.sbatch <bundle folder> [<out dir>]" >&2
+  echo "       bash lynx_score.sbatch --dry-run <bundle folder> [<out dir>]" >&2
+  exit 2
+}
+
+DRY_RUN=false
+if [ "${1:-}" = --dry-run ]; then
+  DRY_RUN=true
+  shift
+fi
+[ $# -ge 1 ] && [ $# -le 2 ] || usage
+[[ "$GPUS" =~ ^[1-9][0-9]*$ ]] \
+  || die "GPUS=\"$GPUS\" is not a whole number of 1 or more; set it to the N of --gres=gpu:<N>"
+{ [[ "$CONTEXT_TOKENS" =~ ^[1-9][0-9]*$ ]] && [ "$CONTEXT_TOKENS" -gt 600 ]; } \
+  || die "CONTEXT_TOKENS=\"$CONTEXT_TOKENS\" is not a whole number above 600, the new tokens of each row"
+
+[ -d "$1" ] || die "$1 is not a folder"
+BUNDLE="$(cd "$1" && pwd -P)"
+[ -f "$BUNDLE/BUNDLE_COMPLETE" ] \
+  || die "$BUNDLE has no BUNDLE_COMPLETE; the job scores only a complete run bundle"
+NAME="$(basename "$BUNDLE")"
+[[ "$NAME" =~ ^(.+)-arm[0-9]+$ ]] || die "the folder name $NAME is not <basename>-arm<N>"
+BASENAME="${BASH_REMATCH[1]}"
+
+if [ $# -eq 2 ]; then
+  [ -d "$2" ] || die "the out dir $2 is not a folder"
+  OUT_DIR="$(cd "$2" && pwd -P)"
+else
+  OUT_DIR=""
+  dir="$(dirname "$BUNDLE")"
+  while :; do
+    if [ -f "$dir/$BASENAME.json" ]; then
+      OUT_DIR="$dir"
+      break
+    fi
+    [ "$dir" != / ] || break
+    dir="$(dirname "$dir")"
+  done
+  [ -n "$OUT_DIR" ] || die "no folder above $BUNDLE holds $BASENAME.json; give the folder of the result JSON as the second argument"
+fi
+case "$OUT_DIR/" in
+  "$BUNDLE/"*) die "the out dir $OUT_DIR is the bundle folder or inside the bundle folder" ;;
+esac
+[ ! -e "$OUT_DIR/$NAME.lynx.json" ] \
+  || die "$OUT_DIR/$NAME.lynx.json exists; remove it to score the bundle again"
+
+if [ -n "${SLURM_JOB_ID:-}" ]; then
+  REPO="${SLURM_SUBMIT_DIR:-$PWD}"
+else
+  REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
+fi
+
+if [ -z "${LYNX_SCRATCH:-}" ] && [ -z "$LAB" ]; then
+  [ "$DRY_RUN" = true ] || die "set LYNX_LAB (your lab folder under /n/netscratch) or LYNX_SCRATCH"
+  echo "lynx_score: LYNX_LAB is not set; a job refuses to start without it or LYNX_SCRATCH" >&2
+fi
+
+for path in "$REPO" "$BUNDLE" "$OUT_DIR" "$SCRATCH_DIR"; do
+  case "$path" in
+    *:* | *,*) die "$path has a ':' or a ','; apptainer --bind cannot take it" ;;
+  esac
+done
+
+CMD=(
+  apptainer exec --nv
+  --bind "$REPO" --bind "$BUNDLE" --bind "$OUT_DIR" --bind "$SCRATCH_DIR"
+  --pwd "$REPO"
+  --env "HF_HOME=$SCRATCH_DIR/hf"
+  --env "XDG_CACHE_HOME=$SCRATCH_DIR/cache"
+  --env PYTHONNOUSERSITE=1
+  "$IMAGE"
+  python3 -m scripts.benchmarking.lynx.score "$BUNDLE"
+  --model "$MODEL_ID" --revision "$MODEL_REVISION"
+  --out-dir "$OUT_DIR" --backend vllm --tensor-parallel-size "$GPUS"
+  --context-tokens "$CONTEXT_TOKENS"
+)
+
+if [ "$DRY_RUN" = true ]; then
+  printf '%q' "${CMD[0]}"
+  printf ' %q' "${CMD[@]:1}"
+  printf '\n'
+  exit 0
+fi
+
+[ -n "${SLURM_JOB_ID:-}" ] || die "not in a Slurm job; submit it with sbatch, or use --dry-run"
+[ -f "$REPO/scripts/benchmarking/lynx/score.py" ] \
+  || die "$REPO is not the archi repo root; submit the job from the repo root"
+command -v apptainer >/dev/null || die "apptainer is not on PATH"
+
+mkdir -p "$SCRATCH_DIR/hf" "$SCRATCH_DIR/cache" "$SCRATCH_DIR/apptainer"
+export APPTAINER_CACHEDIR="$SCRATCH_DIR/apptainer"
+echo "lynx_score: job $SLURM_JOB_ID scores $BUNDLE into $OUT_DIR" >&2
+exec "${CMD[@]}"

@@ -23,12 +23,34 @@ def _run(action, success_message: str) -> None:
     click.echo(f"{success_message}: {manifest['run_id']} ({manifest['status']})")
 
 
-@click.group(name="eval")
+DEPRECATION_NOTICE = (
+    "Deprecated: 'archi eval qa' is now 'archi qa'. The 'archi eval' alias will be "
+    "removed in a later release."
+)
+
+
+class _AliasContext(click.Context):
+    # Leave the alias name out of usage lines, so the alias's help and usage
+    # errors name 'archi qa' and its stdout matches the direct path.
+    @property
+    def command_path(self) -> str:
+        return self.parent.command_path if self.parent is not None else ""
+
+
+class _DeprecatedAliasGroup(click.Group):
+    context_class = _AliasContext
+
+    def parse_args(self, ctx: click.Context, args: list) -> list:
+        click.echo(DEPRECATION_NOTICE, err=True)
+        return super().parse_args(ctx, args)
+
+
+@click.group(name="eval", cls=_DeprecatedAliasGroup, hidden=True)
 def eval_cli() -> None:
-    """Run Archi evaluation suites."""
+    """Deprecated alias for 'archi qa'."""
 
 
-@eval_cli.group(name="qa", invoke_without_command=True)
+@click.group(name="qa", invoke_without_command=True)
 @click.pass_context
 @click.option(
     "--dataset", type=click.Path(path_type=Path), help="JSON or JSONL QA dataset."
@@ -265,3 +287,6 @@ def score_cli(
         ),
         "QA scoring completed",
     )
+
+
+eval_cli.add_command(qa_cli)

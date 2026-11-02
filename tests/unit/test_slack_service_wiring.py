@@ -21,6 +21,7 @@ from jinja2 import (
 from src.cli.managers.secrets_manager import SecretsManager
 from src.cli.service_registry import service_registry
 from src.cli.utils.service_builder import ServiceBuilder
+from src.interfaces.slack_bot import DEFAULT_EXTERNAL_USER_TEXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILES = REPO_ROOT / "src/cli/templates/dockerfiles"
@@ -180,6 +181,9 @@ def test_config_slack_defaults():
         "timeout_seconds": 600,
         "max_workers": 4,
         "history_limit": 20,
+        "internal_users_only": False,
+        "allowed_channels": [],
+        "external_user_text": DEFAULT_EXTERNAL_USER_TEXT,
     }
 
 
@@ -210,6 +214,9 @@ def test_config_slack_explicit_values_are_kept():
             "timeout_seconds": 120,
             "max_workers": 2,
             "history_limit": 0,
+            "internal_users_only": True,
+            "allowed_channels": ["C0C8TS7H8BV", "C0BTTAFE4ET"],
+            "external_user_text": 'Staff only: it\'s <internal> & "private".',
         }
     }
     assert _render_config(services=services)["slack"] == services["slack"]
@@ -218,7 +225,15 @@ def test_config_slack_explicit_values_are_kept():
 def test_config_slack_null_values_render_the_defaults():
     services = {
         "slack": dict.fromkeys(
-            ["chat_url", "timeout_seconds", "max_workers", "history_limit"]
+            [
+                "chat_url",
+                "timeout_seconds",
+                "max_workers",
+                "history_limit",
+                "internal_users_only",
+                "allowed_channels",
+                "external_user_text",
+            ]
         )
     }
     assert _render_config(services=services)["slack"] == {
@@ -226,6 +241,9 @@ def test_config_slack_null_values_render_the_defaults():
         "timeout_seconds": 600,
         "max_workers": 4,
         "history_limit": 20,
+        "internal_users_only": False,
+        "allowed_channels": [],
+        "external_user_text": DEFAULT_EXTERNAL_USER_TEXT,
     }
 
 
@@ -265,3 +283,22 @@ def test_archi_api_token_required_for_slack_when_chat_auth_is_on(tmp_path):
 def test_archi_api_token_not_required_otherwise(tmp_path, configs, services):
     manager = _secrets_manager(tmp_path, configs)
     assert "ARCHI_API_TOKEN" not in manager.get_required_secrets_for_services(services)
+
+
+@pytest.mark.parametrize(
+    "key, value",
+    [
+        ("internal_users_only", "false"),
+        ("internal_users_only", 0),
+        ("internal_users_only", {}),
+        ("allowed_channels", ""),
+        ("allowed_channels", False),
+        ("allowed_channels", 0),
+        ("allowed_channels", {}),
+    ],
+)
+def test_config_slack_access_keys_pass_through_unconverted(key, value):
+    # The template must not turn a malformed value into a valid policy; the bot
+    # validates the raw value at start-up (follow-up to #702).
+    rendered = _render_config(services={"slack": {key: value}})["slack"]
+    assert rendered[key] == value

@@ -1,7 +1,10 @@
 ## 0. Already done by Loop 1 — do NOT redo
 
 - [x] 0.1 The branch `fix/issue-697-drift-baseline` exists, cut from `origin/dev` at
-      `c2e885ca`. You are on it. Do not re-branch and do not rebase.
+      `c2e885ca`. On 2026-11-02 Loop 1 merged `origin/dev` `18698cb3` into it (no
+      conflicts; none of the five files this change edits changed on `dev` except
+      `docs/docs/services.md`, outside the lines task 2.1 edits). You are on it. Do not
+      re-branch, do not rebase, and do not merge `dev` again.
 - [x] 0.2 `openspec validate fix-issue-697-drift-baseline --strict` passed on the host. The
       `openspec` CLI is **not usable in this container** — do not run it, and do not add a
       task that does.
@@ -42,7 +45,9 @@
       Add these tests at the end of `tests/unit/test_status_provenance.py`, reusing the
       file's `_run_row`, `_deploy_row`, `_FakeConn` and `_NthCallRaisingConn` helpers:
       (a) the issue's repro on the panel: `corpus = _run_row(status="updated",
-      completed_at=STARTED, config_snapshot={"categorization": False, "chunk_size": 1000})`,
+      started_at=DEPLOYED, completed_at=STARTED, documents_embedded=5, chunk_count=50,
+      config_snapshot={"categorization": False, "chunk_size": 1000})` (the distinct start
+      time and counts prove that "Last ingest" does not read them from the corpus run),
       `run = _run_row(status="up_to_date", config_snapshot={"categorization": True,
       "chunk_size": 500})`, `current = {"categorization": True, "chunk_size": 500}`;
       `build_knowledge_base_panel(run, current, corpus_run=corpus)` has `config ==
@@ -50,7 +55,9 @@
       the entries `{"key": "categorization", "current": True, "at_ingest": False}` and
       `{"key": "chunk_size", "current": 500, "at_ingest": 1000}` (compare as a list sorted
       by `key`), `corpus_config_available is True`, `corpus_built_at == STARTED`, and
-      `status == "up_to_date"`, `completed_at == FINISHED` (last ingest unchanged);
+      the last-ingest fields still come from `run`: `status == "up_to_date"`,
+      `started_at == STARTED`, `completed_at == FINISHED`, `duration == "1 hr 7 min"`,
+      `documents_embedded == 1091` and `chunk_count == 6926`;
       (b) an `updated` run ignores `corpus_run`: `run = _run_row()` and a different
       `corpus_run` snapshot; the panel's `config` is `run`'s snapshot and `corpus_built_at
       == FINISHED`;
@@ -80,7 +87,11 @@
       tuple(_deploy_row().values()), tuple(utd.values()), ({"chunk_size": 500},), None],
       raise_on_call=5)` with `utd` as in (e); the deployment panel is available, the
       knowledge-base panel is available with `status == "up_to_date"`, `config == {}`,
-      `drift == []`, and `corpus_config_available is False`.
+      `drift == []`, and `corpus_config_available is False`. Give the test the `caplog`
+      fixture, call the loader inside `with caplog.at_level(logging.WARNING):` (add
+      `import logging` to the file's imports), and assert that `caplog.records` holds a
+      WARNING record whose `name` is `"src.interfaces.chat_app.status_provenance"` (the
+      spec scenario says the failure is logged; a silent `except` must fail this test).
       Watch (a), (c), (d), (e) and (g) fail on the unmodified code, then implement D2–D3
       and make all tests in `tests/unit/test_status_provenance.py` and
       `tests/unit/test_status_template_render.py` pass. Do NOT give `_corpus_run_for` a
@@ -94,9 +105,11 @@
       `"From the last run that embedded documents, completed 2026-09-22 19:49 UTC"`;
       (b) a panel built from an `updated` run does not render
       `"From the last run that embedded documents"`;
-      (c) a panel built from an `up_to_date` run with `corpus_run=None` renders
-      `"Configuration at ingest unknown"` and `"drift not evaluated"`, does not render
-      `"No recorded run"`, and does not render `"configuration changed after"`;
+      (c) a panel built from an `up_to_date` run with `corpus_run=None` renders the exact
+      D4 sentence `"Configuration at ingest unknown — no run that embedded documents could
+      be read; drift not evaluated."` (one line in the test, with the em dash), does not
+      render `"No recorded"`, does not render `"no updated run"`, and does not render
+      `"configuration changed after"`;
       (d) a panel built from an `updated` run does not render
       `"Configuration at ingest unknown"`;
       (e) a panel built from an `up_to_date` run (snapshot `{"categorization": False,
@@ -113,11 +126,15 @@
 ## 2. Docs and publish
 
 - [ ] 2.1 Make every design D5 edit in `docs/docs/services.md` (lines 86, 91 (two edits), 92,
-      97, plus the two new sentences; Knowledge Base panel section only; no other section
-      changes). Then `grep -n "after this ingest\|config are from the last successful run\|drift until the next ingest\.\|No recorded run" docs/docs/services.md`
+      97, 100, plus the two new sentences; Knowledge Base panel section only; no other section
+      changes). Then `grep -n "after this ingest\|config are from the last successful run\|drift until the next ingest\.\|until the next deploy or ingest\." docs/docs/services.md`
       must print nothing. Tick this box, one commit
       (`docs: the status board config comes from the run that embedded the corpus`).
-- [ ] 2.2 Run `bash scripts/gate.sh` on the tip and confirm it exits 0. Confirm
+- [ ] 2.2 Do the steps of this task in this order: check, tick this box, commit the tick
+      through the hook, push, then open the PR. The tick must ride the push that opens
+      the PR; after the PR opens, `git status --porcelain` must be empty and
+      `git rev-parse HEAD` must equal `git rev-parse origin/fix/issue-697-drift-baseline`.
+      Run `bash scripts/gate.sh` in the foreground on the tip and confirm it exits 0. Confirm
       `git diff origin/dev --stat` lists only `src/interfaces/chat_app/status_provenance.py`,
       `src/interfaces/chat_app/templates/status.html`,
       `tests/unit/test_status_provenance.py`, `tests/unit/test_status_template_render.py`,
@@ -129,8 +146,11 @@
       "Post-merge operator check" line: after a redeploy, change no documents, let one
       ingest run `up_to_date`, and confirm `/ssb/status` shows "From the last run that
       embedded documents" under the config table. Also list in the PR body: the drift-box
-      title changed to "configuration changed after the corpus was built", and two existing
-      template-test assertions changed with it. Open the PR:
+      title changed to "configuration changed after the corpus was built", two existing
+      template-test assertions changed with it, and the two older spec clauses that
+      `proposal.md` "Supersedes" names (a human reconciles them at archive time). Open the PR:
       `gh pr create --repo fasrc/archi --base dev --head fix/issue-697-drift-baseline --title "status board: compare drift against the run that embedded the corpus" --body-file /tmp/pr-697.md`.
-      This task changes only this checkbox; it is complete when
-      `gh pr view --repo fasrc/archi fix/issue-697-drift-baseline` prints the PR.
+      The only file this task changes is this checkbox, and that change is committed and
+      pushed before `gh pr create`. The task is complete when
+      `gh pr view --repo fasrc/archi fix/issue-697-drift-baseline` prints a PR whose
+      base repository is `fasrc/archi` (not a fork).

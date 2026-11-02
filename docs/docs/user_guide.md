@@ -130,7 +130,7 @@ Archi has benchmarking functionality via the `archi evaluate` CLI command:
 **[Read more →](benchmarking.md)**
 
 For repeatable evaluation of complete agent answers against fixed, reviewable
-answer obligations, use the separate `archi eval qa` workflow or browser
+answer obligations, use the separate `archi qa` workflow or browser
 console.
 
 **[Evaluation guide →](evaluation.md)**
