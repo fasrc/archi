@@ -1,0 +1,286 @@
+## 0. Already done by Loop 1 — do NOT redo
+
+- [x] 0.1 The branch `fix/issue-697-drift-baseline` exists, cut from `origin/dev` at
+      `c2e885ca`. On 2026-11-02 Loop 1 merged `origin/dev` `18698cb3` into it (no
+      conflicts; none of the five files this change edits changed on `dev` except
+      `docs/docs/services.md`, outside the lines task 2.1 edits). You are on it. Do not
+      re-branch, do not rebase, and do not merge `dev` again.
+- [x] 0.2 `openspec validate fix-issue-697-drift-baseline --strict` passed on the host. The
+      `openspec` CLI is **not usable in this container** — do not run it, and do not add a
+      task that does.
+- [x] 0.3 Every design decision is made in `design.md` (D1–D5). Follow the design; where the
+      issue body and the design differ, the design wins.
+- [x] 0.4 The partial-`updated`-run case is out of scope and filed as #703. Do not work it.
+
+## Rules that apply to EVERY task below
+
+- **Red and green live in the SAME task.** `bash scripts/gate.sh` runs before every commit,
+  so a task that ends with the suite red can never be committed. Write the failing tests,
+  run them and watch them fail, make them pass, then commit — all in one task.
+- Each of tasks 1.1, 1.2 and 2.1 ends with exactly one commit (tick its checkbox in this
+  file in the same commit).
+- Before you add a test, `grep -n 'def test_' <test file>` and pick a name that is not
+  already used. No linter runs, so a duplicate `def test_...` silently replaces the older
+  test.
+- Add new tests at the END of the test file. After the insert, `git diff` the file and
+  confirm that the test that was last before your insert still ends with its own last line:
+  in `tests/unit/test_status_provenance.py` that is
+  `assert build_deployment_panel(None)["pin_mismatch"] is False`; in
+  `tests/unit/test_status_template_render.py` it is `assert "not the pinned commit" in html`.
+- Do not delete an existing test. Edit an existing test only where task 1.2 says so (two
+  assertion strings in `tests/unit/test_status_template_render.py`). After each commit,
+  `git diff origin/dev -- tests/ | grep -c '^-.*def test_'` must print `0`.
+- Run `black` and `isort` on every changed `.py` file **before** `git add`. After each
+  commit, `git status --porcelain` must be empty.
+- Never bypass the commit hook. Never add a `Co-Authored-By` or session trailer. Commit
+  messages: short, lowercase.
+- Do not edit `src/interfaces/chat_app/app.py`, `src/data_manager/**`, `src/utils/**`, or any
+  control-plane file. Under `docs/`, edit only `docs/docs/services.md` (task 2.1). The PR
+  body goes in `/tmp`, never in the repo. Do not add an entry to `docs/questions.md`.
+
+## 1. Corpus run for config and drift
+
+- [x] 1.1 Implement design D2–D3 in `src/interfaces/chat_app/status_provenance.py`, test
+      first, one commit (`fix: compare drift against the run that embedded the corpus`).
+      Add these tests at the end of `tests/unit/test_status_provenance.py`, reusing the
+      file's `_run_row`, `_deploy_row`, `_FakeConn` and `_NthCallRaisingConn` helpers:
+      (a) the issue's repro on the panel: `corpus = _run_row(status="updated",
+      started_at=DEPLOYED, completed_at=STARTED, documents_embedded=5, chunk_count=50,
+      config_snapshot={"categorization": False, "chunk_size": 1000})` (the distinct start
+      time and counts prove that "Last ingest" does not read them from the corpus run),
+      `run = _run_row(status="up_to_date", config_snapshot={"categorization": True,
+      "chunk_size": 500})`, `current = {"categorization": True, "chunk_size": 500}`;
+      `build_knowledge_base_panel(run, current, corpus_run=corpus)` has `config ==
+      {"categorization": False, "chunk_size": 1000}`, a `drift` list that contains exactly
+      the entries `{"key": "categorization", "current": True, "at_ingest": False}` and
+      `{"key": "chunk_size", "current": 500, "at_ingest": 1000}` (compare as a list sorted
+      by `key`), `corpus_config_available is True`, `corpus_built_at == STARTED`, and
+      the last-ingest fields still come from `run`: `status == "up_to_date"`,
+      `started_at == STARTED`, `completed_at == FINISHED`, `duration == "1 hr 7 min"`,
+      `documents_embedded == 1091` and `chunk_count == 6926`;
+      (b) an `updated` run ignores `corpus_run`: `run = _run_row()` and a different
+      `corpus_run` snapshot; the panel's `config` is `run`'s snapshot and `corpus_built_at
+      == FINISHED`;
+      (c) `up_to_date` run with `corpus_run=None`: `config == {}`, `drift == []`,
+      `corpus_config_available is False`, `corpus_built_at is None`, and
+      `current_config_available is True` when `current_snapshot` is `{}`;
+      (d) `build_knowledge_base_panel(None, {})` has `corpus_config_available is False` and
+      `corpus_built_at is None`;
+      (e) loader with an `up_to_date` newest run: build
+      `upd = _run_row(status="updated", completed_at=STARTED, config_snapshot={"categorization":
+      False, "chunk_size": 1000})` and `utd = _run_row(status="up_to_date",
+      config_snapshot={"categorization": False, "chunk_size": 500})` (its `completed_at` stays
+      `FINISHED`). Use `_FakeConn(results=[tuple(_deploy_row().values()),
+      tuple(utd.values()), ({"chunk_size": 500},), None, tuple(upd.values())])`. The third
+      result is the static-config row: its single column is the UNWRAPPED data-manager
+      mapping `{"chunk_size": 500}`, NOT `{"data_manager": {...}}` —
+      `build_ingest_config_snapshot` reads `chunk_size` from the top level. The fourth result
+      (`None`) is the failed-attempt read; `_FakeCursor.execute` pops it, so the row is `None`.
+      The fifth is the corpus read. Assert on `view["knowledge_base"]`: `config ==
+      {"categorization": False, "chunk_size": 1000}`, `drift == [{"key": "chunk_size",
+      "current": 500, "at_ingest": 1000}]`, `corpus_built_at == STARTED`, `status ==
+      "up_to_date"`, `completed_at == FINISHED`, and `corpus_config_available is True`;
+      (f) loader with an `updated` newest run executes exactly four reads: count the
+      fake cursor's `execute` calls (add a counter in a NEW fake class at the end of the
+      file; do not change `_FakeCursor`) and assert `4`;
+      (g) loader where the fifth read raises: `_NthCallRaisingConn(results=[
+      tuple(_deploy_row().values()), tuple(utd.values()), ({"chunk_size": 500},), None],
+      raise_on_call=5)` with `utd` as in (e); the deployment panel is available, the
+      knowledge-base panel is available with `status == "up_to_date"`, `config == {}`,
+      `drift == []`, and `corpus_config_available is False`. Give the test the `caplog`
+      fixture, call the loader inside `with caplog.at_level(logging.WARNING):` (add
+      `import logging` to the file's imports), and assert that `caplog.records` holds a
+      WARNING record whose `name` is `"src.interfaces.chat_app.status_provenance"` (the
+      spec scenario says the failure is logged; a silent `except` must fail this test).
+      Watch (a), (c), (d), (e) and (g) fail on the unmodified code, then implement D2–D3
+      and make all tests in `tests/unit/test_status_provenance.py` and
+      `tests/unit/test_status_template_render.py` pass. Do NOT give `_corpus_run_for` a
+      `run is None` arm (design D3): it would be dead, uncovered code.
+
+- [x] 1.2 Implement design D4 in `src/interfaces/chat_app/templates/status.html`, test
+      first, one commit (`fix: name the run that embedded the corpus on the status board`).
+      Add tests at the end of `tests/unit/test_status_template_render.py`:
+      (a) a panel built from an `up_to_date` run (`completed_at=FINISHED`) with an
+      `updated` `corpus_run` (`completed_at=STARTED`) renders
+      `"From the last run that embedded documents, completed 2026-09-22 19:49 UTC"`;
+      (b) a panel built from an `updated` run does not render
+      `"From the last run that embedded documents"`;
+      (c) a panel built from an `up_to_date` run with `corpus_run=None` renders the exact
+      D4 sentence `"Configuration at ingest unknown — no run that embedded documents could
+      be read; drift not evaluated."` (one line in the test, with the em dash), does not
+      render `"No recorded"`, does not render `"no updated run"`, and does not render
+      `"configuration changed after"`;
+      (d) a panel built from an `updated` run does not render
+      `"Configuration at ingest unknown"`;
+      (e) a panel built from an `up_to_date` run (snapshot `{"categorization": False,
+      "chunk_size": 500}`) with an `updated` `corpus_run` (snapshot `{"categorization": False,
+      "chunk_size": 1000}`) and `current_snapshot={"categorization": False, "chunk_size":
+      500}` renders `"configuration changed after the corpus was built"` and does not render
+      `"configuration changed after this ingest"`.
+      Watch (a), (c) and (e) fail. Then add the two template blocks and change the drift-box
+      title to `⚠ configuration changed after the corpus was built` (design D4). Change the
+      two existing assertions that name the old title — line 116 (`... in html`) and line
+      230 (`... not in html`) — to `"configuration changed after the corpus was built"`;
+      change nothing else in those two tests. Make the whole file pass.
+
+## 2. Docs and publish
+
+- [x] 2.1 Make every design D5 edit in `docs/docs/services.md` (lines 86, 91 (two edits), 92,
+      97, 100, plus the two new sentences; Knowledge Base panel section only; no other section
+      changes). Then `grep -n "after this ingest\|config are from the last successful run\|drift until the next ingest\.\|until the next deploy or ingest\." docs/docs/services.md`
+      must print nothing. Tick this box, one commit
+      (`docs: the status board config comes from the run that embedded the corpus`).
+- [x] 2.2 Do the steps of this task in this order: check, tick this box, commit the tick
+      through the hook, push, then open the PR. The tick must ride the push that opens
+      the PR; after the PR opens, `git status --porcelain` must be empty and
+      `git rev-parse HEAD` must equal `git rev-parse origin/fix/issue-697-drift-baseline`.
+      Run `bash scripts/gate.sh` in the foreground on the tip and confirm it exits 0. Confirm
+      `git diff origin/dev --stat` lists only `src/interfaces/chat_app/status_provenance.py`,
+      `src/interfaces/chat_app/templates/status.html`,
+      `tests/unit/test_status_provenance.py`, `tests/unit/test_status_template_render.py`,
+      `docs/docs/services.md`, and files under
+      `openspec/changes/fix-issue-697-drift-baseline/`. Push with
+      `git push -u origin fix/issue-697-drift-baseline`. Write the PR body to
+      `/tmp/pr-697.md` with `Closes #697` in the body (never the title), a per-task
+      summary, a line "Out of scope: partial `updated` runs, tracked in #703", and a
+      "Post-merge operator check" line: after a redeploy, change no documents, let one
+      ingest run `up_to_date`, and confirm `/ssb/status` shows "From the last run that
+      embedded documents" under the config table. Also list in the PR body: the drift-box
+      title changed to "configuration changed after the corpus was built", two existing
+      template-test assertions changed with it, and the two older spec clauses that
+      `proposal.md` "Supersedes" names (a human reconciles them at archive time). Open the PR:
+      `gh pr create --repo fasrc/archi --base dev --head fix/issue-697-drift-baseline --title "status board: compare drift against the run that embedded the corpus" --body-file /tmp/pr-697.md`.
+      The only file this task changes is this checkbox, and that change is committed and
+      pushed before `gh pr create`. The task is complete when
+      `gh pr view --repo fasrc/archi fix/issue-697-drift-baseline` prints a PR whose
+      base repository is `fasrc/archi` (not a fork).
+
+## 3. Post-PR verification findings (added at wrap-up, 2026-11-02)
+
+The post-PR check on `f8cc2d16` confirmed two test gaps. The code is correct today, but
+each of these four edits to `src/interfaces/chat_app/status_provenance.py` brings back the
+#697 bug and all 76 tests in the two changed test files still pass:
+M1 line 89 `status = 'updated'` → `status IN ('updated', 'up_to_date')`;
+M2 line 90 `ORDER BY completed_at DESC` → `ASC`;
+M3 line 334 `_SQL_LATEST_CORPUS_RUN` → `_SQL_LATEST_INGEST_RUN`;
+M4 line 335 `)` → `) or run_row` (the end of the `corpus_row = _fetch_row(` call).
+Section 3 adds tests only. Do not edit any file under `src/`.
+
+- [ ] 3.1 Add the block of Appendix A, unchanged, at the END of
+      `tests/unit/test_status_provenance.py` (after the `    )` that ends
+      `test_loader_corpus_read_raises_gives_unknown_config_and_logs_warning`). Its three
+      test names and two class names are new:
+      `grep -c 'def test_sql_latest_corpus_run_selects_newest_updated_run_only\|def test_loader_fifth_read_runs_the_corpus_query\|def test_loader_up_to_date_newest_run_with_no_updated_run_gives_unknown_config\|class _SqlRecordingFakeCursor\|class _SqlRecordingFakeConn' tests/unit/test_status_provenance.py`
+      must print `5`. Run
+      `python -m pytest -q tests/unit/test_status_provenance.py tests/unit/test_status_template_render.py`:
+      `79 passed`. Red check: make edit M1 by hand, run the same command, and see
+      `1 failed, 78 passed` with `test_sql_latest_corpus_run_selects_newest_updated_run_only`
+      failed. Undo M1. Make edit M4 by hand, run again, and see `1 failed, 78 passed` with
+      `test_loader_up_to_date_newest_run_with_no_updated_run_gives_unknown_config` failed.
+      Undo M4. `git diff -- src/` must print nothing. (Measured on the host: M2 fails the
+      first new test, M3 fails `test_loader_fifth_read_runs_the_corpus_query`.) Run `black`
+      and `isort` on the test file (they change nothing), tick this box, and commit the test
+      file and this file together through the hook
+      (`test: pin the corpus query and the no-updated-run loader path`).
+- [ ] 3.2 Tick this box, commit the tick through the hook, then push with
+      `git push origin fix/issue-697-drift-baseline`. PR #799 is already open: do not run
+      `gh pr create` or `gh pr edit`. The task is complete when `git status --porcelain` is
+      empty and `git rev-parse HEAD` equals
+      `git rev-parse origin/fix/issue-697-drift-baseline`.
+
+### Appendix A (for task 3.1)
+
+```python
+def test_sql_latest_corpus_run_selects_newest_updated_run_only():
+    from src.interfaces.chat_app.status_provenance import _SQL_LATEST_CORPUS_RUN
+
+    assert "status = 'updated'" in _SQL_LATEST_CORPUS_RUN
+    assert "up_to_date" not in _SQL_LATEST_CORPUS_RUN
+    assert "ORDER BY completed_at DESC" in _SQL_LATEST_CORPUS_RUN
+    assert "LIMIT 1" in _SQL_LATEST_CORPUS_RUN
+
+
+class _SqlRecordingFakeCursor:
+    def __init__(self, results):
+        self.results = list(results)
+        self._row = None
+        self.sqls = []
+
+    def execute(self, sql, params=None):
+        self.sqls.append(sql)
+        self._row = self.results.pop(0) if self.results else None
+
+    def fetchone(self):
+        return self._row
+
+    def close(self):
+        pass
+
+
+class _SqlRecordingFakeConn:
+    def __init__(self, results=()):
+        self.cursor_obj = _SqlRecordingFakeCursor(results)
+
+    def cursor(self, **kwargs):
+        return self.cursor_obj
+
+    def close(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+def test_loader_fifth_read_runs_the_corpus_query():
+    from src.interfaces.chat_app.status_provenance import _SQL_LATEST_CORPUS_RUN
+
+    upd = _run_row(
+        status="updated",
+        completed_at=STARTED,
+        config_snapshot={"categorization": False, "chunk_size": 1000},
+    )
+    utd = _run_row(
+        status="up_to_date",
+        config_snapshot={"categorization": False, "chunk_size": 500},
+    )
+    conn = _SqlRecordingFakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(utd.values()),
+            ({"chunk_size": 500},),
+            None,
+            tuple(upd.values()),
+        ]
+    )
+
+    load_status_provenance(conn)
+
+    assert len(conn.cursor_obj.sqls) == 5
+    assert conn.cursor_obj.sqls[4] == _SQL_LATEST_CORPUS_RUN
+
+
+def test_loader_up_to_date_newest_run_with_no_updated_run_gives_unknown_config():
+    utd = _run_row(
+        status="up_to_date",
+        config_snapshot={"categorization": False, "chunk_size": 500},
+    )
+    conn = _FakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(utd.values()),
+            ({"chunk_size": 500},),
+            None,
+            None,
+        ]
+    )
+
+    view = load_status_provenance(conn)
+    kb = view["knowledge_base"]
+
+    assert kb["available"] is True
+    assert kb["status"] == "up_to_date"
+    assert kb["config"] == {}
+    assert kb["drift"] == []
+    assert kb["corpus_config_available"] is False
+    assert kb["corpus_built_at"] is None
+```
