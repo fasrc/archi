@@ -166,7 +166,7 @@ M3 line 334 `_SQL_LATEST_CORPUS_RUN` → `_SQL_LATEST_INGEST_RUN`;
 M4 line 335 `)` → `) or run_row` (the end of the `corpus_row = _fetch_row(` call).
 Section 3 adds tests only. Do not edit any file under `src/`.
 
-- [ ] 3.1 Add the block of Appendix A, unchanged, at the END of
+- [x] 3.1 Add the block of Appendix A, unchanged, at the END of
       `tests/unit/test_status_provenance.py` (after the `    )` that ends
       `test_loader_corpus_read_raises_gives_unknown_config_and_logs_warning`). Its three
       test names and two class names are new:
