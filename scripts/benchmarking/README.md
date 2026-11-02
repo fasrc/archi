@@ -132,8 +132,9 @@ One thin wrapper per step of the #396 campaign protocol
   pin write is not refused (#677): when the stack's newest ragas row records the same
   artifact (path and `artifact_sha256`) as the same arm and run, and the pin is still absent
   (a first pin) or still the row's `repinned_from` (a re-pin, retried with `--new-corpus`),
-  it writes the pin, logs `repaired the corpus pin`, and exits 0. `--sweep` does the same for
-  the two run-1 pins. Every wrapper refuses
+  it writes the pin, logs `repaired the corpus pin`, and exits 0. An arm-mode row written
+  before #677 has no `artifact_sha256`, so a retry on it is still refused: write the row's
+  `corpus_fingerprint` to the pin file by hand. `--sweep` does the same for the two run-1 pins. Every wrapper refuses
   an arm label that does not match the YAML's own `name`. The live fingerprint comes from
   one shared routine in `src/utils/benchmark_provenance.py`: `container_corpus_fingerprint`,
   run inside the stack's data-manager container, calls `live_corpus_fingerprint`, which the
