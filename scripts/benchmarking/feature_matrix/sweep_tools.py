@@ -31,7 +31,7 @@ import sys
 import tempfile
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
@@ -320,6 +320,56 @@ def _check_census(
     return report
 
 
+def _finish_pins(
+    rows: List[dict],
+    *,
+    stack: str,
+    run: int,
+    archived: str,
+    digest: str,
+    pins_dir: Path,
+) -> Tuple[List[dict], List[Path]]:
+    """Finish the pin writes of a run whose ledger rows are durable (#677).
+
+    ``archive`` replaces the ledger, then writes the pins; a failure between the
+    two leaves rows that a retry would refuse as a duplicate. When the stack's
+    newest ragas rows are this run's rows for this exact artifact (archived path
+    and sha256), each absent pin is written with the value those rows record. A
+    pin that exists must already hold that value: anything else was not left by
+    a failed write, so nothing is repaired. Only run 1 rows carry
+    ``census_map_digest``, so only run 1 can be repaired. Returns the run's rows
+    and the pins written; no pin written means there is nothing to repair.
+    """
+    ragas = [r for r in rows if r.get("kind") == "ragas" and r.get("stack") == stack]
+    mine = [
+        r
+        for r in ragas
+        if r.get("run") == run
+        and r.get("artifact") == archived
+        and r.get("artifact_sha256") == digest
+    ]
+    if not mine or ragas[-1] is not mine[-1]:
+        return mine, []
+    want = (
+        (pins_dir / f"corpus-pin-{stack}", mine[-1].get("corpus_fingerprint")),
+        (pins_dir / f"category-map-pin-{stack}", mine[-1].get("census_map_digest")),
+    )
+    if not all(value for _, value in want):
+        return mine, []
+    for pin, value in want:
+        if pin.exists() and not (pin.is_file() and pin.read_text().strip() == value):
+            return mine, []
+    written: List[Path] = []
+    for pin, value in want:
+        if pin.exists():
+            continue
+        pin_tmp = pin.with_name(pin.name + ".tmp")
+        pin_tmp.write_text(f"{value}\n")
+        os.replace(pin_tmp, pin)
+        written.append(pin)
+    return mine, written
+
+
 def archive(
     *,
     lock: Dict[str, Any],
@@ -378,7 +428,22 @@ def archive(
         raise SweepError(refusal)
     digest = _sha(artifact)
     if any(row.get("artifact_sha256") == digest for row in rows):
-        raise SweepError(f"{artifact} is already archived")
+        mine, written = _finish_pins(
+            rows,
+            stack=stack,
+            run=run,
+            archived=str(Path(dest) / artifact.name),
+            digest=digest,
+            pins_dir=Path(pins_dir),
+        )
+        if not written:
+            raise SweepError(f"{artifact} is already archived")
+        names = ", ".join(pin.name for pin in written)
+        print(
+            f"repaired {names} for run {run} on {stack}; "
+            "its ledger rows were already written"
+        )
+        return mine
     taken = [
         row
         for row in rows

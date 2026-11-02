@@ -471,6 +471,82 @@ def test_a_retry_after_a_failed_ledger_write_completes(sweep, monkeypatch):
     assert (sweep / "out/corpus-pin-r0").read_text().strip() == "sha256:corpus"
 
 
+@pytest.mark.parametrize("failed_pin", ["corpus-pin-r0", "category-map-pin-r0"])
+def test_a_retry_after_a_failed_pin_write_finishes_both_pins(
+    sweep, monkeypatch, capsys, failed_pin
+):
+    """#677: the ledger rows are durable, a pin replace failed; a retry finishes."""
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep)
+    ledger = _ledger(sweep)
+    census = _census(sweep, digest, lock)
+    real_replace = os.replace
+
+    def failing_replace(src, dst):
+        if os.path.basename(os.fspath(dst)) == failed_pin:
+            raise OSError("pin write failed")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(st.os, "replace", failing_replace)
+    with pytest.raises(OSError, match="pin write failed"):
+        _archive(sweep, lock, artifact, 1, census)
+    assert len(json.loads(ledger.read_text())) == 4
+    assert not (sweep / "out" / failed_pin).exists()
+
+    monkeypatch.setattr(st.os, "replace", real_replace)
+    rows = _archive(sweep, lock, artifact, 1, census)
+
+    assert [row["arm"] for row in rows] == STEMS
+    assert len(json.loads(ledger.read_text())) == 4
+    assert (sweep / "out/corpus-pin-r0").read_text().strip() == "sha256:corpus"
+    assert (sweep / "out/category-map-pin-r0").read_text().strip() == digest
+    assert f"repaired {failed_pin}" in capsys.readouterr().out
+
+
+def test_a_second_archive_of_a_complete_run_one_is_still_refused(sweep, capsys):
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep)
+    ledger = _ledger(sweep)
+    census = _census(sweep, digest, lock)
+    _archive(sweep, lock, artifact, 1, census)
+    before = ledger.read_text()
+
+    with pytest.raises(st.SweepError, match="already archived"):
+        _archive(sweep, lock, artifact, 1, census)
+    assert ledger.read_text() == before
+    assert (sweep / "out/corpus-pin-r0").read_text().strip() == "sha256:corpus"
+    assert "repaired" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("tamper", ["later-row", "no-map-digest", "other-corpus-pin"])
+def test_a_retry_that_is_not_a_failed_pin_write_is_refused(sweep, tamper):
+    """A later run on the stack, rows with no map digest, or a pin that holds
+    another value: none is the state a failed pin write leaves, so no repair."""
+    lock = _lock(sweep)
+    artifact, digest = _artifact(sweep)
+    ledger = _ledger(sweep)
+    census = _census(sweep, digest, lock)
+    _archive(sweep, lock, artifact, 1, census)
+    rows = json.loads(ledger.read_text())
+    if tamper == "later-row":
+        rows.append(dict(rows[-1], run=2, artifact="later.json", artifact_sha256="0"))
+    elif tamper == "no-map-digest":
+        for row in rows:
+            row.pop("census_map_digest", None)
+    ledger.write_text(json.dumps(rows))
+    corpus_pin = sweep / "out/corpus-pin-r0"
+    corpus_pin.unlink()
+    (sweep / "out/category-map-pin-r0").unlink()
+    if tamper == "other-corpus-pin":
+        corpus_pin.write_text("sha256:other\n")
+
+    with pytest.raises(st.SweepError, match="already archived"):
+        _archive(sweep, lock, artifact, 1, census)
+    assert not (sweep / "out/category-map-pin-r0").exists()
+    kept = corpus_pin.read_text().strip() if corpus_pin.exists() else None
+    assert kept == ("sha256:other" if tamper == "other-corpus-pin" else None)
+
+
 def test_a_v2_reading_is_usable():
     assert st._usable("sha256/v2:abc")
 
