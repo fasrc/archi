@@ -125,7 +125,7 @@
 
 ## 2. Docs and publish
 
-- [ ] 2.1 Make every design D5 edit in `docs/docs/services.md` (lines 86, 91 (two edits), 92,
+- [x] 2.1 Make every design D5 edit in `docs/docs/services.md` (lines 86, 91 (two edits), 92,
       97, 100, plus the two new sentences; Knowledge Base panel section only; no other section
       changes). Then `grep -n "after this ingest\|config are from the last successful run\|drift until the next ingest\.\|until the next deploy or ingest\." docs/docs/services.md`
       must print nothing. Tick this box, one commit
