@@ -29,7 +29,7 @@ Standing notes for every task:
 
 ## 2. Docs
 
-- [ ] 2.1 In `docs/docs/troubleshooting.md`, section "Orphaned parent nodes after re-ingest", replace the paragraph that starts "First, make sure that the parent-id index exists." with Appendix E. Keep the SQL block and the sentence "The index build blocks writes to `document_chunks` until it completes." below it unchanged. Run `bash scripts/gate.sh` green, then commit as `docs(#667): the data manager builds the parent-id index at start`.
+- [x] 2.1 In `docs/docs/troubleshooting.md`, section "Orphaned parent nodes after re-ingest", replace the paragraph that starts "First, make sure that the parent-id index exists." with Appendix E. Keep the SQL block and the sentence "The index build blocks writes to `document_chunks` until it completes." below it unchanged. Run `bash scripts/gate.sh` green, then commit as `docs(#667): the data manager builds the parent-id index at start`.
 
 ## 3. Publish
 
