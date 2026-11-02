@@ -197,9 +197,14 @@ If hierarchical chunking was enabled before **archi v2026.10.0**, the
 `document_parent_nodes` table may contain rows that no chunk references.
 
 First, make sure that the parent-id index exists. Volumes created before this
-index was added do not have it, and an ingest creates it only when a document
-changes. Without it, the queries below scan all of `document_chunks` once for
-each parent row. The statement does nothing if the index exists:
+index was added do not have it. The data manager builds it when it starts, if
+`document_parent_nodes` exists, so a restart of the data-manager container
+creates it on an upgraded volume. Look for
+`Ensured idx_chunks_parent_id on document_chunks` in the data-manager log. A
+WARNING that starts with `Could not build idx_chunks_parent_id` means that the
+build failed. Without the index, the queries below scan all of
+`document_chunks` once for each parent row. To build it by hand, run the
+statement below. It does nothing if the index exists:
 
 ```sql
 CREATE INDEX IF NOT EXISTS idx_chunks_parent_id

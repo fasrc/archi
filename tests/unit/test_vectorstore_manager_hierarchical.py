@@ -1344,11 +1344,10 @@ def test_delete_existing_collection_if_reset_skips_parent_truncate_when_table_ab
     fake_conn.close.assert_called_once()
 
 
-def test_remove_from_postgres_ensures_parent_id_index_before_parent_delete(
-    monkeypatch,
-):
-    """A removal-only sync on an upgraded volume must create idx_chunks_parent_id
-    before the NOT EXISTS cleanup runs, inside the transaction that commits."""
+def test_remove_from_postgres_deletes_parents_without_index_ddl(monkeypatch):
+    """The data-manager start owns the idx_chunks_parent_id build (#667): a
+    removal-only sync runs no DDL and still deletes the unreferenced parents
+    in the transaction that commits."""
     from src.data_manager.vectorstore import parent_nodes
 
     manager = _make_manager()
@@ -1359,13 +1358,9 @@ def test_remove_from_postgres_ensures_parent_id_index_before_parent_delete(
     manager._remove_from_postgres(["hash-1"])
 
     sqls = [s for s, _ in fake_cursor.executed]
-    index_idx = next(
-        i
-        for i, s in enumerate(sqls)
-        if "CREATE INDEX IF NOT EXISTS idx_chunks_parent_id" in " ".join(s.split())
-    )
-    delete_idx = sqls.index(parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE)
-    assert index_idx < delete_idx
+    assert not any("CREATE INDEX" in " ".join(s.split()) for s in sqls)
+    assert not any("idx_chunks_parent_id" in s for s in sqls)
+    assert parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_RESOURCE in sqls
     fake_conn.commit.assert_called_once()
 
 
@@ -1381,11 +1376,12 @@ def test_remove_from_postgres_skips_parent_id_index_when_table_absent(monkeypatc
     assert not any("idx_chunks_parent_id" in s for s, _ in fake_cursor.executed)
 
 
-def test_add_to_postgres_hierarchical_ensures_parent_id_index_before_commit(
+def test_add_to_postgres_hierarchical_runs_no_parent_id_index_ddl(
     monkeypatch,
 ):
-    """The add path builds idx_chunks_parent_id in the committed setup step,
-    before any parent cleanup runs."""
+    """The data-manager start owns the idx_chunks_parent_id build (#667): the
+    add path runs no index DDL, and its setup step still commits before the
+    parent cleanup runs."""
     from src.data_manager.vectorstore import parent_nodes
 
     manager = _make_manager()
@@ -1431,14 +1427,10 @@ def test_add_to_postgres_hierarchical_ensures_parent_id_index_before_commit(
 
     manager._add_to_postgres({"hash-1": "/tmp/doc.html"})
 
-    index_idx = next(
-        i
-        for i, s in enumerate(events)
-        if "CREATE INDEX IF NOT EXISTS idx_chunks_parent_id" in " ".join(s.split())
-    )
+    assert not any("idx_chunks_parent_id" in s for s in events)
     first_commit = events.index("COMMIT")
     delete_idx = events.index(parent_nodes.DELETE_UNREFERENCED_PARENTS_FOR_DOCUMENT)
-    assert index_idx < first_commit < delete_idx
+    assert first_commit < delete_idx
 
 
 def test_add_to_postgres_hierarchical_count_excludes_rolled_back_deletes(

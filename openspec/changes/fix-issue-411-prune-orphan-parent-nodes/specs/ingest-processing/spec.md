@@ -42,21 +42,6 @@ The system SHALL truncate `document_parent_nodes`, when the table exists, in the
 - **WHEN** `reset_collection` is on and `document_parent_nodes` exists
 - **THEN** the table is truncated after `document_chunks` and before the commit
 
-### Requirement: The committed write paths create the parent-id index
-The system SHALL create the index `idx_chunks_parent_id` on `document_chunks ((metadata->>'parent_id'))` with `IF NOT EXISTS` in `ensure_chunks_parent_id_index`, called from the committed setup step of `_add_to_postgres` and before the parent cleanup of `_remove_from_postgres`, and SHALL NOT create it in `ensure_hierarchical_schema`.
-
-#### Scenario: Upgraded volume, removal-only sync
-- **WHEN** `_remove_from_postgres` runs and `document_parent_nodes` exists
-- **THEN** it executes the `CREATE INDEX IF NOT EXISTS idx_chunks_parent_id` statement before the first parent delete, in the transaction that commits
-
-#### Scenario: Upgraded volume, add path
-- **WHEN** `_add_to_postgres` runs with hierarchical chunking
-- **THEN** it executes the `CREATE INDEX IF NOT EXISTS idx_chunks_parent_id` statement before the setup commit
-
-#### Scenario: Chat retrieval path
-- **WHEN** `ensure_hierarchical_schema` runs on a cursor
-- **THEN** it does not execute any statement on `idx_chunks_parent_id`
-
 ### Requirement: Parent deletes are logged and leave the fingerprint queries unchanged
 The system SHALL log, at INFO, one summary line with the count of parent rows deleted for each `_add_to_postgres` run with hierarchical chunking and for each `_remove_from_postgres` call, and SHALL NOT change the text of the corpus-fingerprint queries.
 

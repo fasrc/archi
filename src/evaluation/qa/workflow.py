@@ -873,6 +873,7 @@ class QAWorkflow:
                     iter_jsonl(run_dir / "evaluation_results.jsonl"),
                     iter_jsonl(run_dir / "live_checks.jsonl"),
                     item_sink=item_writer.write,
+                    items_total=manifest["phases"]["prepare"]["input_items"],
                 )
             summary["provenance"] = {
                 "agent_config_sha256": manifest["artifacts"][
@@ -1228,6 +1229,7 @@ class QAWorkflow:
                     iter_jsonl(output_dir / "evaluation_results.jsonl"),
                     iter_jsonl(output_dir / "live_checks.jsonl"),
                     item_sink=item_writer.write,
+                    items_total=manifest["phases"]["prepare"]["input_items"],
                 )
             summary["provenance"] = {
                 "agent_config_sha256": manifest["artifacts"][

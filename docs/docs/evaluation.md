@@ -1216,7 +1216,10 @@ For `P` prepared items and `N` attempts:
 - the agent is invoked up to `P × N` times;
 - the comparator is invoked once for each `answer_ready` attempt;
 - the atom extractor is invoked once for each eligible row without supplied
-  atoms.
+  atoms, and one more time for a row whose first output fails shape validation
+  (at most twice for each row). A retried row carries
+  `"gold_extraction_attempts": 2` in `preparation.jsonl`, and its `usage`
+  covers both calls.
 
 Start with one or two representative items and one attempt to validate
 connectivity, structured output, tool loading, and artifact permissions. Then
@@ -1238,7 +1241,8 @@ pricing a benchmark run from these records leaves out the SUT's tokens.
 
 - `preparation.jsonl` — rows where the extractor was called (`atom_source: "inferred"`,
   or `preparation_failed` after the extractor call) carry a `usage` key (`null` if the
-  call failed before it reported usage). Supplied-atom rows have no `usage` key.
+  call failed before it reported usage). Supplied-atom rows have no `usage` key. On a
+  row with `"gold_extraction_attempts": 2`, `usage` is the sum of both extractor calls.
 - `answers.jsonl` — every `answer_ready` and `execution_failed` row carries `"usage"`
   (`null` if the runtime reported no counts).
 - `evaluation_results.jsonl` — every `scored` and `evaluation_failed` row carries `"usage"`.

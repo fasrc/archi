@@ -9,6 +9,8 @@ from flask import Flask, jsonify
 
 from src.data_manager.data_manager import DataManager
 from src.data_manager.scheduler import CronScheduler
+from src.data_manager.vectorstore import parent_nodes
+from src.data_manager.vectorstore.schema import ensure_chunks_parent_id_index
 from src.interfaces.uploader_app.app import FlaskAppWrapper
 from src.utils.config_access import (
     get_full_config,
@@ -25,6 +27,41 @@ from src.utils.telemetry import instrument_flask_app
 logger = get_logger(__name__)
 
 
+def build_parent_id_index_at_startup(factory) -> bool:
+    """Build ``idx_chunks_parent_id`` once, in its own committed transaction (#667).
+
+    ``init.sql`` creates the index only on a fresh volume. The data-manager start
+    is the single owner of the build: no request or ingest path runs DDL. The
+    statement is the plain ``CREATE INDEX IF NOT EXISTS`` (no ``CONCURRENTLY``).
+
+    Return ``True`` when the build committed. Return ``False`` and run no DDL
+    when ``document_parent_nodes`` does not exist. Return ``False`` and log a
+    WARNING when the connection or the build fails: the service still starts,
+    and the parent deletes scan ``document_chunks`` until a later start.
+    """
+    try:
+        with factory.connection_pool.get_connection() as conn:
+            with conn.cursor() as cursor:
+                if not parent_nodes.parent_table_exists(cursor):
+                    conn.rollback()
+                    logger.info(
+                        "document_parent_nodes does not exist; "
+                        "skipped the idx_chunks_parent_id build"
+                    )
+                    return False
+                ensure_chunks_parent_id_index(cursor)
+            conn.commit()
+    except Exception:
+        logger.warning(
+            "Could not build idx_chunks_parent_id at data-manager start; "
+            "parent deletes scan document_chunks until a later start builds it",
+            exc_info=True,
+        )
+        return False
+    logger.info("Ensured idx_chunks_parent_id on document_chunks")
+    return True
+
+
 def main() -> None:
     setup_logging()
     # set API keys in env for downstream clients
@@ -36,6 +73,7 @@ def main() -> None:
         password_override=read_secret("PG_PASSWORD")
     )
     PostgresServiceFactory.set_instance(factory)
+    build_parent_id_index_at_startup(factory)
     config = get_full_config()
     services_config = get_services_config()
     data_manager_cfg = services_config.get("data_manager", {})
