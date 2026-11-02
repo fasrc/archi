@@ -125,7 +125,10 @@ TRIAL_BUNDLES="*_054355* *_081227* *_130451* control-*" bash scripts/submit.sh g
 ```
 
 To score the rows no inline judge has scored, point the job at `bundles-unscored/`; the
-scores go to `scores-unscored/<judge>/`, which `compare.py` ignores (no Sonnet reference):
+scores go to `scores-unscored/<judge>/`, which `compare.py` ignores (no Sonnet reference).
+That root exists and is world-writable like `scores/`; a job cannot create a new top-level
+folder in the package (the owner does, with `mkdir -m 2777 <root>`), and refuses clearly
+when the root is missing:
 
 ```bash
 TRIAL_BUNDLES_DIR=bundles-unscored bash scripts/submit.sh gpt-oss-120b

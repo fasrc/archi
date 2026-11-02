@@ -195,6 +195,10 @@ else
   [ -f "$SCORER_IMAGE" ] || die "no scorer image at $SCORER_IMAGE"
   [ -d "$HF_HOME_DIR/hub" ] || die "no Hugging Face cache at $HF_HOME_DIR/hub"
   [ -d "$BUNDLES_DIR" ] || die "no bundles folder at $BUNDLES_DIR"
+  # The operator does not own the package, so a top-level output root cannot be created by
+  # the job: the package owner makes it (mkdir -m 2777 <root>), as for scores/ and logs/.
+  [ -d "$PKG/$OUT_ROOT" ] && [ -w "$PKG/$OUT_ROOT" ] \
+    || die "the output root $PKG/$OUT_ROOT must exist and be writable by you; ask the package owner for: mkdir -m 2777 $PKG/$OUT_ROOT"
   mkdir -p "$OUT_DIR" "$PKG/logs" "$CACHE_DIR/apptainer" "$CACHE_DIR/xdg" "$CACHE_DIR/hf-modules"
   SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/archi-judge-trial.$SLURM_JOB_ID.XXXXXX")"
   mkdir -p "$SOCK_DIR/no-torchcodec"
