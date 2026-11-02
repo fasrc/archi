@@ -3,7 +3,7 @@
 ### Requirement: The corpus pin moves only after its ledger row is written
 `archive_run.sh` SHALL write or move a stack's corpus pin only after the ledger write that records that archive succeeded, in arm mode and in sweep mode.
 
-A pin write SHALL be atomic: the pin file holds the old value or the new value, never a partial value. When the ledger write fails, the pin file SHALL keep its value from before the run (or stay absent if it was absent), and the wrapper SHALL exit non-zero. The ledger row schema SHALL not change.
+A pin write SHALL be atomic: the pin file holds the old value or the new value, never a partial value. When the ledger write fails, the pin file SHALL keep its value from before the run (or stay absent if it was absent), and the wrapper SHALL exit non-zero. The pin-ordering fix SHALL not change the ledger row schema (issue #677 later adds `artifact_sha256` to arm-mode rows).
 
 #### Scenario: First pin with a failed ledger append
 - **WHEN** `archive_run.sh <arm> 1 <arm.yaml>` runs on a stack with no pin file and `fm_ledger_append` fails
