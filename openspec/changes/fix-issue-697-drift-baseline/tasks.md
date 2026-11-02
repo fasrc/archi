@@ -130,7 +130,7 @@
       changes). Then `grep -n "after this ingest\|config are from the last successful run\|drift until the next ingest\.\|until the next deploy or ingest\." docs/docs/services.md`
       must print nothing. Tick this box, one commit
       (`docs: the status board config comes from the run that embedded the corpus`).
-- [ ] 2.2 Do the steps of this task in this order: check, tick this box, commit the tick
+- [x] 2.2 Do the steps of this task in this order: check, tick this box, commit the tick
       through the hook, push, then open the PR. The tick must ride the push that opens
       the PR; after the PR opens, `git status --porcelain` must be empty and
       `git rev-parse HEAD` must equal `git rev-parse origin/fix/issue-697-drift-baseline`.
