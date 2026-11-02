@@ -154,3 +154,133 @@
       pushed before `gh pr create`. The task is complete when
       `gh pr view --repo fasrc/archi fix/issue-697-drift-baseline` prints a PR whose
       base repository is `fasrc/archi` (not a fork).
+
+## 3. Post-PR verification findings (added at wrap-up, 2026-11-02)
+
+The post-PR check on `f8cc2d16` confirmed two test gaps. The code is correct today, but
+each of these four edits to `src/interfaces/chat_app/status_provenance.py` brings back the
+#697 bug and all 76 tests in the two changed test files still pass:
+M1 line 89 `status = 'updated'` → `status IN ('updated', 'up_to_date')`;
+M2 line 90 `ORDER BY completed_at DESC` → `ASC`;
+M3 line 334 `_SQL_LATEST_CORPUS_RUN` → `_SQL_LATEST_INGEST_RUN`;
+M4 line 335 `)` → `) or run_row` (the end of the `corpus_row = _fetch_row(` call).
+Section 3 adds tests only. Do not edit any file under `src/`.
+
+- [ ] 3.1 Add the block of Appendix A, unchanged, at the END of
+      `tests/unit/test_status_provenance.py` (after the `    )` that ends
+      `test_loader_corpus_read_raises_gives_unknown_config_and_logs_warning`). Its three
+      test names and two class names are new:
+      `grep -c 'def test_sql_latest_corpus_run_selects_newest_updated_run_only\|def test_loader_fifth_read_runs_the_corpus_query\|def test_loader_up_to_date_newest_run_with_no_updated_run_gives_unknown_config\|class _SqlRecordingFakeCursor\|class _SqlRecordingFakeConn' tests/unit/test_status_provenance.py`
+      must print `5`. Run
+      `python -m pytest -q tests/unit/test_status_provenance.py tests/unit/test_status_template_render.py`:
+      `79 passed`. Red check: make edit M1 by hand, run the same command, and see
+      `1 failed, 78 passed` with `test_sql_latest_corpus_run_selects_newest_updated_run_only`
+      failed. Undo M1. Make edit M4 by hand, run again, and see `1 failed, 78 passed` with
+      `test_loader_up_to_date_newest_run_with_no_updated_run_gives_unknown_config` failed.
+      Undo M4. `git diff -- src/` must print nothing. (Measured on the host: M2 fails the
+      first new test, M3 fails `test_loader_fifth_read_runs_the_corpus_query`.) Run `black`
+      and `isort` on the test file (they change nothing), tick this box, and commit the test
+      file and this file together through the hook
+      (`test: pin the corpus query and the no-updated-run loader path`).
+- [ ] 3.2 Tick this box, commit the tick through the hook, then push with
+      `git push origin fix/issue-697-drift-baseline`. PR #799 is already open: do not run
+      `gh pr create` or `gh pr edit`. The task is complete when `git status --porcelain` is
+      empty and `git rev-parse HEAD` equals
+      `git rev-parse origin/fix/issue-697-drift-baseline`.
+
+### Appendix A (for task 3.1)
+
+```python
+def test_sql_latest_corpus_run_selects_newest_updated_run_only():
+    from src.interfaces.chat_app.status_provenance import _SQL_LATEST_CORPUS_RUN
+
+    assert "status = 'updated'" in _SQL_LATEST_CORPUS_RUN
+    assert "up_to_date" not in _SQL_LATEST_CORPUS_RUN
+    assert "ORDER BY completed_at DESC" in _SQL_LATEST_CORPUS_RUN
+    assert "LIMIT 1" in _SQL_LATEST_CORPUS_RUN
+
+
+class _SqlRecordingFakeCursor:
+    def __init__(self, results):
+        self.results = list(results)
+        self._row = None
+        self.sqls = []
+
+    def execute(self, sql, params=None):
+        self.sqls.append(sql)
+        self._row = self.results.pop(0) if self.results else None
+
+    def fetchone(self):
+        return self._row
+
+    def close(self):
+        pass
+
+
+class _SqlRecordingFakeConn:
+    def __init__(self, results=()):
+        self.cursor_obj = _SqlRecordingFakeCursor(results)
+
+    def cursor(self, **kwargs):
+        return self.cursor_obj
+
+    def close(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+def test_loader_fifth_read_runs_the_corpus_query():
+    from src.interfaces.chat_app.status_provenance import _SQL_LATEST_CORPUS_RUN
+
+    upd = _run_row(
+        status="updated",
+        completed_at=STARTED,
+        config_snapshot={"categorization": False, "chunk_size": 1000},
+    )
+    utd = _run_row(
+        status="up_to_date",
+        config_snapshot={"categorization": False, "chunk_size": 500},
+    )
+    conn = _SqlRecordingFakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(utd.values()),
+            ({"chunk_size": 500},),
+            None,
+            tuple(upd.values()),
+        ]
+    )
+
+    load_status_provenance(conn)
+
+    assert len(conn.cursor_obj.sqls) == 5
+    assert conn.cursor_obj.sqls[4] == _SQL_LATEST_CORPUS_RUN
+
+
+def test_loader_up_to_date_newest_run_with_no_updated_run_gives_unknown_config():
+    utd = _run_row(
+        status="up_to_date",
+        config_snapshot={"categorization": False, "chunk_size": 500},
+    )
+    conn = _FakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(utd.values()),
+            ({"chunk_size": 500},),
+            None,
+            None,
+        ]
+    )
+
+    view = load_status_provenance(conn)
+    kb = view["knowledge_base"]
+
+    assert kb["available"] is True
+    assert kb["status"] == "up_to_date"
+    assert kb["config"] == {}
+    assert kb["drift"] == []
+    assert kb["corpus_config_available"] is False
+    assert kb["corpus_built_at"] is None
+```
