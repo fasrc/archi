@@ -784,3 +784,97 @@ def test_loader_corpus_read_raises_gives_unknown_config_and_logs_warning(caplog)
         and r.name == "src.interfaces.chat_app.status_provenance"
         for r in caplog.records
     )
+
+
+def test_sql_latest_corpus_run_selects_newest_updated_run_only():
+    from src.interfaces.chat_app.status_provenance import _SQL_LATEST_CORPUS_RUN
+
+    assert "status = 'updated'" in _SQL_LATEST_CORPUS_RUN
+    assert "up_to_date" not in _SQL_LATEST_CORPUS_RUN
+    assert "ORDER BY completed_at DESC" in _SQL_LATEST_CORPUS_RUN
+    assert "LIMIT 1" in _SQL_LATEST_CORPUS_RUN
+
+
+class _SqlRecordingFakeCursor:
+    def __init__(self, results):
+        self.results = list(results)
+        self._row = None
+        self.sqls = []
+
+    def execute(self, sql, params=None):
+        self.sqls.append(sql)
+        self._row = self.results.pop(0) if self.results else None
+
+    def fetchone(self):
+        return self._row
+
+    def close(self):
+        pass
+
+
+class _SqlRecordingFakeConn:
+    def __init__(self, results=()):
+        self.cursor_obj = _SqlRecordingFakeCursor(results)
+
+    def cursor(self, **kwargs):
+        return self.cursor_obj
+
+    def close(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+def test_loader_fifth_read_runs_the_corpus_query():
+    from src.interfaces.chat_app.status_provenance import _SQL_LATEST_CORPUS_RUN
+
+    upd = _run_row(
+        status="updated",
+        completed_at=STARTED,
+        config_snapshot={"categorization": False, "chunk_size": 1000},
+    )
+    utd = _run_row(
+        status="up_to_date",
+        config_snapshot={"categorization": False, "chunk_size": 500},
+    )
+    conn = _SqlRecordingFakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(utd.values()),
+            ({"chunk_size": 500},),
+            None,
+            tuple(upd.values()),
+        ]
+    )
+
+    load_status_provenance(conn)
+
+    assert len(conn.cursor_obj.sqls) == 5
+    assert conn.cursor_obj.sqls[4] == _SQL_LATEST_CORPUS_RUN
+
+
+def test_loader_up_to_date_newest_run_with_no_updated_run_gives_unknown_config():
+    utd = _run_row(
+        status="up_to_date",
+        config_snapshot={"categorization": False, "chunk_size": 500},
+    )
+    conn = _FakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(utd.values()),
+            ({"chunk_size": 500},),
+            None,
+            None,
+        ]
+    )
+
+    view = load_status_provenance(conn)
+    kb = view["knowledge_base"]
+
+    assert kb["available"] is True
+    assert kb["status"] == "up_to_date"
+    assert kb["config"] == {}
+    assert kb["drift"] == []
+    assert kb["corpus_config_available"] is False
+    assert kb["corpus_built_at"] is None
