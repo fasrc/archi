@@ -33,7 +33,7 @@ from .node_parsing import (
     warm_up_sentence_tokenizer,
 )
 from .postgres_vectorstore import PostgresVectorStore
-from .schema import ensure_chunks_parent_id_index, ensure_hierarchical_schema
+from .schema import ensure_hierarchical_schema
 
 logger = get_logger(__name__)
 
@@ -541,8 +541,6 @@ class VectorStoreManager:
         try:
             with conn.cursor() as cursor:
                 table_exists = parent_nodes.parent_table_exists(cursor)
-                if table_exists:
-                    ensure_chunks_parent_id_index(cursor)
                 deleted_count = 0
                 for resource_hash in hashes_to_remove:
                     cursor.execute(
@@ -767,7 +765,6 @@ class VectorStoreManager:
                 # undefined-table error. Idempotent (CREATE ... IF NOT EXISTS).
                 if self.hierarchical_chunking:
                     ensure_hierarchical_schema(cursor)
-                    ensure_chunks_parent_id_index(cursor)
                     conn.commit()
 
                 total_files = len(files_to_add_items)
