@@ -32,7 +32,7 @@ import sys  # noqa: E402  (os is needed before the sys.path edit below)
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, TypeGuard
 
 # In the repo this file is scripts/benchmarking/judge_trial/trial_score.py; in a trial
 # package it is bind-mounted elsewhere and the job names archi's root in ARCHI_ROOT
@@ -310,34 +310,68 @@ def score_trial_bundle(
     except BundleFailed as exc:
         raise Refused(f"{checkpoint}: {exc}") from exc
     resumed = len(done)
+    # Every attempt at this bundle (interrupted ones included) leaves its time and judge
+    # usage beside the checkpoint, so the scores file can account for the whole bundle
+    # and not only for the attempt that finished it.
+    attempts_path = out_dir / f"{bundle.name}.scores.{digest}.attempts.jsonl"
+    prior_attempts = _read_attempts(attempts_path)
+    attempt_base = {
+        "started_at": started,
+        "job_id": job_id,
+        "node": socket.gethostname(),
+    }
+
+    def attempt_record(outcome: str) -> Dict[str, Any]:
+        return {
+            **attempt_base,
+            "outcome": outcome,
+            "finished_at": _utc_now(),
+            "elapsed_seconds": round(time.monotonic() - t0, 1),
+            "pairs_judged": len(done) - resumed,
+            "judge_usage": scorer.recorder.snapshot(),
+        }
 
     chunk_times: List[float] = []
-    for metric in scorer.metrics:
-        eligible_rows, eligible_keys = eligible_subset(rows, keys, metric)
-        todo = [
-            (row, key)
-            for row, key in zip(eligible_rows, eligible_keys)
-            if (key, metric) not in done
-        ]
-        for start in range(0, len(todo), chunk_size):
-            chunk = todo[start : start + chunk_size]
-            t_chunk = time.monotonic()
-            scores = list(scorer.score_fn(metric, [row for row, _ in chunk]))
-            chunk_times.append(time.monotonic() - t_chunk)
-            if len(scores) != len(chunk):
-                raise RuntimeError(
-                    f"the judge returned {len(scores)} scores for {len(chunk)} rows"
+    try:
+        for metric in scorer.metrics:
+            eligible_rows, eligible_keys = eligible_subset(rows, keys, metric)
+            todo = [
+                (row, key)
+                for row, key in zip(eligible_rows, eligible_keys)
+                if (key, metric) not in done
+            ]
+            for start in range(0, len(todo), chunk_size):
+                chunk = todo[start : start + chunk_size]
+                t_chunk = time.monotonic()
+                scores = list(scorer.score_fn(metric, [row for row, _ in chunk]))
+                chunk_times.append(time.monotonic() - t_chunk)
+                if len(scores) != len(chunk):
+                    raise RuntimeError(
+                        f"the judge returned {len(scores)} scores for {len(chunk)} rows"
+                    )
+                records = [
+                    _record(key, metric, s) for (_, key), s in zip(chunk, scores)
+                ]
+                append_records(checkpoint, records)
+                for record in records:
+                    done.setdefault((record["key"], metric), record)
+                print(
+                    f"trial_score: {bundle.name} {metric} "
+                    f"{min(start + chunk_size, len(todo))}/{len(todo)} pairs "
+                    f"({chunk_times[-1]:.1f}s)",
+                    file=sys.stderr,
+                    flush=True,
                 )
-            records = [_record(key, metric, s) for (_, key), s in zip(chunk, scores)]
-            append_records(checkpoint, records)
-            for record in records:
-                done.setdefault((record["key"], metric), record)
-            print(
-                f"trial_score: {bundle.name} {metric} {min(start + chunk_size, len(todo))}"
-                f"/{len(todo)} pairs ({chunk_times[-1]:.1f}s)",
-                file=sys.stderr,
-                flush=True,
-            )
+    except BaseException:
+        _append_attempt(attempts_path, attempt_record("failed"))
+        raise
+    this_attempt = attempt_record("completed")
+    _append_attempt(attempts_path, this_attempt)
+    attempts = [*prior_attempts, this_attempt]
+    total_elapsed = sum(float(a.get("elapsed_seconds") or 0) for a in attempts)
+    usage_total: Dict[str, Any] = {}
+    for a in attempts:
+        usage_total = _merge_usage(usage_total, a.get("judge_usage") or {})
 
     def recorded(metric, _eligible_rows):
         _, eligible_keys = eligible_subset(rows, keys, metric)
@@ -369,7 +403,6 @@ def score_trial_bundle(
         )
         for metric in scorer.metrics
     }
-    elapsed = time.monotonic() - t0
     pairs = sum(len(eligible_subset(rows, keys, m)[1]) for m in scorer.metrics)
     result = {
         "bundle": bundle.name,
@@ -389,18 +422,23 @@ def score_trial_bundle(
             "job_id": job_id,
             "node": socket.gethostname(),
             "started_at": started,
-            "finished_at": _utc_now(),
-            "elapsed_seconds": round(elapsed, 1),
+            "finished_at": this_attempt["finished_at"],
+            # Cumulative over every attempt at this bundle; the last attempt alone is
+            # under *_this_attempt and in the attempts list.
+            "elapsed_seconds": round(total_elapsed, 1),
+            "elapsed_seconds_this_attempt": this_attempt["elapsed_seconds"],
+            "attempts": attempts,
             "pairs_total": pairs,
             "pairs_resumed_from_checkpoint": resumed,
             "pairs_judged_this_run": pairs - resumed,
             "chunk_seconds": [round(t, 1) for t in chunk_times],
             "pairs_per_minute": (
-                round((pairs - resumed) / (elapsed / 60.0), 2) if elapsed > 0 else None
+                round(pairs / (total_elapsed / 60.0), 2) if total_elapsed > 0 else None
             ),
             "requeue_count": int(os.environ.get("SLURM_RESTART_COUNT") or 0),
         },
-        "judge_usage": scorer.recorder.snapshot(),
+        "judge_usage": usage_total,
+        "judge_usage_this_attempt": this_attempt["judge_usage"],
         "scores": {key: cells for key, cells in by_key.items() if cells},
         "aggregates": aggregates,
         "nan_counts": nan_counts,
@@ -411,6 +449,46 @@ def score_trial_bundle(
     tmp.write_text(data + "\n")
     os.replace(tmp, target)
     return target
+
+
+def _read_attempts(path: Path) -> List[Dict[str, Any]]:
+    if not path.is_file():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _append_attempt(path: Path, record: Dict[str, Any]) -> None:
+    with open(path, "a") as handle:
+        handle.write(json.dumps(json_safe(record), sort_keys=True) + "\n")
+
+
+def _is_number(value: Any) -> TypeGuard[float]:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _merge_usage(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    """Sum two usage snapshots: numeric fields add; ``by_model`` entries merge by
+    (provider, model); anything else takes the later value."""
+    out: Dict[str, Any] = {}
+    for key in sorted(set(a) | set(b)):
+        if key == "by_model":
+            continue
+        va, vb = a.get(key), b.get(key)
+        if _is_number(va) or _is_number(vb):
+            out[key] = (va if _is_number(va) else 0) + (vb if _is_number(vb) else 0)
+        else:
+            out[key] = vb if vb is not None else va
+    if "by_model" in a or "by_model" in b:
+        merged: Dict[Any, Dict[str, Any]] = {}
+        for entry in [*(a.get("by_model") or []), *(b.get("by_model") or [])]:
+            current = merged.setdefault((entry.get("provider"), entry.get("model")), {})
+            for k, v in entry.items():
+                if _is_number(v):
+                    current[k] = (current.get(k) or 0) + v
+                else:
+                    current[k] = v
+        out["by_model"] = list(merged.values())
+    return out
 
 
 def _live_identity() -> Dict[str, Optional[str]]:

@@ -83,10 +83,17 @@ def pair_metric(
     """Pairs of (sonnet, judge) for one metric, plus who left which rows unscored."""
     keys = sorted(set(reference) & set(scores))
     pairs: List[Tuple[float, float]] = []
-    ref_nan, judge_nan = 0, 0
+    ref_nan, judge_nan, rows_with_cells = 0, 0, 0
     for key in keys:
-        r = _as_float(reference[key].get(metric))
-        j = _as_float(scores[key].get(metric))
+        ref_row, judge_row = reference[key], scores[key]
+        # A row without a cell for this metric was ineligible for it (no reference
+        # answer, say): no score was expected on that side, so it is neither paired nor
+        # a failure. Only a cell that is present and not a finite number is "unscored".
+        if metric not in ref_row or metric not in judge_row:
+            continue
+        rows_with_cells += 1
+        r = _as_float(ref_row[metric])
+        j = _as_float(judge_row[metric])
         if r is None:
             ref_nan += 1
         if j is None:
@@ -95,7 +102,7 @@ def pair_metric(
             pairs.append((r, j))
     return {
         "metric": metric,
-        "rows_in_both_files": len(keys),
+        "rows_in_both_files": rows_with_cells,
         "pairs": pairs,
         "sonnet_unscored": ref_nan,
         "judge_unscored": judge_nan,
@@ -206,8 +213,43 @@ def judges_in(package: Path) -> List[str]:
     )
 
 
+class CompareError(Exception):
+    """A refusal; the message is for the operator."""
+
+
+# The identity fields that define a judge. Concurrency and chunking (max_workers,
+# chunk_size) only change speed and may differ between a trial's jobs.
+_JUDGE_DEFINING = ("model", "model_revision", "precision", "server_image_digest")
+
+
+def judge_definition(identity: Dict[str, Any]) -> Dict[str, Any]:
+    out = {k: identity.get(k) for k in _JUDGE_DEFINING}
+    out["request_options"] = (identity.get("decoding") or {}).get("request_options")
+    return out
+
+
+def _one_definition(judge: str, docs: Dict[str, Dict[str, Any]]) -> None:
+    """Refuse score files that do not all come from the same judge definition: a judge
+    file edited between submissions would otherwise be pooled under the first file's
+    identity."""
+    groups: Dict[str, List[str]] = {}
+    for bundle_name, doc in docs.items():
+        key = json.dumps(
+            judge_definition(doc.get("ragas_judge_identity_effective") or {}),
+            sort_keys=True,
+        )
+        groups.setdefault(key, []).append(bundle_name)
+    if len(groups) > 1:
+        listed = "; ".join(f"{k} <- {', '.join(sorted(v))}" for k, v in groups.items())
+        raise CompareError(
+            f"scores/{judge} mixes {len(groups)} judge definitions; one trial, one "
+            f"definition (rescore or move the odd files aside): {listed}"
+        )
+
+
 def compare_judge(package: Path, judge: str, reference, ledger) -> Dict[str, Any]:
     docs = load_scores(package, judge)
+    _one_definition(judge, docs)
     metrics_seen: List[str] = []
     per_metric: Dict[str, Dict[str, Any]] = {}
     execution = []
@@ -349,7 +391,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument("--json", type=Path, help="also write the full report as JSON")
     args = parser.parse_args(argv)
-    report = build_report(args.package, args.judges)
+    try:
+        report = build_report(args.package, args.judges)
+    except CompareError as exc:
+        print(f"compare: refused: {exc}", file=sys.stderr)
+        return 1
     if not report["judges"]:
         print("compare: no scores under <package>/scores/<judge>/", file=sys.stderr)
         return 1

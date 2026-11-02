@@ -275,7 +275,13 @@ select_bundles() {
     done
     return 0
   fi
-  for pat in ${BUNDLES//,/ }; do
+  # Split on commas and spaces WITHOUT pathname expansion: an unquoted expansion here
+  # would match the pattern against the submit directory (reference/, bundles/, ...)
+  # before it ever reaches $BUNDLES_DIR.
+  local pats
+  IFS=', ' read -r -a pats <<< "$BUNDLES"
+  for pat in ${pats[@]+"${pats[@]}"}; do
+    [ -n "$pat" ] || continue
     found=false
     for d in "$BUNDLES_DIR"/$pat/; do
       [ -d "$d" ] || continue
