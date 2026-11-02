@@ -99,6 +99,16 @@
 #   95. archive_run.sh refuses an artifact whose judge is pending (G11) and names the judged file
 #   96. archive_run.sh takes the judged file beside it and records the arm's judge identity
 #   97. archive_run.sh refuses a run whose judge identity differs from the campaign's rows (G12)
+#   113. a retry of check 80's archive (ledger row durable, pin write failed) writes the pin,
+#        logs "repaired the corpus pin", exits 0, and appends no second row (#677)
+#   114. a second archive of that complete run is still refused; ledger and pin unchanged
+#   115. a row with no artifact_sha256 (written before #677) is not repaired: refused, no pin
+#   116. a matching row that is not the stack's newest ragas row is not repaired: refused, no pin
+#   117. an artifact whose bytes changed since its row was written is not repaired: refused, no pin
+#   118. a pin that holds another value is not overwritten for a first-pin row: refused, pin kept
+#   119. a --new-corpus re-pin whose pin write failed, retried without --new-corpus: refused,
+#        old pin kept
+#   120. the same retry with --new-corpus finishes the re-pin and exits 0
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -1214,6 +1224,89 @@ BEFORE="$(judge_rows)"
 run env FM_OUT="$JO" bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --stack fm-judge
 if [ "$RC" = 2 ] && grep -q "G12 refused" "$T/stderr" && grep -q "model (" "$T/stderr" && [ "$(judge_rows)" = "$BEFORE" ]; then
   ok "archive refuses a run whose judge differs from the campaign's rows"; else notok "archive G12 (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# --- #677: a retry after a failed pin write finishes the pin -----------------------------
+A80="$FM_OUT/benchmarking-fm-pin80-20260903_000023.json"
+pin80_rows() { "$FM_PYTHON" -c "import json,sys; print(sum(1 for e in json.load(open(sys.argv[1])) if e.get('kind')=='ragas' and e.get('stack')=='fm-pin80'))" "$FM_OUT/ledger.json"; }
+
+# 113: check 80 left a durable ledger row and no pin. The same archive, retried with the
+# real python, finishes the pin write and exits 0; it appends no second row for the run.
+ROWS_BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin80
+if [ "$RC" = 0 ] && grep -q 'repaired the corpus pin for fm-pin80' "$T/stdout" && ! grep -q 'archived arm' "$T/stdout" \
+   && [ "$(cat "$FM_OUT/corpus-pin-fm-pin80" 2>/dev/null)" = sha256:pin80 ] && [ "$(ledger_rows)" = "$ROWS_BEFORE" ] \
+   && [ "$(pin80_rows)" = 1 ] && ! compgen -G "$FM_OUT/corpus-pin-fm-pin80.tmp.*" >/dev/null; then
+  ok "a retry after a failed pin write finishes the pin and exits 0"; else notok "pin repair on retry (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# 114: the run is complete now, so a second archive of it is still refused as a duplicate
+ROWS_BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin80
+if [ "$RC" != 0 ] && grep -q 'already archived' "$T/stderr" && ! grep -q 'repaired' "$T/stdout" \
+   && [ "$(ledger_rows)" = "$ROWS_BEFORE" ] && [ "$(cat "$FM_OUT/corpus-pin-fm-pin80" 2>/dev/null)" = sha256:pin80 ]; then
+  ok "a second archive of a complete run is still refused"; else notok "complete-run refusal (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# 115-117 remove the pin and change one thing the repair checks; each retry must be refused
+# and must write no pin. The ledger and the artifact are restored after each check.
+cp "$FM_OUT/ledger.json" "$T/ledger.677"; cp -p "$A80" "$T/artifact.677"
+rm -f "$FM_OUT/corpus-pin-fm-pin80"
+
+# 115: a row written before #677 has no artifact_sha256, so it cannot prove the file is the same
+"$FM_PYTHON" -c "import json,sys; p=sys.argv[1]; rows=json.load(open(p)); [e.pop('artifact_sha256', None) for e in rows if e.get('stack')=='fm-pin80']; json.dump(rows, open(p, 'w'), indent=1)" "$FM_OUT/ledger.json"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin80
+cp "$T/ledger.677" "$FM_OUT/ledger.json"
+if [ "$RC" != 0 ] && grep -q 'already archived' "$T/stderr" && [ ! -e "$FM_OUT/corpus-pin-fm-pin80" ]; then
+  ok "a row with no artifact_sha256 is not repaired"; else notok "legacy-row repair guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# 116: a later ragas row on the stack means the pin may have moved since; not repaired
+"$FM_PYTHON" -c "import json,sys; p=sys.argv[1]; rows=json.load(open(p)); rows.append({'kind': 'ragas', 'arm': '00', 'stack': 'fm-pin80', 'run': 2, 'artifact': 'later.json', 'corpus_fingerprint': 'sha256:pin80'}); json.dump(rows, open(p, 'w'), indent=1)" "$FM_OUT/ledger.json"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin80
+cp "$T/ledger.677" "$FM_OUT/ledger.json"
+if [ "$RC" != 0 ] && grep -q 'already archived' "$T/stderr" && [ ! -e "$FM_OUT/corpus-pin-fm-pin80" ]; then
+  ok "a row that is not the stack's newest ragas row is not repaired"; else notok "newest-row repair guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# 117: the artifact's bytes changed since its row was written (same path, another sha256)
+printf '\n' >> "$A80"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin80
+cp -p "$T/artifact.677" "$A80"
+if [ "$RC" != 0 ] && grep -q 'already archived' "$T/stderr" && [ ! -e "$FM_OUT/corpus-pin-fm-pin80" ]; then
+  ok "an artifact whose bytes changed is not repaired"; else notok "artifact-digest repair guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# 118: a pin that holds another value was not left by a failed first-pin write; it is kept
+printf 'sha256:other\n' > "$FM_OUT/corpus-pin-fm-pin80"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin80
+if [ "$RC" != 0 ] && grep -q 'already archived' "$T/stderr" && [ "$(cat "$FM_OUT/corpus-pin-fm-pin80")" = sha256:other ]; then
+  ok "a pin that holds another value is not overwritten"; else notok "other-pin repair guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+rm -f "$FM_OUT/corpus-pin-fm-pin80"
+
+# 119-120: a closing-baseline re-pin (--new-corpus) whose pin write fails after the ledger
+# append leaves the old pin in place. A fresh stack: run 1 pins p119a; then a fresh deploy
+# and a run-2 re-pin to p119b that fails at the pin write (check 80's shim).
+mkdir -p "$ARCHI_DIR/archi-fm-pin119"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-pin119
+artifact "$FM_OUT/benchmarking-fm-pin119-20260903_000040.json" '[]' p119a 5
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin119
+R1=$RC
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-pin119
+rm -f "$FM_OUT"/benchmarking-fm-pin119-*.json
+artifact "$FM_OUT/benchmarking-fm-pin119-20260903_000041.json" '[]' p119b 5
+FM_PYTHON="$T/bin/python-pin-fail"
+run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --stack fm-pin119 --new-corpus
+FM_PYTHON="$REAL_PY"
+R2=$RC
+if [ -f "$FM_OUT" ]; then rm -f "$FM_OUT"; mv "$FM_OUT.moved" "$FM_OUT"; fi
+
+# 119: the retry without --new-corpus is refused: moving an existing pin needs the flag
+run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --stack fm-pin119
+if [ "$R1" = 0 ] && [ "$R2" != 0 ] && [ "$RC" != 0 ] && grep -q 'already archived' "$T/stderr" \
+   && [ "$(cat "$FM_OUT/corpus-pin-fm-pin119" 2>/dev/null)" = sha256:p119a ]; then
+  ok "a re-pin retry without --new-corpus is refused and keeps the old pin"; else notok "re-pin repair needs --new-corpus (r1=$R1 r2=$R2 rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# 120: the same retry with --new-corpus finishes the re-pin and exits 0
+ROWS_BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --stack fm-pin119 --new-corpus
+if [ "$RC" = 0 ] && grep -q 'repaired the corpus pin for fm-pin119' "$T/stdout" \
+   && [ "$(cat "$FM_OUT/corpus-pin-fm-pin119" 2>/dev/null)" = sha256:p119b ] && [ "$(ledger_rows)" = "$ROWS_BEFORE" ]; then
+  ok "a re-pin retry with --new-corpus finishes the re-pin"; else notok "re-pin repair (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
