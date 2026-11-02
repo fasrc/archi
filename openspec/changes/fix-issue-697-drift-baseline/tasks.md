@@ -40,7 +40,7 @@
 
 ## 1. Corpus run for config and drift
 
-- [ ] 1.1 Implement design D2–D3 in `src/interfaces/chat_app/status_provenance.py`, test
+- [x] 1.1 Implement design D2–D3 in `src/interfaces/chat_app/status_provenance.py`, test
       first, one commit (`fix: compare drift against the run that embedded the corpus`).
       Add these tests at the end of `tests/unit/test_status_provenance.py`, reusing the
       file's `_run_row`, `_deploy_row`, `_FakeConn` and `_NthCallRaisingConn` helpers:
@@ -97,7 +97,7 @@
       `tests/unit/test_status_template_render.py` pass. Do NOT give `_corpus_run_for` a
       `run is None` arm (design D3): it would be dead, uncovered code.
 
-- [ ] 1.2 Implement design D4 in `src/interfaces/chat_app/templates/status.html`, test
+- [x] 1.2 Implement design D4 in `src/interfaces/chat_app/templates/status.html`, test
       first, one commit (`fix: name the run that embedded the corpus on the status board`).
       Add tests at the end of `tests/unit/test_status_template_render.py`:
       (a) a panel built from an `up_to_date` run (`completed_at=FINISHED`) with an
