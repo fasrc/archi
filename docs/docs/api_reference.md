@@ -789,11 +789,13 @@ Get current schedule status.
 
 A URL upload writes its status under `web`, not `links`. As a result, a URL upload does not change the `state` or `last_run` of the `links` job.
 
+A manual ingest writes its status only after its vector update returns. If the update succeeds, it writes `idle` and a new `last_run`. If the update fails, it writes `error` and keeps the old `last_run`, and the uploader answers HTTP 500 with `{"error": "update_failed", "detail": "<message>"}`, not `{"status": "ok"}`. The same order applies to a git repository removal and to a URL upload (under `web`). A failed update does not undo the collection: new documents stay stored and removed documents stay deleted, but retrieval does not see the change until the next successful vector update. A later manual ingest or a scheduled refresh of any source runs that update.
+
 | `state` | Meaning |
 |---|---|
-| `idle` | The last scheduled refresh or manual ingest completed. `last_run` is its completion time. This is also the value for a source that has not run; then `last_run` is `null`. |
+| `idle` | The last scheduled refresh or manual ingest completed, including its vector update. `last_run` is its completion time. This is also the value for a source that has not run; then `last_run` is `null`. |
 | `running` | A refresh is in progress. |
-| `error` | The last scheduled refresh failed. `last_run` keeps the time of the last success. The next scheduled run tries again. A later successful manual ingest of a shared key (`git`, `jira`, `local_files`) sets `idle` again. |
+| `error` | The last scheduled refresh failed, or the vector update after the last manual ingest failed. `last_run` keeps the time of the last success. The next scheduled run tries again. A later successful manual ingest of a shared key (`git`, `jira`, `local_files`) sets `idle` again. |
 
 The cause of a failure is in the data-manager log. `GET /api/ingestion/status` also shows it, but only for a short time: that endpoint keeps one status in memory, so the next ingestion run or a service restart clears the error. The `error` state on this endpoint stays until a later write for that source.
 
