@@ -39,7 +39,7 @@
 
 ## 1. Write the source status after the update
 
-- [ ] 1.1 Test first, then implement design D1, D2 and D5, one commit
+- [x] 1.1 Test first, then implement design D1, D2 and D5, one commit
       (`fix: write a manual ingest's source status after its vector update`).
       (a) Create `tests/unit/test_uploader_manual_ingest_status.py` with the content of
       Appendix A, unchanged.
