@@ -1,5 +1,4 @@
 #!/bin/python
-import json
 import os
 import threading
 from pathlib import Path
@@ -22,6 +21,12 @@ from src.utils.env import read_secret
 from src.utils.ingestion_status import build_ingestion_helpers
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
+from src.utils.source_status_file import (
+    load_source_status,
+    seed_source_schedules,
+    set_source_schedules,
+    update_source_status,
+)
 from src.utils.telemetry import instrument_flask_app
 
 logger = get_logger(__name__)
@@ -84,28 +89,12 @@ def main() -> None:
     _ing = build_ingestion_helpers(data_manager.run_ingestion, lock)
 
     def load_status() -> Dict[str, Dict[str, str]]:
-        if not status_file.exists():
-            return {}
-        try:
-            return json.loads(status_file.read_text())
-        except Exception:
-            return {}
-
-    def save_status(data: Dict[str, Dict[str, str]]) -> None:
-        status_file.parent.mkdir(parents=True, exist_ok=True)
-        status_file.write_text(json.dumps(data))
+        return load_source_status(status_file)
 
     def set_source_status(
         source: str, *, state: str | None = None, last_run: str | None = None
     ) -> None:
-        data = load_status()
-        entry = data.get(source, {})
-        if state is not None:
-            entry["state"] = state
-        if last_run is not None:
-            entry["last_run"] = last_run
-        data[source] = entry
-        save_status(data)
+        update_source_status(status_file, source, state=state, last_run=last_run)
 
     def run_locked(name: str, func: Callable[[], None]) -> None:
         update = data_manager.update_vectorstore
@@ -200,20 +189,15 @@ def main() -> None:
     logger.info("Loaded source schedules: %s", db_schedules)
 
     # seed status with schedules
-    initial_status = load_status()
+    seed_source_schedules(status_file, db_schedules)
 
     for source_name, schedule in db_schedules.items():
         if schedule:
-            entry = initial_status.get(source_name, {})
-            entry.setdefault("schedule", schedule)
-            entry.setdefault("state", "idle")
-            initial_status[source_name] = entry
             scheduler.add_job(
                 name=source_name,
                 cron=schedule,
                 callback=create_job_callback(source_name),
             )
-    save_status(initial_status)
 
     if scheduler.jobs:
         scheduler.start()
@@ -254,11 +238,7 @@ def main() -> None:
             if scheduler.jobs:
                 scheduler.start()
             # Update status file with new schedules
-            status = load_status()
-            for source_name, schedule in new_schedules.items():
-                if source_name in status:
-                    status[source_name]["schedule"] = schedule
-            save_status(status)
+            set_source_schedules(status_file, new_schedules)
             return jsonify(
                 {
                     "success": True,

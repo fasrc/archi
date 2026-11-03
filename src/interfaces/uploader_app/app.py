@@ -35,6 +35,7 @@ from src.utils.catalog_query import parse_metadata_query
 from src.utils.config_access import get_full_config
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
+from src.utils.source_status_file import load_source_status, update_source_status
 
 logger = get_logger(__name__)
 
@@ -514,15 +515,7 @@ class FlaskAppWrapper:
             logger.warning("Post-update hook failed: %s", exc)
 
     def _load_source_status(self) -> Dict[str, Dict[str, str]]:
-        if not self.status_file.exists():
-            return {}
-        try:
-            import json
-
-            return json.loads(self.status_file.read_text())
-        except Exception as exc:
-            logger.warning("Failed to read source status file: %s", exc)
-            return {}
+        return load_source_status(self.status_file)
 
     def _update_source_status(
         self,
@@ -533,25 +526,16 @@ class FlaskAppWrapper:
         schedule: Optional[str] = None,
     ) -> None:
         try:
-            import json
-
-            data = self._load_source_status()
-            entry = data.get(source, {})
-            if state is not None:
-                entry["state"] = state
-            if last_run is not None:
-                entry["last_run"] = last_run
-            if schedule is not None:
-                if schedule:
-                    entry["schedule"] = schedule
-                else:
-                    entry.pop("schedule", None)
-            data[source] = entry
+            update_source_status(
+                self.status_file,
+                source,
+                state=state,
+                last_run=last_run,
+                schedule=schedule,
+            )
             logger.debug(
                 f"Updated source status with state {state}, last_run: {last_run}, schedule: {schedule}"
             )
-            self.status_file.parent.mkdir(parents=True, exist_ok=True)
-            self.status_file.write_text(json.dumps(data))
         except Exception as exc:
             logger.warning("Failed to update source status: %s", exc)
 
