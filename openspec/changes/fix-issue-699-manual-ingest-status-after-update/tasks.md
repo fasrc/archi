@@ -76,7 +76,7 @@
       `awk '/### .GET \/api\/schedules./,/^---/' docs/docs/api_reference.md | grep -c 'last writer'`
       must print `1`. Tick this box and commit through the hook
       (`docs: a manual ingest writes its schedule state after the update`).
-- [ ] 2.2 Do the steps of this task in this order: check, tick this box, commit the tick
+- [x] 2.2 Do the steps of this task in this order: check, tick this box, commit the tick
       through the hook, push, then open the PR. The tick must ride the push that opens the
       PR; after the PR opens, `git status --porcelain` must be empty and
       `git rev-parse HEAD` must equal
