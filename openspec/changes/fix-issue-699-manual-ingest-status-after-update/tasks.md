@@ -69,7 +69,7 @@
 
 ## 2. Docs and publish
 
-- [ ] 2.1 Apply Appendix C to `docs/docs/api_reference.md` (design D6): one new paragraph and
+- [x] 2.1 Apply Appendix C to `docs/docs/api_reference.md` (design D6): one new paragraph and
       two edited table rows in the `GET /api/schedules` section; nothing else changes. Then
       `python -m pytest -q tests/unit/test_api_reference_schedule_state_contract.py` must
       show `2 passed`, and
