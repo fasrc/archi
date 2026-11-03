@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS index_build (
   reason TEXT,                     -- why: reset | embedding_change | chunk_config_change | baseline
   collection_name TEXT NOT NULL,   -- the chunk metadata 'collection' value of this set (it names the class, not the model)
   identity JSONB NOT NULL,         -- build_identity() result; see "Build identity" below. No secrets.
-  phase TEXT,                      -- NULL | probe_pending | rollback_pending; see 4.10
+  phase TEXT,                      -- NULL | probe_pending | rollback_pending | sync_pending; see 4.10
   documents_total INTEGER,
   documents_failed INTEGER,
   chunk_count INTEGER,
@@ -150,7 +150,7 @@ Today, `DataManager.run_ingestion` calls `delete_existing_collection_if_reset()`
    - `/api/upload/embed` in the chat app
      ([app.py:6417](https://github.com/fasrc/archi/blob/7406721b/src/interfaces/chat_app/app.py#L6417)), which runs in a different process and does not see the data-manager `RLock`.
 
-   An incremental write does not embed if it cannot get the shared lock, or if an `index_build` row is `building` or `validating`, or has a non-NULL `phase`. The second check uses durable state, so it also holds while no process holds the locks (for example, after a crash and before recovery). The document stays `pending`, and `/api/upload/embed` tells the user that a rebuild is in progress. The sync at the end of the lifecycle embeds the document (4.10). As a result, no write reaches the live set between the moment that a build reads the catalog and the end of its lifecycle. The existing in-process `RLock`
+   An incremental write does not embed if it cannot get the shared lock, or if an `index_build` row is `building` or `validating`, or has `phase = 'probe_pending'` or `phase = 'rollback_pending'`. The second check uses durable state, so it also holds while no process holds the locks (for example, after a crash and before recovery). The document stays `pending`, and `/api/upload/embed` tells the user that a rebuild is in progress. The final sync (4.10) embeds the document. As a result, no write reaches the live set between the moment that a build reads the catalog and the end of its lifecycle. A `sync_pending` phase (4.10) does not defer a write: it comes after the end of the lifecycle, and the final sync is itself an incremental write, so a deferral in that phase defers the sync itself. The existing in-process `RLock`
    ([service_data_manager.py:45](https://github.com/fasrc/archi/blob/7406721b/src/bin/service_data_manager.py#L45))
    stays, and it still makes scheduled refreshes and uploads in the data-manager wait until the build ends.
 2. Find the build sets of earlier builds. These are the tables that match `document_chunks_b%` or `document_parent_nodes_b%`. Each set belongs to an `index_build` row, or to no row:
@@ -295,7 +295,7 @@ COMMIT;
 
 `lock_timeout` limits each lock wait separately, so it cannot limit the total block. For this reason, part B uses `statement_timeout = 5s`, which limits the full `LOCK` statement: the waits for both tables together. After part B holds both locks, part C does only catalog renames, and then the transaction commits. As a result, chat waits for a maximum of 5 s plus the rename time. On a timeout, the transaction rolls back with no change.
 
-The cutover then tries again 3 times, with 10 s between attempts. After 3 failures, the build stays `validating` with its tables kept (4.3 step 2), and the recovery job (4.10) tries again. The lifecycle connection keeps both locks during the wait, so no write reaches the live set, and the build set stays current.
+The cutover then tries again 3 times, with 10 s between attempts. After 3 failures, the build stays `validating` with its tables kept (4.3 step 2). The lifecycle connection keeps both locks during the wait, so no write reaches the live set, and the build set stays current. The recovery job of this process tries the cutover again on that connection (4.10, step 1). No other process can take the locks, so no other process tries it.
 
 **After the commit:** The `live` row has `phase = 'probe_pending'`. The probe (4.6) runs next. The locks stay held until the lifecycle ends (4.10).
 
@@ -311,11 +311,11 @@ The previous set stays until a successful cutover replaces it (4.3 step 3).
 - Each query text is the `display_name` of a random document that is not deleted (`NOT is_deleted`) and that has chunks in the new live set. A document with no chunks, or a deleted document, cannot give a false empty result.
 - The probe fails if one or more queries raise an error, or if more than half of the queries return 0 rows.
 
-The probe catches a set that the gate cannot judge from counts: an embedder that chat cannot load, a dimension error at query time, or a broken index. The probe result goes to `index_build.gate_detail`. If the probe passes, the code sets `phase = NULL`, and the lifecycle ends (4.10).
+The probe catches a set that the gate cannot judge from counts: an embedder that chat cannot load, a dimension error at query time, or a broken index. The probe result goes to `index_build.gate_detail`. If the probe passes, the code sets `phase = 'sync_pending'`, and the lifecycle ends (4.10).
 
-**Automatic rollback:** If the probe fails, the code sets `phase = 'rollback_pending'` in its own committed transaction, and then rolls back. A rollback that times out on its lock keeps that phase, and the recovery job (4.10) tries it again until it succeeds. The bad set thus never stays live because of a lock timeout. The rollback writes a `failed` `ingest_run` row with the probe detail, and it logs the build id at `ERROR`. The rolled-back build becomes `previous` with `rolled_back_at` set, and the next build supersedes it. Recovery never tries a cutover of a rolled-back build again. The rollback uses the same transaction shape as 4.5:
+**Automatic rollback:** If the probe fails, the code sets `phase = 'rollback_pending'` in its own committed transaction, and then rolls back. A rollback that times out on its lock keeps that phase. The lifecycle connection keeps both locks, and the recovery job of this process tries the rollback again on that connection (4.10, step 1) until it succeeds. The bad set thus never stays live because of a lock timeout. The rollback writes a `failed` `ingest_run` row with the probe detail, and it logs the build id at `ERROR`. The rolled-back build becomes `previous` with `rolled_back_at` set, and the next build supersedes it. Recovery never tries a cutover of a rolled-back build again. The rollback uses the same transaction shape as 4.5:
 
-- Part A saves the current per-document status into the `live` row (4.5 step 2). It writes `documents.ingestion_status`, `ingestion_error`, and `indexed_at` from the `document_results` of the `previous` row. Then it swaps the two statuses: the `previous` row becomes `live`, and the `live` row becomes `previous` with `rolled_back_at = NOW()` and `phase = NULL`. The partial unique indexes (4.2) check each row immediately, so the swap uses three statements: `live` → `swap`, `previous` → `live`, `swap` → `previous`. The `swap` status exists only inside this transaction. A rollback drops no table.
+- Part A saves the current per-document status into the `live` row (4.5 step 2). It writes `documents.ingestion_status`, `ingestion_error`, and `indexed_at` from the `document_results` of the `previous` row. Then it swaps the two statuses: the `previous` row becomes `live`, and the `live` row becomes `previous` with `rolled_back_at = NOW()` and `phase = 'sync_pending'`. The partial unique indexes (4.2) check each row immediately, so the swap uses three statements: `live` → `swap`, `previous` → `live`, `swap` → `previous`. The `swap` status exists only inside this transaction. A rollback drops no table.
 - Parts B and C lock the live tables and swap the two sets with `rename_set` (4.5) through a temporary suffix: `rename_set('', '_swap')`, `rename_set('_prev', '')`, `rename_set('_swap', '_prev')`. The tables, the indexes, and the owned sequences all move, so the canonical names stay on the live tables.
 
 The `previous` row owns the physical previous set (4.2, table ownership), so the rollback always restores the model and the statuses that match the tables. A rollback occurs at most one time for each cutover. For the first cutover on an upgraded volume, the baseline row (4.2) becomes the `previous` row. Readers take the embedding model from the `live` row (4.8), so a rollback also moves chat back to the previous model.
@@ -387,15 +387,18 @@ A build has one lifecycle. The state of each step is in `index_build` (`status` 
 | `live`, `phase = 'probe_pending'` | probe (4.6) | no |
 | `live`, `phase = 'rollback_pending'` | rollback (4.6) | no |
 | `live`, `phase = NULL` | none | yes |
-| `previous` after a rollback, `rejected`, `failed`, `superseded` | none | yes |
+| any end status, `phase = 'sync_pending'` | final sync, then `phase = NULL` | yes; the locks are released, but the final sync is still due |
+| `previous` after a rollback, `rejected`, `failed`, `superseded`, with `phase = NULL` | none | yes |
 
-**Locks:** The lifecycle connection (4.3 step 1) holds the build lock and the write lock from step 1 until an end state. When the lifecycle ends, the code releases both locks, and then it runs one incremental sync (`update_vectorstore()`) on the live set. The sync embeds each document that is still `pending`: an upload that the build deferred, a new document from after the build read the catalog, and a document that changed during the build.
+**Locks and the final sync:** The lifecycle connection (4.3 step 1) holds the build lock and the write lock from step 1 until an end state. The transaction that moves the build to an end state also sets `phase = 'sync_pending'` on its row. Then the code releases both locks, and runs the **final sync**: one incremental sync (`update_vectorstore()`) on the live set. The sync embeds each document that is still `pending`: an upload that the build deferred, a new document from after the build read the catalog, and a document that changed during the build. After `update_vectorstore()` returns, the code sets `phase = NULL` on each row with `phase = 'sync_pending'`. If the sync raises (for example, a connection error that the caller catches and logs), the phase stays, and the recovery job runs the sync again (step 3). A sync that defers (4.3 step 1) also returns. A deferral occurs only while another lifecycle holds the write lock or has a row that is not in an end state, and the final sync of that lifecycle embeds the documents.
 
 **Recovery job:** The data-manager registers one system job on its `CronScheduler`, with the cron `rebuild_recovery_cron`. Today `CronScheduler._reload_jobs` removes each job that the source-schedule loader does not return, so a plain `add_job` job disappears at the first reload of the source schedules. For this reason, `CronJob` gets a `system` flag, and `_reload_jobs` keeps each system job. Each run of the recovery job:
 
-1. Returns at once if this process already has a lifecycle connection. That lifecycle drives its own steps.
-2. Otherwise, opens a lifecycle connection, and tries to take both locks. If another process holds them, it returns.
-3. Finds the row that is not in an end state, and does its next step from the table above. A `validating` row first gets the rule of 4.3 step 2a.
+1. If this process already has a lifecycle connection, the job uses that connection. It does not open a second connection, because that connection already holds both locks. Each step of the lifecycle (the build, a cutover and its 3 tries, the probe, or a rollback) holds an in-process **step lock** while it runs. The job tries the step lock with no wait:
+   - If a step holds it, the job returns. That step continues the lifecycle.
+   - If the job gets it, the lifecycle waits for a retry: a cutover after 3 lock timeouts (4.5), or a rollback after a lock timeout (4.6). The job goes to step 3 on the lifecycle connection, and keeps the step lock until that step ends.
+2. If this process has no lifecycle connection, the job opens one, and tries to take both locks. If another process holds them, it returns.
+3. Finds the row that is not in an end state, and does its next step from the table above. A `validating` row first gets the rule of 4.3 step 2a. If no such row exists, but a row has `phase = 'sync_pending'`, the job releases both locks and runs the final sync (above).
 4. Releases the locks only at an end state, as above.
 
 At boot, the data-manager runs the same steps one time before it starts a new build. As a result, the code finishes each step that a crash or a lock timeout interrupted, with no person or agent.
@@ -407,12 +410,13 @@ At boot, the data-manager runs the same steps one time before it starts a new bu
 | The data-manager crashes during a build | The live set is unchanged. The next boot drops the build set (4.3 step 2) and starts again. |
 | The embedding endpoint is down during a build | Documents fail. The gate rejects the build on `max_failed_ratio`. The live set and the previous set are unchanged. |
 | A source returns few documents | The gate rejects the build on `min_chunk_ratio`. The live set is unchanged. |
-| The cutover lock times out | Rollback with no change, then 3 more tries. Then the recovery job tries again every 5 minutes, until a cutover succeeds or a config change supersedes the build. Writes stay deferred during the wait. |
+| The cutover lock times out | Rollback with no change, then 3 more tries. Then the recovery job of the process that holds the locks tries again every 5 minutes, until a cutover succeeds or a config change supersedes the build. Writes stay deferred during the wait. |
 | The new live set fails the post-cutover probe | Automatic rollback to the previous set. A `failed` `ingest_run` row and an `ERROR` log line record the cause. |
-| The rollback lock times out | The row keeps `phase = 'rollback_pending'`, and the recovery job tries the rollback again until it succeeds. |
+| The rollback lock times out | The row keeps `phase = 'rollback_pending'`, and the recovery job of the process that holds the locks tries the rollback again until it succeeds. |
+| The final sync raises after the end state (for example, a connection error) | The row keeps `phase = 'sync_pending'`, and writes are not deferred. The next run of the recovery job runs the sync again and clears the phase. |
 | The data-manager restarts while a build waits for a cutover, a probe, or a rollback | The boot recovery (4.10) does the next step of the stored state. A `validating` build gets its cutover again only if the config still matches (4.3 step 2a). |
 | A crash during the cutover transaction | Postgres rolls back the transaction. Either all renames apply or none apply. |
-| A user uploads a file during a build or its recovery | The upload does not embed, and the document stays `pending`, also while no process holds the locks. The sync at the end of the lifecycle embeds it. |
+| A user uploads a file during a build or its recovery | The upload does not embed, and the document stays `pending`, also while no process holds the locks. The final sync (4.10) embeds it. |
 | The source-schedule config changes during a wait | `_reload_jobs` keeps the recovery job, because it is a system job (4.10). |
 | The chat process cannot load the embedder of the live set | Retrieval returns no documents and logs the cause until the cutover. |
 | Disk full during the embed | The insert fails, the build fails, and the build set is dropped. The live set is unchanged. |
@@ -431,9 +435,10 @@ TDD, red first, per the project gate (`bash scripts/gate.sh`, patch coverage ≥
 - Rollback: restores the status, the error, and `indexed_at` that the cutover saved for the `previous` row, also after an incremental sync changed a status while that set was live. The status swap does not violate a partial unique index. After a rollback, the canonical index and sequence names are on the live tables.
 - `rename_set`: emits the renames of the tables, each index, and each owned sequence, for the cutover and for the rollback.
 - Post-cutover probe: a probe with an error, or with more than half empty results, starts the automatic rollback. Half or fewer empty results do not. Config validation rejects a probe count below 3. The sample excludes deleted documents and documents with no chunks in the new set. The probe runs only for `phase = 'probe_pending'`, never for a baseline row.
-- Recovery job (4.10): for each non-end state, a run does the next step of the table. A run returns at once if this process has a lifecycle connection, or if another process holds the locks. A matching `validating` row gets a cutover; a non-matching one is superseded. A `rollback_pending` row gets the rollback again after a lock timeout. A rolled-back build never gets a cutover again.
+- Recovery job (4.10): for each non-end state, a run does the next step of the table. In the process that holds the lifecycle connection, a run after 3 cutover lock timeouts does the cutover again on that connection, and a run after a rollback lock timeout does the rollback again. Neither run opens a second connection. A run returns at once while a step of this lifecycle holds the step lock, or if another process holds the locks. A matching `validating` row gets a cutover; a non-matching one is superseded. A `rollback_pending` row gets the rollback again after a lock timeout. A rolled-back build never gets a cutover again.
+- Final sync (4.10): the transaction that reaches an end state sets `phase = 'sync_pending'`, and a sync that returns clears it. If the final sync raises, the row keeps `sync_pending`, and the next recovery run runs the sync again and clears the phase.
 - `CronScheduler._reload_jobs` keeps a system job when the source schedules change.
-- An incremental write defers while a row is `building` or `validating` or has a non-NULL `phase`, also when no process holds the locks.
+- An incremental write defers while a row is `building` or `validating`, or has `phase = 'probe_pending'` or `phase = 'rollback_pending'`, also when no process holds the locks. A row with `phase = 'sync_pending'` does not defer a write.
 - `build_identity`: records only the allowlisted fields, and never a constructor kwarg. A config with an API key in the kwargs gives an identity without the key.
 - A rejected or failed build leaves the previous set and its row unchanged.
 - The status update writes the error of a failed document, clears the error of an embedded document, and skips a document whose `ingested_at` changed.

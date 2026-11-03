@@ -19,7 +19,7 @@ Rules for every task:
 
 ## 1. The lifecycle: findings 1 and 2
 
-- [ ] 1.1 Confirm the old state first: `grep -n "Returns at once if this process already
+- [x] 1.1 Confirm the old state first: `grep -n "Returns at once if this process already
       has a lifecycle connection" "$DOC"` prints line 396, and `grep -c "sync_pending"
       "$DOC"` prints `0`. Then apply design D1 (finding 1, P1: 5 edit sites in 4.10,
       4.5, 4.6, section 5, and section 6) and design D2 (finding 2: 9 edit sites in 4.2,
