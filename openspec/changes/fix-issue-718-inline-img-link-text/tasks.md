@@ -1,6 +1,6 @@
 ## 1. Count an image by its alt text and a video by its text in a heading or cell (red tests and fix in one task)
 
-- [ ] 1.1 In `tests/unit/test_html_to_markdown_processor.py`, insert the test block of
+- [x] 1.1 In `tests/unit/test_html_to_markdown_processor.py`, insert the test block of
       Appendix A2 VERBATIM (copy it; do not rewrite it). Insert it right AFTER the end of
       `test_hoist_kbd_inside_link_does_not_stop_the_count` and BEFORE the comment line
       `# --- hoist marker attributes in source HTML are ignored (issue #713) ----------`.
