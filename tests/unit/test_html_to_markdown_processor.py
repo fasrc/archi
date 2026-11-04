@@ -1191,6 +1191,96 @@ def test_hoist_kbd_inside_link_does_not_stop_the_count():
     )
 
 
+# --- an image without alt text or a video writes nothing in a cell (issue #718) ---
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        '<td><a href="https://x/y"><code>a<br>b</code><img src="i.png"></a></td>',
+        '<td><a href="https://x/y"><code>a<br>b</code><img src="i.png" alt=" "></a></td>',
+        '<td><a href="https://x/y"><code>a<br>b</code><video src="v.mp4"></video></a></td>',
+        '<th><a href="https://x/y"><img src="i.png"><code>a<br>b</code></a></th>',
+    ],
+)
+def test_hoist_textless_img_or_video_in_cell_keeps_target(html):
+    """In a table cell markdownify writes only the alt text of an <img> and only the
+    child text of a <video>, so a split link with neither keeps its target (#718)."""
+    assert html_to_markdown(html) == " <https://x/y>  ``` a b ``` |"
+
+
+def test_hoist_textless_img_in_heading_keeps_target():
+    """A heading is the same context: an <img> without alt text writes nothing."""
+    assert (
+        html_to_markdown(
+            '<h2><a href="https://x/y"><code>a<br>b</code><img src="i.png"></a></h2>'
+        )
+        == "## <https://x/y> ``` a b ```"
+    )
+
+
+def test_hoist_textless_img_in_table_after_two_blocks_keeps_target():
+    """Two blocks and an <img> without alt text in a table keep one target (#718)."""
+    assert (
+        html_to_markdown(
+            '<table><tr><td><a href="https://x/y"><code>a<br>b</code>'
+            '<code>c<br>d</code><img src="i.png"></a></td></tr></table>'
+        )
+        == "|  |\n| --- |\n| <https://x/y>  ``` a b ```  ``` c d ``` |"
+    )
+
+
+def test_hoist_img_with_alt_in_cell_is_link_text():
+    """Guard: an <img> with alt text writes that text in a cell; output unchanged."""
+    assert (
+        html_to_markdown(
+            '<td><a href="https://x/y"><code>a<br>b</code>'
+            '<img src="i.png" alt="pic"></a></td>'
+        )
+        == " ``` a b ```  [pic](https://x/y) |"
+    )
+
+
+@pytest.mark.parametrize(
+    "inner, text",
+    [("clip", "clip"), ('<img src="p.png" alt="pic">', "pic")],
+)
+def test_hoist_video_with_text_in_cell_is_link_text(inner, text):
+    """Guard: a <video> writes its child text in a cell, an inner image's alt text
+    too; output unchanged (issue #718)."""
+    assert (
+        html_to_markdown(
+            f'<td><a href="https://x/y"><code>a<br>b</code>'
+            f'<video src="v.mp4">{inner}</video></a></td>'
+        )
+        == f" ``` a b ```  [{text}](https://x/y) |"
+    )
+
+
+def test_hoist_rule_in_cell_is_link_text():
+    """Guard: an <hr> still counts in a cell; output unchanged (issue #718)."""
+    assert (
+        html_to_markdown('<td><a href="https://x/y"><code>a<br>b</code><hr></a></td>')
+        == " ``` a b ```  [---](https://x/y) |"
+    )
+
+
+@pytest.mark.parametrize(
+    "tail, link_text",
+    [
+        ('<img src="i.png">', "![](i.png)"),
+        ('<video src="v.mp4"></video>', "\\[\\](v.mp4)"),
+    ],
+)
+def test_hoist_textless_img_or_video_outside_cell_is_link_text(tail, link_text):
+    """Guard: outside a heading or cell markdownify writes the image or video as a
+    link, so it is link text there; output unchanged (issue #718)."""
+    assert (
+        html_to_markdown(f'<p><a href="https://x/y"><code>a<br>b</code>{tail}</a></p>')
+        == _A + f"\n\n[{link_text}](https://x/y)"
+    )
+
+
 # --- hoist marker attributes in source HTML are ignored (issue #713) ----------
 
 

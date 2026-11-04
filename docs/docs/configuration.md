@@ -844,8 +844,10 @@ data_manager:
   the target stays in the knowledge base. A quotation, heading, or table cell does not
   count when the link is inside `<kbd>`, `<samp>`, `<code>`, or `<pre>`, where the link
   shows no target, and a heading does not count inside a heading or table cell, where it
-  shows no `#` (PR #716 review). A relative or fragment target, such as `/docs`,
-  becomes `[/docs](/docs)`. The conversion ignores a `data-archi-link-shown` or
+  shows no `#` (PR #716 review). Inside a heading or table cell, an image counts only
+  when its `alt` text is not blank, and a video only when it holds text, because there
+  markdownify writes only that text (issue #718). A relative or fragment target, such as
+  `/docs`, becomes `[/docs](/docs)`. The conversion ignores a `data-archi-link-shown` or
   `data-archi-promoted` attribute in the page HTML (issue #713): these names are its own
   markers. Whitespace that touches the cut is removed,
   so no line beside the fence begins or ends with a stray space. The shape is rare in the
