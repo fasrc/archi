@@ -29,7 +29,7 @@
 
 ## 3. Publish
 
-- [ ] 3.1 Tick this box, commit the tick through the hook (message: `mark #718 tasks
+- [x] 3.1 Tick this box, commit the tick through the hook (message: `mark #718 tasks
       complete`), then push and open the PR. Push:
       `git push -u origin fix/issue-718-inline-img-link-text`. Open the PR:
       `gh pr create --repo fasrc/archi --base dev --head fix/issue-718-inline-img-link-text`
