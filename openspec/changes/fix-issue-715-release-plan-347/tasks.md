@@ -33,7 +33,7 @@ Rules for every task:
 
 ## 2. Verify, push, and open the PR
 
-- [ ] 2.1 Run the acceptance checks of issue #715 again and keep their output for the PR
+- [x] 2.1 Run the acceptance checks of issue #715 again and keep their output for the PR
       body: `grep -n "347" "$PLAN"`, the `git diff --name-only` command of task 1.1, the
       `mkdocs` command of task 1.1, and
       `openspec validate fix-issue-715-release-plan-347 --strict` (valid). If a check
