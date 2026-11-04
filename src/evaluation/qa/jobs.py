@@ -451,7 +451,9 @@ class EvaluationJobManager:
         if process is not None:
             self._terminate(process)
         elif future is not None:
-            future.result(timeout=5)
+            # Wait for the worker to end, but do not raise its error: a worker
+            # that raised has nothing left to stop (#751).
+            future.exception(timeout=5)
 
         with self._lock:
             terminal = self.get(job_id)

@@ -2708,6 +2708,44 @@ def test_an_active_record_with_a_non_string_id_still_blocks(tmp_path):
     manager.close()
 
 
+def test_cancel_of_a_stuck_process_job_returns_canceled_without_raising(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+    stuck, writes = _start_stuck_process_job(monkeypatch, manager, tmp_path)
+    writes["failing"] = False
+
+    canceled = manager.cancel(stuck["id"])
+
+    assert canceled["status"] == "canceled"
+    assert manager.get(stuck["id"])["status"] == "canceled"
+    next_job = manager.start("generate_atoms", lambda: {})
+    assert manager.wait(next_job["id"], timeout=JOB_WAIT_TIMEOUT)["status"] == (
+        "completed"
+    )
+    manager.close()
+
+
+def test_cancel_of_a_stuck_process_job_still_blocks_start_until_it_ends(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+    stuck, writes = _start_stuck_process_job(monkeypatch, manager, tmp_path)
+    writes["failing"] = False
+    terminal_callback_statuses = []
+
+    def on_terminated(terminated_job):
+        terminal_callback_statuses.append(terminated_job["status"])
+        with pytest.raises(JobConflictError, match="already cancel_requested"):
+            manager.start("generate_atoms", lambda: {})
+
+    canceled = manager.cancel(stuck["id"], on_terminated=on_terminated)
+
+    assert terminal_callback_statuses == ["cancel_requested"]
+    assert canceled["status"] == "canceled"
+    manager.close()
+
+
 def test_the_sweep_keeps_a_uuid_spelled_differently_than_the_manager_writes_it(
     tmp_path,
 ):
