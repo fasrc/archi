@@ -15,7 +15,7 @@ Rules for every task:
 
 ## 1. Name the #347 exception in the plan
 
-- [ ] 1.1 Confirm the old state first: `grep -c "One exception (2026-10-09)" "$PLAN"`
+- [x] 1.1 Confirm the old state first: `grep -c "One exception (2026-10-09)" "$PLAN"`
       prints `0`, and `grep -c "Method records it as the one exception" "$PLAN"` prints
       `0`. Copy the Appendix script to `/tmp/apply-715.py` and run
       `python3 /tmp/apply-715.py "$PLAN"`. It must print `applied 2 edits`. If it exits
