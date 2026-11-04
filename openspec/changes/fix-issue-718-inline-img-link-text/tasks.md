@@ -20,7 +20,7 @@
 
 ## 2. Docs
 
-- [ ] 2.1 In `docs/docs/configuration.md`, in the bullet "A promoted block leaves its
+- [x] 2.1 In `docs/docs/configuration.md`, in the bullet "A promoted block leaves its
       inline ancestors.", insert the sentence of Appendix A3 right after the text
       ``where it shows no `#` (PR #716 review).`` and before `A relative or fragment
       target`. Keep the bullet's line wrapping at about 88 characters and change nothing
