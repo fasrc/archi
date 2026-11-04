@@ -2746,6 +2746,29 @@ def test_cancel_of_a_stuck_process_job_still_blocks_start_until_it_ends(
     manager.close()
 
 
+def test_a_failed_settle_write_does_not_block_the_next_job(monkeypatch, tmp_path):
+    manager = EvaluationJobManager(tmp_path)
+    stuck, writes = _start_stuck_process_job(monkeypatch, manager, tmp_path)
+    writes["failing"] = False
+    stuck_name = f"{stuck['id']}.json"
+    recovered_write_json = jobs_module.write_json
+
+    def write_json(path, payload):
+        if path.name == stuck_name:
+            raise OSError("settle write failed")
+        recovered_write_json(path, payload)
+
+    monkeypatch.setattr(jobs_module, "write_json", write_json)
+
+    next_job = manager.start("generate_atoms", lambda: {})
+
+    assert manager.wait(next_job["id"], timeout=JOB_WAIT_TIMEOUT)["status"] == (
+        "completed"
+    )
+    assert manager.get(stuck["id"])["status"] == "queued"
+    manager.close()
+
+
 def test_the_sweep_keeps_a_uuid_spelled_differently_than_the_manager_writes_it(
     tmp_path,
 ):
