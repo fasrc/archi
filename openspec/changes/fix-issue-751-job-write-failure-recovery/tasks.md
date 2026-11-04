@@ -11,6 +11,38 @@
 
 - [x] 3.1 Tick this box, commit the tick through the hook, then push and open the PR, so the push carries every commit. Push with `git push -u origin fix/issue-751-job-write-failure-recovery`. Write the PR body to a file under `/tmp` (never under the repository) and open the PR with `gh pr create --repo fasrc/archi --base dev --title "fix(qa): release an evaluation job that no worker or cancel owns (#751)" --body-file <that file>`. Put `Closes #751` in the PR **body**, not the title. In the body, state the defect (a worker whose job-file write raises leaves an active record that blocks every new job until a restart, and `cancel()` raises the dead worker's error), the ownership rule (future done, no cancel call in progress, no tracked process), the `cancel()` wrapper with its per-job count, the `future.exception` change, the eleven tests (eight red on `origin/dev`, three guards), and the six broken variants from the appendix table, each with the test that catches it. Name the docs paragraph. No `Co-Authored-By` trailer. Do not merge.
 
+## 4. Post-PR check findings (2026-11-04 wrap-up)
+
+The post-PR check of PR #807 confirmed these two findings. Do 4.1, then 4.2. Do not change anything else: two more findings (a paused job left over from a restart, and Cancel on a scored run) wait for a human decision and are listed in the PR body.
+
+- [ ] 4.1 Pin the rule "a failed settle write does not raise" (spec delta; design decision 4). No test catches the removal of the `try`/`except` in `_settle_ownerless`, because `_fail_job_writes_after_the_first` fails every write and so `start()` raises the same `OSError` either way. In `tests/unit/evaluation/qa/test_jobs_history.py`, add the test below directly ABOVE the last test (`test_the_sweep_keeps_a_uuid_spelled_differently_than_the_manager_writes_it`), with two blank lines before and after it. Do not change other lines and do not change `src/`. Then run `python -m pytest tests/unit/evaluation/qa/test_jobs_history.py -q -k failed_settle_write`: expect `1 passed`. Red check (this test guards existing code): in `src/evaluation/qa/jobs.py`, `_settle_ownerless`, replace the four lines `try:` / `write_json(self._path(job_id), job)` / `except Exception:` / `pass` with the one line `write_json(self._path(job_id), job)`, run the same command, and expect `1 failed` with `OSError: settle write failed`. Then run `git checkout -- src/evaluation/qa/jobs.py` and confirm `git diff -- src/` prints nothing. Run the whole file: expect exactly `69 passed`. Tick this box, `git add` the test file and this `tasks.md`, run `bash scripts/gate.sh` in the foreground (green), and commit as `test(qa): pin that a failed settle write does not raise (#751)` with the red line in the commit body. Push with `git push origin fix/issue-751-job-write-failure-recovery`.
+
+  ```python
+  def test_a_failed_settle_write_does_not_block_the_next_job(monkeypatch, tmp_path):
+      manager = EvaluationJobManager(tmp_path)
+      stuck, writes = _start_stuck_process_job(monkeypatch, manager, tmp_path)
+      writes["failing"] = False
+      stuck_name = f"{stuck['id']}.json"
+      recovered_write_json = jobs_module.write_json
+
+      def write_json(path, payload):
+          if path.name == stuck_name:
+              raise OSError("settle write failed")
+          recovered_write_json(path, payload)
+
+      monkeypatch.setattr(jobs_module, "write_json", write_json)
+
+      next_job = manager.start("generate_atoms", lambda: {})
+
+      assert manager.wait(next_job["id"], timeout=JOB_WAIT_TIMEOUT)["status"] == (
+          "completed"
+      )
+      assert manager.get(stuck["id"])["status"] == "queued"
+      manager.close()
+  ```
+
+- [ ] 4.2 Docs: a **Cancel evaluation** also fails with HTTP 500 while job-file writes fail, because `_cancel()` first writes `cancel_requested`. In `docs/docs/evaluation.md`, in the paragraph that starts "A job can also keep reading", replace the sentence "While the jobs directory still refuses writes, a launch fails with HTTP 500 instead of 409, and the chat-app log names the write error." with "While the jobs directory still refuses writes, a launch or a **Cancel evaluation** fails with HTTP 500 instead of 409, and the chat-app log names the write error." Replace the last sentence, "For an evaluation that still reads `queued` or `running`, **Cancel evaluation** also ends it, as `canceled`.", with "When writes succeed again, **Cancel evaluation** also ends an evaluation that still reads `queued` or `running`, as `canceled`." Reflow only that paragraph to lines of at most 80 characters. Do not change other text. Tick this box, `git add` the docs file and this `tasks.md`, run `bash scripts/gate.sh` in the foreground (green), commit as `docs(qa): say that Cancel also fails while job writes fail (#751)`, and push with `git push origin fix/issue-751-job-write-failure-recovery`.
+
 ## Appendix (Loop 1 scratch evidence, 2026-11-04)
 
 Loop 1 ran every stage below on a scratch copy of `origin/dev` `73104693`
