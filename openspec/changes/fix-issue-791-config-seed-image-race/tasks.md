@@ -19,7 +19,7 @@
 
 ## 2. Publish
 
-- [ ] 2.1 Tick this box, commit the tick through the hook (message: `mark #791 tasks
+- [x] 2.1 Tick this box, commit the tick through the hook (message: `mark #791 tasks
       complete`), then push and open the PR, so the push carries every commit. Push with
       `git push -u origin fix/issue-791-config-seed-image-race`. Open the PR with
       `gh pr create --repo fasrc/archi --base dev --head fix/issue-791-config-seed-image-race`,
