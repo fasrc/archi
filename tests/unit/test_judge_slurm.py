@@ -114,6 +114,8 @@ case "$*" in
       printf '{"image_digest": "sha256:rebuilt"}\n' > "$JUDGE_HOME/scorer-identity.json.new"
       mv -f "$JUDGE_HOME/scorer-identity.json.new" "$JUDGE_HOME/scorer-identity.json"
     fi
+    # Last side effect: the curl stub answers only after this file exists (#797).
+    : > "$STUB/vllm.ready"
     exec sleep 300 ;;
   build*)
     out=""
@@ -125,6 +127,10 @@ exit 0
 """
 
 _CURL = r"""#!/bin/bash
+# Wait for the vllm serve stub's side effects (at most 1000 x 0.01 s), so the job
+# cannot probe, score and stop the server before they happen (#797).
+i=0
+while [ ! -e "$STUB/vllm.ready" ] && [ "$i" -lt 1000 ]; do sleep 0.01; i=$((i + 1)); done
 printf '%s\n' "$*" >> "$STUB/curl.calls"
 for a in "$@"; do case "$a" in @*) cat "${a#@}" >> "$STUB/curl.header" ;; esac; done
 n="$(cat "$STUB/curl.count" 2>/dev/null || echo 0)"; echo $((n + 1)) > "$STUB/curl.count"
@@ -490,6 +496,8 @@ def test_a_job_serves_on_a_private_socket_scores_merges_and_stops_vllm(tmp_path,
     assert f"--socket {socket}" in run
     # It waited for /v1/models through the socket.
     assert int((stub / "curl.count").read_text()) == 3
+    # The server stub did all its side effects before the job stopped it (#797).
+    assert (stub / "vllm.ready").exists()
     assert all("--unix-socket" in c and "/v1/models" in c for c in _calls(stub, "curl"))
     # The merge job is submitted after this job succeeds.
     (merge,) = _calls(stub, "sbatch")
