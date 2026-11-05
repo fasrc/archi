@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
 from enum import Enum
 from pathlib import Path
@@ -46,6 +47,9 @@ class EvaluationJobManager:
         )
         self._futures: Dict[str, Future] = {}
         self._processes: Dict[str, subprocess.Popen] = {}
+        # cancel() calls in progress, per job id (#751). A count, not a set:
+        # two overlapping cancels of one job must not release it early.
+        self._cancel_calls: Counter[str] = Counter()
         self._interrupt_stale_jobs()
         self._sweep_orphan_results()
 
@@ -98,8 +102,42 @@ class EvaluationJobManager:
                 JobStatus.RUNNING.value,
                 JobStatus.CANCEL_REQUESTED.value,
             }:
+                if self._settle_ownerless(job):
+                    continue
                 return job
         return None
+
+    def _settle_ownerless(self, job: Dict[str, Any]) -> bool:
+        """Return True when nothing owns an active record any more (#751).
+
+        A worker that raised (for example, every job-file write failed) leaves
+        its record ``queued``, ``running`` or ``cancel_requested`` with no
+        thread to finish it. Such a record must not block new jobs. Try once
+        to record it as ``failed``; if the write fails too, the next call
+        tries again.
+        """
+        job_id = job.get("id")
+        if not isinstance(job_id, str):
+            return False
+        future = self._futures.get(job_id)
+        if (
+            future is None
+            or not future.done()
+            or self._cancel_calls[job_id] > 0
+            or job_id in self._processes
+        ):
+            return False
+        error = None if future.cancelled() else future.exception()
+        job["status"] = JobStatus.FAILED.value
+        job["completed_at"] = utc_now()
+        job["error"] = (
+            str(error) if error is not None else "the job ended without a final status"
+        )
+        try:
+            write_json(self._path(job_id), job)
+        except Exception:
+            pass
+        return True
 
     def start(
         self,
@@ -371,6 +409,23 @@ class EvaluationJobManager:
         *,
         on_terminated: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
+        # While this call runs, its record keeps blocking new jobs, also after
+        # the worker future is done (#751).
+        with self._lock:
+            self._cancel_calls[job_id] += 1
+        try:
+            return self._cancel(job_id, on_terminated)
+        finally:
+            with self._lock:
+                self._cancel_calls[job_id] -= 1
+                if self._cancel_calls[job_id] <= 0:
+                    del self._cancel_calls[job_id]
+
+    def _cancel(
+        self,
+        job_id: str,
+        on_terminated: Optional[Callable[[Dict[str, Any]], None]],
+    ) -> Dict[str, Any]:
         with self._lock:
             job = self.get(job_id)
             if job["kind"] != "evaluation":
@@ -396,7 +451,9 @@ class EvaluationJobManager:
         if process is not None:
             self._terminate(process)
         elif future is not None:
-            future.result(timeout=5)
+            # Wait for the worker to end, but do not raise its error: a worker
+            # that raised has nothing left to stop (#751).
+            future.exception(timeout=5)
 
         with self._lock:
             terminal = self.get(job_id)
