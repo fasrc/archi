@@ -1,6 +1,6 @@
 ## 1. Refuse a bad chunk size (fasrc/archi#778)
 
-- [ ] 1.1 Red then green in one task (do not commit a red state). Write Appendix A to
+- [x] 1.1 Red then green in one task (do not commit a red state). Write Appendix A to
       `/tmp/778-A.diff` with the Write tool and run `git apply -p1 /tmp/778-A.diff` from the
       repository root. It appends 4 test functions at the end of
       `tests/unit/test_vectorstore_manager_hierarchical.py` and changes
