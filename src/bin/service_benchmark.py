@@ -67,11 +67,15 @@ from src.utils.generate_benchmark_report import (
     parse_benchmark_results,
 )
 from src.utils.judge_bundle import (
+    MODE_DEFERRED,
+    MODE_INLINE,
     is_deferred,
-    pending_arm_fields,
+    judge_arm_fields,
     plan_judge_run,
+    scores_inline,
     write_judge_bundle,
     write_result_complete,
+    writes_bundle,
 )
 from src.utils.judge_identity import (
     canonical_identity,
@@ -659,6 +663,7 @@ class ResultHandler:
         ragas_scored: Optional[bool] = None,
         judge_identity: Optional[Dict[str, Any]] = None,
         judge_bundle: Optional[Dict[str, str]] = None,
+        judge_mode: str = MODE_DEFERRED,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -873,9 +878,9 @@ class ResultHandler:
             ),
         }
         # A deferred arm (#731, design D8): `judge_status: pending` and its
-        # bundle. An inline arm gets neither key.
-        if judge_bundle is not None:
-            current_results.update(pending_arm_fields(judge_bundle))
+        # bundle. An inline+bundle arm: the bundle alone, so it still reads as
+        # inline with its scores. An inline arm gets neither key.
+        current_results.update(judge_arm_fields(judge_mode, judge_bundle))
 
         ResultHandler.results.append(current_results)
         ResultHandler.category_map_records_by_arm.append(category_map_end_records)
@@ -2331,14 +2336,16 @@ class Benchmarker:
             # False (#518). get_ragas_results sets it True only when a metric
             # invokes the judge. Left untouched when RAGAS is not a mode.
             self._ragas_scored = False
-            if is_deferred(getattr(self, "judge_plan", None)):
+            plan = getattr(self, "judge_plan", None)
+            if writes_bundle(plan):
                 # Deferred (#731, design D6): write this arm's judge bundle in
                 # place of the judge. No judge or embedding object is built and
                 # no aggregate is written; _ragas_scored stays False, so
                 # handle_results records the #518 null judge fields. An arm with
                 # no scorable row still writes a bundle: the merge waits for
-                # every arm.
-                plan = self.judge_plan
+                # every arm. inline+bundle writes the same bundle and then falls
+                # through to the inline judge below, so a judge failure never
+                # costs the bundle.
                 self._judge_bundle = write_judge_bundle(
                     OUTPUT_DIR / plan.bundle_dir,
                     result_basename=self.result_basename,
@@ -2355,8 +2362,9 @@ class Benchmarker:
                     verbosity=self.config.get("global", {}).get("verbosity", 0),
                     code_version=plan.code_version,
                     package_digest=plan.package_digest,
+                    judge_mode=plan.mode,
                 )
-            elif ragas_input:
+            if scores_inline(plan) and ragas_input:
                 logger.info("Starting to collect RAGAS results")
                 # scorable_items carries #92's per-question keys in ragas_input
                 # order; get_ragas_results scores each metric over its own
@@ -2366,7 +2374,7 @@ class Benchmarker:
                 total_results.update(
                     self.get_ragas_results(ragas_input, list(scorable.keys()), scorable)
                 )
-            else:
+            elif scores_inline(plan):
                 # No scorable input (all failed/degraded): #92's config-level n/a
                 # guard emits NaN for every metric, with no empty-Dataset ragas call.
                 # Tolerant read: this is the FAILURE path, so an unreadable or
@@ -2547,6 +2555,9 @@ class Benchmarker:
         # 0-based position of the arm in benchmarking_results; a deferred arm
         # names its judge bundle with it (#731, design D5).
         arm_index = 0
+        # One judge mode per run (D8a); handle_results picks the arm's judge
+        # fields from it. A bench built without a plan is inline.
+        arm_judge_mode = getattr(getattr(self, "judge_plan", None), "mode", MODE_INLINE)
         while self.all_config_files:
             # Read the corpus BEFORE the arm's questions, so the report can show
             # whether they were all scored against the same documents.
@@ -2588,6 +2599,7 @@ class Benchmarker:
                 ragas_scored=getattr(self, "_ragas_scored", None),
                 judge_identity=self._recorded_judge_identity(),
                 judge_bundle=getattr(self, "_judge_bundle", None),
+                judge_mode=arm_judge_mode,
             )
             self.load_new_configuration()
             arm_index += 1

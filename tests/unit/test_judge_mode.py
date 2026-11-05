@@ -60,6 +60,7 @@ def test_invalid_raises_value_error_names_value_and_both_allowed(bad):
     assert repr(bad) in msg
     assert "inline" in msg
     assert "deferred" in msg
+    assert "inline+bundle" in msg
 
 
 # ---------------------------------------------------------------------------
