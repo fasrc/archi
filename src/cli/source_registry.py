@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -35,6 +36,53 @@ def read_input_list_entries(path) -> List[str]:
                 continue
             entries.append(stripped.split(",")[0].strip())
     return entries
+
+
+def refuse_missing_input_lists(configs) -> None:
+    """Raise ValueError naming every configured input list that does not exist.
+
+    A relative path resolves from the current directory, as get_enabled_sources()
+    and staging resolve it (fasrc/archi#617). A path that exists but cannot be
+    read is not refused here: those callers warn about it and skip it (#636).
+    """
+    missing_pairs = []
+    seen = {}
+    for cfg in configs:
+        config_path = cfg.get("_config_path", "<unknown config>")
+        dm = cfg.get("data_manager")
+        if not isinstance(dm, dict):
+            continue
+        sources = dm.get("sources")
+        if not isinstance(sources, dict):
+            continue
+        links = sources.get("links")
+        if not isinstance(links, dict):
+            continue
+        input_lists = links.get("input_lists")
+        if not isinstance(input_lists, list):
+            continue
+        for entry in input_lists:
+            if not isinstance(entry, (str, os.PathLike)):
+                continue
+            path_str = os.fspath(entry)
+            key = (path_str, config_path)
+            if key not in seen and not os.path.exists(entry):
+                seen[key] = True
+                missing_pairs.append(key)
+
+    if not missing_pairs:
+        return None
+
+    cwd = os.getcwd()
+    lines = "\n".join(
+        f"  - {path} (config: {cfg_path})" for path, cfg_path in missing_pairs
+    )
+    raise ValueError(
+        f"input_lists: these configured list files do not exist. A relative path"
+        f" resolves from the current directory ({cwd}), not from the config"
+        f" file's directory.\n{lines}\n"
+        f"Correct each path, or use an absolute path, then run the command again."
+    )
 
 
 @dataclass
