@@ -50,16 +50,39 @@ def _report_embedding_progress(embedding_progress, done, total):
 SUPPORTED_DISTANCE_METRICS = ["l2", "cosine", "ip"]
 
 
+def _resolve_chunk_size(chunking_cfg, key, default):
+    """Resolve one hierarchical chunk size, refusing a value the parser cannot use.
+
+    ``None`` (key present but empty in YAML) resolves to ``default``, matching the
+    absent-key behavior. A bool, a non-integer, or a value below 1 raises
+    ``ValueError`` naming the key, so the operator sees one clear error at
+    construction time rather than a per-document ``TypeError`` during ingest.
+    """
+    value = chunking_cfg.get(key, default)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(
+            f"data_manager.chunking.{key} must be a positive int, got {value!r}"
+        )
+    return value
+
+
 def _resolve_chunk_sizes(chunking_cfg):
     """Resolve hierarchical parent/child target sizes from ``data_manager.chunking``.
 
     Reads ``parent_chunk_size`` / ``child_chunk_size`` from the chunking config
     section, falling back independently to the node-parser defaults when a key is
-    absent. Keeping this resolution backward-compatible means an existing
-    deployment that omits the keys reproduces its prior chunking exactly.
+    absent or empty. Keeping this resolution backward-compatible means an existing
+    deployment that omits the keys reproduces its prior chunking exactly. A size
+    that is not a positive int raises ``ValueError`` (see ``_resolve_chunk_size``).
     """
-    parent = chunking_cfg.get("parent_chunk_size", DEFAULT_PARENT_CHUNK_SIZE)
-    child = chunking_cfg.get("child_chunk_size", DEFAULT_CHILD_CHUNK_SIZE)
+    parent = _resolve_chunk_size(
+        chunking_cfg, "parent_chunk_size", DEFAULT_PARENT_CHUNK_SIZE
+    )
+    child = _resolve_chunk_size(
+        chunking_cfg, "child_chunk_size", DEFAULT_CHILD_CHUNK_SIZE
+    )
     return parent, child
 
 
