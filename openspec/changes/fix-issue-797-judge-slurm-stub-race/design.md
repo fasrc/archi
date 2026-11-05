@@ -66,8 +66,10 @@ recorded value is the same as before.
 ### D3. The wait has a bound, and then the probe fails closed
 
 The loop is `while [ ! -e "$STUB/vllm.ready" ] && [ "$i" -lt "$ticks" ]; do sleep 0.01; ...; done`,
-with `ticks` from `$STUB/curl.wait_ticks` (default `1000`). It counts steps, not seconds: under
-load each `sleep 0.01` takes longer, so the bound gets longer, which is the safe direction.
+with `ticks` from `$STUB/curl.wait_ticks`. The default is `(_RUN_TIMEOUT + 1) * 100` (6100),
+written into `_CURL` from the `_RUN_TIMEOUT` constant that `_run` also uses (60 s). It counts
+steps, not seconds: under load each `sleep 0.01` takes longer, so the bound gets longer, which
+is the safe direction. So in a test, no probe stops its wait before `_run` stops the job.
 
 If the marker is still absent after the bound, the stub prints `000` and exits 7 before it
 records the call, as `curl` does when nothing listens on the socket. The job then probes
@@ -82,6 +84,15 @@ the server before its side effects: the same race. The new test
 `curl.wait_ticks` to `1` and a 0.5 s `serve.delay` in the `vllm serve` stub. With the first
 version it failed on its `JUDGE_PRECISION=fp8` assertion; with the `000` line it passes.
 
+Review round 2 (2026-11-05) raised the default bound from 1000 steps to 6100. With
+`JUDGE_READY_TIMEOUT=0`, one failed probe ends the job. So in
+`test_a_server_that_never_gets_ready_fails_the_job_and_is_stopped`, a server stub that started
+more than about 10 s late was stopped before it wrote `vllm.pid`, and the test failed with
+`FileNotFoundError` (measured with an 11 s delay at the start of the `vllm serve` branch).
+With the wait longer than the `_run` timeout, the same delay passes. The new test
+`test_the_probe_wait_outlasts_the_run_timeout` reads the default from `_CURL` and failed with
+`assert (1000 * 0.01) > 60` before the change.
+
 Every probe in the job follows `"${SERVE[@]}" &`, and no other script under
 `scripts/benchmarking/slurm/` calls `curl` (`grep -ln curl scripts/benchmarking/slurm/*`
 prints only `archi_judge.sbatch`). So no current test reaches the bound: the file takes about
@@ -89,8 +100,9 @@ prints only `archi_judge.sbatch`). So no current test reaches the bound: the fil
 
 ### D4. One new assertion pins the marker
 
-A later edit that removes the marker line does not make any existing test fail: each probe
-waits 1000 steps and then continues, so the job tests get about 10 s slower each. Loop 1
+In the first version (before review round 1, D3), a later edit that removed the marker line
+made no existing test fail: each probe waited 1000 steps and then continued, so the job tests
+got about 10 s slower each. Loop 1
 measured it: with the marker line removed, the file took 169.8 s. Apart from the new
 assertion below, only `test_the_job_hands_the_scorer_a_slurm_snapshot` failed, on its 10 s
 time window, which does not name the cause. So `test_a_job_serves_on_a_private_socket_scores_merges_and_stops_vllm`
@@ -138,7 +150,8 @@ Without a delay, the fixed file gave `56 passed` in 20 of 20 runs on the host (s
 full).
 
 Review round 1 (2026-11-05) ran the `red` and `red-top` delays on the new file (57 tests):
-`57 passed` for each.
+`57 passed` for each. Review round 2 ran them again on its file (58 tests): `58 passed` for
+each.
 
 ### D6. Ship the fix as an exact patch
 

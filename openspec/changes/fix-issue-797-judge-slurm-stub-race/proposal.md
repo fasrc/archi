@@ -27,8 +27,8 @@ Loop 1 measured the race on `origin/dev` `5f3d80e9` in a copy under `/tmp`:
 
 - The `vllm serve` stub writes a marker, `$STUB/vllm.ready`, as its last step before
   `exec sleep 300`.
-- The `curl` stub waits for that marker before it does anything else, at most 1000 steps of
-  `sleep 0.01`. If the marker is still absent after the bound, it prints `000` and exits 7
+- The `curl` stub waits for that marker before it does anything else, at most 6100 steps of
+  `sleep 0.01`: longer than the 60 s `_run` timeout (review round 2, design D3). If the marker is still absent after the bound, it prints `000` and exits 7
   without a record, as `curl` does with nothing on the socket, so the job probes again and
   never sees `200` before the marker (review round 1, 2026-11-05; design D3). A test whose
   server never writes the marker does not hang: it fails on the 60 s `_run` timeout. The wait
@@ -59,7 +59,8 @@ None.
 - Tests only: `tests/unit/test_judge_slurm.py`. A tests-only diff scores no patch-coverage
   lines.
 - The file's run time does not change measurably (`56 passed`, about 4.5 s, 20 of 20 runs
-  on the host with swap full; `57 passed` in about 5 s after review round 1 adds a test).
+  on the host with swap full; `58 passed` in about 5 s after review rounds 1 and 2 add a test
+  each).
 - The host gate stops failing on the two flaky tests. Until this merges, every commit pays
   up to about 16 min of gate retries.
 - Closes #797.

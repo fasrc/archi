@@ -32,6 +32,7 @@ Standing notes for every task:
 ## 3. Review round 1 (2026-11-05)
 
 - [x] 3.1 Codex adversarial review [medium]: after its 1000-step bound, the `curl` stub answered `200` with no marker, so a server stub slower than about 10 s brought the race back. Red first: `curl.wait_ticks` and `serve.delay` knobs plus `test_a_server_slower_than_the_probe_wait_is_not_ready_before_its_edits`, which failed on its `JUDGE_PRECISION=fp8` assertion. Green: one line, `[ -e "$STUB/vllm.ready" ] || { printf 000; exit 7; }`, after the wait loop (design D3). `57 passed`; `57 passed` with each 3 s delay of design D5.
+- [x] 3.2 Codex adversarial review round 2 [medium]: with `JUDGE_READY_TIMEOUT=0`, a server stub that started more than 1000 steps late was stopped before it wrote `vllm.pid` (`FileNotFoundError`, reproduced with an 11 s delay). Red first: `_RUN_TIMEOUT` names the 60 s `_run` timeout, and `test_the_probe_wait_outlasts_the_run_timeout` failed with `assert (1000 * 0.01) > 60`. Green: the stub's default wait is `(_RUN_TIMEOUT + 1) * 100` steps (design D3). `58 passed`; the 11 s delay passes; `58 passed` with each 3 s delay of design D5.
 
 ## Appendix (reference only — no checkboxes)
 

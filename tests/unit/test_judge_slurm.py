@@ -30,6 +30,8 @@ MERGE = SLURM / "judge_merge.sbatch"
 RECIPE = SLURM / "archi-scorer.def"
 BUILD = SLURM / "build_scorer_image.sh"
 PYTHON_BIN = str(Path(sys.executable).parent)
+#: Seconds that ``_run`` gives one script before it stops it.
+_RUN_TIMEOUT = 60
 
 _SQUEUE = r"""#!/bin/sh
 printf '%s\n' "$*" >> "$STUB/squeue.calls"
@@ -129,10 +131,10 @@ exit 0
 """
 
 _CURL = r"""#!/bin/bash
-# Wait for the vllm serve stub's side effects (at most 1000 x 0.01 s), so the job
-# cannot probe, score and stop the server before they happen (#797). With no
-# marker by then, fail like curl with nothing on the socket, so the job asks again.
-ticks="$(cat "$STUB/curl.wait_ticks" 2>/dev/null || echo 1000)"
+# Wait for the vllm serve stub's side effects, so the job cannot probe, score and
+# stop the server before they happen (#797). The wait outlasts the _run timeout.
+# With no marker by then, fail like curl with nothing on the socket.
+ticks="$(cat "$STUB/curl.wait_ticks" 2>/dev/null || echo @WAIT_TICKS@)"
 i=0
 while [ ! -e "$STUB/vllm.ready" ] && [ "$i" -lt "$ticks" ]; do sleep 0.01; i=$((i + 1)); done
 [ -e "$STUB/vllm.ready" ] || { printf 000; exit 7; }
@@ -140,7 +142,9 @@ printf '%s\n' "$*" >> "$STUB/curl.calls"
 for a in "$@"; do case "$a" in @*) cat "${a#@}" >> "$STUB/curl.header" ;; esac; done
 n="$(cat "$STUB/curl.count" 2>/dev/null || echo 0)"; echo $((n + 1)) > "$STUB/curl.count"
 [ "$n" -ge "$(cat "$STUB/curl.ready_after" 2>/dev/null || echo 0)" ] && printf 200 || printf 503
-"""
+""".replace(
+    "@WAIT_TICKS@", str((_RUN_TIMEOUT + 1) * 100)
+)
 
 
 @pytest.fixture
@@ -185,7 +189,7 @@ def _run(script, tmp_path, stub, *args, **extra):
         env=_env(tmp_path, stub, **extra),
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=_RUN_TIMEOUT,
         cwd=tmp_path,
     )
 
@@ -534,6 +538,15 @@ def test_a_server_that_never_gets_ready_fails_the_job_and_is_stopped(tmp_path, s
     assert _calls(stub, "sbatch") == []
     with pytest.raises(ProcessLookupError):
         os.kill(int((stub / "vllm.pid").read_text()), 0)
+
+
+def test_the_probe_wait_outlasts_the_run_timeout():
+    # With JUDGE_READY_TIMEOUT=0 one failed probe ends the job. A probe wait that
+    # ends while _run still runs the job lets the job stop a slow server stub
+    # before it records vllm.pid (#797, review round 2).
+    match = re.search(r'curl\.wait_ticks" 2>/dev/null \|\| echo (\d+)', _CURL)
+    assert match is not None
+    assert int(match.group(1)) * 0.01 > _RUN_TIMEOUT
 
 
 def test_a_failed_scorer_submits_no_merge(tmp_path, stub):
