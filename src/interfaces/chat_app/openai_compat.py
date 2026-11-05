@@ -20,6 +20,7 @@ import psycopg2
 from flask import Blueprint, Response, g, jsonify, request, stream_with_context
 
 from src.archi.utils.citation_formatter import format_citations
+from src.interfaces.chat_app.source_visibility import visible_sources
 from src.interfaces.slack_trace_tags import (
     slack_trace_attributes,
     tag_current_span,
@@ -378,6 +379,21 @@ def _extract_delta(content, accumulated):
     return content, accumulated + content
 
 
+def _format_visible_citations(source_documents, source_scores):
+    """Format the citation block from the sources the config lets a reader see.
+
+    The native chat drops a document from ``visible: false`` sources before it
+    lists sources (``get_top_sources``); /v1 drops it here, with its own score
+    (issue #769). A chat wrapper without ``sources_config`` filters nothing.
+    """
+    documents, scores = visible_sources(
+        source_documents,
+        source_scores,
+        getattr(_chat_wrapper, "sources_config", None),
+    )
+    return format_citations(documents, scores)
+
+
 # ---------------------------------------------------------------------------
 # Streaming response
 # ---------------------------------------------------------------------------
@@ -411,7 +427,9 @@ def _streaming_response(request_id, model, stream_kwargs, trace_attributes=None)
                         source_documents = docs
                         source_scores = scores_list
 
-                    citation_text = format_citations(source_documents, source_scores)
+                    citation_text = _format_visible_citations(
+                        source_documents, source_scores
+                    )
                     if citation_text:
                         accumulated[0] += citation_text
                         yield _sse_chunk(request_id, model, content=citation_text)
@@ -517,7 +535,7 @@ def _non_streaming_response(request_id, model, stream_kwargs, trace_attributes=N
         )
 
     if append_citations:
-        citation_text = format_citations(source_documents, source_scores)
+        citation_text = _format_visible_citations(source_documents, source_scores)
         if citation_text:
             final_content += citation_text
 

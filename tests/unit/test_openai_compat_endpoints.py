@@ -942,3 +942,114 @@ class TestArchMessageId:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["archi_message_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# Source visibility in /v1 citations (issue #769)
+# ---------------------------------------------------------------------------
+
+_V1_HIDE_JIRA = {"jira": {"visible": False}, "git": {"visible": True}}
+
+
+def _make_visibility_source_doc(display_name, **metadata):
+    """Create a fake source document whose metadata names its source."""
+    doc = MagicMock()
+    doc.metadata = {"display_name": display_name, **metadata}
+    return doc
+
+
+def _visibility_final_events(documents, scores):
+    return [
+        {"type": "chunk", "content": "The answer."},
+        {
+            "type": "final",
+            "answer": "The answer.",
+            "response": "The answer.",
+            "source_documents": documents,
+            "retriever_scores": scores,
+        },
+    ]
+
+
+def _hidden_jira_and_visible_git_docs():
+    return [
+        _make_visibility_source_doc(
+            "JIRA-1", source_type="ticket", ticket_provider="jira"
+        ),
+        _make_visibility_source_doc("repo/README.md", source_type="git"),
+    ]
+
+
+def _v1_content(app, stream):
+    """POST one /v1 request and return the assistant text, joined from SSE if streamed."""
+    resp = app.test_client().post(
+        "/v1/chat/completions",
+        json={
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": stream,
+        },
+    )
+    assert resp.status_code == 200
+    if not stream:
+        return resp.get_json()["choices"][0]["message"]["content"]
+    content = ""
+    for line in resp.get_data(as_text=True).split("\n"):
+        if line.startswith("data: ") and line != "data: [DONE]":
+            delta = json.loads(line[len("data: ") :])["choices"][0]["delta"]
+            content += delta.get("content", "")
+    return content
+
+
+class TestV1CitationVisibility:
+
+    @pytest.mark.parametrize(
+        "stream", [False, True], ids=["non_streaming", "streaming"]
+    )
+    def test_v1_citations_leave_out_a_hidden_source(self, app_no_auth, stream):
+        app, chat_wrapper = app_no_auth
+        chat_wrapper.sources_config = _V1_HIDE_JIRA
+        chat_wrapper.stream.return_value = iter(
+            _visibility_final_events(_hidden_jira_and_visible_git_docs(), [0.9, 0.4])
+        )
+
+        content = _v1_content(app, stream)
+
+        assert content.startswith("The answer.")
+        assert content.count("**Sources:**") == 1
+        assert "JIRA-1" not in content
+        assert "- `repo/README.md` (relevance: 0.40)" in content
+
+    @pytest.mark.parametrize(
+        "stream", [False, True], ids=["non_streaming", "streaming"]
+    )
+    def test_v1_all_hidden_sources_give_no_citation_block(self, app_no_auth, stream):
+        app, chat_wrapper = app_no_auth
+        chat_wrapper.sources_config = _V1_HIDE_JIRA
+        hidden = _make_visibility_source_doc(
+            "JIRA-1", source_type="ticket", ticket_provider="jira"
+        )
+        chat_wrapper.stream.return_value = iter(
+            _visibility_final_events([hidden], [0.9])
+        )
+
+        content = _v1_content(app, stream)
+
+        assert content == "The answer."
+
+    @pytest.mark.parametrize(
+        "stream", [False, True], ids=["non_streaming", "streaming"]
+    )
+    def test_v1_citations_without_sources_config_keep_every_source(
+        self, app_no_auth, stream
+    ):
+        app, chat_wrapper = app_no_auth
+        del chat_wrapper.sources_config
+        chat_wrapper.stream.return_value = iter(
+            _visibility_final_events(_hidden_jira_and_visible_git_docs(), [0.9, 0.4])
+        )
+
+        content = _v1_content(app, stream)
+
+        assert "- `JIRA-1` (relevance: 0.90)" in content
+        assert "- `repo/README.md` (relevance: 0.40)" in content

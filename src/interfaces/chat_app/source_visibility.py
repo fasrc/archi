@@ -43,3 +43,28 @@ def is_visible(metadata, sources_config) -> bool:
         logger.warning("sources_config[%r] is not a dict; treating as visible", key)
         return True
     return bool(entry.get("visible", True))
+
+
+def visible_sources(documents, scores, sources_config):
+    """Drop each document that ``is_visible`` hides, together with its own score.
+
+    ``scores`` pairs with ``documents`` by position, the way ``format_citations``
+    reads them. A kept document that has no score keeps none, so the formatter still
+    pads it with ``-1.0``. A ``sources_config`` that is not a dict means no filter:
+    the two arguments come back unchanged (issue #769).
+    """
+    if not isinstance(sources_config, dict):
+        return documents, scores
+    scores = list(scores or [])
+    kept_documents = []
+    kept_scores = []
+    for index, document in enumerate(documents or []):
+        metadata = getattr(document, "metadata", None)
+        if not isinstance(metadata, dict):
+            metadata = {}
+        if not is_visible(metadata, sources_config):
+            continue
+        kept_documents.append(document)
+        if index < len(scores):
+            kept_scores.append(scores[index])
+    return kept_documents, kept_scores

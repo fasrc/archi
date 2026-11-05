@@ -184,6 +184,11 @@ pipeline returned without a score are listed last, without a `(relevance: ...)` 
 
 Collection labels appear only when sources span multiple collections.
 
+The block leaves out each document whose source has `visible: false` in
+`data_manager.sources`, with its score, in streaming and non-streaming responses. This is the
+rule the chat UI's own source list obeys (see [Configuration](configuration.md)). The model
+still reads a hidden document, so the model's own answer text can still name it.
+
 A `/v1` response carries **at most one** source list appended by archi — the endpoint's citation
 block or the native chat UI's, never both. A source section the model wrote into its own answer
 text is passed through as written; the endpoint does not detect or remove it.
@@ -200,5 +205,6 @@ with one citation block appended when the `final` event arrives, whether or not 
 `answer`, and the chat UI's own list is never involved.
 
 Either path can come back with no source list at all, even when retrieval found documents: the
-citation block is empty when no document carries a usable display name, and the chat UI's list is
-empty when its own relevance and visibility filtering leaves nothing to show.
+citation block is empty when no document carries a usable display name or every document comes
+from a hidden source, and the chat UI's list is empty when its own relevance and visibility
+filtering leaves nothing to show.

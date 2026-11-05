@@ -193,8 +193,11 @@ these to turn anything off or to hide anything:
 | `data_manager.sources.links.html_scraper.reset_data` | no consumer reads it — `ScraperManager` extracts the `html_scraper` block but reads only `verify_urls` and `enable_warnings` when it builds link scrapers |
 | `services.chat_app.flask_debug_mode` | the chat service runs on gunicorn and always turns the Flask debugger off. The grader and the data manager still read their own `flask_debug_mode` keys |
 
-`visible: false` works for all sources. The chat app maps each document's stored metadata
-to a config key using the following table, then reads `visible` from that config entry:
+`visible: false` works for all sources. It removes a document from the chat app's source list
+and from the citation block of `/v1/chat/completions`, streaming and non-streaming. It does not
+remove the document from retrieval: the model still reads it, and the model's own answer text
+can still name it. Both lists map each document's stored metadata to a config key using the
+following table, then read `visible` from that config entry:
 
 | Stored `source_type` | Stored marker | Config key used |
 |---|---|---|
@@ -740,7 +743,7 @@ data_manager:
       anonymize_data: true
 ```
 
-The `visible` flag on any source (`sources.<name>.visible`) controls whether content appears in chat citations (default: `true`).
+The `visible` flag on any source (`sources.<name>.visible`) controls whether content appears in chat citations and in `/v1` citations (default: `true`).
 
 ### Processing (HTML → Markdown & categorization)
 
