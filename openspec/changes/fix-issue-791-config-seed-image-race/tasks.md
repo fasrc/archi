@@ -1,6 +1,6 @@
 ## 1. Build config-seed from the benchmark Dockerfile when no chatbot is deployed (fasrc/archi#791)
 
-- [ ] 1.1 Red then green in one task (do not commit a red state). Write Appendix A to
+- [x] 1.1 Red then green in one task (do not commit a red state). Write Appendix A to
       `/tmp/791-A.diff` with the Write tool and run `git apply -p1 /tmp/791-A.diff` from the
       repository root. It adds `tests/unit/test_base_compose_image_tags.py` and changes the
       `config-seed` `build:` and `environment:` blocks in
