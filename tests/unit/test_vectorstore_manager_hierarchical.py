@@ -1489,3 +1489,67 @@ def test_add_to_postgres_hierarchical_count_excludes_rolled_back_deletes(
         if "unreferenced parent nodes after re-ingest" in r.message
     ]
     assert summary == ["Deleted 0 unreferenced parent nodes after re-ingest"]
+
+
+# ---------------------------------------------------------------------------
+# _resolve_chunk_sizes validation — issue #778
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("key", ["parent_chunk_size", "child_chunk_size"])
+@pytest.mark.parametrize("bad", ["512", True, False, 0, -1, 2.5])
+def test_resolve_chunk_sizes_rejects_a_size_that_is_not_a_positive_int(key, bad):
+    with pytest.raises(ValueError) as excinfo:
+        _resolve_chunk_sizes({key: bad})
+    message = str(excinfo.value)
+    assert f"data_manager.chunking.{key} " in message
+    assert message.endswith(f"got {bad!r}")
+
+
+def test_resolve_chunk_sizes_null_resolves_each_size_to_its_own_default():
+    assert _resolve_chunk_sizes(
+        {"parent_chunk_size": None, "child_chunk_size": None}
+    ) == (DEFAULT_PARENT_CHUNK_SIZE, DEFAULT_CHILD_CHUNK_SIZE)
+    assert _resolve_chunk_sizes(
+        {"parent_chunk_size": None, "child_chunk_size": 256}
+    ) == (DEFAULT_PARENT_CHUNK_SIZE, 256)
+    assert _resolve_chunk_sizes(
+        {"parent_chunk_size": 1024, "child_chunk_size": None}
+    ) == (1024, DEFAULT_CHILD_CHUNK_SIZE)
+
+
+def test_resolve_chunk_sizes_accepts_a_size_of_one():
+    assert _resolve_chunk_sizes({"parent_chunk_size": 1, "child_chunk_size": 1}) == (
+        1,
+        1,
+    )
+
+
+def test_vectorstore_manager_refuses_a_quoted_chunk_size_when_built(monkeypatch):
+    """The constructor refuses the size, not the first document of an ingest."""
+    from src.utils.config_service import ConfigService
+
+    monkeypatch.setattr(
+        manager_module, "PostgresCatalogService", lambda *args, **kwargs: MagicMock()
+    )
+    monkeypatch.setattr(
+        ConfigService,
+        "_resolve_embedding_classes",
+        staticmethod(lambda class_map: class_map),
+    )
+    config = {
+        "data_manager": {
+            "embedding_name": "FakeEmbeddings",
+            "collection_name": "issue_778",
+            "distance_metric": "cosine",
+            "embedding_class_map": {"FakeEmbeddings": {"class": MagicMock}},
+            "chunk_size": 1000,
+            "chunk_overlap": 150,
+            "chunking": {"strategy": "sentence", "child_chunk_size": "512"},
+        }
+    }
+
+    with pytest.raises(ValueError, match="data_manager.chunking.child_chunk_size"):
+        VectorStoreManager(
+            config=config, global_config={}, data_path="/tmp", pg_config={}
+        )
