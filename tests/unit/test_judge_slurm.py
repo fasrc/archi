@@ -99,6 +99,8 @@ case "$*" in
     printf '{"code_digest": "sha256:c", "image_digest": "%s", "package_digest": "sha256:p"}\n' "$digest" > "$out"
     exit 0 ;;
   *"vllm serve"*)
+    # A slow model load: no side effect happens before this delay ends.
+    [ -f "$STUB/serve.delay" ] && sleep "$(cat "$STUB/serve.delay")"
     prev=""
     for a in "$@"; do [ "$prev" = --uds ] && sock="$a"; prev="$a"; done
     stat -c %a "$(dirname "$sock")" > "$STUB/sockdir.mode"
@@ -128,9 +130,12 @@ exit 0
 
 _CURL = r"""#!/bin/bash
 # Wait for the vllm serve stub's side effects (at most 1000 x 0.01 s), so the job
-# cannot probe, score and stop the server before they happen (#797).
+# cannot probe, score and stop the server before they happen (#797). With no
+# marker by then, fail like curl with nothing on the socket, so the job asks again.
+ticks="$(cat "$STUB/curl.wait_ticks" 2>/dev/null || echo 1000)"
 i=0
-while [ ! -e "$STUB/vllm.ready" ] && [ "$i" -lt 1000 ]; do sleep 0.01; i=$((i + 1)); done
+while [ ! -e "$STUB/vllm.ready" ] && [ "$i" -lt "$ticks" ]; do sleep 0.01; i=$((i + 1)); done
+[ -e "$STUB/vllm.ready" ] || { printf 000; exit 7; }
 printf '%s\n' "$*" >> "$STUB/curl.calls"
 for a in "$@"; do case "$a" in @*) cat "${a#@}" >> "$STUB/curl.header" ;; esac; done
 n="$(cat "$STUB/curl.count" 2>/dev/null || echo 0)"; echo $((n + 1)) > "$STUB/curl.count"
@@ -682,6 +687,22 @@ def test_a_judge_env_change_during_the_job_does_not_reach_the_scorer(tmp_path, s
         re.search(r"--judge-env (\S+)", c).group(1) for c in calls if "score.py" in c
     }
     assert len(paths) == 1 and "/archi-judge.9001." in paths.pop()
+
+
+def test_a_server_slower_than_the_probe_wait_is_not_ready_before_its_edits(
+    tmp_path, stub
+):
+    # The curl stub stops its wait after 1 tick; the server stub needs 0.5 s
+    # before its side effects. A probe that answered 200 at the end of its wait
+    # would let the job score and stop the server before the edit (#797).
+    (stub / "curl.wait_ticks").write_text("1")
+    (stub / "serve.delay").write_text("0.5")
+    (stub / "edit-env").write_text("")
+    proc = _job(tmp_path, stub)
+    assert proc.returncode == 0, proc.stderr
+    assert "JUDGE_PRECISION=fp8" in (tmp_path / "judge" / "judge.env").read_text()
+    assert "JUDGE_PRECISION=bf16" in (stub / "run.judge-env").read_text()
+    assert (stub / "vllm.ready").exists()
 
 
 def test_a_job_without_the_scorer_image_starts_nothing(tmp_path, stub):

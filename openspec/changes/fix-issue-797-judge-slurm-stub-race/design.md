@@ -63,12 +63,24 @@ answer `503` while it waits:
 The wait comes before the `curl.calls`, `curl.header` and `curl.count` writes, so every
 recorded value is the same as before.
 
-### D3. The wait has a bound and then continues
+### D3. The wait has a bound, and then the probe fails closed
 
-The loop is `while [ ! -e "$STUB/vllm.ready" ] && [ "$i" -lt 1000 ]; do sleep 0.01; ...; done`.
-It counts steps, not seconds: under load each `sleep 0.01` takes longer, so the bound gets
-longer, which is the safe direction. After the bound the stub continues as now, so a future
-test whose server never writes the marker does not hang (the `_run` timeout is 60 s).
+The loop is `while [ ! -e "$STUB/vllm.ready" ] && [ "$i" -lt "$ticks" ]; do sleep 0.01; ...; done`,
+with `ticks` from `$STUB/curl.wait_ticks` (default `1000`). It counts steps, not seconds: under
+load each `sleep 0.01` takes longer, so the bound gets longer, which is the safe direction.
+
+If the marker is still absent after the bound, the stub prints `000` and exits 7 before it
+records the call, as `curl` does when nothing listens on the socket. The job then probes
+again (`JUDGE_READY_POLL_SECONDS=0`), so no probe answers `200` before the marker. A future
+test whose server never writes the marker does not hang: it fails on the `_run` timeout
+(60 s).
+
+Review round 1 (2026-11-05) changed this. The first version continued as before after the
+bound and answered `200`, so a server stub slower than about 10 s let the job score and stop
+the server before its side effects: the same race. The new test
+`test_a_server_slower_than_the_probe_wait_is_not_ready_before_its_edits` sets
+`curl.wait_ticks` to `1` and a 0.5 s `serve.delay` in the `vllm serve` stub. With the first
+version it failed on its `JUDGE_PRECISION=fp8` assertion; with the `000` line it passes.
 
 Every probe in the job follows `"${SERVE[@]}" &`, and no other script under
 `scripts/benchmarking/slurm/` calls `curl` (`grep -ln curl scripts/benchmarking/slurm/*`
@@ -89,7 +101,10 @@ gets one more assertion, after the `curl.count` assertion:
     assert (stub / "vllm.ready").exists()
 ```
 
-With the marker line removed, that test fails with `AssertionError: assert False`.
+With the marker line removed, that test failed with `AssertionError: assert False`. Since
+review round 1 (D3), it fails earlier: no probe answers `200`, and `_run` stops the job after
+60 s with `subprocess.TimeoutExpired` (measured 2026-11-05). The assertion stays: it still
+names the race if a later edit removes the wait.
 
 The snapshot test's 10 s window is unchanged by this fix in normal runs. With the fix, the job
 also waits for the stub's start, which takes milliseconds. Making that window independent of
@@ -122,6 +137,9 @@ A copy of the fix with the marker but without the wait, and the `red` delay, als
 Without a delay, the fixed file gave `56 passed` in 20 of 20 runs on the host (swap 100 %
 full).
 
+Review round 1 (2026-11-05) ran the `red` and `red-top` delays on the new file (57 tests):
+`57 passed` for each.
+
 ### D6. Ship the fix as an exact patch
 
 Appendix A of `tasks.md` is a `git apply -p1` patch. Loop 1 checked that it applies to
@@ -130,8 +148,10 @@ Appendix A of `tasks.md` is a `git apply -p1` patch. Loop 1 checked that it appl
 
 ## Risks / Trade-offs
 
-- **A future test that never starts the server pays 10 s per probe.** Accepted: it then
-  continues as now, and D3 says why no current test does this.
+- **A future test that never starts the server fails on the 60 s `_run` timeout.** Accepted:
+  that test is wrong, and a loud failure is better than a pass that hides the race. D3 says
+  why no current test does this. An edit that removes the marker line costs about 60 s for
+  each job test before it fails.
 - **The proof depends on timing.** A 3 s delay against a job that ends in well under 1 s gave
   the same result in every Loop-1 run. If a `red` stage passes on a slow host, the delay was
   too short for that host; it is not evidence against the fix.
