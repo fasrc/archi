@@ -1,6 +1,6 @@
 ## 1. Build config-seed from the chatbot's Dockerfile on GPU deploys (fasrc/archi#810)
 
-- [ ] 1.1 Red then green in one task (do not commit a red state). Write Appendix A to
+- [x] 1.1 Red then green in one task (do not commit a red state). Write Appendix A to
       `/tmp/810-A.diff` with the Write tool and run `git apply -p1 /tmp/810-A.diff` from the
       repository root. It removes the strict xfail marker, adds one test in
       `tests/unit/test_base_compose_image_tags.py`, and changes the `config-seed`
