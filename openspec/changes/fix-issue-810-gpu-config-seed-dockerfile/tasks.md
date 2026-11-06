@@ -26,7 +26,7 @@
 
 ## 2. Publish
 
-- [ ] 2.1 Tick this box, commit the tick through the hook (message: `mark #810 tasks
+- [x] 2.1 Tick this box, commit the tick through the hook (message: `mark #810 tasks
       complete`), then push and open the PR, so the push carries every commit. Push with
       `git push -u origin fix/issue-810-gpu-config-seed-dockerfile`. Open the PR with
       `gh pr create --repo fasrc/archi --base dev --head fix/issue-810-gpu-config-seed-dockerfile`,
