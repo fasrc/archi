@@ -6,7 +6,9 @@ under one image tag, the build that finishes last owns the tag, and both
 containers start from that image. In a deploy with no chatbot, ``config-seed``
 fell back to the benchmark image's tag but built Dockerfile-chat, so the
 ``benchmark`` container could start ``service_chat.py`` instead of
-``service_benchmark.py``.
+``service_benchmark.py``. A GPU deploy with a chatbot had the same race
+between ``config-seed`` (Dockerfile-chat) and ``chatbot`` (Dockerfile-chat-gpu)
+(fasrc/archi#810).
 """
 
 from pathlib import Path
@@ -126,15 +128,23 @@ def test_a_chatbot_render_keeps_config_seed_on_the_chat_build(tmp_path):
     assert "APP_VERSION" not in config_seed["environment"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "fasrc/archi#810: with a GPU chatbot, config-seed builds Dockerfile-chat "
-        "and the chatbot builds Dockerfile-chat-gpu under one tag"
-    ),
-)
 def test_a_gpu_chatbot_render_builds_no_tag_from_two_build_blocks(tmp_path):
     compose = _render_compose(tmp_path, ["chatbot", "benchmarking"], gpu_ids="all")
 
     assert _conflicting_builds(compose) == {}
+
+
+def test_a_gpu_chatbot_render_builds_config_seed_as_the_chatbot_image(tmp_path):
+    """config-seed builds the chatbot's GPU Dockerfile (fasrc/archi#810)."""
+    compose = _render_compose(tmp_path, ["chatbot", "benchmarking"], gpu_ids="all")
+    config_seed = compose["services"]["config-seed"]
+    chatbot = compose["services"]["chatbot"]
+
+    assert config_seed["image"] == chatbot["image"]
+    assert config_seed["build"] == chatbot["build"]
+    assert config_seed["build"] == {
+        "context": ".",
+        "dockerfile": f"{_DOCKERFILES}/Dockerfile-chat-gpu",
+        "args": {"APP_VERSION": _APP_VERSION},
+    }
+    assert "APP_VERSION" not in config_seed["environment"]
