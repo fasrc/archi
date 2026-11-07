@@ -38,12 +38,32 @@ def read_input_list_entries(path) -> List[str]:
     return entries
 
 
+def _input_list_is_missing(path) -> bool:
+    """True only when no file system entry exists at *path*.
+
+    os.path.exists() returns False for every OSError, so it reports a list under
+    an untraversable directory (PermissionError) as missing. Only "no such entry"
+    (FileNotFoundError) and "a path component is a regular file"
+    (NotADirectoryError) count as missing here; any other error is left to the
+    warn-and-skip of get_enabled_sources() and staging (#636).
+    """
+    try:
+        os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def refuse_missing_input_lists(configs) -> None:
     """Raise ValueError naming every configured input list that does not exist.
 
     A relative path resolves from the current directory, as get_enabled_sources()
     and staging resolve it (fasrc/archi#617). A path that exists but cannot be
     read is not refused here: those callers warn about it and skip it (#636).
+    That includes a list under a directory the user cannot traverse: os.stat
+    raises PermissionError there, which is not "does not exist".
     """
     missing_pairs = []
     seen = {}
@@ -66,7 +86,7 @@ def refuse_missing_input_lists(configs) -> None:
                 continue
             path_str = os.fspath(entry)
             key = (path_str, config_path)
-            if key not in seen and not os.path.exists(entry):
+            if key not in seen and _input_list_is_missing(entry):
                 seen[key] = True
                 missing_pairs.append(key)
 
