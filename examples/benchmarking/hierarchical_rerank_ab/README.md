@@ -54,9 +54,9 @@ Prereqs (this is a `needs-deploy` task — the local gate cannot run it):
   checkout. For a scored run, swap it to your tuned `config/agents/fasrc-cannon.md`.
 - **Corpus list (REQUIRED, operator-supplied)** — both arms reference
   `config/lists/sources.list`, the live FASRC KB list, which is gitignored and *not*
-  present in a clean checkout. **If it is missing, the scraper logs a warning and
-  skips it, and the benchmark runs against an empty corpus — producing meaningless
-  RAGAS scores rather than failing loudly.** Stage the file (or repoint `input_lists`
+  present in a clean checkout. **If it is missing, `archi evaluate` stops before any teardown and names the
+  path (#617). If it exists but is empty or cannot be read, the benchmark runs against
+  an empty corpus — producing meaningless RAGAS scores rather than failing loudly.** Stage the file (or repoint `input_lists`
   at your deployment's list) before running, then **verify the rendered
   `~/.archi/archi-hr-ab-*/weblists/<list>` is non-empty and that ingest reported a
   non-zero document count** before trusting any results.

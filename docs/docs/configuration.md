@@ -104,7 +104,7 @@ effect — measured through the CLI's own normalised config, not just the bare t
 **SSO does not switch itself on.** The last row above says `false` rather than the
 template's `true` default because `archi create`, `archi evaluate` and `archi restart --config`
 all call `ConfigurationManager.set_sources_enabled()` before rendering
-(`src/cli/cli_main.py:249`, `:894` and `:614`), and that writes `enabled: false` into every managed
+(`src/cli/cli_main.py:254`, `:907` and `:623`), and that writes `enabled: false` into every managed
 source the config does not select. A `schedule` alone does not select a source, so an
 omitted `sso.enabled` reaches the template as an explicit `false`. To turn SSO on, set
 `sources.sso.enabled: true`.
@@ -739,6 +739,15 @@ data_manager:
       project: null
       anonymize_data: true
 ```
+
+A relative `input_lists` path resolves from the directory where you run `archi` (the
+current directory), not from the directory of the config file. Use an absolute path when
+you can. If a listed path does not exist, `archi create`, `archi restart --config`, and
+`archi evaluate` stop before any `--force` teardown and before they write any `enabled`
+key. The error names each missing path, the config file that lists it, and the current
+directory. A path that exists but is not a readable file does not stop the command: archi
+logs a WARNING and skips that list (see [Data Sources](data_sources.md)). (Changed in
+[#617](https://github.com/fasrc/archi/issues/617).)
 
 The `visible` flag on any source (`sources.<name>.visible`) controls whether content appears in chat citations (default: `true`).
 

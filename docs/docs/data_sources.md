@@ -30,10 +30,15 @@ https://example.com/page1
 https://example.com/page2
 ```
 
-A list that is missing, is not a regular file, or cannot be read (for example,
-permission denied, or bytes that are not UTF-8) does not stop `archi create` or a
-scrape. Archi logs a WARNING that names the list, skips that list, and continues
-with the other lists. A successful deploy therefore does not prove that every
+A list path that does not exist stops `archi create`, `archi restart --config`, and
+`archi evaluate` before any teardown. The error names each missing path, the config file
+that lists it, and the current directory. A relative path resolves from the directory
+where you run `archi`. (Changed in [#617](https://github.com/fasrc/archi/issues/617).)
+
+A list that exists but is not a regular file, or cannot be read (for example, permission
+denied, or bytes that are not UTF-8), does not stop `archi create`. A list problem does
+not stop a scrape either. Archi logs a WARNING that names the list, skips that list, and
+continues with the other lists. A successful deploy therefore does not prove that every
 configured list was ingested: look for `could not be copied`, `could not be read`,
 `not a readable file`, or `not found` in the deploy and data-manager logs. While a list is
 skipped, a scheduled refresh or a later full ingest keeps the sitemap `<lastmod>`
