@@ -143,6 +143,32 @@ def test_plan_reports_a_row_also_listed_as_a_plain_link(tmp_path):
     assert plan.unresolved[0].reason == "also listed as a plain link"
 
 
+def test_plan_reports_a_row_under_a_plain_link_entry(tmp_path):
+    """A plain seed inside an explicit scope is crawled to a depth (base_source_depth,
+    default 5), so its descendants can be plain-link rows that no list names. The
+    planner cannot tell them from rows the Indico scraper stored, so it reports them
+    (review round 3 on PR #783). A row of the same scope that no plain entry covers
+    is still repaired."""
+    list_file = tmp_path / "seed.list"
+    list_file.write_text(
+        "indico-https://indico.h/event/7/\nhttps://indico.h/event/7/contributions/\n"
+    )
+    entries = read_list_entries([list_file])
+    plan = plan_marker_repairs(
+        [
+            ("h1", "https://indico.h/event/7/contributions/3/"),
+            ("h2", "https://indico.h/event/7/timetable/"),
+        ],
+        entries,
+    )
+    assert [r.resource_hash for r in plan.repairs] == ["h2"]
+    assert [u.resource_hash for u in plan.unresolved] == ["h1"]
+    assert (
+        plan.unresolved[0].reason
+        == "under the plain link entry https://indico.h/event/7/contributions"
+    )
+
+
 def test_plan_reports_shaped_rows_with_no_entry_and_skips_plain_rows(tmp_path):
     list_file = tmp_path / "empty.list"
     list_file.write_text("")

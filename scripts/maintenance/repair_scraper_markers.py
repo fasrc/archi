@@ -4,7 +4,9 @@
 Before #640, a plain link re-fetch replaced a row's whole `extra_json` and erased its
 `scraper` marker, so ELOG and Indico rows fell back to the `links` source. This script
 gives those rows their marker back, but only from an explicit `elog-` or `indico-`
-entry in the input lists that you name. It never guesses from URL shape. It reports
+entry in the input lists that you name. It never guesses from URL shape. A row at or
+under a plain (unprefixed) entry is reported, not written: the link crawler descends
+from a seed, so such a row may be a plain-link row that no list names. It reports
 the ELOG-shaped and Indico-shaped rows that it cannot place; a row whose URL looks like
 a plain link gets no output, so an Indico material linked from a timetable on another
 host is not reported.

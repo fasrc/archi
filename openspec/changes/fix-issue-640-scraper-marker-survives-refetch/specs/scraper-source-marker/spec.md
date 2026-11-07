@@ -39,7 +39,11 @@ When `elog.enabled` or `indico.enabled` is explicitly `false`, `schedule_collect
 - **THEN** `collect_links` does not receive that row's URL
 
 ### Requirement: The marker repair SHALL derive a missing marker only from explicit elog- and indico- input-list entries
-`plan_marker_repairs` SHALL plan a `scraper` marker for an unmarked `web` row only when the explicit `elog-` or `indico-` entries of the given input lists cover the row's URL (design D5), and only when exactly one source covers it and the URL is not also an unprefixed list entry. It SHALL report, and SHALL NOT repair, an unmarked row that is ELOG-shaped or Indico-shaped but that no explicit entry covers, a row that entries of two sources cover, and a row that is also listed as a plain link.
+`plan_marker_repairs` SHALL plan a `scraper` marker for an unmarked `web` row only when the explicit `elog-` or `indico-` entries of the given input lists cover the row's URL (design D5), and only when exactly one source covers it and the URL is neither an unprefixed list entry nor under one. It SHALL report, and SHALL NOT repair, an unmarked row that is ELOG-shaped or Indico-shaped but that no explicit entry covers, a row that entries of two sources cover, a row that is also listed as a plain link, and a row at or under an unprefixed list entry (a plain seed is crawled to a depth, so such a row may be a plain-link row that no list names).
+
+#### Scenario: Row under a plain link entry inside an explicit scope
+- **WHEN** the lists hold `indico-https://indico.h/event/7/` and `https://indico.h/event/7/contributions/`, and an unmarked row has URL `https://indico.h/event/7/contributions/3/`
+- **THEN** the plan holds no repair for that row and reports it with the reason `under the plain link entry https://indico.h/event/7/contributions`
 
 #### Scenario: Row under an elog- entry with any path
 - **WHEN** the lists hold `elog-https://x/r.git` and an unmarked row has URL `https://x/r.git`

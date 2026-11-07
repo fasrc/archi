@@ -183,6 +183,11 @@ cover `n` (keep the first covering entry per source, in list order).
 
 1. `len(sources) > 1` → `UnresolvedRow(h, url, "covered by entries of more than one source: elog, indico")`.
 2. `len(sources) == 1` and `n in entries.plain` → `UnresolvedRow(h, url, "also listed as a plain link")`.
+   `len(sources) == 1` and a plain entry `p` has `n.startswith(p + "/")` →
+   `UnresolvedRow(h, url, f"under the plain link entry {p}")` (the longest such `p`).
+   A plain seed is crawled to `base_source_depth` (default 5, `scraper_manager.py:105`),
+   so a row under one may be a plain-link row that no list names; the planner cannot
+   tell it from a row the scraper stored (review round 3 on PR #783, 2026-11-07).
 3. `len(sources) == 1` → `MarkerRepair(h, url, source, entry_url)`.
 4. `len(sources) == 0` and the URL is ELOG-shaped (`is_elog_url(url)`) or Indico-shaped
    (`"indico"` in the lowercased host and `"/event/"` in the lowercased path) →

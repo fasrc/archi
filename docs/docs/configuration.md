@@ -230,7 +230,9 @@ still map to `links`. To restore them, run
 on the host, with every input-list file of the deployment (repeat `--input-list`; the script
 does not read the deployment config). The run is a dry run by default and writes only with
 `--apply`. It restores a marker only from an explicit `elog-` or `indico-` entry in the given
-lists, and it reports the ELOG-shaped and Indico-shaped rows that it cannot place. To
+lists; it reports, and does not write, a row at or under a plain link entry (the crawler
+descends from a seed, so that row may be a plain-link row that no list names) and the
+ELOG-shaped and Indico-shaped rows that it cannot place. To
 reclassify a row whose entry moved (for example from an `indico-` entry to a plain link
 entry), delete the document through the uploader app (its `/document_index/delete/<hash>`
 endpoint; a soft delete of the catalog row), then let the next ingest fetch the URL under

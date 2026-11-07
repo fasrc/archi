@@ -107,6 +107,18 @@ def read_list_entries(paths: Sequence[Union[str, Path]]) -> ListEntries:
     return ListEntries(explicit=tuple(explicit), plain=frozenset(plain))
 
 
+def _covering_plain_entry(normalized_url: str, plain: FrozenSet[str]) -> Optional[str]:
+    """Return the most specific plain entry whose scope holds the URL, if any.
+
+    A plain entry covers the rows at or under it (the same rule as an explicit
+    entry's scope, design D5), because the link crawler descends from a seed.
+    """
+    parents = [p for p in plain if normalized_url.startswith(p + "/")]
+    if not parents:
+        return None
+    return max(sorted(parents), key=len)
+
+
 def plan_marker_repairs(
     rows: Iterable[Tuple[str, Optional[str]]],
     entries: ListEntries,
@@ -114,7 +126,10 @@ def plan_marker_repairs(
     """Build a repair plan: which unmarked rows can be assigned a marker.
 
     Rows whose url is empty or None are skipped. A row is repaired only when
-    exactly one explicit entry covers it and it is not also a plain link.
+    exactly one explicit entry covers it and no plain (unprefixed) entry is at
+    or above it: a plain seed is crawled to a depth, so a row under one may be
+    a plain-link row that no list names, and the planner cannot tell it from a
+    row the scraper stored.
     Shaped rows (elog- or indico-URL) that no entry covers are reported as
     unresolved. Plain rows that nothing covers are silently skipped.
     """
@@ -148,9 +163,18 @@ def plan_marker_repairs(
             )
         elif len(covering) == 1:
             source, entry_url = next(iter(covering.items()))
+            plain_parent = _covering_plain_entry(n, entries.plain)
             if n in entries.plain:
                 unresolved.append(
                     UnresolvedRow(resource_hash, url, "also listed as a plain link")
+                )
+            elif plain_parent is not None:
+                unresolved.append(
+                    UnresolvedRow(
+                        resource_hash,
+                        url,
+                        f"under the plain link entry {plain_parent}",
+                    )
                 )
             else:
                 repairs.append(MarkerRepair(resource_hash, url, source, entry_url))

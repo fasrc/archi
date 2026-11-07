@@ -242,6 +242,16 @@
       `test_update_guard_rechecks_the_row_that_the_plan_read` and the updated SQL-text and
       call-parameter tests in `tests/unit/test_scraper_marker_repair_db.py`.
 
+## 7. Review round 3 fix (PR #783, 2026-11-07; the sync adversarial pass)
+
+- [x] 7.1 A row at or under a plain link entry is reported, not repaired (design D6 rule
+      2, second form). A plain seed is crawled to `base_source_depth` (default 5), so a
+      row under one may be a plain-link row that no list names. Test:
+      `test_plan_reports_a_row_under_a_plain_link_entry` in
+      `tests/unit/test_scraper_marker_repair.py` (red: both rows repaired; green: one
+      repair, one unresolved). Spec, design D6, the script docstring, and the docs
+      paragraph say so.
+
 ## Appendix (no checkboxes; copy these bodies exactly in task 1.1)
 
 Loop 1 ran both files on 2026-10-26: on `origin/dev` `bbc52059`, **2 failed, 4 passed**; with
