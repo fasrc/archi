@@ -66,6 +66,7 @@ if [ "${1:-}" = --sweep ]; then
   [ "$(fm_container_state "benchmarking-$STACK")" != "running" ] || fm_die "benchmarking-$STACK is still running (use --wait)"
   FM_SELECTED="$(fm_select_result "$STACK")" || fm_die "nothing archived for stack $STACK (see above)"
   ARTIFACT="${FM_SELECTED%%$'\n'*}"; DATED_BY="${FM_SELECTED#*$'\n'}"
+  fm_arm_page_on_failure "stack $STACK sweep"
   FM_ERRF="$(mktemp)"
   if ! fm_sweep_tools archive --lock "$(fm_sweep_lock_file "$STACK")" --artifact "$ARTIFACT" --stack "$STACK" \
     --run "$RUN" --ledger "$(fm_ledger)" --pins-dir "$FM_OUT" --dest "$FM_OUT/archive/$STACK" \
@@ -103,6 +104,7 @@ fi
 # is refused here (G11). The run is dated by the file it wrote, not by a later judged copy.
 FM_SELECTED="$(fm_select_result "$STACK")" || fm_die "nothing archived for stack $STACK arm $ARM (see above)"
 ARTIFACT="${FM_SELECTED%%$'\n'*}"; DATED_BY="${FM_SELECTED#*$'\n'}"
+fm_arm_page_on_failure "stack $STACK arm $ARM"
 
 # One artifact, one ledger row: refuse a file already archived, and a file that predates
 # this stack's latest ragas-start (the re-run produced nothing; this is run 1's file).

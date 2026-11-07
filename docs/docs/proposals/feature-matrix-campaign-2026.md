@@ -179,10 +179,20 @@ paging is off. `FM_MAIL` names the mail binary (default `mail`, called as
 its archive checks) and the two `qa_arm.sh` corpus-drift exits (the corpus changed during
 the QA run, for a normal arm or a sweep arm).
 The subject names the stack and the arm; the body carries the refusal reason. The exit
-code (2) and the terminal message do not change. Precondition refusals (a bad arm label,
-a missing file, a dirty checkout) fail before any long work starts and never page. The
-`qa_arm.sh` refusal of a run that scored nothing (§5.3) comes after long work but does not
-page either; it exits 2 with no ledger row. A
+code (2) and the terminal message do not change. After long work starts (the QA run in
+`qa_arm.sh`, the artifact found in `archive_run.sh`), any other failure exit also pages
+once ([#624](https://github.com/fasrc/archi/issues/624)); that page's subject ends with
+`failed after long work (exit N)`, and the wrapper keeps its exit status N; its body names
+the wrapper and the exit status, and then the refusal message, or else the `file:line` and
+the command that failed; a SIGHUP, SIGINT or SIGTERM to the wrapper also pages once, and
+the wrapper then ends by that signal, so a chain that runs it stops too; a refusal that
+already paged does not page again. A signal sent only to the wrapper's own PID (not to its
+process group, as systemd and a closed terminal do) takes effect when the current command
+ends, and that can be the end of the QA run. Precondition refusals (a bad arm label, a
+missing file, a dirty checkout) fail before any long work starts and never page. The
+`qa_arm.sh` refusal of a run that scored nothing (§5.3) comes after long work, so it pages
+once through that failure page, with the refusal in the body
+([#624](https://github.com/fasrc/archi/issues/624)); it still exits 2 with no ledger row. A
 failing mail binary prints `feature_matrix: page failed` and does not change the exit.
 A mail binary that does not return in `FM_MAIL_TIMEOUT` seconds (default 60; a zero or
 non-numeric value also gives 60, because `timeout 0` means no bound) is stopped
@@ -292,7 +302,7 @@ What it does, and why each step exists:
    `attempt_lifecycle_counts.scored` is not a whole number above 0, the wrapper exits 2
    with `QA run scored nothing …` (or `no …/summary.json`, or `… is not readable JSON`)
    and `the run is void`. It keeps the output directory for diagnosis, writes **no**
-   ledger row, and does **not** page
+   ledger row, and pages once (see Paging above)
    ([#434](https://github.com/fasrc/archi/issues/434)). A run that scored nothing is not
    an observation, so exit 2 here is never a success. To repeat the run, start `qa_arm.sh`
    again without `--run`: the kept directory holds its number, so the new run takes the
