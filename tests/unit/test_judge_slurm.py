@@ -30,6 +30,8 @@ MERGE = SLURM / "judge_merge.sbatch"
 RECIPE = SLURM / "archi-scorer.def"
 BUILD = SLURM / "build_scorer_image.sh"
 PYTHON_BIN = str(Path(sys.executable).parent)
+#: Seconds that ``_run`` gives one script before it stops it.
+_RUN_TIMEOUT = 60
 
 _SQUEUE = r"""#!/bin/sh
 printf '%s\n' "$*" >> "$STUB/squeue.calls"
@@ -99,6 +101,8 @@ case "$*" in
     printf '{"code_digest": "sha256:c", "image_digest": "%s", "package_digest": "sha256:p"}\n' "$digest" > "$out"
     exit 0 ;;
   *"vllm serve"*)
+    # A slow model load: no side effect happens before this delay ends.
+    [ -f "$STUB/serve.delay" ] && sleep "$(cat "$STUB/serve.delay")"
     prev=""
     for a in "$@"; do [ "$prev" = --uds ] && sock="$a"; prev="$a"; done
     stat -c %a "$(dirname "$sock")" > "$STUB/sockdir.mode"
@@ -114,6 +118,8 @@ case "$*" in
       printf '{"image_digest": "sha256:rebuilt"}\n' > "$JUDGE_HOME/scorer-identity.json.new"
       mv -f "$JUDGE_HOME/scorer-identity.json.new" "$JUDGE_HOME/scorer-identity.json"
     fi
+    # Last side effect: the curl stub answers only after this file exists (#797).
+    : > "$STUB/vllm.ready"
     exec sleep 300 ;;
   build*)
     out=""
@@ -125,11 +131,20 @@ exit 0
 """
 
 _CURL = r"""#!/bin/bash
+# Wait for the vllm serve stub's side effects, so the job cannot probe, score and
+# stop the server before they happen (#797). The wait outlasts the _run timeout.
+# With no marker by then, fail like curl with nothing on the socket.
+ticks="$(cat "$STUB/curl.wait_ticks" 2>/dev/null || echo @WAIT_TICKS@)"
+i=0
+while [ ! -e "$STUB/vllm.ready" ] && [ "$i" -lt "$ticks" ]; do sleep 0.01; i=$((i + 1)); done
+[ -e "$STUB/vllm.ready" ] || { printf 000; exit 7; }
 printf '%s\n' "$*" >> "$STUB/curl.calls"
 for a in "$@"; do case "$a" in @*) cat "${a#@}" >> "$STUB/curl.header" ;; esac; done
 n="$(cat "$STUB/curl.count" 2>/dev/null || echo 0)"; echo $((n + 1)) > "$STUB/curl.count"
 [ "$n" -ge "$(cat "$STUB/curl.ready_after" 2>/dev/null || echo 0)" ] && printf 200 || printf 503
-"""
+""".replace(
+    "@WAIT_TICKS@", str((_RUN_TIMEOUT + 1) * 100)
+)
 
 
 @pytest.fixture
@@ -174,7 +189,7 @@ def _run(script, tmp_path, stub, *args, **extra):
         env=_env(tmp_path, stub, **extra),
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=_RUN_TIMEOUT,
         cwd=tmp_path,
     )
 
@@ -490,6 +505,8 @@ def test_a_job_serves_on_a_private_socket_scores_merges_and_stops_vllm(tmp_path,
     assert f"--socket {socket}" in run
     # It waited for /v1/models through the socket.
     assert int((stub / "curl.count").read_text()) == 3
+    # The server stub did all its side effects before the job stopped it (#797).
+    assert (stub / "vllm.ready").exists()
     assert all("--unix-socket" in c and "/v1/models" in c for c in _calls(stub, "curl"))
     # The merge job is submitted after this job succeeds.
     (merge,) = _calls(stub, "sbatch")
@@ -521,6 +538,15 @@ def test_a_server_that_never_gets_ready_fails_the_job_and_is_stopped(tmp_path, s
     assert _calls(stub, "sbatch") == []
     with pytest.raises(ProcessLookupError):
         os.kill(int((stub / "vllm.pid").read_text()), 0)
+
+
+def test_the_probe_wait_outlasts_the_run_timeout():
+    # With JUDGE_READY_TIMEOUT=0 one failed probe ends the job. A probe wait that
+    # ends while _run still runs the job lets the job stop a slow server stub
+    # before it records vllm.pid (#797, review round 2).
+    match = re.search(r'curl\.wait_ticks" 2>/dev/null \|\| echo (\d+)', _CURL)
+    assert match is not None
+    assert int(match.group(1)) * 0.01 > _RUN_TIMEOUT
 
 
 def test_a_failed_scorer_submits_no_merge(tmp_path, stub):
@@ -674,6 +700,22 @@ def test_a_judge_env_change_during_the_job_does_not_reach_the_scorer(tmp_path, s
         re.search(r"--judge-env (\S+)", c).group(1) for c in calls if "score.py" in c
     }
     assert len(paths) == 1 and "/archi-judge.9001." in paths.pop()
+
+
+def test_a_server_slower_than_the_probe_wait_is_not_ready_before_its_edits(
+    tmp_path, stub
+):
+    # The curl stub stops its wait after 1 tick; the server stub needs 0.5 s
+    # before its side effects. A probe that answered 200 at the end of its wait
+    # would let the job score and stop the server before the edit (#797).
+    (stub / "curl.wait_ticks").write_text("1")
+    (stub / "serve.delay").write_text("0.5")
+    (stub / "edit-env").write_text("")
+    proc = _job(tmp_path, stub)
+    assert proc.returncode == 0, proc.stderr
+    assert "JUDGE_PRECISION=fp8" in (tmp_path / "judge" / "judge.env").read_text()
+    assert "JUDGE_PRECISION=bf16" in (stub / "run.judge-env").read_text()
+    assert (stub / "vllm.ready").exists()
 
 
 def test_a_job_without_the_scorer_image_starts_nothing(tmp_path, stub):

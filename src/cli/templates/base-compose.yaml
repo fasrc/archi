@@ -141,9 +141,21 @@ services:
     image: {{ chatbot_image | default(benchmarking_image) }}:{{ chatbot_tag | default(benchmarking_tag) }}
     build:
       context: .
-      dockerfile: archi_code/cli/templates/dockerfiles/Dockerfile-chat
+      {#- With no chatbot in the deploy, config-seed carries the benchmark image's
+          tag, so it builds the benchmark image's Dockerfile: compose builds services
+          in parallel and the last build to finish owns a shared tag
+          (fasrc/archi#791). The benchmark image does not bake APP_VERSION in, so
+          the environment block below passes it for the deployment record. With a
+          chatbot, config-seed carries the chatbot's tag, so it builds the chatbot's
+          Dockerfile, GPU suffix included (fasrc/archi#810). #}
+      {%- set config_seed_on_benchmark_image = chatbot_image is not defined %}
+      {%- if config_seed_on_benchmark_image %}
+      dockerfile: archi_code/cli/templates/dockerfiles/Dockerfile-benchmarks{{ '-gpu' if gpu_ids else '' }}
+      {%- else %}
+      dockerfile: archi_code/cli/templates/dockerfiles/Dockerfile-chat{{ '-gpu' if gpu_ids else '' }}
       args:
         APP_VERSION: {{ app_version }}
+      {%- endif %}
     container_name: {{ name }}-config-seed
     depends_on:
       postgres:
@@ -173,6 +185,9 @@ services:
       ARCHI_CONFIG_HEAD: ${ARCHI_CONFIG_HEAD:-}
       ARCHI_CONFIG_PIN_MATCHED: ${ARCHI_CONFIG_PIN_MATCHED:-}
       ARCHI_CONFIG_DIRTY_PATHS: ${ARCHI_CONFIG_DIRTY_PATHS:-}
+      {%- if config_seed_on_benchmark_image %}
+      APP_VERSION: "{{ app_version }}"
+      {%- endif %}
     env_file:
       - .env
     volumes:

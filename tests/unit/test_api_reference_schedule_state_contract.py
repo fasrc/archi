@@ -7,8 +7,8 @@ link schedule job reads ``links``, so a URL upload never changes the ``links`` j
 review, PR #694).
 
 This reads the backticked keys out of the docs sentence and compares them, as a set,
-against the keys the uploader writes with ``state="idle"`` that are also schedule job
-names in ``service_data_manager.py``.
+against the keys the uploader passes to ``_finish_manual_ingest`` (which writes their
+status) that are also schedule job names in ``service_data_manager.py``.
 """
 
 import re
@@ -19,9 +19,7 @@ API_REFERENCE = ROOT / "docs" / "docs" / "api_reference.md"
 UPLOADER = ROOT / "src" / "interfaces" / "uploader_app" / "app.py"
 DATA_MANAGER = ROOT / "src" / "bin" / "service_data_manager.py"
 
-_UPLOADER_IDLE_KEY = re.compile(
-    r'_update_source_status\(\s*"(\w+)",\s*state="idle"', re.MULTILINE
-)
+_UPLOADER_IDLE_KEY = re.compile(r'_finish_manual_ingest\(\s*"(\w+)"', re.MULTILINE)
 _SCHEDULE_KEY = re.compile(r'^\s*"(\w+)": lambda last_run', re.MULTILINE)
 _BACKTICKED = re.compile(r"`([^`]+)`")
 

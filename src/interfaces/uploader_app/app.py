@@ -35,6 +35,7 @@ from src.utils.catalog_query import parse_metadata_query
 from src.utils.config_access import get_full_config
 from src.utils.env import read_secret
 from src.utils.logging import get_logger
+from src.utils.source_status_file import load_source_status, update_source_status
 
 logger = get_logger(__name__)
 
@@ -262,9 +263,7 @@ class FlaskAppWrapper:
 
         try:
             self.scraper_manager.collect_git(self.persistence, [repo_url.strip()])
-            self._update_source_status("git", state="idle", last_run=self._now_iso())
-            self._notify_update()
-            return jsonify({"status": "ok"})
+            return self._finish_manual_ingest("git", {"status": "ok"})
         except Exception as exc:
             logger.error("Failed to add git repo %s: %s", repo_url, exc)
             return jsonify({"error": "ingest_failed", "detail": str(exc)}), 500
@@ -301,10 +300,8 @@ class FlaskAppWrapper:
             for resource_hash in to_remove:
                 self.persistence.delete_resource(resource_hash, flush=False)
             self.persistence.flush_index()
-            self._update_source_status("git", state="idle", last_run=self._now_iso())
-            self._notify_update()
-            return jsonify(
-                {"status": "ok", "repo": repo_name, "deleted": len(to_remove)}
+            return self._finish_manual_ingest(
+                "git", {"status": "ok", "repo": repo_name, "deleted": len(to_remove)}
             )
         except Exception as exc:
             logger.error("Failed to remove git repo %s: %s", repo_name, exc)
@@ -321,9 +318,7 @@ class FlaskAppWrapper:
         try:
             self.ticket_manager.collect_jira(self.persistence, [project_key.strip()])
             self.persistence.flush_index()
-            self._update_source_status("jira", state="idle", last_run=self._now_iso())
-            self._notify_update()
-            return jsonify({"status": "ok"})
+            return self._finish_manual_ingest("jira", {"status": "ok"})
         except Exception as exc:
             logger.error("Failed to add JIRA project %s: %s", project_key, exc)
             return jsonify({"error": "ingest_failed", "detail": str(exc)}), 500
@@ -348,11 +343,9 @@ class FlaskAppWrapper:
                 upload, self.persistence
             )
             self.persistence.flush_index()
-            self._update_source_status(
-                "local_files", state="idle", last_run=self._now_iso()
+            return self._finish_manual_ingest(
+                "local_files", {"status": "ok", "path": str(stored_path)}
             )
-            self._notify_update()
-            return jsonify({"status": "ok", "path": str(stored_path)})
         except Exception as exc:
             logger.error("Failed to ingest uploaded file %s: %s", filename, exc)
             return jsonify({"error": "upload_failed", "detail": str(exc)}), 500
@@ -391,9 +384,6 @@ class FlaskAppWrapper:
                     self.persistence, link_urls=[url], max_depth=depth
                 )
                 self.persistence.flush_index()
-                self._update_source_status(
-                    "web", state="idle", last_run=self._now_iso()
-                )
                 added_to_urls = True
             except Exception as exc:
                 logger.exception("Failed to upload URL: %s", exc)
@@ -402,8 +392,9 @@ class FlaskAppWrapper:
 
             if added_to_urls:
                 logger.info("URL uploaded successfully")
-                self._notify_update()
-                return jsonify({"status": "ok", "resources_scraped": scraped_count})
+                return self._finish_manual_ingest(
+                    "web", {"status": "ok", "resources_scraped": scraped_count}
+                )
             else:
                 return jsonify({"error": "upload_failed", "detail": upload_error}), 500
         else:
@@ -513,16 +504,25 @@ class FlaskAppWrapper:
         except Exception as exc:
             logger.warning("Post-update hook failed: %s", exc)
 
-    def _load_source_status(self) -> Dict[str, Dict[str, str]]:
-        if not self.status_file.exists():
-            return {}
-        try:
-            import json
+    def _finish_manual_ingest(self, source: str, ok_body: Dict[str, object]):
+        """Run the vector update of a manual ingest, then record its outcome.
 
-            return json.loads(self.status_file.read_text())
-        except Exception as exc:
-            logger.warning("Failed to read source status file: %s", exc)
-            return {}
+        The source status is written only after the update returns. Unlike
+        _notify_update, a failed update is not swallowed: the source is set to
+        error, its last_run is kept, and the caller gets a 500 answer.
+        """
+        if self.post_update_hook:
+            try:
+                self.post_update_hook()
+            except Exception as exc:
+                logger.error("Update after a manual %s ingest failed: %s", source, exc)
+                self._update_source_status(source, state="error")
+                return jsonify({"error": "update_failed", "detail": str(exc)}), 500
+        self._update_source_status(source, state="idle", last_run=self._now_iso())
+        return jsonify(ok_body)
+
+    def _load_source_status(self) -> Dict[str, Dict[str, str]]:
+        return load_source_status(self.status_file)
 
     def _update_source_status(
         self,
@@ -533,25 +533,16 @@ class FlaskAppWrapper:
         schedule: Optional[str] = None,
     ) -> None:
         try:
-            import json
-
-            data = self._load_source_status()
-            entry = data.get(source, {})
-            if state is not None:
-                entry["state"] = state
-            if last_run is not None:
-                entry["last_run"] = last_run
-            if schedule is not None:
-                if schedule:
-                    entry["schedule"] = schedule
-                else:
-                    entry.pop("schedule", None)
-            data[source] = entry
+            update_source_status(
+                self.status_file,
+                source,
+                state=state,
+                last_run=last_run,
+                schedule=schedule,
+            )
             logger.debug(
                 f"Updated source status with state {state}, last_run: {last_run}, schedule: {schedule}"
             )
-            self.status_file.parent.mkdir(parents=True, exist_ok=True)
-            self.status_file.write_text(json.dumps(data))
         except Exception as exc:
             logger.warning("Failed to update source status: %s", exc)
 

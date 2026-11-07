@@ -684,7 +684,11 @@ _INLINE_CONTEXT_TAGS: frozenset = _HEADING_TAGS | {"td", "th"}
 # The issue #713 tags count only where they make the anchor show its href, so they
 # do not hide the synthesized target anywhere else (Codex review on PR #716).
 _LINK_TEXT_TAGS_NOFORMAT: frozenset = frozenset({"hr", "img", "video"})
-_LINK_TEXT_TAGS_INLINE: frozenset = _RENDERS_WITHOUT_TEXT - _HEADING_TAGS
+# In a heading or table cell markdownify writes only the alt text of an <img> and only
+# the child text of a <video>, so neither tag counts there by name (issue #718).
+_LINK_TEXT_TAGS_INLINE: frozenset = (
+    _RENDERS_WITHOUT_TEXT - _HEADING_TAGS - {"img", "video"}
+)
 
 
 def _link_text_tags(anchor) -> frozenset:
@@ -701,6 +705,15 @@ def _link_text_tags(anchor) -> frozenset:
     return _RENDERS_WITHOUT_TEXT
 
 
+def _img_has_alt_text(tag) -> bool:
+    """True when *tag* is an ``<img>`` whose ``alt`` has visible text (issue #718).
+
+    A heading or table cell writes only that text for the image, so it is link text
+    there even though ``img`` is not in ``_LINK_TEXT_TAGS_INLINE``.
+    """
+    return tag.name == "img" and bool((tag.get("alt") or "").strip())
+
+
 def _renders_link_text(tag, counted: frozenset = _RENDERS_WITHOUT_TEXT) -> bool:
     """True when *tag* gives ``markdownify`` link text: visible text, or a tag in
     *counted* (issue #430, #713).
@@ -713,7 +726,7 @@ def _renders_link_text(tag, counted: frozenset = _RENDERS_WITHOUT_TEXT) -> bool:
     """
     for node in tag.descendants:
         if isinstance(node, Tag):
-            if node.name in counted:
+            if node.name in counted or _img_has_alt_text(node):
                 return True
         elif type(node) is NavigableString and node.strip():
             return True

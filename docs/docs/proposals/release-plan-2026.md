@@ -88,7 +88,9 @@ invariant" below). Such issues are neither gating nor parked; do not park them.
   number, or a repro from the issue itself.
 - **UX overrides:** anything an end chat user experiences (leaked reasoning, wrong
   citations, overflow apologies, silently stale knowledge base) is highest priority
-  regardless of track.
+  regardless of track. One exception (2026-10-09): an operator decision moved
+  [#347](https://github.com/fasrc/archi/issues/347) (a literal `</think>` truncates an
+  answer) from `v2026.09.0` to `v2026.11.0` so that `v2026.09.0` can ship.
 - All 56 open issue bodies were read and classified against `origin/dev` @ `52c102f6`;
   stale claims were re-verified against merged PRs before scheduling.
 
@@ -303,7 +305,9 @@ the PR-preview stack's Ollama never reaches the fixed branch. #347 into `v2026.0
 the UX override rather than the benchmark track: a literal `</think>` inside a genuine
 answer truncates it on every provider, live today, but the fix needs `reasoning_content`
 or a first-tag-only rule — an open design question — so August is not feasible and
-September is the earliest that is. #326, #327 and #330 into `v2026.11.0`, each gating
+September is the earliest that is. On 2026-10-09 an operator decision moved #347 to
+`v2026.11.0` so that `v2026.09.0` can ship; Method records it as the one exception to
+the UX override. #326, #327 and #330 into `v2026.11.0`, each gating
 #320's safe console activation on its own file:line evidence: a manifest no validator
 accepts, a retry path that refuses healthy workspaces, and a rendered default the runtime
 seam always refuses.

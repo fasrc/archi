@@ -1,8 +1,14 @@
 import logging
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
-from src.interfaces.chat_app.source_visibility import is_visible, visibility_config_key
+from src.interfaces.chat_app.source_visibility import (
+    is_visible,
+    visibility_config_key,
+    visible_sources,
+)
 
 
 @pytest.mark.parametrize(
@@ -74,3 +80,71 @@ def test_non_dict_entry_visible_no_raise():
     config = {"links": None}
     result = is_visible({"source_type": "web"}, config)
     assert result is True
+
+
+# --- visible_sources: the /v1 citation filter (issue #769) ---------------------------
+
+_HIDE_JIRA = {"jira": {"visible": False}, "git": {"visible": True}}
+
+
+def _visibility_doc(**metadata):
+    return SimpleNamespace(metadata=metadata)
+
+
+def test_visible_sources_drops_a_hidden_document_with_its_own_score():
+    hidden = _visibility_doc(source_type="ticket", ticket_provider="jira")
+    shown = _visibility_doc(source_type="git")
+
+    documents, scores = visible_sources([hidden, shown], [0.9, 0.4], _HIDE_JIRA)
+
+    assert documents == [shown]
+    assert scores == [0.4]
+
+
+def test_visible_sources_leaves_a_missing_score_missing():
+    hidden = _visibility_doc(source_type="ticket", ticket_provider="jira")
+    first = _visibility_doc(source_type="git")
+    second = _visibility_doc(source_type="git")
+
+    documents, scores = visible_sources([hidden, first, second], [0.9, 0.4], _HIDE_JIRA)
+
+    assert documents == [first, second]
+    assert scores == [0.4]
+
+
+def test_visible_sources_drops_a_score_that_has_no_document():
+    shown = _visibility_doc(source_type="git")
+
+    documents, scores = visible_sources([shown], [0.9, 0.4], _HIDE_JIRA)
+
+    assert documents == [shown]
+    assert scores == [0.9]
+
+
+@pytest.mark.parametrize("sources_config", [None, MagicMock()])
+def test_visible_sources_without_a_config_dict_filters_nothing(sources_config, caplog):
+    hidden = _visibility_doc(source_type="ticket", ticket_provider="jira")
+    input_documents = [hidden]
+    input_scores = [0.9]
+
+    with caplog.at_level(logging.DEBUG):
+        documents, scores = visible_sources(
+            input_documents, input_scores, sources_config
+        )
+
+    assert documents is input_documents
+    assert scores is input_scores
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize("document", [SimpleNamespace(metadata=None), object()])
+def test_visible_sources_keeps_a_document_without_a_metadata_dict(document):
+    documents, scores = visible_sources([document], [0.7], _HIDE_JIRA)
+
+    assert documents == [document]
+    assert scores == [0.7]
+
+
+@pytest.mark.parametrize("empty", [None, []])
+def test_visible_sources_with_no_documents_or_scores_returns_empty_lists(empty):
+    assert visible_sources(empty, empty, _HIDE_JIRA) == ([], [])
