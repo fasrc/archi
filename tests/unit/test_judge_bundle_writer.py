@@ -25,6 +25,7 @@ _SETTINGS = {
 }
 _MANIFEST_KEYS = {
     "bundle_format",
+    "judge_mode",
     "result_basename",
     "arm_index",
     "arm_count",
@@ -101,6 +102,7 @@ def test_manifest_has_exactly_the_d5_keys_and_values(tmp_path):
     )
     assert set(manifest) == _MANIFEST_KEYS
     assert manifest["bundle_format"] == 1
+    assert manifest["judge_mode"] == "deferred"
     assert manifest["result_basename"] == "bench-20260101_000000"
     assert manifest["arm_index"] == 0
     assert manifest["arm_count"] == 2
