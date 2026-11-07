@@ -116,6 +116,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -245,6 +249,23 @@ existing deployment is removed, so a run that cannot obtain its base images leav
 deployment alone.</p>
 <p>If you already have the base images locally, no login is required: the check accepts an image
 that is present on the host without contacting any registry.</p>
+<p>The same check also covers two third-party base images from Docker Hub, but only for the
+services that the deployment enables:</p>
+<ul>
+<li><code>postgres</code> builds on <code>docker.io/pgvector/pgvector</code> (from <code>Dockerfile-postgres</code>).</li>
+<li><code>grafana</code> builds on <code>docker.io/grafana/grafana-enterprise</code> (from <code>Dockerfile-grafana</code>).</li>
+</ul>
+<p>The check does not read a Python version from these two images. These images are public, so
+the <code>ghcr.io</code> token above does not apply to them. If the check refuses one of these images,
+the message gives the cause and the remedy:</p>
+<ul>
+<li><strong>Rate limit.</strong> Docker Hub limits anonymous pulls. Wait for the limit to reset, or run
+  <code>docker login docker.io</code> to get a higher limit.</li>
+<li><strong>Unknown tag.</strong> The tag is not on Docker Hub. Change the <code>FROM</code> line in the template to a
+  tag that exists. <code>scripts/dev/update_service_base_images.py</code> changes only the archi base
+  images, so it cannot fix this pin.</li>
+<li><strong>Not authorized.</strong> Log in to <code>docker.io</code> with the container tool that you deploy with.</li>
+</ul>
 <!--
 Shared abbreviation definitions, auto-appended to EVERY docs page by
 pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the

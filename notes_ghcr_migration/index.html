@@ -104,6 +104,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -307,7 +311,7 @@ docker.io publishing stays untouched; ghcr.io is added as an opt-in lane.</p>
 <p>Caveat: confirm there's no FAS-level "no public artifacts by default"
    policy before first push.</p>
 <ol>
-<li><strong>Graceful skip — CI fails soft when DOCKERHUB_* secrets are missing.</strong></li>
+<li><em><em>Graceful skip — CI fails soft when DOCKERHUB_</em> secrets are missing.</em>*</li>
 </ol>
 <p>CI pushes to ghcr always (uses auto-injected <code>GITHUB_TOKEN</code> with
    <code>packages:write</code>); pushes to docker.io only when both <code>DOCKERHUB_USERNAME</code>

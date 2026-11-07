@@ -184,6 +184,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -245,7 +249,8 @@ iterable</code>. <code>archi create</code> cannot render the config at all.</p>
 <ul>
 <li><code>global.ACCEPTED_FILES</code></li>
 <li><code>services.benchmarking.modes</code></li>
-<li><code>services.benchmarking.ragas_settings.enabled_metrics</code></li>
+<li><code>services.benchmarking.mode_settings.ragas_settings.enabled_metrics</code> (and its older
+  spelling <code>services.benchmarking.ragas_settings.enabled_metrics</code>, still read)</li>
 <li><code>data_manager.utils.anonymizer.excluded_words</code></li>
 <li><code>data_manager.utils.anonymizer.greeting_patterns</code></li>
 <li><code>data_manager.utils.anonymizer.signoff_patterns</code></li>
@@ -336,33 +341,35 @@ the rendered config nested it inside <code>git:</code> — and the SSO block's o
 If you had <code>git.enabled: false</code> or a <code>git.schedule</code>, they were being ignored and now take
 effect — measured through the CLI's own normalised config, not just the bare template.</p>
 <p><strong>SSO does not switch itself on.</strong> The last row above says <code>false</code> rather than the
-template's <code>true</code> default because <code>archi create</code> and <code>archi evaluate</code> both call
-<code>ConfigurationManager.set_sources_enabled()</code> before rendering
-(<code>src/cli/cli_main.py:248</code> and <code>:879</code>), and that writes <code>enabled: false</code> into every managed
+template's <code>true</code> default because <code>archi create</code>, <code>archi evaluate</code> and <code>archi restart --config</code>
+all call <code>ConfigurationManager.set_sources_enabled()</code> before rendering
+(<code>src/cli/cli_main.py:249</code>, <code>:894</code> and <code>:614</code>), and that writes <code>enabled: false</code> into every managed
 source the config does not select. A <code>schedule</code> alone does not select a source, so an
 omitted <code>sso.enabled</code> reaches the template as an explicit <code>false</code>. To turn SSO on, set
 <code>sources.sso.enabled: true</code>.</p>
-<p><strong>CAUTION: <code>archi restart --config</code> does not do that normalisation.</strong> It renders the
-configuration without calling <code>set_sources_enabled()</code>, so every source whose <code>enabled</code> you
-omitted takes the template default of <code>true</code> — and its required credentials are not
-validated, because the source is absent from the enabled-source list the preflight checks.
-That applies to all six managed sources (<code>local_files</code>, <code>links</code>, <code>git</code>, <code>sso</code>, <code>jira</code>,
-<code>redmine</code>), not just SSO, and it means <code>archi create</code> and <code>archi restart --config</code> can
-produce different deployed configurations from the same input. Tracked as
-<a href="https://github.com/fasrc/archi/issues/461">issue #461</a>. Until it is fixed, write <code>enabled</code>
-explicitly on every source you care about rather than relying on the default, and prefer
-<code>archi create</code> when changing which sources are on.</p>
-<p>Of these, <code>enabled: false</code> is acted on by the <code>git</code>, <code>sso</code>, <code>indico</code>, <code>jira</code>, <code>redmine</code> and
-<code>elog</code> collectors, and by the Selenium scraper — with one exception for <code>git</code> and <code>sso</code>,
-described in the next paragraph.</p>
-<p><strong>CAUTION: a <code>git-</code> or <code>sso-</code> entry in <code>input_lists</code> overrides <code>enabled: false</code> for that
-source.</strong> <code>ScraperManager.collect_all_from_config()</code> sets <code>git_enabled = True</code> when the
-input lists yield any <code>git-</code> URL, and <code>sso_enabled = True</code> for any <code>sso-</code> URL, without
-consulting the flag. ELOG URLs are passed through as <code>extra_urls</code> and collected regardless
-of <code>elog.enabled</code>. So an ingest can fetch a source you configured as disabled — possibly
-after CLI validation skipped that source's required secrets. To disable one of these,
-remove its entries from <code>input_lists</code> as well as setting <code>enabled: false</code>. Tracked as
-<a href="https://github.com/fasrc/archi/issues/460">issue #460</a>.</p>
+<p><code>archi restart --config</code> normalises the same way, so <code>archi create</code> and
+<code>archi restart --config</code> deploy the same source settings from the same input
+(<a href="https://github.com/fasrc/archi/issues/461">issue #461</a>, fixed). Before that fix, restart
+rendered without <code>set_sources_enabled()</code>, so an omitted <code>enabled</code> took the template default
+of <code>true</code> and the source's credentials were not preflighted.</p>
+<p><code>enabled: false</code> is acted on by the <code>git</code>, <code>sso</code>, <code>indico</code>, <code>jira</code>, <code>redmine</code> and
+<code>elog</code> collectors, and by the Selenium scraper.</p>
+<p>An explicit <code>enabled: false</code> wins over any <code>input_lists</code> entries: the data manager logs a
+WARNING naming how many entries were skipped and does not collect that source. With <code>enabled</code>
+absent, a prefixed entry (<code>git-</code>, <code>sso-</code>, <code>elog-</code>, <code>indico-</code>) or an ELOG-path URL (<code>/elog/</code>
+or <code>/elogs/</code> in the path) enables the source, and <code>archi create</code> validates its required
+secrets and config fields before deploying. <code>enabled: true</code> collects unconditionally.
+(Changed in <a href="https://github.com/fasrc/archi/issues/460">#460</a>.)</p>
+<p><strong>CAUTION: re-render the configs after you upgrade to this change.</strong> Before #460, the CLI
+wrote <code>enabled: false</code> for every source the config did not select, and the scraper ignored
+that value when the input lists held <code>git-</code>, <code>sso-</code> or ELOG entries. A deployment rendered
+then can carry that <code>false</code> for <code>git</code>, <code>sso</code> or <code>elog</code> while it still collects them.
+<code>archi restart</code> without <code>--config</code> keeps the rendered configs, so after the upgrade the data
+manager skips those entries and logs only a WARNING. Run <code>archi create --force</code> once after
+the upgrade, so the CLI infers the sources from the input lists again.
+<code>archi restart --config</code> refuses this change: the inferred <code>enabled: true</code> differs from the
+stored <code>false</code>, and restart accepts no change to the <code>data_manager</code> section.
+<code>deploy/scripts/redeploy.sh</code> runs <code>archi create --force</code>, so a redeploy needs no extra step.</p>
 <p><strong><code>anonymize_data: false</code> is the row to check first.</strong> It was silently ignored before and is
 honored now, and it widens what a reader can see. <code>visible: false</code> is the opposite
 direction — but see the list at the end of this section: for most sources it still does not
@@ -447,6 +454,10 @@ these to turn anything off or to hide anything:</p>
 <tr>
 <td><code>data_manager.sources.links.html_scraper.reset_data</code></td>
 <td>no consumer reads it — <code>ScraperManager</code> extracts the <code>html_scraper</code> block but reads only <code>verify_urls</code> and <code>enable_warnings</code> when it builds link scrapers</td>
+</tr>
+<tr>
+<td><code>services.chat_app.flask_debug_mode</code></td>
+<td>the chat service runs on gunicorn and always turns the Flask debugger off. The grader and the data manager still read their own <code>flask_debug_mode</code> keys</td>
 </tr>
 <tr>
 <td><code>visible</code> on <code>links</code>, <code>indico</code>, <code>jira</code>, <code>redmine</code> and <code>elog</code></td>
@@ -635,10 +646,22 @@ names is always the key to edit.</p>
 <td>Network binding</td>
 </tr>
 <tr>
+<td><code>wsgi_threads</code></td>
+<td>int</td>
+<td><code>16</code></td>
+<td>Threads in the one gunicorn worker process. Each open chat stream holds one thread. Must be 1 or more</td>
+</tr>
+<tr>
 <td><code>num_responses_until_feedback</code></td>
 <td>int</td>
 <td><code>3</code></td>
 <td>Responses before prompting for feedback</td>
+</tr>
+<tr>
+<td><code>flask_debug_mode</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>No effect on the chat service (see below)</td>
 </tr>
 <tr>
 <td><code>auth.enabled</code></td>
@@ -654,6 +677,11 @@ names is always the key to edit.</p>
 </tr>
 </tbody>
 </table>
+<p>The chat service runs on gunicorn with one worker process and the <code>gthread</code> worker, so
+<code>wsgi_threads</code> is the limit on requests that run at the same time. Each open chat stream
+holds one thread until it ends. A value that is not a whole number of 1 or more stops the
+chat service at start. The chat service never runs the Flask debugger: <code>flask_debug_mode</code>
+and the <code>FLASK_DEBUG</code> environment variable have no effect on it.</p>
 <h4 id="serviceschat_appauth"><code>services.chat_app.auth</code></h4>
 <p>With <code>auth.enabled: false</code> (the default) every route runs for everyone and none of the rules
 below apply. With it <code>true</code>, each guarded route rejects a caller who is not logged in — and
@@ -754,7 +782,7 @@ atom-review drafts, jobs, and run artifacts.</p>
     evaluations:
       enabled: true
       root: /root/archi/evaluations
-      agent_config_path: /root/archi/configs/config.eval.yaml
+      agent_config_path: ../configs/config.eval.yaml
       mcp_config_path: ../configs/qa_evaluation_mcp.yaml
 </code></pre>
 <ul>
@@ -791,24 +819,37 @@ atom-review drafts, jobs, and run artifacts.</p>
   mismatch on the host directory — the console disables itself and chat keeps
   serving. Look for the start-up error line naming the root, then correct this
   setting and redeploy to re-enable the console.
-- <code>evaluations.agent_config_path</code> is the in-container path to the Archi
-  deployment YAML that defines the agent under test. This key is <strong>required</strong>
-  when <code>enabled</code> is <code>true</code>; it has <strong>no default</strong>. <code>archi create</code> refuses a
-  config that omits it or that names the live deployment config
-  (<code>/root/archi/configs/config.yaml</code>), because every evaluation run copies the
-  named file into the host-mounted run workspace the console serves — credential
-  values included. Use a redacted copy such as
-  <code>/root/archi/configs/config.eval.yaml</code> instead. Archi does not generate that
-  copy: place the redacted file in the deployment's own <code>configs/</code> directory on
-  the host (<code>~/.archi/archi-&lt;name&gt;/configs/</code>, or <code>$ARCHI_DIR/archi-&lt;name&gt;/configs/</code>),
-  which Compose mounts at <code>/root/archi/configs</code>. A run whose <code>agent_config_path</code>
-  names a file that is absent from the container starts and then fails the file
-  check, so confirm the file is in place before the first run. A relative value
-  is read inside the container and so resolves against <code>/root/archi</code>, not against
-  the directory <code>archi create</code> ran in.
+- <code>evaluations.agent_config_path</code> is an absolute host path or a path relative
+  to this deployment YAML (the same resolution rule as <code>mcp_config_path</code>). This
+  key is <strong>required</strong> when <code>enabled</code> is <code>true</code>; it has <strong>no default</strong>. <code>archi
+  create</code> refuses a missing file, the deployment YAML itself, the live
+  deployment config (<code>/root/archi/configs/config.yaml</code>), and any file inside the
+  deployment directory (which <code>archi create --force</code> deletes on every run). On
+  every <code>archi create</code>, Archi copies the named file to
+  <code>evaluation_config/qa_agent_config.yaml</code> inside the deployment directory and
+  points the running config at <code>/root/archi/evaluation_config/qa_agent_config.yaml</code>.
+  Archi does not generate or redact the file — name a redacted copy, because
+  every evaluation run copies it into the run workspace the console serves.
 - <code>evaluations.mcp_config_path</code> is needed only for Dataset V2 live oracle
   items. It is an absolute host path or a path relative to this deployment YAML.
   Archi validates and stages the referenced evaluator MCP registry.</p>
+<p>When auth is on, the evaluation console enforces three permissions. GET routes
+require <code>evaluations:view</code>. Starting a run, cancelling or continuing a job, and
+retrying failed rows require <code>evaluations:run</code>. Every other write and all
+atom-draft routes require <code>evaluations:manage</code>. A role with <code>*</code> has all three.
+An anonymous browser request is redirected to the login page; an anonymous API
+request (any path under <code>/api/evaluations/</code>) gets a JSON 401.</p>
+<pre><code class="language-yaml">services:
+  chat_app:
+    auth:
+      auth_roles:
+        roles:
+          eval-team:
+            permissions:
+              - evaluations:view
+              - evaluations:run
+              - evaluations:manage
+</code></pre>
 <p>Top-level <code>mcp_servers</code> configures tools available to the tested agent; it is
 not reused as the evaluator registry. See
 <a href="../evaluation/#chat-app-evaluation-configuration">Chat-app evaluation configuration</a>
@@ -1007,6 +1048,7 @@ resolution, runtime reachability, authentication, and schema rules.</p>
 <ul>
 <li><strong><code>services.piazza</code></strong>: Requires <code>network_id</code>, <code>agent_class</code>, <code>provider</code>, <code>model</code></li>
 <li><strong><code>services.mattermost</code></strong>: Requires <code>update_time</code></li>
+<li><strong><code>services.slack</code></strong>: Optional <code>chat_url</code>, <code>timeout_seconds</code>, <code>max_workers</code>, <code>history_limit</code>, <code>internal_users_only</code>, <code>allowed_channels</code>, <code>external_user_text</code>; needs <code>services.chat_app.openai_compat.enabled: true</code> (in host mode with authentication off, <code>local_only: true</code> instead; see <a href="../api-reference-v1/#local-callers-only">Local callers only</a>). See <a href="../services/#slack-interface">Slack Interface</a></li>
 <li><strong><code>services.redmine_mailbox</code></strong>: Requires <code>url</code>, <code>project</code>, <code>redmine_update_time</code>, <code>mailbox_update_time</code></li>
 <li><strong><code>services.benchmarking</code></strong>: See <a href="../benchmarking/">Benchmarking</a></li>
 </ul>
@@ -1046,7 +1088,7 @@ resolution, runtime reachability, authentication, and schema rules.</p>
 <td><code>chunk_overlap</code></td>
 <td>int</td>
 <td><code>0</code></td>
-<td>Overlapping characters between chunks</td>
+<td>Overlapping characters between chunks (<code>character</code> strategy only; the hierarchical strategies use <code>chunking.chunk_overlap</code>)</td>
 </tr>
 <tr>
 <td><code>parallel_workers</code></td>
@@ -1077,6 +1119,12 @@ resolution, runtime reachability, authentication, and schema rules.</p>
 <td>string</td>
 <td><code>cosine</code></td>
 <td>Similarity metric: <code>cosine</code>, <code>l2</code>, <code>ip</code></td>
+</tr>
+<tr>
+<td><code>torch_threads</code></td>
+<td>int</td>
+<td><code>8</code>, capped at the host's CPUs</td>
+<td>CPU threads torch uses in the data-manager and chatbot containers, rendered into both as <code>OMP_NUM_THREADS</code> and <code>MKL_NUM_THREADS</code> (torch reads <code>MKL_NUM_THREADS</code> first, so both get the same value). Unset, torch starts one thread per host core; on a shared 32-core host that made each embedding call ~3 s instead of ~16 ms (<a href="https://github.com/fasrc/archi/issues/721">#721</a>). Without this key, the default is 8, or fewer on a host where <code>archi create</code> can use fewer than 8 CPUs, and an <code>OMP_NUM_THREADS</code> or <code>MKL_NUM_THREADS</code> already in your <code>--env-file</code> is kept as it is. Like any other env-file value, a changed thread variable reaches only the services that are recreated: <code>archi restart -e</code> applies it to the one service it restarts. Must be a positive integer; anything else fails <code>archi create</code> and <code>archi restart</code>. <code>archi restart -c</code> refuses a change to it, like any other <code>data_manager</code> change</td>
 </tr>
 </tbody>
 </table>
@@ -1184,6 +1232,12 @@ hierarchical-rerank retriever returns). The legacy <code>character</code> strate
 <td><code>512</code></td>
 <td>Target size in tokens of embedded child leaf nodes (hierarchical strategies only)</td>
 </tr>
+<tr>
+<td><code>chunking.chunk_overlap</code></td>
+<td>int</td>
+<td><code>20</code></td>
+<td>Overlap in tokens between child chunks (hierarchical strategies only). Clamped to half the child size; on the <code>sentence</code> path, to half the smaller of the two sizes. <code>0</code> turns overlap off. A change takes effect only on re-ingest.</td>
+</tr>
 </tbody>
 </table>
 <pre><code class="language-yaml">data_manager:
@@ -1191,12 +1245,15 @@ hierarchical-rerank retriever returns). The legacy <code>character</code> strate
     strategy: sentence
     parent_chunk_size: 2048
     child_chunk_size: 512
+    chunk_overlap: 20
 </code></pre>
 <blockquote>
 <p><strong>Backward compatibility:</strong> <code>parent_chunk_size</code>/<code>child_chunk_size</code> are optional.
 Omitting them reproduces the built-in defaults (2048/512), so an existing
-deployment's chunking is unchanged. They exist so a benchmark can sweep chunk
-sizes and recommend defaults from data — see
+deployment's chunking is unchanged. Omitting <code>chunk_overlap</code> keeps the overlap at
+20 tokens. A child size below 40 now gets an overlap of half its size (for example,
+10 for a size of 20), so re-ingest such a collection to apply the change. The keys
+exist so a benchmark can sweep chunk sizes and recommend defaults from data — see
 <a href="../benchmarking/#hierarchical-rerank-ab">Benchmarking → Hierarchical-rerank A/B</a>.</p>
 </blockquote>
 <h4 id="the-markdown-strategy">The <code>markdown</code> strategy</h4>
@@ -1216,9 +1273,9 @@ adds no config keys.</p>
 <li><strong>Per-file dispatch.</strong> Only files whose suffix is <code>md</code> or <code>markdown</code> (any case, with
   or without the dot) take the Markdown parser. Every other file chunks with the
   <code>sentence</code> strategy, so a mixed corpus needs no per-source setting.</li>
-<li><strong>Child overlap.</strong> Child nodes overlap by 20 tokens, clamped to <code>child_chunk_size</code>,
-  on both hierarchical strategies. A <code>child_chunk_size</code> below 200 no longer fails
-  ingestion.</li>
+<li><strong>Child overlap.</strong> Child nodes overlap by <code>chunking.chunk_overlap</code> tokens (default
+  20), clamped to half of <code>child_chunk_size</code>, on both hierarchical strategies. A
+  <code>child_chunk_size</code> below 200 no longer fails ingestion.</li>
 </ul>
 <blockquote>
 <p><strong>A strategy change re-chunks nothing already ingested.</strong> The vectorstore diffs by
@@ -1301,12 +1358,12 @@ ingest and the uploader UI, so the two never produce an inconsistent corpus.</p>
 <tr>
 <td><code>html_to_markdown.enabled</code></td>
 <td><code>true</code></td>
-<td>Convert string HTML content (suffix <code>html</code>/<code>htm</code>) to ATX Markdown via <code>markdownify</code>, flip the suffix and path fields to <code>.md</code>, and record <code>metadata.converted_from = "html"</code>. The <code>.md</code> file then loads through <code>TextLoader</code> instead of <code>BSHTMLLoader</code>, so headings, lists, tables, and links survive into chunks. For <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> KB (Echo-KB) pages, the converted Markdown is additionally sliced to the article body between the page's <code>Table of Contents</code> and <code>Bookmarkable Links</code> (or, when absent, <code>Last Updated</code>) landmarks, dropping the surrounding category-filter nav and footer; pages without those landmarks (non-KB sources) keep the full-page conversion.</td>
+<td>Convert string HTML content (suffix <code>html</code>/<code>htm</code>) to ATX Markdown via <code>markdownify</code>, flip the suffix and path fields to <code>.md</code>, and record <code>metadata.converted_from = "html"</code>. The <code>.md</code> file then loads through <code>TextLoader</code> instead of <code>BSHTMLLoader</code>, so headings, lists, tables, and links survive into chunks. For <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> KB (Echo-KB) pages, the converted Markdown is additionally sliced to the article body between the page's <code>Table of Contents</code> and <code>Bookmarkable Links</code> (or, when absent, <code>Last Updated</code>) landmarks, dropping the surrounding category-filter nav and footer; pages without those landmarks (non-KB sources) keep the full-page conversion. Empty headings (no text and no image or code) are dropped, so no bare <code>#</code> line reaches the Markdown.</td>
 </tr>
 <tr>
 <td><code>categorization.enabled</code></td>
 <td><code>false</code></td>
-<td>Assign one label from <code>categories</code> to each document via an <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> and store it under <code>metadata.llm_category</code>.</td>
+<td>Assign one label from <code>categories</code> to each document via an <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> and store it under <code>metadata.llm_category</code>. Costs one <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> call per document; <strong>measured at about +19 min per 1091-document ingest with no resolvable retrieval effect</strong> — see "Measured cost" below.</td>
 </tr>
 <tr>
 <td><code>categorization.provider</code> / <code>model</code></td>
@@ -1335,6 +1392,26 @@ ingest and the uploader UI, so the two never produce an inconsistent corpus.</p>
 <li><strong>No-op when disabled.</strong> A <strong>missing</strong> <code>processing</code> block means conversion on,
   categorization off (the shipped default). An explicitly all-disabled block makes
   the persistence service behave byte-for-byte identically to the unwrapped service.</li>
+<li><strong>Measured cost, and why the default is off.</strong> The 2026-09 feature-matrix campaign
+  ran categorization as its own arm against the baseline, on a 1091-document corpus.
+  Ingest took 3802 s with the feature off against 4956 s with it on — <strong>about 19
+  minutes</strong>, one <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> call per document at <code>max_concurrency: 1</code>. Enabling the feature
+  adds about 30 % to ingest; disabling it saves about 23 %. Read the figure as
+  approximate: the two arms did not ingest identical corpora (6926 chunks against
+  6896, 0.43 % apart), and the campaign therefore calls the comparison "not a clean
+  isolation". No quality delta came out of the noise — <code>context_precision</code> moved
+  −0.004 / −0.002 against a minimum detectable effect of 0.025 / 0.027, and source
+  accuracy was 0.868 / 0.840 against a baseline of 0.868 (McNemar p = 1 / 0.38).
+  Measurement table: <a href="../proposals/categories-action-plan/">Categories action plan</a>.</li>
+<li><strong>The label is reachable, but nothing on the default path reads it.</strong>
+  <code>metadata.llm_category</code> has one writer, <code>CategorizationProcessor</code>. No retriever,
+  prompt or embedding path consumes it. It is not unreachable, though:
+  <code>_build_extra_text</code> writes <code>llm_category:&lt;value&gt;</code> into the <code>extra_text</code> column, and
+  <code>CatalogPostgres.search_metadata</code> matches any key outside <code>_METADATA_COLUMN_MAP</code> by
+  substring over that column, so an agent calling <code>search_metadata_index</code> can filter on
+  it. Nothing tells the model the vocabulary, so the campaign result means the label did
+  not help <strong>as wired and as prompted</strong> — not that no reader exists. Enable the feature
+  once something reads the label on purpose.</li>
 <li><strong>Never blocks ingest.</strong> A conversion that raises, or that yields blank/whitespace
   Markdown (e.g. a script-only page), keeps the original resource. A categorization
   error never raises and defaults to <code>uncategorized</code>.</li>
@@ -1368,10 +1445,44 @@ ingest and the uploader UI, so the two never produce an inconsistent corpus.</p>
   markup, the fence stands on its own, and the text after the block continues in a fresh
   copy of the same tag with the same attributes. A link therefore renders as two links
   with the same <code>href</code> around the fence, a bold or italic run resumes after it, and an
-  ancestor left with no content is dropped. Whitespace that touches the cut is removed,
+  ancestor left with no content is dropped. The exception is a link left with no text,
+  image, rule, video, quotation, heading, or table cell on any side of the fences (issue #430)
+  (issue #713): it is replaced by one link before the
+  fence, whose text is the link's <code>title</code> or, if there is none, its <code>href</code> — so
+  <code>&lt;a href="https://x/y"&gt;</code> around a lone block becomes <code>&lt;https://x/y&gt;</code> above the fence and
+  the target stays in the knowledge base. A quotation, heading, or table cell does not
+  count when the link is inside <code>&lt;kbd&gt;</code>, <code>&lt;samp&gt;</code>, <code>&lt;code&gt;</code>, or <code>&lt;pre&gt;</code>, where the link
+  shows no target, and a heading does not count inside a heading or table cell, where it
+  shows no <code>#</code> (PR #716 review). A relative or fragment target, such as <code>/docs</code>,
+  becomes <code>[/docs](/docs)</code>. The conversion ignores a <code>data-archi-link-shown</code> or
+  <code>data-archi-promoted</code> attribute in the page HTML (issue #713): these names are its own
+  markers. Whitespace that touches the cut is removed,
   so no line beside the fence begins or ends with a stray space. The shape is rare in the
   <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> KB (0 of 25 sampled multi-line code elements) and, like every item in this list,
   it reaches disk only for new or force-overwritten documents.</li>
+<li><strong>A link target that Markdown would misread is escaped.</strong> A link is written as
+  <code>[text](&lt;target&gt;)</code> so the target survives (issue #605) when its target has any of
+  these: whitespace or a control character, an unbalanced parenthesis, a leading <code>&lt;</code>,
+  a <code>\</code> before punctuation or at the end, or an <code>&amp;</code> that starts a character reference
+  (such as <code>&amp;amp;</code>). A target with a line ending is left as before, because no
+  Markdown link form can hold one. Inside the angle brackets, <code>\</code>, <code>&lt;</code>, <code>&gt;</code>, and that <code>&amp;</code> are
+  backslash-escaped, and a NUL is written as <code>%00</code>. A self-link (text equal to the
+  target) that cannot be an autolink (whitespace, <code>&lt;</code>, <code>&gt;</code>, or a control character)
+  becomes an explicit link whose text is the target with its Markdown characters
+  escaped. Other links convert
+  as before; like every item in this list, it reaches disk only for new or
+  force-overwritten documents.</li>
+<li><strong>Link text with an unbalanced bracket is escaped.</strong> Link text that contains an
+  unbalanced <code>[</code> or <code>]</code>, and not already backslash-escaped, gets a <code>\</code> inserted before
+  that bracket so the link survives CommonMark parsing (issue #691). Brackets inside a
+  code span, an autolink, raw inline HTML, or a nested image's destination or title do
+  not count, and a lone <code>\</code> at the end of the link text is doubled so it cannot escape
+  the closing <code>]</code>. Link syntax inside the link text, such as <code>[a](b)</code> or the empty link
+  that <code>markdownify</code> writes for a <code>&lt;video&gt;</code>, has its brackets escaped, because
+  CommonMark does not let a link hold a link. Balanced brackets and nested images are
+  unchanged, and an <code>&lt;a&gt;</code>
+  without an <code>href</code> (written as plain text) is not escaped; like every item in this
+  list, it reaches disk only for new or force-overwritten documents.</li>
 <li><strong>Content after a nested list starts on its own line.</strong> <code>markdownify</code> drops the newline
   after a list nested inside a list item, so the text, inline element, or sibling item
   that followed it was glued onto the nested list's last line — onto a closing code fence
@@ -1380,6 +1491,11 @@ ingest and the uploader UI, so the two never produce an inconsistent corpus.</p>
   paragraph, code block, heading, or list is unchanged; like the body slice, the change
   reaches disk only for new or force-overwritten documents — see <em>Applying to an existing
   corpus</em> below.</li>
+<li><strong>A relative or fragment self-link becomes a Markdown link.</strong> A link whose text equals
+  a relative or fragment <code>href</code>, such as <code>/docs</code>, becomes <code>[/docs](/docs)</code>, because a
+  CommonMark autolink needs a URI scheme and <code>&lt;/docs&gt;</code> reads as an HTML end tag
+  (issue #604); absolute URLs stay <code>&lt;https://...&gt;</code>; like the other items, it reaches disk
+  only for new or force-overwritten documents.</li>
 <li><strong>Cost.</strong> Categorization issues one <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> call per document — expensive on large
   crawls, hence off by default.</li>
 <li><strong>Local <code>.html</code> uploads are not converted.</strong> Uploaded local files arrive as <code>bytes</code>

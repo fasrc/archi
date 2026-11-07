@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>In-Context Learning and Query→Category Mapping - Archi Docs</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "In-Context Learning and Query\u2192Category Mapping";
+        var mkdocs_page_input_path = "proposals/icl-and-query-category-mapping.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../.." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">In-Context Learning and Query→Category Mapping</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/proposals/icl-and-query-category-mapping.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="in-context-learning-and-querycategory-mapping">In-Context Learning and Query→Category Mapping</h1>
+<p><strong>Author:</strong> Austin Swinney, <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> — Harvard University
+<strong>Date:</strong> September 2026
+<strong>Status:</strong> Exploration — no milestone proposed; the rung-0 tracking issue is filed as <code>evidence-trial</code> before the sweep runs (see "Release-plan judgment")
+<strong>Baseline read:</strong> <code>origin/dev</code> @ <code>4b253e2</code>, 2026-09-19; every anchor re-checked against <code>origin/dev</code> @ <code>314039d</code>, 2026-09-21
+<strong>Companion:</strong> <a href="../release-plan-2026/">Release Plan 2026</a> · <a href="../multi-collection-routing/">Multi-Collection Routing</a> · <a href="../feature-matrix-campaign-2026/">Feature-Matrix Campaign</a> · <a href="../categories-action-plan/">Categories Action Plan</a></p>
+<hr />
+<h2 id="tldr">TL;DR</h2>
+<p>Two ideas were raised:</p>
+<ol>
+<li><strong>In-context learning (ICL)</strong> — put worked examples in front of the model.</li>
+<li><strong>Query→category mapping</strong> — have the agent map the query to a category in
+   <code>docs.rc.fas.harvard.edu</code> before answering.</li>
+</ol>
+<p>Both are <strong>prompt-only at rung 0</strong> and need <strong>no code at all</strong> to measure, because
+<code>generate_prompt_sweep.py</code> already A/B's agent prompts with everything else held fixed.</p>
+<p>The load-bearing point for idea 2 is that it is <strong>half-built and unread where it would
+matter</strong>. <a href="https://github.com/fasrc/archi/issues/496">#496</a> records the <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> label as
+write-only, and the same holds for the breadcrumb field: the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> docs category is
+captured at ingest into <code>metadata["category"]</code> (<code>processing.py:181-208</code>), and <strong>neither
+the retriever nor the prompt path reads it</strong> — not the retriever, not the chunk header
+the model sees, not the schema hint tool. One reader does exist, by accident: both labels
+land in the catalog's <code>extra_text</code>, and <code>search_metadata_index</code> matches an unknown key
+such as <code>llm_category:&lt;value&gt;</code> as a substring filter against it
+(<code>catalog_postgres.py:474-481</code>, <code>:1560-1569</code>). The campaign prompt exposes that tool but
+never names either key, and <code>list_metadata_schema</code> never advertises them, so the model
+could reach the label only by guessing it. That is why "no effect" was the <strong>expected</strong>
+outcome of arm 03 (<a href="https://github.com/fasrc/archi/issues/496">#496</a>: 19.2 min per
+ingest, no measurable retrieval effect) — not the only possible one, and the null result
+cannot be attributed mechanically to a writer with no reader. <strong>Arm 03 is evidence
+against the ingest-side label as wired and as prompted. It is not evidence against
+mapping the query to a category.</strong></p>
+<p>Neither idea clears the release plan's gate bar today. Rung 0 runs on the
+<strong>prompt-sweep harness</strong>, which is the vehicle the feature-matrix campaign
+(<a href="https://github.com/fasrc/archi/issues/396">#396</a>) explicitly points at for this: that
+campaign puts prompt variants <strong>out of scope</strong> (§11) and pins the agent prompt as a fixed
+factor by sha256 (§2), so a prompt arm is not an arm of it and needs its own
+pre-registration. What #396 does supply is most of what makes the arm measurable — its
+power numbers, its decision rules, <code>compare_runs.py</code>, and the arm-03 result above. What it
+does <strong>not</strong> supply is a comparator: its baseline runs were pinned to one code SHA and one
+corpus, so a standalone sweep must carry the unchanged production prompt as a control arm
+of its own, and it must bring its own paired tests for the count metrics, because
+<code>compare_runs.py</code> has none (see "Staging").</p>
+<hr />
+<h2 id="what-exists-today">What exists today</h2>
+<h3 id="the-category-is-captured-and-nothing-reads-it">The category is captured, and nothing reads it</h3>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Where</th>
+<th>State</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Breadcrumb → <code>metadata["category"]</code></td>
+<td><code>processing.py:181-208</code> (<code>HtmlCategoryProcessor</code>)</td>
+<td><strong>live</strong> — default on, runs whenever <code>html_to_markdown.enabled</code> (<code>processing.py:1072-1076</code>)</td>
+</tr>
+<tr>
+<td><abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> label → <code>metadata["llm_category"]</code></td>
+<td><code>processing.py:857</code> (<code>CategorizationProcessor</code>)</td>
+<td><strong>live on <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr></strong>, code-default <code>false</code> (<code>base-config.yaml:519</code>, <code>processing.py:1078</code>)</td>
+</tr>
+<tr>
+<td>Catalog persistence</td>
+<td><code>catalog_postgres.py:295</code> → <code>extra_json</code> / <code>extra_text</code></td>
+<td><strong>live</strong> — <code>_build_extra_text</code> (<code>:1560-1569</code>) emits <code>category:&lt;value&gt;</code></td>
+</tr>
+<tr>
+<td>Chunk metadata</td>
+<td><code>manager.py:484,574</code> (<code>file_level_metadata</code> merged into every chunk)</td>
+<td><strong>live</strong> — the field reaches <code>document_chunks</code></td>
+</tr>
+<tr>
+<td>Retrieval filter</td>
+<td><code>LlamaIndexHierarchicalRetriever._generate_candidates</code> (<code>hierarchical_retriever.py:125-138</code>) on the shipped default — the deployed configs set <code>hierarchical_rerank.enabled: true</code> and <code>factory.py:54-56</code> returns it; <code>HybridRetriever._get_relevant_documents</code> (<code>hybrid_retriever.py:63-116</code>) only when reranking is disabled (<code>factory.py:79</code>)</td>
+<td><strong>absent on both paths</strong> — each calls <code>hybrid_search(query, k, weights)</code> and forwards no <code>filter</code>, though <code>PostgresVectorStore.hybrid_search</code> accepts one (<code>postgres_vectorstore.py:439,449</code>)</td>
+</tr>
+<tr>
+<td>What the model is shown</td>
+<td><code>_format_documents_for_llm</code> (<code>tools/retriever.py:78-98</code>)</td>
+<td><strong>absent</strong> — header is <code>[i] title &lt;url&gt; (hash=…)</code> + <code>Score:</code>; no category</td>
+</tr>
+<tr>
+<td>Schema hint to the model</td>
+<td><code>api_catalog_schema</code> (<code>uploader_app/app.py:779-790</code>) → the <code>list_metadata_schema</code> tool (<code>create_metadata_schema_tool</code>, <code>tools/local_files.py:439-476</code>)</td>
+<td><strong>absent</strong> — <code>keys</code> is <code>sorted(_METADATA_COLUMN_MAP.keys())</code> (<code>catalog_postgres.py:49-66</code>), <code>get_distinct_metadata</code> allows only <code>source_type</code>, <code>suffix</code>, <code>ticket_id</code>, <code>git_repo</code>, <code>url</code> (<code>:554-564</code>), and the tool formats exactly three payload fields, <code>keys</code>, <code>source_types</code>, <code>suffixes</code> (<code>local_files.py:469-476</code>). <code>category</code> is in none of them</td>
+</tr>
+<tr>
+<td>Query-side classification</td>
+<td>—</td>
+<td><strong>absent</strong></td>
+</tr>
+<tr>
+<td>Few-shot / exemplar machinery</td>
+<td>—</td>
+<td><strong>absent</strong>: zero hits for <code>few.?shot|in.?context learning|\bICL\b|exemplar</code> across <code>src/</code>, <code>docs/</code>, configs</td>
+</tr>
+</tbody>
+</table>
+<p><code>grep -rn '"category"' src/ --include='*.py'</code> outside <code>data_manager/collectors/</code> and
+<code>evaluation/qa/</code> returns nothing. The field is write-only, exactly as
+<a href="https://github.com/fasrc/archi/issues/496">#496</a> records for <code>llm_category</code>.</p>
+<h3 id="the-taxonomy-lives-only-in-the-breadcrumb">The taxonomy lives only in the breadcrumb</h3>
+<p>The <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> docs site is an Echo Knowledge Base install: the ingested sitemap is
+<code>https://docs.rc.fas.harvard.edu/kb/epkb_post_type_1-sitemap.xml</code>
+(<code>examples/sources.manifest.yaml:12</code>) and article URLs are flat <code>/kb/&lt;slug&gt;</code> — see the
+anchor questions' <code>sources</code> (<code>examples/benchmarking/anchor_questions.json</code>). There is no
+category segment in the URL to key off. The taxonomy exists on-page as
+<code>Home › &lt;Category&gt; › &lt;Article&gt;</code>, which is precisely what <code>_extract_kb_category</code>
+(<code>processing.py:130-149</code>) scrapes off <code>span.eckb-breadcrumb-link</code>.</p>
+<p><strong>So "the category present in docs.rc.fas.harvard.edu" is a field archi already
+has.</strong> That is the good news for idea 2, and it is why the idea is cheaper than it
+looks.</p>
+<h3 id="one-usable-path-is-already-open-by-accident">One usable path is already open, by accident</h3>
+<p><code>search_metadata</code> maps an unrecognised filter key to a substring match on the flattened
+metadata blob (<code>catalog_postgres.py:474-481</code>):</p>
+<pre><code class="language-python">column = _METADATA_COLUMN_MAP.get(key)
+if column:
+    sub_clauses.append(f&quot;{column} = %s&quot;)
+else:
+    sub_clauses.append(&quot;extra_text ILIKE %s&quot;)
+    params.append(f&quot;%{key}:{val}%&quot;)
+</code></pre>
+<p>Because <code>_build_extra_text</code> writes <code>category:&lt;value&gt;</code>, a
+<code>search_metadata_index</code> call with <code>category:storage</code> <strong>works on the deployed corpus
+today</strong>, with no code change. Three caveats before leaning on it:</p>
+<ul>
+<li>It is <code>ILIKE</code> substring, not equality: <code>category:compute</code> also matches
+  <code>llm_category:compute</code>, and a prefix matches a longer label.</li>
+<li><code>list_metadata_schema</code> never advertises <code>category</code> and offers no distinct values, so
+  the model cannot discover the vocabulary — a prompt would have to hard-code it.</li>
+<li><code>search_metadata_index</code> returns matched lines + hashes, not ranked chunks
+  (<code>fasrc_docs_agent.py:86-93</code>), so it is a different retrieval surface from
+  <code>search_vectorstore_hybrid</code> and needs <code>fetch_catalog_document</code> to read anything.</li>
+</ul>
+<h3 id="where-a-prompt-lands-and-where-anything-dynamic-would-land">Where a prompt lands, and where anything dynamic would land</h3>
+<p>The agent prompt is <strong>static per deployment</strong>: agent spec markdown →
+<code>load_agent_spec</code> (<code>agent_spec.py:62-68</code>) → <code>_build_system_prompt</code>
+(<code>base_react.py:1521-1531</code>) → <code>create_agent(system_prompt=…)</code> (<code>:1535-1545</code>). Nothing
+varies it per turn.</p>
+<p>The per-turn seam that does exist is <code>_inject_forced_retrieval</code>
+(<code>base_react.py:1752-1762</code>, overridden at <code>fasrc_docs_agent.py:237-302</code>). It already
+rewrites the message list before the model's first turn, prefilling a <em>completed</em> tool
+round — an <code>AIMessage</code> carrying the call plus its <code>ToolMessage</code> result. Anything
+dynamic (retrieved exemplars, a classified-category hint, a pre-filtered search) belongs
+at that seam, and it is a proven pattern rather than a new one.</p>
+<h3 id="the-measurement-rig-and-the-bar-it-sets">The measurement rig, and the bar it sets</h3>
+<p><code>scripts/benchmarking/generate_prompt_sweep.py</code> renders one benchmarking config per
+prompt file, varying <strong>only</strong> <code>services.benchmarking.agent_md_file</code> and holding
+everything else byte-identical so the leaderboard is apples-to-apples. Both ideas'
+rung-0 form is a prompt file, so both are measurable with the rig that already ships.</p>
+<p>What the rig holds fixed is the <strong>config</strong>, not the <strong>spec</strong>. <code>agent_md_file</code> selects a
+whole <code>AgentSpec</code>: <code>load_agent_spec</code> reads the file's YAML <code>tools</code> list
+(<code>agent_spec.py:60-67</code>, <code>:134-142</code>), <code>BaseReActAgent</code> takes that list as
+<code>selected_tool_names</code> (<code>base_react.py:133</code>), and <code>FASRCDocsAgent</code> builds its vector tools
+only if <code>search_vectorstore_hybrid</code> is on it (<code>fasrc_docs_agent.py:52-54</code>). The generator
+checks that each prompt file exists and never parses it
+(<code>generate_prompt_sweep.py:104-110</code>), and the leaderboard's shared-context check compares
+model, provider, judge settings, bank and corpus — never the resolved tool list
+(<code>service_benchmark.py:970-989</code>). A prompt sweep must therefore <strong>hold the frontmatter
+fixed</strong>: identical <code>tools</code> across the control and every arm, checked by loading each spec
+before the sweep runs. archi-config PR #22's README does exactly that, and its three files
+list the same three tools; without the check, a tool-surface change rides along and is
+attributed to the wording.</p>
+<p>The bar comes from the campaign's own decision rules, as recorded on
+<a href="https://github.com/fasrc/archi/issues/496">#496</a> for arm 03:</p>
+<ul>
+<li><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> deltas are verdicts only outside <code>MDE = max(2·SE, 2σ)</code> — <strong>measured at 0.025–0.05</strong>
+  per metric on this bank, in both runs. Mean deltas inside that spread need roughly
+  <strong>40 runs per arm</strong> to carry a claim.</li>
+<li>Gold-atom deltas only outside 2σ of the four-run floor: pass <code>0.424 ± 0.024</code>,
+  atom <code>0.475 ± 0.017</code>, required-atom recall <code>0.614 ± 0.010</code>.</li>
+<li>Count-type metrics were decisive far cheaper: source accuracy <code>0.868</code> (McNemar),
+  recursion-limit blowouts <code>7 / 109</code>, time per question <code>48.2 s</code>.</li>
+</ul>
+<p><strong>Consequence for both ideas: judge them on the count-type metrics — source accuracy
+and blowout count, each under a pre-registered paired test (McNemar; see "Staging") —
+and read the gold-atom metrics, required-atom recall included, only as paired deltas
+under the 2σ rule; never on <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> means.</strong> The paired test is not in this repository:
+<code>compare_runs.py</code> reports source accuracy per arm in aggregate and drops blowout rows
+before pairing, so a raw count change is not a verdict until the test runs. Required-atom
+recall is a per-attempt fraction, <code>entailed_required / required_count</code>
+(<code>evaluation/qa/scoring.py:32</code>), not a paired pass/fail count, so McNemar does not apply
+to it; and <code>compare_runs.py</code> pairs only <code>item_pass_rate</code> and <code>atom_score</code>
+(<code>compare_runs.py:1695</code>), so a required-atom delta is descriptive until that rig is
+extended. A two-run <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> arm cannot resolve a prompt effect of plausible size, and
+reporting one would be the kind of overclaim <code>v2026.09.0</code> exists to prevent.</p>
+<hr />
+<h2 id="idea-1-in-context-learning">Idea 1 — In-context learning</h2>
+<h3 id="two-different-features-under-one-name">Two different features under one name</h3>
+<p><strong>Static ICL</strong> is a prompt edit: 3–5 worked examples in the agent spec markdown. Zero
+code, sweepable today, and it carries a fixed prompt-token cost on <em>every</em> turn.</p>
+<p><strong>Dynamic ICL</strong> (retrieve the nearest prior Q/A and inject it) is a feature: an exemplar
+store, a second retrieval per turn, and an injection at the
+<code>_inject_forced_retrieval</code> seam. It is not a prompt tweak and should not be scoped as
+one.</p>
+<h3 id="two-risks-that-are-specific-to-this-repo">Two risks that are specific to this repo</h3>
+<p><strong>Contamination is the real hazard.</strong> The obvious exemplar source is the material archi
+already has: the 109-question golden bank (<code>evaluation/qa/dataset.py</code>) and
+<code>examples/benchmarking/anchor_questions.json</code>. Drawing exemplars from the bank and then
+scoring against the bank leaks gold answers into the system under test, and every number
+downstream of it becomes uninterpretable — including the numbers <code>v2026.09.0</code> is being
+built to make citable. Any ICL arm must draw exemplars from a pool <strong>disjoint from the
+bank</strong>, and the pre-registration must name the pool and record the disjointness check.
+The Argilla feedback loop (#60) and real ticket traffic are the candidate pools; the
+bank is not.</p>
+<p><strong>Prompt tokens interact with a live defect.</strong> <a href="https://github.com/fasrc/archi/issues/499">#499</a>
+measures 8% of <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> questions ending in a recursion-limit blowout at ~230 s. Two bounds
+sit under that, and they are different mechanisms: the <strong>pre-loop history trim</strong> reserves
+15% of the window (<code>base_react.py:1696-1697</code>) and counts with the model's own
+<code>get_num_tokens_from_messages</code>; the <strong>in-loop approximate counter</strong>
+(<code>count_request_tokens</code>, <code>agents/utils/context_middleware.py:103-121</code>) subtracts, by
+default, a 15% generation reserve (<code>context_budget.py:108</code>) <em>and</em> a separate 25% counting
+margin (<code>:144</code>) over a 4-chars-per-token estimate (#263, parked). Static exemplars add
+fixed tokens to every turn, but <strong>only the in-loop counter sees them</strong>: the pre-loop trim
+counts <code>history_messages</code> alone (<code>base_react.py:1703-1705</code>), while the agent-spec text
+travels separately as <code>system_prompt</code> into <code>create_agent</code> (<code>:1536-1544</code>); only
+<code>count_request_tokens</code> prepends that prompt to what it counts
+(<code>context_middleware.py:118-121</code>). So the pre-loop trim reserves no room for the examples:
+history can sit at its old 85% ceiling before they are added, and the examples land on top
+of it. That asymmetry is the overflow-risk mechanism to watch, not a uniform tax under both
+bounds. The blowout count is already a campaign metric (<code>7 / 109</code>), so the interaction is
+measurable in the same arm — but it must be <strong>read</strong>, not assumed benign.</p>
+<hr />
+<h2 id="idea-2-map-the-query-to-a-docs-category">Idea 2 — Map the query to a docs category</h2>
+<h3 id="why-arm-03-does-not-refute-it">Why arm 03 does not refute it</h3>
+<p><a href="https://github.com/fasrc/archi/issues/496">#496</a> is sometimes readable as "categories
+were tried and did nothing." What was tried was the <strong>ingest-side writer</strong>: one <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> call
+per document, writing a label that <code>grep</code> proves nobody reads. The measured cost was real
+(19.2 min per 1,091-document ingest) and the measured effect was nil — which is what a
+write-only field must produce. Turning that writer off is the right call and is already
+scoped.</p>
+<p>Idea 2 is the <strong>reader half</strong>, on the query side. It has never been measured, and arm
+03 says nothing about it.</p>
+<h3 id="the-design-choice-that-matters">The design choice that matters</h3>
+<p>A hard classify-then-filter has a failure mode worse than doing nothing: one
+misclassified query removes the correct document from the candidate set entirely, and
+the answer degrades silently with full confidence. Ordered by risk:</p>
+<ol>
+<li><strong>Soft hint (rung 0).</strong> The prompt tells the agent to name the docs category first,
+   then search — the category shapes the query text, and no code excludes anything. If
+   the prompt also advertises the <code>category:&lt;value&gt;</code> substring filter on
+   <code>search_metadata_index</code>, rung 2's exclusion risk comes back through the model's own
+   tool call, because <code>search_metadata</code> has no thin-result fallback
+   (<code>catalog_postgres.py:474-481</code>); the prompt must then order the unfiltered re-search
+   itself, and the arm measures a soft hint <strong>plus a model-enforced fallback</strong>, not a bare
+   hint. Either way, the only variant that is free.</li>
+<li><strong>Show the category (rung 1).</strong> Add <code>category</code> to the chunk header in
+   <code>_format_documents_for_llm</code>, so the model can see which section each hit came from and
+   reject off-category hits itself. One field in one f-string, plus a test, behind a
+   toggle whose default is off.</li>
+<li><strong>Filter with fallback (rung 2).</strong> Plumb <code>filter</code> into <code>hybrid_search</code> through the
+   retriever the shipped config actually uses — <code>LlamaIndexHierarchicalRetriever</code>, whose
+   candidate generator calls <code>hybrid_search</code> directly — and through <code>HybridRetriever</code> for
+   the reranker-off path, or through one shared retrieval interface; run filtered, and
+   re-run unfiltered when the filtered set is <strong>empty or thin</strong> — <em>thin</em> pre-registered
+   as fewer than half the requested <code>k</code> candidates, a <code>min_filtered_results</code> knob under
+   the rung-2 toggle with code default <code>k // 2</code>. The thin case is the one that matters: a
+   wrong category that returns one irrelevant document is the silent exclusion, and an
+   empty-only fallback never fires on it. Never a bare <code>WHERE</code>.</li>
+</ol>
+<p>A fourth cost question decides rung 2's shape: classifying the query with an <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> call
+adds latency to the <strong>answer</strong> path (baseline 48.2 s/question), unlike categorization's
+ingest-time cost. The prompt-only variant asks the model to state the category as its
+first reasoning step and costs no extra call at all — which is another reason rung 0
+comes first.</p>
+<h3 id="two-unknowns-that-must-be-closed-on-the-host">Two unknowns that must be closed on the host</h3>
+<p>Neither is answerable from this repository, and both are cheap on the dev host:</p>
+<ol>
+<li><strong>Coverage.</strong> What fraction of the 1,091 ingested documents carry a non-empty
+   <code>category</code>? <code>_extract_kb_category</code> returns <code>None</code> for crumbless pages and never
+   raises (<code>processing.py:137-149</code>), so a low-coverage corpus would cap the idea's
+   ceiling before any prompt work. One query against <code>documents.extra_json</code>.</li>
+<li><strong>Vocabulary agreement.</strong> The <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> config's <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> label list is <strong>six</strong> lower-case
+   slugs — <code>job-scheduling</code>, <code>storage</code>, <code>account-access</code>, <code>software</code>, <code>compute</code>,
+   <code>data-transfer</code> (<code>fasrc/archi-config</code> <code>environments/dev.yaml:220-226</code> on <code>main</code>,
+   <code>:100-106</code> at the <code>deploy-pin-2026-08b</code> checkout) — not the twenty that an earlier
+   draft of this document and <a href="https://github.com/fasrc/archi/issues/496">#496</a> cite.
+   The breadcrumb vocabulary is a <strong>19-item Title Case list that lives only in the
+   corpus</strong> (<code>documents.extra_json</code> on the host), and the two lists share no values
+   (<a href="../categories-action-plan/">Categories Action Plan</a>,
+   PR #512). #496 says the labels "duplicate the breadcrumb <code>category</code> field the scraper
+   already writes"; they duplicate its <em>purpose</em>, not its values, so a prompt that
+   hard-codes one list filters against the other.</li>
+</ol>
+<p>The taxonomy in any rung-0 prompt must be <strong>copied from the host, not from this
+document and not from any config</strong>: <code>docs.rc.fas.harvard.edu</code> was unreachable from the
+session that wrote this, and the breadcrumb list is read from the corpus, not from
+<code>archi-config</code>.</p>
+<hr />
+<h2 id="staging">Staging</h2>
+<p><strong>Rung 0 — no code, measurable now.</strong> Three prompt files through
+<code>generate_prompt_sweep.py</code>, in <strong>one</strong> sweep:</p>
+<ul>
+<li><strong>(control) the unchanged production prompt</strong> — <code>config/agents/claw/fasrc-docs.md</code>,
+  the campaign's locked prompt (sha256 <code>ac22702a…4ce8</code>), run <strong>in the same sweep</strong> as the
+  arms. Every delta is read against this arm. The feature-matrix campaign's historical
+  baseline is <strong>not</strong> a substitute: that campaign pinned one code SHA and one corpus, and
+  this sweep can run after either has moved. <code>compare_runs.py</code> refuses arms that disagree
+  on <code>corpus_fingerprint</code> (G3, <code>compare_runs.py:511-545</code>) but only <em>displays</em>
+  <code>code_version.digest</code> for the baseline and treatment (<code>:466</code>); it refuses a digest
+  mismatch only among noise replicates (<code>:859-875</code>). Without a contemporaneous control, a
+  count or timing delta can be intervening code rather than the prompt. archi-config
+  PR #22's manifest already lists the control first; the campaign numbers below are a
+  drift check on the control, not the comparator.</li>
+<li>
+<p><strong>(a) category-routing prompt (<code>r0a</code>)</strong> — name the docs category and carry its
+  vocabulary in the query text. archi-config PR #22's <code>r0a</code> also advertises the
+  <code>category:&lt;value&gt;</code> substring filter on <code>search_metadata_index</code>, with the substring
+  caveat stated, <strong>and orders the fallback itself</strong>: "if a narrowed search comes back
+  empty or off-topic, search again without the narrowing." The code has no such fallback,
+  so this arm measures a soft hint plus a model-enforced fallback. A bare-hint arm, if
+  ever wanted, is a fourth prompt file without the filter paragraph.</p>
+<p><strong>What <code>r0a</code> can touch under the shipped default.</strong> <code>force_initial_retrieval</code>
+defaults to <code>true</code> (<code>fasrc_docs_agent.py:256</code>), and the hook it gates searches with
+the <strong>raw user question</strong> before the model's first turn (<code>:268-274</code>). So under the
+default, <code>r0a</code> never names a category before the first search — the harness has
+already issued an unfiltered one — and the arm shapes only the model's follow-up
+searches. This document pre-registers <code>r0a</code> accordingly, as <strong>post-retrieval
+rerouting</strong>, not as category-first search. Category-first search is a separate
+pre-registration, and the flag has to be set where the agent will read it. The
+generated sweep YAML does not reach the agent directly: the harness hands the
+runtime only the selected file's benchmarking agent spec, provider and model
+(<code>service_benchmark.py:1421-1434</code>), and the agent loads its pipeline config from the
+PostgreSQL-backed active config through <code>get_full_config()</code> (<code>archi.py:31</code>,
+<code>config_access.py:73</code>, reading Postgres at <code>:15-21</code>), which is where
+<code>FASRCDocsAgent</code> looks <code>force_initial_retrieval</code> up (<code>fasrc_docs_agent.py:256</code>, via
+<code>services.chat_app</code> at <code>:61-63</code>). Postgres is seeded from exactly one file: a
+multi-config deployment renders no <code>config.yaml</code>, so the seeder takes the
+alphabetically first rendered arm file and seeds its whole <code>services</code> block
+(<code>config_seed.py:30-52</code>, <code>:94</code>). A value held <strong>identical across every arm</strong>
+therefore does arrive and is honoured; a value that <strong>differs between arms</strong> is
+silently replaced by the first arm's, and the per-arm digest cannot tell those arms
+apart, because <code>effective_config</code> overlays only <code>services.benchmarking</code> onto the
+running config (<code>benchmark_provenance.py:77</code>, <code>:351</code>). The harness refuses rather
+than publishing the mislabel: <code>services.chat_app</code> is not in
+<code>DIVERGENCE_IGNORED_PATHS</code> (<code>benchmark_provenance.py:104-106</code>), so the mismatch
+lands in <code>divergence_from_selected_file</code> and Procedure E stops the comparison
+(<code>compare_runs.py:569-588</code>). The rule for this sweep is therefore: set
+<code>services.chat_app.force_initial_retrieval: false</code> in the configuration that seeds
+the sweep deployment's Postgres and <strong>redeploy</strong> — editing a rendered file and
+restarting the container is a no-op (<code>CLAUDE.md</code>, "Don't-touch / gotchas") — hold it
+identical across control and treatments, never vary it between arms (the flag's own
+docstring invites a per-arm A/B that the seeder cannot express —
+<a href="https://github.com/fasrc/archi/issues/523">#523</a>), and confirm
+<code>divergence_from_selected_file</code> is empty in every artifact before reading a number.
+State in the issue body which of the two sweeps a number came from.
+- <strong>(b) static-ICL prompt (<code>r0b</code>)</strong> — 3–5 exemplars from a pool disjoint from the
+  109-question bank, with the disjointness recorded.</p>
+</li>
+</ul>
+<p><strong>Prompt contents pinned, not only their paths.</strong> Record the <code>sha256sum</code> of every
+resolved prompt file — control, <code>r0a</code>, <code>r0b</code> — in the issue body before the first run,
+and beside each arm's artifact afterwards. Nothing in the rig does this for the arms:
+the generator writes the prompt's <strong>path</strong> into each arm's config
+(<code>generate_prompt_sweep.py:128</code>) and never parses the file it names (<code>:104-110</code>), so
+<code>config_fingerprint</code> digests that path string rather than the prompt's bytes
+(<code>benchmark_provenance.py:321</code>), and the code digest is a content digest of the <code>src</code>
+package files only (<code>:379</code>, <code>:489</code>) — a prompt under <code>config/agents/</code> sits outside it.
+The arm prompts live in archi-config PR #22, which can still change after this
+pre-registration, and the arms run sequentially, so an edit between two arms would leave
+two runs carrying identical labels, identical provenance and different treatments. The
+control already has a pinned hash (sha256 <code>ac22702a…4ce8</code>); the arms need theirs for the
+same reason. A hash that does not match its pre-registered value voids that arm.</p>
+<p><strong>Frontmatter held fixed.</strong> All three files carry identical <code>tools</code> lists, checked by
+loading each spec before the sweep (see "The measurement rig"); a mismatch on any arm
+voids the sweep.</p>
+<p><strong>Two evaluators per arm, not one.</strong> <code>archi evaluate</code> over the sweep directory produces
+the <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr>, source-hit and timing rows; it does <strong>not</strong> produce gold-atom scores. Those
+come from <code>archi qa</code>, which takes the arm's prompt as <code>--agent-spec</code>
+(<code>src/cli/qa_eval.py:41-42</code>, <code>:184</code>) and writes its own run directory, and
+<code>compare_runs.py</code> reports gold-atom deltas only when handed those directories with
+<code>--qa-run LABEL=RUN_DIR</code>, one per arm (<code>compare_runs.py:2295-2332</code>). Rung 0 is therefore
+one <code>archi qa</code> per prompt file — control, <code>r0a</code>, <code>r0b</code> — with everything but
+<code>--agent-spec</code> identical, the way <code>feature_matrix/qa_arm.sh</code> runs it, followed by one
+<code>compare_runs.py</code> invocation carrying all three <code>--qa-run</code> pairs. Without the QA runs the
+required-atom and other gold-atom deltas do not exist.</p>
+<p><strong>Decision rules, pre-registered.</strong> The decisive metrics are the count-type ones, and
+each needs a <strong>paired</strong> test with its threshold written into the tracking issue before
+the first run.</p>
+<p><strong>One primary endpoint per arm.</strong> Two arms times two count tests is a family of four,
+and "Release-plan judgment" below treats a single positive count result as the evidence
+that lets a rung-1/2 issue enter a milestone. Four such tests, each read at an
+unadjusted <code>p &lt; 0.05</code>, carry a family-wise false-positive rate near 18.5%, so an
+unadjusted family lets chance alone supply release-gating evidence. This
+pre-registration therefore names <strong>one primary count endpoint per arm</strong>, picked by what
+the arm acts on: <strong>source accuracy for <code>r0a</code></strong>, which reroutes retrieval and so changes
+which documents come back, and <strong>blowout count for <code>r0b</code></strong>, whose exemplars lengthen
+every prompt and so act on whether a row finishes. The primary carries that arm's
+verdict at <code>p &lt; 0.05</code>. The other count test on each arm is <strong>secondary</strong>: report it with
+a Holm-adjusted p-value across the two secondaries, and never let a secondary alone gate
+a milestone. Write both primaries into the issue body before the first run; a swap
+afterwards voids the sweep.</p>
+<ul>
+<li><strong>Source accuracy</strong> — exact two-sided McNemar on per-question source hits, control vs
+  arm, verdict at p &lt; 0.05. This is the test behind the campaign's <code>0.868</code> reading
+  (<a href="https://github.com/fasrc/archi/issues/496">#496</a>), and it does <strong>not</strong> live in this
+  repository: <code>compare_runs.py::source_block</code> reports each arm's aggregate hit rate beside
+  a recomputation (<code>compare_runs.py:1091-1117</code>) and pairs nothing, and <code>timing_block</code>
+  (<code>:1119</code>) is descriptive. The campaign's implementation is <code>mcnemar_exact</code> in
+  <a href="https://github.com/fasrc/archi-bench-out/blob/main/feature_matrix/figures/extract_figure_data.py#L67-L74"><code>feature_matrix/figures/extract_figure_data.py:67-74</code></a>
+  of <code>fasrc/archi-bench-out</code>, applied to paired hits at <code>:329-351</code>. Run that script
+  against the sweep's artifacts, or port the test into <code>compare_runs.py</code> first; a raw
+  hit-rate change is <strong>not</strong> a verdict.</li>
+<li><strong>Blowout count</strong> — a blowout is a row whose harness <code>status</code> is not <code>"ok"</code>
+  (<code>service_benchmark.py:2069-2071</code>, <code>:2104</code>); <code>compare_runs.py</code> drops such rows from
+  every paired mean (G6, <code>compare_runs.py:20</code>, <code>:207</code>) and never counts them. Count them
+  per arm the way the same bench-out script does (<code>:167</code>) and test with the same paired
+  McNemar on per-question ok/not-ok, control vs arm, at p &lt; 0.05. Campaign reference:
+  <code>7 / 109</code> on the locked prompt.</li>
+<li><strong>Time per question</strong> — descriptive (<code>timing_block</code>); report cold and warm means beside
+  the control's and read no direction from them.</li>
+</ul>
+<p>Gold-atom scores are paired deltas against the 2σ floor: <code>item_pass_rate</code> and
+<code>atom_score</code> are paired by <code>compare_runs.py</code> today (<code>compare_runs.py:1695</code>), required-atom
+recall is descriptive until it is. Do <strong>not</strong> read <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> means at two runs.</p>
+<p><strong>Rung 1 — small, only if rung 0 shows signal.</strong> Surface <code>category</code> in
+<code>_format_documents_for_llm</code> (<code>tools/retriever.py:94</code>), and teach the whole schema-hint
+path to offer <code>category</code> and its distinct values: <code>api_catalog_schema</code>
+(<code>uploader_app/app.py:779-790</code>) and <code>get_distinct_metadata</code> (<code>catalog_postgres.py:554-564</code>)
+on the server side, <strong>and</strong> the agent-facing <code>list_metadata_schema</code> tool
+(<code>create_metadata_schema_tool</code>, <code>tools/local_files.py:469-476</code>), which formats exactly
+three payload fields and hard-codes its tool description — a new field in the payload
+never reaches the model until that formatter and description change too. Note the
+server half is not one line: <code>category</code> is not a promoted column, so distinct values need
+a JSONB query over <code>extra_json</code> or a schema migration. Both surfaces ship behind one
+toggle whose default is off (below).</p>
+<p><strong>Rung 2 — a feature, with its own issue.</strong> <code>filter</code> plumbed into <code>hybrid_search</code> on
+<strong>both</strong> retrieval paths — <code>LlamaIndexHierarchicalRetriever._generate_candidates</code>
+(<code>hierarchical_retriever.py:125-138</code>), which the shipped <code>hierarchical_rerank.enabled:
+true</code> selects (<code>factory.py:54-56</code>), and <code>HybridRetriever</code> (<code>hybrid_retriever.py:63-116</code>)
+for the reranker-off fallback (<code>factory.py:79</code>) — or one shared retrieval interface that
+both implement; a query-classification step at the <code>_inject_forced_retrieval</code> seam;
+fallback when the filtered set is <strong>empty or thin</strong>, with <em>thin</em> the pre-registered
+<code>min_filtered_results</code> threshold from "The design choice that matters" (fewer than half
+the requested <code>k</code>, default <code>k // 2</code>) — an empty-only fallback leaves the one-wrong-document
+case silent. A filter on <code>HybridRetriever</code> alone is unused on the default path.
+Dynamic ICL joins here, sharing the same seam and the same exemplar
+store. Both overlap <a href="../multi-collection-routing/">Multi-Collection Routing</a> — a category
+filter and a collection filter are the same mechanism at different granularity, and the
+two should not grow separate vocabularies.</p>
+<p>Rung 1 touches <code>tools/retriever.py</code>, <code>tools/local_files.py</code> and <code>uploader_app/app.py</code>.
+None of them is <code>chat_app/app.py</code>, so the diff-cover trap in <code>CLAUDE.md</code> does not apply,
+but all three are large files — run the <code>black-seam-scout</code> check before editing in place.</p>
+<hr />
+<h2 id="release-plan-judgment">Release-plan judgment</h2>
+<p><strong>Neither idea clears the gate bar.</strong> <code>v2026.10.0</code>'s feature is <em>measurably better
+answers</em>, and it is not broken, wrong, or dishonest without either of these: its gates
+are #216, #215, #384 and #396. Both ideas are enhancements with no file:line defect and
+no measured number behind them, and the plan's own accounting is explicit that a real
+defect is not the bar — an unmeasured enhancement is further from it still.</p>
+<p><strong>Rung 0 is not an arm of #396.</strong> That campaign lists <em>prompt variants</em> in its
+out-of-scope section (§11, "the prompt-sweep harness exists for that") and pins the agent
+prompt as a fixed factor (§2, <code>config/agents/claw/fasrc-docs.md</code>, sha256 <code>ac22702a…4ce8</code>),
+so varying the prompt breaks a fixed factor and must not run under the campaign lock. Rung
+0 is a standalone sweep with its own pre-registration, reusing the campaign's decision
+rules but <strong>not</strong> its baseline runs: the unchanged production prompt runs as a control arm
+in the same sweep, and the campaign's numbers serve only as a drift check on that control
+("Staging"). Those rules still do the rest: a <em>no measurable difference</em> on a free prompt
+change is a finding that closes the question, and a positive count-metric result <strong>under
+the pre-registered paired test</strong> — not a raw count change — is the evidence a rung-1/2
+issue would need to enter a milestone honestly.</p>
+<p>Because it is its own sweep rather than a campaign arm, the house pattern for recording it
+is a separate issue — which is how #496, #497 and #498 were filed out of the campaign —
+not a comment on #396.</p>
+<p><strong>File the rung-0 issue before the sweep runs, labelled <code>evidence-trial</code>.</strong> The plan's
+invariant is that every open issue carries exactly one of {a milestone, <code>parked</code>,
+<code>evidence-trial</code>}, and the third state exists for exactly this: "operator-initiated
+evidence work", milestone-exempt while the trial runs, with the label held until a human
+records the adopt/reject decision (release plan, "evidence-trial"; <code>AGENTS.md:13-15</code>). An
+earlier draft of this document said "do not file yet" and "the honest label would be
+<code>parked</code>"; that was wrong, because a sweep with no issue is invisible to every report and
+leaves the trial without the adopt/reject record the label requires. The
+pre-registration — arms, pool disjointness, decision rules, baselines — goes in the issue
+body before the first run; the number goes in afterwards. This is decision D3 of the
+<a href="../categories-action-plan/">Categories Action Plan</a>
+(PR #512).</p>
+<p><strong>If rung 1/2 is ever merged ahead of its named release</strong>, the plan's dark-ship rule
+applies: on this single trunk, code merged to <code>dev</code> rides the next release regardless of
+milestone, so a category filter or an exemplar injector must be an off-by-default toggle
+with no user-visible surface until the release that claims it. That needs <strong>dedicated
+toggles whose code default is <code>false</code></strong> — one for the rung-1 surface (chunk header plus
+schema hint), one for rung-2 filtered or classified retrieval — read the way
+<code>categorization.enabled</code> is read (<code>base-config.yaml:519</code>, <code>processing.py:1078</code>: code
+default <code>false</code>, turned on only by the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> config). <code>force_initial_retrieval</code>
+(<code>fasrc_docs_agent.py:256</code>) is <strong>not</strong> the precedent: its code default is <code>true</code>, so a
+toggle shaped like it ships the feature on. And rung 1's category header must not be
+added unconditionally, as an earlier draft of this document implied; ungated, it is
+user-visible in the next release.</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

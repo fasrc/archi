@@ -104,6 +104,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -155,7 +159,7 @@
 <hr />
 <h2 id="tldr">TL;DR</h2>
 <p>Enable a single archi deployment to serve <strong>multiple isolated document collections</strong> — e.g., public cluster docs for everyone and privileged runbooks for superusers. archi's pgvector vectorstore already supports per-collection filtering; the gap is routing requests to the right collection, ingesting sources into named collections, and enforcing access. This proposal adds collection config, a connector pool, collection groups for cross-collection queries, collection-level auth, and standardized inline source citations.</p>
-<p><strong>Scope:</strong> 13 tasks. The vectorstore collection filtering infrastructure already exists — the work is routing, ingestion tagging, auth, and citations.</p>
+<p><strong>Scope:</strong> 19 tasks. The vectorstore collection filtering infrastructure already exists — the work is routing, ingestion tagging, auth, and citations.</p>
 <hr />
 <h2 id="motivation">Motivation</h2>
 <p>A cluster operator needs to serve different document sets to different audiences from the same archi deployment:</p>
@@ -174,7 +178,7 @@
         E2[&quot;Chunks tagged on ingest&lt;br/&gt;&lt;i&gt;metadata['collection'] = name&lt;/i&gt;&quot;]:::done
         E3[&quot;Queries filtered at SQL level&lt;br/&gt;&lt;i&gt;WHERE metadata→'collection' = %s&lt;/i&gt;&quot;]:::done
         E4[&quot;Config-driven naming&lt;br/&gt;&lt;i&gt;base-config.yaml:147&lt;/i&gt;&quot;]:::done
-        E5[&quot;config_name routing&lt;br/&gt;&lt;i&gt;swaps agent/pipeline per request&lt;/i&gt;&quot;]:::done
+        E5[&quot;config_name request param&lt;br/&gt;&lt;i&gt;accepted, but every name maps to one config&lt;/i&gt;&quot;]:::done
         E6[&quot;RBAC permission system&lt;br/&gt;&lt;i&gt;8 categories, 20+ permissions&lt;/i&gt;&quot;]:::done
     end
 
@@ -217,9 +221,9 @@
 <td>Builds <code>{collection_name}_with_{embedding_name}</code></td>
 </tr>
 <tr>
-<td><code>config_name</code> request routing</td>
-<td><code>app.py:1300</code></td>
-<td>Swaps agent/pipeline per request</td>
+<td><code>config_name</code> request parameter</td>
+<td><code>app.py:1981-1982</code></td>
+<td>Accepted per request, but every name resolves to the same config (see <a href="#what-bound-to-one-collection-means">The Gap</a>)</td>
 </tr>
 <tr>
 <td>RBAC permissions</td>
@@ -236,7 +240,7 @@
         direction TB
         G1[&quot;Multi-collection routing&lt;br/&gt;&lt;i&gt;one connector per archi instance&lt;/i&gt;&quot;]:::todo
         G2[&quot;Per-source collection tagging&lt;br/&gt;&lt;i&gt;all sources → one collection&lt;/i&gt;&quot;]:::todo
-        G3[&quot;config_name → collection mapping&lt;br/&gt;&lt;i&gt;config_name swaps agents, not collections&lt;/i&gt;&quot;]:::todo
+        G3[&quot;config_name → collection mapping&lt;br/&gt;&lt;i&gt;config_name selects nothing today&lt;/i&gt;&quot;]:::todo
         G4[&quot;Collection groups&lt;br/&gt;&lt;i&gt;cross-collection queries&lt;/i&gt;&quot;]:::todo
         G5[&quot;Collection-level auth&lt;br/&gt;&lt;i&gt;RBAC is feature-level only&lt;/i&gt;&quot;]:::todo
         G6[&quot;Inline citation formatter&lt;br/&gt;&lt;i&gt;sources exist but formatting is inconsistent&lt;/i&gt;&quot;]:::todo
@@ -247,6 +251,54 @@
     classDef todo fill:#c0392b,stroke:#333,color:#000
 </code></pre>
 <p><strong>The core limitation:</strong> archi boots with one <code>VectorstoreConnector</code> bound to one <code>collection_name</code> for the lifetime of the process. To serve multiple collections, each request needs to resolve to the correct collection — but <code>VectorstoreConnector</code> is initialized once in <code>archi.__init__()</code> and reused for every call.</p>
+<h3 id="what-bound-to-one-collection-means">What "bound to one collection" means</h3>
+<p>Line anchors in this section are against <code>origin/dev</code> at the time of writing.</p>
+<p><code>VectorstoreConnector</code> holds three things: one embedding model instance, one collection name, and the Postgres connection settings. It computes the collection name one time, as <code>collection_name + "_with_" + embedding_name</code> (<code>vectorstore_connector.py:36</code>). <code>get_vectorstore()</code> makes a new <code>PostgresVectorStore</code> on each call, but each new store gets the same name (<code>vectorstore_connector.py:75</code>).</p>
+<p>The binding is stronger than "one connector per process":</p>
+<ul>
+<li><strong>Only <code>archi.__init__()</code> makes the connector</strong> (<code>archi.py:22</code>). <code>archi.update()</code> rebuilds the pipeline, but it does not rebuild the connector. The process searches the same collection until a restart.</li>
+<li><strong><code>config_name</code> does not select a config.</strong> The chat app calls <code>update_config(config_name=...)</code> on each request (<code>app.py:1981-1982</code>). But <code>_get_config_payload()</code> returns the same cached <code>get_full_config()</code> for every name (<code>app.py:618-621</code>), <code>_config_names()</code> lists only the one active name (<code>app.py:301-303</code>), and <code>archi.update()</code> ignores <code>config_name</code> (<code>archi.py:30-31</code>). At runtime, only the agent spec file can change. The "<code>config_name</code> routing" in the table above is therefore a parameter with no effect, and this proposal must add the name-to-config resolution itself, from the new <code>collections</code> section.</li>
+<li><strong>The embedding model is part of the collection name.</strong> One connector means one embedding model, and a query embeds with that model only. A collection group can use one <code>ANY(ARRAY[...])</code> query only if all member collections use the same embedding model. Collections with different embedding models need one query each, and the scores from different models are not comparable for a merge.</li>
+<li><strong>The embedding model is the expensive part of a connector.</strong> The benchmark code lists this embedding instance as one of three shared-state blockers to parallel <code>archi()</code> instances (<code>service_benchmark.py:1535-1542</code>). A pool with one connector per collection loads one model per collection. The pool must share one model instance per <code>embedding_name</code>, and keep only the collection name per entry.</li>
+</ul>
+<h3 id="isolation-is-weaker-than-each-query-is-scoped">Isolation is weaker than "each query is scoped"</h3>
+<p>The "What Already Exists" table says that each query is scoped to its collection. That is true for rows with a tag. It is not true for rows without a tag, or for the write path.</p>
+<ul>
+<li><strong>Rows without a tag go to all collections.</strong> Both search paths filter with <code>collection = %s OR collection IS NULL</code> (<code>postgres_vectorstore.py:345</code>, <code>postgres_vectorstore.py:477</code>). A chunk with no <code>collection</code> key is visible in every collection. With one public and one private collection, a private chunk without a tag leaks to public users. Collection-level auth cannot stop this leak, because the leak is in the SQL filter, not in the request path. A migration must tag every row, and the filter must then drop the <code>IS NULL</code> branch.</li>
+<li><strong>One URL can be in one collection only.</strong> <code>documents.resource_hash</code> is <code>UNIQUE</code> (<code>init.sql:209</code>), and chunks are unique on <code>(document_id, chunk_index)</code> (<code>init.sql:284</code>). There are two write paths, and a second collection breaks each one differently:</li>
+<li><em>The data manager</em> (the production ingest) uses a plain <code>INSERT</code> (<code>manager.py:809</code>, <code>manager.py:996</code>). The second collection's insert hits the unique key, rolls back to its savepoint, and sets the shared <code>documents</code> row to <code>ingestion_status = 'failed'</code> (<code>manager.py:828-837</code>). The page stays in the first collection only, and the status of the first collection's copy now reads as failed.</li>
+<li><em><code>PostgresVectorStore.add_texts()</code></em> uses an upsert that replaces the text, the embedding, and the metadata (<code>postgres_vectorstore.py:221</code>). It overwrites the first collection's chunks only when both calls pass the same <code>document_id</code>. Then the page moves into the second collection, and no error occurs. The default <code>document_id</code> is <code>None</code>, and Postgres treats each <code>NULL</code> as distinct in a unique key, so a default call inserts a second set of rows with no link to <code>documents</code>.</li>
+</ul>
+<p>Task 5 (a <code>collection</code> column on <code>documents</code>) must widen the <code>documents</code> key to <code>(resource_hash, collection)</code>. Each copy then gets its own <code>document_id</code>, so the chunk key <code>(document_id, chunk_index)</code> is already per collection and needs no change. The catalog must change with the key: <code>PostgresCatalogService</code> upserts <code>ON CONFLICT (resource_hash)</code> (<code>catalog_postgres.py:321</code>) and caches document ids and paths by <code>resource_hash</code> alone (<code>catalog_postgres.py:152-154</code>, <code>catalog_postgres.py:236-238</code>). After the key widens, that upsert has no matching constraint and fails. Test both write paths with one page in two collections.
+- <strong>Deletes and the reset reach past the collection.</strong> The data manager's removal of stale chunks filters on its collection, but also on untagged rows (<code>manager.py:487-490</code>). While untagged rows exist, a refresh in one collection deletes untagged rows that every collection reads. The untagged-row migration must thus come before this path is collection-safe. Also, <code>PostgresVectorStore.delete(document_id=...)</code> removes the chunks of the document for all collections (<code>postgres_vectorstore.py:590</code>). <code>reset_collection</code> runs <code>TRUNCATE TABLE document_chunks</code> (<code>manager.py:195</code>), which empties every collection, not only the configured one.</p>
+<h3 id="what-it-means-for-archi-in-general">What it means for archi in general</h3>
+<ul>
+<li><strong>One deployment is one knowledge base.</strong> Two audiences need two full stacks (two databases, two data managers, two chat services), or one shared stack where every user sees every document.</li>
+<li><strong>A wrong collection name is not an error.</strong> The connector counts the chunks in the collection, but it logs the count only at debug level (<code>vectorstore_connector.py:71-72</code>). If the name matches no rows, hybrid search logs a warning and falls back to semantic search (<code>postgres_vectorstore.py:547</code>), which also finds no tagged rows. The agent then answers from untagged rows or from no context. The user sees a weak answer, not a configuration error.</li>
+<li><strong>The task list must also fix the write path.</strong> The routing tasks (2, 3, 6, 7) change the read path. Without changes to the <code>documents</code> key, the catalog, the deletes, and the reset, a second collection can fail or corrupt the first at the next ingest. Tasks 14-16 below add this work.</li>
+</ul>
+<h3 id="what-it-means-for-the-eval">What it means for the eval</h3>
+<p>The evaluation stack assumes one corpus per deployment, and one collection per corpus. Each run is thus an evaluation of one collection, and the run records do not say which collection.</p>
+<ul>
+<li><strong>Each eval path finds its collection in a different place.</strong> The goldenset benchmark (<code>service_benchmark.py</code>) builds <code>archi()</code> (<code>service_benchmark.py:1527</code>), so its collection comes from the running config in Postgres. The QA workflow builds its own <code>VectorstoreConnector</code> from the resolved agent config that it loaded into memory (<code>runtime.py:333</code>, <code>workflow.py:364-370</code>). It writes that config to <code>agent_config.resolved.yaml</code>, and a resumed run reads the file again (<code>workflow.py:946</code>). The two paths can search different collections on the same stack. Both paths save a full config that contains the name (the QA path in <code>agent_config.resolved.yaml</code>, the benchmark in <code>running_configuration</code> at <code>service_benchmark.py:558</code>). But neither path records the collection as a separate field, and no comparison gate checks it.</li>
+<li><strong>The corpus fingerprint ignores collections.</strong> <code>CORPUS_STATE_QUERY</code> (<code>service_benchmark.py:110</code>) hashes all live documents, chunks, and parents in the database, but retrieval reads one collection plus the untagged rows. With two collections, this causes two errors:</li>
+<li><em>False "corpus changed":</em> an ingest into collection B changes the fingerprint of an eval that searches only collection A. The G3 gate in <code>compare_runs.py</code> (one pinned corpus) then rejects a fair comparison.</li>
+<li><em>False "corpus unchanged":</em> the fingerprint hashes chunk text, not the <code>collection</code> tag. A move of chunks from one collection to a different collection changes what retrieval returns, but the fingerprint stays the same. Task 4 (per-source tagging) makes this move a routine operation. This is the same class of defect as a change to <code>category</code> only, which the fingerprint also does not see (see the <code>CATEGORY_MAP_QUERY</code> comment at <code>service_benchmark.py:134-137</code>).</li>
+</ul>
+<p>Separately from collections, the fingerprint misses chunks with no document link. <code>CORPUS_STATE_QUERY</code> joins chunks to <code>documents</code> with an inner join, but retrieval uses a <code>LEFT JOIN</code> (<code>postgres_vectorstore.py:377</code>, <code>postgres_vectorstore.py:509</code>) and returns chunks with a <code>NULL</code> <code>document_id</code>. The data manager writes such chunks when it finds no document row (<code>manager.py:702</code>, <code>manager.py:781</code>). A change to one of them does not move the fingerprint.
+- <strong>A wrong collection looks like a quality regression.</strong> If an arm's config names a collection with no rows, the agent gets almost no context. The fingerprint still matches the pin, because the fingerprint reads the full database. The arm then scores low on faithfulness and context metrics, and the provenance says that the corpus was correct. Only the debug-level chunk count shows the real cause.
+- <strong>Some eval tools know about collections, and others do not.</strong> <code>dump_chunk_overlap_corpus.sql</code> and <code>measure_chunk_overlap.py</code> take the collection as an input and use the same <code>IS NULL</code> rule as retrieval (<code>dump_chunk_overlap_corpus.sql:41</code>). The fingerprint and the category map (<code>CATEGORY_MAP_QUERY</code>) read the full <code>documents</code> table, and <code>documents</code> has no collection column. A per-category slice thus cannot be limited to one collection.
+- <strong>An embedding A/B test in one database is blocked twice.</strong> Two collections with different embedding models in one database is the natural rig to compare models on the same corpus. First, <code>document_chunks.embedding</code> is one <code>vector(N)</code> column for the whole table (<code>init.sql:275</code>), so models with different output dimensions cannot share the table. Second, for models with the same dimension, the <code>documents</code> key above makes the second ingest of each page fail. Today an embedding A/B test thus needs two stacks, or same-dimension models run one after the other on one stack (the plan in #216).
+- <strong>A collection group cannot be evaluated.</strong> There is no code path that searches more than one collection, so no eval can measure the merge and re-rank of task 7. The group feature needs its own eval arm before it can ship with evidence.</p>
+<p>For the eval, the minimum changes are these:</p>
+<ol>
+<li>Record the searched collection name, its embedding name, and its embedding model (<code>model_name</code>) on every run and every arm. The embedding name is not enough: #216 swaps the model and keeps the name.</li>
+<li>Limit the fingerprint queries to that collection (plus the untagged rows while they exist), start from every chunk that retrieval can return (including chunks with no document link), and hash the <code>collection</code> tag of each chunk.</li>
+<li>Stop a run before its first question if the collection has zero chunks.</li>
+</ol>
+<p>These three changes are independent of routing and are useful with one collection too. They are tracked in <a href="https://github.com/fasrc/archi/issues/570">#570</a>, and listed as tasks 17-19 below.</p>
+<p>Do them in this order: 17 (backfill first), 19, 18, then re-pin. Task 17 includes a backfill that stamps the identity on existing reports, so the old baselines carry it with no re-run. Task 18 changes the fingerprint to v2, and a v1 pin never equals a v2 digest, so the campaign re-pins once, after the deploy.</p>
+<p>The #411 orphan-parent cleanup does not move the v2 fingerprint. Fingerprint v2 hashes only the parent nodes that an in-scope chunk references, and an orphan parent has no such chunk.</p>
 <hr />
 <h2 id="design">Design</h2>
 <h3 id="how-it-works-today-single-collection">How It Works Today (Single Collection)</h3>
@@ -276,6 +328,7 @@
     classDef req fill:none,stroke:#999,color:#e0e0e0
 </code></pre>
 <p>The change is in <code>archi._prepare_call_kwargs()</code>: instead of always using <code>self.vs_connector</code>, it resolves the collection from the request's <code>config_name</code> and picks (or creates) the right <code>VectorstoreConnector</code> from a pool.</p>
+<p>The name must reach <code>_prepare_call_kwargs()</code> as an argument of each call. Today the chat app passes <code>config_name</code> only to the shared <code>update_config()</code> and then calls <code>self.archi(...)</code> without it (<code>app.py:1981-1986</code>). If the collection is read from shared state, two concurrent requests for different collections can each search the collection of the other. <code>invoke()</code> and <code>stream()</code> must therefore take the collection name per call, as they already take a per-call <code>pipeline</code> (<code>archi.py:91-106</code>).</p>
 <h3 id="configuration">Configuration</h3>
 <pre><code class="language-yaml"># archi deployment config
 collections:
@@ -328,6 +381,7 @@ WHERE metadata-&gt;&gt;'collection' = 'runbooks_with_bge'
 -- Collection group (all-ops):
 WHERE metadata-&gt;&gt;'collection' = ANY(ARRAY['cluster-docs_with_bge', 'runbooks_with_bge'])
 </code></pre>
+<p>All collections in a group must use the same embedding model. The single <code>ANY</code> query embeds the question one time, and a similarity score between vectors from two different models has no meaning, even when the dimensions match. Config validation rejects a group whose collections use different embedding models.</p>
 <p>Collection groups inherit the pipeline and model config from their first collection, or can override:</p>
 <pre><code class="language-yaml">collection_groups:
   all-ops:
@@ -394,17 +448,17 @@ management console. Finally, update DNS records.
 <tbody>
 <tr>
 <td>1</td>
-<td>Add <code>collections</code> + <code>collection_groups</code> config sections</td>
-<td><code>base-config.yaml</code></td>
+<td>Add <code>collections</code> + <code>collection_groups</code> config sections; reject a group whose collections use different embedding models</td>
+<td><code>base-config.yaml</code>, config validation</td>
 </tr>
 <tr>
 <td>2</td>
-<td>Map <code>config_name</code> → <code>collection_name</code> in request path</td>
-<td><code>archi.py</code></td>
+<td>Map <code>config_name</code> → <code>collection_name</code> in request path, and pass the collection to <code>invoke()</code>/<code>stream()</code> per call, not through shared state</td>
+<td><code>archi.py</code>, <code>app.py</code></td>
 </tr>
 <tr>
 <td>3</td>
-<td>Pool <code>VectorstoreConnector</code> instances by collection</td>
+<td>Pool <code>VectorstoreConnector</code> instances by collection, with one shared embedding model instance per <code>embedding_name</code></td>
 <td><code>vectorstore_connector.py</code></td>
 </tr>
 <tr>
@@ -414,8 +468,8 @@ management console. Finally, update DNS records.
 </tr>
 <tr>
 <td>5</td>
-<td>Add <code>collection</code> column to <code>documents</code> table</td>
-<td><code>init.sql</code></td>
+<td>Add a backfilled <code>collection</code> column to <code>documents</code> through a migration (<code>init.sql</code> runs only on a new database; upgrades apply only <code>migrations/*.sql</code>)</td>
+<td><code>init.sql</code>, <code>migrations/</code></td>
 </tr>
 <tr>
 <td>6</td>
@@ -424,8 +478,8 @@ management console. Finally, update DNS records.
 </tr>
 <tr>
 <td>7</td>
-<td>Merge + re-rank results from multi-collection queries</td>
-<td><code>semantic_retriever.py</code></td>
+<td>Merge + re-rank results from multi-collection queries, with an eval arm that measures the merge</td>
+<td><code>semantic_retriever.py</code>, benchmark</td>
 </tr>
 </tbody>
 </table>
@@ -492,6 +546,60 @@ management console. Finally, update DNS records.
 <td>13</td>
 <td>Document collection-level access control setup</td>
 <td><code>docs/</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="write-path-3-tasks">Write Path (3 tasks)</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Task</th>
+<th>Touches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>14</td>
+<td>Replace <code>UNIQUE(resource_hash)</code> with <code>UNIQUE(resource_hash, collection)</code> in <code>init.sql</code> and in a migration; thread the collection through every hash-keyed read and write: the catalog upsert, lookups, caches, <code>delete_resource()</code>, <code>update_ingestion_status()</code>, and the data manager's direct <code>UPDATE documents</code> statements</td>
+<td><code>init.sql</code>, <code>migrations/</code>, <code>catalog_postgres.py</code>, <code>manager.py</code></td>
+</tr>
+<tr>
+<td>15</td>
+<td>Tag every untagged chunk, then drop the <code>IS NULL</code> branch from search, count, and stale-chunk removal</td>
+<td><code>postgres_vectorstore.py</code>, <code>manager.py</code>, migration</td>
+</tr>
+<tr>
+<td>16</td>
+<td>Scope <code>PostgresVectorStore.delete()</code> and <code>reset_collection</code> to one collection</td>
+<td><code>postgres_vectorstore.py</code>, <code>manager.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="eval-provenance-3-tasks-570">Eval Provenance (3 tasks, <a href="https://github.com/fasrc/archi/issues/570">#570</a>)</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Task</th>
+<th>Touches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>17</td>
+<td>Record the searched collection, embedding name, and embedding model on every run; gate comparisons on the collection</td>
+<td><code>service_benchmark.py</code>, <code>src/evaluation/qa/</code>, <code>compare_runs.py</code></td>
+</tr>
+<tr>
+<td>18</td>
+<td>Scope the corpus fingerprint and the category map to the searched collection, include chunks with no document link, and hash the collection tag</td>
+<td><code>service_benchmark.py</code>, <code>benchmark_provenance.py</code></td>
+</tr>
+<tr>
+<td>19</td>
+<td>Stop a run before its first question if its collection has zero chunks</td>
+<td><code>service_benchmark.py</code>, <code>src/evaluation/qa/workflow.py</code></td>
 </tr>
 </tbody>
 </table>

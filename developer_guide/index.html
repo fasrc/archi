@@ -104,6 +104,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -135,6 +139,14 @@
     <li class="toctree-l2"><a class="reference internal" href="#contribution-workflow">Contribution Workflow</a>
         <ul>
     <li class="toctree-l3"><a class="reference internal" href="#reading-the-pr-list">Reading the PR list</a>
+        <ul>
+    <li class="toctree-l4"><a class="reference internal" href="#why-a-pr-is-not-ready">Why a PR is not ready</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#labels-a-pr-inherits">Labels a PR inherits</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#the-issue-taxonomy">The issue taxonomy</a>
+    </li>
+        </ul>
     </li>
         </ul>
     </li>
@@ -442,10 +454,6 @@ automatically-maintained labels close that gap — see
 <td><code>conflicts</code></td>
 <td>Merge-conflicted with <code>dev</code>, drafts included. Resolve it before spending another review round — answering findings cannot land the PR.</td>
 </tr>
-<tr>
-<td><em>neither</em></td>
-<td>In flight: review findings outstanding, or checks not green.</td>
-</tr>
 </tbody>
 </table>
 <p><code>ready-to-merge</code> is <strong>not</strong> a claim that review is provably complete — it is a
@@ -454,6 +462,132 @@ The review-response skill resolves threads as it addresses them, so <code>isReso
 is the authoritative signal.</p>
 <p>Filter for what is actually mergeable:
 <a href="https://github.com/fasrc/archi/pulls?q=is%3Apr+is%3Aopen+label%3Aready-to-merge"><code>is:pr is:open label:ready-to-merge</code></a>.</p>
+<h4 id="why-a-pr-is-not-ready">Why a PR is not ready</h4>
+<p>The chip is withheld for several different reasons and its absence used to look
+the same for all of them. Exactly one <strong>status label</strong> names the reason, from
+the same precedence ladder that decides the chip:</p>
+<table>
+<thead>
+<tr>
+<th>Status label</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>review-pending</code></td>
+<td>One or more review threads are unresolved. Reply and <strong>resolve</strong> them — a reply alone does not clear this, which is the most common reason a green PR sits for days.</td>
+</tr>
+<tr>
+<td><code>checks-failing</code></td>
+<td>A check on the head commit has finished and come back bad. Something to fix.</td>
+</tr>
+<tr>
+<td><code>checks-pending</code></td>
+<td>Checks have not finished yet. Nothing to fix — wait.</td>
+</tr>
+<tr>
+<td><code>base-behind</code></td>
+<td>The branch is behind <code>dev</code>, so the checks on record did not test the current base. Merge <code>dev</code> in.</td>
+</tr>
+<tr>
+<td><code>unverifiable</code></td>
+<td>Readiness could not be determined from the snapshot — a truncated review-thread or check connection. Never read as ready; the next sweep retries.</td>
+</tr>
+</tbody>
+</table>
+<p>A ready PR carries none of these, and neither does a <strong>draft</strong> (GitHub already
+marks drafts in the list) or a <strong>conflicted</strong> PR (<code>conflicts</code> says it). At most
+one is ever present: they come from an <code>if</code>/<code>elif</code>, so the earliest matching
+reason wins — a PR with both a failing check and an open thread reads
+<code>checks-failing</code>, and a red check outranks a still-running one.</p>
+<p>One state is deliberately unlabelled: mergeability GitHub has not finished
+computing, which is what it returns right after a push to <code>dev</code>. That path
+revokes the chip <strong>and any stale status label</strong>, and adds nothing, by a
+long-standing invariant that it must not assert what it cannot see. Removing
+withdraws a claim; adding would make one. Such a PR shows nothing until the
+next sweep resolves it.</p>
+<p>Find what needs a human:
+<a href="https://github.com/fasrc/archi/pulls?q=is%3Apr+is%3Aopen+label%3Areview-pending"><code>is:pr is:open label:review-pending</code></a>.</p>
+<h4 id="labels-a-pr-inherits">Labels a PR inherits</h4>
+<p>A PR also carries the <strong>kind</strong>, <strong>priority</strong> and <strong>area</strong> of the issues it
+closes, so the PR list can be triaged like the issue list:</p>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th>Labels</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Kind</td>
+<td><code>bug</code>, <code>enhancement</code>, <code>documentation</code></td>
+<td>The closing issue. With no closing issue, a <code>fix:</code> / <code>feat:</code> / <code>docs:</code> title prefix. Any other prefix yields nothing.</td>
+</tr>
+<tr>
+<td>Priority</td>
+<td><code>P1</code>, <code>P2</code>, <code>P3</code></td>
+<td>The closing issue; the strongest wins when several are closed.</td>
+</tr>
+<tr>
+<td>Area</td>
+<td><code>ragas</code>, <code>upstream</code></td>
+<td>The closing issues, accumulated.</td>
+</tr>
+</tbody>
+</table>
+<p>These are <strong>grant-only</strong>: added when absent, never removed. Re-prioritise a PR
+by hand and the next sweep will leave your label alone; relabel the issue after
+the PR opened and the PR is not rewritten. An exclusive group is skipped
+entirely when the PR already has one of its labels, so an inherited <code>P3</code> never
+lands beside a hand-set <code>P1</code>.</p>
+<h4 id="the-issue-taxonomy">The issue taxonomy</h4>
+<p>The same labels on issues, plus the ones that drive the nightly automation.
+These are applied by a human or by nightly triage, never by CI:</p>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th>Labels</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Kind</td>
+<td><code>bug</code>, <code>enhancement</code>, <code>documentation</code>, <code>question</code></td>
+</tr>
+<tr>
+<td>Priority</td>
+<td><code>P1</code> drop everything · <code>P2</code> this cycle · <code>P3</code> when possible</td>
+</tr>
+<tr>
+<td>Area</td>
+<td><code>ragas</code>, <code>upstream</code></td>
+</tr>
+<tr>
+<td>Queue</td>
+<td><code>auto-ok</code> the nightly run may open a PR · <code>explore</code> turn into an exploration note · <code>ai-wip</code> claimed and in flight · <code>priority</code> jump the queue</td>
+</tr>
+<tr>
+<td>Routing</td>
+<td><code>sonnet</code> mechanical, fully-specified · <code>ultracode</code> multi-agent orchestration</td>
+</tr>
+<tr>
+<td>Blocked</td>
+<td><code>needs-human</code> needs a design decision · <code>needs-human-session</code> needs a human to do the work · <code>needs-deploy</code> needs the live deployment</td>
+</tr>
+<tr>
+<td>Scheduling</td>
+<td><code>parked</code> deliberately unscheduled · <code>evidence-trial</code> operator-driven trial, automation never touches it</td>
+</tr>
+</tbody>
+</table>
+<p>None of the queue, routing, blocked or scheduling labels is mirrored onto PRs.
+They answer "should automation pick this up", which does not arise for work
+already in flight, or they need a judgment a deterministic reconciler must not
+guess at.</p>
 <h2 id="editing-documentation">Editing Documentation</h2>
 <p>Editing documentation requires the <code>mkdocs</code> Python package:</p>
 <pre><code class="language-bash">pip install mkdocs

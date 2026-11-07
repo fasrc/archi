@@ -104,6 +104,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -150,6 +154,15 @@
                 <h1 id="ingest-performance-cpu-vs-gpu-embedding">Ingest Performance: CPU vs GPU Embedding</h1>
 <p>Measured on fasrc-dev (<code>holygpu7c0717.rc.fas.harvard.edu</code>) on 2026-08-06.
 Tracking issue: fasrc/archi#215.</p>
+<blockquote>
+<p><strong>Update 2026-10-19 (<a href="https://github.com/fasrc/archi/issues/721">#721</a>):</strong> most of
+the CPU-to-GPU gap below came from torch's CPU thread count, not from the GPU.
+The CPU baseline ran torch at its default of 32 threads (one per host core), and on
+this shared host each embedding call then waited ~3 s on its slowest thread. With
+<code>OMP_NUM_THREADS=8</code> the CPU embed stage of a full ingest took 2.1 min (1,162 files),
+against 1.1 min on a V100. archi now renders that cap by default
+(<code>data_manager.torch_threads</code>, see <a href="../configuration/">configuration</a>).</p>
+</blockquote>
 <h2 id="hardware">Hardware</h2>
 <table>
 <thead>
@@ -551,7 +564,11 @@ is CUDA runtime overhead.</p>
 <ol>
 <li><strong>New bottleneck: Git clone + <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> categorize</strong> (12m 51s, was 8m 53s — more
    files). Scales linearly with file count; batching the categorization <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> calls
-   would help.</li>
+   would help. <strong>Superseded 2026-09-22:</strong> the 2026-09 feature-matrix campaign
+   measured the categorization half at about +19 min per 1091-document ingest (an
+   approximate figure — the two arms' corpora were 0.43 % apart) with no resolvable
+   retrieval effect, and no default retrieval path reads the label it writes, so the
+   <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> configs turn the feature off instead of batching it (issue #496).</li>
 <li><strong>Incremental embedding:</strong> skip files whose content hash already has vectors in
    Postgres. A no-change re-ingest would be near-instant instead of 22 minutes.</li>
 <li><strong>772 remaining "disallowed suffix" warnings</strong> are legitimate (.png, .rst,

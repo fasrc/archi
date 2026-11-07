@@ -114,7 +114,7 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#2-the-metrics-in-plain-words">2. The metrics, in plain words</a>
         <ul>
-    <li class="toctree-l3"><a class="reference internal" href="#21-the-five-ragas-metrics">2.1 The five RAGAS metrics</a>
+    <li class="toctree-l3"><a class="reference internal" href="#21-the-ragas-metrics">2.1 The RAGAS metrics</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#22-the-two-source-metrics">2.2 The two source metrics</a>
     </li>
@@ -185,6 +185,10 @@
     <li class="toctree-l2"><a class="reference internal" href="#see-also">See also</a>
     </li>
     </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
                 </li>
               </ul>
               <ul>
@@ -315,8 +319,11 @@ subject of Section 3.</p>
 grading</strong> in Argilla. See <a href="../benchmarking/#human-grading-via-argilla"><code>benchmarking.md</code></a>.</p>
 <hr />
 <h2 id="2-the-metrics-in-plain-words">2. The metrics, in plain words</h2>
-<p>Archi reports two families of scores. All are between 0 and 1, higher is better.</p>
-<h3 id="21-the-five-ragas-metrics">2.1 The five <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> metrics</h3>
+<p>Archi reports two families of scores. All are between 0 and 1. Higher is better for
+every score except <code>noise_sensitivity</code>, where <strong>lower is better</strong> (it is the share of
+wrong claims). The leaderboard ranks it ascending, and the reports color it on that
+reversed scale.</p>
+<h3 id="21-the-ragas-metrics">2.1 The <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> metrics</h3>
 <p><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> is the open-source library (version 0.3.5) that computes these. Each metric
 answers a different question, and — critically — <strong>each one looks at a different
 subset of the available information.</strong></p>
@@ -354,6 +361,31 @@ subset of the available information.</strong></p>
 <td>Is the answer <em>correct</em> against the reference answer?</td>
 <td>answer + reference answer</td>
 </tr>
+<tr>
+<td><code>factual_correctness_recall</code></td>
+<td>What share of the reference answer's claims does the answer cover?</td>
+<td>answer + reference answer</td>
+</tr>
+<tr>
+<td><code>factual_correctness_precision</code></td>
+<td>What share of the answer's claims does the reference support?</td>
+<td>answer + reference answer</td>
+</tr>
+<tr>
+<td><code>noise_sensitivity</code></td>
+<td>What share of the answer's claims are <em>wrong</em>? <strong>Lower is better.</strong></td>
+<td>question + answer + chunks + reference answer</td>
+</tr>
+<tr>
+<td><code>answer_accuracy</code></td>
+<td>Does the answer agree with the reference? (two judge ratings, averaged)</td>
+<td>question + answer + reference answer</td>
+</tr>
+<tr>
+<td><code>response_groundedness</code></td>
+<td>Is the answer supported by the chunks? (two judge ratings, averaged)</td>
+<td>answer + chunks</td>
+</tr>
 </tbody>
 </table>
 <p>Read that last column carefully, because it determines what each metric can
@@ -370,21 +402,47 @@ detect.</p>
   perfectly relevant and entirely made up.</p>
 </li>
 <li>
-<p><strong><code>answer_correctness</code> is the only metric that compares the answer to the
-  reference answer.</strong> The other four grade <em>relevance</em> and <em>grounding</em>; none of
-  them can tell a right answer from a wrong one. A fluent answer, grounded in
-  correctly retrieved chunks, that still contradicts the reference scores well on
-  all four and poorly only here. It blends factual overlap with the reference
-  (weight 0.75) and embedding similarity (0.25).</p>
+<p><strong><code>answer_correctness</code> is the only one of the original five that compares the
+  answer to the reference answer.</strong> The other four grade <em>relevance</em> and
+  <em>grounding</em>; none of them can tell a right answer from a wrong one. A fluent
+  answer, grounded in correctly retrieved chunks, that still contradicts the
+  reference scores well on all four and poorly only here. It is one <strong>blended</strong>
+  score: factual overlap with the reference (weight 0.75) plus embedding
+  similarity (0.25). Four of the generation-side metrics below also compare the
+  answer to the reference, each on one narrower question:
+  <code>factual_correctness_recall</code>, <code>factual_correctness_precision</code>,
+  <code>noise_sensitivity</code> and <code>answer_accuracy</code>. <code>response_groundedness</code> does not.</p>
 <p>This metric is <strong>opt-in</strong>: add it to
 <code>services.benchmarking.mode_settings.ragas_settings.enabled_metrics</code>. A run
 that omits it reports the original four, so an older run's JSON carries no
 <code>aggregate_answer_correctness</code> key at all.</p>
 </li>
 <li>
-<p><strong>Three metrics require a non-empty reference answer</strong> — the two <code>context_*</code>
-  metrics and <code>answer_correctness</code>. Rows without one are silently excluded from
-  those metrics only. (In code: <code>src/utils/benchmark_schema.py</code>,
+<p><strong>The generation-side metrics are opt-in too</strong> (the last five rows). They
+  grade the answer rather than retrieval, the half a prompt edit can move:</p>
+<ul>
+<li><code>factual_correctness_recall</code> and <code>factual_correctness_precision</code> split
+  what <code>answer_correctness</code> blends. Recall falls when the answer <em>leaves
+  facts out</em>; precision falls when it <em>adds claims the reference does not
+  make</em>. A "be thorough" prompt can raise the first and lower the second, and
+  one blended score hides that trade. Neither includes an embedding
+  similarity term.</li>
+<li><code>noise_sensitivity</code> is the only metric where <strong>lower is better</strong>. It counts
+  answer claims that are incorrect given the reference, attributing them to
+  the retrieved chunks (ragas' <code>relevant</code> mode). <code>faithfulness</code> asks only
+  whether a claim is <em>in</em> the chunks, not whether it is right. The
+  leaderboard, the A/B winner and <code>compare_runs</code>' regression checks all read
+  its direction from <code>LOWER_IS_BETTER_METRICS</code> in
+  <code>src/utils/benchmark_schema.py</code>.</li>
+<li><code>answer_accuracy</code> and <code>response_groundedness</code> are ragas' NVIDIA metrics:
+  each asks the judge twice and averages, so they are steadier on small banks
+  but give no per-claim explanation.</li>
+</ul>
+</li>
+<li>
+<p><strong>Seven metrics require a non-empty reference answer</strong> — every metric above
+  except <code>answer_relevancy</code>, <code>faithfulness</code> and <code>response_groundedness</code>. Rows
+  without one are silently excluded from those metrics only. (In code: <code>src/utils/benchmark_schema.py</code>,
   <code>_METRIC_REQUIRED_COLUMN</code>.) This is why the metrics can each be averaged over a
   <em>different number of questions</em> in the same run — see
   <a href="#34-denominator-drift-the-quiet-one">Denominator drift</a>.</p>
@@ -425,16 +483,18 @@ else changed too.</p>
 </tr>
 <tr>
 <td>the system prompt, or the <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> model</td>
-<td><code>faithfulness</code>, <code>answer_relevancy</code>, <code>answer_correctness</code></td>
-<td>the <code>context_*</code> metrics</td>
+<td><code>faithfulness</code>, <code>answer_relevancy</code>, <code>answer_correctness</code>, and the five generation-side metrics</td>
+<td>the <code>context_*</code> metrics — but the agent writes its own search queries, so a prompt edit <em>can</em> move them; if it does, the prompt changed retrieval too</td>
 </tr>
 </tbody>
 </table>
-<p><code>answer_correctness</code> is the one metric that can move when nothing else does. If a
+<p>The reference-based answer metrics (<code>answer_correctness</code>, and when enabled
+<code>factual_correctness_recall</code>, <code>factual_correctness_precision</code>,
+<code>noise_sensitivity</code> and <code>answer_accuracy</code>) can move when nothing else does. If a
 change makes the bot <em>right</em> more often without changing what it retrieved or how
-grounded it sounds, only this metric registers it. In the other direction, a
-retrieval change moves it only when retrieval was the thing standing between the
-bot and a correct answer.</p>
+grounded it sounds, only these metrics register it; of the original five, only
+<code>answer_correctness</code> does. In the other direction, a retrieval change moves them
+only when retrieval was the thing standing between the bot and a correct answer.</p>
 <div class="admonition danger">
 <p class="admonition-title">The coupling that breaks this table</p>
 <p>Archi's agent decides <em>its own search queries</em> as it reasons. So changing the
@@ -551,6 +611,42 @@ you have it.</p>
 <p>An arm whose corpus reading failed, or whose corpus differs from the others', is
 withheld from the leaderboard and the A/B winner rather than ranked, because
 ranking it would assert a controlled comparison that did not happen.</p>
+<p><strong>The embedding model tags at the end of the run.</strong> Every chunk carries an
+<code>embedding_model</code> tag naming the model that made its vector. The start check
+refuses to run when a tag names another model. Newer <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> arms and QA runs also
+read the tags again at the end, and record two fields (per arm in the results
+file; in <code>manifest.json</code> and <code>summary.json</code> <code>provenance</code> for a QA run):</p>
+<ul>
+<li><code>embedding_tags_end</code> — the tags found at the end (<code>embedding_model_tags</code>) and
+  the number of chunks with no tag (<code>untagged_chunk_count</code>). A value beginning
+  <code>&lt;unavailable:</code> means the read failed; the text after it says why.</li>
+<li><code>embedding_tags_unchanged_at_endpoints</code> — the end state compared with the
+  start:<ul>
+<li><code>true</code>: no tag other than the run's own model appeared, and the untagged
+  count did not grow. Ordinary ingestion with the same model is still <code>true</code>;
+  the corpus fingerprint reports that content change.</li>
+<li><code>false</code>: the collection was re-embedded during the run. A tag of another
+  model appeared, or more chunks lost their tag, so some questions searched
+  vectors of another model or of no recorded model. The fingerprint cannot
+  see this, because it reads the text and not the vectors: it stays equal and
+  <code>corpus_unchanged_at_endpoints</code> stays <code>true</code>.</li>
+<li><code>null</code>: not observed. The end read failed, or the start record was
+  missing. (A QA run whose agent had no search tool also records <code>null</code>,
+  with null corpus readings; it searched nothing, so nothing refuses it.)</li>
+<li>absent: the run predates the field. That is unknown, not unstable, and
+  nothing refuses it.</li>
+</ul>
+</li>
+</ul>
+<p>A <code>false</code> or <code>null</code> value withholds the arm's rank on the leaderboard (the
+warning names the variant), puts an alert in the per-arm report, makes
+<code>compare_runs.py</code> refuse the arm, noise replicate, or QA run, and makes
+<code>archive_run.sh</code> refuse the artifact, in single-arm and <code>--sweep</code> mode. No flag
+admits it; <code>--corpus-differs-by-design</code> does not apply, because the change is a
+different model, not different content. <strong>The remedy is to re-run the arm</strong>:
+wait until the re-embed has finished, confirm every chunk carries the configured
+model's tag (the start check reports this), and run again. A <code>null</code> from a
+failed read also needs a re-run once the database can be read.</p>
 <h3 id="34-denominator-drift-the-quiet-one">3.4 Denominator drift — the quiet one</h3>
 <p>The harness protects a run from a single bad question: if a question crashes or
 overflows the model's context window, it is marked <code>degraded</code> and excluded rather
@@ -625,7 +721,7 @@ us, and that is as valuable as the noise floor itself.</p>
 <hr />
 <h2 id="4-the-gate">4. The gate</h2>
 <p>A benchmark result <strong>may not be reported as an improvement</strong>, and <strong>may not be
-used to justify shipping a change</strong>, unless all eight items below pass. For
+used to justify shipping a change</strong>, unless all ten items below pass. For
 exploratory runs where no decision is being made, the gate is advisory — but say
 so explicitly when you circulate the numbers.</p>
 <table>
@@ -676,6 +772,16 @@ so explicitly when you circulate the numbers.</p>
 <td><strong>G8</strong></td>
 <td>The <strong>anchors</strong> hold, and no other metric regressed by more than one noise-floor unit</td>
 <td>Catches the classic trap: raising <code>faithfulness</code> by teaching the model to hedge, while quietly tanking <code>answer_relevancy</code></td>
+</tr>
+<tr>
+<td><strong>G11</strong></td>
+<td>Every arm is <strong>judged</strong>: no arm has <code>judge_status: pending</code></td>
+<td>A deferred run writes its result before its judge runs, so its arms have no <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> scores yet. Use the judged file <code>&lt;basename&gt;.judged.json</code> (<a href="../benchmarking/#offloaded-ragas-judge-on-slurm">offloaded judge</a>)</td>
+</tr>
+<tr>
+<td><strong>G12</strong></td>
+<td><strong>One <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> judge</strong> scored every arm and every noise replicate: equal <code>ragas_judge_identity_effective</code></td>
+<td>Two judges, or one judge at two precisions or with two scorer images, give different scores to the same answer. A delta between them measures the judges, not the arms</td>
 </tr>
 </tbody>
 </table>
@@ -810,7 +916,7 @@ in time as practical. Record both <code>corpus_snapshot_id</code> values and not
 pre-reg that the corpora differ by design. Worked example:
 <a href="../benchmarking/#hierarchical-rerank-ab"><code>benchmarking.md</code></a>.</p>
 <h3 id="procedure-c-compare-two-arms">Procedure C: compare two arms</h3>
-<p><code>scripts/benchmarking/compare_runs.py</code> does this. It implements G3–G8 in one
+<p><code>scripts/benchmarking/compare_runs.py</code> does this. It implements G3–G12 in one
 tested place, so a comparison cannot skip a gate by accident:</p>
 <pre><code class="language-bash">python scripts/benchmarking/compare_runs.py \
   bench_out/&lt;baseline&gt;.json bench_out/&lt;treatment&gt;.json \
@@ -833,11 +939,15 @@ it is compared against the first. <code>path@2</code> picks one arm out of a swe
 </tr>
 <tr>
 <td><code>--noise-runs FILE ...</code></td>
-<td>measure sigma here instead: every arm of every file is one replicate, and sigma is the standard deviation of the <strong>recomputed</strong> means (needs two or more). Replicates face the same bank, corpus, code/config identity and divergence checks as the arms, and sigma is measured over the <em>same</em> questions the paired table uses — sigma <em>is</em> the G7 threshold, so a stale or foreign replicate would move the bar rather than describe it</td>
+<td>measure sigma here instead: every arm of every file is one replicate, and sigma is the standard deviation of the <strong>recomputed</strong> means (needs two or more). Replicates face the same bank, corpus, code/config identity, divergence and judge (G11, G12) checks as the arms, and sigma is measured over the <em>same</em> questions the paired table uses — sigma <em>is</em> the G7 threshold, so a stale or foreign replicate would move the bar rather than describe it</td>
 </tr>
 <tr>
 <td><code>--corpus-differs-by-design</code></td>
 <td>the only way past the G3 corpus gate; prints both fingerprints and the Procedure B warning</td>
+</tr>
+<tr>
+<td><code>--config-differs-by-design DOTTED.PATH</code></td>
+<td>the only way past the G10 answer-path gate for one named setting; accepts only <code>services.chat_app.context_editing</code> and <code>services.chat_app.recursion_limit</code>; repeatable; prints both values and marks the row OVERRIDDEN; never hides the difference</td>
 </tr>
 <tr>
 <td><code>--ignore-config-divergence</code></td>
@@ -853,7 +963,7 @@ it is compared against the first. <code>path@2</code> picks one arm out of a swe
 </tr>
 <tr>
 <td><code>--qa-run LABEL=RUN_DIR</code></td>
-<td>join an <code>archi eval qa</code> run to an arm, by derived item id (repeatable). This is the one flag that needs the project's evaluation dependencies installed — the id is derived by the QA stack's own <code>derive_item_id</code>, so the two sides cannot drift apart</td>
+<td>join an <code>archi qa</code> run to an arm, by derived item id (repeatable). This is the one flag that needs the project's evaluation dependencies installed — the id is derived by the QA stack's own <code>derive_item_id</code>, so the two sides cannot drift apart</td>
 </tr>
 <tr>
 <td><code>--json PATH</code></td>
@@ -881,8 +991,44 @@ files are.</p>
   questions against two of them even when it started and finished on the same
   one. <code>--corpus-differs-by-design</code> continues and prints the Procedure B
   warning; it does not make the arms comparable.</li>
+<li><strong>An arm, a <code>--noise-runs</code> replicate, or a <code>--qa-run</code> recorded
+  <code>embedding_tags_unchanged_at_endpoints: false</code></strong> — the collection was
+  re-embedded while it ran, so some questions searched vectors of another model
+  or of no recorded model. The corpus fingerprint is model-neutral and cannot
+  see this. A recorded <code>null</code> (not observed) is refused the same way; a missing
+  key (an older artifact) is not. No flag admits it, including
+  <code>--corpus-differs-by-design</code>; re-run the arm
+  (<a href="#33-the-corpus-changed">section 3.3</a>). <code>archive_run.sh</code> refuses the same
+  artifact.</li>
+<li><strong>The arms recorded different answer-path settings, or an arm recorded no
+  <code>configuration</code> at all</strong> — the bound (<code>services.chat_app.context_editing</code>)
+  and the limit (<code>services.chat_app.recursion_limit</code>) decide which questions the
+  agent can finish, so a delta between arms set up differently does not measure
+  what it claims to measure (G10). In the 2026-09-19 case, 6 of 109 questions
+  were lost because the treatment arm had a lower recursion limit. To waive one
+  setting, use <code>--config-differs-by-design DOTTED.PATH</code>; both values are still
+  printed. <code>services.benchmarking.agent_md_file</code> is reported rather than
+  refused — prompt arms vary it on purpose.</li>
 <li><strong><code>divergence_from_selected_file</code> is non-empty</strong> — the run did not use the
   settings you selected (Procedure E), so its scores belong to neither arm.</li>
+<li><strong>An arm or a <code>--noise-runs</code> replicate has <code>judge_status: pending</code></strong> — a
+  <code>judge_mode: deferred</code> run writes its result before the Slurm judge scores
+  it, so the arm has no <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> scores, and a comparison would read the missing
+  values as a result (G11). The refusal names the judged file
+  <code>&lt;basename&gt;.judged.json</code> to wait for. No flag overrides this.</li>
+<li><strong>The arms, or a <code>--noise-runs</code> replicate and the baseline, recorded
+  different <code>ragas_judge_identity_effective</code></strong> — another judge model, revision,
+  precision, server or decoding setting, embedding, judge pressure or scorer
+  image gives different scores to the same answer (G12). The refusal names the
+  fields that differ and each arm's value. An artifact from before the key
+  existed is compared on <code>(evaluator_provider, evaluator_model)</code> from its
+  recorded configuration, and only with another such artifact: a missing field
+  never equals a recorded one, so an older artifact never matches a newer one,
+  and a four-field record (#618) never matches an extended one. The replicates
+  set the G7 sigma, so a replicate that another judge scored would move the
+  threshold for these arms. No flag overrides this. <code>archive_run.sh</code> holds
+  campaign runs to the same two gates, through the same shared check
+  (<code>src/utils/judge_gates.py</code>).</li>
 </ul>
 <p><strong>What it prints.</strong> Run provenance including the three question counts (asked /
 anchors / bank rows, so the denominator is visible); the gate results; the paired
@@ -993,6 +1139,8 @@ settles it: a non-zero count means a strict reader will refuse the file. Python'
 ├── metadata
 │   ├── corpus_snapshot_id     # shared =&gt; ran together (see §3.3)
 │   ├── git_info.last_commit   # the DEPLOY's commit, NOT this run's code (§5.E)
+│   ├── git_info.git_diff      # uncommitted changes at DEPLOY; capped at 256 KB, top-level bench_out/ excluded
+│   ├── git_info.git_diff_stat # git diff --stat of the same changes, at most 200 files
 │   ├── code_version           # which code produced this (§5.E)
 │   ├── host                   # machine that ran the deploy (§5.E)
 │   └── config_versions[]      # one config digest per arm, in run order
@@ -1033,7 +1181,10 @@ fields.</p>
 <p><strong>Do not use <code>git_info.last_commit</code> for this.</strong> <code>archi create</code> writes
 <code>git_info.yaml</code> once at deploy and then freezes it. Every run between 2026-08-11
 and 2026-08-17 reports the same commit (<code>0a157cdce0</code>) with an empty diff, because
-they shared one deployment — even though they ran different code. The field names
+they shared one deployment — even though they ran different code. Since #514 the diff
+is bounded: <code>git_diff</code> holds at most 256 KB (also once JSON-escaped in the artifact),
+<code>git_diff_truncated</code> says whether it was cut, <code>git_diff_original_bytes</code> gives the full
+size, and top-level <code>bench_out/</code> is excluded. The field names
 the deploy, not the image. It is kept, and labelled, for exactly that reason.
 <code>metadata.host</code> does not share this freeze trap: a container cannot move to another
 machine, so the host recorded at deploy is the host every run in that deployment
@@ -1166,7 +1317,8 @@ pointing at it still lands somewhere truthful.</p>
 <p><code>scripts/benchmarking/compare_runs.py</code> exists. It refuses to run when the
 question sets differ (G4, with no override), when the corpus fingerprints differ
 or were never recorded (G3), or when <code>divergence_from_selected_file</code> is non-empty
-(Procedure E); and it prints the paired table, the slices, and the anchor
+(Procedure E), or when the arms recorded different answer-path settings (G10);
+and it prints the paired table, the slices, and the anchor
 pass/fail block. See <a href="#procedure-c-compare-two-arms">Procedure C</a>.</p>
 <p>Two limits are worth stating rather than discovering:</p>
 <ul>
@@ -1316,7 +1468,7 @@ Fuller definitions live in glossary.md.
           </div><footer>
     <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
         <a href="../evaluation/" class="btn btn-neutral float-left" title="Evaluation"><span class="icon icon-circle-arrow-left"></span> Previous</a>
-        <a href="../advanced_setup_deploy/" class="btn btn-neutral float-right" title="Advanced Setup">Next <span class="icon icon-circle-arrow-right"></span></a>
+        <a href="../feature_matrix_results_2026_09/" class="btn btn-neutral float-right" title="Feature-Matrix Results (2026-09)">Next <span class="icon icon-circle-arrow-right"></span></a>
     </div>
 
   <hr/>
@@ -1346,7 +1498,7 @@ Fuller definitions live in glossary.md.
       <span><a href="../evaluation/" style="color: #fcfcfc">&laquo; Previous</a></span>
     
     
-      <span><a href="../advanced_setup_deploy/" style="color: #fcfcfc">Next &raquo;</a></span>
+      <span><a href="../feature_matrix_results_2026_09/" style="color: #fcfcfc">Next &raquo;</a></span>
     
   </span>
 </div>

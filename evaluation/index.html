@@ -185,6 +185,10 @@
     <li class="toctree-l3"><a class="reference internal" href="#failure-and-lifecycle-records">Failure and lifecycle records</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#cost-concurrency-and-data-handling">Cost, concurrency, and data handling</a>
+        <ul>
+    <li class="toctree-l4"><a class="reference internal" href="#price-a-run-from-recorded-tokens">Price a run from recorded tokens</a>
+    </li>
+        </ul>
     </li>
         </ul>
     </li>
@@ -213,6 +217,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
                 </li>
               </ul>
               <ul>
@@ -274,7 +282,7 @@ stability, review failures, and compare agent configurations or prompts.</p>
 </ul>
 <p>Evaluation is separate from the legacy <code>archi evaluate</code> benchmarking
 workflow. The legacy workflow measures <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> and source-retrieval metrics; see
-<a href="../benchmarking/">Benchmarking</a>. <code>archi eval qa</code> evaluates complete agent
+<a href="../benchmarking/">Benchmarking</a>. <code>archi qa</code> evaluates complete agent
 answers against explicit obligations and preserves reproducible run artifacts.</p>
 <h2 id="what-the-evaluator-does">What the evaluator does</h2>
 <p>Every evaluation has three phases:</p>
@@ -307,7 +315,7 @@ inspection between phases, or use the browser console.</p>
 <tr>
 <td><a href="#cli-guide">CLI Guide</a></td>
 <td>Automation, CI, local experiments, and exact control over workspaces</td>
-<td><code>archi eval qa</code> accepts file paths directly and can run all phases or one phase at a time</td>
+<td><code>archi qa</code> accepts file paths directly and can run all phases or one phase at a time</td>
 </tr>
 <tr>
 <td><a href="#browser-console-guide">Browser Console Guide</a></td>
@@ -373,7 +381,7 @@ workspace paths and individual phases.</p>
 <p>The output directory is not a config file and does not need to exist in
 advance. Before running:</p>
 <ol>
-<li><a href="../install/">Install Archi</a> and confirm <code>archi eval qa --help</code> works.</li>
+<li><a href="../install/">Install Archi</a> and confirm <code>archi qa --help</code> works.</li>
 <li>Make the tested agent's model provider and selected tool dependencies
    reachable from the CLI process.</li>
 <li>Provide credentials for the tested agent and evaluator models. See
@@ -775,7 +783,11 @@ vector-store, data-manager, or MCP settings. The <code>agent_class</code> must n
 pipeline exported by <code>src.archi.pipelines</code>.</p>
 <p>The CLI accepts an existing local <code>.yaml</code> or <code>.yml</code> file through
 <code>--agent-config</code>. During the run, Archi snapshots the resolved file as
-<code>agent_config.resolved.yaml</code>.</p>
+<code>agent_config.resolved.yaml</code>. Values under secret-named keys (API keys, tokens,
+passwords, <code>Authorization</code> headers, and the password component of a URL) are
+replaced with <code>[redacted]</code> before the write. Every phase, including continue and
+retry, runs from that redacted content. Credentials must come from the environment
+or secrets, not from inline config values.</p>
 <p>The browser Console needs no separate agent-config file. It evaluates the agent
 already defined by the running deployment's YAML—for example,
 <code>deployments/comp_ops_config.yaml</code>. See
@@ -818,7 +830,7 @@ empty.</p>
 <h3 id="usage">Usage</h3>
 <h4 id="run-all-phases">Run all phases</h4>
 <p>The composite command prepares, runs, and scores in one operation:</p>
-<pre><code class="language-bash">archi eval qa \
+<pre><code class="language-bash">archi qa \
   --dataset questions.json \
   --agent-config agent.yaml \
   --agent-spec agent.md \
@@ -845,7 +857,7 @@ not. A normal run resolves every live item before agent work and once again
 after the global agent-attempt barrier. Only items whose two observations match
 the approved baseline are scored.</p>
 <p>Omit <code>--evaluator-profile</code> to use the built-in profile:</p>
-<pre><code class="language-bash">archi eval qa \
+<pre><code class="language-bash">archi qa \
   --dataset questions.json \
   --agent-config agent.yaml \
   --agent-spec agent.md \
@@ -857,7 +869,7 @@ the approved baseline are scored.</p>
 <p>Use the staged workflow to review atoms before running the agent, or answers
 before paying for evaluator calls.</p>
 <h5 id="1-prepare">1. Prepare</h5>
-<pre><code class="language-bash">archi eval qa prepare questions.json \
+<pre><code class="language-bash">archi qa prepare questions.json \
   --evaluator-profile evaluator.yaml \
   --mcp-config qa_evaluation_mcp.yaml \
   --output-dir evaluation-run/
@@ -871,7 +883,7 @@ live rows omitted with <code>--skip-live</code> contain no runnable output. Run 
 and lifecycle counts come from this same artifact. Preparation does not invoke
 the tested agent. If no row is prepared, the subsequent run refuses to start.</p>
 <h5 id="2-run-the-agent">2. Run the agent</h5>
-<pre><code class="language-bash">archi eval qa run evaluation-run/ \
+<pre><code class="language-bash">archi qa run evaluation-run/ \
   --agent-config agent.yaml \
   --agent-spec agent.md \
   --mcp-config qa_evaluation_mcp.yaml \
@@ -893,11 +905,11 @@ and duration when available. Content is stored without truncation. A call that
 starts without a matching terminal callback remains visible as <code>incomplete</code> and
 omits unavailable response and duration fields.</p>
 <h5 id="3-score">3. Score</h5>
-<pre><code class="language-bash">archi eval qa score evaluation-run/ --score-workers 8
+<pre><code class="language-bash">archi qa score evaluation-run/ --score-workers 8
 </code></pre>
 <p>You may pass <code>--evaluator-profile evaluator.yaml</code>, but it must match the
 profile already snapshotted during preparation:</p>
-<pre><code class="language-bash">archi eval qa score evaluation-run/ \
+<pre><code class="language-bash">archi qa score evaluation-run/ \
   --evaluator-profile evaluator.yaml
 </code></pre>
 <p>Scoring does not invoke the tested agent again. It writes the judgments,
@@ -1018,11 +1030,11 @@ a <abbr title="The library archi uses to score answer quality with a language-mo
   <a href="#evaluator-mcp-registry">Evaluator MCP registry</a>.</li>
 </ul>
 <p>The same adapter is reachable from the command line, for a bank you want to run
-through <code>archi eval qa</code> rather than upload:
+through <code>archi qa</code> rather than upload:
 <code>python scripts/benchmarking/ragas_bank_to_qa_dataset.py &lt;bank.json&gt; --out &lt;dataset.json&gt;</code>
 converts a bank — plus the anchor questions the <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> harness stages beside it on
 every run, deduped on exact <code>user_input</code> with the bank row winning — into a
-<code>qa-dataset-v2</code> file that <code>archi eval qa --dataset &lt;dataset.json&gt;</code> accepts. It
+<code>qa-dataset-v2</code> file that <code>archi qa --dataset &lt;dataset.json&gt;</code> accepts. It
 calls this same normalizer and reads the bank with the same strict parser, so for
 a modern-dialect bank the mapping, the carried fields and the ids are identical
 whichever door it comes through. A <strong>legacy</strong> bank is the one difference: the
@@ -1121,9 +1133,17 @@ judgments, and evaluator rationales can reveal canonical answers.</p>
 <li><code>evaluations:manage</code> to import datasets and profiles, generate or review
   atoms, refresh live snapshots, and save reviewed datasets.</li>
 </ul>
+<p>Run detail keeps the answer key from callers without <code>evaluations:manage</code>.
+A view-only caller still gets scores, statuses, questions, judgment outcomes,
+latency, and tool calls, but not approved answers, gold atoms, live-oracle
+evidence, raw agent answers, judgment rationales, the text of error and
+live-validation diagnostics, or the manifest's artifact digests. Failed rows
+keep their status. A caller with <code>evaluations:manage</code> gets the full run. The
+run list and reports are the same for both.</p>
 <p>The wildcard administrator role grants all three. Add them explicitly to
 custom roles as needed. When authentication is disabled, evaluation routes
-retain the normal unrestricted local-development behavior.</p>
+retain the normal unrestricted local-development behavior, and run detail
+includes the answer key.</p>
 <h3 id="usage_1">Usage</h3>
 <h4 id="import-and-prepare-a-dataset">Import and prepare a dataset</h4>
 <ol>
@@ -1302,6 +1322,9 @@ neither a job nor a new artifact.</p>
 </tr>
 </tbody>
 </table>
+<p>Answers, gold atoms, and judgment rationales in run detail need
+<code>evaluations:manage</code>; a view-only caller sees the outcomes without them (see
+<a href="#permissions">Permissions</a>).</p>
 <h4 id="compare-history-trends">Compare history trends</h4>
 <p>The evaluation homepage requests one bounded history window from the server for
 the run table and all graphs. Choose the last 7, 30, 90, or 365 days; 90 days is
@@ -1495,7 +1518,7 @@ evaluator failures are not mistaken for good quality.</p>
 <tr>
 <td><code>agent_config.resolved.yaml</code></td>
 <td>Run</td>
-<td>Exact tested Archi config</td>
+<td>Exact tested Archi config with secret values redacted</td>
 </tr>
 <tr>
 <td><code>agent_spec.resolved.md</code></td>
@@ -1541,9 +1564,10 @@ evaluator failures are not mistaken for good quality.</p>
 </table>
 <p>The workspace is the reproducibility record. Keep it intact when comparing
 runs, and archive it with any external version identifiers you need. The
-current artifacts record tested-agent and tool-call latency but do not record
-source-control commits, release gates, token usage, model prompts, evaluator
-prompts, or reasoning traces. Tool queries and responses are complete.</p>
+current artifacts record tested-agent and tool-call latency and <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> token
+usage (see <a href="#price-a-run-from-recorded-tokens">Price a run from recorded tokens</a>),
+but do not record source-control commits, release gates, model prompts,
+evaluator prompts, or reasoning traces. Tool queries and responses are complete.</p>
 <h3 id="rerunning-and-integrity-protection">Rerunning and integrity protection</h3>
 <p>Completed-phase artifacts are hashed in <code>manifest.json</code>. A later phase verifies
 its inputs and fails closed if an artifact is edited, missing, or replaced.
@@ -1554,7 +1578,7 @@ Review files without modifying them.</p>
   artifacts;</li>
 <li><code>run --overwrite</code> replaces run artifacts and invalidates score artifacts;</li>
 <li><code>score --overwrite</code> replaces only results, summary, and report;</li>
-<li>composite <code>archi eval qa --overwrite</code> rebuilds the complete workspace.</li>
+<li>composite <code>archi qa --overwrite</code> rebuilds the complete workspace.</li>
 </ul>
 <p>Use a new output directory when comparing agents, prompts, providers, models,
 attempt counts, datasets, or evaluator profiles. Reusing and overwriting one
@@ -1598,6 +1622,64 @@ increase dataset size or attempt count.</p>
 stored in the workspace. Evaluator prompts and rationales also contain or may
 reveal them. Restrict access to datasets, the evaluation root, run artifacts,
 logs, and reports according to the sensitivity of the evaluation set.</p>
+<h4 id="price-a-run-from-recorded-tokens">Price a run from recorded tokens</h4>
+<p>Token records cover the QA workflow's own <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> calls (atom extraction, the tested
+agent, the comparator) and the <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> judge in benchmark runs. The benchmark's
+tested model (the <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr>) is <strong>not</strong> recorded: <code>judge_usage</code> counts only the judge, so
+pricing a benchmark run from these records leaves out the <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr>'s tokens.</p>
+<p><strong>Where <code>usage</code> appears:</strong></p>
+<ul>
+<li><code>preparation.jsonl</code> — rows where the extractor was called (<code>atom_source: "inferred"</code>,
+  or <code>preparation_failed</code> after the extractor call) carry a <code>usage</code> key (<code>null</code> if the
+  call failed before it reported usage). Supplied-atom rows have no <code>usage</code> key.</li>
+<li><code>answers.jsonl</code> — every <code>answer_ready</code> and <code>execution_failed</code> row carries <code>"usage"</code>
+  (<code>null</code> if the runtime reported no counts).</li>
+<li><code>evaluation_results.jsonl</code> — every <code>scored</code> and <code>evaluation_failed</code> row carries <code>"usage"</code>.</li>
+<li><code>summary.json</code> → <code>provenance.usage</code> — three keys <code>prepare</code>, <code>run</code>, and <code>score</code> hold
+  the phase totals (each is <code>null</code> if no rows reported usage for that phase).</li>
+<li>Benchmark arm entries → <code>judge_usage</code> — the ragas judge's token usage for that arm
+  (<code>null</code> when ragas did not run).</li>
+</ul>
+<p><strong>Shape (the same everywhere):</strong></p>
+<pre><code class="language-json">{
+  &quot;input_tokens&quot;: 1234,
+  &quot;output_tokens&quot;: 56,
+  &quot;calls&quot;: 2,
+  &quot;unreported_calls&quot;: 0,
+  &quot;by_model&quot;: [
+    {
+      &quot;provider&quot;: &quot;huit_bedrock&quot;,
+      &quot;model&quot;: &quot;claude-x&quot;,
+      &quot;input_tokens&quot;: 1234,
+      &quot;output_tokens&quot;: 56,
+      &quot;calls&quot;: 2,
+      &quot;unreported_calls&quot;: 0
+    }
+  ]
+}
+</code></pre>
+<p><code>calls</code> counts <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> requests. A request that returns several candidates (<code>n &gt; 1</code>)
+counts as one call with its request-level tokens, not once for each candidate.</p>
+<p><strong>Calculating cost:</strong></p>
+<p>Sum over every entry in <code>by_model</code> using your provider's per-token rates:</p>
+<pre><code>cost = Σ (entry[&quot;input_tokens&quot;] × rate_in + entry[&quot;output_tokens&quot;] × rate_out)
+</code></pre>
+<p>where <code>rate_in</code> and <code>rate_out</code> are the per-token input and output prices for that
+<code>(provider, model)</code> pair, sourced from the provider's current pricing page.</p>
+<p><strong>Limits:</strong></p>
+<ul>
+<li><code>unreported_calls &gt; 0</code> means that many <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> calls finished without sending token counts;
+  those tokens were consumed but are not measurable here.</li>
+<li>A call that raised before it finished left no usage event and is not counted in any field.</li>
+<li><code>input_tokens</code> is one total. When a provider bills cached-read or cache-creation
+  input tokens at a different rate, that split is not kept here, so the formula
+  gives an estimate that can be higher or lower than the bill.</li>
+<li>A retry run directory copies rows from its parent; those rows carry the parent run's usage,
+  so the retry totals include them.</li>
+<li><code>provider</code> is always <code>services.chat_app.default_provider</code>, also for a model that a
+  pipeline declares on another provider and for <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> calls inside tools. <code>model</code> comes
+  from the response, so check <code>provider</code> before you pick a rate (issue #597).</li>
+</ul>
 <h2 id="troubleshooting">Troubleshooting</h2>
 <h3 id="the-run-remains-prepared">The run remains <code>prepared</code></h3>
 <p>Preparation finished, but the agent phase has not atomically committed all
@@ -1648,7 +1730,7 @@ active job to finish, or cancel it from the active-job banner when it is an
 evaluation. A <code>cancel_requested</code> job remains active until its process exits. If
 the service restarted, refresh the catalog and verify that the old job was
 marked <code>interrupted</code>.</p>
-<p>For exact command flags, see <a href="../cli_reference/#archi-eval-qa"><code>archi eval qa</code> in the CLI
+<p>For exact command flags, see <a href="../cli_reference/#archi-qa"><code>archi qa</code> in the CLI
 reference</a>. For deployment-level paths and
 authentication settings, see <a href="../configuration/">Configuration</a>.</p>
 <!--

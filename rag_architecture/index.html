@@ -104,6 +104,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -199,12 +203,16 @@ semantic-only (with a structured warning). No re-ranking stage exists.</p>
 Tools: <code>search_vectorstore_hybrid</code>, <code>search_metadata_index</code>,
 <code>list_metadata_schema</code>, <code>search_local_files</code>, <code>fetch_catalog_document</code> (+ optional
 MCP/MONIT). Two behaviors matter for <abbr title="Retrieval-Augmented Generation — search a document collection, then have a language model write the answer from what it found.">RAG</abbr> experiments:
-- <strong>Forced initial retrieval</strong> (<code>force_initial_retrieval</code>, default on): a
-  <code>search_vectorstore_hybrid</code> round is prefilled before the model's first turn,
-  so retrieval always happens even if the model wouldn't call it. Toggle for
-  prompt-only vs retrieval A/B.
-- <strong>Per-turn search budget</strong> (default <code>search_vectorstore_hybrid: 2</code>): caps
-  searches/turn; over-budget returns a synthetic "reuse prior results" message.</p>
+- <strong>Forced initial retrieval</strong> (<code>services.chat_app.force_initial_retrieval</code>,
+  default on): a <code>search_vectorstore_hybrid</code> round is prefilled before the model's
+  first turn, so retrieval always happens even if the model wouldn't call it.
+  One deployment seeds one value, so a prompt-only vs retrieval A/B needs one
+  deployment per value.
+- <strong>Per-turn search budget</strong> (<code>services.chat_app.tool_budgets</code>, default
+  <code>search_vectorstore_hybrid: 2</code>): caps the model's own searches per turn;
+  over-budget returns a synthetic "reuse prior results" message. The forced
+  initial round is not counted, so a default turn holds the forced round plus up
+  to two model searches.</p>
 <p><abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr>: <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> serving <code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code> at <code>localhost:8001/v1</code>.
 Agent behavior (tool list, citation rules, first-action) is declared in a
 <strong>markdown spec</strong> with YAML frontmatter under <code>config/agents/*.md</code>, live
@@ -243,7 +251,7 @@ mutable). See <code>fasrc_archi.md</code> for the model-server ops.</p>
 <tr>
 <td>top-k</td>
 <td>retriever / agent</td>
-<td>5 (tool returns 4, 800 chars each)</td>
+<td>5 (tool renders all, each the matched passage, ≤1200 chars or a fair share of the 8000-char result)</td>
 </tr>
 <tr>
 <td>metadata filter</td>
@@ -257,7 +265,7 @@ mutable). See <code>fasrc_archi.md</code> for the model-server ops.</p>
 </tr>
 <tr>
 <td>search budget</td>
-<td><code>tool_budgets.search_vectorstore_hybrid</code></td>
+<td><code>services.chat_app.tool_budgets.search_vectorstore_hybrid</code></td>
 <td>2/turn</td>
 </tr>
 <tr>
@@ -333,8 +341,10 @@ that switches to a smaller model gets the smaller budget.</p>
   clamps still apply, so this is a weaker guarantee, not an absent one.</li>
 </ul>
 <h3 id="settings">Settings</h3>
-<p>Under <code>services.chat_app.context_editing</code>, overridable per pipeline via
-<code>pipeline_config.context_editing</code> — the same three-layer lookup as <code>tool_budgets</code>.</p>
+<p>Under <code>services.chat_app.context_editing</code>. The code also reads a per-pipeline
+override, <code>pipeline_config.context_editing</code> (the same three-layer lookup as
+<code>tool_budgets</code>), but the config template does not render <code>archi.pipeline_map</code>, so
+no deployment config can set that layer.</p>
 <table>
 <thead>
 <tr>
@@ -418,7 +428,8 @@ absolute, and it holds only while it is provably cheap.</p>
 <p>The static guard sizes what the clearing pass cannot touch — the exempt results
 <em>and</em> the <code>keep</code> preserved ones — against <code>exemption_fraction</code> of the budget. If
 it exceeds that, the exemption is <strong>dropped with a warning</strong>. Raising
-<code>tool_budgets.search_vectorstore_hybrid</code> far enough switches it off on its own.</p>
+<code>services.chat_app.tool_budgets.search_vectorstore_hybrid</code> far enough switches it
+off on its own.</p>
 <p>At runtime the exemption also yields under pressure. With the shipped call
 budget of 2 and <code>keep</code> of 3, an ordinary five-result turn makes the exempt set
 <em>identical</em> to the clearable set, so honouring it unconditionally would reclaim
@@ -428,7 +439,10 @@ fits.</p>
 <strong>earliest</strong>, and the ones shed first are the <strong>newest of those</strong>: once the
 per-turn search budget is spent the retrieval tool returns a synthetic refusal
 under the same tool name, so the earliest results are the evidence and the later
-ones trend toward refusals — the cheapest thing to give up.</p>
+ones trend toward refusals — the cheapest thing to give up. The forced initial
+round is not counted against the budget, so a turn can hold one more successful
+result than the budget allows: the exemption covers the earliest <em>budget</em> results
+(the forced round first), and the model's last successful search stays clearable.</p>
 <h3 id="when-it-cannot-fit">When it cannot fit</h3>
 <p>If the request is still over budget after clearing, the middleware logs the
 measured overage and sends it anyway; the pre-existing reactive overflow handler

@@ -104,7 +104,7 @@
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#archi-evaluate">archi evaluate</a>
     </li>
-    <li class="toctree-l3"><a class="reference internal" href="#archi-eval-qa">archi eval qa</a>
+    <li class="toctree-l3"><a class="reference internal" href="#archi-qa">archi qa</a>
         <ul>
     <li class="toctree-l4"><a class="reference internal" href="#1-prepare-the-dataset">1. Prepare the dataset</a>
     </li>
@@ -155,6 +155,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
                 </li>
               </ul>
               <ul>
@@ -492,17 +496,21 @@ serving:</p>
 </code></pre>
 <p>See <a href="../benchmarking/">Benchmarking</a> for full details on query format and evaluation modes.</p>
 <hr />
-<h3 id="archi-eval-qa"><code>archi eval qa</code></h3>
+<h3 id="archi-qa"><code>archi qa</code></h3>
+<blockquote>
+<p><strong>Deprecated alias:</strong> <code>archi eval qa …</code> still runs the same command for one
+release and prints a deprecation notice to stderr. Use <code>archi qa</code>.</p>
+</blockquote>
 <p>Run source-neutral, atom-based evaluation without changing the legacy
 <code>archi evaluate</code> workflow. <code>archi evaluate</code> above measures <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> and
-source-retrieval benchmarking metrics; <code>archi eval qa</code> instead judges a
+source-retrieval benchmarking metrics; <code>archi qa</code> instead judges a
 complete agent answer against explicit gold-atom obligations. The composite
 command validates and prepares the dataset, runs the selected agent
 independently for every attempt, then scores each usable answer:</p>
 <p>For prerequisites, complete input schemas, agent and evaluator examples,
 console usage, state semantics, scoring, and troubleshooting, see the
 <a href="../evaluation/">Evaluation Guide</a>.</p>
-<pre><code class="language-bash">archi eval qa \
+<pre><code class="language-bash">archi qa \
   --dataset questions.jsonl \
   --agent-config agent.yaml \
   --agent-spec agent.md \
@@ -577,7 +585,7 @@ from the tested agent's top-level <code>mcp_servers</code> configuration.</p>
 want to inspect the generated atoms before running Archi or inspect Archi's
 answers before scoring them.</p>
 <h4 id="1-prepare-the-dataset">1. Prepare the dataset</h4>
-<pre><code class="language-bash">archi eval qa prepare questions.jsonl \
+<pre><code class="language-bash">archi qa prepare questions.jsonl \
   --evaluator-profile evaluator.yaml \
   --mcp-config qa_evaluation_mcp.yaml \
   --output-dir evaluation-run/
@@ -599,7 +607,7 @@ same artifact determines both run eligibility and preparation lifecycle
 counts. The command also stores the resolved evaluator profile in the run
 workspace. It does not run Archi or generate tested-agent answers.</p>
 <h4 id="2-run-archi">2. Run Archi</h4>
-<pre><code class="language-bash">archi eval qa run evaluation-run/ \
+<pre><code class="language-bash">archi qa run evaluation-run/ \
   --agent-config agent.yaml \
   --agent-spec agent.md \
   --mcp-config qa_evaluation_mcp.yaml \
@@ -619,7 +627,7 @@ observed tool call: ordinal, name, status, complete query, complete response or
 error when observed, and duration in milliseconds when available. Historical
 rows with timing-only records remain supported by the evaluation console.</p>
 <h4 id="3-score-the-answers">3. Score the answers</h4>
-<pre><code class="language-bash">archi eval qa score evaluation-run/ --score-workers 8
+<pre><code class="language-bash">archi qa score evaluation-run/ --score-workers 8
 </code></pre>
 <p>The positional <code>evaluation-run/</code> argument is the same workspace directory used by the
 previous stages. <code>score</code> reads <code>preparation.jsonl</code> and <code>answers.jsonl</code> from it.
@@ -679,7 +687,7 @@ more detailed analysis or automation, the same workspace contains:</p>
 </tr>
 <tr>
 <td><code>agent_config.resolved.yaml</code> and <code>agent_spec.resolved.md</code></td>
-<td>The resolved Archi configuration and exact agent spec used to generate the answers.</td>
+<td>The resolved Archi configuration with secret values redacted, and the exact agent spec used to generate the answers.</td>
 </tr>
 <tr>
 <td><code>evaluator_profile.resolved.yaml</code></td>
@@ -717,19 +725,22 @@ output directory private when those evaluation references are sensitive.</p>
 <code>required</code> value, and every row must contain at least one required atom.
 Supplying <code>expected_atoms</code> replaces automatic atom generation for that row:
 <code>prepare</code> validates and copies the supplied atoms without calling the atoms
-extractor. The composite <code>archi eval qa</code> command detects this automatically as
+extractor. The composite <code>archi qa</code> command detects this automatically as
 well, so no separate atom-generation command is needed. It still performs the
 preparation phase to validate and snapshot the dataset before running and
 scoring it. In the staged workflow, <code>run</code> still requires that prepared
-workspace, so <code>archi eval qa prepare</code> cannot be omitted entirely.</p>
+workspace, so <code>archi qa prepare</code> cannot be omitted entirely.</p>
 <p>Across all three stages, <code>manifest.json</code> records phase state and SHA-256 hashes.
 Editing an artifact from a completed phase makes the next phase fail closed.</p>
 <p><code>run</code> uses the selected Archi pipeline through its normal production interface.
 The evaluation runner observes the pipeline's tool callbacks and stores complete
 ordered query, response, error, status, and available duration evidence in
-<code>answers.jsonl</code>. It does not add tool-schema preflight, secret redaction,
-automatic retries, or evaluation-specific changes to agent behavior. Treat the
-workspace as sensitive because tool evidence is not truncated or redacted.
+<code>answers.jsonl</code>. Before the first phase, <code>run</code> replaces secret values in the
+resolved Archi config with <code>[redacted]</code>, and every phase runs from that redacted
+config, so credentials must come from the environment. It does not add
+tool-schema preflight, automatic retries, or other evaluation-specific changes to
+agent behavior. Treat the workspace as sensitive because tool evidence is not
+truncated or redacted.
 When the selected agent spec enables <code>mcp</code> but normal pipeline construction
 loads no MCP tools, that attempt is recorded as <code>execution_failed</code> before the
 model is invoked.</p>
@@ -748,7 +759,7 @@ qa:
 <p>Use <code>--evaluator-profile profile.yaml</code> on the composite command or <code>prepare</code>.
 If supplied again to <code>score</code>, its resolved content must match the prepared
 profile. Evaluator temperature is fixed at zero; selected evaluator models must
-accept <code>temperature=0</code>, otherwise the <code>archi eval qa</code> command fails.</p>
+accept <code>temperature=0</code>, otherwise the <code>archi qa</code> command fails.</p>
 <hr />
 <h3 id="archi-sources-build"><code>archi sources build</code></h3>
 <p>Regenerate a web <code>sources.list</code> from a typed YAML <strong>manifest</strong> of seeds. This

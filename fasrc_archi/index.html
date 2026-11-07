@@ -104,6 +104,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -154,7 +158,9 @@ not belong in the upstream docs — primarily the self-hosted <abbr title="The h
 that backs the chat app.</p>
 <p>Host: <code>archi.rc.fas.harvard.edu</code> (DNS alias for <code>holygpu7c0717.rc.fas.harvard.edu</code>),
 4× Tesla V100-PCIE-32GB.</p>
-<p><strong>Two <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> servers run on this host</strong>, one per GPU pair, both under systemd:</p>
+<p><strong>One <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> server runs on this host</strong> (since 2026-10-13), under systemd. GPUs 0,1
+and port 8002 are free and reserved for the
+<a href="../proposals/generator-model-trial-2026-10/">answering-model replacement trial</a>:</p>
 <table>
 <thead>
 <tr>
@@ -170,21 +176,22 @@ that backs the chat app.</p>
 <td><code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code></td>
 <td>8001</td>
 <td>2,3</td>
-<td><code>vllm-qwen36.service</code></td>
+<td><code>vllm-qwen36.service</code> (active)</td>
 <td><code>local</code> (default)</td>
 </tr>
 <tr>
 <td><code>palmfuture/Qwen3.8-27B-GPTQ-Int4</code></td>
 <td>8002</td>
 <td>0,1</td>
-<td><code>vllm-qwen38.service</code></td>
+<td><code>vllm-qwen38.service</code> — <strong>stopped and disabled 2026-10-13, weights deleted</strong></td>
 <td><code>openai</code> (see <a href="#running-two-models-in-archi-provider-slots">Running two models</a>)</td>
 </tr>
 </tbody>
 </table>
-<p>Qwen 3.8 requires two source patches to the container's <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> — without them it
-either crashes at load or silently emits garbage. See
-<a href="#vllm-patches-required"><abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> patches</a>.</p>
+<p>Company policy moves archi off Qwen models; Qwen 3.6 keeps serving until the trial
+picks a replacement. The Qwen 3.8 sections below are kept as the reference for serving
+a second model on GPUs 0,1 / port 8002. Qwen 3.8 itself required two source patches to
+the container's <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> — see <a href="#vllm-patches-required"><abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> patches</a>.</p>
 <hr />
 <h2 id="model-server-vllm-qwen-36">Model server (<abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> / Qwen 3.6)</h2>
 <p>The chat app does <strong>not</strong> ship the <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> — it calls an OpenAI-compatible <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr>
@@ -425,6 +432,13 @@ just <code>docker restart chatbot-archi-openai-compat</code>). Server first, app
 reverse order briefly serves empty answers.</p>
 <hr />
 <h2 id="second-model-server-vllm-qwen-38">Second model server (<abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> / Qwen 3.8)</h2>
+<blockquote>
+<p><strong>Status: stopped and disabled on 2026-10-13; its weights were deleted from the
+Hugging Face cache.</strong> Nothing serves port 8002 until the
+<a href="../proposals/generator-model-trial-2026-10/">answering-model trial</a> starts a
+candidate there. To restore Qwen 3.8: let the first start re-download the weights
+(~20 GB), then <code>sudo systemctl enable --now vllm-qwen38</code>.</p>
+</blockquote>
 <table>
 <thead>
 <tr>
@@ -482,7 +496,7 @@ exhaustion the 3.6 section documents as <code>CUDA out of memory</code> → dead
 → whole server exits. Keep 0.80 until a long-prefill end-to-end test against 3.8
 itself passes at the higher cap.</p>
 <pre><code class="language-bash">bash config/scripts/singularity_vllm_qwen38_volta.sh   # manual (backgrounds)
-sudo systemctl status vllm-qwen38.service              # systemd (installed &amp; active)
+sudo systemctl status vllm-qwen38.service              # systemd (installed; disabled since 2026-10-13)
 </code></pre>
 <p>Install/operate exactly as for 3.6 — stop any manual instance first so the unit
 can bind :8002, and kill by specific PID, never a broad <code>pkill -f vllm</code>.</p>
@@ -604,6 +618,13 @@ config-parse time); and it is <strong>not</strong> an fp16/bf16 issue (GPTQ in t
 accepts <em>only</em> fp16 — <code>--dtype float32</code> is rejected outright).</p>
 <hr />
 <h2 id="running-two-models-in-archi-provider-slots">Running two models in archi (provider slots)</h2>
+<blockquote>
+<p>Since 2026-10-13 nothing serves port 8002, so picking Qwen 3.8 in the dev chat
+dropdown fails — and keeps failing even once a trial candidate serves <code>:8002</code>,
+because the <code>openai</code> slot names Qwen 3.8's model id. Removing the entry needs a
+<code>dev.yaml</code> change and a redeploy. The mechanics below are unchanged and are what
+the trial uses.</p>
+</blockquote>
 <p>archi's providers are a <strong>closed enum</strong> — <code>openai</code>, <code>anthropic</code>, <code>gemini</code>,
 <code>openrouter</code>, <code>local</code>, <code>cern_litellm</code>, <code>huit_bedrock</code>. Provider config is read by
 <code>_build_provider_config_from_payload()</code> (<code>chat_app/app.py:158</code>, the enum lookup at
@@ -775,8 +796,11 @@ up. Keep <code>device: cpu</code> while <abbr title="The high-performance server
 <p>Two layers:</p>
 <ul>
 <li><strong>Source file (edit this):</strong> <code>config/environments/dev.yaml</code>. The active deploy
-  is the <strong>repo-root</strong> <code>./g.sh</code>:
-  <code>archi create --name archi-openai-compat --dev --config ./config/environments/dev.yaml --services chatbot,grafana --hostmode --force --env-file &lt;path-to-secrets.env&gt;</code>.
+  (verified 2026-10-14) is <code>deploy/scripts/redeploy.sh</code>, which reads
+  <code>deploy/scripts/host.env</code> (<code>DEPLOYMENT=dev</code>, <code>CONFIG=config/environments/dev.yaml</code>)
+  and runs <code>archi create --force</code> for the <code>dev</code> deployment — containers <code>chatbot-dev</code>,
+  <code>postgres-dev</code>, <code>data-manager-dev</code> and <code>slack-dev</code>. Its log names the config it
+  deployed (<code>config: deploying &lt;path&gt;</code>, <code>deploy/scripts/lib.sh</code>).
   The <code>--force</code> (<code>-f</code>) is <strong>required</strong> on a reseed: <code>archi create</code> aborts with
   <code>Deployment '...' already exists</code> otherwise (it overwrites the existing
   deployment dir; volumes are preserved). A <em>separate</em> <code>config/scripts/g.sh</code>
@@ -803,9 +827,9 @@ below config validation, secret validation, and compose-plan construction.</p>
 request that changed them. Grep the name.)</p>
 <p><strong>This does not make <code>--force</code> safe in general.</strong> Config, secrets, the compose
 plan, the agent files, and port configuration (bad or duplicated values) are
-checked before anything is destroyed. Closing this class of errors more
-completely means rendering the replacement before destroying the old deployment
-rather than adding checks one at a time
+checked before anything is destroyed. The whole replacement is now rendered into a temporary directory and discarded
+before anything is destroyed, for both <code>archi create --force</code> and
+<code>archi evaluate --force</code>; a <code>--dry</code> run performs the same render check
 (<a href="https://github.com/fasrc/archi/issues/294">#294</a>). Beyond that, a failure
 while <em>starting</em> the deployment — an image that will not pull, a port already
 taken by something else, a compose error — still leaves you without a running
@@ -819,23 +843,23 @@ while a plain <code>archi restart</code> skips that block entirely. <code>create
 no such special-case guard — it does not need one, because its ordering makes
 every required secret fail safely, not just grafana's.
 - <strong>Authoritative running config (what archi reads):</strong> Postgres
-  <code>static_config.services_config</code> (db <code>archi-db</code>, container
-  <code>postgres-archi-openai-compat</code>), seeded from <code>dev.yaml</code> at <code>archi create</code>.</p>
+  <code>static_config.services_config</code> (db <code>archi-db</code>, container <code>postgres-dev</code>), seeded
+  from <code>dev.yaml</code> at <code>archi create</code>.</p>
 </blockquote>
-<p>Consequence: <strong>editing <code>dev.yaml</code> + restarting is a no-op</strong> — re-run <code>g.sh</code> to
-reseed Postgres. A <code>docker restart chatbot-archi-openai-compat</code> only picks up
-values already seeded into Postgres. <code>config/</code> is a checkout of the separate
+<p>Consequence: <strong>editing <code>dev.yaml</code> + restarting is a no-op</strong> — re-run
+<code>deploy/scripts/redeploy.sh</code> to reseed Postgres. A <code>docker restart chatbot-dev</code> only
+picks up values already seeded into Postgres. <code>config/</code> is a checkout of the separate
 <code>fasrc/archi-config</code> repo — see the note at the end of
 <a href="#file-reference">File reference</a>.</p>
 <blockquote>
-<p><strong>This is not the <code>deploy/fasrc-dev/</code> deployment.</strong> That one is
-<code>DEPLOYMENT="dev"</code> (<code>deploy/scripts/lib.sh:74-75</code>) → containers
-<code>chatbot-dev</code> / <code>postgres-dev</code>. Since issue #363 the name <code>dev</code> is reserved for
-the GPU host; the no-GPU workstation deploys as <code>claw</code> via its own <code>host.env</code>.
-Both point at a remote <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> endpoint, and both leave <code>GPU_IDS</code> off
-(<code>lib.sh:91-104</code>). Everything on this page is the
-<code>archi-openai-compat</code> deployment on <code>archi.rc.fas.harvard.edu</code>. The container
-names are not interchangeable between the two.</p>
+<p><strong><code>archi-openai-compat</code> is no longer what runs here.</strong> Earlier versions of this page
+described the repo-root <code>g.sh</code> deploying <code>archi-openai-compat</code> (containers
+<code>chatbot-archi-openai-compat</code>, <code>postgres-archi-openai-compat</code>). On 2026-10-14 the GPU
+host runs only the <code>dev</code> containers named above; since issue #363 the name <code>dev</code> is
+reserved for this host, and the no-GPU workstation deploys as <code>claw</code> via its own
+<code>host.env</code>. Other mentions of <code>g.sh</code> and <code>chatbot-archi-openai-compat</code> elsewhere on
+this page predate that switch: read them as <code>deploy/scripts/redeploy.sh</code> and
+<code>chatbot-dev</code>.</p>
 </blockquote>
 <hr />
 <h2 id="file-reference">File reference</h2>
@@ -869,7 +893,7 @@ names are not interchangeable between the two.</p>
 </tr>
 <tr>
 <td><code>config/scripts/vllm-qwen38.service</code></td>
-<td>systemd unit — <strong>installed &amp; active</strong> at <code>/etc/systemd/system/vllm-qwen38.service</code></td>
+<td>systemd unit — installed at <code>/etc/systemd/system/vllm-qwen38.service</code>, <strong>stopped and disabled since 2026-10-13</strong></td>
 </tr>
 <tr>
 <td><code>config/scripts/vllm_patch/sitecustomize.py</code></td>
@@ -906,7 +930,7 @@ and nothing provisions it on this host.</strong>
 unversioned.</p>
 <p><strong>Provisioning is not automatic here.</strong> <code>ensure_config</code>, which checks the
 checkout out at a pinned, SHA-verified ref, has exactly one caller —
-<code>deploy/scripts/lib.sh:282</code> — on the <em>other</em> deployment. This page's
+<code>deploy/scripts/lib.sh:373</code> — on the <em>other</em> deployment. This page's
 active path is the repo-root <code>g.sh</code> calling <code>archi create</code> directly, which never
 runs it. So on this host <code>config/</code> is simply whatever is on disk, at whatever
 revision someone last left it, with nothing verifying it.</p>
@@ -926,11 +950,10 @@ would not have restored them, because they had never been committed.</p>
 <ol>
 <li>Add the launchers, both units, the compat shim and <code>vllm_patches/</code> to
    <code>fasrc/archi-config</code>.</li>
-<li>Give <em>this</em> deployment a provisioning step that pins them. Bumping
-   <code>CONFIG_REF</code>/<code>CONFIG_SHA</code> in <code>deploy/scripts/lib.sh</code> governs
-   <strong>every script-managed deployment</strong> — <code>dev</code> on the GPU host and <code>claw</code> on the
-   workstation both source that shared file, and <code>archi_deploy</code> calls
-   <code>ensure_config</code> unconditionally, so one bump converges both on their next
+<li>Give <em>this</em> deployment a provisioning step that pins them. The pin table in
+   <code>deploy/scripts/lib.sh</code> has one <code>CONFIG_REF</code>/<code>CONFIG_SHA</code> row for each
+   script-managed deployment — <code>dev</code> on the GPU host and <code>claw</code> on the
+   workstation — so a bump of one row converges only that deployment on its next
    create/redeploy. It still does nothing here. Either wrap <code>g.sh</code> so it sources
    <code>ensure_config</code> before <code>archi create</code>, or record an explicit checkout step in
    this deployment's procedure that <strong>verifies the commit, not just the tag
@@ -939,7 +962,7 @@ would not have restored them, because they had never been committed.</p>
    against the recorded SHA and abort on mismatch, and only then
    <code>git -C config/ checkout "$resolved"</code>. A bare <code>checkout &lt;tag&gt;</code> accepts
    whatever commit the remote tag currently names — that is not the SHA-verified
-   pin <code>ensure_config</code> implements (<code>lib.sh:121-139</code>), which rejects a re-pointed
+   pin <code>ensure_config</code> implements (<code>lib.sh:248-284</code>), which rejects a re-pointed
    remote tag outright. (When creating the tag: make a <em>new</em> annotated tag —
    never move an existing one, as <code>git fetch --tags</code> refuses to clobber a moved
    tag.)</li>

@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>Autonomous Prompt Optimization Loop - Archi Docs</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Autonomous Prompt Optimization Loop";
+        var mkdocs_page_input_path = "proposals/prompt-optimization-loop.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../.." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Autonomous Prompt Optimization Loop</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/proposals/prompt-optimization-loop.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="autonomous-prompt-optimization-loop">Autonomous Prompt Optimization Loop</h1>
+<p><strong>Author:</strong> Austin Swinney, <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> — Harvard University
+<strong>Date:</strong> September 2026
+<strong>Status:</strong> Design proposal — no milestone proposed; the tracking issue is filed as <code>evidence-trial</code> before the first loop runs (see "Release-plan judgment")
+<strong>Baseline read:</strong> <code>origin/dev</code> @ <code>92e1b576</code>, 2026-09-25
+<strong>Companion:</strong> <a href="../release-plan-2026/">Release Plan 2026</a> · <a href="../icl-and-query-category-mapping/">In-Context Learning and Query→Category Mapping</a> · <a href="../feature-matrix-campaign-2026/">Feature-Matrix Campaign</a> · <a href="../../interpreting_benchmark_results/">Interpreting Benchmark Results</a></p>
+<hr />
+<h2 id="tldr">TL;DR</h2>
+<p>Let Claude improve the agent's system prompt on its own: read why answers failed,
+change the prompt, re-measure, keep or revert, repeat. It stops when it finds a change
+that improves accuracy <strong>by a statistically significant margin</strong>.</p>
+<p>The loop itself is easy, and most of it already exists (<code>archi qa</code>,
+<code>qa_prepare.sh</code>, the <code>lib.sh</code> stack and corpus guards, the exact McNemar test in
+<code>paired_tests.py</code>). The one piece that does not fit is the sweep runner: it runs a fixed,
+pre-locked set of prompts at one attempt, so the loop gets its own runner (§3.4). Three findings shape the
+design more than the loop does:</p>
+<ol>
+<li><strong>Ten questions cannot prove a significant improvement on their own.</strong> Each question
+   either passes or fails, and a 4/10 → 7/10 jump happens by chance about one time in
+   four. So the ten are a <strong>tuning set</strong> the loop iterates on, and the significance
+   verdict comes from a <strong>holdout set</strong> (the other 99 golden-set questions) that the
+   optimizer never sees. The holdout also blocks the main failure mode: a model editing
+   a prompt against ten known reference answers will start writing those answers into
+   the prompt.</li>
+<li><strong>Measure run-to-run noise before changing anything.</strong> Nobody has measured it for
+   this evaluator (<code>interpreting_benchmark_results.md</code> §"Procedure A" is documented as
+   never run). Until that number exists, no improvement can be told apart from luck.
+   This is step 0.</li>
+<li><strong>Pick questions a prompt can actually fix.</strong> A question fails either because search
+   never found the facts (no prompt can fix that) or because the facts were retrieved
+   and the answer left them out or got them wrong (a prompt can). The QA evaluator
+   records each search's returned text per attempt (<code>src/evaluation/qa/tool_traces.py:22</code>),
+   so the two can be told apart mechanically.</li>
+</ol>
+<hr />
+<h2 id="1-why-this-is-worth-doing">1. Why this is worth doing</h2>
+<p>Prompt changes have so far been tested as hand-written arms in a sweep: an operator
+writes three to five variants, runs them overnight and reads a leaderboard. That finds
+the best of the variants someone thought of. An automated loop can instead read the
+<strong>specific</strong> missed facts, form a hypothesis about why the model dropped them, and test
+it. That is closer to how a person debugs a prompt, but it can run ten or more
+iterations a night.</p>
+<p>The risk is the usual one for any optimizer: it tunes to the test. Most of this design
+exists to keep the measurement honest.</p>
+<hr />
+<h2 id="2-what-already-exists">2. What already exists</h2>
+<table>
+<thead>
+<tr>
+<th>Need</th>
+<th>Existing piece</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Score one prompt against a question set, fact by fact</td>
+<td><code>archi qa</code> (prepare → run → score): the judge marks each reference fact ("atom") entailed / missing / contradicted; an answer passes only if every required atom is entailed</td>
+<td><code>src/cli/qa_eval.py</code>, <code>src/evaluation/qa/</code>, <code>docs/docs/evaluation.md</code></td>
+</tr>
+<tr>
+<td>Test a prompt with no redeploy</td>
+<td><code>--agent-spec &lt;file.md&gt;</code> reads the prompt file directly</td>
+<td><code>src/cli/qa_eval.py</code></td>
+</tr>
+<tr>
+<td>Grade every run against the <em>same</em> atoms</td>
+<td><code>archi qa prepare</code> extracts atoms once into a run directory; each run copies that snapshot (the pattern <code>qa_prepare.sh --sweep</code> and <code>qa_arm.sh --sweep</code> use)</td>
+<td><code>scripts/benchmarking/feature_matrix/qa_prepare.sh</code>, <code>qa_arm.sh:80</code></td>
+</tr>
+<tr>
+<td>Stack, corpus and code guards</td>
+<td><code>fm_require_stack_name</code>, <code>fm_require_pinned_corpus</code>, <code>fm_code_tree</code>, <code>fm_fingerprint</code>, <code>fm_ledger_append</code></td>
+<td><code>scripts/benchmarking/feature_matrix/lib.sh</code></td>
+</tr>
+<tr>
+<td>Hash-and-verify inputs</td>
+<td><code>sweep_tools.py lock / verify</code> hashes every input of a <strong>fixed</strong> arm set</td>
+<td><code>scripts/benchmarking/feature_matrix/sweep_tools.py</code></td>
+</tr>
+<tr>
+<td>Paired significance test</td>
+<td><code>paired_tests.paired_binary</code>: exact McNemar over two pass/fail maps keyed by question. <code>compare_runs.py</code> is <strong>not</strong> reused for the verdict: it needs benchmark artifacts as positional arms (this loop makes none), and its <code>completion</code> test pairs <code>status == "ok"</code>, not QA pass outcomes</td>
+<td><code>scripts/benchmarking/paired_tests.py:47</code></td>
+</tr>
+<tr>
+<td>Per-question QA pass outcome</td>
+<td><code>summary.json</code> → <code>items[].item_pass_rate</code> (1.0 or 0.0 at one attempt)</td>
+<td><code>archi qa</code> run directory</td>
+</tr>
+<tr>
+<td>Repeat each question</td>
+<td><code>archi qa --attempts N</code></td>
+<td><code>src/cli/qa_eval.py</code></td>
+</tr>
+<tr>
+<td>Answer-side <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> metrics</td>
+<td><code>factual_correctness_recall</code>, <code>factual_correctness_precision</code>, <code>noise_sensitivity</code>, <code>answer_accuracy</code>, <code>response_groundedness</code> (added alongside this proposal)</td>
+<td><code>src/utils/benchmark_schema.py</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Not reusable as is: <code>qa_arm.sh --sweep</code>.</strong> It hard-codes <code>--attempts 1</code>
+(<code>qa_arm.sh:87</code>), and it runs only a prompt already in the sweep lock
+(<code>qa_arm.sh:62</code>). The lock hashes every arm's prompt (<code>sweep_tools.py:224</code>), and the stack
+is stamped with the sha256 of the lock file itself (<code>lib.sh:376</code>). A prompt written
+mid-campaign is not in the lock, editing a locked prompt fails <code>verify</code>, and adding an
+arm changes the lock's hash and breaks the stamp, which costs a redeploy. The loop
+therefore has its own runner (§3.4, §4) built from the same <code>lib.sh</code> guards.</p>
+<p>One <code>archi evaluate</code> stack is ingested once (about 50–67 minutes); after that, every
+prompt arm is just an <code>archi qa</code> run against that stack's database. Cost per arm
+is dominated by answer time: about 48 s per question (<code>categories-action-plan.md:67</code>).</p>
+<hr />
+<h2 id="3-design">3. Design</h2>
+<h3 id="31-two-question-sets">3.1 Two question sets</h3>
+<table>
+<thead>
+<tr>
+<th>Set</th>
+<th>Size</th>
+<th>Who sees it</th>
+<th>Used for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Tuning</strong></td>
+<td>10</td>
+<td>the optimizer: questions, missed atoms, judge notes, retrieved text, answers</td>
+<td>every iteration's keep/revert decision</td>
+</tr>
+<tr>
+<td><strong>Holdout</strong></td>
+<td>the other 99</td>
+<td>nobody during iteration; the driver only reports its pass count after a confirmation</td>
+<td>the significance verdict</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Why the holdout is the other 99 and not 30.</strong> Each confirmation tests at
+α = 0.05 / 3 ≈ 0.0167 (§3.5). With an exact McNemar test on paired pass/fail, a
+30-question holdout needs at least +7 net flips (+23 percentage points) with no
+question broken. That is a larger gain than a prompt edit plausibly delivers. On 99
+questions, about +10 net flips (+10 points) is enough, for example 12 questions fixed
+and 2 broken (two-sided p ≈ 0.013). The test counts both directions, so churn costs
+power: 12 fixed and 3 broken is +9 and gives p ≈ 0.035, which passes at 0.05 but not
+at 0.0167. A confirmation run costs about
+80 minutes at one attempt; it runs only when a candidate has already cleared the tuning
+bar.</p>
+<h3 id="32-choosing-the-ten">3.2 Choosing the ten</h3>
+<p>From the most recent baseline QA run on the current stack:</p>
+<ol>
+<li>Take every question that <strong>failed</strong> (at least one required atom not entailed).</li>
+<li>For each missed atom, ask the same atom judge whether the atom is entailed by the
+   <strong>retrieved text</strong> (the concatenated <code>tool_calls[*].response</code> for that attempt)
+   rather than by the answer. The judge already exists; only its input changes.</li>
+<li>A question is <strong>prompt-fixable</strong> if every missed atom was present in what was
+   retrieved. Rank these by how often they fail across attempts.</li>
+<li>Tuning set = <strong>7 prompt-fixable failures + 3 currently passing canaries.</strong> The
+   canaries catch regressions inside the loop, before a confirmation run is spent.</li>
+<li>Record the selection and each question's classification in the campaign ledger.</li>
+</ol>
+<p>A set built as "the ten hardest" would mostly be retrieval misses, and the loop would
+spend its night on changes that cannot help.</p>
+<h3 id="33-step-0-measure-the-noise">3.3 Step 0: measure the noise</h3>
+<p>Run the <strong>unchanged</strong> production prompt three times on the tuning set
+(<code>run_arm.sh --set tuning --attempts 5</code>, pinned atoms), then once on the holdout
+(<code>--set holdout --attempts 1</code>). Record:</p>
+<ul>
+<li>per-question pass-rate spread across the three tuning runs (how often a question
+  flips with nothing changed);</li>
+<li>sigma of the tuning-set mean atom score across the three runs. This is the noise
+  floor the keep/revert rule uses;</li>
+<li>the holdout baseline pass count (the confirmation reference).</li>
+</ul>
+<p>About 2 hours for the three tuning replicates (40 minutes each at one run worker)
+plus about 80 minutes for the holdout: roughly 3 h 20 min in all.</p>
+<h3 id="34-one-iteration">3.4 One iteration</h3>
+<pre><code>1. Read    failure dossier for the tuning set only:
+           question · missed atoms · judge verdict per atom · retrieved text · answer
+2. Propose ONE hypothesis and ONE prompt change that tests it, logged to the ledger:
+           {iteration, hypothesis, targeted atoms/questions, diff}
+3. Check   the spec loads (load_agent_spec) and passes the leak check (§3.6)
+4. Run     prompt_opt/run_arm.sh --campaign &lt;dir&gt; --prompt arms/&lt;stem&gt;.md
+                                 --set tuning --attempts 5          (10 q × 5 attempts)
+5. Decide  keep if  Δ mean atom score (tuning) &gt; 2σ_noise
+                and no canary lost more than 1 of its 5 attempts' passes
+           else revert; log the result either way
+</code></pre>
+<p>About 40 minutes per iteration at one run worker. Ten iterations fit in a night.</p>
+<p>The optimizer works from the <strong>current best</strong> prompt, so kept changes stack up. A
+reverted hypothesis stays in the ledger so it is not retried under a new name.</p>
+<h3 id="35-confirmation-and-stopping">3.5 Confirmation and stopping</h3>
+<p>When a kept prompt beats the baseline on the tuning set by more than 2σ, and at least
+three iterations have passed since the last confirmation:</p>
+<ol>
+<li>Run it on the holdout: <code>run_arm.sh --set holdout --attempts 1</code> (pinned atoms).</li>
+<li><code>holdout_test.py &lt;baseline-run-dir&gt; &lt;candidate-run-dir&gt; --look &lt;k&gt;</code> (§4). It pairs
+   the two runs' <code>items[].item_pass_rate</code> by <code>item_id</code>, so a completed but wrong
+   answer counts as a failure. Then it runs <code>paired_tests.paired_binary</code> (exact
+   McNemar) and appends <code>{look, b, c, p}</code> to the campaign ledger. It refuses runs with
+   more than one attempt, differing item sets, or a <code>k</code> that is not the next look in
+   the ledger.</li>
+<li><strong>Significant (p &lt; 0.05 / 3) and positive:</strong> stop and report.
+   <strong>Otherwise:</strong> continue iterating. The holdout pass count is reported to the
+   operator but not fed back to the optimizer.</li>
+</ol>
+<p><strong>Multiplicity.</strong> The alpha of 0.05 is split before the campaign starts: each of the
+at most three looks tests at 0.05 / 3 (Bonferroni). The chance of any false positive
+across the campaign is then at most 0.05, for any number of looks up to three and any
+correlation between them, and a campaign that stops early spends no more. Holm is not
+used across looks: it ranks p-values that all exist at the same time, and a campaign
+that stops at a significant look never produces the later ones. The Holm correction
+inside <code>compare_runs.py</code> covers only the secondary tests of one call.</p>
+<p><strong>Hard stops:</strong> at most <strong>3 confirmations</strong> per campaign (the per-look alpha is
+fixed at 0.05 / 3, so a fourth look has no alpha left), at most <strong>12 iterations</strong>, or
+<strong>4 consecutive reverts</strong>.</p>
+<p><strong>After a significant result</strong>, one more step guards against the winner's curse (the
+best of several tries tends to overstate its own gain): a fresh replicate of both
+prompts on the holdout, plus a full <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> golden-set run with the answer-side metrics
+enabled. The expected signature of a real prompt improvement is
+<code>factual_correctness_recall</code> up, <code>noise_sensitivity</code> flat or down, and the <code>context_*</code>
+metrics roughly flat. The agent writes its own search queries, so if the context
+metrics move, the prompt changed retrieval too, and the report must say so.</p>
+<h3 id="36-rules-the-optimizer-must-follow">3.6 Rules the optimizer must follow</h3>
+<ul>
+<li><strong>One hypothesis per change</strong>, written down before the run.</li>
+<li><strong>No reference content in the prompt.</strong> A leak check compares each new prompt with
+  the frozen atoms and reference answers of <strong>all 109</strong> questions and refuses the arm if
+  new text shares any 6-word run, URL, path, or numeric value with them. Tokens
+  already in the baseline prompt, and the docs site root
+  (<code>docs.rc.fas.harvard.edu</code>), are allowlisted; otherwise any added link would trip
+  it, since references cite that site. General
+  guidance ("list every required module, not only the first") is allowed; facts ("the
+  default partition is <code>shared</code>") are not.</li>
+<li><strong>Never see the holdout.</strong> The driver gives the optimizer tuning-set dossiers only.</li>
+<li><strong>Prompt edits only.</strong> No config, retrieval or code changes; those belong to the
+  feature-matrix process.</li>
+<li><strong>Every arm locked, append-only.</strong> The campaign lock (§4) is written once, before
+  step 0. It pins the code tree, the stack, the corpus, the judge profile, the baseline
+  prompt, and the two prepared atom snapshots (tuning and holdout). It pins no
+  candidate prompt, so it never changes and the stack stamp stays valid. Each
+  candidate prompt is a new file <code>arms/&lt;stem&gt;.md</code>. The runner appends its sha256 to the
+  ledger before the run and refuses a stem already in the ledger. After the run, it
+  checks the file again and voids the run if the hash changed. A prompt file is never
+  edited in place: the next change is the next stem.</li>
+</ul>
+<h3 id="37-preconditions-checked-by-the-driver-before-step-0">3.7 Preconditions (checked by the driver before step 0)</h3>
+<ul>
+<li>The stack's corpus fingerprint matches its pin (<code>fm_require_pinned_corpus</code>, the check
+  <code>qa_arm.sh</code> already uses).</li>
+<li>The <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> endpoint named by the stack's config is up and <strong>reserved for the
+  campaign</strong>. A shared endpoint changes latency, and a model swap changes everything.</li>
+<li>Host eval environment pinned: <code>transformers==4.57.6</code>, <code>sentence-transformers==5.1.2</code>.
+  Without them every attempt silently fails with exit code 0.</li>
+<li>Judge key present (<code>HUIT_API_KEY_FILE</code>). Atoms prepared once per set: one
+  <code>archi qa prepare</code> on the 10-item tuning dataset and one on the 99-item holdout
+  dataset. The sets do not overlap, so each question's atoms are extracted exactly once.
+  <code>archi qa run</code> has no item filter, and a prepared directory carries its item
+  count in its manifest, so a full-bank snapshot cannot be cut down to a subset.</li>
+<li>No <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> run and no other QA run on the same stack for the duration.</li>
+</ul>
+<hr />
+<h2 id="4-what-gets-built">4. What gets built</h2>
+<p>Small and test-first. Everything in §2 is reused as is.</p>
+<table>
+<thead>
+<tr>
+<th>Piece</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scripts/benchmarking/prompt_opt/select_tuning_set.py</code></td>
+<td>§3.2: classify failures as retrieval vs generation using the atom judge on retrieved text; emit the 10-item QA dataset and the 99-item holdout</td>
+</tr>
+<tr>
+<td><code>scripts/benchmarking/prompt_opt/leak_check.py</code></td>
+<td>§3.6: refuse a prompt that shares 6-grams, URLs, paths or numbers with any reference</td>
+</tr>
+<tr>
+<td><code>scripts/benchmarking/prompt_opt/holdout_test.py</code></td>
+<td>§3.5: paired exact McNemar over two holdout QA runs' per-item pass outcomes, at the per-look alpha 0.05 / 3; each look appended to the ledger</td>
+</tr>
+<tr>
+<td><code>scripts/benchmarking/prompt_opt/decide.py</code></td>
+<td>§3.4/§3.5: the keep/revert rule, the confirmation trigger and the stop rules, reading <code>summary.json</code> and the ledger</td>
+</tr>
+<tr>
+<td><code>scripts/benchmarking/prompt_opt/dossier.py</code></td>
+<td>§3.4 step 1: one failure dossier per tuning question from <code>evaluation_results.jsonl</code></td>
+</tr>
+<tr>
+<td><code>scripts/benchmarking/prompt_opt/lock_campaign.py</code></td>
+<td>§3.6: write the campaign lock once (code tree, stack, corpus pin, judge profile, baseline prompt, both prepared snapshots); <code>verify</code> re-hashes all of it</td>
+</tr>
+<tr>
+<td><code>scripts/benchmarking/prompt_opt/run_arm.sh</code></td>
+<td>§3.4: one QA run of one prompt file: <code>--campaign &lt;dir&gt; --prompt &lt;file&gt; --set tuning\|holdout --attempts N</code>. It uses the <code>lib.sh</code> guards as <code>qa_arm.sh --sweep</code> does, verifies the campaign lock, copies the chosen prepared snapshot, and passes <code>--attempts N</code> to <code>archi qa run</code>. It also applies the append-only prompt rule of §3.6</td>
+</tr>
+<tr>
+<td><code>scripts/benchmarking/prompt_opt/run_campaign.sh</code></td>
+<td>Driver: preconditions → step 0 → iterate → confirm, calling <code>run_arm.sh</code></td>
+</tr>
+<tr>
+<td>Optimizer brief (skill <code>archi-prompt-optimize</code>)</td>
+<td>The instructions the Claude session follows each iteration: read the dossier, write one hypothesis, edit the prompt, log it, never read the holdout</td>
+</tr>
+</tbody>
+</table>
+<p>The optimizer runs as a Claude Code session driven one iteration at a time (a <code>/loop</code>
+or a systemd timer, like the nightly jobs). The deterministic parts (running, deciding,
+leak checking) are scripts with unit tests; only "read the failures and propose an
+edit" is the model's job.</p>
+<p><strong>Campaign state</strong> lives in <code>bench_out/banks/golden/prompt-opt/&lt;campaign&gt;/</code>:
+<code>ledger.jsonl</code> (one line per iteration), <code>arms/&lt;stem&gt;.md</code>, the tuning and holdout
+datasets, and each run's QA output. That is where the golden-set report already lives,
+and it keeps archi itself free of run artifacts.</p>
+<hr />
+<h2 id="5-cost">5. Cost</h2>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Stack ingest (once, if no locked stack exists)</td>
+<td>50–67 min</td>
+</tr>
+<tr>
+<td>Step 0: 3 tuning replicates + 1 holdout baseline</td>
+<td>~3 h 20 min</td>
+</tr>
+<tr>
+<td>Each iteration (10 q × 5 attempts)</td>
+<td>~40 min</td>
+</tr>
+<tr>
+<td>Each confirmation (99 q × 1 attempt)</td>
+<td>~80 min</td>
+</tr>
+<tr>
+<td>A 12-iteration campaign with 3 confirmations (after step 0)</td>
+<td>~12 h (8 h iterating + 4 h confirming)</td>
+</tr>
+<tr>
+<td>Whole campaign including step 0</td>
+<td>~15–16 h, about two nights</td>
+</tr>
+</tbody>
+</table>
+<p>Judge cost scales with atoms judged. The five new <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> metrics are used only in the
+final <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> confirmation, not in the loop.</p>
+<hr />
+<h2 id="6-risks">6. Risks</h2>
+<table>
+<thead>
+<tr>
+<th>Risk</th>
+<th>Mitigation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Overfitting to ten questions</td>
+<td>Holdout verdict; leak check; one hypothesis per change</td>
+</tr>
+<tr>
+<td>Judge noise read as signal</td>
+<td>Step-0 noise floor; pinned atoms; 5 attempts per tuning question</td>
+</tr>
+<tr>
+<td>Too many looks at the holdout</td>
+<td>Maximum 3 confirmations, each at the preallocated alpha 0.05 / 3; holdout scores never reach the optimizer</td>
+</tr>
+<tr>
+<td>Prompt quietly changes retrieval</td>
+<td>Report <code>context_*</code> movement in the final <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> run</td>
+</tr>
+<tr>
+<td>Gains that don't survive a replicate (winner's curse)</td>
+<td>Fresh replicate of both prompts before adoption</td>
+</tr>
+<tr>
+<td>Stack or <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> drift mid-campaign</td>
+<td>Campaign-lock <code>verify</code> around every run; corpus pin check before and after each run in <code>run_arm.sh</code></td>
+</tr>
+<tr>
+<td>A prompt changes after its run</td>
+<td>Append-only prompt files; hash in the ledger before the run, checked again after it</td>
+</tr>
+<tr>
+<td>The optimizer tunes the prompt for the judge rather than for users</td>
+<td>Atoms are fixed facts, not style; a human reads the final diff before adoption</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7-release-plan-judgment">7. Release-plan judgment</h2>
+<p>This is operator-driven evidence work: the output is a measured prompt change, not a
+feature. Following the precedent set by the in-context-learning proposal, the tracking
+issue is labelled <code>evidence-trial</code>, so it is milestone-exempt and nightly automation
+never schedules or drains it. A winning prompt is adopted through the normal path: a PR
+that changes the deployed agent spec, citing the campaign ledger and the <code>holdout_test.py</code>
+verdict as evidence.</p>
+<h2 id="8-decisions-taken-as-defaults-operator-may-override">8. Decisions taken as defaults (operator may override)</h2>
+<ul>
+<li><strong>Holdout size:</strong> all 99 remaining questions (see §3.1 for why 30 is too small).</li>
+<li><strong>Win metric:</strong> pass rate on the holdout decides (McNemar); the mean atom score is
+  the tuning signal inside the loop; the answer-side <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> metrics are corroboration.</li>
+<li><strong>Tuning set composition:</strong> 7 prompt-fixable failures + 3 passing canaries.</li>
+</ul>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

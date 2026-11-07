@@ -104,6 +104,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -155,6 +159,19 @@
 </code></pre>
 <p>Generate tokens via <code>POST /api/users/me/api-token</code>.</p>
 <p>When authentication is disabled, no token is required.</p>
+<h2 id="local-callers-only">Local callers only</h2>
+<pre><code class="language-yaml">services:
+  chat_app:
+    openai_compat:
+      local_only: true   # turns /v1 on, for local callers only; leave `enabled` unset
+</code></pre>
+<p><code>local_only: true</code> turns <code>/v1</code> on by itself. Do not also set <code>enabled: true</code>: a chat app older than this setting reads only <code>enabled</code>, so with <code>local_only</code> alone it keeps <code>/v1</code> off instead of serving it to the network.</p>
+<p>With <code>local_only: true</code>, <code>/v1</code> answers only a request whose TCP peer is a loopback address (<code>127.0.0.0/8</code> or <code>::1</code>) and that carries no proxy forwarding header (<code>Forwarded</code>, <code>X-Forwarded-For</code>, <code>X-Forwarded-Host</code>, <code>X-Real-IP</code>). Every other request gets HTTP 403 with <code>{"error": {"type": "permission_error", ...}}</code>, before authentication and before request validation. The rest of the chat app is not affected.</p>
+<p>Use it to turn on <code>/v1</code> for a client on the same host — the <a href="../services/#slack-interface">Slack service</a> in host mode — on a deployment with authentication off, without opening a model API to the network. In container (bridge) mode the Slack container is not a loopback caller, so use authentication there instead.</p>
+<div class="admonition warning">
+<p class="admonition-title">A same-host reverse proxy</p>
+<p>A proxy on the same host connects from loopback. The gate refuses a request that carries a forwarding header, but a proxy that forwards to <code>/v1</code> and adds none would pass it. Do not route <code>/v1</code> through such a proxy on a <code>local_only</code> deployment.</p>
+</div>
 <h2 id="endpoints">Endpoints</h2>
 <h3 id="get-v1models">GET /v1/models</h3>
 <p>List available archi configurations as OpenAI model objects.</p>
@@ -233,9 +250,11 @@
     &quot;prompt_tokens&quot;: 0,
     &quot;completion_tokens&quot;: 0,
     &quot;total_tokens&quot;: 0
-  }
+  },
+  &quot;archi_message_id&quot;: 42
 }
 </code></pre>
+<p><code>archi_message_id</code> is the integer primary key of the stored conversation message for this answer. It is <code>null</code> when the chat app did not store a message (for example, if the database insert failed). Standard OpenAI clients ignore this field. The Slack bot uses it to link feedback button clicks back to the answer row.</p>
 <p><strong>Streaming response:</strong></p>
 <p>Each event is an SSE line:</p>
 <pre><code>data: {&quot;id&quot;:&quot;chatcmpl-abc123&quot;,&quot;object&quot;:&quot;chat.completion.chunk&quot;,&quot;created&quot;:1700000000,&quot;model&quot;:&quot;my_archi&quot;,&quot;choices&quot;:[{&quot;index&quot;:0,&quot;delta&quot;:{&quot;content&quot;:&quot;RAG&quot;},&quot;finish_reason&quot;:null}]}

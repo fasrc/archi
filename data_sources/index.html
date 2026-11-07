@@ -182,6 +182,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -246,6 +250,14 @@
 <pre><code>https://example.com/page1
 https://example.com/page2
 </code></pre>
+<p>A list that is missing, is not a regular file, or cannot be read (for example,
+permission denied, or bytes that are not UTF-8) does not stop <code>archi create</code> or a
+scrape. Archi logs a WARNING that names the list, skips that list, and continues
+with the other lists. A successful deploy therefore does not prove that every
+configured list was ingested: look for <code>could not be copied</code>, <code>could not be read</code>,
+<code>not a readable file</code>, or <code>not found</code> in the deploy and data-manager logs. While a list is
+skipped, a scheduled refresh or a later full ingest keeps the sitemap <code>&lt;lastmod&gt;</code>
+timestamps it already has instead of discarding them.</p>
 <h3 id="customizing-the-scraper">Customizing the Scraper</h3>
 <p>You can tune HTTP scraping behaviour:</p>
 <pre><code class="language-yaml">data_manager:

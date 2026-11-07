@@ -84,6 +84,8 @@
         <ul>
     <li class="toctree-l3"><a class="reference internal" href="#how-it-works">How It Works</a>
     </li>
+    <li class="toctree-l3"><a class="reference internal" href="#deployment-and-knowledge-base-provenance">Deployment and Knowledge Base provenance</a>
+    </li>
     <li class="toctree-l3"><a class="reference internal" href="#severity-levels">Severity Levels</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#creating-and-deleting-alerts">Creating and Deleting Alerts</a>
@@ -138,9 +140,17 @@
     </li>
         </ul>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#grafana-monitoring">Grafana Monitoring</a>
+    <li class="toctree-l2"><a class="reference internal" href="#slack-interface">Slack Interface</a>
         <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#prerequisites">Prerequisites</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#slack-app-manifest">Slack app manifest</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#answer-feedback">Answer feedback</a>
+    </li>
     <li class="toctree-l3"><a class="reference internal" href="#configuration_5">Configuration</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#access-limits">Access limits</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#secrets_3">Secrets</a>
     </li>
@@ -148,15 +158,25 @@
     </li>
         </ul>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#grader-interface">Grader Interface</a>
+    <li class="toctree-l2"><a class="reference internal" href="#grafana-monitoring">Grafana Monitoring</a>
         <ul>
-    <li class="toctree-l3"><a class="reference internal" href="#requirements">Requirements</a>
-    </li>
     <li class="toctree-l3"><a class="reference internal" href="#configuration_6">Configuration</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#secrets_4">Secrets</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#running_5">Running</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#grader-interface">Grader Interface</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#requirements">Requirements</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#configuration_7">Configuration</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#secrets_5">Secrets</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#running_6">Running</a>
     </li>
         </ul>
     </li>
@@ -193,6 +213,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
                 </li>
               </ul>
               <ul>
@@ -285,7 +309,37 @@
 <li><strong>Active Alerts</strong> — non-expired alerts with severity badges, creator, and timestamp</li>
 <li><strong>Expired Alerts</strong> — historical record shown at reduced opacity</li>
 <li><strong>Post New Alert form</strong> — visible only to configured alert managers</li>
+<li><strong>Deployment</strong> and <strong>Knowledge Base</strong> panels — which config is deployed and how the corpus was built; see <a href="#deployment-and-knowledge-base-provenance">Deployment and Knowledge Base provenance</a></li>
 </ul>
+<h3 id="deployment-and-knowledge-base-provenance">Deployment and Knowledge Base provenance</h3>
+<p>Two panels at the top of <code>/ssb/status</code> show where the running service came from. Both are read from Postgres. If a record cannot be read, the panel says it is unavailable and the alert sections still render.</p>
+<p><strong>Deployment panel</strong> (newest row of <code>deployment_record</code>, written by each deploy):</p>
+<ul>
+<li><strong>Config pin</strong> — the config ref and short commit SHA that the deploy was pinned to, with one of three verdicts:<ul>
+<li><strong>✓ matches pin</strong> — the deploy recorded that the config checkout was the pinned commit, with no tracked edits.</li>
+<li><strong>pin verdict not recorded</strong> — the deploy recorded no verdict (for example a hand-run <code>archi create</code>). This is not a claim that the config is clean, and not a claim that it was edited.</li>
+<li><strong>⚠ live-edited config</strong> — a warning box shown when there is evidence the running config is not the pin. It says "The deployed config is not the pinned commit." only when the deploy recorded a mismatch. It lists the tracked files edited on top of the pin (first 5, then "… N more").</li>
+</ul>
+</li>
+<li><strong>Deployed HEAD</strong> — shown only with the live-edited warning: the commit the config checkout was actually on.</li>
+<li><strong>App version</strong> and <strong>Deployed</strong> — the archi version and the deploy time (UTC).</li>
+</ul>
+<p>If no record exists, the panel says "Deployment provenance unavailable — recorded from the next deploy onward."</p>
+<p><strong>Knowledge Base panel</strong> (newest <em>successful</em> row of <code>ingest_run</code>, status <code>updated</code> or <code>up_to_date</code>):</p>
+<ul>
+<li><strong>Last ingest</strong> — start time, end time (UTC), and duration of that run.</li>
+<li><strong>Documents</strong> — embedded, failed, and pending counts at the end of that run.</li>
+<li><strong>Chunks</strong> — the chunk count for the active collection only (chunks tagged with that collection, plus untagged chunks). Rows recorded before this rule counted chunks from every collection.</li>
+<li><strong>Ingest configuration (as used at ingest)</strong> — the ingest settings saved with that run, such as chunking, embedding model, and <strong>embedding dimensions</strong>. With no <code>dimensions</code> set in <code>embedding_class_map</code>, the recorded dimension is the model's default (1536 for <code>OpenAIEmbeddings</code>, 384 for <code>HuggingFaceEmbeddings</code> and unknown models). Rows recorded before this rule stored 384 for every model. For a row without <code>embedding_dimensions_explicit</code>, a change from 384 to the model's default is not reported as drift. Runs recorded after <a href="https://github.com/fasrc/archi/issues/654">#654</a> also save <code>embedding_dimensions_explicit</code>, which says whether <code>dimensions</code> was set; for those runs every change of the dimension is reported as drift. On a run without that field, an explicit <code>dimensions: 384</code> that was later removed still does not show as drift until the next ingest.</li>
+<li><strong>⚠ configuration changed after this ingest</strong> — the running config differs from the saved one. Each changed setting is listed with its value now and at ingest.</li>
+</ul>
+<p>Unknown and failure states:</p>
+<ul>
+<li><strong>Current configuration unavailable — drift not evaluated.</strong> The running config could not be read, so no drift check was done. This does not mean there is no drift.</li>
+<li><strong>⚠ the most recent ingest attempt failed at …</strong> — a failed run is newer than the run shown. The counts and config are from the last successful run, but the failed attempt may have changed the live corpus (deletions and partial additions are committed as they happen).</li>
+<li><strong>No successful ingest run recorded</strong> — no successful run exists yet. If a failed attempt exists, its time is shown below.</li>
+</ul>
+<p>Values are recorded when a deploy or ingest runs. A row written before a rule above existed keeps its old value until the next deploy or ingest.</p>
 <h3 id="severity-levels">Severity Levels</h3>
 <table>
 <thead>
@@ -530,22 +584,138 @@ MATTERMOST_CHANNEL_ID_WRITE=...
 <pre><code class="language-bash">archi create [...] --services chatbot,mattermost
 </code></pre>
 <hr />
+<h2 id="slack-interface">Slack Interface</h2>
+<p>A Slack bot that answers <code>@archi</code> mentions in channels and direct messages, in the Slack thread of the question. The bot is a thin client of the chat app: it sends each question, with the earlier messages of its thread, to the chat app's <a href="../api-reference-v1/"><code>/v1/chat/completions</code></a> endpoint. It loads no model and needs no GPU.</p>
+<ul>
+<li>One archi conversation for each Slack thread. A follow-up in the same thread continues it.</li>
+<li>The bot connects to Slack in Socket Mode, an outbound websocket, so the deployment needs no public URL.</li>
+<li>The bot posts a short placeholder at once and replaces it with the answer and its sources.</li>
+</ul>
+<h3 id="prerequisites">Prerequisites</h3>
+<ol>
+<li><strong>Turn on the <code>/v1</code> API</strong> in the chat app: <code>services.chat_app.openai_compat.enabled: true</code>. The Slack service checks <code>GET /v1/models</code> at start-up and stops with an error if <code>/v1</code> does not answer. On a host-mode deployment with authentication off, set <code>local_only: true</code> instead of <code>enabled: true</code>, so <code>/v1</code> answers only the bot on the same host (see <a href="../api-reference-v1/#local-callers-only">Local callers only</a>).</li>
+<li><strong>Create the Slack app.</strong> A Slack workspace admin creates it from the <a href="#slack-app-manifest">app manifest</a> below (api.slack.com → Your Apps → Create New App → From a manifest), then installs it in the workspace.</li>
+<li><strong>Get the two tokens.</strong> In the app settings, Basic Information → App-Level Tokens → create a token with the scope <code>connections:write</code>: this is <code>SLACK_APP_TOKEN</code> (<code>xapp-…</code>). OAuth &amp; Permissions → Bot User OAuth Token: this is <code>SLACK_BOT_TOKEN</code> (<code>xoxb-…</code>).</li>
+<li><strong>Invite the bot</strong> to each channel where it must answer (<code>/invite @archi</code>). If you set <code>allowed_channels</code>, invite it only to the listed channels: the bot leaves every other channel (see <a href="#access-limits">Access limits</a>).</li>
+</ol>
+<h3 id="slack-app-manifest">Slack app manifest</h3>
+<p>The bot needs <code>app_mentions:read</code> and <code>message.im</code> to receive questions, <code>chat:write</code> to answer, and the four <code>*:history</code> scopes to read the earlier messages of a thread (<code>mpim:history</code> covers threads in group DMs). The <a href="#access-limits">access limits</a> use <code>users:read</code> to find guests and external users, and <code>channels:read</code>, <code>groups:read</code>, <code>mpim:read</code>, <code>channels:manage</code>, <code>groups:write</code> and <code>mpim:write</code> to list and leave channels and group DMs outside <code>allowed_channels</code>. After you add scopes to an installed app, reinstall it in the workspace.</p>
+<pre><code class="language-yaml">_metadata:
+  major_version: 1
+display_information:
+  name: archi
+features:
+  bot_user:
+    display_name: archi
+    always_online: false
+  app_home:
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+      - users:read
+      - channels:read
+      - groups:read
+      - channels:manage
+      - groups:write
+      - mpim:read
+      - mpim:write
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.im
+      - member_joined_channel
+  interactivity:
+    is_enabled: true
+  socket_mode_enabled: true
+  org_deploy_enabled: false
+  is_hosted: false
+  token_rotation_enabled: false
+</code></pre>
+<div class="admonition warning">
+<p class="admonition-title">Keep the Slack app internal</p>
+<p>Do not distribute the app outside your workspace. Slack limits <code>conversations.replies</code>, which the bot uses to read a thread, to 1 request per minute for apps distributed outside the Slack Marketplace. Internal apps get Tier 3 limits.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Who can ask</p>
+<p>By default, every user who can message the bot can query the knowledge base. This includes guests and, through Slack Connect, users from other organizations. Set <code>internal_users_only: true</code> to limit the bot to full members of your workspace (see <a href="#access-limits">Access limits</a>). All Slack questions use one archi identity; the bot log records the Slack user ID of each question.</p>
+</div>
+<h3 id="answer-feedback">Answer feedback</h3>
+<p>After each stored answer the bot posts <strong>Helpful</strong> and <strong>Not helpful</strong> buttons in the same thread. A <strong>Helpful</strong> click records one row in the <code>feedback</code> table. A <strong>Not helpful</strong> click opens a modal where the user can flag the answer as incorrect, unhelpful, or inappropriate, and leave an optional comment; the row is recorded when the user submits the form. A cancelled form records nothing.</p>
+<p>The app needs <strong>Interactivity &amp; Shortcuts</strong> turned on in the Slack app settings (already included in the manifest above). No Request URL is required — the bot uses Socket Mode, so all interactive payloads arrive over the same outbound websocket. No new OAuth scope is needed beyond <code>chat:write</code>.</p>
+<p>Each <strong>Helpful</strong> click and each submitted <strong>Not helpful</strong> form appends one row to the <code>feedback</code> table; there is no per-user deduplication column. To filter Slack ratings, join <code>feedback</code> to <code>conversations</code> on <code>message_id</code>, then join <code>conversations</code> to <code>conversation_metadata</code> on <code>conversation_id</code>, and match <code>external_chat_id</code> against the Slack thread key format <code>slack:&lt;team_id&gt;:&lt;channel&gt;:&lt;thread_ts&gt;</code> (see <code>thread_key()</code> in <code>src/interfaces/slack_bot.py</code>). A Slack retry of one click with a valid <code>action_ts</code>, or a retry of one form submission whose <strong>Not helpful</strong> click had a valid <code>action_ts</code>, stores one row — the duplicate is detected by primary key and silently ignored. The <code>feedback_ts</code> of a dislike row records the time of the <strong>Not helpful</strong> click, not the form submission. A <strong>Helpful</strong> click without a valid <code>action_ts</code> falls back to the server time and is not protected against a Slack retry storing a second row. The same applies to a form submission whose <code>private_metadata</code> carries no valid click time: a form opened before this release (metadata is only the message ID) or opened from a click without a valid <code>action_ts</code>.</p>
+<h3 id="configuration_5">Configuration</h3>
+<pre><code class="language-yaml">services:
+  chat_app:
+    openai_compat:
+      enabled: true                 # or, host mode + auth off: local_only: true alone
+  slack:
+    chat_url: http://chatbot:7861   # default: the chatbot container, or localhost in host mode
+    timeout_seconds: 600            # longest wait for one answer
+    max_workers: 4                  # Slack threads answered at the same time
+    history_limit: 20               # earlier thread messages sent with a question (0 = none)
+    internal_users_only: false      # true = answer full workspace members only
+    allowed_channels: []            # channel IDs the bot may stay in ([] or null = any)
+    external_user_text: null        # notice for a rejected user (null = built-in text)
+</code></pre>
+<p>All seven keys are optional. Questions in one thread are answered one at a time, in order; different threads run in parallel up to <code>max_workers</code>.</p>
+<h3 id="access-limits">Access limits</h3>
+<p>Two keys limit who can use the bot and where. Both are off by default.</p>
+<p><strong><code>internal_users_only: true</code></strong> answers only full members of the workspace where the app is installed. The bot looks up each sender with <code>users.info</code> and rejects these users:</p>
+<ul>
+<li>users of another workspace, for example in a Slack Connect channel or DM;</li>
+<li>multi-channel guests (<code>is_restricted</code>) and single-channel guests (<code>is_ultra_restricted</code>);</li>
+<li>deactivated accounts (<code>deleted</code>);</li>
+<li>a user that <code>users.info</code> cannot find. This user gets the general error reply, because the user can be internal.</li>
+</ul>
+<p>The bot looks up the sender for each question and keeps no result, so a member who becomes a guest loses access at the next question. On Enterprise Grid, a member of another workspace in the same enterprise is internal. A rejected user gets <code>external_user_text</code> as an ephemeral reply, which only that user can see. The reply goes in the thread of the question if the question is in a thread, else in the channel or DM: Slack does not show an ephemeral reply that starts a new thread. The bot sends no question to archi for that user, and it stores no feedback click from that user. When an internal user asks in a thread, the bot also drops the earlier thread messages of rejected users, so their words do not reach archi as context.</p>
+<p><strong><code>allowed_channels</code></strong> is a list of channel IDs, for example <code>[C0C8TS7H8BV, C0BTTAFE4ET]</code>. The bot answers mentions only in these channels. At start-up it leaves each channel that is not on the list. When someone adds it to an unlisted channel, it leaves at the first mention there, or at the next start-up if nobody mentions it. Slack does not tell a bot about its own join into a channel, so the bot cannot leave before that. Slack does not let a bot leave the workspace's general channel. If the bot is in that channel and the channel is not on the list, the bot stays a member, logs the <code>cant_leave_general</code> error, and still answers no mention there. Group DMs obey the list. Direct messages to the bot are not channels, so the list does not apply to them. Only <code>[]</code> or <code>null</code> turns the limit off. A value with no channel IDs in it, such as a blank string, <code>false</code> or <code>{}</code>, stops the bot at start-up with an error. In the same way, <code>internal_users_only</code> must be <code>true</code>, <code>false</code> or <code>null</code>: a quoted <code>"false"</code> stops the bot with an error. To find a channel ID, open the channel details in Slack. The ID is at the bottom of the About tab.</p>
+<pre><code class="language-yaml">services:
+  slack:
+    internal_users_only: true
+    allowed_channels:
+      - C0C8TS7H8BV
+      - C0BTTAFE4ET
+</code></pre>
+<h3 id="secrets_3">Secrets</h3>
+<pre><code class="language-bash">SLACK_BOT_TOKEN=xoxb-...
+SLACK_APP_TOKEN=xapp-...
+# Required only when services.chat_app.auth.enabled is true:
+ARCHI_API_TOKEN=archi_...
+</code></pre>
+<p>When chat authentication is on, <code>/v1</code> needs a bearer token. Create one with <code>POST /api/users/me/api-token</code> (see the <a href="../api-reference-v1/">/v1 API reference</a>) as the archi user that Slack questions run as. <code>archi create</code> refuses to deploy the Slack service without it.</p>
+<div class="admonition warning">
+<p class="admonition-title">Turning on chat authentication later</p>
+<p>If you turn on <code>services.chat_app.auth.enabled</code> on a deployment that already runs the Slack service, add <code>ARCHI_API_TOKEN</code> to the secrets file, then run <code>archi create --force</code> with the same services. <code>archi restart --service chatbot</code> does not give the token to the Slack container, and the bot then gets HTTP 401 for each question.</p>
+</div>
+<h3 id="running_4">Running</h3>
+<pre><code class="language-bash">archi create [...] --services chatbot,slack
+</code></pre>
+<hr />
 <h2 id="grafana-monitoring">Grafana Monitoring</h2>
 <p>Monitor system performance and <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> usage with a pre-configured Grafana dashboard.</p>
 <p><strong>Default port:</strong> <code>3000</code></p>
 <blockquote>
 <p><strong>Note:</strong> If redeploying with an existing name (without removing volumes), the PostgreSQL Grafana user may not have been created. Deploy a fresh instance to avoid issues.</p>
 </blockquote>
-<h3 id="configuration_5">Configuration</h3>
+<h3 id="configuration_6">Configuration</h3>
 <pre><code class="language-yaml">services:
   grafana:
     external_port: 3000
 </code></pre>
-<h3 id="secrets_3">Secrets</h3>
+<h3 id="secrets_4">Secrets</h3>
 <pre><code class="language-bash">PG_PASSWORD=&lt;your_database_password&gt;
 GRAFANA_PG_PASSWORD=&lt;grafana_db_password&gt;
 </code></pre>
-<h3 id="running_4">Running</h3>
+<h3 id="running_5">Running</h3>
 <pre><code class="language-bash">archi create [...] --services chatbot,grafana
 </code></pre>
 <p>After deployment, access Grafana at <code>your-hostname:3000</code>. The default login is <code>admin</code>/<code>admin</code> — you'll be prompted to change the password on first login. Navigate to <strong>Menu → Dashboards → Archi → Archi Usage</strong> for the main dashboard.</p>
@@ -565,7 +735,7 @@ GRAFANA_PG_PASSWORD=&lt;grafana_db_password&gt;
 <li><strong><code>solution_with_rubric_*.txt</code></strong>: One file per problem, named with the problem number. Begins with the problem name and a line of dashes.</li>
 <li><strong><code>admin_password.txt</code></strong>: Admin code for resetting student attempts (passed as a secret).</li>
 </ul>
-<h3 id="configuration_6">Configuration</h3>
+<h3 id="configuration_7">Configuration</h3>
 <pre><code class="language-yaml">services:
   grader_app:
     provider: local
@@ -581,10 +751,10 @@ GRAFANA_PG_PASSWORD=&lt;grafana_db_password&gt;
   chat_app:
     trained_on: &quot;rubrics, class info, etc.&quot;
 </code></pre>
-<h3 id="secrets_4">Secrets</h3>
+<h3 id="secrets_5">Secrets</h3>
 <pre><code class="language-bash">ADMIN_PASSWORD=your_password
 </code></pre>
-<h3 id="running_5">Running</h3>
+<h3 id="running_6">Running</h3>
 <pre><code class="language-bash">archi create [...] --services grader
 </code></pre>
 <!--

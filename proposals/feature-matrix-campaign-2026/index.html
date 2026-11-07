@@ -104,6 +104,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -148,6 +152,9 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="feature-matrix-benchmark-campaign-2026-09">Feature-matrix benchmark campaign (2026-09)</h1>
+<blockquote>
+<p><strong>Results:</strong> the final cross-arm report is <a href="../../feature_matrix_results_2026_09/"><code>feature_matrix_results_2026_09.md</code></a> (written 2026-09-11). This document is the protocol and the operating log.</p>
+</blockquote>
 <p><strong>Status:</strong> adopted 2026-09-03 (operator decision, recorded on
 <a href="https://github.com/fasrc/archi/issues/396">#396</a>). This document is the campaign plan
 for issue #396 and the runbook for every arm. It is complete when every arm in
@@ -178,7 +185,7 @@ four metric families. The four families and where each comes from:</p>
 <tr>
 <td>Accuracy, gold atoms</td>
 <td>atom score, required-atom recall, pass rate</td>
-<td><code>archi eval qa</code> (the QA evaluator, CLI form)</td>
+<td><code>archi qa</code> (the QA evaluator, CLI form)</td>
 </tr>
 <tr>
 <td>Time to result</td>
@@ -222,13 +229,13 @@ that the ledger records per run.</p>
 </tr>
 <tr>
 <td>Agent prompt</td>
-<td><code>config/agents/claw/fasrc-docs.md</code> — byte-identical to the GPU host's production spec (<code>deploy/fasrc-dev/agents/fasrc-docs.md</code>)</td>
+<td><code>config/agents/claw/fasrc-docs.md</code> — byte-identical to the GPU host's production spec (<code>deploy/fasrc-dev/agents/fasrc-docs.md</code>). <strong>Made true on 2026-09-04</strong>: the host previously served <code>fasrc-v2.md</code> (name <code>FASRC</code>, <code>search_vectorstore_hybrid</code> only), which was retired to <code>agents/archive/</code>; production now serves this file, verified by a live cited answer</td>
 <td>sha256 <code>ac22702a…4ce8</code></td>
 </tr>
 <tr>
 <td>System under test</td>
-<td><abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> <code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code> at <code>http://archi.rc.fas.harvard.edu:8001/v1</code>, <code>temperature: 0.3</code>, <code>enable_thinking: false</code>, <code>context_window: 32768</code></td>
-<td>recorded in <code>config_version.key_settings</code></td>
+<td><abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> <code>palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4</code> at <code>http://archi.rc.fas.harvard.edu:8001/v1</code>, <code>temperature: 0.3</code>, <code>enable_thinking: false</code>, <code>context_window: 32768</code>. <strong>The 32768 was not actually configured until 2026-09-04:</strong> every arm YAML omitted <code>services.chat_app.context_editing</code>, which <code>base-config.yaml</code> emits only when declared, so the arms would have run with NO in-loop bound (<code>No in-loop context limit installed</code>, observed in the smoke) while production ships 32768. The block was added to all nine arms pre-lock, matching production byte for byte</td>
+<td>recorded in <code>config_version.key_settings</code>; the lock's <code>sut.context_editing</code> is the check — it read <code>null</code> before the fix</td>
 </tr>
 <tr>
 <td>Judge, both evaluators</td>
@@ -247,12 +254,12 @@ that the ledger records per run.</p>
 </tr>
 <tr>
 <td>Code</td>
-<td>one <code>dev</code> SHA for the whole campaign; <code>~/Projects/archi</code> is pulled to it before arm 00</td>
+<td>one <code>dev</code> SHA for the whole campaign; <code>/home/a2rchi/archi-openai-compat</code> is pulled to it before arm 00</td>
 <td><code>metadata.code_version.digest</code>, identical on every artifact</td>
 </tr>
 <tr>
 <td>Host</td>
-<td>this workstation (claw); every stack runs <code>--hostmode</code> on Postgres 5434 and data-manager 7882</td>
+<td><strong>holygpu7c0717</strong> (<code>archi.rc.fas.harvard.edu</code>), the production <code>dev</code> GPU host — operator decision 2026-09-04, a deviation from the original claw plan (§10). Every stack runs <code>--hostmode</code> on Postgres 5434 and data-manager 7882, which are free here; the production <code>dev</code> stack (7861) and both <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> servers (8001/8002) stay up alongside</td>
 <td>—</td>
 </tr>
 </tbody>
@@ -505,10 +512,29 @@ runs (n = 108–109), same prompt caveat as above:</p>
    or latency is itself a finding and gets an issue proposing the cheaper setting.</li>
 </ol>
 <h2 id="5-protocol-per-arm">5. Protocol per arm</h2>
-<p>All commands run from <code>~/Projects/archi</code> (so <code>config/...</code> and <code>examples/...</code> resolve),
+<p>All commands run from <code>/home/a2rchi/archi-openai-compat</code> (so <code>config/...</code> and <code>examples/...</code> resolve),
 with <code>~/miniforge3/envs/archi</code> on <code>PATH</code>, the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> VPN up, and the judge key in the env
-file: <code>RAGAS_ENV_FILE=/home/austin/.archi/archi-ragas-205/.env</code>. The wrappers under
+file: <code>RAGAS_ENV_FILE=/home/a2rchi/.archi/.env.benchmark</code>. The wrappers under
 <code>scripts/benchmarking/feature_matrix/</code> are one step each; the runbook is this section.</p>
+<p><strong>Paging (#504).</strong> A wrapper can mail the operator when it stops after long unattended
+work. Set <code>FM_PAGE_MAIL_TO</code> to the recipient; it is empty by default, and empty means
+paging is off. <code>FM_MAIL</code> names the mail binary (default <code>mail</code>, called as
+<code>mail -s &lt;subject&gt; &lt;recipient&gt;</code> with the message on stdin). These exits page: the
+<code>archive_run.sh</code> refusals after the run finished (an arm artifact that fails any check in
+§5.1, live document and chunk counts that cannot be read, and a sweep artifact that fails
+its archive checks) and the two <code>qa_arm.sh</code> corpus-drift exits (the corpus changed during
+the QA run, for a normal arm or a sweep arm).
+The subject names the stack and the arm; the body carries the refusal reason. The exit
+code (2) and the terminal message do not change. Precondition refusals (a bad arm label,
+a missing file, a dirty checkout) fail before any long work starts and never page. The
+<code>qa_arm.sh</code> refusal of a run that scored nothing (§5.3) comes after long work but does not
+page either; it exits 2 with no ledger row. A
+failing mail binary prints <code>feature_matrix: page failed</code> and does not change the exit.
+A mail binary that does not return in <code>FM_MAIL_TIMEOUT</code> seconds (default 60; a zero or
+non-numeric value also gives 60, because <code>timeout 0</code> means no bound) is stopped
+and counts as a failure. On a host without <code>timeout</code> but with <code>sleep</code>, a watchdog gives the
+same bound (a fractional value is rounded up to whole seconds). On a host with neither, the
+page is still sent, with no bound.</p>
 <h3 id="51-ingest-arm-00-02-03-04-06-07">5.1 Ingest arm (00, 02, 03, 04, 06, 07)</h3>
 <pre><code class="language-bash">ARM=03; YAML=config/benchmarking/feature_matrix/03-categorization-off.yaml
 scripts/benchmarking/feature_matrix/run_arm.sh $ARM $YAML            # archi evaluate -n fm-$ARM -c $YAML --hostmode
@@ -516,7 +542,7 @@ scripts/benchmarking/feature_matrix/run_arm.sh $ARM $YAML            # archi eva
 scripts/benchmarking/feature_matrix/archive_run.sh $ARM 1 $YAML --wait  # proves the artifact ran this arm on one corpus; appends ledger.json, writes the corpus pin
 scripts/benchmarking/feature_matrix/run_arm.sh $ARM --rerun          # benchmark container only, same corpus → run 2
 scripts/benchmarking/feature_matrix/archive_run.sh $ARM 2 $YAML
-scripts/benchmarking/feature_matrix/qa_arm.sh $ARM $YAML             # archi eval qa against the same stack (§5.3)
+scripts/benchmarking/feature_matrix/qa_arm.sh $ARM $YAML             # archi qa against the same stack (§5.3)
 archi delete --name fm-$ARM --rmi --rmv                              # after archive_run.sh confirmed both artifacts
 </code></pre>
 <p><strong>Arm 00 is the exception to this block.</strong> The opening baseline gets THREE <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> runs
@@ -577,7 +603,7 @@ rebuilt.</p>
    <code>HUIT_API_KEY_FILE=$STACK/secrets/huit_api_key.txt</code>, <code>OPENAI_API_KEY=EMPTY</code>, <code>HOST_MODE=1</code>:</li>
 </ol>
 <p><code>bash
-   archi eval qa \
+   archi qa \
      --dataset bench_out/feature_matrix/qa/fasrc_ragas_queries.qa-v2.json \
      --agent-config bench_out/feature_matrix/qa/$ARM.agent-config.yaml \
      --agent-spec config/agents/claw/fasrc-docs.md \
@@ -589,14 +615,25 @@ rebuilt.</p>
    and arm, so the closing baseline's QA run lands as <code>fm-00-arm00-r2</code> beside the opening
    <code>r1</code>. The dataset is the bank + anchors converted once per
    campaign with <code>ragas_bank_to_qa_dataset.py</code> (<a href="https://github.com/fasrc/archi/issues/418">#418</a>);
-   its item ids are content-derived, and <code>compare_runs.py</code> joins them to the <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> rows.
+   its item ids are content-derived, and <code>compare_runs.py</code> joins them to the <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> rows.</p>
+<p>After <code>archi qa</code> returns, the wrapper re-reads the corpus fingerprint (a moved
+   corpus refuses and pages; see Paging above). Then it reads <code>summary.json</code> in the output
+   directory. If that file is missing, is not valid JSON, or its
+   <code>attempt_lifecycle_counts.scored</code> is not a whole number above 0, the wrapper exits 2
+   with <code>QA run scored nothing …</code> (or <code>no …/summary.json</code>, or <code>… is not readable JSON</code>)
+   and <code>the run is void</code>. It keeps the output directory for diagnosis, writes <strong>no</strong>
+   ledger row, and does <strong>not</strong> page
+   (<a href="https://github.com/fasrc/archi/issues/434">#434</a>). A run that scored nothing is not
+   an observation, so exit 2 here is never a success. To repeat the run, start <code>qa_arm.sh</code>
+   again without <code>--run</code>: the kept directory holds its number, so the new run takes the
+   next one. The sweep form (<code>qa_arm.sh --sweep</code>) applies the same check.
 3. Optional, for the console's trend graphs: copy the run directory under claw's
    <code>~/.archi/archi-claw/data/evaluations/runs/</code> (root-owned; <code>sudo</code>). The console lists
    every run directory it finds, so all arms appear side by side in its history view.</p>
 <h2 id="6-order">6. Order</h2>
 <ol>
 <li><strong>Phase 0</strong> (<a href="#12-prerequisites-phase-0">§12</a>) complete: five PRs on <code>dev</code>, disk
-   reclaimed, config checkout on the new pin, <code>~/Projects/archi</code> pulled to the campaign SHA.</li>
+   reclaimed, config checkout on the new pin, <code>/home/a2rchi/archi-openai-compat</code> pulled to the campaign SHA.</li>
 <li><strong>Smoke</strong>: every wrapper requires a lock, so lock the smoke inputs first —
    <code>lock_campaign.sh &lt;smoke copy of 00-baseline.yaml pointing at a 3-question bank&gt; --qa-dataset &lt;its converted bank&gt;</code> —
    then run <code>fm-smoke</code> through every wrapper, <code>compare_runs.py</code> on its artifact against
@@ -662,7 +699,7 @@ time of day across arms where possible, and the ledger records start and end tim
 <tr>
 <td>Same corpus for a retrieval arm</td>
 <td>G3</td>
-<td><code>corpus_fingerprint</code> equal to the baseline pin. The wrappers compute the live fingerprint with the harness's own <code>CORPUS_STATE_QUERY</code> and <code>corpus_fingerprint</code> routine (documents, chunks, parent nodes; sha256), run inside the stack's data-manager container, so the pin taken from an artifact and the live check are one digest</td>
+<td><code>corpus_fingerprint</code> equal to the baseline pin. The wrappers compute the live fingerprint with the shared <code>live_corpus_fingerprint</code> routine in <code>benchmark_provenance.py</code> (fingerprint v2, prefix <code>sha256/v2:</code>: scoped to the searched collection; its chunks, the documents that own them, and the parent nodes they reference), run inside the stack's data-manager container, so the pin taken from an artifact and the live check are one digest. A v1 pin never equals a v2 digest, so re-pin after the deploy that ships v2</td>
 </tr>
 <tr>
 <td>Different corpus for an ingest arm is declared</td>
@@ -722,7 +759,12 @@ time of day across arms where possible, and the ledger records start and end tim
 <tr>
 <td>The QA corpus held for the whole run</td>
 <td>G3</td>
-<td><code>qa_arm.sh</code> re-reads the fingerprint after <code>archi eval qa</code> returns and writes no row if it moved</td>
+<td><code>qa_arm.sh</code> re-reads the fingerprint after <code>archi qa</code> returns and writes no row if it moved</td>
+</tr>
+<tr>
+<td>A QA run that scored nothing is void</td>
+<td>#434</td>
+<td><code>qa_arm.sh</code> writes no row unless the run's <code>summary.json</code> records <code>attempt_lifecycle_counts.scored</code> &gt; 0; it keeps the output directory and exits 2</td>
 </tr>
 </tbody>
 </table>
@@ -803,6 +845,7 @@ questions × (extraction + judgment) on HUIT Bedrock.</p>
 <thead>
 <tr>
 <th>Arm</th>
+<th>FUT — feature under test (<code>key: baseline → arm</code>)</th>
 <th>Runs</th>
 <th>Fingerprint</th>
 <th>Ingest (s)</th>
@@ -816,113 +859,123 @@ questions × (extraction + judgment) on HUIT Bedrock.</p>
 <tbody>
 <tr>
 <td>00</td>
-<td>—</td>
-<td>—</td>
-<td>—</td>
-<td>—</td>
+<td>— <em>(reference)</em></td>
+<td>3 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> + <strong>3 QA</strong></td>
+<td><code>sha256:fc8ee1b5…</code></td>
+<td>4959.9</td>
+<td>6926 (1091 docs)</td>
 <td>reference</td>
 <td>—</td>
-<td>—</td>
-<td>—</td>
+<td>ingest 82.7 min on a quiet host. <strong>Gold-atom noise floor (QA r1/r2/r3):</strong> pass rate 0.440 / 0.398 / 0.454 (σ 0.024, s 0.029); atom score 0.499 / 0.454 / 0.483 (σ 0.018, s 0.023); required-atom recall 0.630 / 0.604 / 0.611 (σ 0.011, s 0.014); atoms contradicted 47 / 70 / 52 on identical setups</td>
+<td><code>benchmarking-fm-00-20260905_{001802,024701,053600}.json</code>; QA <code>qa/fm-00-arm00-r{1,2,3}</code></td>
 </tr>
 <tr>
 <td>01</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td><code>retrievers.hierarchical_rerank.enabled: true → false</code></td>
+<td>2 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> + 1 QA</td>
+<td><code>sha256:fc8ee1b5…</code> (= 00)</td>
+<td>n/a (re-seed)</td>
+<td>6926</td>
+<td><code>context_precision</code> −0.0253 / −0.0095 (MDE 0.063)</td>
+<td><strong>no measurable difference on the primary metric</strong> — the <abbr title="Architecture Decision Record — a short doc capturing one hard-to-reverse decision and why.">ADR</abbr> 0003 "+19 % <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr>" claim is NOT reproduced. Trade-off: <code>context_recall</code> −0.072 / −0.052, consistent in both runs and opposite in sign to the baseline's own replicate spread (+0.021 / +0.016)</td>
+<td><strong>latency ~halved</strong>: 48.2 s → 24.2 / 28.8 s mean, p90 100.9 → 36.8 / 58.3 s. Gold atoms higher — <strong>outside 2σ of the three-run baseline floor on all three metrics</strong>: pass rate 0.523 vs 0.431 ± 0.024 (+0.092, 2σ 0.047), atom score 0.591 vs 0.479 ± 0.018 (+0.112, 2σ 0.037), required-atom recall 0.737 vs 0.615 ± 0.011 (+0.122, 2σ 0.023). One arm-side QA run, so this is one draw 3–5σ from the floor, not a paired test</td>
+<td><code>benchmarking-fm-00-20260906_{054238,073529}.json</code>; QA <code>qa/fm-00-arm01-r1</code>; report <code>reports/arm-01.md</code></td>
 </tr>
 <tr>
 <td>02</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td><code>chunking.strategy: sentence → character</code> <strong>+</strong> <code>retrievers.hierarchical_rerank.enabled: true → false</code> (two keys, pre-registered: character chunks carry no <code>parent_id</code>)</td>
+<td>2 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> + 1 QA</td>
+<td><code>sha256:d7417a68…</code> (own corpus, ingest arm)</td>
+<td>4863.5</td>
+<td>7177 (1091 docs; +3.6 % vs 6926)</td>
+<td><code>context_precision</code> −0.0698 / −0.0730 (MDE 0.0806 / 0.0820)</td>
+<td><strong>held constant on the primary metric, but only just</strong> — both deltas sit within 0.01 of a wide MDE (per-question deltas vary a lot when chunking changes). <code>context_recall</code> <strong>−0.183 / −0.218 REGRESSED</strong> (MDE 0.069 / 0.073) — the largest regression in the campaign; arm 01 isolated the rerank-off half at −0.072 / −0.052, so character chunking on its own costs roughly another −0.13 recall. Source accuracy 0.877 → 0.840 / 0.840 — <strong>but see the corpus control (§13.5 09:50): a same-config fresh-corpus run scores 0.8585, so ~⅔ of this drop is the corpus change, leaving ≈ −0.019 attributable to the arm.</strong> Arm 01 (same corpus) was unchanged. <code>faithfulness</code> / <code>answer_relevancy</code> inside MDE</td>
+<td>Latency 48.2 → 28.2 / 25.0 s (≈ arm 01's 24.2 / 28.8: the speed-up is the rerank-off half; chunking strategy is latency-neutral). Blowouts 4 / 3 (baseline 6–11). Ingest 4863.5 s ≈ baseline 4959.9 s. <strong>Gold atoms IMPROVED outside 2σ on all three</strong> — pass rate 0.537 (+0.106, 2σ 0.047), atom score 0.570 (+0.091, 2σ 0.037), required-atom recall 0.715 (+0.100, 2σ 0.023) — and within ~0.02 of arm 01's values, so the atom gain is rerank-off's, not the chunking's. Procedure B: σ is the baseline corpus's, applied as an estimate. QA scored 108 (one non-scored, §13.2 #16)</td>
+<td><code>benchmarking-fm-02-20260908_{042141,061046}.json</code>; QA <code>qa/fm-02-arm02-r1</code>; report <code>reports/arm-02.md</code></td>
 </tr>
 <tr>
 <td>03</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td><code>processing.categorization.enabled: true → false</code></td>
+<td>2 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> + 1 QA</td>
+<td><code>sha256:570ccaa8…</code> (own corpus, ingest arm)</td>
+<td><strong>3802.3</strong> (−23 % vs 4959.9)</td>
+<td><strong>6896</strong> (1091 docs; <strong>−30 vs baseline 6926/6928 — caused by the FUT, not by scrape variation</strong>. <code>node_parsing.py:120-121</code> hands the document's metadata to a metadata-aware splitter, whose effective chunk size is <code>chunk_size − len(tokenize(metadata_str))</code> (<code>SentenceSplitter.split_text_metadata_aware</code>). Removing <code>llm_category</code> frees ~8 tokens per document (measured: effective child chunk 472 → 480), so boundaries shift and slightly fewer chunks are produced. <strong>A real, feature-caused corpus difference — legitimately part of what this arm tests, not a confound and not noise.</strong> Contrast arm 04 (chunking-neutral by construction): −7)</td>
+<td><code>context_precision</code> −0.0138 / −0.0232 (MDE 0.0247 / 0.0269)</td>
+<td><strong>held constant on the primary metric; no consistent effect anywhere.</strong> <code>context_recall</code> −0.043 REGRESSED (MDE 0.041) / −0.031 held (MDE 0.036) — a borderline dip, one run just outside; <code>faithfulness</code> / <code>answer_relevancy</code> inside MDE; source accuracy 0.877 → 0.868 / 0.840 — <strong>−0.005 against the fresh-corpus control (0.8585), i.e. no effect</strong> (§13.5 09:50). Gold atoms: pass rate −0.023 held, atom score +0.019 held, required-atom recall <strong>+0.038 IMPROVED</strong> (2σ 0.023) — one of three, positive, so no coherent atom direction. This is the outcome the 2026-09-01 code audit predicted: <code>metadata.llm_category</code> is write-only (<code>processing.py:475</code>), read by no retriever, prompt or embedding path, so the feature cannot move retrieval — the residual wobble is corpus-to-corpus noise (Procedure B)</td>
+<td><strong>The whole effect is cost: ingest 19 min faster</strong> with no per-document categorization call (~1080 <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> calls saved per ingest). Latency 48.2 → 48.7 / 51.5 s (flat). Blowouts 6 / 5 (baseline 6–11), tool calls per normal question 3.69 / 4.39 (baseline 3.69). QA scored 108</td>
+<td><code>benchmarking-fm-03-20260908_{104423,132337}.json</code>; QA <code>qa/fm-03-arm03-r1</code>; report <code>reports/arm-03.md</code></td>
 </tr>
 <tr>
 <td>04</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td><code>retrievers.stemming.enabled: false → true</code></td>
+<td>2 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> + 1 QA</td>
+<td><code>sha256:95574702…</code> (own corpus, ingest arm)</td>
+<td>5001.4 (≈ baseline)</td>
+<td>6919 (1091 docs; <strong>−7 vs the baseline pair 6926/6928 — and stemming is chunking-neutral by construction</strong>: <code>manager.py:842-848</code> stems each child string <em>after</em> <code>build_hierarchical_nodes</code> has already split it, so the only way it can change the count is the <code>if not child.strip(): continue</code> drop of a chunk that stems to nothing. That makes arm 04 the campaign's control for scrape-to-scrape variation, and it is small)</td>
+<td><strong>primary for this arm is <code>context_recall</code> (§4.4, pre-reg):</strong> −0.052 REGRESSED (MDE 0.040) / −0.029 held (MDE 0.055) vs the opening baseline; <strong>−0.032 / −0.015 re-based on the contemporaneous Sep 9 baseline → no measurable difference</strong>. Secondary <code>context_precision</code> <strong>−0.1035 / −0.0979 REGRESSED</strong> (MDE 0.0557 / 0.0578); −0.091 / −0.088 re-based</td>
+<td><strong>NO MEASURABLE DIFFERENCE on the primary metric (<code>context_recall</code>); <code>context_precision</code> REGRESSED as a secondary effect</strong> — <em>correction 2026-09-11: an earlier version of this row called precision the primary for arm 04; the pre-registration fixes <code>context_recall</code> for this arm, and the final report uses that.</em> Precision is the first metric any arm moved: both runs, ~1.6–2× the MDE, 0.63 → 0.53. Source accuracy 0.877 → 0.849 / 0.840 — <strong>−0.014 against the fresh-corpus control (0.8585), largely the corpus, not stemming</strong> (§13.5 09:50). <code>faithfulness</code> / <code>answer_relevancy</code> inside MDE. Gold atoms all held (pass rate −0.018, atom score −0.005, required-atom recall +0.010): retrieval got noisier, the answers did not get worse. Procedure B: σ is the baseline corpus's, applied as an estimate</td>
+<td>Latency 48.2 → 52.0 / 51.0 s; per normal question 34.3 → 37.0 / 44.0 s; <strong>tool calls per normal question 3.69 → 4.32 / 4.72</strong> — the agent searches more when stemming is on, consistent with noisier first-pass results. Blowouts 10 / 7 (baseline 6–11). Ingest flat. QA scored 109</td>
+<td><code>benchmarking-fm-04-20260908_{190046,213459}.json</code>; QA <code>qa/fm-04-arm04-r1</code>; report <code>reports/arm-04.md</code></td>
 </tr>
 <tr>
 <td>05a</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td><code>retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 3</code></td>
+<td>2 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> + 1 QA</td>
+<td><code>sha256:fc8ee1b5…</code> (= 00)</td>
+<td>n/a (re-seed)</td>
+<td>6926</td>
+<td><code>context_precision</code> −0.0141 / −0.0054 (MDE 0.0225 / 0.0214)</td>
+<td><strong>held constant on the primary metric, but the arm is worse.</strong> <code>context_recall</code> −0.0872 / −0.0611 REGRESSED in both runs, against a baseline replicate spread of the opposite sign (+0.021 / +0.016); source accuracy 0.877 → 0.792 on both runs (106 scored). <code>faithfulness</code> −0.0513 / −0.0548 straddles its MDE (inside on run 1, outside on run 2) — reported as the null on run 1, so no faithfulness claim. Judged on <code>context_precision</code> alone this arm reads as a wash; it is not</td>
+<td><strong>no latency payoff</strong>: 48.2 s → 55.1 / 45.8 s mean (p90 100.9 → 149.9 / 113.7), i.e. retrieving fewer documents did not buy speed. Gold atoms <strong>inside 2σ of the three-run baseline floor</strong> on all three metrics (atom score 0.482 vs 0.479 ± 0.018; pass rate 0.431 vs 0.431; required-atom recall 0.622 vs 0.615) — no atom effect</td>
+<td><code>benchmarking-fm-00-20260906_{112444,134950}.json</code>; QA <code>qa/fm-00-arm05a-r1</code>; report <code>reports/arm-05a.md</code></td>
 </tr>
 <tr>
 <td>05b</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td><code>retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 8</code></td>
+<td>2 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> + 1 QA</td>
+<td><code>sha256:fc8ee1b5…</code> (= 00)</td>
+<td>n/a (re-seed)</td>
+<td>6926</td>
+<td><code>context_precision</code> −0.0135 / −0.0128 (MDE 0.0178 / 0.0168)</td>
+<td><strong>held constant on the primary metric; the arm is better on retrieval.</strong> <code>context_recall</code> +0.0604 <strong>IMPROVED</strong> (MDE 0.0417) / +0.0276 held (MDE 0.0418) — same sign both runs and same sign as the baseline's own replicate spread (+0.021 / +0.016), so read the second run as a real but sub-MDE lift. <strong>Source accuracy 0.877 → 0.962 / 0.953</strong> — the largest clean effect in the campaign so far, in both runs. <code>faithfulness</code> +0.028 / +0.035 inside MDE; <code>answer_relevancy</code> flat</td>
+<td><strong>latency flat</strong>: 48.2 s → 47.2 / 47.2 s mean (p90 100.9 → 126.5 / 74.4); per normal question 34.3 → 35.0 / 38.7 s; blowouts 7 / 4 (baseline 6–11). Gold atoms <strong>down</strong> from ONE QA run: passed 48 → 45, atom score 0.499 → 0.457, required-atom recall 0.630 → 0.603 — over <strong>108</strong> scored, one item <code>preparation_failed</code> (§13.2 #16); <strong>inside 2σ of the three-run baseline floor</strong> on all three metrics (atom score 0.457 vs 0.479 ± 0.018, Δ −0.022 vs 2σ 0.037; pass rate −0.014 vs 0.047; required-atom recall −0.012 vs 0.023) — the apparent atom drop was noise</td>
+<td><code>benchmarking-fm-00-20260906_{175600,203046}.json</code>; QA <code>qa/fm-00-arm05b-r1</code>; report <code>reports/arm-05b.md</code></td>
 </tr>
 <tr>
 <td>06</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td><code>processing.html_to_markdown.enabled: true → false</code></td>
+<td>1 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> (<strong>refused</strong>), 0 QA</td>
+<td><code>sha256:e67eb9f0…</code> (own corpus)</td>
+<td>4932.8</td>
+<td>n/a</td>
+<td>n/a</td>
+<td><strong>UNTESTABLE</strong> — the config renderer turns <code>enabled: false</code> into <code>True</code> (§13.2 #19, <a href="https://github.com/fasrc/archi/issues/448">fasrc/archi#448</a>); <code>archive_run.sh</code> refused run 1 at 2026-09-08 23:04 after 3 h 45 m. Operator decision: drop from this campaign, fix + re-run under a new lock with a same-lock baseline. The refused artifact is a baseline-configuration run on a third fresh corpus and is used in the final report only as a corpus control (§13.5 09:50 / 12:55)</td>
+<td>ingest 4932.8 s (≈ baseline)</td>
+<td>unarchived <code>benchmarking-fm-06-20260909_030421.json</code>; <code>evidence/fm-06-rendered-config.yaml</code>, <code>evidence/fm-06-compose.yaml</code></td>
 </tr>
 <tr>
 <td>07</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td><code>chunking.strategy: sentence → markdown</code></td>
+<td>2 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> + 1 QA</td>
+<td><code>sha256:e7ed322f…</code> (own corpus, ingest arm)</td>
+<td>5165.8 (≈ baseline)</td>
+<td><strong>10733</strong> (1091 docs; <strong>+55 %</strong> vs 6926 — header-aware chunking makes many more, smaller chunks)</td>
+<td><code>context_precision</code> <strong>−0.1006 / −0.1093 REGRESSED</strong> (MDE 0.0721 / 0.0745)</td>
+<td><strong>REGRESSED on the primary metric in both runs</strong> (0.63 → 0.52) and <code>context_recall</code> <strong>−0.160 / −0.160 REGRESSED</strong> (MDE 0.081 / 0.070). Source accuracy 0.877 → 0.849 / 0.849 — <strong>−0.009 against the fresh-corpus control (0.8585), i.e. no real effect</strong> (§13.5 09:50). <code>faithfulness</code> / <code>answer_relevancy</code> inside MDE (both slightly up). <strong>Gold atoms up:</strong> atom score <strong>+0.072 IMPROVED</strong> (2σ 0.037), required-atom recall <strong>+0.077 IMPROVED</strong> (2σ 0.023), pass rate +0.046 just inside its 2σ (0.047). Procedure B: σ is the baseline corpus's. <strong>Same signature as arm 01 (rerank off):</strong> <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> retrieval-side metrics down, answer-side atoms up, latency down, agent searches far less — consistent with the smaller-context mechanism (§13.5 13:05 entry): markdown sections are smaller parents, so each call hands the model less text</td>
+<td><strong>Latency 48.2 → 29.1 / 31.0 s</strong> (per normal question 34.3 → 24.4 / 29.7); <strong>tool calls per normal question 3.69 → 2.27 / 2.26; one-search completions 17 → 66 / 68 of 109</strong>; blowouts 4 / 1 (baseline 6–11). Ingest flat. QA scored 109</td>
+<td><code>benchmarking-fm-07-20260909_{062810,082735}.json</code>; QA <code>qa/fm-07-arm07-r1</code>; report <code>reports/arm-07.md</code></td>
 </tr>
 <tr>
 <td>00 (closing)</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td>drift check</td>
-<td></td>
-<td></td>
+<td>— <em>(reference, drift check)</em></td>
+<td>1 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> + 1 QA</td>
+<td><code>sha256:137e41c1…</code> (<strong>new corpus</strong>, <code>--new-corpus</code> re-pin; opening was <code>fc8ee1b5…</code>)</td>
+<td>4974.4</td>
+<td>6928 (1091 docs; opening 6926 — <strong>same-config scrape reproducibility is ±2</strong>)</td>
+<td>n/a (this IS a baseline)</td>
+<td><strong>Drift check: the harness held, the corpus moved.</strong> Identical config, 4 days later. <code>context_precision</code> 0.6135 → 0.6198 (+0.006, stable); <strong><code>context_recall</code> 0.8846 → 0.8637 (−0.021)</strong> and <strong><code>faithfulness</code> 0.5541 → 0.5873 (+0.033)</strong>, both beyond the opening within-corpus 2σ. The independent fm-06 run (same config, third corpus, same day) lands at 0.8653 / 0.5936 — <strong>the two Sep 9 corpora agree to 0.0016 on recall</strong>, so this is a real content change in the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> docs between Sep 5 and Sep 9, not scrape jitter. <code>answer_relevancy</code> 0.6966 → 0.6667 with 84–96 of 109 scored (§13.2 #20 — unusable). <strong>Consequence: ingest arms (Sep 8–9) are judged against a contemporaneous baseline, retrieval arms against the opening one</strong></td>
+<td><strong>Gold atoms drifted less than <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> did:</strong> QA <code>r4</code> scored <strong>109/109</strong> (the only baseline QA run with no non-scored item), pass rate 0.4037, atom score 0.4639, required-atom recall 0.6130 — all within the opening 3-run 2σ. Contradicted atoms 72 vs 47/70/52 opening. Adding r4 gives a <strong>4-run atom floor</strong> (pass 0.4240 ± 0.0236, atom 0.4750 ± 0.0172, req-recall 0.6145 ± 0.0099) spanning two corpora, which every arm's atoms are now judged against</td>
+<td><code>benchmarking-fm-00-20260909_&lt;run4&gt;.json</code>; QA <code>qa/fm-00-arm00-r4</code></td>
 </tr>
 </tbody>
 </table>
@@ -935,6 +988,13 @@ questions × (extraction + judgment) on HUIT Bedrock.</p>
   ingest stack before the next.</li>
 <li><strong>Port collision.</strong> The <code>archi-ragas-205</code> stack holds 5433/7881; the campaign uses
   5434/7882, so it can stay until the operator decides otherwise.</li>
+<li><strong>Co-location with production (host deviation).</strong> The arms share this box with the
+  production <code>dev</code> stack and both <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> servers. Ingest and embedding are CPU-side and
+  the embedder is pinned <code>device: cpu</code>, so the GPUs stay with <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> — but Time to Result
+  and Time to Ingest carry whatever else the host is doing. Latency is comparable
+  across arms only because every arm pays the same tax; it is not comparable with claw
+  numbers or with the 2026-08 runs. Artifacts do not record the host (<a href="https://github.com/fasrc/archi/issues/433">#433</a>),
+  so the ledger records it by hand.</li>
 <li><strong>Sources change under the campaign.</strong> The closing baseline detects it via
   <code>corpus_fingerprint</code>; the pre-registration records the bank blob hash so bank edits are
   detectable too. All 105 bank rows are <code>draft</code> (no <code>source_hashes</code>), so the drift
@@ -942,7 +1002,7 @@ questions × (extraction + judgment) on HUIT Bedrock.</p>
 <li><strong>Parent-row accumulation</strong> (<a href="https://github.com/fasrc/archi/issues/411">#411</a>) does
   not apply: every ingest arm is a fresh stack with one ingest.</li>
 <li><strong>The deploy clone is the code.</strong> <code>~/miniforge3/envs/archi</code> is an editable install of
-  <code>~/Projects/archi</code>; <code>archi evaluate</code> builds images from that tree. It must sit on the
+  <code>/home/a2rchi/archi-openai-compat</code>; <code>archi evaluate</code> builds images from that tree. It must sit on the
   campaign SHA for the whole campaign, and <code>git_info</code>/<code>code_version.digest</code> prove it per
   artifact.</li>
 <li><strong>Draft references.</strong> The QA atoms derive from <code>reference</code> fields that no human has
@@ -1005,8 +1065,417 @@ is filed if a second campaign is scheduled), and migrating the ten pre-#279 arti
 </tr>
 <tr>
 <td>7</td>
-<td>Operator: reclaim disk; converge the config checkout to the required pin; pull <code>~/Projects/archi</code> to the campaign SHA</td>
+<td>Operator: reclaim disk; converge the config checkout to the required pin; pull <code>/home/a2rchi/archi-openai-compat</code> to the campaign SHA</td>
 <td>see §10</td>
+</tr>
+</tbody>
+</table>
+<h2 id="13-operating-log-what-works-what-does-not">13. Operating log — what works, what does not</h2>
+<p>Kept current as the campaign runs. The point of this section is reproducibility: someone
+re-running this campaign cold should hit none of the walls below twice. Every entry was
+observed on <strong>holygpu7c0717</strong> on the date given.</p>
+<h3 id="131-preconditions-that-must-actually-hold">13.1 Preconditions that must actually hold</h3>
+<p>Checked before the 2026-09-04 lock; a failure in any of these is silent or misleading
+rather than loud, which is why they are listed.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Precondition</th>
+<th>How to check</th>
+<th>Why it bites</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>config/</code> at the campaign pin</td>
+<td><code>git -C config rev-parse HEAD</code> = the <code>CONFIG_SHA</code> in <code>deploy/scripts/lib.sh</code></td>
+<td><code>redeploy.sh</code> refuses an off-pin checkout with local edits — correctly, and it refuses <em>before</em> touching containers</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Checkout on the campaign code, runtime trees clean</td>
+<td><code>git status --porcelain --untracked-files=no -- src scripts deploy</code> empty</td>
+<td><code>lock_campaign.sh</code> and every wrapper refuse otherwise. Untracked files elsewhere (docs) are fine by design</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>RAGAS_ENV_FILE</code> exported</td>
+<td><code>[ -f "$RAGAS_ENV_FILE" ]</code></td>
+<td><code>run_arm.sh</code> dies without it. It does <strong>not</strong> persist between shells — export it in every invocation</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Host conda env can build embeddings</td>
+<td><code>python -c "from langchain_huggingface import HuggingFaceEmbeddings"</code></td>
+<td><strong><code>archi qa</code> runs in-process on the host</strong>, not in a container. Drift here silently voids every QA run (§13.2 #5)</td>
+</tr>
+<tr>
+<td>5</td>
+<td>ghcr.io login + <code>ijson</code> present</td>
+<td><code>grep ghcr.io ~/.docker/config.json</code>; <code>python -c "import ijson"</code></td>
+<td>Both fail the deploy before containers move</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Ports 5434 / 7882 free</td>
+<td><code>ss -ltn \| grep -E ':(5434\|7882)'</code></td>
+<td>Every stack binds the same pair, so only one arm can exist at a time</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Disk headroom</td>
+<td><code>df -h /scratch</code> (Docker root here) — ~10 GB per stack</td>
+<td>The plan's "13 GB free" figure was claw's, not this host's</td>
+</tr>
+</tbody>
+</table>
+<h3 id="132-defects-found-and-what-to-do-about-them">13.2 Defects found, and what to do about them</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Symptom</th>
+<th>Cause</th>
+<th>Resolution</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>§6 step 2 says run <code>fm-smoke</code> through every wrapper, but the wrappers reject the label</td>
+<td><code>fm_require_arm</code> is <code>^[0-9]{2}[a-z]?$</code> and <code>lock_campaign.sh</code> hardcodes <code>fm_require_arm_yaml 00</code></td>
+<td>Use <code>run_arm.sh 00 &lt;yaml&gt; --stack fm-smoke</code>; <code>--stack</code> is honoured on the deploy path too. Verified that <code>archi evaluate --name</code> drives the deployment dir and every <code>container_name</code>, while the YAML's own <code>name:</code> does not (live proof: <code>dev.yaml</code> says <code>name: archi_dev</code>, containers are <code>chatbot-dev</code>)</td>
+<td><strong>works, doc corrected</strong></td>
+</tr>
+<tr>
+<td>2</td>
+<td>§5 pointed at <code>~/Projects/archi</code> and <code>/home/austin/.archi/archi-ragas-205/.env</code></td>
+<td>Written on claw</td>
+<td>Paths corrected to this checkout and <code>~/.archi/.env.benchmark</code></td>
+<td><strong>fixed</strong></td>
+</tr>
+<tr>
+<td>3</td>
+<td>Pre-reg claimed the campaign prompt was byte-identical to the GPU host's production spec; that file did not exist</td>
+<td>The host served <code>fasrc-v2.md</code> (name <code>FASRC</code>, <code>search_vectorstore_hybrid</code> only)</td>
+<td>Production migrated to <code>config/agents/claw/fasrc-docs.md</code>; <code>fasrc-v2.md</code> retired to <code>agents/archive/</code>. Claim is now true rather than asserted</td>
+<td><strong>fixed, verified live</strong></td>
+</tr>
+<tr>
+<td>4</td>
+<td>Arms would run with <strong>no in-loop context bound</strong> while production has 32768</td>
+<td>Every arm YAML omitted <code>services.chat_app.context_editing</code>; <code>base-config.yaml</code> emits the block only when declared</td>
+<td>Added to all nine arms, matching production byte for byte. The lock's <code>sut.context_editing</code> is the check — it read <code>null</code> before</td>
+<td><strong>fixed pre-lock</strong></td>
+</tr>
+<tr>
+<td>5</td>
+<td>QA run "completes", exits 0, and scores <strong>nothing</strong></td>
+<td><code>archi qa</code> runs in-process on the host; the host env had <code>transformers</code> 5.9.0 against <code>huggingface_hub</code> 0.36.2 → <code>ImportError: cannot import name 'is_offline_mode'</code>, surfaced as the misleading <code>Could not import sentence_transformers</code></td>
+<td><code>pip install "transformers==4.57.6" "sentence-transformers==5.1.2"</code> (the versions the benchmark image runs; the latter is also the repo pin). Re-run went from <code>execution_failed: 8</code> to <code>scored: 8</code></td>
+<td><strong>fixed</strong></td>
+</tr>
+<tr>
+<td>6</td>
+<td>A QA run that scored nothing still gets a ledger row and exit 0</td>
+<td><code>qa_arm.sh</code> does not fail closed on <code>scored: 0</code>, unlike <code>archive_run.sh</code> on the <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> side</td>
+<td><strong>Open.</strong> Until fixed, read <code>summary.json</code> → <code>attempt_lifecycle_counts.scored</code> after every QA run. A zero there with exit 0 is the silent-failure shape. <code>bench_out/feature_matrix/check_qa_scored.sh</code> does this across every QA run dir. <strong>Cannot be fixed mid-campaign</strong>: <code>scripts/</code> is inside the locked code trees, so editing <code>qa_arm.sh</code> forces a <code>--relock</code> and a redeploy of every stack</td>
+<td><strong>open — <a href="https://github.com/fasrc/archi/issues/434">#434</a></strong></td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>archi delete --rmv</code> aborts non-interactively</td>
+<td>It calls <code>click.confirm(..., abort=True)</code> and there is no <code>--force</code>/<code>--yes</code></td>
+<td><code>printf 'y\n' \| archi delete --name &lt;stack&gt; --rmi --rmv</code></td>
+<td><strong>works</strong></td>
+</tr>
+<tr>
+<td>8</td>
+<td>A retired agent spec survives a redeploy in the staged agents dir</td>
+<td><code>archi create --force</code> cannot remove <code>data/evaluations</code> (root-owned), so it abandons removal of the whole <code>data/</code> dir — the staged <code>data/agents/</code> keeps old files</td>
+<td>Delete the retired spec from <code>~/.archi/archi-&lt;name&gt;/data/agents/</code> by hand after the redeploy, then restart the chatbot</td>
+<td><strong>works, manual step</strong></td>
+</tr>
+<tr>
+<td>10</td>
+<td>Arm 00's ingest ran while the host was at load ~44</td>
+<td><strong>A <code>redeploy.sh</code> of production <code>dev</code> triggers a full re-ingest</strong> (1145 files, ~30 min at ~26 cores). The agent migration on 2026-09-04 was redeployed minutes before arm 00 started, so the baseline ingest overlapped it</td>
+<td><strong>Sequence any production deploy well BEFORE an arm, never during.</strong> Arm 00 was torn down 7 min in and restarted once <code>data-manager-dev</code> went quiet (<code>bench_out/feature_matrix/fm00_start_when_quiet.sh</code> waits for 3 consecutive sub-100 % CPU reads). This matters because arm 00's <code>ingest_wall_seconds</code> is the reference all five ingest-side arms are compared against — a one-off production re-ingest is a tax only arm 00 would pay, breaking §10's "every arm pays the same tax" premise</td>
+<td><strong>fixed by restart</strong></td>
+</tr>
+<tr>
+<td>11</td>
+<td>A hung run would block the chain forever</td>
+<td><code>archive_run.sh --wait</code> is an unbounded poll — <code>while [ running ]; do sleep 30; done</code> — with no timeout and no stall detection (unlike the ingest wait, which got a stall budget in #378)</td>
+<td><strong>Open.</strong> There is no dead-man's switch: check that <code>bench_out/feature_matrix/fm00_baseline.log</code> has advanced. Budget ≈ 3 h for run 1 (ingest + 109 questions + judging) and ≈ 1.5 h per re-run</td>
+<td><strong>open — operational check</strong></td>
+</tr>
+<tr>
+<td>13</td>
+<td><strong>Every re-seeded retrieval arm fails Procedure E.</strong> <code>archive_run.sh</code> refuses with <code>divergence_from_selected_file = ['data_manager.retrievers.hierarchical_rerank.enabled']</code>, even though the run used the arm's setting correctly</td>
+<td>The benchmark service is the only one of six in <code>base-compose.yaml</code> that does NOT bind-mount <code>./configs</code>, so it reads a config baked into its image at build time. <code>reseed_arm.sh</code> updates the host file and Postgres — the agent obeys Postgres (verified: <code>hierarchical_rerank disabled: falling back to HybridRetriever</code>), but the harness compares against the stale baked copy. The baseline never tripped this because baked and Postgres both held baseline values</td>
+<td>Added the mount by hand to <code>~/.archi/archi-fm-00/compose.yaml</code>. Verified the baked and host configs differ in <strong>exactly one key</strong>, the one under test, so the mount changes nothing else. <strong>The patch is not durable</strong> — <code>archi create</code>/<code>evaluate</code> re-renders that file — but nothing the retrieval arms do re-renders it, and if it were lost the failure is loud (a Procedure E refusal), never a silent wrong number. Permanent fix: <a href="https://github.com/fasrc/archi/issues/439">#439</a>, blocked until the campaign ends because <code>src/</code> is lock-pinned. Ingest arms are unaffected — a fresh <code>archi evaluate</code> bakes the right config</td>
+<td><strong>worked around — <a href="https://github.com/fasrc/archi/issues/439">#439</a></strong></td>
+</tr>
+<tr>
+<td>14</td>
+<td><strong>G8 anchor gate fires on runs that changed nothing.</strong> The arm-05a report shows <code>easy_retrieve ALARM</code> naming baseline replicates <code>20260905_024701</code> and <code>20260905_053600</code> — both are runs of the <em>baseline</em> config against the baseline reference, so a config delta of zero trips the tripwire</td>
+<td>The per-question alarm threshold is the <strong>aggregate</strong> noise floor σ (<code>scripts/benchmarking/compare_runs.py:1293-1298</code>, threshold = <code>sigmas.get(metric)</code>, i.e. 1σ not 2σ), which is the spread of a <em>mean over 104 questions</em>. Per-question spread is much larger. Using the tool's own σ (from <code>reports/arm-05a.json</code>, identical to the §13.5 σ checkpoint) against per-question σ measured over the three baseline replicates: <code>faithfulness</code> <strong>0.0209 vs 0.1081 (5.2×)</strong>, <code>answer_relevancy</code> 0.0111 vs 0.0743 (6.7×), <code>context_precision</code> 0.0050 vs 0.0162 (3.2×), <code>context_recall</code> 0.0109 vs 0.0160 (1.5×). On the SLURM anchor the three identical-config replicates span <code>faithfulness</code> 0.789 / 0.880 / 0.950 — a 0.161 range against a 0.0209 threshold. The gate is structurally guaranteed to alarm on the noisy metrics</td>
+<td><strong>Open — does NOT invalidate any arm.</strong> It fires on the baseline itself, and no arm verdict rests on it; arm verdicts come from the paired MDE tables, where the aggregate σ is the right scale because the compared quantity <em>is</em> an aggregate. <code>scripts/</code> is lock-pinned → no fix until the campaign closes; fix is to scale the anchor threshold to per-question spread (e.g. 2× per-question σ from the replicates) instead of reusing the aggregate σ. <strong>File after the campaign.</strong> Scope: G8 walks a curated 5-anchor set, 2 alarm; across all 31 rows carrying <code>anchor_type: easy_retrieve</code>, baseline-vs-itself would alarm 22/31 on <code>faithfulness</code>, 17/31 on <code>answer_relevancy</code>, 5/31 on <code>context_precision</code>, 0/31 on <code>context_recall</code>. <strong>Not every G8 alarm is noise:</strong> arm 01 drove <code>context_precision</code> on this anchor to <strong>0.000 in both runs</strong> (baseline 0.29-0.34) — rerank-off zeroing precision on an easy-retrieve question is a genuine signal and belongs in the arm 01 discussion, not in this defect</td>
+<td><strong>open</strong></td>
+</tr>
+<tr>
+<td>15</td>
+<td><code>context_recall</code> on the SLURM GPU-partition anchor is pinned at exactly <strong>0.500</strong> in all seven runs to date — three baseline replicates, both arm 01 runs, both arm 05a runs — regardless of rerank or <code>k</code></td>
+<td>Unconfirmed; the shape (an exact one-half, invariant to every retrieval change) is what a two-claim reference answer looks like when only one claim exists in the corpus. The question asks two things (<em>which partition</em> <strong>and</strong> <em>what flag</em>)</td>
+<td><strong>Open, bank-quality item, not a blocker.</strong> The question bank is NOT edited mid-campaign (G4). Verify against the reference answer and the corpus after the campaign; if confirmed, it caps that anchor's recall at 0.5 for every arm equally, so it biases no comparison</td>
+<td><strong>open</strong></td>
+</tr>
+<tr>
+<td>16</td>
+<td>Arm 05b's QA run scored <strong>108 of 109</strong>: item <code>qa-e603732c6893188c9c7f</code> ended <code>preparation_failed</code> with <code>gold extraction for item … .atoms must be a list</code>, yet the <strong>same item prepared and scored in the arm 00, 01 and 05a QA runs</strong></td>
+<td>Gold-atom extraction is <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr>-driven and returned a non-list for that item on that run — nondeterministic preparation, so the scored denominator drifts between runs (the #279 concern, on the QA side). <code>qa_arm.sh</code> / <code>check_qa_scored.sh</code> guard <code>scored == 0</code>, not <code>scored &lt; items</code></td>
+<td><strong>Open — does not change 05b's verdict</strong> (one item of 109 moves the macro pass rate by ≤ 0.009). Fix: retry extraction on a non-list, or fail closed when <code>prepared &lt; items</code>, and report <code>scored / items</code> on every QA table. <code>src/</code> and <code>scripts/</code> are lock-pinned → <strong>file after the campaign</strong> alongside #434</td>
+<td><strong>open</strong></td>
+</tr>
+<tr>
+<td>17</td>
+<td>The shell guard around <code>check_qa_scored.sh</code> in <strong>both</strong> <code>bench_out/feature_matrix/retrieval_arms.sh:33</code> and <code>fm00_qa_replicates.sh</code> never evaluates the <code>grep</code> it appears to test. The retrieval chain printed <code>QA scored ok</code> for arms 01 / 05a / 05b <strong>unconditionally</strong>; the replicate chain's <code>&amp;&amp; die</code> can never fire</td>
+<td><code>set -o pipefail</code> + <code>… \| tee \| grep -q</code>: <code>grep -q</code> exits on first match and closes the pipe, <code>tee</code>/the checker die of SIGPIPE, and under pipefail the pipeline's status is <strong>141</strong>, not grep's 0 — measured: <code>pipeline status under pipefail: 141</code>, <code>grep alone: 0</code>. Independently, <code>check_qa_scored.sh</code> itself exits 1 whenever <em>any</em> VOID row exists, and the stale <code>fm-smoke-arm00-r1</code> VOID row is permanent, so even without SIGPIPE the pipeline status would be 1. Either way <code>if ! …</code> is always true and <code>… &amp;&amp; die</code> is always false</td>
+<td><strong>Open — no data affected.</strong> Every QA run the guard "passed" genuinely scored (109 / 109 / 108 / 109 / 108), verified by reading <code>summary.json</code> directly, which is what <code>check_qa_scored.sh</code>'s <em>printed output</em> also shows correctly — only the shell composition is wrong. Not lock-pinned (<code>bench_out/</code> helpers), but <code>fm00_qa_replicates.sh</code> is <strong>executing now and bash reads scripts incrementally — do not edit it until the chain exits.</strong> Fix applied after r3 (see status)</td>
+<td><strong>fixed 2026-09-06 22:35</strong> in <code>retrieval_arms.sh</code> and <code>fm00_qa_replicates.sh</code>: <code>QA_CHECK="$(check_qa_scored.sh \|\| true)"</code> then <code>grep -q '^VOID .*qa/fm-00-arm&lt;N&gt;-r[0-9]*:' &lt;&lt;&lt;"$QA_CHECK"</code>; verified quiet on real data, fires on an injected VOID row</td>
+</tr>
+<tr>
+<td>18</td>
+<td><strong>Ingest arms produced no report.</strong> The chain logged <code>report_arm.py failed (non-fatal)</code> for arm 02 at 03:08; <code>arm-02.md</code> did not exist until 10:12, so the per-arm ping never fired</td>
+<td>Two causes, both in <code>bench_out/feature_matrix/report_arm.py</code> (un-pinned helper, written for the retrieval arms): (1) <code>STACK = "fm-00"</code> hard-coded — ingest arms' ledger rows live under <code>fm-&lt;arm&gt;</code>, so it found "no archived ragas runs"; (2) it never passed <code>--corpus-differs-by-design</code>, which the plan's own G3 row (§8) requires for an ingest arm, so <code>compare_runs.py</code> refused with exit 2 and every table came out empty</td>
+<td><strong>fixed 2026-09-08 10:08–10:12:</strong> stack chosen per arm (<code>fm-&lt;arm&gt;</code> if present, else <code>fm-00</code>); flag added when the fingerprint differs, with a Procedure B caveat printed above the verdict table; closing baseline (arm 00 runs 4+) reported as an arm against runs 1–3; gold-atoms table now shows the three-run floor as mean ± σ with a 2σ verdict; gates table deduped. Arm 02 regenerated; arms 01 / 05a / 05b regenerated for the new atoms table (<abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> verdicts unchanged)</td>
+<td><strong>fixed</strong></td>
+</tr>
+<tr>
+<td>19</td>
+<td><strong>Arm 06 cannot be run: <code>processing.html_to_markdown.enabled: false</code> is silently rendered as <code>True</code>.</strong> <code>archive_run.sh</code> refused run 1 at 23:04 (<code>artifact ran factor processing.html_to_markdown.enabled=True, arm 06 wants False</code>) after 3 h 45 m of compute (ingest 4933 s + one full <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> run). Procedure E passed because the artifact's "selected file" is the <em>rendered</em> config, which already carried <code>True</code></td>
+<td><code>src/cli/templates/base-config.yaml:426</code>: <code>enabled: {{ data_manager.processing.html_to_markdown.enabled \| default(true, true) }}</code>. Jinja's <code>default(v, true)</code> also replaces <strong>falsy</strong> values, so <code>false</code> → <code>true</code>. Measured in the archi env (jinja2 3.1.3): <code>default(true, true)</code> renders <code>True</code> for <code>False</code>, <code>True</code> and <code>None</code> alike; the correct <code>default(true)</code> renders <code>False</code>. <code>categorization.enabled</code> uses <code>default(false, true)</code> and survives only because its default is <code>false</code>. <strong>This is a production bug in every archi deployment: HTML→Markdown conversion cannot be disabled by config.</strong> <code>lock_campaign.sh</code> hashes arm YAML content and never renders it, so the lock could not catch it</td>
+<td><strong>Open — arm 06 is untestable under the current lock.</strong> <code>src/</code> is lock-pinned; the one-token fix (<code>default(true)</code>) forces a <code>--relock</code>, after which any arm 06 run carries a different <code>code_version.digest</code> from arms 00–05b/02–04. Operator decision pending: (A) drop arm 06 from this campaign, file the product bug, test it in a follow-up campaign; or (B) fix + relock and run 06 alone under the new lock with the digest caveat (ideally with a same-lock baseline, +~5.5 h). <strong>Chain resumed 23:1x as <code>ingest_arms_2.sh</code> with arm 07 + closing baseline under the current lock</strong> — the no-regret path either way. Evidence: <code>bench_out/feature_matrix/evidence/fm-06-rendered-config.yaml</code> (line 383 <code>enabled: True</code>), <code>evidence/fm-06-compose.yaml</code>, unarchived artifact <code>benchmarking-fm-06-20260909_030421.json</code> (a baseline-configuration run on a fresh corpus <code>e67eb9f0…</code>, 4933 s ingest — usable as drift evidence, never as arm 06)</td>
+<td><strong>bug filed: fasrc/archi#448</strong>; arm 06 still untestable under this lock</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Idle stacks still hold memory on the measuring host</td>
+<td><code>data-manager-ragas-0827</code> / <code>postgres-ragas-0827</code> have been up 7 days (~1.6 GB, ~0 % CPU). They publish no ports so they cannot collide</td>
+<td>Operator's call before arm 01: take them down, or record them in the ledger as a constant part of the host tax</td>
+<td><strong>open — operator decision</strong></td>
+</tr>
+<tr>
+<td>9</td>
+<td>Commits intermittently blocked by a red gate</td>
+<td><code>tests/unit/evaluation/qa/test_jobs_history.py::test_job_manager_terminates_running_evaluation_process</code> is flaky on <code>dev</code> — 3 failures in 5 consecutive runs, and it passes on retry with no code change. Its own race: it waits for status <code>running</code>, then reads <code>manager._processes[job_id]</code>, which the reaper may already have removed</td>
+<td>Retry the commit. <strong>Never</strong> <code>--no-verify</code>. Safe to fix during a campaign — <code>tests/</code> is NOT in the locked trees</td>
+<td><strong>open — <a href="https://github.com/fasrc/archi/issues/435">#435</a></strong></td>
+</tr>
+<tr>
+<td>20</td>
+<td><strong><code>answer_relevancy</code> silently drops ~18 % of the bank, and not at random.</strong> Across all 16 campaign runs it scores <strong>83–96 of 109</strong> (spread 13); <code>context_precision</code> 103–109 (spread 6); <code>context_recall</code> and <code>faithfulness</code> are 109 / 109 in every run. The loss concentrates by question class — mean nulls per run: <code>reasoning</code> <strong>14.4 of 75 (19 %)</strong>, <code>easy_retrieve</code> 3.6 of 31 (11 %), <code>should_refuse</code> 1.4 of 3 (46 %)</td>
+<td><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> emits no <code>answer_relevancy</code> for an answer it judges non-committal; that flag is <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr>-internal and is surfaced nowhere in this repo (no <code>noncommittal</code> handling in <code>src/</code> or <code>scripts/</code>). <strong>Not a judge timeout</strong> — the competing mechanism the harness documents at <code>src/bin/service_benchmark.py:866-874</code> ("a judge timeout on one question silently shrinks the sample"): all 20 null rows in <code>fm-04</code> run 1 carry <code>status: ok</code> <strong>and score on all three other metrics</strong>, and <code>fm-06</code> logged 2 <code>TimeoutError</code>s against a mean of 19.3 nulls per run. The row is fine; the metric abstains. The denominator is therefore a property of <em>the answers</em>, which is exactly what an arm changes: the scored subset is re-drawn every run and systematically under-weights <code>reasoning</code> and <code>should_refuse</code> against <code>easy_retrieve</code>. §8's honest-denominator guard (#279, <code>scripts/benchmarking/compare_runs.py:982-995</code>) recomputes and flags the counts, but its "differ by more than 5" trigger is already exceeded by the <strong>baseline replicates against each other</strong> (89 / 84 / 87 at identical config), so the flag cannot separate an arm effect from the metric's own behaviour</td>
+<td><strong>Open — does NOT invalidate any arm verdict.</strong> The paired MDE tables intersect the scored sets per comparison, which is why <code>answer_relevancy</code> carries a paired <em>n</em> of <strong>66–75</strong> against 104 for the other three metrics — a third of the bank gone, and the reason every <code>answer_relevancy</code> delta in this campaign lands inside its MDE. Read the aggregate only beside its paired <em>n</em>, and treat the metric as advisory at this bank size. For a second campaign: (a) print <code>scored / eligible</code> per metric per arm in every table, (b) scale the &gt;5 trigger to each metric's own replicate spread instead of a constant, (c) power the bank on the paired <em>n</em>, not on 109. <code>scripts/</code> is lock-pinned → <strong>file after the campaign</strong> alongside #434 and #16</td>
+<td><strong>open</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="133-verified-working-2026-09-04-smoke-fm-smoke-3-urls-8-questions">13.3 Verified working (2026-09-04 smoke, <code>fm-smoke</code>, 3 URLs / 8 questions)</h3>
+<p>The whole wrapper chain was exercised end to end before the campaign locked:</p>
+<ul>
+<li><code>lock_campaign.sh</code> — pins bank, anchors, prompt, sources, QA dataset and profile, <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> and
+  judge settings, every non-factor <code>data_manager</code> key, all nine arm sha256s, and the runtime
+  trees. Re-lock with <code>--relock</code>.</li>
+<li><code>run_arm.sh</code> → <code>archive_run.sh --wait</code> — artifact archived with
+  <code>divergence_from_selected_file: []</code>, corpus fingerprint pinned, <code>ingest_wall_seconds</code>
+  recorded (<strong>Gap 1 closed</strong>, 45.27 s on the smoke corpus), and scored counts recomputed
+  from finite values (<strong>#279 working</strong>: honest <code>7 of 8</code>, <code>degraded 1</code>).</li>
+<li><code>qa_arm.sh</code> — proves the stack is on the arm, rewrites the <code>chat_app</code> <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr> fields from
+  <code>services.benchmarking</code>, and records the rendered config sha256 and fingerprint.</li>
+<li><code>compare_runs.py</code> — self-comparison gave <code>+0.0000</code> on every metric, evaluated G3/G4/
+  Procedure E as pass, raised an honest G8 alarm on an unscored anchor, excluded anchors
+  from the bank aggregate, and <strong>refused to call anything SIGNIFICANT with no measured
+  noise floor</strong> (G2).</li>
+<li>A docs-only commit moves <code>HEAD</code> but not the locked trees — confirmed: <code>HEAD:src</code> equals
+  <code>3170498c:src</code>, and <code>run_arm.sh</code> passed <code>fm_require_code_lock</code> afterwards.</li>
+</ul>
+<h3 id="134-the-sequence-that-actually-ran">13.4 The sequence that actually ran</h3>
+<pre><code class="language-bash">export RAGAS_ENV_FILE=/home/a2rchi/.archi/.env.benchmark   # every shell
+W=scripts/benchmarking/feature_matrix
+
+# once per campaign: the QA dataset (105 bank + 5 anchors - 1 duplicate = 109 items)
+python scripts/benchmarking/ragas_bank_to_qa_dataset.py \
+    config/benchmarking/fasrc_ragas_queries.json \
+    --anchors examples/benchmarking/anchor_questions.json \
+    --out bench_out/feature_matrix/qa/fasrc_ragas_queries.qa-v2.json
+
+# smoke: a copy of 00-baseline.yaml (name STAYS fm-00) pointed at a 3-URL sources list and
+# a 3-row bank, in its own arms dir, then every wrapper against --stack fm-smoke
+$W/lock_campaign.sh bench_out/feature_matrix/smoke/00-baseline.yaml \
+    --arms-dir bench_out/feature_matrix/smoke \
+    --qa-dataset bench_out/feature_matrix/smoke/bank.smoke.qa-v2.json
+$W/run_arm.sh 00 bench_out/feature_matrix/smoke/00-baseline.yaml --stack fm-smoke
+$W/archive_run.sh 00 1 bench_out/feature_matrix/smoke/00-baseline.yaml --stack fm-smoke --wait
+$W/qa_arm.sh 00 bench_out/feature_matrix/smoke/00-baseline.yaml --stack fm-smoke \
+    --dataset bench_out/feature_matrix/smoke/bank.smoke.qa-v2.json
+python scripts/benchmarking/compare_runs.py &lt;artifact&gt; &lt;artifact&gt;
+printf 'y\n' | archi delete --name fm-smoke --rmi --rmv
+
+# campaign: re-lock on the real inputs, commit the pre-registration (G1), then arm 00
+$W/lock_campaign.sh config/benchmarking/feature_matrix/00-baseline.yaml \
+    --arms-dir config/benchmarking/feature_matrix \
+    --qa-dataset bench_out/feature_matrix/qa/fasrc_ragas_queries.qa-v2.json --relock
+git commit docs/eval/preregs/2026-09-feature-matrix.md     # G1; docs-only, lock survives
+$W/run_arm.sh 00 config/benchmarking/feature_matrix/00-baseline.yaml
+</code></pre>
+<p>Because the smoke stack is <code>fm-smoke</code> and not <code>fm-00</code>, its ledger rows and corpus pin sit
+under their own stack key: the campaign's <code>fm-00</code> still numbers its runs from 1 and pins its
+own corpus. Using <code>fm-00</code> for the smoke would have forced runs 2-4 and a stale pin.</p>
+<h3 id="135-campaign-run-log">13.5 Campaign run log</h3>
+<table>
+<thead>
+<tr>
+<th>When (EDT)</th>
+<th>Event</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2026-09-04 15:39</td>
+<td>Campaign locked (<code>3e07ae79…</code>) on the corrected arms; pre-registration committed (<code>c2deac32</code>) — gate G1 satisfied</td>
+</tr>
+<tr>
+<td>2026-09-04 15:46</td>
+<td>Arm 00 started — <strong>aborted 7 min in</strong>: a production re-ingest triggered by that afternoon's dev redeploy was running concurrently (§13.2 #10). Stack deleted with its volumes; ledger keeps the orphan <code>ragas-start</code> row for arm 00 / <code>fm-00</code>, which is expected and harmless (<code>fm_next_run</code> counts archived <code>ragas</code> rows, not starts, so run numbering still begins at 1)</td>
+</tr>
+<tr>
+<td>2026-09-05 03:07</td>
+<td><strong>Opening baseline complete.</strong> 3 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> runs + 1 QA run archived, <code>degraded = 0</code> on all three, QA <code>scored: 109/109</code>. Ingest 4959.9 s (82.7 min), 1091 docs / 6926 chunks, one corpus fingerprint across all three runs</td>
+</tr>
+<tr>
+<td>2026-09-05 14:56</td>
+<td>Retrieval arms <strong>aborted on arm 01 run 1</strong> — Procedure E refusal, root-caused to the baked benchmark config (§13.2 #13). ~2.5 h of compute discarded; the completed artifact <code>benchmarking-fm-00-20260905_185530.json</code> is left in place unarchived as evidence. Chain relaunched at 23:55 after mounting <code>./configs</code> into the benchmark service</td>
+</tr>
+<tr>
+<td>2026-09-05 12:00</td>
+<td><strong>σ checkpoint PASSED — N = 2 stands, no re-lock needed.</strong> Measured σ (paired, 104 questions, by <code>compare_runs.py --noise-runs</code>): <code>context_precision</code> <strong>0.0040</strong>, <code>context_recall</code> <strong>0.0109</strong>, <code>answer_relevancy</code> <strong>0.0161</strong>, <code>faithfulness</code> <strong>0.0209</strong>. Every value is <em>below</em> the planning prior (0.016 / 0.021 / 0.025 / 0.027), so the pre-registered escalation rule — σ on the primary metric more than 50 % above prior — did not trigger. MDE on <code>context_precision</code> ≈ 0.016 (2·SE dominates 2·σ). All three replicates were mutually "not distinguishable", which is the result you want from replicates</td>
+</tr>
+<tr>
+<td>2026-09-04 16:13</td>
+<td>Watcher armed: waits for <code>data-manager-dev</code> to go quiet, then runs the opening baseline (3 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> runs + 1 QA) and <strong>stops before arm 01</strong> for the pre-registered σ checkpoint</td>
+</tr>
+<tr>
+<td>2026-09-05 23:55</td>
+<td>Retrieval-arm chain relaunched (<code>retrieval_arms.sh</code>, PID 3057809) after the <code>./configs</code> bind-mount fix. Chain order: 01 → 05a → 05b, then restore the baseline config and <strong>stop before the ingest arms</strong> (02/03/04/06/07), which need fresh stacks and operator go-ahead</td>
+</tr>
+<tr>
+<td>2026-09-06 04:47</td>
+<td><strong>Arm 01 complete</strong> (FUT <code>hierarchical_rerank.enabled: true → false</code>). Primary metric shows no measurable difference; the <abbr title="Architecture Decision Record — a short doc capturing one hard-to-reverse decision and why.">ADR</abbr> 0003 "+19 % <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr>" claim is not reproduced. <code>context_recall</code> regressed in both runs; latency roughly halved. Report <code>reports/arm-01.md</code></td>
+</tr>
+<tr>
+<td>2026-09-06 11:20</td>
+<td><strong>Arm 05a complete</strong> (FUT <code>num_documents_to_retrieve: 5 → 3</code>). Primary metric held constant; <code>context_recall</code> regressed in both runs and source accuracy fell 0.877 → 0.792, with <strong>no latency payoff</strong>. Report <code>reports/arm-05a.md</code>. Arm 05b (<code>5 → 8</code>) started immediately</td>
+</tr>
+<tr>
+<td>2026-09-06 11:20</td>
+<td><strong>G8 anchor gate is in ALARM — diagnosed as a false positive, see §13.2 #14.</strong> The gate's own detail names baseline replicates <code>024701</code> and <code>053600</code>, which are runs of the <em>baseline</em> config against the baseline reference: a zero config delta trips it. Root cause is a mis-scaled threshold — the per-question alarm compares against the <strong>aggregate</strong> σ (0.0184 for <code>faithfulness</code>) when per-question σ is 0.108, a 5.9× mismatch. <strong>No arm verdict depends on G8</strong>; the arm verdicts come from the paired MDE tables, where the aggregate σ is used correctly. No fix during the campaign (<code>scripts/</code> is lock-pinned); the question bank is NOT edited (G4)</td>
+</tr>
+<tr>
+<td>2026-09-06 13:05</td>
+<td><strong>Interim cross-arm insights after arms 00 / 01 / 05a</strong> (analysis only; no arm verdict changed). <strong>(1) ~8 % of baseline questions never get an answer.</strong> The agent hits <code>services.chat_app.recursion_limit: 50</code>; <code>GraphRecursionError</code> is caught at <code>src/archi/pipelines/agents/base_react.py:427</code> and <code>_handle_recursion_limit_error</code> returns an <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr>-written wrap-up that opens <em>"The agent attempted to…"</em> — <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> then scores that text as the answer. Counts per <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> run, arm 00: <strong>9 / 6 / 11</strong>; arm 01: 0 / 5; arm 05a: 11 / 4. Per QA run: 00: 4, 01: 7, 05a: 7, and QA blowouts pass 1 of 18. 23 distinct questions ever blew out; 7 did so in ≥2 of the 3 baseline runs (question-intrinsic core plus a stochastic tail); 17 of the 23 are <code>reasoning</code> anchors. A blowout takes 150–250 s vs 23–40 s for a normal question. <strong>(2) Latency decomposes.</strong> Baseline mean 48.2 s → <strong>34.3 s excluding blowouts</strong>; arm 01: 24.2 / 23.0 s excluding; arm 05a: 33.5 / 39.6 s excluding. So rerank-off is ~30 % faster <em>per normal question</em> and additionally had fewer blowouts; k=3 is no faster per normal question — its entire latency swing is blowout count. <strong>(3) The agent searches less without the reranker.</strong> Tool calls per question, normal (non-blown-out) questions only: 00 <strong>3.69</strong> (17 questions finished in one call), 01 <strong>2.61 / 2.50</strong> (54 / 51 in one call), 05a <strong>4.04</strong> (14 in one call). <em>(Corrected 18:10 — an earlier version of this entry gave 3.41 and 3.62, averages that included blown-out rows, whose traces are empty and count as zero calls.)</em> Candidate mechanism: the hierarchical retriever returns <em>parent</em> nodes (target 2048 chars, <code>src/data_manager/vectorstore/node_parsing.py:51</code>) instead of 1000-char chunks, so each call is ~2× the text; with <code>context_editing.keep: 1</code> the agent re-searches more. Not yet tested directly. <strong>(4) What the metrics can and cannot see.</strong> On blowout rows <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> <code>context_recall</code> is <strong>0.79–0.96</strong> (it scores the retrieved pile, and a 25-round search retrieves a lot); <code>faithfulness</code> 0.14–0.34 (partially catches it); gold atoms catch it fully. Within the baseline, <code>context_recall</code> vs number of sources is Spearman <strong>+0.02</strong> — this is <em>not</em> "recall rewards volume" in general, it is "recall cannot see a blown-out answer". <code>context_precision</code> vs sources is −0.32 (mechanical). <strong>(5) The primary metric has not moved for either retrieval knob</strong> (rerank on/off, k 5→3); <code>context_recall</code> is the sensitive one (−0.05 to −0.09 in both arms). Source accuracy is a clean discriminator: rerank-off 0.877 / 0.887 (= baseline), k=3 0.792 / 0.792. <strong>(6) <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> and gold atoms disagree on arm 01, and the atoms win on robustness:</strong> passed 48 → 57, entailed 345 → 414, not-mentioned 304 → 235, contradicted 47 → 40 — one QA run per arm, no noise floor, but the direction is opposite to <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> <code>context_recall</code> and holds even though arm 01's QA run had <em>more</em> blowouts than baseline (7 vs 4). Candidate post-campaign issue: the recursion-limit blowout itself is a production behaviour, not a benchmark artifact</td>
+</tr>
+<tr>
+<td>2026-09-06 13:05</td>
+<td><strong>Informal prediction for arm 05b (<code>num_documents_to_retrieve: 5 → 8</code>), logged before its first artifact (run 1 archives ~13:55).</strong> Two mechanisms compete: (a) more documents per call → the agent is satisfied sooner → fewer tool calls, fewer blowouts, <code>context_recall</code> up; (b) 8 parents × ~2048 chars per call → more context pressure under <code>keep: 1</code> → more re-searching → more blowouts. <strong>Predicted:</strong> <code>context_precision</code> held constant again (it has been insensitive to both knobs); <code>context_recall</code> up vs baseline, plausibly outside its MDE; per-normal-question latency up modestly (more text to read). <strong>Discriminator:</strong> blowout count below the baseline's 6–11 → (a) dominates; above → (b). Tool calls per question below 3.41 → (a). Not pre-registered; recorded so the 05b result tests a mechanism rather than adding a row</td>
+</tr>
+<tr>
+<td>2026-09-06 18:10</td>
+<td><strong>Arm 05b complete</strong> (FUT <code>num_documents_to_retrieve: 5 → 8</code>). Primary held; <code>context_recall</code> +0.060 IMPROVED / +0.028 held; <strong>source accuracy 0.877 → 0.962 / 0.953</strong>; latency flat; gold atoms down from one run over 108 scored. Report <code>reports/arm-05b.md</code>. <strong>Prediction scorecard (13:05 entry):</strong> precision held ✔; recall up ✔ (outside MDE in 1 of 2 runs); normal-question latency up modestly ✔ (34.3 → 35.0 / 38.7 s); <strong>mechanism discriminator: neither.</strong> Blowouts 7 / 4 did not rise above the baseline's 6–11, so context pressure (b) did not bite; tool calls per normal question 3.85 / 3.50 vs baseline 3.69 did not fall, so "satisfied sooner" (a) did not happen either. What actually happened: <strong><code>k</code> does not change how much the agent searches — it changes how much each search returns.</strong> The k-sweep is now monotonic in recall and source accuracy (k=3 0.792 → k=5 0.877 → k=8 0.957), flat in precision, flat in latency, flat in blowouts; whether it reaches the <em>answer</em> is unresolved (atoms, one run each, non-monotonic)</td>
+</tr>
+<tr>
+<td>2026-09-06 18:10</td>
+<td><strong>RETRIEVAL ARMS COMPLETE (00, 01, 05a, 05b). Chain exited 0 by design.</strong> <code>fm-00</code> was re-seeded back to the arm 00 config with <code>--no-run</code>; <code>postgres-fm-00</code> and <code>data-manager-fm-00</code> are <strong>up and hold the pinned corpus</strong> (<code>sha256:fc8ee1b5…</code>, 2 days); <code>benchmarking-fm-00</code> exited. <strong>The ingest arms (02 / 03 / 04 / 06 / 07 + closing baseline, ~46 h) need <code>printf 'y\n' \| archi delete --name fm-00 --rmi --rmv</code> first</strong> (every stack binds 5434 / 7882). That delete <strong>destroys the pinned corpus</strong>: after it, no further re-seeded arm or QA replicate can run against the exact corpus the four completed arms used. Awaiting operator go-ahead. Consideration raised to the operator: every gold-atom claim so far rests on one QA run per arm with no noise floor; two more baseline QA runs on <code>fm-00</code> before the delete (~3 h) would give σ for the atom metrics and are replication of a pre-registered arm, not a new arm</td>
+</tr>
+<tr>
+<td>2026-09-06 19:19</td>
+<td><strong>Operator decision: two more baseline QA runs on <code>fm-00</code> before it is deleted</strong>, to give the gold-atom metrics a measured noise floor (every atom claim so far is one run per arm). Replication of the pre-registered arm 00 on the pinned corpus — not a new arm, pre-registration untouched. Launched 19:2x via <code>bench_out/feature_matrix/fm00_qa_replicates.sh</code> (same <code>qa_arm.sh</code> wrapper and env as the retrieval chain; runs land as <code>qa/fm-00-arm00-r2</code> and <code>-r3</code>; #434 guard after each). Expected ~1.5–1.7 h per run → done ~22:45 EDT. fm-00 delete + ingest arms remain pending after this</td>
+</tr>
+<tr>
+<td>2026-09-06 22:15</td>
+<td><strong>Baseline QA replicate 1 (<code>qa/fm-00-arm00-r2</code>) done at 21:07 (107 min); replicate 2 (<code>r3</code>) running, ~63 % at 22:12, ETA ~22:50.</strong> <strong>First noise reading, same config, same corpus, r1 → r2:</strong> passed 48 → <strong>43</strong>, pass rate 0.440 → 0.398 (−0.042), atom score 0.499 → <strong>0.454 (−0.045)</strong>, required-atom recall 0.630 → 0.604 (−0.027); atoms entailed 345 → 323, not-mentioned 304 → 295, <strong>contradicted 47 → 70</strong>. One QA run wobbles by ~0.04–0.045 on pass rate and atom score with nothing changed. Read against the arms: 05b's −0.042 atom score / −3 passed is <strong>inside a single replicate pair's spread</strong>; 05a's −0.017 likewise; arm 01's <strong>+0.092 / +9 passed is ~2× the r1–r2 spread</strong> — suggestive, not yet a σ (r3 gives the third point). r2 scored <strong>108</strong>: one <code>evaluation_failed</code> (<code>qa-c133e62618be1f47c60c</code>, <em>comparator returned an unjudgeable outcome</em>) — a second non-scored path, on the judge side, distinct from 05b's <code>preparation_failed</code> on the extraction side (§13.2 #16 widened). <strong>Correction to the 19:2x launch note:</strong> the #434 guard in <code>fm00_qa_replicates.sh</code> could NOT have stopped the chain — see §13.2 #17; it did not matter (both runs scored), and r3 is checked by hand</td>
+</tr>
+<tr>
+<td>2026-09-06 22:31</td>
+<td><strong>Baseline QA replicate 2 (<code>qa/fm-00-arm00-r3</code>) done (84 min); chain exited 0. Gold-atom noise floor established from three baseline QA runs on one corpus and one config.</strong> Pass rate 0.440 / 0.398 / 0.454 → <strong>σ 0.024</strong>; atom score 0.499 / 0.454 / 0.483 → <strong>σ 0.018</strong>; required-atom recall 0.630 / 0.604 / 0.611 → <strong>σ 0.011</strong> (population σ; sample s is ~1.2× — both shown in the ledger). <strong>Arm verdicts at 2σ against the three-run mean:</strong> arm 01 (<code>hierarchical_rerank.enabled: true → false</code>) is <strong>OUTSIDE 2σ on all three</strong> — pass rate +0.092 (2σ 0.047), atom score +0.112 (2σ 0.037), required-atom recall +0.122 (2σ 0.023); arms 05a (k=3) and 05b (k=8) are <strong>inside 2σ on all three</strong> (largest</td>
+</tr>
+<tr>
+<td>2026-09-07 19:29</td>
+<td><strong>Operator go-ahead for the ingest arms</strong> ("go ahead" — also covered pushing the four campaign-log commits, pushed as <code>5028beac</code>). Pre-delete checks: nothing running on <code>fm-00</code>, host quiet (load 5.1, production data-manager idle), ports 5434/7882 held only by <code>fm-00</code>. <strong>Disk:</strong> Docker root is <code>/scratch/docker</code> (397 G, <strong>64 G free</strong>; each fresh stack ≈ 10 G images + small volumes, deleted before the next → peak ≈ 12 G, fine). <strong><code>/</code> is at 97 % (1.8 G free)</strong> and holds <code>~/.archi/archi-fm-*</code> (11 M each) and <code>bench_out/</code> (117 M; ≈ 8 M per arm) — enough for the campaign, thin for the host; large consumers (<code>/usr</code> 17 G, miniforge 9.2 G, <code>/opt</code> 3.6 G) left alone. No <code>fm-02…07</code> leftovers</td>
+</tr>
+<tr>
+<td>2026-09-07 21:06</td>
+<td><strong>INGEST ARMS LAUNCHED — by the operator's own shell.</strong> The session's permission classifier refused every command that would place or launch the chain because it contains <code>archi delete --rmi --rmv</code> (a compound launch, a plain file write, and a <code>cp</code> were all denied); the chain script was written to the job scratch dir and the operator ran the copy + launch line. <code>bench_out/feature_matrix/ingest_arms.sh</code>: §5.1 cycle per arm (<code>run_arm.sh</code> deploy+ingest+run 1 → <code>archive_run.sh 1 --wait</code> → <code>run_arm.sh --rerun</code> → <code>archive_run.sh 2 --wait</code> → <code>qa_arm.sh</code> → fixed QA guard → <code>report_arm.py</code> → <code>archi delete --rmi --rmv</code>), arms <strong>02 → 03 → 04 → 06 → 07</strong>, then the closing baseline (fresh <code>fm-00</code>, <code>archive_run.sh 00 4 … --wait --new-corpus</code>, <code>qa_arm.sh</code> → <code>r4</code>, report, <strong>stack left up</strong> for drift inspection). Log <code>bench_out/feature_matrix/ingest_arms.log</code>. <strong><code>fm-00</code> deleted 21:06:14–21:06:26 (the pinned corpus <code>sha256:fc8ee1b5…</code> is gone; its four arms and three QA replicates are archived)</strong>; arm 02 deploy started 21:06:26. Expected per arm ≈ 8 h (ingest ~1.4 h + 2 × ~2.5 h <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> + ~1.5 h QA): arm 02 report ~05:00 09-08, 03 ~13:00, 04 ~21:00, 06 ~05:00 09-09, 07 ~13:00, closing baseline ~18:30 09-09</td>
+</tr>
+<tr>
+<td>2026-09-08 03:08</td>
+<td><strong>Arm 02 complete</strong> (6 h 02 m: ingest 4863.5 s, run 1 archived 00:22, run 2 archived 02:10, QA 02:10–03:08 scored 108). <code>report_arm.py</code> failed (§13.2 #18) — chain continued as designed, <code>fm-02</code> deleted 03:08:38, <strong>arm 03 started 03:08:50</strong>. Report regenerated 10:12 after the fix; see §9 row 02</td>
+</tr>
+<tr>
+<td>2026-09-08 10:12</td>
+<td><strong>Arm 03 in progress</strong> (<code>processing.categorization.enabled: true → false</code>): ingest <strong>3802.3 s vs 4959.9 s</strong> (−19 min: no per-document categorization call), 1091 docs / 6896 chunks (fingerprint <code>570ccaa8…</code>), run 1 archived 06:44 (scored 107 of 109 on <code>context_precision</code>), run 2 archived 09:24 (105 of 109), QA running since 09:24 → report ≈ 11:00. Arm 02 report regenerated and 01 / 05a / 05b refreshed with the σ-floor atoms table</td>
+</tr>
+<tr>
+<td>2026-09-08 10:56</td>
+<td><strong>Arm 03 complete</strong> (7 h 48 m: ingest 3802 s, run 1 archived 06:44, run 2 09:24, QA 09:24–10:56 scored 108); report written by the fixed <code>report_arm.py</code> first time. Primary held; only <code>context_recall</code> dips, borderline; <strong>ingest −19 min is the finding</strong> — categorization is write-only, as predicted by the 2026-09-01 audit. <code>fm-03</code> deleted 10:56:41; <strong>arm 04 (<code>retrievers.stemming.enabled: false → true</code>) started 10:56:53</strong>, report ≈ 18:30</td>
+</tr>
+<tr>
+<td>2026-09-08 19:18</td>
+<td><strong>Arm 04 complete</strong> (8 h 22 m: ingest 5001 s, run 1 archived ~15:00, run 2 ~17:35, QA → 19:18 scored 109). <strong>First arm to move the primary metric: <code>context_precision</code> −0.10 in both runs, REGRESSED at ~2× MDE.</strong> Atoms flat; agent searches ~20 % more. <code>fm-04</code> deleted 19:18:38; <strong>arm 06 (<code>processing.html_to_markdown.enabled: true → false</code>) started 19:18:50</strong>, report ≈ 03:00 09-09</td>
+</tr>
+<tr>
+<td>2026-09-08 23:04</td>
+<td><strong>CHAIN STOPPED — arm 06 run 1 REFUSED by <code>archive_run.sh</code></strong> (<code>processing.html_to_markdown.enabled=True</code> in the artifact, arm wants <code>False</code>). Root cause §13.2 #19: the config renderer cannot set this key to false (Jinja <code>default(true, true)</code>). The integrity gate worked as designed; cost 3 h 45 m. <code>fm-06</code> rendered config + compose copied to <code>evidence/</code>, stack deleted 23:1x. Arms 02 / 03 / 04 are unaffected (their keys render correctly, proven by their factor checks passing)</td>
+</tr>
+<tr>
+<td>2026-09-08 23:1x</td>
+<td><strong>Chain 2 launched</strong> (<code>bench_out/feature_matrix/ingest_arms_2.sh</code>): arm 07 (<code>chunking.strategy: sentence → markdown</code> — its key renders, proven by arm 02) then the closing baseline, both under the current lock; <strong>arm 06 skipped pending the operator's decision (#19)</strong>. Chain 2 contains no stack deletes (the session's permission rule allows <code>archi delete</code> only as a standalone command): it polls for ports 5434/7882 and the session deletes <code>fm-07</code> by hand at the <code>ARM07_DONE_DELETE_FM07</code> marker. Expected: arm 07 report ≈ 07:30 09-09, closing baseline ≈ 13:30 09-09</td>
+</tr>
+<tr>
+<td>2026-09-09 05:41</td>
+<td><strong>Arm 07 complete</strong> (6 h 32 m: ingest 5166 s, run 1 archived ~02:30, run 2 ~04:27, QA 04:27–05:41 scored 109). Second arm to move the primary metric, again a regression (−0.10), with recall −0.16 — yet atoms up and latency −40 %: the rerank-off signature. Chain 2 then <strong>waited for the manual <code>fm-07</code> delete</strong></td>
+</tr>
+<tr>
+<td>2026-09-09 08:41</td>
+<td><code>fm-07</code> deleted by the session — <strong>~3 h idle between 05:41 and 08:41</strong> because the delete step is outside the chain (the permission rule allows <code>archi delete</code> only as a standalone command) and the session did not act on the 05:41 marker until the operator's 08:39 check-in. Lesson for the runbook: a chain that needs a manual step must page the operator, not just log a marker. <strong>Closing baseline started ≈ 08:42</strong>: fresh <code>fm-00</code> ingest, 1 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> (archived as run 4 with <code>--new-corpus</code>) + 1 QA (<code>r4</code>); report ≈ 14:15</td>
+</tr>
+<tr>
+<td>2026-09-09 09:50</td>
+<td><strong>The refused arm-06 run turns out to be the corpus-noise control the ingest arms never had — and it corrects some of their verdicts.</strong> <code>benchmarking-fm-06-20260909_030421.json</code> ran the <strong>baseline configuration</strong> (the renderer forced <code>html_to_markdown</code> back on, §13.2 #19) on a <strong>fresh corpus</strong> <code>e67eb9f0…</code>. Same config, different scrape, so every delta it shows is pure corpus-to-corpus noise. Measured against the opening baseline's 3 runs (mean, within-corpus σ): <code>context_precision</code> −0.0010 (2σ 0.0123, inside); <code>context_recall</code> <strong>−0.0193 (2σ 0.0169, OUTSIDE)</strong>; <code>faithfulness</code> <strong>+0.0395 (2σ 0.0368, OUTSIDE)</strong>; <code>answer_relevancy</code> +0.0005 (inside); <strong><code>source_accuracy</code> −0.0252 (2σ 0.0089, OUTSIDE)</strong>. <strong>Consequence: corpus-to-corpus noise exceeds within-corpus noise on recall, faithfulness and source accuracy, so the ingest arms' MDEs (Procedure B, baseline-corpus σ) are too tight for exactly those metrics.</strong> Re-basing source accuracy on the fresh-corpus control (0.8585) instead of the one-corpus baseline (0.8836): arm 02 −0.044 → <strong>−0.019</strong>, arm 03 −0.030 → <strong>−0.005</strong>, arm 04 −0.039 → <strong>−0.014</strong>, arm 07 −0.035 → <strong>−0.009</strong> — i.e. the citation-accuracy losses attributed to categorization-off, stemming-on and markdown chunking are mostly the corpus, and only arm 02 retains a modest real drop. <strong>What survives untouched:</strong> arm 04's and arm 07's <code>context_precision</code> −0.10 (corpus effect on precision is −0.001) and arm 02's / arm 07's large recall regressions (−0.18/−0.22 and −0.16, vs a −0.019 corpus effect). Retrieval arms 01 / 05a / 05b are unaffected entirely — they shared one corpus. The closing baseline (running) supplies a <strong>second</strong> fresh-corpus point, upgrading this from one control run to a 2-point corpus-σ estimate; the final report must use it for every ingest-arm verdict</td>
+</tr>
+<tr>
+<td>2026-09-09 12:55</td>
+<td><strong>Closing baseline <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> archived as run 4</strong> (corpus <code>137e41c1…</code>, ingest 4974 s, 1091 docs / <strong>6928</strong> chunks vs the opening's 6926 — the sentence-chunk count is reproducible to ±2 on a re-scrape; QA <code>r4</code> still running). <strong>Drift check + a corrected corpus model.</strong> Two <em>independent</em> fresh-corpus runs of the baseline configuration now exist — the closing baseline (Sep 9) and the refused fm-06 run (Sep 9). They agree with each other far more tightly than either agrees with the opening baseline (Sep 5): <code>context_recall</code> 0.8637 / 0.8653 (<strong>spread 0.0016</strong>) against the opening's 0.8846; <code>context_precision</code> 0.6198 / 0.6125 (spread 0.0073) against 0.6135; <code>faithfulness</code> 0.5873 / 0.5936 (spread 0.0062) against 0.5541. <strong>So the earlier 09:50 reading was wrong in its mechanism:</strong> what looked like scrape-to-scrape <em>noise</em> is actually a <strong>real content shift in the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> docs between Sep 5 and Sep 9</strong> — recall down ~0.021, faithfulness up ~0.035, precision unchanged — while the scrape itself is highly reproducible. <code>answer_relevancy</code> remains the exception (0.6667 / 0.6971, spread 0.0304, scored rows 84-96 of 109 — §13.2 #20; unusable for verdicts). <strong>Consequence: the ingest arms (02/03/04/07, all run Sep 8-9) must be compared to the contemporaneous Sep 8-9 baseline (<code>context_precision</code> 0.6161, <code>context_recall</code> 0.8645, <code>faithfulness</code> 0.5904), not the Sep 5 opening.</strong> Re-based: <strong><code>context_precision</code> is corpus-stable (2σ 0.0073), so those verdicts harden</strong> — arm 04 −0.089, arm 07 −0.095, arm 02 −0.063 all REGRESSED; arm 03 −0.003 unchanged. <strong><code>context_recall</code> re-bases and two verdicts change:</strong> arm 02 −0.178 and arm 07 −0.142 remain large regressions, but <strong>arm 03 goes −0.042 → −0.022 and arm 04 −0.044 → −0.024</strong>, i.e. neither categorization-off nor stemming-on has a real recall effect; the earlier "REGRESSED" readings for those two were the corpus shift. <strong><code>faithfulness</code>: every ingest arm's apparent +0.02-0.03 gain vanishes</strong> (−0.009 to +0.000 against the contemporaneous baseline) — it was the corpus, not the feature. Retrieval arms 01 / 05a / 05b are untouched by all of this (one shared corpus). The final report must state the baseline used for each arm</td>
+</tr>
+<tr>
+<td>2026-09-09 13:10</td>
+<td><strong>Correction — chunk-count variation is NOT scrape noise; the FUTs predict it.</strong> The 10:12 and 19:18 entries claimed "±30 scrape-to-scrape wobble" from 6926 / 6896 / 6919. That compared runs with <strong>different configs</strong> and was wrong. Reasoning from the pre-registered FUT of each arm instead: <strong>arm 04 (<code>stemming.enabled: false → true</code>) cannot change chunk count</strong> — <code>manager.py:842-848</code> stems each child string <em>after</em> <code>build_hierarchical_nodes</code> returns, so counts can only move via the <code>if not child.strip()</code> empty-chunk drop; its 6919 (−7) is therefore the campaign's genuine control for scrape variation. <strong>Arm 03 (<code>processing.categorization.enabled: true → false</code>) is expected to change it</strong> — <code>node_parsing.py:120-121</code> passes document metadata into a metadata-aware splitter (<code>effective_chunk_size = chunk_size − len(tokenize(metadata_str))</code>); dropping <code>llm_category</code> frees ~8 tokens (measured: 472 → 480 effective child chunk), shifting boundaries, so its −30 is the feature's own doing. <strong>Actual same-config scrape reproducibility is ±2</strong> (opening 6926, closing 6928), an order of magnitude tighter than claimed. Arms 02 (7177) and 07 (10733) change <code>chunking.strategy</code> and are expected to differ by construction. No arm verdict changes — a corpus difference <em>caused by</em> the FUT is part of that feature's effect — but the campaign must not describe these as noise, and the final report must derive "can this FUT touch the corpus?" from where the key sits in the pipeline (<code>processing.</code>/<code>chunking.</code> = ingest-time, and check the code path) rather than from run-to-run arithmetic</td>
+</tr>
+<tr>
+<td>2026-09-09 14:19</td>
+<td><strong>CAMPAIGN DATA COLLECTION COMPLETE — <code>INGEST_ARMS_COMPLETE</code>, chain 2 exited 0.</strong> Closing baseline QA <code>r4</code> scored <strong>109/109</strong>. Totals: <strong>8 arms attempted, 7 completed</strong> (00, 01, 05a, 05b, 02, 03, 04, 07), <strong>arm 06 untestable</strong> (§13.2 #19 → fasrc/archi#448); <strong>17 archived <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> runs and 8 QA runs</strong>; zero degraded rows anywhere; every Procedure E check passed; no arm ran a configuration it did not declare (the one that tried was refused). <strong>Atom floor re-derived on 4 baseline QA runs across two corpora</strong> — tighter than the 3-run version on required-atom recall (2σ 0.0197 vs 0.0227). Re-testing every arm against it leaves the retrieval verdicts unchanged (01 outside 2σ on all three; 05a/05b inside on all three) and <strong>adds one</strong>: arm 03 (categorization off) is now +0.0386 on required-atom recall, just outside 2σ 0.0197 — one metric of three, direction positive, and its <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> metrics are flat, so the final report should call it suggestive, not a win. Arms 02 and 07 remain outside 2σ on all three atom metrics — the rerank-off signature they share. <code>fm-00</code> (closing baseline) <strong>left up</strong> with corpus <code>137e41c1…</code> for drift inspection; delete when the final report is written. <strong>Next and last step: the cross-arm report</strong></td>
+</tr>
+<tr>
+<td>2026-09-11 17:05</td>
+<td><strong>FINAL CROSS-ARM REPORT WRITTEN — <code>docs/docs/feature_matrix_results_2026_09.md</code></strong> (linked in the mkdocs nav as "Feature-Matrix Results (2026-09)"). Figures generated with R (<code>bench_out/feature_matrix/figures/make_figures.R</code>, data from <code>figures/extract_figure_data.py</code>; R 4.4 + ggplot2 in a conda env at <code>/scratch/a2rchi/conda-envs/r-bench</code> — <strong>the host root filesystem is at 96 %, a first attempt to install R under <code>~/miniforge3</code> filled <code>/</code> to 100 % and was rolled back; install envs on <code>/scratch</code></strong>). The extractor reproduces every re-based number logged on 09-09 (12:55 entry) and the 4-run atom floor exactly. <strong>Two corrections made while writing:</strong> (1) arm 04's pre-registered primary metric is <code>context_recall</code>, not <code>context_precision</code> — its §9 row and the 09-08 19:18 entry had called precision the primary; the arm reads "no measurable difference" on its primary with precision as a strong secondary regression; (2) blowouts are defined mechanically in the report (a row whose trace has no tool call), which gives 9 / 7 / 13 for the opening baseline against the 9 / 6 / 11 hand counts above. Primary verdicts in the pre-registered vocabulary: 01 / 05a / 05b / 02 / 03 / 04 no measurable difference, 07 hurts, 06 untestable. <strong>Run totals corrected:</strong> the 14:19 entry's "17 <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> / 8 QA" should read <strong>18 archived <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> runs</strong> (3 + 2×3 + 2×4 + 1) plus the refused fm-06 control, and <strong>11 QA runs</strong> (4 baseline + 7 arms). The pre-registration's Outcome section is filled in. Follow-ups are <em>proposed</em> in the report (§5), none filed. <code>fm-00</code> (closing baseline) still up; delete with <code>printf 'y\n' \| archi delete --name fm-00 --rmi --rmv</code></td>
+</tr>
+<tr>
+<td>2026-09-17 14:50</td>
+<td><strong>Follow-ups filed</strong> as fasrc/archi #496 (categorization off), #497 (reranker decision + payload-size control), #498 (k = 8), #499 (recursion-limit blowouts), #500 (arm 06 re-run under a new lock; #448 was fixed by #456 on 09-11), #501 (defect 14), #502 (defect 20), #503 (defect 16), #504 (page the operator); back-linked on #396. <code>fm-00</code> closing stack deleted 14:10 (three volumes, <code>~/.archi/archi-fm-00</code>, four images). archi-bench-out README now lists config-file artifacts by location (<code>68823dc</code>). <strong>Correction:</strong> the report's §2.3 quoted the <code>answer_relevancy</code> paired σ as 0.016 (the aggregate σ over the three opening runs); the tool's noise floor in <code>reports/arm-01.json</code> is 0.005, fixed in this commit. <strong>Host note:</strong> this checkout has been detached at <code>v2026.08.0</code> since 09-16; switching it rewrote the 48 archi-tracked <code>bench_out/</code> files with archi's strict-JSON versions, so the bench_out repo shows 20 modified + 10 untracked files until the untrack PR settles which copy is canonical. Never <code>git switch</code> this checkout; use a worktree.</td>
 </tr>
 </tbody>
 </table>
@@ -1041,7 +1510,7 @@ for i,j in ((0,1),(1,2),(0,2)):
         sd=st.stdev(d); print(f&quot;r{i+1}-r{j+1} {m:18s} n={len(d)} sd_delta={sd:.3f} 2SE={2*sd/math.sqrt(len(d)):.3f}&quot;)
 EOF
 </code></pre>
-<p>Pins (§2), from <code>~/Projects/archi</code>:</p>
+<p>Pins (§2), from <code>/home/a2rchi/archi-openai-compat</code>:</p>
 <pre><code class="language-bash">git -C config hash-object benchmarking/fasrc_ragas_queries.json
 sha256sum config/benchmarking/fasrc_ragas_queries.json config/agents/claw/fasrc-docs.md config/lists/sources.list examples/benchmarking/anchor_questions.json
 cmp deploy/fasrc-dev/agents/fasrc-docs.md config/agents/claw/fasrc-docs.md &amp;&amp; echo identical

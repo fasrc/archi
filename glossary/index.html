@@ -130,11 +130,27 @@
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#arm">arm</a>
     </li>
+    <li class="toctree-l3"><a class="reference internal" href="#control-treatment">control / treatment</a>
+    </li>
     <li class="toctree-l3"><a class="reference internal" href="#anchor-anchor-questions">anchor / anchor questions</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#bank-question-bank">bank / question bank</a>
     </li>
+    <li class="toctree-l3"><a class="reference internal" href="#noise">noise</a>
+    </li>
     <li class="toctree-l3"><a class="reference internal" href="#noise-floor">noise floor</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#replicate">replicate</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#replicates-an-effect">replicates (an effect)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#paired-test">paired test</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#source-accuracy">source accuracy</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#faithfulness">faithfulness</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#verdict-helps-hurts-no-measurable-difference">verdict (helps / hurts / no measurable difference)</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#pre-registration">pre-registration</a>
     </li>
@@ -239,6 +255,10 @@
               </ul>
               <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
                 </li>
               </ul>
               <ul>
@@ -453,15 +473,58 @@ clinical trials, where each treatment group is an "arm". Every arm answers the s
 bank under otherwise identical conditions (same corpus, same judge), so any score difference
 can be pinned on the one thing that varies — for example, the current code as a <em>baseline</em>
 arm against a proposed fix as a <em>treatment</em> arm.</p>
+<h3 id="control-treatment">control / treatment</h3>
+<p>The <strong>control</strong> is the arm left exactly as it is today, the baseline that everything else is
+measured against. A <strong>treatment</strong> is the control with <em>one</em> deliberate change. In the rung-0
+prompt sweep (<a href="https://github.com/fasrc/archi/issues/540">#540</a>), the control was the live <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr>
+Docs agent prompt, and each treatment was that same prompt word for word plus one appended
+section (category routing, or worked examples). Because only one thing differs, a difference in
+results can be credited to that one change.</p>
 <h3 id="anchor-anchor-questions">anchor / anchor questions</h3>
 <p>A small set of fixed benchmark questions, never edited and never tuned against, run every round
 to catch regressions. If an anchor's score moves, something changed.</p>
 <h3 id="bank-question-bank">bank / question bank</h3>
 <p>The file of benchmark questions, each with a reference answer and its gold source(s). The
 evaluation runs the assistant over the bank and scores the results.</p>
+<h3 id="noise">noise</h3>
+<p>The difference between two runs of the <em>same</em> arm on the same questions. It is never zero:
+the model and the judge both have some randomness, so an unchanged prompt can score 0.48 on a
+question in one run and 0.35 in the next. That gap is noise, because nothing changed.</p>
 <h3 id="noise-floor">noise floor</h3>
-<p>How much a score wobbles when you re-run the identical benchmark and change nothing. A
-difference smaller than the noise floor isn't real — it's just run-to-run jitter.</p>
+<p>The <em>typical size</em> of the noise, measured by re-running an unchanged arm and comparing the runs
+(written σ, "sigma"). It is a yardstick, not a single observation: noise is one wiggle, the noise
+floor is how big wiggles usually are. A difference smaller than the noise floor can't be told apart
+from noise, and the benchmarking guide only calls a difference real at twice the noise floor (2σ,
+<a href="../interpreting_benchmark_results/#7-glossary">Interpreting Results §7</a>).</p>
+<h3 id="replicate">replicate</h3>
+<p>One complete, repeated run of the same experiment: the same question bank, arms, corpus and
+settings, run again. The rung-0 sweep ran two replicates ("run 1" and "run 2"). Comparing the
+control arm across replicates is also how its noise floor is measured.</p>
+<h3 id="replicates-an-effect">replicates (an effect)</h3>
+<p>An effect <em>replicates</em> when the same treatment-vs-control difference shows up again in a second
+replicate, pointing the same way and clearly larger than the noise. It is the difference that has
+to repeat, not the raw scores: two runs never produce identical numbers. A result seen in only one
+replicate may be a lucky run, which is why archi's pre-registered rules require an effect in
+<strong>both</strong> replicates before calling it.</p>
+<h3 id="paired-test">paired test</h3>
+<p>A comparison made question by question, with the same question answered by both arms, instead of
+comparing two overall averages. It cancels out how hard each question is. For yes/no outcomes
+(for example "cited the right page"), archi uses the exact <strong>McNemar</strong> test, which counts only the
+questions where the two arms disagreed. Its <strong>p-value</strong> is the chance of a split at least that
+uneven if the change really did nothing; below 0.05 is the usual bar for "real".</p>
+<h3 id="source-accuracy">source accuracy</h3>
+<p>The share of questions where the assistant cited at least one of the question's
+<a href="#gold-source">gold sources</a>, counting only questions that finished normally.</p>
+<h3 id="faithfulness">faithfulness</h3>
+<p>A <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> score from 0 to 1 for how closely an answer sticks to the text it retrieved: high means
+every claim can be traced to a retrieved passage, low means the answer added things the sources
+don't say. It is scored per question by the <a href="#judge">judge</a>, and it varies noticeably from run
+to run.</p>
+<h3 id="verdict-helps-hurts-no-measurable-difference">verdict (helps / hurts / no measurable difference)</h3>
+<p>The pre-registered outcome for a treatment arm. <strong>helps</strong>: its deciding metric beats the control
+by more than noise, in both replicates, with no significant harm elsewhere. <strong>hurts</strong>: it is
+significantly worse, in both replicates. <strong>no measurable difference</strong>: neither, which is a real
+finding (the change didn't do anything this benchmark can detect), not a failed experiment.</p>
 <h3 id="pre-registration">pre-registration</h3>
 <p>Writing down the hypothesis, the metric that decides it, and the pass/fail rule <em>before</em>
 running an evaluation — so you can't rationalize the result afterward.</p>
@@ -537,7 +600,8 @@ fetch it automatically (see <a href="#config-pin">config pin</a>).</p>
 <p>The exact, named version of the <a href="#archi-config">archi-config</a> repository that deployments
 install — like ordering a specific edition of a book rather than "whatever's newest". Every
 deploy checks the version it got against a recorded fingerprint and refuses to proceed if
-someone has quietly swapped what the name points to.</p>
+someone has quietly swapped what the name points to. Each deployment has its own pin, so
+moving one host to a newer version does not move the others.</p>
 <!--
 Shared abbreviation definitions, auto-appended to EVERY docs page by
 pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the

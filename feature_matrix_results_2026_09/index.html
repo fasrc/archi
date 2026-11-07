@@ -1,0 +1,1757 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Feature-Matrix Results (2026-09) - Archi Docs</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Feature-Matrix Results (2026-09)";
+        var mkdocs_page_input_path = "feature_matrix_results_2026_09.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Archi Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../glossary/">Glossary</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../quickstart/">Quickstart</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../secrets/">Secrets</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../user_guide/">User Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../data_sources/">Data Sources</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../services/">Services</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../models_providers/">Models & Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../agents_tools/">Agents & Tools</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../configuration/">Configuration</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../cli_reference/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../api_reference/">API Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../benchmarking/">Benchmarking</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../evaluation/">Evaluation</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../interpreting_benchmark_results/">Interpreting Results</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Feature-Matrix Results (2026-09)</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#1-the-short-version">1. The short version</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#2-what-was-tested-and-how-to-read-the-numbers">2. What was tested and how to read the numbers</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#21-the-arms">2.1 The arms</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#22-what-is-measured">2.2 What is measured</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#23-the-decision-rule-and-which-baseline-each-arm-is-judged-against">2.3 The decision rule, and which baseline each arm is judged against</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#24-deviations-from-the-pre-registration">2.4 Deviations from the pre-registration</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#3-results-by-feature">3. Results by feature</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#31-reranker-off-retrievershierarchical_rerankenabled-true-false">3.1 Reranker OFF — retrievers.hierarchical_rerank.enabled: true → false</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#32-fewer-parents-per-search-retrievershierarchical_reranknum_documents_to_retrieve-5-3">3.2 Fewer parents per search — retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 3</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#33-more-parents-per-search-retrievershierarchical_reranknum_documents_to_retrieve-5-8">3.3 More parents per search — retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 8</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#34-character-chunking-chunkingstrategy-sentence-character-retrievershierarchical_rerankenabled-true-false">3.4 Character chunking — chunking.strategy: sentence → character + retrievers.hierarchical_rerank.enabled: true → false</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#35-categorization-off-processingcategorizationenabled-true-false">3.5 Categorization OFF — processing.categorization.enabled: true → false</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#36-stemming-on-stemmingenabled-false-true-primary-metric-context_recall">3.6 Stemming ON — stemming.enabled: false → true (primary metric: context_recall)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#37-htmlmarkdown-off-processinghtml_to_markdownenabled-true-false-untestable">3.7 HTML→Markdown OFF — processing.html_to_markdown.enabled: true → false — untestable</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#38-markdown-chunking-chunkingstrategy-sentence-markdown">3.8 Markdown chunking — chunking.strategy: sentence → markdown</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#4-cross-cutting-findings">4. Cross-cutting findings</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#41-what-went-in-versus-what-came-out">4.1 What went in versus what came out</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#42-the-k-sweep-is-monotonic">4.2 The k sweep is monotonic</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#43-about-8-of-questions-never-get-an-answer-and-it-dominates-the-latency-picture">4.3 About 8 % of questions never get an answer, and it dominates the latency picture</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#44-the-corpus-moved-between-sep-5-and-sep-9-the-harness-did-not">4.4 The corpus moved between Sep 5 and Sep 9; the harness did not</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#45-scorecard-against-the-pre-registered-claims">4.5 Scorecard against the pre-registered claims</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#5-proposed-follow-ups">5. Proposed follow-ups</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#6-integrity-and-caveats">6. Integrity and caveats</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#61-what-held">6.1 What held</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#62-what-to-keep-in-mind-when-reading">6.2 What to keep in mind when reading</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#7-reproducibility">7. Reproducibility</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#appendix-a-run-inventory">Appendix A — run inventory</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../adding_providers/">Adding Providers</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../developer_guide/">Developer Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../observability/">Observability</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Archi Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Feature-Matrix Results (2026-09)</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/archi-physics/archi/edit/master/docs/feature_matrix_results_2026_09.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="feature-matrix-campaign-results-2026-09">Feature-Matrix Campaign Results (2026-09)</h1>
+<p><strong>Audience:</strong> anyone deciding whether a shipped <code>data_manager</code> default should change. No
+<abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> background is assumed: every metric is introduced in plain words before its name is
+used, and every comparison names the feature under test as <code>key: default → arm</code>.</p>
+<p><strong>What this is.</strong> The cross-arm report for issue
+<a href="https://github.com/fasrc/archi/issues/396">#396</a>. Between 2026-09-04 and 2026-09-09, on the
+production GPU host, eight arms were compared against the shipped defaults, with the same 109
+questions, the same judge, the same code and a locked protocol. Six arms changed one key each;
+arm 02 changed two keys by design (section 2.1), and arm 06 could not apply its change at all
+(section 3.7). The protocol, the pre-registered decision rules and the day-by-day operating log
+live in the <a href="../proposals/feature-matrix-campaign-2026/">campaign plan</a> and the
+<a href="https://github.com/fasrc/archi/blob/bench/2026-09-feature-matrix/docs/eval/preregs/2026-09-feature-matrix.md">pre-registration</a>;
+this page reports what came out. Times are EDT (the operating log's convention); artifact
+filenames carry UTC.</p>
+<p><strong>The one-paragraph answer.</strong> No retrieval-side knob moved the pre-registered primary metric
+(<code>context_precision</code>, the share of retrieved text that was actually needed). Two ingest-side
+changes made it worse: markdown chunking (<code>hurts</code>) and, as a strong secondary effect,
+stemming. Two shipped defaults cost real money for no measurable benefit: per-document <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr>
+categorization adds 19 minutes to every ingest and moved no metric (it only shifts some chunk
+boundaries), and the hierarchical reranker roughly doubles time per question while, in an
+exploratory one-run reading, the answers it produces contain <em>fewer</em> of the required facts.
+Returning 8 parents per search instead of 5 raised source accuracy (the reference page is
+among the retrieved documents) from 0.88 to 0.96 at no latency cost, a secondary-metric result
+(section 2.4). One arm, turning HTML→Markdown conversion off,
+could not be run at all: the config renderer silently ignores <code>enabled: false</code> for that key
+(<a href="https://github.com/fasrc/archi/issues/448">fasrc/archi#448</a>). The two evaluators disagree
+on three arms, and the disagreement is informative rather than contradictory: they measure
+different stages of the pipeline.</p>
+<p><img alt="Verdict grid: every feature under test, judged against its correct baseline" src="../_static/feature_matrix_2026_09/fig1_verdict_grid.png" /></p>
+<hr />
+<h2 id="1-the-short-version">1. The short version</h2>
+<p>Each line names the feature under test (<code>key: default → arm</code>), the pre-registered verdict on
+the primary metric in the pre-registered vocabulary (helps / hurts / no measurable difference
+/ mixed), and what else moved. Full tables are in <a href="#3-results-by-feature">section 3</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Feature under test</th>
+<th>Primary verdict</th>
+<th>What else moved</th>
+<th>Cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>retrievers.hierarchical_rerank.enabled: true → false</code> (reranker OFF)</td>
+<td><strong>no measurable difference</strong> (Δ −0.025 / −0.010, MDE 0.063)</td>
+<td>retrieved-text recall lower in both runs (−0.072 / −0.052, one outside MDE); <strong>answer-side gold atoms up on all three metrics (+0.10 to +0.12; exploratory, one unpaired QA run)</strong></td>
+<td><strong>45 % less time per question</strong>, a third fewer searches</td>
+</tr>
+<tr>
+<td><code>retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 3</code> (k = 3)</td>
+<td><strong>no measurable difference</strong> (Δ −0.014 / −0.005, MDE 0.022)</td>
+<td>recall <strong>hurts</strong> (−0.087 / −0.061); reference page retrieved 0.877 → 0.792 (p = 0.012 / 0.023)</td>
+<td>no speed gain</td>
+</tr>
+<tr>
+<td><code>retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 8</code> (k = 8)</td>
+<td><strong>no measurable difference</strong> (Δ −0.014 / −0.013, MDE 0.018)</td>
+<td>recall up (+0.060 / +0.028, one outside MDE); <strong>reference page retrieved 0.877 → 0.962 / 0.953 (p = 0.002 / 0.012)</strong></td>
+<td>latency flat</td>
+</tr>
+<tr>
+<td><code>chunking.strategy: sentence → character</code> + <code>hierarchical_rerank.enabled: true → false</code> (two keys, pre-registered)</td>
+<td><strong>no measurable difference</strong> (Δ −0.058 / −0.067, MDE 0.081)</td>
+<td>recall <strong>hurts, worst in the campaign</strong> (−0.162 / −0.195); gold atoms up (exploratory; probably the reranker-OFF half)</td>
+<td>45 % faster (the reranker-OFF half)</td>
+</tr>
+<tr>
+<td><code>processing.categorization.enabled: true → false</code> (categorization OFF)</td>
+<td><strong>no measurable difference</strong> (Δ −0.004 / −0.002, MDE 0.026)</td>
+<td>nothing on retrieval; one of three atom metrics just outside 2σ (suggestive)</td>
+<td><strong>ingest 19 min faster (−23 %)</strong></td>
+</tr>
+<tr>
+<td><code>stemming.enabled: false → true</code> (stemming ON); primary is <code>context_recall</code></td>
+<td><strong>no measurable difference</strong> (Δ −0.032 / −0.015, MDE 0.040 / 0.055)</td>
+<td><strong>precision hurts as a secondary effect</strong> (−0.091 / −0.088, MDE 0.057); the agent searches ~15 % more</td>
+<td>+7 % time per question</td>
+</tr>
+<tr>
+<td><code>processing.html_to_markdown.enabled: true → false</code> (HTML→Markdown OFF)</td>
+<td><strong>untestable</strong></td>
+<td>the renderer forced the key back to <code>true</code>; the integrity gate refused the run after 3 h 45 m (#448)</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>chunking.strategy: sentence → markdown</code> (markdown chunking)</td>
+<td><strong>hurts</strong> (Δ −0.098 / −0.091, MDE 0.072 / 0.074)</td>
+<td>recall <strong>hurts</strong> (−0.145 / −0.140); gold atoms up on all three (exploratory); +55 % chunks</td>
+<td>37 % faster, two searches per question instead of four</td>
+</tr>
+</tbody>
+</table>
+<p>Three things to take from the table before the details:</p>
+<ul>
+<li><strong>The primary metric is insensitive to the retrieval knobs.</strong> Reranker and k leave
+  <code>context_precision</code> inside its minimum detectable effect. Only two ingest-side changes move
+  it past that bound, both downward: markdown chunking (its primary metric) and stemming (a
+  secondary metric for that arm). The character-chunking arm's drop (−0.058 / −0.067) stays
+  inside its MDE (0.081 / 0.082). <code>context_recall</code> and source accuracy are the metrics that
+  respond to retrieval settings.</li>
+<li><strong>The two shipped defaults with a measurable cost buy nothing measurable.</strong> Categorization
+  costs 19 minutes per ingest (about 1 080 <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> calls), and no retriever, prompt or embedding
+  reads the category (it only shifts chunk boundaries, section 3.5); the reranker costs 45 %
+  of the time per question. Section 5 proposes the issues.</li>
+<li><strong>"Less material in, more facts out" happened three times.</strong> Reranker OFF, character
+  chunking (+ reranker OFF) and markdown chunking all lowered <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> recall of the retrieved
+  text and all raised the answer-side gold-atom scores (exploratory, one QA run each), while
+  cutting searches per question roughly in half. Section 4.1 explains why this is not a contradiction.</li>
+</ul>
+<hr />
+<h2 id="2-what-was-tested-and-how-to-read-the-numbers">2. What was tested and how to read the numbers</h2>
+<h3 id="21-the-arms">2.1 The arms</h3>
+<p>One factor flips per arm (arm 02 flips two, because <code>character</code> chunks carry no <code>parent_id</code>
+and the reranker would have nothing to return). Baseline and arm configs are in
+<code>config/benchmarking/feature_matrix/</code> (archi-config); the feature under test is derived by
+diffing each arm's <code>data_manager</code> block against <code>00-baseline.yaml</code>, never written by hand.</p>
+<table>
+<thead>
+<tr>
+<th>Arm</th>
+<th>Feature under test (<code>key: default → arm</code>)</th>
+<th>Kind</th>
+<th>Corpus</th>
+<th><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> runs</th>
+<th>QA runs</th>
+<th>Baseline used for the verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>00</td>
+<td>— shipped defaults made explicit: <code>chunking.strategy: sentence</code>, <code>hierarchical_rerank.enabled: true</code>, <code>num_documents_to_retrieve: 5</code>, <code>html_to_markdown.enabled: true</code>, <code>categorization.enabled: true</code>, <code>stemming.enabled: false</code></td>
+<td>reference</td>
+<td>opening <code>fc8ee1b5…</code> (Sep 5) and closing <code>137e41c1…</code> (Sep 9)</td>
+<td>3 opening + 1 closing</td>
+<td>4</td>
+<td>—</td>
+</tr>
+<tr>
+<td>01</td>
+<td><code>retrievers.hierarchical_rerank.enabled: true → false</code></td>
+<td>retrieval (re-seeded on <code>fm-00</code>)</td>
+<td>= opening</td>
+<td>2</td>
+<td>1</td>
+<td>opening, paired per question</td>
+</tr>
+<tr>
+<td>05a</td>
+<td><code>retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 3</code></td>
+<td>retrieval</td>
+<td>= opening</td>
+<td>2</td>
+<td>1</td>
+<td>opening, paired</td>
+</tr>
+<tr>
+<td>05b</td>
+<td><code>retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 8</code></td>
+<td>retrieval</td>
+<td>= opening</td>
+<td>2</td>
+<td>1</td>
+<td>opening, paired</td>
+</tr>
+<tr>
+<td>02</td>
+<td><code>chunking.strategy: sentence → character</code>; <code>retrievers.hierarchical_rerank.enabled: true → false</code></td>
+<td>ingest (own stack)</td>
+<td>own, <code>d7417a68…</code></td>
+<td>2</td>
+<td>1</td>
+<td>contemporaneous (Sep 9), aggregate</td>
+</tr>
+<tr>
+<td>03</td>
+<td><code>processing.categorization.enabled: true → false</code></td>
+<td>ingest</td>
+<td>own, <code>570ccaa8…</code></td>
+<td>2</td>
+<td>1</td>
+<td>contemporaneous, aggregate</td>
+</tr>
+<tr>
+<td>04</td>
+<td><code>stemming.enabled: false → true</code></td>
+<td>ingest</td>
+<td>own, <code>95574702…</code></td>
+<td>2</td>
+<td>1</td>
+<td>contemporaneous, aggregate</td>
+</tr>
+<tr>
+<td>06</td>
+<td><code>processing.html_to_markdown.enabled: true → false</code></td>
+<td>ingest</td>
+<td>own, <code>e67eb9f0…</code></td>
+<td>1 (refused)</td>
+<td>0</td>
+<td>untestable (#448); the refused run is reused as a baseline-configuration control</td>
+</tr>
+<tr>
+<td>07</td>
+<td><code>chunking.strategy: sentence → markdown</code></td>
+<td>ingest</td>
+<td>own, <code>e7ed322f…</code></td>
+<td>2</td>
+<td>1</td>
+<td>contemporaneous, aggregate</td>
+</tr>
+</tbody>
+</table>
+<p>Fixed for every arm: 1 091 documents from <code>config/lists/sources.list</code>, the 109-question bank
+(104 bank rows + 5 tripwire anchors), the production agent prompt <code>fasrc-docs.md</code>, the
+system under test (<abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> <code>Qwen3.6-35B-A3B-GPTQ-Int4</code>, temperature 0.3, 32 768-token in-loop
+context bound, <code>recursion_limit: 50</code>), the judge (<code>claude-sonnet-4-5</code> via HUIT Bedrock) and
+the code (lock <code>3e07ae79…</code>, runtime trees identical to <code>dev</code> tip <code>3170498c</code>). Totals: 18
+archived <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> runs, 11 QA runs, zero degraded rows, every configuration-divergence check
+passed, and no arm ran a configuration it did not declare (the one that tried was refused).</p>
+<h3 id="22-what-is-measured">2.2 What is measured</h3>
+<p>The campaign uses two evaluators that look at different stages of the same pipeline. Keep
+the stage in mind: most of the "disagreements" below are the two stages disagreeing.</p>
+<table>
+<thead>
+<tr>
+<th>What is measured, in plain words</th>
+<th>Metric</th>
+<th>Evaluator</th>
+<th>Stage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Of the text the agent retrieved, how much was actually needed to answer?</td>
+<td><code>context_precision</code> — <strong>the pre-registered primary metric</strong> (except arm 04)</td>
+<td><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr>, judged against the reference answer</td>
+<td>retrieved text (what went <em>in</em>)</td>
+</tr>
+<tr>
+<td>Did the pile of retrieved text cover the facts in the reference answer?</td>
+<td><code>context_recall</code> — primary for arm 04</td>
+<td><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr></td>
+<td>retrieved text</td>
+</tr>
+<tr>
+<td>Is the answer grounded in the retrieved text (no invented claims)?</td>
+<td><code>faithfulness</code></td>
+<td><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr></td>
+<td>the answer (what came <em>out</em>)</td>
+</tr>
+<tr>
+<td>Does the answer address the question asked?</td>
+<td><code>answer_relevancy</code> — <strong>advisory only</strong> (see 6.2)</td>
+<td><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr></td>
+<td>the answer</td>
+</tr>
+<tr>
+<td>Is the page the reference cites among the documents the agent retrieved?</td>
+<td>source accuracy (URL match against the metadata of the retrieved documents, not the links in the answer; 106 of 109 questions carry a reference URL)</td>
+<td>harness</td>
+<td>retrieved sources</td>
+</tr>
+<tr>
+<td>Does the answer contain the specific required facts?</td>
+<td>gold atoms: attempt pass rate, atom score, required-atom recall</td>
+<td><code>archi qa</code>, same judge model</td>
+<td>the answer</td>
+</tr>
+<tr>
+<td>How long did a question take; how often did the agent give up?</td>
+<td>seconds per question (warm mean, first question dropped); blowouts; searches per question</td>
+<td>harness traces</td>
+<td>cost</td>
+</tr>
+<tr>
+<td>How long did the corpus take to ingest; how big is the index?</td>
+<td>ingest wall seconds; chunk count</td>
+<td>harness / ledger</td>
+<td>cost</td>
+</tr>
+</tbody>
+</table>
+<p>A <strong>blowout</strong> is a question whose trace contains no tool call: the agent hit
+<code>services.chat_app.recursion_limit: 50</code>, the error handler returned an <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr>-written wrap-up
+("The agent attempted to…"), and <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> scored that text as the answer. This mechanical
+definition supersedes the hand counts in the operating log (which differ by one or two on
+two baseline runs). A row with no tool call can also be a direct answer, so the proxy was
+checked against all 20 <code>benchmarking-fm-*.json</code> artifacts of the campaign (the smoke run
+excluded): every no-tool row is a recursion-limit wrap-up (it carries the limit marker, or
+opens with "The agent attempted to…"), and no row that carries the marker has a tool call. A
+<strong>normal question</strong> is any other question.</p>
+<h3 id="23-the-decision-rule-and-which-baseline-each-arm-is-judged-against">2.3 The decision rule, and which baseline each arm is judged against</h3>
+<ul>
+<li><strong><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> metrics.</strong> Verdicts come from <code>scripts/benchmarking/compare_runs.py</code>, never by hand.
+  The minimum detectable effect is <code>MDE = max(2·SE, 2·σ)</code>: <code>SE</code> is the paired per-question
+  standard error over the 104 bank questions, <code>σ</code> the run-to-run spread of the mean measured
+  on the three opening baseline runs of this campaign (paired σ: <code>context_precision</code> 0.004,
+  <code>context_recall</code> 0.011, <code>faithfulness</code> 0.021, <code>answer_relevancy</code> 0.005 — all below the
+  planning prior, so N = 2 runs per arm stood). A delta inside the MDE is the null, never a
+  direction. <strong>Two runs combine as: outside the MDE in the same direction in both runs → a
+  verdict; outside in one run → reported as the null, with the direction noted.</strong> This rule
+  replaces the pre-registered pooled delta (deviation 1 in section 2.4).</li>
+<li><strong>Retrieval arms (01, 05a, 05b)</strong> ran on the baseline's own stack and corpus, so their
+  deltas are paired per question against the opening baseline, exactly as pre-registered.</li>
+<li><strong>Ingest arms (02, 03, 04, 07)</strong> must ingest their own corpus, and the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> documentation
+  changed between Sep 5 and Sep 9 (section 4.4). They are therefore judged against the
+  <strong>contemporaneous baseline</strong>: the mean of the two baseline-configuration runs made on Sep 9
+  — the closing baseline (run 4) and the refused arm-06 run, which the renderer bug turned
+  into a baseline-configuration run on a third fresh corpus. Those two runs agree with each
+  other to 0.0016 on recall and 0.007 on precision. The MDE applied is the tool's own for that
+  arm and run. <strong>This is a logged deviation from the pre-registration</strong> (which compared every
+  arm to the opening baseline; deviation 2 in section 2.4, which also gives the scrape times);
+  section 3 shows both numbers for every ingest arm so the reader can see what the re-basing
+  changed. It moved two secondary readings inside the MDE (the categorization-OFF and
+  stemming-ON recall dips) and changed no primary verdict under the two-run rule.</li>
+<li><strong>Gold atoms.</strong> One QA run per arm against a <strong>four-run baseline floor</strong> (three opening runs
+  on the Sep 5 corpus plus the closing run on the Sep 9 corpus): pass rate 0.424 ± 0.024,
+  atom score 0.475 ± 0.017, required-atom recall 0.614 ± 0.010 (mean ± population σ). A delta
+  inside 2σ is the null. Because the arm side is a single run, an atom gain is one draw
+  several σ from a four-point floor, not a paired test. This analysis is exploratory and
+  replaces the pre-registered paired one (deviation 3 in section 2.4).</li>
+<li><strong>Retrieved sources.</strong> Exact McNemar test on paired page hits (question by question, arm run
+  against the reference run of the right baseline); p &lt; 0.05 in both runs is a verdict.</li>
+<li><strong>Cost</strong> is reported beside every verdict, never judged (plan §4.4 step 4).</li>
+</ul>
+<p><img alt="Baseline stability: RAGAS and gold atoms on the baseline configuration across two corpora" src="../_static/feature_matrix_2026_09/fig6_baseline_stability.png" /></p>
+<h3 id="24-deviations-from-the-pre-registration">2.4 Deviations from the pre-registration</h3>
+<p>The <a href="https://github.com/fasrc/archi/blob/dev/docs/eval/preregs/2026-09-feature-matrix.md">pre-registration</a>
+fixed the analysis before any arm ran. This report departs from it in five places. Read every
+verdict below with them in mind.</p>
+<ol>
+<li><strong>Each run is compared on its own; the two runs are not pooled.</strong> The pre-registration
+   computes one paired delta over both runs of an arm. <code>compare_runs.py</code> at the locked code
+   compares one artifact per arm and has no pooled mode, so each run was compared separately
+   and the two results were combined by the two-run rule in section 2.3, which the
+   pre-registration does not contain. A pooled delta has a smaller standard error, so the
+   pooled rule can turn a split reading into a verdict. The split readings are
+   <code>context_recall</code> for arms 01 and 05b, <code>faithfulness</code> for arm 05a, <code>context_precision</code> for
+   arm 05b (both runs within 0.004 of the MDE) and, against the opening baseline,
+   <code>context_recall</code> for arms 03 and 04 (the primary metric of arm 04). The pooled deltas were
+   not computed, so these readings are open.</li>
+<li><strong>Ingest arms are compared with baseline runs scraped later.</strong> The pre-registration compares
+   every arm with the opening baseline. Section 2.3 compares the ingest arms with the mean of
+   two baseline-configuration runs, and calls it the contemporaneous baseline. The word is
+   approximate: arms 02, 03 and 04 were scraped on Sep 7 21:06, Sep 8 03:08 and Sep 8 10:56
+   (EDT), and the two controls on Sep 8 19:18 (the refused arm-06 run) and Sep 9 08:40 (the
+   closing baseline). When the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> documentation changed between Sep 5 and Sep 9 is not
+   known, so the campaign cannot say which content version arms 02–04 saw. Section 3 shows
+   both comparisons for every ingest arm. Where a reading changes between them, the corpus is
+   the likely cause, not a measured one.</li>
+<li><strong>The gold-atom analysis is exploratory.</strong> The pre-registration fixed one opening and one
+   closing baseline QA run and an analysis paired by item, with McNemar on pass/fail. The
+   campaign added two opening replicates and compared each arm's single QA run with the spread
+   of the four baseline runs (section 2.3). That spread is baseline run-to-run noise, not the
+   noise of an arm-minus-baseline contrast, and the paired analysis was not run. Every atom
+   reading in this report is exploratory and carries no verdict.</li>
+<li><strong><code>answer_correctness</code> was not collected.</strong> The pre-registration lists all five <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr>
+   metrics for every arm. The locked harness enables four by default (<code>DEFAULT_ENABLED_METRICS</code>
+   in <code>src/utils/benchmark_schema.py</code> at <code>3170498c</code>), and no artifact of the campaign carries
+   <code>answer_correctness</code>.</li>
+<li><strong>The k = 8 proposal rests on a secondary metric.</strong> When the primary metric shows no
+   measurable difference, the decision rule allows a default-change issue only for a cheaper
+   setting, and k = 8 is not cheaper. The proposal in section 5 rests on source accuracy and on
+   one QA run, so it is exploratory and needs a pre-registered confirming experiment before the
+   default changes.</li>
+</ol>
+<hr />
+<h2 id="3-results-by-feature">3. Results by feature</h2>
+<p>Every table is framed from the feature's point of view: the shipped default in one column,
+the arm in the next, then the delta with its MDE (<abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr>), 2σ (atoms) or p-value (sources),
+and a one-word reading. Two <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> runs per arm are shown as <code>run 1 / run 2</code>. Baseline values
+in the <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> rows are the paired means the tool reports for that comparison.</p>
+<h3 id="31-reranker-off-retrievershierarchical_rerankenabled-true-false">3.1 Reranker OFF — <code>retrievers.hierarchical_rerank.enabled: true → false</code></h3>
+<p>Same corpus as the baseline, paired per question.</p>
+<table>
+<thead>
+<tr>
+<th>What is measured</th>
+<th>Metric</th>
+<th>reranker ON (default)</th>
+<th>reranker OFF</th>
+<th>Δ (MDE or 2σ)</th>
+<th>Reading</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>retrieved text was needed</td>
+<td><code>context_precision</code> (primary)</td>
+<td>0.633 / 0.629</td>
+<td>0.608 / 0.619</td>
+<td>−0.025 / −0.010 (0.063 / 0.064)</td>
+<td><strong>no measurable difference</strong></td>
+</tr>
+<tr>
+<td>retrieved text covers the reference</td>
+<td><code>context_recall</code></td>
+<td>0.891</td>
+<td>0.818 / 0.839</td>
+<td>−0.072 / −0.052 (0.057 / 0.055)</td>
+<td>lower in both runs, one outside MDE → the null, but 3× the baseline's own replicate spread (+0.021 / +0.016) and opposite in sign: a probable small loss</td>
+</tr>
+<tr>
+<td>answer grounded in retrieved text</td>
+<td><code>faithfulness</code></td>
+<td>0.561</td>
+<td>0.603 / 0.565</td>
+<td>+0.042 / +0.004 (0.058 / 0.055)</td>
+<td>no difference</td>
+</tr>
+<tr>
+<td>retrieved the reference page</td>
+<td>source accuracy</td>
+<td>0.877</td>
+<td>0.877 / 0.887</td>
+<td>p = 1 / 1</td>
+<td>identical</td>
+</tr>
+<tr>
+<td>answer contains the required facts</td>
+<td>atom score</td>
+<td>0.475 ± 0.017</td>
+<td><strong>0.591</strong></td>
+<td><strong>+0.116 (2σ 0.034)</strong></td>
+<td>up (exploratory)</td>
+</tr>
+<tr>
+<td>required facts recalled</td>
+<td>required-atom recall</td>
+<td>0.614 ± 0.010</td>
+<td><strong>0.737</strong></td>
+<td><strong>+0.123 (2σ 0.020)</strong></td>
+<td>up (exploratory)</td>
+</tr>
+<tr>
+<td>items passing</td>
+<td>pass rate</td>
+<td>0.424 ± 0.024</td>
+<td><strong>0.523</strong> (57 of 109)</td>
+<td><strong>+0.099 (2σ 0.047)</strong></td>
+<td>up (exploratory)</td>
+</tr>
+<tr>
+<td>time per question (warm mean)</td>
+<td>seconds</td>
+<td>48.5</td>
+<td>24.2 / 28.9</td>
+<td><strong>−45 %</strong></td>
+<td>much cheaper</td>
+</tr>
+<tr>
+<td>searches per normal question</td>
+<td>tool calls</td>
+<td>3.72 (17 questions done in one search)</td>
+<td>2.61 / 2.50 (54 / 51 in one search)</td>
+<td>−1.2</td>
+<td>a third fewer</td>
+</tr>
+<tr>
+<td>gave up (blowouts)</td>
+<td>count of 109</td>
+<td>9 (7 / 13 in the replicates)</td>
+<td>0 / 5</td>
+<td></td>
+<td>fewer</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading.</strong> The pre-registered claim ("disabling the reranker lowers <code>context_precision</code>;
+<abbr title="Architecture Decision Record — a short doc capturing one hard-to-reverse decision and why.">ADR</abbr> 0003's +19 % still holds") is not supported: precision is inside its MDE in both runs.
+What the reranker does buy is retrieved-text recall, about 0.06 of it. What it costs is time
+and, on the answer side, facts: without it the agent finishes most questions in a single
+search, never or rarely blows out, and, in one exploratory QA run, its answers contain more of
+the required facts on all three gold-atom metrics (+0.10 to +0.12 above the four-run baseline
+mean). One G8 tripwire is a genuine signal
+here, not the false-positive pattern of defect #14: on the "which SLURM partition for GPU
+jobs" anchor, reranker OFF drove <code>context_precision</code> to 0.000 in both runs (baseline
+0.29–0.34) — the hybrid retriever put the right page nowhere near the top for that question.</p>
+<ul>
+<li>Caveat: the atom gain is one QA run against a four-run floor, not a paired test; the QA
+  references are all <code>draft</code>.</li>
+<li>Caveat: recall is "probable small loss", not a verdict, under the two-run rule.</li>
+</ul>
+<h3 id="32-fewer-parents-per-search-retrievershierarchical_reranknum_documents_to_retrieve-5-3">3.2 Fewer parents per search — <code>retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 3</code></h3>
+<table>
+<thead>
+<tr>
+<th>What is measured</th>
+<th>Metric</th>
+<th>k = 5 (default)</th>
+<th>k = 3</th>
+<th>Δ (MDE or 2σ)</th>
+<th>Reading</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>retrieved text was needed</td>
+<td><code>context_precision</code> (primary)</td>
+<td>0.622 / 0.637</td>
+<td>0.608 / 0.631</td>
+<td>−0.014 / −0.005 (0.023 / 0.021)</td>
+<td><strong>no measurable difference</strong></td>
+</tr>
+<tr>
+<td>retrieved text covers the reference</td>
+<td><code>context_recall</code></td>
+<td>0.891</td>
+<td>0.804 / 0.830</td>
+<td><strong>−0.087 / −0.061 (0.052 / 0.057)</strong></td>
+<td><strong>hurts</strong></td>
+</tr>
+<tr>
+<td>answer grounded in retrieved text</td>
+<td><code>faithfulness</code></td>
+<td>0.561</td>
+<td>0.510 / 0.506</td>
+<td>−0.051 / −0.055 (0.054 / 0.052)</td>
+<td>one outside MDE → the null; both negative</td>
+</tr>
+<tr>
+<td>retrieved the reference page</td>
+<td>source accuracy</td>
+<td>0.877 (93 of 106)</td>
+<td><strong>0.792 / 0.792</strong> (84 of 106)</td>
+<td>p = 0.012 / 0.023</td>
+<td><strong>regressed</strong></td>
+</tr>
+<tr>
+<td>answer contains the required facts</td>
+<td>atom score / required-atom recall / pass rate</td>
+<td>0.475 / 0.614 / 0.424</td>
+<td>0.482 / 0.622 / 0.431</td>
+<td>+0.007 each</td>
+<td>inside 2σ</td>
+</tr>
+<tr>
+<td>time per question (warm mean)</td>
+<td>seconds</td>
+<td>48.5</td>
+<td>55.5 / 46.0</td>
+<td>+5 %</td>
+<td>no speed gain</td>
+</tr>
+<tr>
+<td>gave up (blowouts)</td>
+<td>count</td>
+<td>9</td>
+<td>11 / 7</td>
+<td></td>
+<td>same</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading.</strong> The pre-registered claim was "fewer parents raise precision and lower recall".
+The recall half held; the precision half did not. Retrieving fewer documents bought no speed
+at all (per normal question 33.5 / 35.6 s vs 34.3 s), retrieved the reference page for nine
+fewer questions of 106 in both runs, and left the answers unchanged. Default confirmed against k = 3.</p>
+<h3 id="33-more-parents-per-search-retrievershierarchical_reranknum_documents_to_retrieve-5-8">3.3 More parents per search — <code>retrievers.hierarchical_rerank.num_documents_to_retrieve: 5 → 8</code></h3>
+<table>
+<thead>
+<tr>
+<th>What is measured</th>
+<th>Metric</th>
+<th>k = 5 (default)</th>
+<th>k = 8</th>
+<th>Δ (MDE or 2σ)</th>
+<th>Reading</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>retrieved text was needed</td>
+<td><code>context_precision</code> (primary)</td>
+<td>0.639 / 0.634</td>
+<td>0.626 / 0.621</td>
+<td>−0.014 / −0.013 (0.018 / 0.017)</td>
+<td><strong>no measurable difference</strong>, but both runs sit within 0.004 of the MDE on the low side</td>
+</tr>
+<tr>
+<td>retrieved text covers the reference</td>
+<td><code>context_recall</code></td>
+<td>0.891</td>
+<td><strong>0.951</strong> / 0.918</td>
+<td>+0.060 / +0.028 (0.042 / 0.042)</td>
+<td>one outside MDE → the null; both positive, run 2 inside the replicate spread</td>
+</tr>
+<tr>
+<td>answer grounded in retrieved text</td>
+<td><code>faithfulness</code></td>
+<td>0.561</td>
+<td>0.589 / 0.596</td>
+<td>+0.028 / +0.035 (0.046)</td>
+<td>no difference</td>
+</tr>
+<tr>
+<td>retrieved the reference page</td>
+<td>source accuracy</td>
+<td>0.877 (93 of 106)</td>
+<td><strong>0.962 / 0.953</strong> (102 / 101 of 106)</td>
+<td>p = 0.002 / 0.012</td>
+<td><strong>improved</strong></td>
+</tr>
+<tr>
+<td>answer contains the required facts</td>
+<td>atom score / required-atom recall / pass rate</td>
+<td>0.475 / 0.614 / 0.424</td>
+<td>0.457 / 0.603 / 0.417 (108 scored)</td>
+<td>−0.018 / −0.012 / −0.007</td>
+<td>inside 2σ</td>
+</tr>
+<tr>
+<td>time per question (warm mean)</td>
+<td>seconds</td>
+<td>48.5</td>
+<td>47.5 / 47.5</td>
+<td>−2 %</td>
+<td>flat</td>
+</tr>
+<tr>
+<td>searches per normal question</td>
+<td>tool calls</td>
+<td>3.72</td>
+<td>3.85 / 3.56</td>
+<td></td>
+<td>flat</td>
+</tr>
+<tr>
+<td>gave up (blowouts)</td>
+<td>count</td>
+<td>9</td>
+<td>7 / 6</td>
+<td></td>
+<td>same</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading.</strong> The cleanest positive result in the campaign is source accuracy: for nine more
+questions of 106 the reference page is among the retrieved documents, in both runs, at
+p ≤ 0.012, with no latency cost and no rise in blowouts. It is a secondary metric and the
+primary is null, so under the pre-registered rule it does not support a default change by
+itself (deviation 5 in section 2.4). <code>k</code> does not change how much the agent searches; it changes how much
+each search returns. Whether the extra material reaches the answer is unresolved: the atoms
+are flat over one QA run. The k-sweep is monotonic (section 4.2).</p>
+<p><img alt="k sweep: recall, precision, source accuracy, latency and blowouts at k = 3, 5, 8" src="../_static/feature_matrix_2026_09/fig3_k_sweep.png" /></p>
+<h3 id="34-character-chunking-chunkingstrategy-sentence-character-retrievershierarchical_rerankenabled-true-false">3.4 Character chunking — <code>chunking.strategy: sentence → character</code> + <code>retrievers.hierarchical_rerank.enabled: true → false</code></h3>
+<p>Own corpus (7 177 chunks from the same 1 091 documents, +3.6 %). Two keys by design:
+character chunks carry no <code>parent_id</code>, so the reranker had to go too. Arm 01 measured the
+reranker-OFF half alone, on the Sep 5 corpus. To read the difference between the two arms as
+what character chunking adds is to assume that the two effects add and that the corpus change
+did not matter. Neither was tested (one factor at a time, section 6.2), so the split below is
+a reading, not a measurement.</p>
+<table>
+<thead>
+<tr>
+<th>What is measured</th>
+<th>Metric</th>
+<th>sentence + reranker ON (default)</th>
+<th>character + reranker OFF</th>
+<th>Δ vs Sep 9 baseline (MDE)</th>
+<th>Δ vs Sep 5 opening (pre-registered)</th>
+<th>Reading</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>retrieved text was needed</td>
+<td><code>context_precision</code> (primary)</td>
+<td>0.616</td>
+<td>0.558 / 0.549</td>
+<td>−0.058 / −0.067 (0.081 / 0.082)</td>
+<td>−0.070 / −0.073</td>
+<td><strong>no measurable difference</strong> — the MDE is wide because per-question deltas scatter when chunk boundaries change</td>
+</tr>
+<tr>
+<td>retrieved text covers the reference</td>
+<td><code>context_recall</code></td>
+<td>0.865</td>
+<td>0.703 / 0.670</td>
+<td><strong>−0.162 / −0.195 (0.069 / 0.073)</strong></td>
+<td>−0.183 / −0.218</td>
+<td><strong>hurts — the largest regression in the campaign</strong>; reranker OFF alone was −0.06, so, if the effects add, character chunking itself costs about −0.13</td>
+</tr>
+<tr>
+<td>answer grounded in retrieved text</td>
+<td><code>faithfulness</code></td>
+<td>0.590</td>
+<td>0.562 / 0.601</td>
+<td>−0.029 / +0.010 (0.064 / 0.059)</td>
+<td>+0.004 / +0.041</td>
+<td>no difference</td>
+</tr>
+<tr>
+<td>retrieved the reference page</td>
+<td>source accuracy</td>
+<td>0.868 (the two Sep 9 baseline runs: 0.877, 0.859)</td>
+<td>0.840 / 0.840</td>
+<td>−0.028; p = 0.63 / 0.45</td>
+<td></td>
+<td>not separable from corpus variation</td>
+</tr>
+<tr>
+<td>answer contains the required facts</td>
+<td>atom score / required-atom recall / pass rate</td>
+<td>0.475 / 0.614 / 0.424</td>
+<td><strong>0.570 / 0.715 / 0.537</strong> (108 scored)</td>
+<td>+0.095 / +0.101 / +0.113 (2σ 0.034 / 0.020 / 0.047)</td>
+<td></td>
+<td>up (exploratory) — within 0.02 of reranker OFF alone, which points to the reranker-OFF half</td>
+</tr>
+<tr>
+<td>time per question (warm mean)</td>
+<td>seconds</td>
+<td>48.2</td>
+<td>28.3 / 25.1</td>
+<td><strong>−45 %</strong></td>
+<td></td>
+<td>the reranker-OFF half</td>
+</tr>
+<tr>
+<td>searches per normal question</td>
+<td>tool calls</td>
+<td>4.01 (Sep 9) / 3.72 (Sep 5)</td>
+<td>2.00 / 2.07 (66 / 67 done in one search)</td>
+<td></td>
+<td></td>
+<td>half</td>
+</tr>
+<tr>
+<td>gave up (blowouts)</td>
+<td>count</td>
+<td>7 (Sep 9 run 4)</td>
+<td>5 / 3</td>
+<td></td>
+<td></td>
+<td>fewer</td>
+</tr>
+<tr>
+<td>ingest</td>
+<td>wall time / chunks</td>
+<td>4 960 s / 6 926</td>
+<td>4 864 s / 7 177</td>
+<td>−2 min / +3.6 %</td>
+<td></td>
+<td>about the same</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading.</strong> Read additively (an untested assumption), everything good about this arm is the
+reranker-OFF half (compare 3.1 line by line) and everything bad is the chunking. Flat 1 000-character chunks with no parent context
+lose a fifth of retrieved-text recall. Default (<code>sentence</code>) confirmed.</p>
+<h3 id="35-categorization-off-processingcategorizationenabled-true-false">3.5 Categorization OFF — <code>processing.categorization.enabled: true → false</code></h3>
+<p>Own corpus (6 896 chunks, −30). The chunk-count difference is caused by the feature, not by
+scrape variation: the metadata-aware splitter subtracts the document's metadata tokens from
+the child chunk size, so removing <code>llm_category</code> frees about 8 tokens per document (measured
+effective child chunk 472 → 480) and shifts boundaries slightly.</p>
+<table>
+<thead>
+<tr>
+<th>What is measured</th>
+<th>Metric</th>
+<th>categorization ON (default)</th>
+<th>categorization OFF</th>
+<th>Δ vs Sep 9 baseline (MDE)</th>
+<th>Δ vs Sep 5 opening (pre-registered)</th>
+<th>Reading</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>retrieved text was needed</td>
+<td><code>context_precision</code> (primary)</td>
+<td>0.616</td>
+<td>0.612 / 0.614</td>
+<td>−0.004 / −0.002 (0.025 / 0.027)</td>
+<td>−0.014 / −0.023</td>
+<td><strong>no measurable difference</strong></td>
+</tr>
+<tr>
+<td>retrieved text covers the reference</td>
+<td><code>context_recall</code></td>
+<td>0.865</td>
+<td>0.839 / 0.846</td>
+<td>−0.025 / −0.018 (0.041 / 0.036)</td>
+<td>−0.043 / −0.031 (one outside MDE)</td>
+<td>no difference against the Sep 9 runs; the dip against the opening baseline is probably the corpus change (deviation 2 in section 2.4)</td>
+</tr>
+<tr>
+<td>answer grounded in retrieved text</td>
+<td><code>faithfulness</code></td>
+<td>0.590</td>
+<td>0.585 / 0.570</td>
+<td>−0.006 / −0.020 (0.045 / 0.050)</td>
+<td>+0.010 / +0.004</td>
+<td>no difference</td>
+</tr>
+<tr>
+<td>retrieved the reference page</td>
+<td>source accuracy</td>
+<td>0.868</td>
+<td>0.868 / 0.840</td>
+<td>0.000 / −0.028; p = 1 / 0.38</td>
+<td></td>
+<td>not separable from corpus variation</td>
+</tr>
+<tr>
+<td>answer contains the required facts</td>
+<td>atom score / required-atom recall / pass rate</td>
+<td>0.475 / 0.614 / 0.424</td>
+<td>0.498 / <strong>0.653</strong> / 0.407 (108 scored)</td>
+<td>+0.023 / <strong>+0.039 (2σ 0.020)</strong> / −0.017</td>
+<td></td>
+<td>one of three just outside 2σ, positive: suggestive, not a win</td>
+</tr>
+<tr>
+<td>time per question (warm mean)</td>
+<td>seconds</td>
+<td>48.2</td>
+<td>48.9 / 51.8</td>
+<td>+5 %</td>
+<td></td>
+<td>flat</td>
+</tr>
+<tr>
+<td>searches per normal question</td>
+<td>tool calls</td>
+<td>4.01</td>
+<td>3.73 / 4.39</td>
+<td></td>
+<td></td>
+<td>flat</td>
+</tr>
+<tr>
+<td>gave up (blowouts)</td>
+<td>count</td>
+<td>7</td>
+<td>7 / 5</td>
+<td></td>
+<td></td>
+<td>same</td>
+</tr>
+<tr>
+<td><strong>ingest</strong></td>
+<td><strong>wall time</strong> / chunks</td>
+<td><strong>4 960 s (82.7 min)</strong> / 6 926</td>
+<td><strong>3 802 s (63.4 min)</strong> / 6 896</td>
+<td><strong>−19.3 min (−23 %)</strong></td>
+<td></td>
+<td><strong>much cheaper</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading.</strong> The pre-registered claim ("removing <code>llm_category</code> does not change precision")
+is confirmed, and the 2026-09-01 code audit predicted why: the category is written to
+metadata and read by no retriever, prompt or embedding path. Its one structural effect is the
+chunk-boundary shift described above (−30 chunks), and no metric detected that. The measured
+effect of the feature is its cost — one <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> call per document, about 1 080 per ingest, 19
+minutes on this host.
+The atom reading (required-atom recall +0.039 against 2σ 0.020, the other two inside) is
+one metric of three from one run and should be treated as noise until replicated.</p>
+<h3 id="36-stemming-on-stemmingenabled-false-true-primary-metric-context_recall">3.6 Stemming ON — <code>stemming.enabled: false → true</code> (primary metric: <code>context_recall</code>)</h3>
+<p>Own corpus (6 919 chunks, −7). Stemming is applied to each child string <em>after</em> the
+hierarchical splitter has produced it, so it cannot change chunk boundaries; its −7 is the
+campaign's genuine measure of scrape-to-scrape variation (the closing baseline's re-scrape
+gave +2).</p>
+<table>
+<thead>
+<tr>
+<th>What is measured</th>
+<th>Metric</th>
+<th>stemming OFF (default)</th>
+<th>stemming ON</th>
+<th>Δ vs Sep 9 baseline (MDE)</th>
+<th>Δ vs Sep 5 opening (pre-registered)</th>
+<th>Reading</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>retrieved text covers the reference</td>
+<td><code>context_recall</code> <strong>(primary for this arm)</strong></td>
+<td>0.865</td>
+<td>0.832 / 0.850</td>
+<td>−0.032 / −0.015 (0.040 / 0.055)</td>
+<td>−0.052 / −0.029 (one outside MDE)</td>
+<td><strong>no measurable difference</strong> — the pre-registered claim ("stemming raises recall through <abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr>") is not supported</td>
+</tr>
+<tr>
+<td>retrieved text was needed</td>
+<td><code>context_precision</code></td>
+<td>0.616</td>
+<td><strong>0.525 / 0.529</strong></td>
+<td><strong>−0.091 / −0.088 (0.056 / 0.058)</strong></td>
+<td>−0.104 / −0.098</td>
+<td><strong>hurts</strong> (secondary) — about 1.6× the MDE in both runs</td>
+</tr>
+<tr>
+<td>answer grounded in retrieved text</td>
+<td><code>faithfulness</code></td>
+<td>0.590</td>
+<td>0.568 / 0.608</td>
+<td>−0.023 / +0.018 (0.052)</td>
+<td>−0.006 / +0.036</td>
+<td>no difference</td>
+</tr>
+<tr>
+<td>retrieved the reference page</td>
+<td>source accuracy</td>
+<td>0.868</td>
+<td>0.849 / 0.840</td>
+<td>−0.019 / −0.028; p = 0.61 / 0.42</td>
+<td></td>
+<td>not separable from corpus variation</td>
+</tr>
+<tr>
+<td>answer contains the required facts</td>
+<td>atom score / required-atom recall / pass rate</td>
+<td>0.475 / 0.614 / 0.424</td>
+<td>0.474 / 0.625 / 0.413</td>
+<td>−0.001 / +0.011 / −0.011</td>
+<td></td>
+<td>inside 2σ — the answers did not get worse</td>
+</tr>
+<tr>
+<td>time per question (warm mean)</td>
+<td>seconds</td>
+<td>48.2</td>
+<td>52.3 / 51.2</td>
+<td>+7 %</td>
+<td></td>
+<td>slightly slower</td>
+</tr>
+<tr>
+<td>searches per normal question</td>
+<td>tool calls</td>
+<td>4.01 (Sep 9) / 3.72 (Sep 5)</td>
+<td>4.32 / 4.76</td>
+<td></td>
+<td></td>
+<td><strong>the agent searches more</strong>, consistent with noisier first-pass results</td>
+</tr>
+<tr>
+<td>gave up (blowouts)</td>
+<td>count</td>
+<td>7</td>
+<td>10 / 8</td>
+<td></td>
+<td></td>
+<td>slightly more</td>
+</tr>
+<tr>
+<td>ingest</td>
+<td>wall time / chunks</td>
+<td>4 960 s / 6 926</td>
+<td>5 001 s / 6 919</td>
+<td>+1 min</td>
+<td></td>
+<td>same</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading.</strong> Stemming the indexed text made the first search less precise (about a tenth of
+the retrieved text that used to be relevant no longer is), which the agent compensated for by
+searching more, and the answers ended up no different. Nothing here argues for turning it on.
+Default (<code>false</code>) confirmed.</p>
+<h3 id="37-htmlmarkdown-off-processinghtml_to_markdownenabled-true-false-untestable">3.7 HTML→Markdown OFF — <code>processing.html_to_markdown.enabled: true → false</code> — untestable</h3>
+<p>The stack deployed, ingested for 4 933 s and completed a full <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> pass, then
+<code>archive_run.sh</code> refused the artifact: the run had executed with
+<code>html_to_markdown.enabled = True</code>. The cause is in the config renderer
+(<code>src/cli/templates/base-config.yaml</code>): the key is rendered with Jinja's <code>default(true, true)</code>,
+whose second argument substitutes the default for <em>any falsy value</em>, so an explicit <code>false</code>
+becomes <code>true</code>. <strong>This setting cannot be turned off in any archi deployment</strong>, and 20 other
+boolean keys in the same template share the pattern. Filed as
+<a href="https://github.com/fasrc/archi/issues/448">fasrc/archi#448</a> with the rendered config as
+evidence. The pre-registered claim ("raw HTML lowers precision and faithfulness") is untested.
+The refused run — a baseline configuration on a third fresh corpus — is reused in this report
+only as a baseline-configuration control (sections 2.3 and 4.4), never as arm 06.</p>
+<h3 id="38-markdown-chunking-chunkingstrategy-sentence-markdown">3.8 Markdown chunking — <code>chunking.strategy: sentence → markdown</code></h3>
+<p>Own corpus: header-aware chunking produced <strong>10 733 chunks from the same documents (+55 %)</strong>,
+i.e. many more, smaller chunks and smaller parents.</p>
+<table>
+<thead>
+<tr>
+<th>What is measured</th>
+<th>Metric</th>
+<th>sentence (default)</th>
+<th>markdown</th>
+<th>Δ vs Sep 9 baseline (MDE)</th>
+<th>Δ vs Sep 5 opening (pre-registered)</th>
+<th>Reading</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>retrieved text was needed</td>
+<td><code>context_precision</code> (primary)</td>
+<td>0.616</td>
+<td><strong>0.518 / 0.525</strong></td>
+<td><strong>−0.098 / −0.091 (0.072 / 0.074)</strong></td>
+<td>−0.101 / −0.109</td>
+<td><strong>hurts</strong></td>
+</tr>
+<tr>
+<td>retrieved text covers the reference</td>
+<td><code>context_recall</code></td>
+<td>0.865</td>
+<td><strong>0.720 / 0.725</strong></td>
+<td><strong>−0.145 / −0.140 (0.081 / 0.070)</strong></td>
+<td>−0.160 / −0.160</td>
+<td><strong>hurts</strong></td>
+</tr>
+<tr>
+<td>answer grounded in retrieved text</td>
+<td><code>faithfulness</code></td>
+<td>0.590</td>
+<td>0.581 / 0.583</td>
+<td>−0.010 / −0.007 (0.062 / 0.067)</td>
+<td>+0.016 / +0.022</td>
+<td>no difference</td>
+</tr>
+<tr>
+<td>retrieved the reference page</td>
+<td>source accuracy</td>
+<td>0.868</td>
+<td>0.849 / 0.849</td>
+<td>−0.019; p = 0.58 / 0.58</td>
+<td></td>
+<td>not separable from corpus variation</td>
+</tr>
+<tr>
+<td>answer contains the required facts</td>
+<td>atom score / required-atom recall / pass rate</td>
+<td>0.475 / 0.614 / 0.424</td>
+<td><strong>0.551 / 0.692 / 0.477</strong></td>
+<td><strong>+0.076 / +0.078 / +0.053</strong> (2σ 0.034 / 0.020 / 0.047)</td>
+<td></td>
+<td>up on all three, exploratory (pass rate just over its 2σ)</td>
+</tr>
+<tr>
+<td>time per question (warm mean)</td>
+<td>seconds</td>
+<td>48.2</td>
+<td>29.2 / 31.1</td>
+<td><strong>−37 %</strong></td>
+<td></td>
+<td>much cheaper</td>
+</tr>
+<tr>
+<td>searches per normal question</td>
+<td>tool calls</td>
+<td>4.01</td>
+<td>2.27 / 2.30 (66 / 68 done in one search)</td>
+<td></td>
+<td></td>
+<td>half</td>
+</tr>
+<tr>
+<td>gave up (blowouts)</td>
+<td>count</td>
+<td>7</td>
+<td>4 / 3</td>
+<td></td>
+<td></td>
+<td>fewer</td>
+</tr>
+<tr>
+<td>ingest</td>
+<td>wall time / chunks</td>
+<td>4 960 s / 6 926</td>
+<td>5 166 s / <strong>10 733</strong></td>
+<td>+3 min / <strong>+55 %</strong></td>
+<td></td>
+<td>index 55 % larger</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading.</strong> The pre-registered claim ("header-aware chunking raises precision on the
+Markdown-bearing part of the corpus") is refuted at the corpus level: precision and recall of
+the retrieved text both fall by more than their MDEs in both runs. The bank carries no
+"Markdown-bearing page" slice, so the narrower claim was not tested.
+(<a href="https://github.com/fasrc/archi/issues/490">#490</a> disputes this caveat: every source URL in
+the bank resolves to a web-scraped Markdown page, so arm 07 was in effect judged on that
+slice. This report keeps the caveat until #490 settles it.) Yet, in one exploratory QA run,
+the answers improved on all three gold-atom metrics, and they arrived 37 % sooner — the same signature as reranker OFF. Section 4.1 takes this up. As a
+default: hurts on the primary metric, with an answer-side trade-off and a 55 % larger index;
+not recommended without the follow-up in section 5.</p>
+<hr />
+<h2 id="4-cross-cutting-findings">4. Cross-cutting findings</h2>
+<h3 id="41-what-went-in-versus-what-came-out">4.1 What went in versus what came out</h3>
+<p><img alt="In versus out: change in retrieved-text recall against change in gold-atom score, per arm" src="../_static/feature_matrix_2026_09/fig4_in_vs_out.png" /></p>
+<p>Three arms lowered <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> <code>context_recall</code> — the retrieved pile covered less of the reference
+— while raising every answer-side gold-atom metric in one exploratory QA run each: reranker
+OFF, character chunking (+ reranker OFF) and markdown chunking. Read as two stages, this is not a contradiction:</p>
+<ul>
+<li><strong><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> <code>context_recall</code> scores what went in.</strong> A 25-round search that eventually blows out
+  retrieves a great deal, and scores 0.79–0.96 on recall while its "answer" is an apology.
+  Recall cannot see a blown-out answer; within the baseline, recall against number of
+  sources retrieved is Spearman +0.02.</li>
+<li><strong>Gold atoms score what came out.</strong> They fail a blown-out answer outright (blowouts pass
+  1 of 18 QA attempts) and reward an answer that states the required facts, however few
+  passages it took.</li>
+</ul>
+<p>The three arms share a mechanism as well as a signature: each hands the model less text per
+search (hybrid 1 000-character chunks instead of ~2 048-character parents; markdown sections
+as smaller parents), each roughly halves the searches per question (3.7–4.0 → 2.0–2.6) and
+the number of questions answered after a single search (14–18 → 51–68 of 109), and each has
+fewer blowouts. Under the production in-loop context bound (<code>context_editing.keep: 1</code>), a
+plausible reading is that large retrieved payloads push the agent into re-searching and
+eventually into the recursion limit, while smaller payloads let it answer. <strong>This mechanism
+was not tested directly</strong>; section 5 proposes the experiment that would.</p>
+<p>Which evaluator should win is a product decision. The pre-registration fixed
+<code>context_precision</code> as primary, and by that rule none of the three arms "helps". But the
+metric that users experience is the answer, and on that metric the reranker's default-on
+setting is the costliest one in the campaign.</p>
+<h3 id="42-the-k-sweep-is-monotonic">4.2 The k sweep is monotonic</h3>
+<p>k = 3 / 5 / 8 on one shared corpus (section 3.2, 3.3, figure above): retrieved-text recall
+0.80 → 0.88 → 0.92, source accuracy 0.79 → 0.88 → 0.96, precision 0.61 → 0.61 → 0.62,
+warm time per question 51 → 52 → 48 s, blowouts 9 → 10 → 7 per run. More parents per search
+is close to a free improvement on the secondary retrieval metrics (the primary is flat, so
+this is exploratory, deviation 5 in section 2.4); the answer side is flat at both k. Note
+that <code>k</code> changes how much each search returns, not how often the agent searches (3.7–4.2
+searches per normal question at every k).</p>
+<h3 id="43-about-8-of-questions-never-get-an-answer-and-it-dominates-the-latency-picture">4.3 About 8 % of questions never get an answer, and it dominates the latency picture</h3>
+<p><img alt="Cost: seconds per question, searches per question, blowouts, ingest time and index size, per run" src="../_static/feature_matrix_2026_09/fig5_cost.png" /></p>
+<p>On the baseline configuration 7–13 of 109 questions per run end in a blowout (150–250 s each
+against 23–40 s for a normal question). In the operating log's hand analysis of the three
+opening runs (plan §13.5, 2026-09-06 13:05, under its own blowout count), 23 distinct
+questions blew out at least once, 7 did so in two or more — a question-intrinsic core plus
+a stochastic tail — and 17 of the 23 are <code>reasoning</code> items. The baseline's 48 s mean per question
+is 34 s without them. This is a production behaviour, not a benchmark artifact, and it moves
+every latency number more than any retrieval knob except the two that also cut the searches
+per question (reranker OFF, markdown chunking). Proposed as a follow-up in section 5.</p>
+<h3 id="44-the-corpus-moved-between-sep-5-and-sep-9-the-harness-did-not">4.4 The corpus moved between Sep 5 and Sep 9; the harness did not</h3>
+<p>The closing baseline (identical config and code, four days later) reproduced the opening
+chunk count to ±2 (6 926 → 6 928) and <code>context_precision</code> to +0.006, but landed 0.021 lower
+on <code>context_recall</code> and 0.033 higher on <code>faithfulness</code> — both beyond the opening within-corpus
+2σ. The refused arm-06 run, an independent scrape the same day, agrees with the closing
+baseline to 0.0016 on recall and 0.006 on faithfulness. That agreement is what turns "noise"
+into "a real content change in the <abbr title="Harvard's Faculty of Arts and Sciences Research Computing group — archi's deployment target.">FASRC</abbr> documentation between the two dates". Consequences:</p>
+<ul>
+<li>Ingest arms are judged against the contemporaneous baseline (section 2.3). Doing so moved
+  two apparent recall dips (categorization OFF, stemming ON) and every ingest arm's apparent
+  +0.02–0.03 faithfulness gain inside the MDE. The two controls agree, so the corpus is the
+  likely cause, but both were scraped after arms 02–04 (deviation 2 in section 2.4).</li>
+<li>Source accuracy differs by 0.019 between the two Sep 9 baseline runs, so no ingest arm's
+  source-accuracy delta (−0.019 to −0.028) can be separated from corpus variation.</li>
+<li>The gold atoms drifted less than <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> did: the closing QA run sits inside the opening
+  three-run 2σ on all three metrics, which is why a four-run floor spanning both corpora is
+  used.</li>
+<li>Any future campaign that mixes ingest and retrieval arms needs a baseline-configuration
+  ingest <em>per day of ingest arms</em>, not one at each end.</li>
+</ul>
+<h3 id="45-scorecard-against-the-pre-registered-claims">4.5 Scorecard against the pre-registered claims</h3>
+<table>
+<thead>
+<tr>
+<th>Arm</th>
+<th>Claim under test (pre-registration)</th>
+<th>Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>01</td>
+<td>Disabling the reranker lowers <code>context_precision</code> (<abbr title="Architecture Decision Record — a short doc capturing one hard-to-reverse decision and why.">ADR</abbr> 0003's +19 % holds)</td>
+<td><strong>not supported</strong> — no measurable difference at MDE 0.063; recall probably lower; answers better (exploratory)</td>
+</tr>
+<tr>
+<td>02</td>
+<td>Character chunks + hybrid retriever lower <code>context_precision</code></td>
+<td><strong>not established</strong> at this MDE (−0.06 vs 0.08); recall collapses</td>
+</tr>
+<tr>
+<td>03</td>
+<td>Removing <code>llm_category</code> does not change <code>context_precision</code></td>
+<td><strong>confirmed</strong> (−0.003, MDE 0.026)</td>
+</tr>
+<tr>
+<td>04</td>
+<td>Stemming raises <code>context_recall</code> through <abbr title="A classic keyword-relevance score — ranks a passage higher when it contains the question's (rarer) words.">BM25</abbr></td>
+<td><strong>not supported</strong> (−0.02, MDE 0.04–0.055); precision falls −0.09</td>
+</tr>
+<tr>
+<td>05a</td>
+<td>Fewer parents raise precision, lower recall</td>
+<td>precision half <strong>not supported</strong>; recall half <strong>confirmed</strong> (−0.07)</td>
+</tr>
+<tr>
+<td>05b</td>
+<td>More parents lower precision, raise recall</td>
+<td>precision half <strong>not supported at N = 2</strong> (−0.013 vs MDE 0.017, both runs on the low side); recall up in both runs, one outside MDE; reference page retrieved +0.08</td>
+</tr>
+<tr>
+<td>06</td>
+<td>Raw HTML lowers precision and faithfulness</td>
+<td><strong>untested</strong> (#448)</td>
+</tr>
+<tr>
+<td>07</td>
+<td>Header-aware chunking raises precision on the Markdown-bearing part of the corpus</td>
+<td><strong>refuted</strong> at corpus level (−0.095); the slice was not testable with this bank (disputed in <a href="https://github.com/fasrc/archi/issues/490">#490</a>)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-proposed-follow-ups">5. Proposed follow-ups</h2>
+<p>Per plan §4.4 step 5: a default the campaign shows to hurt gets an issue; "no measurable
+difference" on a default that costs ingest time or latency is itself a finding and gets an
+issue proposing the cheaper setting. <strong>Filed on 2026-09-17</strong> as fasrc/archi issues, numbered
+beside each item; milestones are left to the operator against the release plan's gate bar.</p>
+<ol>
+<li><strong>Propose <code>processing.categorization.enabled: false</code> as the default</strong> (<a href="https://github.com/fasrc/archi/issues/496">#496</a>)<strong>.</strong> No measurable effect
+   on any retrieval metric across two runs (3.5), no retriever, prompt or embedding reads the
+   category (it only shifts chunk boundaries), and it costs 19 min and ~1 080 <abbr title="Large Language Model — the AI that writes answers (e.g. GPT, Claude, a local model).">LLM</abbr> calls per
+   ingest. The one atom metric just outside 2σ points the
+   same way. Lowest-risk change in this report.</li>
+<li><strong>Propose <code>retrievers.hierarchical_rerank.num_documents_to_retrieve: 8</code></strong> (<a href="https://github.com/fasrc/archi/issues/498">#498</a>)<strong>.</strong> Source accuracy
+   (reference page retrieved) 0.88 → 0.96 at p ≤ 0.012 in both runs, recall up, latency and
+   blowouts flat (3.3). This rests on a secondary metric with a null primary, which is
+   outside the pre-registered decision rule (deviation 5 in section 2.4). Treat it as
+   exploratory, and confirm it with a pre-registered experiment before the default changes.</li>
+<li><strong>Decide the reranker's default — this needs a human call, not more data of the same
+   kind</strong> (<a href="https://github.com/fasrc/archi/issues/497">#497</a>)<strong>.</strong> The primary metric says nothing; the cost is 45 % of the time per question and a
+   third of the searches; the answer-side evaluator says the answers are better without it;
+   retrieved-text recall says they rest on less material. The campaign's lean: the evidence
+   for default-on is not there, and the decision should be made on the answer-side metric with
+   a paired QA design (two QA runs per side, McNemar on item passes), which is about 6 h of
+   compute.</li>
+<li><strong>Separate "smaller payload per search" from "better chunk boundaries"</strong> (folded into <a href="https://github.com/fasrc/archi/issues/497">#497</a>)<strong>.</strong> Reranker OFF and
+   markdown chunking share one signature (4.1). A two-arm follow-up that keeps sentence
+   chunking and the reranker but caps the parent size, or raises <code>context_editing.keep</code>, would
+   say whether the answer-side gains come from payload size — which would also settle whether
+   markdown chunking's atom gain is worth its 55 % larger index.</li>
+<li><strong>Recursion-limit blowouts as a production issue</strong> (4.3; <a href="https://github.com/fasrc/archi/issues/499">#499</a>): ~8 % of questions, 150–250 s
+   each, an apology as the answer. Not a benchmark artifact.</li>
+<li><strong>Fix #448 and re-run the HTML→Markdown arm</strong> (#448 was fixed by #456 on 2026-09-11; the re-run is <a href="https://github.com/fasrc/archi/issues/500">#500</a>) under a new lock, with a same-lock baseline
+   (about 5.5 h extra), plus the lock-time render check so an arm can never again run a
+   configuration it did not intend.</li>
+<li><strong>Defaults confirmed, no action:</strong> <code>chunking.strategy: sentence</code> (against both <code>character</code>
+   and <code>markdown</code> on the primary metric), <code>stemming.enabled: false</code>, k = 5 against k = 3.</li>
+<li><strong>Harness items unblocked now that the lock is released</strong> (all logged in plan §13.2):
+   G8 anchor threshold uses aggregate σ and fires on the baseline itself (#14; <a href="https://github.com/fasrc/archi/issues/501">#501</a>);
+   <code>answer_relevancy</code> abstains on ~18 % of the bank, concentrated by question class (#20; <a href="https://github.com/fasrc/archi/issues/502">#502</a>); QA
+   denominator drifts by one item between runs (#16; <a href="https://github.com/fasrc/archi/issues/503">#503</a>); <code>qa_arm.sh</code> fails open on a zero-scored
+   run (<a href="https://github.com/fasrc/archi/issues/434">#434</a>); the benchmark service reads a
+   baked config (<a href="https://github.com/fasrc/archi/issues/439">#439</a>); a chain with a manual
+   step must page the operator, not log a marker (cost 3 idle hours on Sep 9; <a href="https://github.com/fasrc/archi/issues/504">#504</a>).</li>
+</ol>
+<hr />
+<h2 id="6-integrity-and-caveats">6. Integrity and caveats</h2>
+<h3 id="61-what-held">6.1 What held</h3>
+<ul>
+<li>Every archived run passed the gates: identical 109-question bank (G4), one pinned corpus
+  per arm (G3, overridden by declaration for ingest arms), empty configuration divergence
+  (Procedure E), one code digest and one baseline config digest across all replicates, zero
+  degraded rows in 18 runs.</li>
+<li>The noise floor was measured on this campaign's own prompt, corpus and code, and came in
+  below the planning prior on every metric, so the pre-registered N = 2 stood.</li>
+<li>The one run that executed a configuration other than the one it declared (arm 06) was
+  refused by the factor check before any number from it was reported as an arm result.</li>
+<li>The baseline was re-run at the end; it reproduced the index to ±2 chunks and exposed a
+  corpus change rather than a harness drift (4.4).</li>
+</ul>
+<h3 id="62-what-to-keep-in-mind-when-reading">6.2 What to keep in mind when reading</h3>
+<ul>
+<li><strong>Deviations from the pre-registration</strong> are listed in section 2.4: runs judged one at a
+  time, ingest arms re-based on later baseline runs (with the refused arm-06 artifact as a
+  baseline-configuration control), an exploratory atom analysis, no <code>answer_correctness</code>, and
+  a k = 8 proposal from a secondary metric. Both baseline comparisons are shown for every
+  ingest arm; under the two-run rule they reach the same primary verdict in every case.</li>
+<li><strong>One QA run per arm.</strong> Every gold-atom gain is a single draw against a four-run floor; the
+  σ is the baseline's. Suggestive readings (categorization OFF) are labelled as
+  such.</li>
+<li><strong><code>answer_relevancy</code> is advisory.</strong> <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> emits no score for answers it judges
+  non-committal; that drops 13–25 of 109 rows per run, more for <code>reasoning</code> items, so paired
+  n is 66–75 and every delta lands inside a wide MDE. It carries no verdict in this report.</li>
+<li><strong>G8 anchor alarms</strong> fire on baseline-vs-baseline comparisons because the threshold is the
+  aggregate σ (5× smaller than one question's own spread); no verdict rests on them. The one
+  anchor signal that is real (reranker OFF zeroing precision on the SLURM-partition question)
+  is reported in 3.1.</li>
+<li><strong>The QA references are all <code>draft</code></strong>; the atoms family measures relative movement, not
+  absolute quality. All 105 bank references were unchanged for the campaign (G4).</li>
+<li><strong>Arms are not a factorial design.</strong> One factor at a time; interactions (for example
+  k = 8 with the reranker off) were not measured.</li>
+<li><strong>Latency shares a <abbr title="The high-performance server hosting the chat model on GPUs, separate from archi.">vLLM</abbr> server</strong>; runs are timestamped and compared within the same days
+  where possible, and the blowout count moves the mean more than server load did.</li>
+</ul>
+<hr />
+<h2 id="7-reproducibility">7. Reproducibility</h2>
+<p>Everything below is on the GPU host <code>holygpu7c0717</code> unless noted; <code>bench_out/</code> is its own
+repository (<code>fasrc/archi-bench-out</code>) checked out inside the archi tree.</p>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Protocol, gates, budget, operating log (defects #1–#20, timestamped run log)</td>
+<td><code>docs/docs/proposals/feature-matrix-campaign-2026.md</code> §1–§13</td>
+</tr>
+<tr>
+<td>Pre-registered decision rules</td>
+<td><code>docs/eval/preregs/2026-09-feature-matrix.md</code> (commit <code>c2deac32</code>, before any arm ran)</td>
+</tr>
+<tr>
+<td>Campaign lock (bank, anchors, prompt, sources, <abbr title="System Under Test — the exact archi configuration being benchmarked.">SUT</abbr>, judge, arm hashes, runtime trees)</td>
+<td><code>bench_out/feature_matrix/campaign.lock</code>, sha256 <code>3e07ae79…</code></td>
+</tr>
+<tr>
+<td>Arm configs</td>
+<td><code>config/benchmarking/feature_matrix/*.yaml</code> (archi-config)</td>
+</tr>
+<tr>
+<td>Machine ledger, one row per run</td>
+<td><code>bench_out/feature_matrix/ledger.json</code></td>
+</tr>
+<tr>
+<td><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> artifacts (18 archived + the refused arm-06 run)</td>
+<td><code>bench_out/feature_matrix/benchmarking-fm-*.json</code></td>
+</tr>
+<tr>
+<td>QA runs</td>
+<td><code>bench_out/feature_matrix/qa/&lt;stack&gt;-arm&lt;arm&gt;-r&lt;n&gt;/</code></td>
+</tr>
+<tr>
+<td>Per-arm reports (deltas from <code>compare_runs.py</code> only)</td>
+<td><code>bench_out/feature_matrix/reports/arm-*.md</code> and <code>.json</code></td>
+</tr>
+<tr>
+<td>Figure data and scripts</td>
+<td><code>bench_out/feature_matrix/figures/extract_figure_data.py</code> → <code>figures/data/*.csv</code>; <code>figures/make_figures.R</code> → <code>docs/docs/_static/feature_matrix_2026_09/*.png</code></td>
+</tr>
+<tr>
+<td>Evidence for #448</td>
+<td><code>bench_out/feature_matrix/evidence/fm-06-rendered-config.yaml</code> (line 383)</td>
+</tr>
+</tbody>
+</table>
+<p>To regenerate every number and figure in this page:</p>
+<pre><code class="language-bash"># per-arm reports (already archived; re-running is idempotent)
+for a in 01 05a 05b 02 03 04 07 00; do python bench_out/feature_matrix/report_arm.py &quot;$a&quot;; done
+
+# tidy CSVs + figures (R 4.4 with ggplot2, dplyr, tidyr, readr, jsonlite, patchwork, ragg;
+# on this host: conda env at /scratch/a2rchi/conda-envs/r-bench)
+python bench_out/feature_matrix/figures/extract_figure_data.py
+Rscript bench_out/feature_matrix/figures/make_figures.R
+</code></pre>
+<p>The extractor recomputes every aggregate from the artifacts (mean over finite scores across
+all 109 rows, the artifact's own aggregate), reads paired deltas, SE and σ from the per-arm
+JSON, derives each arm's feature under test by diffing its YAML against the baseline, and
+writes the verdict grid with the rules in section 2.3. It reproduces the operating log's
+re-based numbers exactly.</p>
+<hr />
+<h2 id="appendix-a-run-inventory">Appendix A — run inventory</h2>
+<table>
+<thead>
+<tr>
+<th>Arm</th>
+<th>Feature under test</th>
+<th>Stack</th>
+<th><abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> artifacts (<code>benchmarking-&lt;stack&gt;-&lt;UTC&gt;</code>)</th>
+<th>QA run</th>
+<th>Corpus</th>
+<th>Chunks</th>
+<th>Ingest (s)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>00 opening</td>
+<td>—</td>
+<td><code>fm-00</code></td>
+<td><code>20260905_001802</code>, <code>_024701</code>, <code>_053600</code></td>
+<td><code>qa/fm-00-arm00-r1</code>, <code>r2</code>, <code>r3</code></td>
+<td><code>fc8ee1b5…</code></td>
+<td>6 926</td>
+<td>4 959.9</td>
+</tr>
+<tr>
+<td>01</td>
+<td><code>hierarchical_rerank.enabled: true → false</code></td>
+<td><code>fm-00</code> (re-seeded)</td>
+<td><code>20260906_054238</code>, <code>_073529</code></td>
+<td><code>qa/fm-00-arm01-r1</code></td>
+<td><code>fc8ee1b5…</code></td>
+<td>6 926</td>
+<td>—</td>
+</tr>
+<tr>
+<td>05a</td>
+<td><code>num_documents_to_retrieve: 5 → 3</code></td>
+<td><code>fm-00</code> (re-seeded)</td>
+<td><code>20260906_112444</code>, <code>_134950</code></td>
+<td><code>qa/fm-00-arm05a-r1</code></td>
+<td><code>fc8ee1b5…</code></td>
+<td>6 926</td>
+<td>—</td>
+</tr>
+<tr>
+<td>05b</td>
+<td><code>num_documents_to_retrieve: 5 → 8</code></td>
+<td><code>fm-00</code> (re-seeded)</td>
+<td><code>20260906_175600</code>, <code>_203046</code></td>
+<td><code>qa/fm-00-arm05b-r1</code></td>
+<td><code>fc8ee1b5…</code></td>
+<td>6 926</td>
+<td>—</td>
+</tr>
+<tr>
+<td>02</td>
+<td><code>chunking.strategy: sentence → character</code>; <code>hierarchical_rerank.enabled: true → false</code></td>
+<td><code>fm-02</code></td>
+<td><code>20260908_042141</code>, <code>_061046</code></td>
+<td><code>qa/fm-02-arm02-r1</code></td>
+<td><code>d7417a68…</code></td>
+<td>7 177</td>
+<td>4 863.5</td>
+</tr>
+<tr>
+<td>03</td>
+<td><code>processing.categorization.enabled: true → false</code></td>
+<td><code>fm-03</code></td>
+<td><code>20260908_104423</code>, <code>_132337</code></td>
+<td><code>qa/fm-03-arm03-r1</code></td>
+<td><code>570ccaa8…</code></td>
+<td>6 896</td>
+<td>3 802.3</td>
+</tr>
+<tr>
+<td>04</td>
+<td><code>stemming.enabled: false → true</code></td>
+<td><code>fm-04</code></td>
+<td><code>20260908_190046</code>, <code>_213459</code></td>
+<td><code>qa/fm-04-arm04-r1</code></td>
+<td><code>95574702…</code></td>
+<td>6 919</td>
+<td>5 001.4</td>
+</tr>
+<tr>
+<td>06</td>
+<td><code>processing.html_to_markdown.enabled: true → false</code></td>
+<td><code>fm-06</code></td>
+<td><code>20260909_030421</code> — <strong>refused</strong>, ran as baseline config; used as a control only</td>
+<td>—</td>
+<td><code>e67eb9f0…</code></td>
+<td>—</td>
+<td>4 932.8</td>
+</tr>
+<tr>
+<td>07</td>
+<td><code>chunking.strategy: sentence → markdown</code></td>
+<td><code>fm-07</code></td>
+<td><code>20260909_062810</code>, <code>_082735</code></td>
+<td><code>qa/fm-07-arm07-r1</code></td>
+<td><code>e7ed322f…</code></td>
+<td>10 733</td>
+<td>5 165.7</td>
+</tr>
+<tr>
+<td>00 closing</td>
+<td>—</td>
+<td><code>fm-00</code> (fresh)</td>
+<td><code>20260909_163725</code> (run 4)</td>
+<td><code>qa/fm-00-arm00-r4</code></td>
+<td><code>137e41c1…</code></td>
+<td>6 928</td>
+<td>4 974.4</td>
+</tr>
+</tbody>
+</table>
+<p>Compute: about 5 days wall clock on one host, roughly 2–3 h per <abbr title="The library archi uses to score answer quality with a language-model judge.">RAGAS</abbr> run, 1.5 h per QA run,
+1.1–1.4 h per ingest; 3 h 45 m lost to the refused arm and 3 h to an unattended manual step.</p>
+<!--
+Shared abbreviation definitions, auto-appended to EVERY docs page by
+pymdownx.snippets (see docs/mkdocs.yml). Each `*[TERM]: definition` line makes the
+`abbr` extension render every whole-word occurrence of TERM as an <abbr> hover tooltip.
+
+Keep this to acronyms and unambiguous short tokens only. Multi-word concept phrases
+("the gate", "gold source") are handled as glossary links, not tooltips, because abbr
+matches literally and would over- or under-match a phrase. Do NOT add ambiguous tokens
+(e.g. "KB" also means kilobytes; "QA" is overloaded). Definitions are one plain line.
+Fuller definitions live in glossary.md.
+-->
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../interpreting_benchmark_results/" class="btn btn-neutral float-left" title="Interpreting Results"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../advanced_setup_deploy/" class="btn btn-neutral float-right" title="Advanced Setup">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/archi-physics/archi" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+      <span><a href="../interpreting_benchmark_results/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../advanced_setup_deploy/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

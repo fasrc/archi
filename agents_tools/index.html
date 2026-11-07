@@ -178,6 +178,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -335,7 +339,7 @@ When a request is about rates, failures, or timeseries:
 <h3 id="list_metadata_schema"><code>list_metadata_schema</code></h3>
 <p>Returns the metadata schema and available filter keys. Helps the agent understand what metadata fields exist.</p>
 <h3 id="fetch_catalog_document"><code>fetch_catalog_document</code></h3>
-<p>Pull the full text of a specific file by its hash. Supports truncation with <code>max_chars</code>.</p>
+<p>Pull the full text of a specific file by its hash. Supports truncation with <code>max_chars</code>. The server caps <code>max_chars</code> at 6000 characters, a request with no <code>max_chars</code> returns at most 4000, and <code>0</code>, a negative, a malformed value, or a value below 50 means the 6000 cap, not "no limit".</p>
 <ul>
 <li><strong>Use for:</strong> Reading a specific document after finding it via search</li>
 </ul>

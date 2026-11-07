@@ -258,6 +258,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../feature_matrix_results_2026_09/">Feature-Matrix Results (2026-09)</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../advanced_setup_deploy/">Advanced Setup</a>
                 </li>
               </ul>
@@ -952,10 +956,92 @@ events go with it. The two are not separable through this API.</p>
 <p>These endpoints are served by the Data Manager service (default port: 7871).</p>
 <h3 id="get-apiingestionstatus"><code>GET /api/ingestion/status</code></h3>
 <p>Get current ingestion progress.</p>
+<p>The response has four keys:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>state</code></td>
+<td>string</td>
+<td><code>pending</code>, <code>running</code>, <code>completed</code>, or <code>error</code>.</td>
+</tr>
+<tr>
+<td><code>step</code></td>
+<td>string or <code>null</code></td>
+<td>The current ingestion step, for example <code>Updating vectorstore</code>.</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>string or <code>null</code></td>
+<td>The error message when <code>state</code> is <code>error</code>.</td>
+</tr>
+<tr>
+<td><code>progress</code></td>
+<td>object or <code>null</code></td>
+<td>The embedding counter: <code>{"done": &lt;int&gt;, "total": &lt;int or null&gt;}</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><code>progress</code> is <code>null</code> until the embedding loop starts, and each new ingest resets it
+to <code>null</code>. After the embedding loop starts, <code>done</code> counts the files committed to the
+vectorstore. The counter advances once per committed batch of 25 files. <code>done</code> can
+end below <code>total</code>, because a file that a loader skips is never counted. After the
+ingest ends, <code>progress</code> keeps its last value.</p>
+<p><strong>Scheduled refreshes and upload runs</strong> also move through this endpoint. While a
+scheduled source refresh is running, <code>state</code> is <code>running</code> and <code>step</code> is
+<code>scheduled:&lt;source&gt;</code> (for example <code>scheduled:git</code>). While a file upload is being
+ingested, <code>step</code> is <code>upload</code>. In both cases <code>progress</code> is <code>null</code> for the duration of
+the run. When the run ends, <code>state</code> becomes <code>completed</code> and <code>step</code> becomes <code>done</code>; on
+failure, <code>state</code> becomes <code>error</code> and <code>step</code> becomes <code>failed</code>. A run whose vectorstore
+sync could not add its documents also ends in <code>error</code>. If another run is queued for the
+ingestion lock, the endpoint keeps reporting <code>running</code> instead of <code>completed</code>, and it
+does not publish a queued run's step over a running one. A run that starts when no run
+is reported as <code>running</code> publishes its step at once, so <code>completed</code> never stays visible
+while that run waits for the lock. Any benchmark that
+polls this endpoint to wait for an idle system will also wait during scheduled
+refreshes and upload runs.</p>
+<pre><code class="language-json">{&quot;state&quot;: &quot;running&quot;, &quot;step&quot;: &quot;Updating vectorstore&quot;, &quot;error&quot;: null,
+ &quot;progress&quot;: {&quot;done&quot;: 150, &quot;total&quot;: 412}}
+</code></pre>
 <h3 id="post-apireload-schedules"><code>POST /api/reload-schedules</code></h3>
 <p>Trigger schedule reload from database.</p>
 <h3 id="get-apischedules"><code>GET /api/schedules</code></h3>
 <p>Get current schedule status.</p>
+<pre><code class="language-json">{&quot;jobs&quot;: [{&quot;name&quot;: &quot;links&quot;, &quot;cron&quot;: &quot;0 3 * * *&quot;,
+           &quot;next_run&quot;: &quot;2026-10-14T03:00:00+00:00&quot;,
+           &quot;last_run&quot;: &quot;2026-10-13T03:04:12+00:00&quot;, &quot;state&quot;: &quot;idle&quot;}]}
+</code></pre>
+<p><code>state</code> is the last state recorded for that source. A scheduled refresh writes it. A manual ingest through the uploader writes the same entry for <code>git</code>, <code>jira</code>, and <code>local_files</code>: the last writer wins.</p>
+<p>A URL upload writes its status under <code>web</code>, not <code>links</code>. As a result, a URL upload does not change the <code>state</code> or <code>last_run</code> of the <code>links</code> job.</p>
+<table>
+<thead>
+<tr>
+<th><code>state</code></th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>idle</code></td>
+<td>The last scheduled refresh or manual ingest completed. <code>last_run</code> is its completion time. This is also the value for a source that has not run; then <code>last_run</code> is <code>null</code>.</td>
+</tr>
+<tr>
+<td><code>running</code></td>
+<td>A refresh is in progress.</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>The last scheduled refresh failed. <code>last_run</code> keeps the time of the last success. The next scheduled run tries again. A later successful manual ingest of a shared key (<code>git</code>, <code>jira</code>, <code>local_files</code>) sets <code>idle</code> again.</td>
+</tr>
+</tbody>
+</table>
+<p>The cause of a failure is in the data-manager log. <code>GET /api/ingestion/status</code> also shows it, but only for a short time: that endpoint keeps one status in memory, so the next ingestion run or a service restart clears the error. The <code>error</code> state on this endpoint stays until a later write for that source.</p>
 <hr />
 <h2 id="health-info">Health &amp; Info</h2>
 <h3 id="get-apihealth"><code>GET /api/health</code></h3>
