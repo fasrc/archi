@@ -81,7 +81,10 @@ Selection is bounded by count *and ordered*: the earliest results up to the call
 budget are exempt. The per-turn budget permits its allowance of successful calls
 before it begins returning synthetic refusals under the same tool name, so the
 earliest results are the evidence and the newest are the refusals. Selecting by
-recency inverts this — it protects refusals and exposes evidence.
+recency inverts this — it protects refusals and exposes evidence. The forced
+initial retrieval sits outside the budget, so a turn can hold one more
+successful result than the budget; the exemption covers the earliest *budget*
+of them (the forced round first) and leaves the last one clearable.
 
 Configuration
 -------------
@@ -611,9 +614,11 @@ def select_exempt_indices(
     Selects the **earliest** results bearing *tool_name*, up to *limit*. The
     per-turn call budget permits its allowance of successful calls before it
     starts returning synthetic refusals under the same name, so the earliest
-    results are the evidence and everything after them is a refusal. Selecting by
-    recency would exempt exactly the wrong messages — protecting refusals while
-    handing the grounding evidence to the clearing pass.
+    results are the evidence and the later ones are refusals. (The forced initial
+    retrieval is not counted against the budget, so one successful result past
+    *limit* can precede the refusals; it stays clearable.) Selecting by recency
+    would exempt exactly the wrong messages — protecting refusals while handing
+    the grounding evidence to the clearing pass.
     """
     if limit <= 0:
         return set()

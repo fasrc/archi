@@ -154,11 +154,17 @@ mk_checks() {
 #              The FILTER treats a null statusCheckRollup as 0/0/0.
 # checks-totalCount: override to simulate a truncated rollup where totalCount
 #              exceeds the fetched contexts; defaults to the array's actual length.
+# title:  PR title, for the conventional-commit kind fallback. Defaults to a
+#         `chore:` title, which maps to NO kind, so every pre-existing case is
+#         unaffected by the fallback.
+# closes: the issues this PR closes and their labels, as
+#         "<num>:<label>|<label>;<num>:<label>". Defaults to none.
 mk_node() {
   local n="$1" draft="$2" state="$3" labels="${4:-}" threads="${5:-}"
   local tt="${6:-}" lt="${7:-}" mergeable="${8:-}"
   local checks="${9:-}" ct="${10:-}"
-  local tcount lcount ljson tjson cjson ccount rollup_json
+  local title="${11:-chore: untitled}" closes="${12:-}" ctotal="${13:-}" ltotal="${14:-}"
+  local tcount lcount ljson tjson cjson ccount rollup_json closes_json title_json
   if [ -z "$mergeable" ]; then
     case "$state" in
       UNKNOWN) mergeable=UNKNOWN ;;
@@ -184,8 +190,34 @@ mk_node() {
   else
     rollup_json='null'
   fi
-  printf '{"number":%s,"isDraft":%s,"mergeable":"%s","mergeStateStatus":"%s","labels":{"totalCount":%s,"nodes":%s},"reviewThreads":{"totalCount":%s,"nodes":%s},"commits":{"nodes":[{"commit":{"statusCheckRollup":%s}}]}}' \
-    "$n" "$draft" "$mergeable" "$state" "$lcount" "$ljson" "$tcount" "$tjson" "$rollup_json"
+  closes_json="$(mk_closes "$closes" "$ltotal")"
+  # jq builds the title string, so a title containing a quote, a backslash, a
+  # tab or a newline is encoded correctly rather than breaking the JSON — the
+  # tab case is the one that could split a TSV row downstream.
+  title_json="$(jq -cn --arg t "$title" '$t')"
+  local ccount; ccount="$(printf '%s' "$closes_json" | jq 'length')"
+  if [ -n "$ctotal" ]; then ccount="$ctotal"; fi
+  printf '{"number":%s,"isDraft":%s,"mergeable":"%s","mergeStateStatus":"%s","title":%s,"labels":{"totalCount":%s,"nodes":%s},"reviewThreads":{"totalCount":%s,"nodes":%s},"closingIssuesReferences":{"totalCount":%s,"nodes":%s},"commits":{"nodes":[{"commit":{"statusCheckRollup":%s}}]}}' \
+    "$n" "$draft" "$mergeable" "$state" "$title_json" "$lcount" "$ljson" "$tcount" "$tjson" "$ccount" "$closes_json" "$rollup_json"
+}
+
+# mk_closes "<num>:<label>|<label>;<num>:<label>"  ->  closingIssuesReferences nodes
+mk_closes() {
+  local spec="${1:-}" ltotal="${2:-}" out="" item num labels lj l ln
+  [ -z "$spec" ] && { printf '[]'; return; }
+  local IFS=';'
+  for item in $spec; do
+    num="${item%%:*}"; labels="${item#*:}"
+    lj=""
+    if [ -n "$labels" ] && [ "$labels" != "$num" ]; then
+      local IFS='|'
+      for l in $labels; do lj+="{\"name\":\"$l\"},"; done
+    fi
+    ln="$(printf '[%s]' "${lj%,}" | jq 'length')"
+    [ -n "$ltotal" ] && ln="$ltotal"
+    out+="{\"number\":$num,\"labels\":{\"totalCount\":$ln,\"nodes\":[${lj%,}]}},"
+  done
+  printf '[%s]' "${out%,}"
 }
 
 # mk_page <hasNextPage> <endCursor> <node-json>...
@@ -366,7 +398,7 @@ sb="$(new_sandbox)"
 mk_page false "" \
   "$(mk_node 153 false CLEAN "ready-to-merge" "")" \
   "$(mk_node 159 false DIRTY "conflicts" "false:false")" \
-  "$(mk_node 154 false CLEAN "" "false:false")" > "$sb/resp_1.json"
+  "$(mk_node 154 false CLEAN "review-pending" "false:false")" > "$sb/resp_1.json"
 run_reconciler "$sb" >/dev/null 2>&1
 if [ "$(write_calls "$sb")" = "0" ]; then
   ok "an already-correct sweep makes zero write calls"
@@ -410,10 +442,13 @@ mk_page false "" \
   "$(mk_node 262 false UNSTABLE "" "" "" "" "" "$_fail_check")" > "$sb/resp_1.json"
 run_reconciler "$sb" >/dev/null 2>&1
 if grep -q '162 .*--remove-label ready-to-merge' "$sb/calls" \
-   && ! grep -q -- '--add-label' "$sb/calls"; then
-  ok "a red check revokes ready-to-merge and earns no conflicts chip"
+   && ! grep -q -- '--add-label conflicts' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls" \
+   && grep -q '162 .*--add-label checks-failing' "$sb/calls" \
+   && grep -q '262 .*--add-label checks-failing' "$sb/calls"; then
+  ok "a red check revokes ready-to-merge, earns no conflicts chip, and says checks-failing"
 else
-  notok "a red check revokes ready-to-merge and earns no conflicts chip"
+  notok "a red check revokes ready-to-merge, earns no conflicts chip, and says checks-failing"
   cat "$sb/calls" 2>/dev/null
 fi
 
@@ -977,6 +1012,410 @@ case "$(PR_LABELS_UNDOCUMENTED=x help_knob_gaps "$_mut42")" in
   *PR_LABELS_UNDOCUMENTED*) ok "an unbraced knob read with no help entry is caught" ;;
   *) notok "an unbraced knob read evaded discovery" ;;
 esac
+
+# =============================================================================
+# The label TAXONOMY: a status label that explains a withheld chip, and the
+# kind/priority/area a PR inherits from the issues it closes.
+#
+# Every negative case here seeds a PR ALREADY HOLDING the label it must lose,
+# for the same reason the readiness cases do: asserting only "the label was not
+# added" passes for a reconciler that skipped the PR entirely.
+# =============================================================================
+
+# ---- 43: live findings earn review-pending ----------------------------------
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 300 false CLEAN "" "false:false")" \
+  "$(mk_node 301 false CLEAN "review-pending" "")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '300 .*--add-label review-pending' "$sb/calls" \
+   && grep -q '301 .*--remove-label review-pending' "$sb/calls"; then
+  ok "an unresolved thread earns review-pending, and clearing it revokes the label"
+else
+  notok "an unresolved thread earns review-pending, and clearing it revokes the label"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 44: a blocking check outranks a live finding ---------------------------
+# The ladder reports ONE reason. A PR with both must say checks-failing, because
+# that is the earlier branch — re-deriving the status from independent
+# conditions would light up both and is what this case exists to prevent.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 302 false UNSTABLE "" "false:false" "" "" "" "$(mk_checks 'C:gate:COMPLETED:FAILURE')")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '302 .*--add-label checks-failing' "$sb/calls" \
+   && ! grep -q -- '--add-label review-pending' "$sb/calls"; then
+  ok "a blocking check outranks a live finding: checks-failing only"
+else
+  notok "a blocking check outranks a live finding: checks-failing only"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 45: resolving the last thread swaps the label for the chip -------------
+sb="$(new_sandbox)"
+mk_page false "" "$(mk_node 303 false CLEAN "review-pending" "true:false")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '303 .*--remove-label review-pending' "$sb/calls" \
+   && grep -q '303 .*--add-label ready-to-merge' "$sb/calls"; then
+  ok "resolving the last thread removes review-pending and grants the chip in one sweep"
+else
+  notok "resolving the last thread removes review-pending and grants the chip in one sweep"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 46: a draft carries no status label ------------------------------------
+# GitHub renders Draft in the index already, so a label would duplicate it.
+sb="$(new_sandbox)"
+mk_page false "" "$(mk_node 304 true DRAFT "review-pending" "false:false")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '304 .*--remove-label review-pending' "$sb/calls" \
+   && ! grep -q -- '--add-label review-pending' "$sb/calls" \
+   && ! grep -q -- '--add-label checks-failing' "$sb/calls" \
+   && ! grep -q -- '--add-label unverifiable' "$sb/calls" \
+   && ! grep -q -- '--add-label base-behind' "$sb/calls"; then
+  ok "a draft carries none of the four status labels, and loses one it held"
+else
+  notok "a draft carries none of the four status labels, and loses one it held"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 47: a conflict is reported by `conflicts` alone ------------------------
+sb="$(new_sandbox)"
+mk_page false "" "$(mk_node 305 false DIRTY "" "false:false")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '305 .*--add-label conflicts' "$sb/calls" \
+   && ! grep -q -- '--add-label review-pending' "$sb/calls" \
+   && ! grep -q -- '--add-label checks-failing' "$sb/calls"; then
+  ok "a conflicted PR keeps conflicts and gains none of the four"
+else
+  notok "a conflicted PR keeps conflicts and gains none of the four"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 48: base behind ---------------------------------------------------------
+sb="$(new_sandbox)"
+mk_page false "" "$(mk_node 306 false BEHIND "" "")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '306 .*--add-label base-behind' "$sb/calls"; then
+  ok "a PR behind its base earns base-behind"
+else
+  notok "a PR behind its base earns base-behind"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 49: all three unverifiable paths ---------------------------------------
+# Truncated threads, truncated rollup, and no checks on record while BLOCKED.
+# One label covers all three because the consequence is identical: the snapshot
+# cannot support a verdict, so readiness must not be asserted.
+for spec in threads rollup blocked; do
+  sb="$(new_sandbox)"
+  case "$spec" in
+    threads) node="$(mk_node 307 false CLEAN "" "true:false" 999)" ;;
+    rollup)  node="$(mk_node 307 false CLEAN "" "" "" "" "" "$(mk_checks 'C:gate:COMPLETED:SUCCESS')" 99)" ;;
+    blocked) node="$(mk_node 307 false BLOCKED "" "" "" "" "" "[]" 0)" ;;
+  esac
+  mk_page false "" "$node" > "$sb/resp_1.json"
+  run_reconciler "$sb" >/dev/null 2>&1
+  if grep -q '307 .*--add-label unverifiable' "$sb/calls" \
+     && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+    ok "an unverifiable snapshot ($spec) earns unverifiable and never the chip"
+  else
+    notok "an unverifiable snapshot ($spec) earns unverifiable and never the chip"
+    cat "$sb/calls" 2>/dev/null
+  fi
+done
+
+# ---- 50: the four are mutually exclusive ------------------------------------
+# Seed a PR holding ALL FOUR and assert exactly one survives. Mutual exclusivity
+# is a property of the if/elif ladder today; a later edit turning it into
+# independent `if`s would light up several, and nothing else here would notice.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 308 false CLEAN "review-pending,checks-failing,base-behind,unverifiable" "false:false")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+# All the removals ride ONE `gh pr edit` invocation, so count FLAGS, not lines.
+removed="$(grep -o -- '--remove-label \(checks-failing\|base-behind\|unverifiable\)' "$sb/calls" 2>/dev/null | grep -c . || true)"
+if [ "$removed" -eq 3 ] && ! grep -q '308 .*--remove-label review-pending' "$sb/calls"; then
+  ok "exactly one status label survives: the other three are revoked"
+else
+  notok "exactly one status label survives: the other three are revoked (removed=$removed)"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 51: a PR inherits kind and priority from the issue it closes -----------
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 309 false CLEAN "" "" "" "" "" "" "" "fix: reject opaque paths" "491:bug|P3")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '309 .*--add-label bug' "$sb/calls" && grep -q '309 .*--add-label P3' "$sb/calls"; then
+  ok "a PR closing a P3 bug inherits both labels"
+else
+  notok "a PR closing a P3 bug inherits both labels"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 52: a hand-set priority is never overridden ----------------------------
+# Grant-only is not enough on its own: without the exclusive-group rule an
+# inherited P3 would land BESIDE the human's P1 and the PR would carry two.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 310 false CLEAN "P1" "" "" "" "" "" "" "chore: x" "491:bug|P3")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if ! grep -q -- '--add-label P3' "$sb/calls" \
+   && ! grep -q -- '--remove-label P1' "$sb/calls" \
+   && grep -q '310 .*--add-label bug' "$sb/calls"; then
+  ok "a hand-set P1 blocks the inherited P3 and is never removed; kind still lands"
+else
+  notok "a hand-set P1 blocks the inherited P3 and is never removed; kind still lands"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 53: an inherited label is never revoked --------------------------------
+# The issue was relabelled after the PR opened. Rewriting the PR to match would
+# churn its timeline every hour and would fight a human who chose differently.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 311 false CLEAN "P2,bug" "" "" "" "" "" "" "chore: x" "491:bug|P3")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if ! grep -q -- '--remove-label P2' "$sb/calls" && ! grep -q -- '--add-label P3' "$sb/calls"; then
+  ok "an inherited label is never revoked when the issue is relabelled"
+else
+  notok "an inherited label is never revoked when the issue is relabelled"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 54: the strongest priority wins across several closing issues ----------
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 312 false CLEAN "" "" "" "" "" "" "" "chore: x" "491:P3;509:P1")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '312 .*--add-label P1' "$sb/calls" && ! grep -q -- '--add-label P3' "$sb/calls"; then
+  ok "the strongest priority wins across two closing issues"
+else
+  notok "the strongest priority wins across two closing issues"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 55: areas accumulate ----------------------------------------------------
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 313 false CLEAN "" "" "" "" "" "" "" "chore: x" "491:ragas;509:upstream")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '313 .*--add-label ragas' "$sb/calls" && grep -q '313 .*--add-label upstream' "$sb/calls"; then
+  ok "area labels from two closing issues both land"
+else
+  notok "area labels from two closing issues both land"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 56: the title fallback, and its limits ---------------------------------
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 314 false CLEAN "" "" "" "" "" "" "" "fix(#492): harden the guard" "")" \
+  "$(mk_node 315 false CLEAN "" "" "" "" "" "" "" "chore: archive the change" "")" \
+  "$(mk_node 316 false CLEAN "" "" "" "" "" "" "" "docs: categories plan" "491:bug")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '314 .*--add-label bug' "$sb/calls" \
+   && ! grep -q '315 .*--add-label bug' "$sb/calls" \
+   && ! grep -q '315 .*--add-label enhancement' "$sb/calls" \
+   && ! grep -q '315 .*--add-label documentation' "$sb/calls" \
+   && grep -q '316 .*--add-label bug' "$sb/calls" \
+   && ! grep -q '316 .*--add-label documentation' "$sb/calls"; then
+  ok "fix: yields bug, chore: yields nothing, and a closing issue outranks the title"
+else
+  notok "fix: yields bug, chore: yields nothing, and a closing issue outranks the title"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 57: a tab in the title cannot split the TSV row ------------------------
+# The row is tab-delimited and the title is attacker-adjacent free text. A raw
+# tab would shift every later column by one and silently corrupt the verdict.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 317 false CLEAN "" "false:false" "" "" "" "" "" "$(printf 'fix:\tsneaky\ttabs')" "")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '317 .*--add-label review-pending' "$sb/calls"; then
+  ok "a tab in the PR title does not corrupt the row"
+else
+  notok "a tab in the PR title does not corrupt the row"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 58: unmanaged labels are never touched ---------------------------------
+sb="$(new_sandbox)"
+mk_page false "" "$(mk_node 318 false CLEAN "needs-deploy,ai-wip" "")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if ! grep -q -- '--remove-label needs-deploy' "$sb/calls" \
+   && ! grep -q -- '--remove-label ai-wip' "$sb/calls" \
+   && grep -q '318 .*--add-label ready-to-merge' "$sb/calls"; then
+  ok "labels the reconciler does not manage survive a sweep untouched"
+else
+  notok "labels the reconciler does not manage survive a sweep untouched"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 59: idempotence over the WIDENED set -----------------------------------
+# The reconciler writes to every open PR on every sweep, so a desired set that
+# is already satisfied must cost ZERO writes. Widening what is managed widens
+# what has to be diffed, and a regression here spams every PR's timeline hourly.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 319 false CLEAN "review-pending,bug,P3" "false:false" "" "" "" "" "" "chore: x" "491:bug|P3")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if [ "$(write_calls "$sb")" -eq 0 ]; then
+  ok "a PR already carrying the full desired set — status and inherited — costs zero writes"
+else
+  notok "a PR already carrying the full desired set costs zero writes"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 60: a PENDING check is not a FAILING check -----------------------------
+# The gap that shipped: every non-passing context counted as "blocking", and the
+# status label called all of them checks-failing. PR #517 was labelled
+# checks-failing while its checks were merely still running, and every one of
+# them then passed. "CI failed" and "CI is still running" call for opposite
+# actions from a reader, so a label asserting the first when the second is true
+# is simply false. Both still withhold the chip, exactly as before -- only the
+# reported reason splits.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 320 false BLOCKED "" "" "" "" "" "$(mk_checks 'C:gate:IN_PROGRESS:null')")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '320 .*--add-label checks-pending' "$sb/calls" \
+   && ! grep -q -- '--add-label checks-failing' "$sb/calls" \
+   && ! grep -q -- '--add-label ready-to-merge' "$sb/calls"; then
+  ok "a check still running earns checks-pending, never checks-failing"
+else
+  notok "a check still running earns checks-pending, never checks-failing"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 61: a finished-and-bad check still says checks-failing -----------------
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 321 false UNSTABLE "" "" "" "" "" "$(mk_checks 'C:gate:COMPLETED:FAILURE')")" \
+  "$(mk_node 322 false UNSTABLE "" "" "" "" "" "$(mk_checks 'S:legacy:ERROR')")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '321 .*--add-label checks-failing' "$sb/calls" \
+   && grep -q '322 .*--add-label checks-failing' "$sb/calls" \
+   && ! grep -q -- '--add-label checks-pending' "$sb/calls"; then
+  ok "a completed failure, from either context type, still says checks-failing"
+else
+  notok "a completed failure, from either context type, still says checks-failing"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 62: failure outranks pending ------------------------------------------
+# A PR with one red check and one still running is red. Reporting it as pending
+# would tell the reader to wait for a verdict that has already arrived.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 323 false UNSTABLE "" "" "" "" "" "$(mk_checks 'C:a:IN_PROGRESS:null,C:b:COMPLETED:FAILURE')")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '323 .*--add-label checks-failing' "$sb/calls" \
+   && ! grep -q -- '--add-label checks-pending' "$sb/calls"; then
+  ok "one red check outranks a pending one: checks-failing"
+else
+  notok "one red check outranks a pending one: checks-failing"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 63: a neutral or skipped check is passing, not pending -----------------
+# These already counted as passing for the chip; the split must not reclassify
+# them as "not green yet" and withhold it.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 324 false CLEAN "" "" "" "" "" "$(mk_checks 'C:a:COMPLETED:NEUTRAL,C:b:COMPLETED:SKIPPED')")" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '324 .*--add-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label checks-pending' "$sb/calls" \
+   && ! grep -q -- '--add-label checks-failing' "$sb/calls"; then
+  ok "NEUTRAL and SKIPPED stay passing and earn the chip"
+else
+  notok "NEUTRAL and SKIPPED stay passing and earn the chip"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 64: UNKNOWN clears a stale status label, and still asserts nothing -----
+# Removal withdraws a claim; it does not make one. So this keeps the "asserts
+# nothing new" contract of the UNKNOWN path while not leaving a cause
+# advertised that was derived from a snapshot we can no longer stand behind.
+sb="$(new_sandbox)"
+mk_page false "" "$(mk_node 330 false UNKNOWN "review-pending,ready-to-merge" "")" > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '330 .*--remove-label review-pending' "$sb/calls" \
+   && grep -q '330 .*--remove-label ready-to-merge' "$sb/calls" \
+   && ! grep -q -- '--add-label' "$sb/calls"; then
+  ok "UNKNOWN revokes a stale status label and the chip, and adds nothing"
+else
+  notok "UNKNOWN revokes a stale status label and the chip, and adds nothing"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 65: a truncated closing-issue set inherits NOTHING ---------------------
+# Inheriting from a subset is not merely incomplete, it is unfixable: priority
+# is grant-only and skipped once any priority is present, so a P3 from a
+# visible issue would permanently mask a P1 on an omitted one.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 331 false CLEAN "" "" "" "" "" "" "" "chore: x" "491:bug|P3" 25)" \
+  "$(mk_node 332 false CLEAN "" "" "" "" "" "" "" "chore: x" "491:bug|P3" "" 60)" \
+  > "$sb/resp_1.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if ! grep -q -- '--add-label bug' "$sb/calls" \
+   && ! grep -q -- '--add-label P3' "$sb/calls" \
+   && grep -q '331 .*--add-label ready-to-merge' "$sb/calls"; then
+  ok "a truncated closing-issue or issue-label set inherits nothing, and still gets the chip"
+else
+  notok "a truncated closing-issue or issue-label set inherits nothing, and still gets the chip"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 66: a truncated PR-label set still inherits, from the authoritative read
+# The label connection being over the page is not a reason to abandon
+# inheritance forever: the re-read returns the full list, so the exclusive-group
+# rule can be evaluated properly. A PR permanently over the limit would
+# otherwise never inherit anything and no later sweep could fix it.
+sb="$(new_sandbox)"
+mk_page false "" \
+  "$(mk_node 333 false CLEAN "P1" "" "" 150 "" "" "" "chore: x" "491:bug|P3")" \
+  > "$sb/resp_1.json"
+printf '[{"name":"P1"}]' > "$sb/labels_333.json"
+run_reconciler "$sb" >/dev/null 2>&1
+if grep -q '333 .*--add-label bug' "$sb/calls" \
+   && ! grep -q -- '--add-label P3' "$sb/calls"; then
+  ok "a truncated label set still inherits, and the exclusive rule uses the authoritative list"
+else
+  notok "a truncated label set still inherits, and the exclusive rule uses the authoritative list"
+  cat "$sb/calls" 2>/dev/null
+fi
+
+# ---- 67: the nested closing-issue bounds stay small -------------------------
+# GraphQL node cost is the PRODUCT of enclosing first: values, so this one
+# nested connection dominates the whole query. At first:20/first:50 it budgets
+# 50,000 nodes and takes the query past 600 points against a 1,000-point hourly
+# quota -- one sweep an hour before the reconciler starts getting rate-limited.
+if grep -q 'closingIssuesReferences(first:5){ totalCount nodes{ labels(first:20){ totalCount' "$RECONCILER"; then
+  ok "the nested closing-issue connection keeps its small, totalCount-checked bounds"
+else
+  notok "the nested closing-issue connection keeps its small, totalCount-checked bounds"
+  grep -n 'closingIssuesReferences' "$RECONCILER"
+fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

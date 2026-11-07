@@ -5,16 +5,17 @@ needs — is it enabled, may this request proceed, does the nav link show —
 lives here where the gate can cover it. ``app.py`` keeps thin call sites only
 (pattern: ``config_fingerprint.py``).
 
-Three decisions here diverge from upstream on purpose. ``build_evaluation_service``
+Two decisions here diverge from upstream on purpose. ``build_evaluation_service``
 refuses an enabled console that names no ``agent_config_path``, refuses the live
 deployment config outright, because each run copies that file into its own run
 directory, and refuses a storage root construction cannot use (details on the
 function).
 
-And the ``authorize_request`` callable is narrower than upstream's: it has no
-bearer-token or SSO branch, so an SSO deployment that turns the console on gets a
-401 instead of a login redirect. That is a recorded trial divergence — the console
-is off by default and the dev stack runs auth-off.
+And the ``authorize_request`` callable answers anonymous callers like the main
+app (browser → login redirect, API → 401, SSO without anonymous access →
+audited) and has no token-based authentication path, which is a recorded
+divergence from upstream. The console is off by default and the dev stack runs
+auth-off.
 """
 
 import os
@@ -22,10 +23,11 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from flask import jsonify, request, session
+from flask import jsonify, redirect, request, session, url_for
 
 from src.evaluation.qa.console import EvaluationConsoleService
 from src.utils.logging import get_logger
+from src.utils.rbac.audit import log_authentication_event
 from src.utils.rbac.permission_enum import Permission
 from src.utils.rbac.permissions import has_permission
 
@@ -162,24 +164,52 @@ def build_evaluation_service(
         return None
 
 
-def build_authorize_request(auth_enabled: bool) -> Callable[[str], Optional[Any]]:
+def _never() -> bool:
+    return False
+
+
+def _always() -> bool:
+    return True
+
+
+def build_authorize_request(
+    auth_enabled: bool,
+    *,
+    sso_enabled: Callable[[], bool] = _never,
+    allow_anonymous: Callable[[], bool] = _always,
+    is_api_request: Callable[[], bool] = _always,
+) -> Callable[[str], Optional[Any]]:
     """Return the permission check the evaluation blueprint calls per route.
 
     The returned callable answers ``None`` when the request may proceed, and a
-    ``(response, status)`` pair otherwise.
+    ``(response, status)`` pair or ``Response`` object otherwise.
 
-    Auth scope — fail-closed on purpose. With auth on, the one credential this
-    check accepts is a Flask login session (``session["logged_in"]``) that
-    carries roles. Every other credential the main app accepts — a bearer
-    token, an SSO session, an OIDC redirect — gets a flat 401 here, because
-    this callable holds no bearer branch and no SSO branch at all.
+    Three keyword-only predicates, each a zero-argument callable, tune anonymous
+    handling: ``sso_enabled`` reports whether SSO is active in the deployment,
+    ``allow_anonymous`` reports whether the registry permits anonymous access,
+    and ``is_api_request`` reports whether the current request is an API call
+    (reads ``request`` at call time, not build time).
 
-    That is the recorded scope of this trial, not an oversight. The capability
-    ships dark: the console exists only when ``evaluations.enabled`` is exactly
-    ``True``, which no deployed config sets, and the dev stack runs auth-off. An
-    SSO-aware or bearer-aware ``authorize_request`` is a written adoption
-    precondition (proposal.md "Not in scope"; adopt writeup, tasks.md 7.3), so
-    do not enable this console on an auth-on deployment before that lands.
+    Anonymous callers (no ``session["logged_in"]``) are answered in this order:
+
+    1. ``sso_enabled()`` and not ``allow_anonymous()`` — audit the request by
+       calling ``log_authentication_event`` with
+       ``event_type="anonymous_redirect"``.
+    2. ``is_api_request()`` — return JSON 401 (existing body).
+    3. Otherwise — return ``redirect(url_for("login"))``.
+
+    One deliberate departure from the main app: when SSO is active and
+    anonymous access is disallowed, the main app redirects an API request to
+    the login page; this callable answers it with 401 instead. Every console
+    JSON route sits under ``/api/evaluations/``, where a redirect to an HTML
+    login page gives a client nothing to parse. The audit event still fires,
+    so the anonymous hit is not lost.
+
+    The defaults — ``sso_enabled`` returns ``False``, ``allow_anonymous`` and
+    ``is_api_request`` both return ``True`` — reproduce the previous behaviour
+    exactly: no audit, no redirect, JSON 401 for every unauthenticated request.
+    There is no token-based authentication path; that is a recorded divergence
+    from upstream.
     """
 
     def authorize_request(permission: str) -> Optional[Any]:
@@ -187,12 +217,22 @@ def build_authorize_request(auth_enabled: bool) -> Callable[[str], Optional[Any]
             return None
 
         if not session.get("logged_in"):
-            return (
-                jsonify(
-                    {"error": "Unauthorized", "message": "Authentication required"}
-                ),
-                401,
-            )
+            if sso_enabled() and not allow_anonymous():
+                log_authentication_event(
+                    user="anonymous",
+                    event_type="anonymous_redirect",
+                    success=False,
+                    method="web",
+                    details=f"path={request.path}, method={request.method}",
+                )
+            if is_api_request():
+                return (
+                    jsonify(
+                        {"error": "Unauthorized", "message": "Authentication required"}
+                    ),
+                    401,
+                )
+            return redirect(url_for("login"))
 
         roles = session.get("roles", [])
         if not has_permission(permission, roles):

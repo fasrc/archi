@@ -505,22 +505,44 @@ class TestStemmedCorpusWarning:
 
 class TestSweepBudgets:
     def test_reports_the_effective_budget_and_collapses_duplicates(self):
-        # 600 clamps to the child size; 64 and 128 both clamp to a 48-token child.
+        # 600 clamps to half the child size; 64 and 128 both clamp to half a
+        # 48-token child.
         assert sweep_budgets(
             [128, 600, 64], chunk_size=512, parent_chunk_size=2048
         ) == [
             (64, 64),
             (128, 128),
-            (600, 512),
+            (600, 256),
         ]
         assert sweep_budgets([64, 128], chunk_size=48, parent_chunk_size=2048) == [
-            (64, 48)
+            (64, 24)
         ]
 
     def test_negative_requests_measure_zero(self):
         assert sweep_budgets([-5, 0], chunk_size=512, parent_chunk_size=2048) == [
             (-5, 0)
         ]
+
+
+class TestClampOverlapParity:
+    def test_matches_the_production_clamp_on_the_sentence_path(self):
+        # _parse_sentence clamps one budget to half the smaller of the two sizes;
+        # the script must report the budget the ingest really uses (#403).
+        from scripts.benchmarking.measure_chunk_overlap import clamp_overlap
+        from src.data_manager.vectorstore import node_parsing
+
+        for chunk_size in (8, 16, 39, 40, 41, 48, 512):
+            for parent_chunk_size in (16, 128, 2048):
+                for overlap in (0, 1, 20, 64, 500):
+                    assert clamp_overlap(
+                        overlap, chunk_size, parent_chunk_size
+                    ) == node_parsing._clamped_overlap(
+                        min(chunk_size, parent_chunk_size), overlap
+                    ), (
+                        chunk_size,
+                        parent_chunk_size,
+                        overlap,
+                    )
 
 
 class TestEmbeddedText:

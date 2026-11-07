@@ -16,6 +16,7 @@ from src.data_manager.vectorstore.node_parsing import (
     build_hierarchical_nodes,
     embed_child_nodes,
     resolve_effective_strategy,
+    warm_up_sentence_tokenizer,
 )
 
 
@@ -618,13 +619,13 @@ def test_cap_section_falls_back_to_join_when_a_piece_is_not_in_the_source():
 
 
 def test_clamped_overlap_boundary_values():
-    """The clamp preserves legal overlaps exactly (upstream raises only on >)."""
+    """The clamp is at most half the chunk size (design D2)."""
     from src.data_manager.vectorstore.node_parsing import _clamped_overlap
 
     assert _clamped_overlap(0) == 0
-    assert _clamped_overlap(1) == 1
-    assert _clamped_overlap(20) == 20  # unchanged topology at the boundary
-    assert _clamped_overlap(21) == 20
+    assert _clamped_overlap(1) == 0
+    assert _clamped_overlap(20) == 10
+    assert _clamped_overlap(21) == 10
     assert _clamped_overlap(200) == 20
 
 
@@ -708,3 +709,135 @@ def test_resolve_effective_strategy_passes_other_strategies_through():
         resolve_effective_strategy("character", filename="guide.md", suffix="md")
         == "character"
     )
+
+
+def test_clamped_overlap_with_explicit_overlap():
+    """_clamped_overlap(chunk_size, overlap) returns max(0, min(overlap, chunk_size // 2))."""
+    from src.data_manager.vectorstore.node_parsing import _clamped_overlap
+
+    assert _clamped_overlap(512, 500) == 256
+    assert _clamped_overlap(512, 0) == 0
+    assert _clamped_overlap(16, 20) == 8
+    assert _clamped_overlap(512) == 20
+
+
+def test_markdown_strategy_builds_child_splitter_with_clamped_overlap(monkeypatch):
+    """markdown path: child SentenceSplitter gets chunk_overlap=min(overlap, child//2)."""
+    import src.data_manager.vectorstore.node_parsing as np_mod
+
+    calls = []
+    _Real = np_mod.SentenceSplitter
+
+    class _Recorder(_Real):
+        def __init__(self, **kwargs):
+            calls.append(dict(kwargs))
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(np_mod, "SentenceSplitter", _Recorder)
+
+    doc = Document(page_content=_sentences(40), metadata={})
+    build_hierarchical_nodes(
+        doc,
+        strategy=MARKDOWN_STRATEGY,
+        parent_chunk_size=2048,
+        child_chunk_size=512,
+        child_chunk_overlap=500,
+    )
+
+    assert calls[0]["chunk_overlap"] == 0
+    assert calls[1]["chunk_overlap"] == 256
+
+
+@pytest.mark.parametrize(
+    "child_chunk_overlap,expected_overlap",
+    [(0, 0), (500, 256)],
+)
+def test_sentence_strategy_passes_clamped_overlap_to_hnp(
+    monkeypatch, child_chunk_overlap, expected_overlap
+):
+    """sentence path: HierarchicalNodeParser.from_defaults receives the clamped overlap."""
+    import src.data_manager.vectorstore.node_parsing as np_mod
+
+    captured = {}
+    _RealHNP = np_mod.HierarchicalNodeParser
+
+    class _Recorder:
+        @staticmethod
+        def from_defaults(**kwargs):
+            captured.update(kwargs)
+            return _RealHNP.from_defaults(**kwargs)
+
+    monkeypatch.setattr(np_mod, "HierarchicalNodeParser", _Recorder)
+
+    doc = Document(page_content=_sentences(40), metadata={})
+    build_hierarchical_nodes(
+        doc,
+        strategy=SENTENCE_STRATEGY,
+        parent_chunk_size=512,
+        child_chunk_size=512,
+        child_chunk_overlap=child_chunk_overlap,
+    )
+
+    assert captured["chunk_overlap"] == expected_overlap
+
+
+def test_warm_up_loads_the_sentence_tokenizer_and_stopwords(monkeypatch):
+    """The warm-up turns NLTK's shared lazy stopwords loader into a reader (#119).
+
+    The ingest worker pool must find the corpus already loaded: the first load
+    swaps the shared loader's class in place, and threads that race it fail
+    with ``'WordListCorpusReader' object has no attribute
+    '_LazyCorpusLoader__reader_cls'``.
+    """
+    import nltk.corpus
+    from llama_index.core.utils import globals_helper
+    from nltk.corpus.reader import WordListCorpusReader
+    from nltk.corpus.util import LazyCorpusLoader
+
+    # The never-loaded state a fresh data-manager process starts in.
+    monkeypatch.setattr(
+        nltk.corpus,
+        "stopwords",
+        LazyCorpusLoader(
+            "stopwords", WordListCorpusReader, r"(?!README|\.).*", encoding="utf8"
+        ),
+    )
+    monkeypatch.setattr(globals_helper, "_stopwords", None)
+    monkeypatch.setattr(globals_helper, "_punkt_tokenizer", None)
+
+    warm_up_sentence_tokenizer()
+
+    assert type(nltk.corpus.stopwords) is WordListCorpusReader
+    assert globals_helper._punkt_tokenizer is not None
+    assert "the" in globals_helper._stopwords
+
+
+def test_concurrent_warm_ups_do_not_load_at_the_same_time(monkeypatch):
+    """Two ingests that start together must not race the first load (#119)."""
+    import threading
+    import time
+
+    from src.data_manager.vectorstore import node_parsing
+
+    active = []
+    overlaps = []
+
+    class _SlowHelper:
+        @property
+        def punkt_tokenizer(self):
+            active.append(1)
+            overlaps.append(len(active))
+            time.sleep(0.01)
+            active.pop()
+            return object()
+
+    monkeypatch.setattr(node_parsing, "globals_helper", _SlowHelper())
+
+    threads = [threading.Thread(target=warm_up_sentence_tokenizer) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(overlaps) == 8
+    assert max(overlaps) == 1

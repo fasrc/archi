@@ -10,6 +10,7 @@ import src.evaluation.qa.workflow as workflow_module
 from src.evaluation.qa.artifacts import read_json, read_jsonl
 from src.evaluation.qa.oracle import OracleCallEvidence
 from src.evaluation.qa.workflow import QAWorkflow
+from src.evaluation.qa.workspace import EvaluationWorkspace
 
 
 class SequenceInvoker:
@@ -68,6 +69,25 @@ class AgentFactory:
 
             def run(self, question):
                 owner.calls[question] += 1
+                return "agent answer"
+
+        return Agent()
+
+
+class FailingAgentFactory:
+    def __init__(self):
+        self.calls = Counter()
+
+    def __call__(self, *_args, **_kwargs):
+        owner = self
+
+        class Agent:
+            tool_calls = []
+
+            def run(self, question):
+                owner.calls[question] += 1
+                if question == "Current value?":
+                    raise RuntimeError("agent exploded")
                 return "agent answer"
 
         return Agent()
@@ -181,6 +201,32 @@ def _paused_at_live_gate(monkeypatch, tmp_path):
     )
     assert gated["status"] == "attention_required"
     return workflow, run_dir
+
+
+def _crashing_post_drift_run(monkeypatch, tmp_path):
+    dataset = tmp_path / "dataset.json"
+    run_dir = tmp_path / "run"
+    _dataset(dataset, include_static=True)
+    invoker = SequenceInvoker(
+        [
+            {"value": 7, "revision": "r1"},
+            {"value": 7, "revision": "r1"},
+            {"value": 8, "revision": "r2"},
+        ]
+    )
+    monkeypatch.setattr(
+        workflow_module.EvaluatorMCPRegistry,
+        "load",
+        classmethod(lambda cls, path=None: invoker),
+    )
+    monkeypatch.setattr(workflow_module, "ArchiAgentRuntime", FailingAgentFactory())
+    QAWorkflow().composite(
+        dataset,
+        tmp_path / "agent.yaml",
+        tmp_path / "agent.md",
+        run_dir,
+    )
+    return run_dir
 
 
 class TestLiveWorkflow:
@@ -462,6 +508,61 @@ class TestLiveWorkflow:
             "static"
         ]
 
+    def test_continue_keeps_the_redacted_snapshot_digest(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        from pathlib import Path
+
+        import yaml
+
+        sentinel_config = {
+            "services": {
+                "chat_app": {
+                    "agent_class": "FakeAgent",
+                    "default_provider": "fake",
+                    "default_model": "fake-model",
+                    "providers": {"fake": {"api_key": "SENTINEL-APIKEY"}},
+                },
+                "postgres": {"password": "SENTINEL-PG"},
+            },
+        }
+        spec = SimpleNamespace(tools=[])
+        spec_text = "---\nname: fake\ntools: []\n---\n"
+
+        def sentinel_loader(config_path, spec_path):
+            if Path(config_path) == tmp_path / "agent.yaml":
+                return (sentinel_config, spec, spec_text, object)
+            return (
+                yaml.safe_load(Path(config_path).read_text(encoding="utf-8")),
+                spec,
+                spec_text,
+                object,
+            )
+
+        monkeypatch.setattr(workflow_module, "load_agent_inputs", sentinel_loader)
+        workflow, run_dir = _paused_at_live_gate(monkeypatch, tmp_path)
+        paused_digest = read_json(run_dir / "manifest.json")["artifacts"][
+            "agent_config.resolved.yaml"
+        ]
+        assert (
+            "SENTINEL"
+            not in (run_dir / "agent_config.resolved.yaml").read_bytes().decode()
+        )
+        manifest = workflow.run(
+            run_dir,
+            run_dir / "agent_config.resolved.yaml",
+            run_dir / "agent_spec.resolved.md",
+            overwrite=True,
+            pause_on_live_mismatch=True,
+            authorize_staged_invalid=True,
+        )
+        assert manifest["phases"]["run"]["status"] == "completed"
+        assert manifest["artifacts"]["agent_config.resolved.yaml"] == paused_digest
+        assert (
+            "SENTINEL"
+            not in (run_dir / "agent_config.resolved.yaml").read_bytes().decode()
+        )
+
     def test_high_cardinality_gate_persists_only_compact_attention_counts(
         self, monkeypatch, tmp_path, runtimes
     ):
@@ -594,6 +695,81 @@ class TestLiveWorkflow:
         assert summary["attempt_lifecycle_counts"]["live_validation_failed"] == 1
         assert evaluator.calls == Counter({"extract": 1})
         assert agent.calls == Counter({"Current value?": 1})
+
+    def test_post_run_drift_with_crashed_attempt_is_accepted_as_retry_parent(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        run_dir = _crashing_post_drift_run(monkeypatch, tmp_path)
+
+        results = read_jsonl(run_dir / "evaluation_results.jsonl")
+        live_result = next(r for r in results if r["item_id"] == "live")
+        assert live_result["live_validation"]["phase"] == "post_run"
+        answers = read_jsonl(run_dir / "answers.jsonl")
+        live_answer = next(a for a in answers if a["item_id"] == "live")
+        assert live_answer["status"] == "execution_failed"
+
+        assert read_json(run_dir / "manifest.json")["status"] == "scored"
+        store = EvaluationWorkspace.open_retry_parent(run_dir)
+        store.close()
+
+    def test_crashing_post_drift_retry_plan_classifies_as_live_validation(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        run_dir = _crashing_post_drift_run(monkeypatch, tmp_path)
+
+        plan = QAWorkflow().retry_plan(run_dir)
+
+        assert plan["live_validation_attempt_count"] >= 1
+        assert plan["execution_attempt_count"] == 0
+
+    def test_grandchild_crashing_post_drift_is_accepted_as_retry_parent(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        dataset = tmp_path / "dataset.json"
+        parent = tmp_path / "parent"
+        successor = tmp_path / "successor"
+        _dataset(dataset, include_static=True)
+        invoker = SequenceInvoker(
+            [
+                {"value": 7, "revision": "r1"},
+                {"value": 7, "revision": "r1"},
+                {"value": 8, "revision": "r2"},
+                {"value": 7, "revision": "r1"},
+                {"value": 8, "revision": "r2"},
+            ]
+        )
+        monkeypatch.setattr(
+            workflow_module.EvaluatorMCPRegistry,
+            "load",
+            classmethod(lambda cls, path=None: invoker),
+        )
+        monkeypatch.setattr(workflow_module, "ArchiAgentRuntime", FailingAgentFactory())
+        workflow = QAWorkflow()
+        workflow.composite(
+            dataset,
+            tmp_path / "agent.yaml",
+            tmp_path / "agent.md",
+            parent,
+        )
+
+        parent_results = read_jsonl(parent / "evaluation_results.jsonl")
+        parent_live = next(r for r in parent_results if r["item_id"] == "live")
+        assert parent_live["live_validation"]["phase"] == "post_run"
+        parent_answers = read_jsonl(parent / "answers.jsonl")
+        parent_live_answer = next(a for a in parent_answers if a["item_id"] == "live")
+        assert parent_live_answer["status"] == "execution_failed"
+
+        workflow.retry(parent, successor)
+
+        succ_results = read_jsonl(successor / "evaluation_results.jsonl")
+        succ_live = next(r for r in succ_results if r["item_id"] == "live")
+        assert succ_live["live_validation"]["phase"] == "post_run"
+        succ_answers = read_jsonl(successor / "answers.jsonl")
+        succ_live_answer = next(a for a in succ_answers if a["item_id"] == "live")
+        assert succ_live_answer["status"] == "execution_failed"
+
+        store = EvaluationWorkspace.open_retry_parent(successor)
+        store.close()
 
     def test_skip_live_omits_calls_and_scoring_membership(
         self, monkeypatch, tmp_path, runtimes
@@ -810,3 +986,78 @@ class TestLiveWorkflow:
             ("live-0", "post_run"),
             ("live-1", "post_run"),
         ]
+
+
+def test_a_retry_that_promotes_a_live_retry_takes_its_own_readings(
+    monkeypatch, tmp_path, runtimes
+):
+    """The promoted attempt answers fresh, so it gets a guard and two readings.
+
+    The parent failed only a live pre-run check, so its plan has no execution
+    retry. The retry's pre-run check then matches the baseline and promotes the
+    attempt to a fresh execution against today's corpus (#570).
+    """
+    import src.evaluation.qa.provenance as provenance
+
+    config = {
+        "services": {
+            "chat_app": {
+                "agent_class": "FakeAgent",
+                "default_provider": "fake",
+                "default_model": "fake-model",
+            }
+        },
+        "data_manager": {
+            "collection_name": "fasrc",
+            "embedding_name": "HuggingFaceEmbeddings",
+            "embedding_class_map": {
+                "HuggingFaceEmbeddings": {"kwargs": {"model_name": "Qwen/Q"}}
+            },
+        },
+    }
+    spec = SimpleNamespace(tools=["search_vectorstore_hybrid"])
+    monkeypatch.setattr(
+        workflow_module,
+        "load_agent_inputs",
+        lambda *_args: (config, spec, "---\n---\n", object),
+    )
+    monkeypatch.setattr(workflow_module, "LazyVectorstore", lambda cfg: object())
+    guards = []
+    readings = iter(["sha256/v2:p1", "sha256/v2:p2", "sha256/v2:r1", "sha256/v2:r2"])
+    monkeypatch.setattr(provenance, "direct_pool", lambda cfg: object())
+    monkeypatch.setattr(
+        provenance,
+        "collection_readiness",
+        lambda pool, identity: guards.append(1)
+        or {
+            "chunk_count": 1,
+            "usable_chunk_count": 1,
+            "untagged_chunk_count": 0,
+            "embedding_model_source": "chunks",
+        },
+    )
+    monkeypatch.setattr(
+        provenance, "live_corpus_fingerprint", lambda pool, cfg: next(readings)
+    )
+    dataset = tmp_path / "dataset.json"
+    parent = tmp_path / "parent"
+    successor = tmp_path / "successor"
+    _dataset(dataset)
+    baseline = {"value": 7, "revision": "r1"}
+    changed = {"value": 8, "revision": "r2"}
+    invoker = SequenceInvoker([baseline, changed, baseline, baseline])
+    monkeypatch.setattr(
+        workflow_module.EvaluatorMCPRegistry,
+        "load",
+        classmethod(lambda cls, path=None: invoker),
+    )
+    workflow = QAWorkflow()
+    workflow.composite(dataset, tmp_path / "agent.yaml", tmp_path / "agent.md", parent)
+    assert read_json(parent / "manifest.json")["corpus_fingerprint"] == "sha256/v2:p2"
+
+    manifest = workflow.retry(parent, successor)
+
+    assert manifest["phases"]["run"]["actual_agent_executions"] == 1
+    assert len(guards) == 2
+    assert manifest["corpus_fingerprint_before"] == "sha256/v2:r1"
+    assert manifest["corpus_fingerprint"] == "sha256/v2:r2"

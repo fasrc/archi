@@ -24,7 +24,7 @@ class VolumeManager:
             self._create_volume(volume_name)
 
         if config is not None:
-            self._stage_local_files(compose_config, config)
+            self.stage_local_files(compose_config, config)
 
     def _create_volume(self, volume_name: str) -> None:
         """Create a single volume if it doesn't exist"""
@@ -109,7 +109,7 @@ class VolumeManager:
                 return True
         return False
 
-    def _stage_local_files(self, compose_config, config: dict) -> None:
+    def stage_local_files(self, compose_config, config: dict) -> None:
         """Stage local files into the data-manager volume if configured."""
         try:
             data_mgr_service = compose_config.get_service("data-manager")

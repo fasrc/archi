@@ -1,0 +1,563 @@
+"""Unit tests for the generation-side RAGAS metrics and the metric registry.
+
+Adds five opt-in metrics aimed at the answer rather than retrieval — the half a
+prompt edit can move:
+
+- ``factual_correctness_recall``: share of the reference's claims the answer
+  covers (omission).
+- ``factual_correctness_precision``: share of the answer's claims the reference
+  supports (over-claiming).
+- ``noise_sensitivity``: share of the answer's claims that are wrong given the
+  retrieved context. LOWER is better — the first such metric, so every reader
+  that picks a winner or flags a regression must consult the direction.
+- ``answer_accuracy`` / ``response_groundedness``: ragas' dual-judge (averaged)
+  variants of correctness and faithfulness, steadier on small banks.
+
+One registry in ``benchmark_schema`` names every metric; the other hand-kept
+lists are checked against it here so a future metric cannot land in half of
+them. ragas itself is absent from the unit-test env, so metric construction is
+exercised against a fake ``ragas.metrics`` module.
+"""
+
+from __future__ import annotations
+
+import math
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from scripts.benchmarking import compare_runs as cr
+from scripts.benchmarking import generate_prompt_sweep as gps
+from src.bin.service_benchmark import ResultHandler
+from src.utils import benchmark_argilla
+from src.utils import generate_benchmark_report as report
+from src.utils.benchmark_resilience import build_ragas_aggregates
+from src.utils.benchmark_schema import (
+    LOWER_IS_BETTER_METRICS,
+    RAGAS_METRIC_LABELS,
+    RAGAS_METRIC_NAMES,
+    build_ragas_metric_objects,
+    metric_required_column,
+    metric_winner,
+    ragas_result_column,
+)
+from src.utils.generate_benchmark_report import RAGAS_METRIC_LABELS as report_labels
+from src.utils.generate_benchmark_report import format_markdown_output
+
+NEW_METRICS = (
+    "factual_correctness_recall",
+    "factual_correctness_precision",
+    "noise_sensitivity",
+    "answer_accuracy",
+    "response_groundedness",
+)
+LEGACY_METRICS = (
+    "answer_relevancy",
+    "faithfulness",
+    "context_precision",
+    "context_recall",
+    "answer_correctness",
+)
+
+
+# --- registry ---------------------------------------------------------------
+
+
+def test_registry_keeps_the_legacy_order_and_appends_the_new_metrics():
+    assert RAGAS_METRIC_NAMES == LEGACY_METRICS + NEW_METRICS
+
+
+def test_every_registered_metric_has_a_display_label():
+    assert set(RAGAS_METRIC_LABELS) == set(RAGAS_METRIC_NAMES)
+    assert RAGAS_METRIC_LABELS["noise_sensitivity"].endswith("(lower is better)")
+
+
+@pytest.mark.parametrize(
+    "metric, column",
+    [
+        ("factual_correctness_recall", "reference"),
+        ("factual_correctness_precision", "reference"),
+        ("noise_sensitivity", "reference"),
+        ("answer_accuracy", "reference"),
+        ("response_groundedness", None),
+    ],
+)
+def test_new_metrics_declare_the_column_they_need(metric, column):
+    """A reference-grading metric must skip draft rows with an empty reference;
+    groundedness judges the answer against the contexts only."""
+    assert metric_required_column(metric) == column
+
+
+def test_only_noise_sensitivity_is_lower_is_better():
+    assert LOWER_IS_BETTER_METRICS == frozenset({"noise_sensitivity"})
+
+
+# --- direction-aware winner -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "metric, a, b, expected",
+    [
+        ("faithfulness", 0.9, 0.5, "a"),
+        ("faithfulness", 0.5, 0.9, "b"),
+        ("noise_sensitivity", 0.1, 0.4, "a"),
+        ("noise_sensitivity", 0.4, 0.1, "b"),
+        ("noise_sensitivity", 0.2, 0.2, "tie"),
+        ("faithfulness", math.nan, 0.9, "tie"),
+    ],
+)
+def test_metric_winner_respects_direction(metric, a, b, expected):
+    assert metric_winner(metric, a, b) == expected
+
+
+# --- ragas result column ----------------------------------------------------
+
+
+def test_result_column_is_the_name_for_a_plain_metric():
+    assert ragas_result_column(SimpleNamespace(name="answer_accuracy")) == (
+        "answer_accuracy"
+    )
+
+
+def test_result_column_carries_the_mode_for_a_mode_metric():
+    """ragas 0.3.5 evaluation.py keys any object with ``name`` AND ``mode`` as
+    ``name(mode=...)`` — reading ``to_pandas()[name]`` would KeyError."""
+    metric = SimpleNamespace(name="factual_correctness_recall", mode="recall")
+    assert ragas_result_column(metric) == "factual_correctness_recall(mode=recall)"
+
+
+# --- metric construction ----------------------------------------------------
+
+
+class _Recorder:
+    """Stand-in for a ragas metric class: records its constructor kwargs."""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.name = kwargs.get("name")
+        if "mode" in kwargs:
+            self.mode = kwargs["mode"]
+
+
+def _fake_ragas_metrics():
+    return SimpleNamespace(
+        answer_relevancy="AR",
+        faithfulness="F",
+        context_precision="CP",
+        context_recall="CR",
+        answer_correctness="AC",
+        FactualCorrectness=type("FactualCorrectness", (_Recorder,), {}),
+        NoiseSensitivity=type("NoiseSensitivity", (_Recorder,), {}),
+        AnswerAccuracy=type("AnswerAccuracy", (_Recorder,), {}),
+        ResponseGroundedness=type("ResponseGroundedness", (_Recorder,), {}),
+    )
+
+
+def test_legacy_metrics_use_the_pre_instantiated_objects():
+    objs = build_ragas_metric_objects(_fake_ragas_metrics(), LEGACY_METRICS)
+    assert objs == {
+        "answer_relevancy": "AR",
+        "faithfulness": "F",
+        "context_precision": "CP",
+        "context_recall": "CR",
+        "answer_correctness": "AC",
+    }
+
+
+def test_new_metrics_are_built_with_a_fixed_name_and_mode():
+    objs = build_ragas_metric_objects(_fake_ragas_metrics(), NEW_METRICS)
+    assert objs["factual_correctness_recall"].kwargs == {
+        "mode": "recall",
+        "name": "factual_correctness_recall",
+    }
+    assert objs["factual_correctness_precision"].kwargs == {
+        "mode": "precision",
+        "name": "factual_correctness_precision",
+    }
+    assert objs["noise_sensitivity"].kwargs == {
+        "mode": "relevant",
+        "name": "noise_sensitivity",
+    }
+    assert objs["answer_accuracy"].kwargs == {"name": "answer_accuracy"}
+    assert objs["response_groundedness"].kwargs == {"name": "response_groundedness"}
+    # Every built metric reads back under a column the harness can predict.
+    assert ragas_result_column(objs["factual_correctness_recall"]) == (
+        "factual_correctness_recall(mode=recall)"
+    )
+    assert ragas_result_column(objs["answer_accuracy"]) == "answer_accuracy"
+
+
+def test_building_an_unknown_metric_is_refused():
+    with pytest.raises(KeyError, match="bogus_metric"):
+        build_ragas_metric_objects(_fake_ragas_metrics(), ["bogus_metric"])
+
+
+def test_real_ragas_names_match_the_registry():
+    """Where ragas is installed (the benchmark image, the archi conda env),
+    confirm the real classes accept the kwargs and name their columns as the
+    registry predicts."""
+    ragas_metrics = pytest.importorskip("ragas.metrics")
+    objs = build_ragas_metric_objects(ragas_metrics, NEW_METRICS)
+    assert {name: obj.name for name, obj in objs.items()} == {
+        name: name for name in NEW_METRICS
+    }
+    assert objs["factual_correctness_precision"].mode == "precision"
+    assert objs["noise_sensitivity"].mode == "relevant"
+
+
+# --- hand-kept lists stay in sync with the registry --------------------------
+
+
+def test_placeholder_aggregates_cover_every_metric():
+    keys = set(build_ragas_aggregates(None))
+    assert keys == {f"aggregate_{m}" for m in RAGAS_METRIC_NAMES}
+
+
+def test_leaderboard_knows_every_metric():
+    assert [name for name, _ in ResultHandler.LEADERBOARD_METRICS] == list(
+        RAGAS_METRIC_NAMES
+    )
+
+
+def test_compare_runs_metrics_and_direction_match_the_registry():
+    """compare_runs avoids importing src at module load, so it keeps its own
+    copy — this is the tie that keeps the copy honest."""
+    assert cr.METRICS == RAGAS_METRIC_NAMES
+    assert cr.LOWER_IS_BETTER == LOWER_IS_BETTER_METRICS
+
+
+def test_prompt_sweep_accepts_every_metric():
+    assert gps.KNOWN_METRICS == set(RAGAS_METRIC_NAMES)
+
+
+def test_report_labels_match_the_registry():
+    assert report_labels == RAGAS_METRIC_LABELS
+    assert list(report_labels) == list(RAGAS_METRIC_NAMES)
+
+
+def test_argilla_lists_every_metric():
+    assert benchmark_argilla.RAGAS_METRICS == list(RAGAS_METRIC_NAMES)
+
+
+# --- compare_runs regression direction ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "metric, delta, expected",
+    [
+        ("faithfulness", -0.1, 0.1),
+        ("faithfulness", 0.1, -0.1),
+        ("noise_sensitivity", 0.1, 0.1),
+        ("noise_sensitivity", -0.1, -0.1),
+    ],
+)
+def test_worsening_is_positive_when_the_metric_got_worse(metric, delta, expected):
+    assert cr.worsening(metric, delta) == pytest.approx(expected)
+
+
+# --- consumers ---------------------------------------------------------------
+
+
+def _leaderboard_record(name, noise):
+    return {
+        "configuration": {
+            "name": name,
+            "services": {
+                "benchmarking": {
+                    "agent_md_file": f"{name}.md",
+                    "mode_settings": {
+                        "ragas_settings": {
+                            "enabled_metrics": ["noise_sensitivity"],
+                        }
+                    },
+                }
+            },
+        },
+        "total_results": {"aggregate_noise_sensitivity": noise},
+        "single_question_results": {"question_1": {"noise_sensitivity": noise}},
+    }
+
+
+@pytest.fixture
+def _reset_results():
+    saved = ResultHandler.results
+    ResultHandler.results = []
+    yield
+    ResultHandler.results = saved
+
+
+def test_leaderboard_ranks_a_lower_is_better_primary_ascending(_reset_results):
+    ResultHandler.results = [
+        _leaderboard_record("noisy", 0.4),
+        _leaderboard_record("clean", 0.1),
+    ]
+    lb = ResultHandler.build_leaderboard(primary_metric="noise_sensitivity")
+    assert lb["primary_metric"] == "noise_sensitivity"
+    assert [row["name"] for row in lb["rows"]] == ["clean", "noisy"]
+
+
+def _ab_row(noise, recall):
+    return {
+        "question": "How do I submit a job?",
+        "status": "ok",
+        "answer": "sbatch",
+        "noise_sensitivity": noise,
+        "factual_correctness_recall": recall,
+    }
+
+
+def test_ab_pairing_picks_the_lower_noise_sensitivity(_reset_results):
+    ResultHandler.results = [
+        {"single_question_results": {"question_1": _ab_row(0.1, 0.5)}},
+        {"single_question_results": {"question_1": _ab_row(0.4, 0.9)}},
+    ]
+    (paired,) = ResultHandler.pair_ab_results()
+    assert paired.winner_by_metric == {
+        "factual_correctness_recall": "b",
+        "noise_sensitivity": "a",
+    }
+
+
+def test_markdown_report_labels_the_new_per_question_metrics():
+    row = {
+        "question": "How do I submit a job?",
+        "status": "ok",
+        "answer": "Use sbatch.",
+        "reference_answer": "Submit with sbatch.",
+        "factual_correctness_recall": 0.75,
+        "noise_sensitivity": 0.25,
+    }
+    md = format_markdown_output(
+        {"services": {"benchmarking": {"modes": ["RAGAS"]}}},
+        "ragas-bench",
+        "2026-09-25",
+        {"question_1": row},
+        {"aggregate_noise_sensitivity": 0.25},
+        None,
+    )
+    assert "| Factual Correctness (recall) | " in md
+    assert "| Noise Sensitivity (lower is better) | " in md
+
+
+def _two_metric_record(name, noise, faithfulness):
+    """A record that enables noise and faithfulness; ``None`` leaves one out."""
+    totals, row = {}, {}
+    if noise is not None:
+        totals["aggregate_noise_sensitivity"] = noise
+        row["noise_sensitivity"] = noise
+    if faithfulness is not None:
+        totals["aggregate_faithfulness"] = faithfulness
+        row["faithfulness"] = faithfulness
+    record = _leaderboard_record(name, noise)
+    benchmarking = record["configuration"]["services"]["benchmarking"]
+    benchmarking["mode_settings"]["ragas_settings"]["enabled_metrics"] = [
+        "noise_sensitivity",
+        "faithfulness",
+    ]
+    record["total_results"] = totals
+    record["single_question_results"] = {"question_1": row}
+    return record
+
+
+def test_unscored_lower_is_better_row_sorts_after_a_scored_one(_reset_results):
+    """A missing score is not the best possible noise score: an incomplete row
+    that scored noise sorts ahead of one that never scored it."""
+    ResultHandler.results = [
+        _two_metric_record("unscored", None, 0.9),
+        _two_metric_record("scored", 0.2, None),
+    ]
+    lb = ResultHandler.build_leaderboard(primary_metric="noise_sensitivity")
+    assert all(row["incomplete"] for row in lb["rows"])
+    assert [row["name"] for row in lb["rows"]] == ["scored", "unscored"]
+
+
+def test_unscored_higher_is_better_row_sorts_after_a_scored_zero(_reset_results):
+    ResultHandler.results = [
+        _two_metric_record("unscored", 0.3, None),
+        _two_metric_record("scored", None, 0.0),
+    ]
+    lb = ResultHandler.build_leaderboard(primary_metric="faithfulness")
+    assert all(row["incomplete"] for row in lb["rows"])
+    assert [row["name"] for row in lb["rows"]] == ["scored", "unscored"]
+
+
+def test_report_direction_copy_matches_the_registry():
+    """The report CLI imports nothing from src, so it keeps its own copy."""
+    assert report.LOWER_IS_BETTER_METRICS == LOWER_IS_BETTER_METRICS
+
+
+@pytest.mark.parametrize(
+    "metric, value, badge, css",
+    [
+        ("noise_sensitivity", 0.1, "🟢", "score-high"),
+        ("noise_sensitivity", 0.4, "🟡", "score-medium"),
+        ("noise_sensitivity", 0.9, "🔴", "score-low"),
+        ("faithfulness", 0.1, "🔴", "score-low"),
+        ("faithfulness", 0.9, "🟢", "score-high"),
+        (None, 0.9, "🟢", "score-high"),
+    ],
+)
+def test_score_colors_honor_the_metric_direction(metric, value, badge, css):
+    assert report._score_cell(value, metric) == f"{value:.3f} {badge}"
+    assert report._html_score_parts(value, metric) == (css, f"{value:.3f}")
+
+
+def _noise_only_inputs(noise):
+    row = {"question": "q", "status": "ok", "answer": "a", "noise_sensitivity": noise}
+    return (
+        {"services": {"benchmarking": {"modes": ["RAGAS"]}}},
+        "ragas-bench",
+        "2026-09-25",
+        {"question_1": row},
+        {"aggregate_noise_sensitivity": noise},
+        None,
+    )
+
+
+def test_markdown_report_badges_low_noise_green():
+    md = format_markdown_output(*_noise_only_inputs(0.1))
+    assert "| Noise Sensitivity (lower is better) | 0.100 🟢 |" in md
+    assert "| Noise Sensitivity | 0.100 🟢 |" in md
+    assert "🔴" not in md
+
+
+def _every_metric_scored(offset=0.0):
+    return {
+        name: round(0.05 * (i + 1) + offset, 3)
+        for i, name in enumerate(RAGAS_METRIC_NAMES)
+    }
+
+
+def _push_capturing(push, data):
+    """Run one Argilla push against a mock client; return (records, declared)."""
+    rg_mock = MagicMock()
+    rg_mock.Record = MagicMock(side_effect=lambda **kw: SimpleNamespace(**kw))
+    with (
+        patch.dict("sys.modules", {"argilla": rg_mock}),
+        patch("src.utils.benchmark_argilla._get_client"),
+        patch("src.utils.benchmark_argilla._get_workspace", return_value="admin"),
+    ):
+        push(data, "test-dataset")
+    records = rg_mock.Dataset.return_value.records.log.call_args[0][0]
+    declared = {c.kwargs["name"] for c in rg_mock.FloatMetadataProperty.call_args_list}
+    return records, declared
+
+
+def test_argilla_single_export_carries_every_metric():
+    row: dict = {"question": "Q", "reference_answer": "R", "answer": "A"}
+    row.update(_every_metric_scored())
+    data = {"benchmarking_results": [{"single_question_results": {"q0": row}}]}
+    (record,), declared = _push_capturing(
+        benchmark_argilla.push_single_results_to_argilla, data
+    )
+    for metric in RAGAS_METRIC_NAMES:
+        key = benchmark_argilla.ARGILLA_METRIC_METADATA[metric][0]
+        assert record.metadata[key] == row[metric]
+        assert key in declared
+    assert set(record.metadata) - {"time_elapsed"} <= declared
+
+
+def test_argilla_ab_export_carries_every_metric_for_both_arms():
+    scores_a, scores_b = _every_metric_scored(), _every_metric_scored(0.01)
+    item = {
+        "question": "Q",
+        "reference_answer": "R",
+        "answer_a": "A",
+        "answer_b": "B",
+        "ragas_a": scores_a,
+        "ragas_b": scores_b,
+    }
+    (record,), declared = _push_capturing(
+        benchmark_argilla.push_ab_results_to_argilla,
+        {"ab_comparison": {"per_question": [item]}},
+    )
+    for metric in RAGAS_METRIC_NAMES:
+        key = benchmark_argilla.ARGILLA_METRIC_METADATA[metric][0]
+        assert record.metadata[f"{key}_a"] == scores_a[metric]
+        assert record.metadata[f"{key}_b"] == scores_b[metric]
+        assert {f"{key}_a", f"{key}_b"} <= declared
+
+
+def test_argilla_keeps_the_legacy_metadata_names():
+    """Existing datasets and graders read these names; they must not move."""
+    names = {m: v[0] for m, v in benchmark_argilla.ARGILLA_METRIC_METADATA.items()}
+    assert names["answer_relevancy"] == "ragas_relevancy"
+    assert names["faithfulness"] == "ragas_faithfulness"
+    assert names["context_precision"] == "ragas_precision"
+    assert names["context_recall"] == "ragas_recall"
+    assert names["answer_correctness"] == "ragas_correctness"
+
+
+def test_argilla_skips_nan_new_metric():
+    row: dict = {"question": "Q", "reference_answer": "R", "answer": "A"}
+    row["noise_sensitivity"] = float("nan")
+    data = {"benchmarking_results": [{"single_question_results": {"q0": row}}]}
+    (record,), _ = _push_capturing(
+        benchmark_argilla.push_single_results_to_argilla, data
+    )
+    assert "ragas_noise_sensitivity" not in record.metadata
+
+
+def test_leaderboard_table_labels_every_metric():
+    assert list(ResultHandler.LEADERBOARD_COLUMN_LABELS) == list(RAGAS_METRIC_NAMES)
+
+
+def test_argilla_metadata_covers_every_metric():
+    assert list(benchmark_argilla.ARGILLA_METRIC_METADATA) == list(RAGAS_METRIC_NAMES)
+
+
+def test_leaderboard_table_shows_a_new_primary_metric(_reset_results):
+    ResultHandler.results = [
+        _leaderboard_record("noisy", 0.4),
+        _leaderboard_record("clean", 0.1),
+    ]
+    lb = ResultHandler.build_leaderboard(primary_metric="noise_sensitivity")
+    header, *rows = ResultHandler.leaderboard_table_lines(lb)
+    assert "noise" in header
+    assert "0.1000" in rows[0] and "clean" in rows[0]
+    assert "0.4000" in rows[1] and "noisy" in rows[1]
+
+
+def test_leaderboard_table_columns_follow_what_was_scored(_reset_results):
+    ResultHandler.results = [
+        _two_metric_record("a", 0.2, 0.9),
+        _two_metric_record("b", 0.3, 0.8),
+    ]
+    lb = ResultHandler.build_leaderboard(primary_metric="faithfulness")
+    assert ResultHandler.leaderboard_columns(lb) == [
+        "faithfulness",
+        "noise_sensitivity",
+    ]
+
+
+def test_leaderboard_table_always_shows_the_primary_metric(_reset_results):
+    ResultHandler.results = [
+        _two_metric_record("a", 0.2, None),
+        _two_metric_record("b", 0.3, None),
+    ]
+    lb = ResultHandler.build_leaderboard(primary_metric="faithfulness")
+    assert ResultHandler.leaderboard_columns(lb) == [
+        "faithfulness",
+        "noise_sensitivity",
+    ]
+    _, *rows = ResultHandler.leaderboard_table_lines(lb)
+    assert all("n/a" in row for row in rows)
+
+
+def test_leaderboard_table_marks_an_undersampled_mean(_reset_results):
+    record = _leaderboard_record("thin", 0.2)
+    record["single_question_results"]["question_2"] = {
+        "noise_sensitivity": float("nan")
+    }
+    ResultHandler.results = [record, _leaderboard_record("full", 0.1)]
+    lb = ResultHandler.build_leaderboard(primary_metric="noise_sensitivity")
+    _, *rows = ResultHandler.leaderboard_table_lines(lb)
+    thin = next(row for row in rows if "thin" in row)
+    assert "0.2000@1" in thin
+
+
+def test_html_report_paints_low_noise_green():
+    page = report.format_html_output(*_noise_only_inputs(0.1))
+    assert 'metric-value score-low"' not in page
+    assert page.count('metric-value score-high">0.100') == 2

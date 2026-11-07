@@ -250,10 +250,15 @@ class RetryParentStore:
                 phase = (
                     validation.get("phase") if isinstance(validation, dict) else None
                 )
-                expected_answer = (
-                    None if phase == "pre_run" else (AnswerStatus.ANSWER_READY.value,)
+                valid_answers = (
+                    {None}
+                    if phase == "pre_run"
+                    else {
+                        (AnswerStatus.ANSWER_READY.value,),
+                        (AnswerStatus.EXECUTION_FAILED.value,),
+                    }
                 )
-                if phase not in {"pre_run", "post_run"} or answer != expected_answer:
+                if phase not in {"pre_run", "post_run"} or answer not in valid_answers:
                     raise ValueError(
                         "parent run answer and live-validation phase disagree"
                     )

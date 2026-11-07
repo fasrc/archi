@@ -91,6 +91,7 @@ Required when the corresponding service is enabled via `--services`.
 | Grader | `ADMIN_PASSWORD` |
 | Piazza | `PIAZZA_EMAIL`, `PIAZZA_PASSWORD`, `SLACK_WEBHOOK` |
 | Mattermost | `MATTERMOST_WEBHOOK`, `MATTERMOST_CHANNEL_ID_READ`, `MATTERMOST_CHANNEL_ID_WRITE`, `MATTERMOST_PAK` |
+| Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`; `ARCHI_API_TOKEN` when `services.chat_app.auth.enabled` is true |
 | Redmine-Mailer | `IMAP_USER`, `IMAP_PW`, `REDMINE_USER`, `REDMINE_PW`, `SENDER_SERVER`, `SENDER_PORT`, `SENDER_REPLYTO`, `SENDER_USER`, `SENDER_PW` |
 
 ### Data Sources

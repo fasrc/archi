@@ -51,7 +51,7 @@ class Mattermost:
         logger.info("Mattermost::INIT")
 
         self.mattermost_config = (
-            get_full_config().get("utils", {}).get("mattermost", None)
+            get_full_config().get("services", {}).get("mattermost", None)
         )
 
         # mattermost webhook for reading questions/sending responses

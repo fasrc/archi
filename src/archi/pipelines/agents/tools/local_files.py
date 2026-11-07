@@ -481,7 +481,7 @@ def create_metadata_schema_tool(
 # Enforced ceilings on the complete serialized tool result (issue #235). These are
 # backstops against pathological content, not a tightening of ordinary output:
 # a default fetch is ~4000 chars of text plus a <=800 char metadata preview, and a
-# default retrieval is 4 documents x 800 chars plus headers.
+# default retrieval is every retrieved document, its bodies sized to fit 8000 chars.
 DEFAULT_FETCH_RESULT_CHARS = 6000
 
 

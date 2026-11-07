@@ -10,6 +10,7 @@ tests pin that the keys render when set and stay absent (defaults preserved)
 when unset.
 """
 
+import pytest
 import yaml
 from jinja2 import ChainableUndefined, Environment, PackageLoader, select_autoescape
 
@@ -85,3 +86,36 @@ def test_default_retrieval_config_is_coherent():
     dm = cfg["data_manager"]
     assert dm["chunking"]["strategy"] == "sentence"
     assert dm["retrievers"]["hierarchical_rerank"]["enabled"] is True
+
+
+def test_chunk_overlap_zero_renders_as_zero():
+    # 0 is a valid configured value (disables overlap); it must not be treated as
+    # falsy and swapped for a default.
+    cfg = _render({"chunking": {"chunk_overlap": 0}})
+    assert cfg["data_manager"]["chunking"]["chunk_overlap"] == 0
+
+
+def test_chunk_overlap_nonzero_renders():
+    cfg = _render({"chunking": {"chunk_overlap": 64}})
+    assert cfg["data_manager"]["chunking"]["chunk_overlap"] == 64
+
+
+def test_chunk_overlap_absent_when_unset():
+    # Unset → manager uses CHILD_CHUNK_OVERLAP; key must not appear in config.
+    cfg = _render({"chunking": {"strategy": "sentence"}})
+    assert "chunk_overlap" not in cfg["data_manager"]["chunking"]
+
+
+@pytest.mark.parametrize("value", ["20", "null", "true"])
+def test_chunk_overlap_string_keeps_its_type(value):
+    # A bare interpolation lets YAML retype "20" to 20 and "null" to None, so an
+    # invalid string would pass _resolve_chunk_overlap; it must reach the
+    # manager as a string and fail there.
+    cfg = _render({"chunking": {"chunk_overlap": value}})
+    assert cfg["data_manager"]["chunking"]["chunk_overlap"] == value
+
+
+def test_chunk_overlap_absent_when_none():
+    # None (key present but empty in YAML) → same as absent; manager uses default.
+    cfg = _render({"chunking": {"chunk_overlap": None}})
+    assert "chunk_overlap" not in cfg["data_manager"]["chunking"]

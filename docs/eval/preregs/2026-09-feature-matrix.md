@@ -12,14 +12,15 @@ rules; the plan holds the protocol.
 |---|---|
 | Round ID | `2026-09-feature-matrix` |
 | Operator | Austin Swinney |
-| Date locked | _filled at lock, after Phase 0 (plan §6 step 3)_ |
-| Commit at lock | _filled at lock: the `dev` SHA every arm runs on_ |
+| Host | `holygpu7c0717` (`archi.rc.fas.harvard.edu`), the production `dev` GPU host. Deviation from the plan's original claw pin, decided 2026-09-04 before the lock; recorded because benchmark artifacts do not carry the host ([#433](https://github.com/fasrc/archi/issues/433)) |
+| Date locked | **2026-09-04** (smoke green on every wrapper, then re-locked on the campaign inputs) |
+| Commit at lock | `93e0904d8ef82a4531931dbde0b8dc6df0fe7f77` on `bench/2026-09-feature-matrix`. This is a branch SHA, not a `dev` SHA: the branch carries only docs commits on top of `dev` tip `3170498c`, and the invariant that matters is that the locked runtime trees are identical to `3170498c`'s (`src=3911adee`, `scripts=dc42dfbc`, `deploy=8ee0ac2c`, `pyproject.toml=c95c72d5`, `requirements=c451e960`). Campaign lock sha256 `3e07ae79734682c682caf7e70704eeb247ba2f13313ed56e673dd6de62c65ea8` |
 | Question bank | `config/benchmarking/fasrc_ragas_queries.json` (archi-config), 105 rows, all `status: draft`; git blob `99efd5b4d4f37dc696476be0f82113251987dc45`, sha256 `a116bd724d6f8ef99aeac96ff100ea63f72ee109dd048ffe86ebbe0dbffd4156` |
 | Anchors | `examples/benchmarking/anchor_questions.json`, 5 rows, sha256 `6b2fd99175b26011336a3159d23fa6991c90cfe51d1110067fbb890f8e80311e`; one `should_refuse` anchor duplicates a bank row → 109 questions asked |
-| Agent prompt | `config/agents/claw/fasrc-docs.md`, sha256 `ac22702ae6767c49ae7fdc65fb4c40211d97724c574585d1e321468377d64ce8` (byte-identical to the GPU host's `deploy/fasrc-dev/agents/fasrc-docs.md`) |
+| Agent prompt | `config/agents/claw/fasrc-docs.md`, sha256 `ac22702ae6767c49ae7fdc65fb4c40211d97724c574585d1e321468377d64ce8`, byte-identical to the GPU host's `deploy/fasrc-dev/agents/fasrc-docs.md`. **This was made true on 2026-09-04, not merely asserted:** the host served `fasrc-v2.md` (name `FASRC`, `search_vectorstore_hybrid` only) until that date, so the claim was false when this file was drafted. Production was migrated to this spec and the old one retired to `agents/archive/`; verified by a live cited chat answer. Consequence: the two extra tools (`search_local_files`, `search_metadata_index`) are now live in production and ride the still-open [#139](https://github.com/fasrc/archi/issues/139) context-budget gap — watch the degraded-row count |
 | Sources | `config/lists/sources.list`, sha256 `8d4590f4841a640f8bf32c413bc5cc189db338e4019cdcdbf795b633e0cb787f` |
 | Configs compared | `config/benchmarking/feature_matrix/00-baseline.yaml` vs each of `01-rerank-off`, `02-chunking-character`, `03-categorization-off`, `04-stemming-on`, `05a-k3`, `05b-k8`, `06-html-to-markdown-off`, `07-chunking-markdown` |
-| SUT | vLLM `palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4`, `temperature: 0.3`, `enable_thinking: false` |
+| SUT | vLLM `palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4`, `temperature: 0.3`, `enable_thinking: false`, in-loop context bound `context_windows: 32768` / `keep: 1`. That bound was **absent from every arm YAML until 2026-09-04** and was added pre-lock so the arms match production; before the fix the lock recorded `sut.context_editing = null` and the runtime warned it had no bound. This matters because `fasrc-docs.md` selects `search_metadata_index`, which auto-includes `fetch_catalog_document`, whose `max_chars` is still unclamped under open [#139](https://github.com/fasrc/archi/issues/139) |
 | Judge | `huit_bedrock / us.anthropic.claude-sonnet-4-5-20250929-v1:0` for both RAGAS and the QA atoms evaluator |
 | Evaluators (target N) | model judges only; no human grading round in this campaign |
 
@@ -127,5 +128,40 @@ and is reported as the null, not as a direction.
 
 ## Outcome (filled after the campaign)
 
-_Verdict per arm from the plan's ledger (§9), with the MDE beside each delta, the
-opening-vs-closing drift check, and the follow-up issues filed._
+Filled 2026-09-11. Full report: [`docs/docs/feature_matrix_results_2026_09.md`](../../docs/feature_matrix_results_2026_09.md);
+ledger and operating log: plan §9 and §13. Data collection ran 2026-09-04 → 2026-09-09; 18
+archived RAGAS runs, 11 QA runs, zero degraded rows, every Procedure E check passed.
+
+| Arm | Claim under test | Primary Δ per run (MDE) | Verdict (pre-registered vocabulary) |
+|---|---|---|---|
+| 01 rerank off | disabling rerank lowers `context_precision` | −0.025 / −0.010 (0.063 / 0.064) | **no measurable difference** — claim not supported; `context_recall` lower in both runs (one outside MDE); gold atoms up (exploratory, one unpaired QA run); 45 % less time per question |
+| 02 character chunking | lowers `context_precision` | −0.058 / −0.067 (0.081 / 0.082) re-based; −0.070 / −0.073 vs opening | **no measurable difference** — claim not established at this MDE; `context_recall` −0.16 / −0.19 hurts |
+| 03 categorization off | does not change `context_precision` | −0.004 / −0.002 (0.025 / 0.027) | **no measurable difference** — claim confirmed; ingest −19 min |
+| 04 stemming on | raises `context_recall` | −0.032 / −0.015 (0.040 / 0.055) re-based; −0.052 / −0.029 vs opening | **no measurable difference** — claim not supported; `context_precision` −0.09 hurts (secondary) |
+| 05a k = 3 | fewer parents raise precision, lower recall | −0.014 / −0.005 (0.023 / 0.021) | **no measurable difference** on precision; recall −0.087 / −0.061 hurts; reference page retrieved 0.877 → 0.792 |
+| 05b k = 8 | more parents lower precision, raise recall | −0.014 / −0.013 (0.018 / 0.017) | **no measurable difference** on precision (both runs within 0.004 of the MDE); recall +0.060 / +0.028 (one outside MDE); reference page retrieved 0.877 → 0.96 (p ≤ 0.012 both runs) |
+| 06 html_to_markdown off | raw HTML lowers precision and faithfulness | — | **untestable** — renderer forces the key to `true` ([#448](https://github.com/fasrc/archi/issues/448)); run refused by the factor check |
+| 07 markdown chunking | raises `context_precision` on the Markdown-bearing part | −0.098 / −0.091 (0.072 / 0.074) re-based; −0.101 / −0.109 vs opening | **hurts** (corpus level; the slice was not testable with this bank, disputed in [#490](https://github.com/fasrc/archi/issues/490)); recall −0.14 hurts; gold atoms up; 37 % less time per question |
+
+**Drift check (opening vs closing baseline).** Identical config and code, four days apart:
+chunk count 6926 → 6928, `context_precision` +0.006, `context_recall` −0.021,
+`faithfulness` +0.033 (both beyond the within-corpus 2σ). An independent same-day
+baseline-configuration scrape (the refused arm-06 run) agrees with the closing baseline to
+0.0016 on recall — a real content change in the FASRC docs between Sep 5 and Sep 9, not
+harness drift. Bank blob hash unchanged (G4).
+
+**Deviation from this pre-registration, logged before the report was written:** ingest arms
+(02, 03, 04, 07) are judged against the mean of the two Sep 9 baseline-configuration runs
+rather than the Sep 5 opening baseline, with the tool's MDE unchanged; both numbers are
+shown in the report. No primary verdict differs between the two comparisons.
+
+**Other deviations, recorded after review:** section 2.4 of the report lists every departure
+from this file — runs judged one at a time instead of pooled, the ingest-arm re-basing above,
+an exploratory atom analysis in place of the paired one with McNemar, `answer_correctness`
+not collected, and the k = 8 proposal resting on a secondary metric.
+
+**Follow-up issues:** filed 2026-09-17 on fasrc/archi: #496 (categorization default off), #497
+(reranker default decision, with the payload-size experiment), #498 (k = 8), #499 (recursion-limit
+blowouts), #500 (arm 06 re-run under a new lock, #448 having been fixed by #456), #501 (G8 anchor
+σ, defect 14), #502 (`answer_relevancy` denominator, defect 20), #503 (QA denominator, defect 16),
+#504 (page the operator). #434 and #439 pre-existed.

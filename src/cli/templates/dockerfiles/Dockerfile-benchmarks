@@ -29,10 +29,10 @@ COPY weblists weblists
 
 # run all the pip installs, including for ragas and all of this
 RUN pip install --upgrade pip && pip install .
-RUN pip install pandas
-RUN pip install ragas==0.3.5
-RUN pip install langchain-openai==1.0.1
-RUN pip install 'argilla>=2.5,<3'
+# The benchmark stack, constrained to versions proven together (fasrc/archi#681).
+# Unconstrained, this step floats its transitive closure past the base image's pins.
+RUN pip install -c src/cli/templates/dockerfiles/benchmark-constraints.txt \
+    pandas ragas==0.3.5 langchain-openai==1.0.1 'argilla>=2.5,<3'
 
 RUN chmod g+rx /root; chmod -R g+w /root/archi/src/interfaces
 

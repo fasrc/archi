@@ -33,6 +33,12 @@ This is a backfill, so it is strictly additive and it refuses to invent:
 Existing keys are never overwritten, and a file already stamped is skipped, so
 the script is safe to re-run.
 
+``retrieval_identity`` is a separate, per-arm pass that ignores that file-level
+skip. An arm that recorded ``running_configuration`` (every report since #272)
+proves which collection it searched and which embedding model the config named,
+so it gains that identity, labelled as reconstructed. An arm without it (before
+#272) gains nothing.
+
 ``--regenerate-html`` is independent of that skip: the HTML is a view of the JSON
 and goes stale when the *renderer* changes, not only when the data does. So a
 report-format fix re-renders every artifact, stamped or not.
@@ -59,6 +65,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.utils.benchmark_provenance import (  # noqa: E402
     reconstruct_version_stamp,
+    retrieval_identity,
 )
 from src.utils.generate_benchmark_report import (  # noqa: E402
     format_html_output,
@@ -69,9 +76,31 @@ from src.utils.generate_benchmark_report import (  # noqa: E402
 DEFAULT_GLOB = "bench_out/*.json"
 STAMP_KEYS = ("code_version", "config_version", "config_versions")
 NOT_AN_ARTIFACT = "skipped (not a benchmark artifact)"
+IDENTITY_SOURCE = "reconstructed from running_configuration"
 
 
-def stamp_file(path, dry_run=False):
+def stamp_retrieval_identity(results):
+    """Stamp ``retrieval_identity`` on each arm that can prove it.
+
+    Returns ``(stamped, skipped)``. An arm that already has the key is neither:
+    it is left as it is. An arm is skipped when its ``running_configuration`` is
+    missing or does not name a collection.
+    """
+    stamped = skipped = 0
+    for record in results:
+        if not isinstance(record, dict) or "retrieval_identity" in record:
+            continue
+        running = record.get("running_configuration")
+        identity = retrieval_identity(running) if isinstance(running, dict) else None
+        if identity is None or identity.collection is None:
+            skipped += 1
+            continue
+        record["retrieval_identity"] = {**identity.as_dict(), "source": IDENTITY_SOURCE}
+        stamped += 1
+    return stamped, skipped
+
+
+def stamp_file(path, dry_run=False, counts=None):
     """Add the version blocks to one artifact. Returns a short status string.
 
     The config version goes on each result record, because one invocation runs
@@ -95,10 +124,22 @@ def stamp_file(path, dry_run=False):
         return NOT_AN_ARTIFACT
 
     metadata = document["metadata"]
-    if any(key in metadata for key in STAMP_KEYS):
-        return "skipped (already stamped)"
-
     results = document.get("benchmarking_results") or []
+
+    stamped, skipped = stamp_retrieval_identity(results)
+    if counts is not None:
+        counts["identity_stamped"] = counts.get("identity_stamped", 0) + stamped
+        counts["identity_skipped"] = counts.get("identity_skipped", 0) + skipped
+    identity_detail = f"identity: {stamped} stamped, {skipped} skipped"
+
+    if any(key in metadata for key in STAMP_KEYS):
+        if not stamped:
+            return f"skipped (already stamped; {identity_detail})"
+        if dry_run:
+            return f"would stamp ({identity_detail})"
+        with open(path, "w") as handle:
+            json.dump(document, handle, indent=4)
+        return f"stamped ({identity_detail})"
 
     digests = []
     arms = []
@@ -126,6 +167,7 @@ def stamp_file(path, dry_run=False):
     detail = f"{len(digests)} arm(s): {shown}"
     if arms:
         detail += f" context_editing={'; '.join(arms)}"
+    detail += f"; {identity_detail}"
 
     if dry_run:
         return f"would stamp ({detail})"
@@ -274,11 +316,12 @@ def main():
         return 1
 
     changed = 0
+    counts = {}
     rendered = 0
     md_rendered = 0
     for path in paths:
         try:
-            status = stamp_file(path, dry_run=args.dry_run)
+            status = stamp_file(path, dry_run=args.dry_run, counts=counts)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             print(f"{path.name}: ERROR {exc}", file=sys.stderr)
             continue
@@ -314,6 +357,11 @@ def main():
 
     verb = "would change" if args.dry_run else "changed"
     print(f"\n{changed} of {len(paths)} artifact(s) {verb}.")
+    print(
+        f"retrieval_identity: {counts.get('identity_stamped', 0)} arm(s) "
+        f"{'would be ' if args.dry_run else ''}stamped, "
+        f"{counts.get('identity_skipped', 0)} skipped (no running_configuration)."
+    )
     if args.regenerate_html:
         noun = "would re-render" if args.dry_run else "re-rendered"
         print(f"{noun} {rendered} report(s).")

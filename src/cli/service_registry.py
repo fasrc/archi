@@ -170,6 +170,19 @@ class ServiceRegistry:
 
         self.register(
             ServiceDefinition(
+                name="slack",
+                description="Slack bot that answers @mentions and DMs through the chat app /v1 API",
+                category="integration",
+                # Reads its config from Postgres, then calls the chatbot's /v1 API.
+                # ARCHI_API_TOKEN is required only when chat auth is on; the secrets
+                # manager adds it (openspec/changes/add-slack-service).
+                depends_on=["postgres", "chatbot"],
+                required_secrets=["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+            )
+        )
+
+        self.register(
+            ServiceDefinition(
                 name="redmine-mailer",
                 consumes_agent_specs=True,
                 description="Email processing and Cleo/Redmine ticket management",
@@ -269,6 +282,23 @@ class ServiceRegistry:
                 resolved.add(name)
 
         return list(resolved)
+
+    def selected_with_dependencies(self, selected: List[str]) -> List[str]:
+        """Return the selected services plus the services they depend on.
+
+        Unlike resolve_dependencies, this adds no auto-enabled service that was
+        not selected, so validation of a plain `--services chatbot` is unchanged.
+        """
+        result = list(dict.fromkeys(selected))
+        for name in result:
+            service_def = self._services.get(name)
+            if not service_def:
+                continue
+            for dep in service_def.depends_on + service_def.requires_services:
+                dep_def = self._services.get(dep)
+                if dep_def and not dep_def.auto_enable and dep not in result:
+                    result.append(dep)
+        return result
 
     def get_required_secrets(self, enabled_services: List[str]) -> Set[str]:
         """Get all required secrets for enabled services"""

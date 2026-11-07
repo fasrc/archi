@@ -72,7 +72,10 @@ class DescendantWorkflow:
                 (
                     "import os, pathlib, signal, sys, time; "
                     "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-                    "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); "
+                    # Write then rename, so a reader never sees an empty file.
+                    "tmp = pathlib.Path(sys.argv[1] + '.tmp'); "
+                    "tmp.write_text(str(os.getpid())); "
+                    "os.replace(tmp, sys.argv[1]); "
                     "time.sleep(30)"
                 ),
                 str(child_pid_path),

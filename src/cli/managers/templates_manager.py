@@ -5,22 +5,30 @@ import platform
 import shutil
 import socket
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from jinja2 import Environment
 
+from src.cli.managers.git_diff_capture import capture_git_diff
+from src.cli.managers.git_env import git_env
 from src.cli.managers.source_version import write_source_commit
 from src.cli.service_registry import service_registry
 from src.cli.utils.grafana_styling import assign_feedback_palette
 from src.cli.utils.service_builder import DeploymentPlan
+from src.cli.utils.torch_threads import deployment_env_values, resolve_torch_threads
 from src.utils.benchmark_schema import (
     anchor_container_path,
     anchor_source_path,
     anchors_enabled,
 )
 from src.utils.container_endpoint import container_endpoint_is_provably_local
+from src.utils.evaluations_config import (
+    AGENT_CONFIG_STAGED_FILENAME,
+    resolve_agent_config_source,
+)
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -91,6 +99,9 @@ EVALUATION_MCP_CONFIG_FILENAME = "qa_evaluation_mcp.yaml"
 EVALUATION_MCP_RUNTIME_PATH = (
     f"/root/archi/{EVALUATION_CONFIG_DIR}/{EVALUATION_MCP_CONFIG_FILENAME}"
 )
+EVALUATION_AGENT_CONFIG_RUNTIME_PATH = (
+    f"/root/archi/{EVALUATION_CONFIG_DIR}/{AGENT_CONFIG_STAGED_FILENAME}"
+)
 
 
 def collect_host_information() -> Optional[Dict[str, Optional[str]]]:
@@ -135,10 +146,10 @@ def collect_host_information() -> Optional[Dict[str, Optional[str]]]:
     return {"hostname": hostname, "cpu_model": cpu_model}
 
 
-def get_git_information() -> Dict[str, str]:
+def get_git_information(wd: Optional[Path] = None) -> Dict[str, str]:
 
     meta_data: Dict[str, str] = {}
-    wd = Path(__file__).parent
+    wd = Path(wd) if wd is not None else Path(__file__).parent
 
     if (
         subprocess.call(
@@ -146,6 +157,7 @@ def get_git_information() -> Dict[str, str]:
             cwd=wd,
             stderr=subprocess.STDOUT,
             stdout=open(os.devnull, "w"),
+            env=git_env(),
         )
         != 0
     ):
@@ -155,12 +167,9 @@ def get_git_information() -> Dict[str, str]:
         }
     else:
         meta_data["last_commit"] = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=wd, encoding="UTF-8"
+            ["git", "rev-parse", "HEAD"], cwd=wd, encoding="UTF-8", env=git_env()
         )
-        diff_comm = ["git", "diff"]
-        meta_data["git_diff"] = subprocess.check_output(
-            diff_comm, encoding="UTF-8", cwd=wd
-        )
+        meta_data.update(capture_git_diff(wd))
     meta_data["host"] = collect_host_information()
     return meta_data
 
@@ -174,6 +183,7 @@ def get_git_version() -> str:
                 ["git", "describe", "--tags", "--always", "--dirty"],
                 stderr=subprocess.DEVNULL,
                 cwd=Path(__file__).parent,
+                env=git_env(),
             )
             .strip()
             .decode("utf-8")
@@ -192,6 +202,7 @@ class TemplateContext:
     base_dir: Path = field(init=False)
     prompt_mappings: Dict[str, Dict[str, str]] = field(default_factory=dict)
     evaluation_mcp_configured: bool = False
+    evaluation_agent_config_staged: bool = False
 
     def __post_init__(self) -> None:
         self.base_dir = self.plan.base_dir
@@ -460,6 +471,26 @@ def validate_port_config(
     return port_to_services, errors
 
 
+def _unlink_quietly(paths) -> None:
+    """Remove each path that exists; a failure to remove one is ignored."""
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _warn_if_left(stale) -> None:
+    """Name each stale copy that cleanup could not remove: the runtime ingests
+    it in place of the skipped list (PR #689 review)."""
+    for path in stale:
+        if path.exists():
+            logger.warning(
+                f"stale copy {path} could not be removed; the runtime will "
+                f"ingest it in place of the skipped list"
+            )
+
+
 class TemplateManager:
     """Manages template rendering and file preparation using service registry"""
 
@@ -471,6 +502,39 @@ class TemplateManager:
             "grafana": self._render_grafana_assets,
             "grader": self._copy_grader_assets,
         }
+
+    def preflight_render(
+        self,
+        plan: DeploymentPlan,
+        config_manager,
+        secrets_manager,
+        **options,
+    ) -> None:
+        """Render all stages into a temporary directory and discard the result.
+
+        Skips the source copy (build=False — large, and unable to fail on config input,
+        per design D2) and the live port-availability probe (allow_port_reuse=True — the
+        existing deployment still holds its ports before the teardown, so probing there
+        would report a false conflict for every port the replacement reuses, per design D3).
+        The pure port-configuration check still runs.  The temporary directory is removed
+        on success and on failure.
+        """
+        preflight_options = {**options, "build": False, "allow_port_reuse": True}
+        context = TemplateContext(
+            plan=plan,
+            config_manager=config_manager,
+            secrets_manager=secrets_manager,
+            options=dict(preflight_options),
+        )
+        with tempfile.TemporaryDirectory(prefix="archi-preflight-") as tmp:
+            context.base_dir = Path(tmp)
+            try:
+                self._run_workflow(context)
+            except Exception:
+                logger.error(
+                    "Render preflight failed; existing deployment was not changed"
+                )
+                raise
 
     def prepare_deployment_files(
         self,
@@ -493,12 +557,19 @@ class TemplateManager:
         # stage), so it is tied to the code that actually lands in the image and is
         # skipped when no build happens (``restart --no-build``).
 
-        for stage in self._build_workflow(context):
-            logger.debug(f"Starting template stage {stage.__name__}")
-            stage(context)
-            logger.debug(f"Completed template stage {stage.__name__}")
+        self._run_workflow(context)
 
         logger.info(f"Finished preparing deployment artifacts for {plan.name}")
+
+    def _run_workflow(self, context: TemplateContext) -> None:
+        for stage in self._build_workflow(context):
+            logger.debug(f"Starting template stage {stage.__name__}")
+            try:
+                stage(context)
+            except Exception:
+                logger.error(f"Template stage {stage.__name__} failed")
+                raise
+            logger.debug(f"Completed template stage {stage.__name__}")
 
     # workflow construction
     def _build_workflow(
@@ -509,6 +580,7 @@ class TemplateManager:
             self._stage_agents,
             self._stage_skills,
             self._stage_evaluation_config,
+            self._stage_agent_config,
             self._stage_configs,
             self._stage_service_artifacts,
             self._stage_postgres_init,
@@ -728,6 +800,33 @@ class TemplateManager:
             staged_path,
         )
 
+    def _stage_agent_config(self, context: TemplateContext) -> None:
+        """Stage the operator's evaluations agent config into the deployment directory."""
+        config = context.config_manager.config or {}
+        staged_path = (
+            context.base_dir / EVALUATION_CONFIG_DIR / AGENT_CONFIG_STAGED_FILENAME
+        )
+
+        # The console runs in the chatbot container; without it an inactive
+        # evaluations block must not be resolved (see _validate_chat_app_config).
+        source = None
+        if "chatbot" in context.plan.get_enabled_services():
+            source = resolve_agent_config_source(config)
+        if source is None:
+            context.evaluation_agent_config_staged = False
+            if staged_path.exists() or staged_path.is_symlink():
+                staged_path.unlink()
+            return
+
+        staged_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, staged_path)
+        context.evaluation_agent_config_staged = True
+        logger.info(
+            "Staged evaluations agent config from %s to %s",
+            source,
+            staged_path,
+        )
+
     def _stage_configs(self, context: TemplateContext) -> None:
         self._render_config_files(context)
 
@@ -889,6 +988,12 @@ class TemplateManager:
                                 if context.evaluation_mcp_configured
                                 else None
                             )
+                            if getattr(
+                                context, "evaluation_agent_config_staged", False
+                            ):
+                                evaluations_cfg["agent_config_path"] = (
+                                    EVALUATION_AGENT_CONFIG_RUNTIME_PATH
+                                )
             if context.benchmarking:
                 benchmark_cfg = services_cfg.get("benchmarking")
                 if isinstance(benchmark_cfg, dict):
@@ -1109,6 +1214,9 @@ class TemplateManager:
             .get("port", 5432),
         )
         template_vars.setdefault("verbosity", self.global_verbosity)
+        template_vars["torch_threads"] = resolve_torch_threads(
+            context.config_manager.config, deployment_env_values(context.base_dir)
+        )
 
         template_vars["app_version"] = get_git_version()
 
@@ -1118,6 +1226,9 @@ class TemplateManager:
 
         template_vars["benchmark_anchors_target"] = self._anchor_mount_target(context)
         template_vars["evaluation_mcp_configured"] = context.evaluation_mcp_configured
+        template_vars["evaluation_agent_config_staged"] = (
+            context.evaluation_agent_config_staged
+        )
 
         if context.plan.get_service("grader").enabled:
             template_vars["rubrics"] = self._get_grader_rubrics(context.config_manager)
@@ -1147,7 +1258,8 @@ class TemplateManager:
         # The probe runs here — after teardown — not pre-teardown: the existing
         # deployment still holds its ports, so an early probe would report a false
         # conflict for every port the replacement reuses, refusing exactly the
-        # re-creates that should succeed (spec acceptance criterion 5).
+        # re-creates that should succeed (spec acceptance criterion 5).  The preflight
+        # skips this probe (allow_port_reuse=True) for the same reason.
         if not allow_port_reuse:
             for port, services in sorted(port_to_services.items()):
                 error = self._probe_port(port)
@@ -1201,23 +1313,54 @@ class TemplateManager:
         if not input_lists:
             return
 
+        # The last regular file with a given basename wins its name in weblists,
+        # as in source inference (ConfigurationManager._staged_input_lists), so
+        # any other same-named path is never copied and never cleans up: a failed
+        # winner cannot leave a loser staged, and a later missing path cannot
+        # remove the winner's copy (PR #689 review).
+        winners = {os.path.basename(p): p for p in input_lists if os.path.isfile(p)}
+        configured = {Path(p).resolve() for p in input_lists}
         for input_list in input_lists:
+            winner = winners.get(os.path.basename(input_list), input_list)
+            if winner != input_list:
+                logger.debug(f"Input list {input_list} is overridden by {winner}")
+                continue
             # isfile, not exists: a directory satisfies exists() and then makes
             # shutil.copyfile raise IsADirectoryError here — inside
             # prepare_deployment_files(), so under --force after the existing
             # deployment was torn down (fasrc/archi#287). Staging already
             # tolerates a missing input list by warning and skipping, and a path
             # that is not a regular file is no more usable than an absent one.
+            dest = weblists_path / os.path.basename(input_list)
+            # A skipped list also removes dest, so a copy staged by an earlier
+            # deployment is not ingested in its place -- unless dest IS a
+            # configured list, the winner or a loser (PR #689 review).
+            stale = [] if dest.resolve() in configured else [dest]
             if os.path.isfile(input_list):
-                shutil.copyfile(
-                    input_list, weblists_path / os.path.basename(input_list)
-                )
+                # Copy to a side file and rename it into place, so a copy that
+                # fails part-way never leaves a truncated list for the runtime.
+                # The side file's name is random, so it cannot be another
+                # configured list's name or an existing entry in weblists, and
+                # short, so a long list name cannot push it past NAME_MAX.
+                partial = weblists_path / f".{os.urandom(8).hex()}.partial"
+                try:
+                    shutil.copyfile(input_list, partial)
+                    os.replace(partial, dest)
+                except OSError as exc:
+                    _unlink_quietly([partial, *stale])
+                    logger.warning(
+                        f"Input list {input_list} could not be copied, skipping: {exc}"
+                    )
+                    _warn_if_left(stale)
+                    continue
                 logger.debug(f"Copied input list {input_list}")
             else:
+                _unlink_quietly(stale)
                 logger.warning(
                     f"Configured input list {input_list} is not a readable file; "
                     f"skipping"
                 )
+                _warn_if_left(stale)
 
     def copy_source_code(self, base_dir: Path) -> None:
         # Locate the tree this deployment ships. The checkout `setup.py` recorded at

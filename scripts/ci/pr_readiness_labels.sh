@@ -57,6 +57,28 @@ DRY_RUN=0
 # blocking on its own in-progress check when triggered by pull_request events.
 RECONCILER_JOB_NAME="${PR_LABELS_RECONCILER_JOB:-reconcile}"
 
+# --- the managed label set --------------------------------------------------
+# Two groups with DELIBERATELY DIFFERENT management modes.
+#
+# STATUS is reconciled both ways. It describes live state, so a stale one is a
+# lie, and at most one is ever held: it is derived from the single if/elif
+# ladder that already decides the chip, so the ladder's precedence IS the
+# exclusivity. `conflicts` is not in this group — it keys on a different field
+# (mergeable) and keeps its own independent meaning.
+#
+# INHERITED is grant-only. It carries a JUDGMENT from the issues a PR closes,
+# and there are two legitimate reasons a PR may differ: a human re-prioritised
+# it, or the issue was relabelled after the PR opened. Removing would fight the
+# first and churn every timeline hourly on the second.
+#
+# Nothing outside these groups is ever added or removed, so the nightly
+# triager's labels and a human's labels are untouched.
+STATUS_LABELS='["review-pending","checks-failing","checks-pending","base-behind","unverifiable"]'
+KIND_LABELS='["bug","enhancement","documentation"]'
+# Strongest first: a PR closing a P1 is a P1 whatever else rides with it.
+PRIORITY_LABELS='["P1","P2","P3"]'
+AREA_LABELS='["ragas","upstream"]' 
+
 # Connections are fetched one page deep; FILTER returns each totalCount so the
 # reconciler can tell a complete snapshot from a truncated one. The two truncation
 # cases are NOT symmetric:
@@ -117,13 +139,28 @@ NAME="${REPO##*/}"
 
 # One query carries everything the predicate needs, so every PR in a sweep is
 # judged against the same snapshot. `mergeStateStatus` needs no preview header.
+#
+# THE NESTED BOUNDS ARE A COST DECISION, not a guess. GraphQL node cost is the
+# product of the enclosing `first:` values, so a nested labels connection is
+# multiplied by BOTH the PR page and the issue page. At first:20 / first:50 the
+# closing-issue taxonomy alone budgets 50,000 nodes and takes the whole query
+# from ~151 points to ~661 -- against a 1,000-point hourly quota on
+# GITHUB_TOKEN, on a workflow that runs on many events PLUS an hourly sweep.
+# That is one sweep an hour before rate limiting, which would leave labels
+# unreconciled and is a worse failure than the one this change fixes.
+#
+# first:5 / first:20 costs ~204 points and leaves room for four sweeps an hour.
+# Measured against this repository: the most issues any PR closes is 2, and the
+# mean is 0.6. Both connections carry `totalCount`, so exceeding the bound is
+# DETECTED and inheritance is skipped rather than computed from a partial set.
 QUERY='query($owner:String!,$name:String!,$cursor:String){
   repository(owner:$owner,name:$name){
     pullRequests(states:OPEN, first:50, after:$cursor){
       pageInfo{ hasNextPage endCursor }
       nodes{
-        number isDraft mergeable mergeStateStatus
+        number isDraft mergeable mergeStateStatus title
         labels(first:100){ totalCount nodes{ name } }
+        closingIssuesReferences(first:5){ totalCount nodes{ labels(first:20){ totalCount nodes{ name } } } }
         reviewThreads(first:100){ totalCount nodes{ isResolved isOutdated } }
         commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){
           totalCount
@@ -152,6 +189,8 @@ QUERY='query($owner:String!,$name:String!,$cursor:String){
 # mergeStateStatus, because an empty rollup also describes a PR whose checks have
 # not registered yet.
 # CheckRun conclusions considered passing: SUCCESS, NEUTRAL, SKIPPED.
+# A context that is neither passing nor finished-and-bad is PENDING: it blocks
+# the chip exactly as before, and is reported as pending rather than as failing.
 # StatusContext states considered passing: SUCCESS.
 # A CheckRun whose name equals $excl is excluded from the blocking count.
 FILTER='
@@ -173,6 +212,57 @@ FILTER='
            )
          | map(select(.))
          | length) as $blocking
+      # A second, NARROWER count: contexts that have finished and come back bad,
+      # as opposed to ones that simply have not finished. Both withhold the chip
+      # and always have -- this splits only the REASON, because "CI failed" and
+      # "CI is still running" call for opposite actions from a reader, and a
+      # label saying the first when the second is true is simply false.
+      | ($cnodes
+         | map(select(.__typename != "CheckRun" or .name != $excl))
+         | map(
+             if .__typename == "CheckRun" then
+               (.conclusion // "" | . == "FAILURE" or . == "TIMED_OUT"
+                  or . == "CANCELLED" or . == "ACTION_REQUIRED"
+                  or . == "STARTUP_FAILURE" or . == "STALE")
+             else
+               (.state == "FAILURE" or .state == "ERROR")
+             end
+           )
+         | map(select(.))
+         | length) as $failing
+      | ([.labels.nodes[].name]) as $own
+      | (.labels.totalCount > $page) as $ltrunc
+      | ([.closingIssuesReferences.nodes[].labels.nodes[].name] | unique) as $issue_labels
+      | ((.closingIssuesReferences.nodes | length) > 0) as $closes_something
+      # Either bounded connection overflowing means the taxonomy we can see is
+      # a SUBSET. Inheriting from a subset is not merely incomplete, it is
+      # unfixable: priority is grant-only and skipped once any priority is
+      # present, so a P3 granted from a visible issue permanently masks a P1 on
+      # an omitted one. Fail closed, exactly as the label and thread
+      # connections already do.
+      | ((.closingIssuesReferences.totalCount > (.closingIssuesReferences.nodes | length))
+         or ([.closingIssuesReferences.nodes[]
+              | .labels.totalCount > (.labels.nodes | length)] | any)) as $ctrunc
+      | ($own | map(select(. as $l | $status | index($l)))) as $held_status
+      # Inherited set. Skipped wholesale when the label connection is truncated:
+      # the exclusive-group rule needs the the PR OWN labels, and acting on a
+      # partial list could add a second priority. Grant-only makes skipping
+      # harmless -- nothing false is asserted, and the next sweep retries.
+      | (if $ctrunc then []
+         else
+           ($issue_labels | map(select(. as $l | $kind | index($l))))
+           + ([$prio[] | select(. as $x | $issue_labels | index($x))][0:1])
+           + ($issue_labels | map(select(. as $l | $area | index($l))))
+         end) as $offer
+      # Title fallback: only when no issue is closed and no kind is held. An
+      # unrecognized prefix yields NOTHING rather than a default, because a
+      # wrong kind makes the index confidently misleading.
+      | (if $ctrunc or $closes_something then []
+         elif (.title | test("^fix(\\([^)]*\\))?!?:"))  then ["bug"]
+         elif (.title | test("^feat(\\([^)]*\\))?!?:")) then ["enhancement"]
+         elif (.title | test("^docs(\\([^)]*\\))?!?:")) then ["documentation"]
+         else [] end) as $title_kind
+      | (($offer + $title_kind) | unique) as $cand
       | [ "PR",
           (.number | tostring),
           (.isDraft | tostring),
@@ -185,8 +275,12 @@ FILTER='
           ([.labels.nodes[].name] | any(. == $ready) | tostring),
           ([.labels.nodes[].name] | any(. == $conflict) | tostring),
           ($blocking | tostring),
+          ($failing | tostring),
           ($ct | tostring),
-          ($cf | tostring)
+          ($cf | tostring),
+          ($held_status | tojson),
+          ($cand | tojson),
+          ($own | tojson)
         ] | @tsv )
 '
 
@@ -228,7 +322,10 @@ fetch_snapshot() {
     fi
     if ! rows="$(printf '%s' "$page" \
         | jq -r --arg ready "$READY_LABEL" --arg conflict "$CONFLICT_LABEL" \
-               --arg excl "$RECONCILER_JOB_NAME" "$FILTER")"; then
+               --arg excl "$RECONCILER_JOB_NAME" \
+               --argjson status "$STATUS_LABELS" --argjson kind "$KIND_LABELS" \
+               --argjson prio "$PRIORITY_LABELS" --argjson area "$AREA_LABELS" \
+               --argjson page "$PAGE" "$FILTER")"; then
       printf '%s: could not parse the GraphQL response for %s\n' "${0##*/}" "$REPO" >&2
       return 1
     fi
@@ -246,13 +343,41 @@ fetch_snapshot() {
 # labels connection was truncated, so the extra request costs nothing on the
 # normal path. --paginate concatenates one JSON array per page, hence the
 # slurp-and-add; `// []` covers the no-output case.
+# The ONLY place the grant rule lives. `cand` is what the closing issues (or the
+# title) OFFER; `own` is what the PR already carries. Priority and kind are
+# exclusive, so an offer in those groups is dropped whole when the PR already
+# holds any member -- an inherited P3 must never land beside a hand-set P1.
+# Area is not exclusive and is filtered per label.
+#
+# Deliberately not inlined into the FILTER: the truncated-labels path re-runs it
+# against an authoritative label list, and two copies of this rule could
+# disagree about the one thing it exists to decide.
+inherit_to_add() { # $1 = cand JSON, $2 = own JSON
+  jq -cn --argjson cand "$1" --argjson own "$2" \
+     --argjson kind "$KIND_LABELS" --argjson prio "$PRIORITY_LABELS" '
+    ($own | any(. as $l | $kind | index($l))) as $has_kind
+    | ($own | any(. as $l | $prio | index($l))) as $has_prio
+    | $cand
+    | map(select(. as $l |
+        # Bind the element FIRST. Inside `$kind | index(.)` the dot rebinds to
+        # $kind, so the membership test silently never matched and an inherited
+        # priority landed beside a hand-set one.
+        if ($kind | index($l)) then ($has_kind | not)
+        elif ($prio | index($l)) then ($has_prio | not)
+        else true end))
+    | map(select(. as $l | ($own | index($l)) | not))
+    | unique'
+}
+
 authoritative_membership() { # $1 = PR number
   local out
   if ! out="$(gh api "repos/$REPO/issues/$1/labels" --paginate)"; then
     return 1
   fi
   printf '%s' "$out" | jq -rs --arg ready "$READY_LABEL" --arg conflict "$CONFLICT_LABEL" \
-    '(add // []) | map(.name) | "\(any(. == $ready)) \(any(. == $conflict))"'
+    --argjson status "$STATUS_LABELS" \
+    '(add // []) | map(.name)
+     | "\(any(. == $ready)) \(any(. == $conflict)) \(map(select(. as $l | $status | index($l))) | tojson) \(tojson)"'
 }
 
 # Re-query while any PR's mergeability is still being computed — the query is
@@ -292,13 +417,17 @@ unverifiable=0
 
 while IFS=$'\t' read -r _tag number isdraft mergeable state live \
                         threads_total labels_total has_ready has_conflict \
-                        blocking_checks rollup_total rollup_fetched; do
+                        blocking_checks failing_checks rollup_total rollup_fetched \
+                        held_status cand own_labels; do
   if [ -z "${number:-}" ]; then
     continue
   fi
 
   # Truncated label connection: re-read authoritatively rather than conclude a chip
   # is absent because it fell off the page. Guessing here would break fail-closed.
+  # The re-read returns the FULL label list, so inheritance is recomputed from it
+  # rather than abandoned: a PR that is permanently over the page limit would
+  # otherwise never inherit anything, and no later sweep could fix it.
   if [ "$labels_total" -gt "$PAGE" ]; then
     if ! membership="$(authoritative_membership "$number")"; then
       printf '%s: could not read the full label list for #%s (%s labels)\n' \
@@ -306,7 +435,7 @@ while IFS=$'\t' read -r _tag number isdraft mergeable state live \
       failed=$((failed + 1))
       continue
     fi
-    read -r has_ready has_conflict <<<"$membership"
+    read -r has_ready has_conflict held_status own_labels <<<"$membership"
   fi
 
   # Mergeability not computed even after the retries. We cannot verify readiness,
@@ -319,17 +448,28 @@ while IFS=$'\t' read -r _tag number isdraft mergeable state live \
   # direction.
   if [ "$state" = "UNKNOWN" ] || [ "$mergeable" = "UNKNOWN" ]; then
     unverifiable=$((unverifiable + 1))
-    if [ "$has_ready" = false ]; then
+    # A held status label is REVOKED here, and none is added. Removal asserts
+    # nothing -- it withdraws a claim derived from a snapshot we can no longer
+    # stand behind -- so it keeps this path's "assert nothing new" contract
+    # while not leaving a stale cause advertised until a later sweep.
+    unk_edits=()
+    if [ "$has_ready" = true ]; then
+      unk_edits+=(--remove-label "$READY_LABEL")
+    fi
+    while IFS= read -r label; do
+      [ -n "$label" ] && unk_edits+=(--remove-label "$label")
+    done < <(printf '%s' "${held_status:-[]}" | jq -r '.[]?')
+    if [ ${#unk_edits[@]} -eq 0 ]; then
       printf '#%-5s %-9s live=%-3s : skip (mergeability not computed)\n' \
         "$number" "UNKNOWN" "$live"
       skipped=$((skipped + 1))
       continue
     fi
-    printf '#%-5s %-9s live=%-3s : --remove-label %s (unverifiable — mergeability not computed)\n' \
-      "$number" "UNKNOWN" "$live" "$READY_LABEL"
+    printf '#%-5s %-9s live=%-3s : %s (unverifiable — mergeability not computed)\n' \
+      "$number" "UNKNOWN" "$live" "${unk_edits[*]}"
     if [ "$DRY_RUN" -eq 0 ]; then
-      if ! gh pr edit "$number" --repo "$REPO" --remove-label "$READY_LABEL" >/dev/null; then
-        printf '%s: failed to revoke %s on #%s\n' "${0##*/}" "$READY_LABEL" "$number" >&2
+      if ! gh pr edit "$number" --repo "$REPO" "${unk_edits[@]}" >/dev/null; then
+        printf '%s: failed to reconcile #%s\n' "${0##*/}" "$number" >&2
         failed=$((failed + 1))
         continue
       fi
@@ -389,29 +529,50 @@ while IFS=$'\t' read -r _tag number isdraft mergeable state live \
   # head commit, so rollup_total is at least 1 and this clause cannot fire. The
   # remaining BLOCKED slice — green checks plus a missing required approval — is a
   # non-empty rollup, still falls through, and is tracked in #231.
+  # `want_status` is set in the SAME ladder that sets `why`, never from a
+  # parallel set of conditions. Two derivations could disagree, and a status
+  # label that contradicts the chip beside it is worse than none at all. Because
+  # this is an if/elif, exactly one branch fires, so at most one status label is
+  # ever wanted — the exclusivity is a property of the ladder, not a rule
+  # enforced afterwards.
+  #
+  # Two branches deliberately want NO label. A draft is already rendered as a
+  # draft by GitHub, and a conflict is already reported by `conflicts`, which
+  # keys on a different field and keeps its own meaning.
   want_ready=false
+  want_status="checks-failing"
   why="blocking check"
   if [ "$isdraft" = "true" ]; then
-    why="draft"
+    why="draft"; want_status=""
   elif [ "$mergeable" = "CONFLICTING" ]; then
-    why="conflicting"
+    why="conflicting"; want_status=""
   elif [ "$state" = "BEHIND" ]; then
     why="behind the base — checks on record did not test the current base"
+    want_status="base-behind"
   elif [ "$rollup_total" -eq 0 ] && [ "$state" = "BLOCKED" ]; then
     why="no checks on record while GitHub reports BLOCKED — cannot verify"
+    want_status="unverifiable"
   elif [ "$rollup_total" -gt "$rollup_fetched" ]; then
     why="rollup truncated ($rollup_total checks seen, $rollup_fetched fetched) — cannot verify"
+    want_status="unverifiable"
+  elif [ "$failing_checks" -gt 0 ]; then
+    why="$failing_checks failing check(s)"
+    want_status="checks-failing"
   elif [ "$blocking_checks" -gt 0 ]; then
-    why="$blocking_checks blocking check(s)"
+    why="$blocking_checks check(s) not green yet"
+    want_status="checks-pending"
   elif [ "$live" -gt 0 ]; then
     why="$live live review finding(s)"
+    want_status="review-pending"
   elif [ "$threads_total" -gt "$PAGE" ]; then
     # A live finding could be sitting in the unfetched tail, in which case `live`
     # undercounted. Withhold rather than advertise a readiness we did not verify.
     why="$threads_total review threads exceed the $PAGE fetched — cannot verify"
+    want_status="unverifiable"
   else
     want_ready=true
     why=""
+    want_status=""
   fi
 
   edits=()
@@ -427,6 +588,29 @@ while IFS=$'\t' read -r _tag number isdraft mergeable state live \
   if [ "$want_conflict" = false ] && [ "$has_conflict" = true ]; then
     edits+=(--remove-label "$CONFLICT_LABEL")
   fi
+
+  # STATUS: reconciled both ways, at most one held. Every status label the PR
+  # carries that is not the wanted one is revoked in the same edit, so a PR
+  # cannot accumulate stale reasons as its blocker changes.
+  held_status="${held_status:-[]}"
+  while IFS= read -r label; do
+    [ -z "$label" ] && continue
+    if [ "$label" != "$want_status" ]; then
+      edits+=(--remove-label "$label")
+    fi
+  done < <(printf '%s' "$held_status" | jq -r '.[]?')
+  if [ -n "$want_status" ] \
+     && ! printf '%s' "$held_status" | jq -e --arg w "$want_status" 'index($w)' >/dev/null; then
+    edits+=(--add-label "$want_status")
+  fi
+
+  # INHERITED: grant-only. The rule ran in `inherit_to_add` against whichever
+  # label list we ended up trusting, so there is nothing to decide here. No
+  # branch of this loop ever builds a --remove-label: that is the whole contract.
+  to_add="$(inherit_to_add "${cand:-[]}" "${own_labels:-[]}")"
+  while IFS= read -r label; do
+    [ -n "$label" ] && edits+=(--add-label "$label")
+  done < <(printf '%s' "$to_add" | jq -r '.[]?')
 
   if [ "$want_ready" = true ]; then
     ready_now=$((ready_now + 1))

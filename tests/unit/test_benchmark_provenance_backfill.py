@@ -113,3 +113,126 @@ class TestBackfillIsAdditive:
     def test_existing_metadata_keys_are_not_part_of_the_stamp(self):
         """The caller merges; the stamp must not carry keys that would overwrite."""
         assert set(_stamp()) == {"code_version", "config_version"}
+
+
+def _load_backfill():
+    import importlib.util
+    from pathlib import Path
+
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "benchmarking"
+        / "backfill_report_provenance.py"
+    )
+    spec = importlib.util.spec_from_file_location("backfill_identity", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+RUNNING_CONFIG = {
+    "data_manager": {
+        "collection_name": "fasrc",
+        "embedding_name": "HuggingFaceEmbeddings",
+        "embedding_class_map": {
+            "HuggingFaceEmbeddings": {
+                "class": "HuggingFaceEmbeddings",
+                "kwargs": {"model_name": "Qwen/Qwen3-Embedding-0.6B"},
+            }
+        },
+    }
+}
+
+
+def _write_report(tmp_path, arms, metadata=None):
+    import json
+
+    path = tmp_path / "bench-20260920_120000.json"
+    path.write_text(
+        json.dumps(
+            {
+                "metadata": metadata if metadata is not None else {"time": "t"},
+                "benchmarking_results": arms,
+            }
+        )
+    )
+    return path
+
+
+def _read_arms(path):
+    import json
+
+    return json.loads(path.read_text())["benchmarking_results"]
+
+
+class TestRetrievalIdentityBackfill:
+    """An arm that recorded its running config gets the identity it implies."""
+
+    def test_arm_with_running_configuration_is_stamped(self, tmp_path):
+        backfill = _load_backfill()
+        path = _write_report(tmp_path, [{"running_configuration": RUNNING_CONFIG}])
+
+        backfill.stamp_file(path)
+
+        assert _read_arms(path)[0]["retrieval_identity"] == {
+            "collection": "fasrc_with_HuggingFaceEmbeddings",
+            "embedding_name": "HuggingFaceEmbeddings",
+            "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+            "source": "reconstructed from running_configuration",
+        }
+
+    def test_version_stamped_report_still_gets_its_arms_stamped(self, tmp_path):
+        backfill = _load_backfill()
+        metadata = {"code_version": {"digest": "keep"}, "config_versions": ["keep"]}
+        path = _write_report(
+            tmp_path, [{"running_configuration": RUNNING_CONFIG}], metadata=metadata
+        )
+
+        status = backfill.stamp_file(path)
+
+        import json
+
+        document = json.loads(path.read_text())
+        assert "retrieval_identity" in document["benchmarking_results"][0]
+        assert document["metadata"] == metadata
+        assert "1 stamped" in status
+
+    def test_arm_already_stamped_is_unchanged(self, tmp_path):
+        backfill = _load_backfill()
+        existing = {"collection": "other", "source": "recorded"}
+        path = _write_report(
+            tmp_path,
+            [{"running_configuration": RUNNING_CONFIG, "retrieval_identity": existing}],
+            metadata={"code_version": {}},
+        )
+
+        status = backfill.stamp_file(path)
+
+        assert _read_arms(path)[0]["retrieval_identity"] == existing
+        assert status.startswith("skipped")
+
+    def test_arm_without_running_configuration_is_skipped_and_reported(self, tmp_path):
+        backfill = _load_backfill()
+        path = _write_report(
+            tmp_path,
+            [{"running_configuration": RUNNING_CONFIG}, {"configuration": {}}],
+        )
+        counts = {}
+
+        status = backfill.stamp_file(path, counts=counts)
+
+        arms = _read_arms(path)
+        assert "retrieval_identity" not in arms[1]
+        assert "1 skipped" in status
+        assert counts == {"identity_stamped": 1, "identity_skipped": 1}
+
+    def test_dry_run_writes_nothing(self, tmp_path):
+        backfill = _load_backfill()
+        path = _write_report(tmp_path, [{"running_configuration": RUNNING_CONFIG}])
+        before = path.read_text()
+
+        status = backfill.stamp_file(path, dry_run=True)
+
+        assert path.read_text() == before
+        assert status.startswith("would stamp")

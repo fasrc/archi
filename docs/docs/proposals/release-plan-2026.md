@@ -81,7 +81,8 @@ invariant" below). Such issues are neither gating nor parked; do not park them.
   Explicitly **not** drivers: headless `/v1` external frontends, incremental re-ingest.
   One amendment (2026-08-28): the WordPress chat window
   ([#384](https://github.com/fasrc/archi/issues/384)) enters `v2026.10.0` by operator
-  decision — the single exception to the frontends line.
+  decision — the single exception to the frontends line. On 2026-10-23 an operator
+  decision moved the window to `v2026.11.0`.
 - **Gate bar — broken-without-it:** an issue is in a milestone only if the release's
   feature is broken/wrong/dishonest without it, evidenced by a file:line, a measured
   number, or a repro from the issue itself.
@@ -122,7 +123,6 @@ any "answers improved" claim.
 | [#279](https://github.com/fasrc/archi/issues/279) valid JSON artifacts, honest denominators | 10 of 18 committed artifacts are rejected by a strict JSON parser (bare `NaN`); a "109 of 109 scored" report had only 108 finite values | M |
 | [#213](https://github.com/fasrc/archi/issues/213) drift tripwire actually checks rows | Nightly drift reports "0 checked / 105 skipped" — 0 of 105 goldenset rows carry `source_hashes`, so the bank's gold answers are unverified | L |
 | [#119](https://github.com/fasrc/archi/issues/119) warm NLTK before the thread pool (UX too) | 8 files randomly fail per re-ingest (thread race) — a nondeterministic corpus corrupts arm comparisons **and** silently makes topics unanswerable | S |
-| [#347](https://github.com/fasrc/archi/issues/347) literal `</think>` in an answer truncates it (UX) | Enters by the UX override, not this track. `base_react.py:287-296` keys the orphan-tag rule on literal characters, so an answer that quotes the tag is truncated to what follows it — on every provider, thinking on or off, before and after the #122 gate; pinned by `test_a_literal_closing_tag_in_an_answer_truncates_as_it_did_before`. Not `v2026.08.0`: the fix needs the provider's `reasoning_content` or a first-tag-only rule, an open design question, so this is the earliest **feasible** release | M |
 | [#378](https://github.com/fasrc/archi/issues/378) benchmark aborts a healthy ingest at an absolute deadline | `wait_for_ingestion_completion` (`service_benchmark.py:2116`) holds one absolute `BENCH_INGEST_WAIT_TIMEOUT` (default 7200s) that never resets on healthy progress, then reports the failure as a connection error against a URL it never used. A rig that kills advancing ingests on the clock, and misattributes why, yields neither numbers nor a diagnosis | M |
 | [#394](https://github.com/fasrc/archi/issues/394) run the base-image preflight before `archi evaluate --force` tears the runtime down | `base_image_preflight.py` exists for one ordering guarantee — refuse before the destructive step — and that guarantee holds on the `create` path only. `archi evaluate --force` calls `remove_existing_deployment()` first, so a benchmarking run destroys an existing runtime and only then fails on a base image the preflight would have refused | M |
 
@@ -130,14 +130,19 @@ any "answers improved" claim.
 
 Target: end of October. Depends on the v2026.09.0 rig. Amended 2026-08-28: the release
 also delivers those answers where users already are — a WordPress chat window backed by
-`/v1` ([#384](https://github.com/fasrc/archi/issues/384)).
+`/v1` ([#384](https://github.com/fasrc/archi/issues/384)). On 2026-10-23 an operator
+decision moved that window to `v2026.11.0` (row there), so this release no longer
+delivers it.
 
 | Gate | Why it gates | Size |
 |---|---|---|
-| [#216](https://github.com/fasrc/archi/issues/216) embedding A/B (MiniLM vs gte/nomic) | The feature itself. Measured defect: 68% of chunks (4,684/6,854) exceed MiniLM's 256-token window and are silently truncated today | L |
+| [#216](https://github.com/fasrc/archi/issues/216) embedding A/B (MiniLM vs gte/nomic) | The feature itself. Measured defect: 68% of chunks (4,684/6,854) exceed MiniLM's 256-token window and are silently truncated today. The 2026-10-23 work order on #216 replaces the gte candidates with `bge-small`, `bge-base` and `bge-large`, because `base-config.yaml` renders no `trust_remote_code` (only `device` under `model_kwargs`, `:330-331` at `91aba782`) | L |
 | [#215](https://github.com/fasrc/archi/issues/215) GPU TEI embedding | Named enabler in #216: 40 min → ~1 min re-embeds make the A/B (and adopting a winner) feasible | M |
-| [#384](https://github.com/fasrc/archi/issues/384) WordPress chat window on the FASRC site via `/v1` | Enters by operator amendment (2026-08-28), not the broken-without-it bar. The fork's `/v1` already ships bearer-auth chat completions, and inline `[title](url)` citations arrive in the answer text itself via the committed citation-guidance default (`agent_spec.py`), so a markdown-rendering widget shows them (#245 removes `/v1`'s redundant appended source block). AI Engine's free tier ships the widget with a custom OpenAI-compatible connector, so the remaining work is evaluation, config, and ops. The rtCamp `universal-openai-connector` was scouted and is a provider adapter for the WordPress AI Client, not a chat window. **Constraint:** until #81 closes, the widget stays a page-limited pilot — bearer auth on, anonymous `/v1` access off, firewall scoped to the WordPress host; public default-on exposure rides `v2026.11.0` | M |
-| [#396](https://github.com/fasrc/archi/issues/396) feature-matrix benchmark campaign | "Measurably better answers" is this release's feature, and #216 measures one axis of it. Every other retrieval and ingest toggle ships on an inherited default with no measurement behind it: `hierarchical_rerank` is default-on carrying ADR 0003's "+19% RAGAS" from the pre-sentence-chunking #32 A/B, and `categorization` is code-default `false` (`processing.py:689`) but `true` in the shipped example config (`config.example.yaml:150`) at one LLM call per document. Claiming measured improvement while most of the retrieval config is set by unmeasured default is dishonest. Adds the Time-to-Ingest metric the rig discards today (`service_benchmark.py:2178`) | L |
+| [#721](https://github.com/fasrc/archi/issues/721) cap torch CPU threads in data-manager and chatbot (UX too) | Enters by operator decision (2026-10-23) and replaces the open part of #215. #215 gates because fast re-embeds make the #216 A/B feasible. PR #217 delivered a GPU path in August, but dev embeds on the CPU, and the real cause of the slow ingest is the torch thread pool: a full ingest takes 66.0 min, and 6.9 min with 8 threads. It is also a chat-user item: each small embedding call takes about 3 s, not 15 ms, so each chat vector search waits about 3 s more. [#722](https://github.com/fasrc/archi/pull/722) (`3a351cfb`) caps torch at 8 threads; the issue closes on one GPU-host redeploy that measures 8 threads in both containers and a full ingest under 10 min | S |
+| [#396](https://github.com/fasrc/archi/issues/396) feature-matrix benchmark campaign | "Measurably better answers" is this release's feature, and #216 measures one axis of it. Every other retrieval and ingest toggle ships on an inherited default with no measurement behind it: `hierarchical_rerank` is default-on carrying ADR 0003's "+19% RAGAS" from the pre-sentence-chunking #32 A/B, and `categorization` is code-default `false` (`processing.py:689`) but `true` in the shipped example config ([`config.example.yaml:150` at `376b5867`](https://github.com/fasrc/archi/blob/376b586707dd3a641d21496204bd378af7313c8c/deploy/fasrc-dev/config.example.yaml#L150), the last commit before it changed) at one LLM call per document — the campaign went on to measure that arm, and [#496](https://github.com/fasrc/archi/issues/496) turned the example off on 2026-09-22 in [#532](https://github.com/fasrc/archi/pull/532), which is why this row is pinned to the commit and records the state at adoption. Claiming measured improvement while most of the retrieval config is set by unmeasured default is dishonest. Adds the Time-to-Ingest metric the rig discards today (`service_benchmark.py:2178`) | L |
+| [#729](https://github.com/fasrc/archi/issues/729) RAGAS judge offload to a FASRC Slurm GPU job (children #730–#733) | Enters by operator amendment (2026-10-20), not the broken-without-it bar. Each golden-set run grades its answers with Claude Sonnet 4.5 through HUIT Bedrock, which bills a cost center and throttles: judge timeouts lost 62 of 109 rows on 2026-09-20. The plan ([#584](https://github.com/fasrc/archi/pull/584), OpenSpec `offload-ragas-judge-to-slurm`) lets a run defer its judge and write a judge bundle, and a GPU job then grades the bundle with an open-weights judge. The bundle is also the input of #583. Four code PRs, in order, and they gate this release. The cluster and config steps (the four open operator questions, the judge comparison, `scrontab`, the publish timer) are in [#737](https://github.com/fasrc/archi/issues/737), `v2026.11.0`, so this release does not wait for cluster queue time. Deferred mode ships off by default (`judge_mode: inline`), so the default path does not change. The release's end-to-end check of the deferred path is a CI test in #733 (task 4.7): bundle → publish → submit → stub-judge scoring → merge → G11 and `archive_run.sh --sweep`, with no cluster. The first real cluster run is in #737, before any config switches to deferred | L |
+| [#739](https://github.com/fasrc/archi/issues/739) production timeout and retry defaults of `build_uds_judge_llm` | Enters by operator decision (2026-10-23), done inside #732, so that the release accounting holds. The offline scorer of #732 is the first production caller of `build_uds_judge_llm`, and it sets the production values: `timeout=300` seconds, the inline judge timeout that `fasrc/archi-config` PR #45 set for its deployments (180 → 300; the code default stays 180, `base-config.yaml:98` and `benchmark_schema.py:74`), and `max_retries=2`. The unit tests keep their own bound (10 s, 0 retries) and pass it explicitly. Closed by [#756](https://github.com/fasrc/archi/pull/756) (`0740e504`, `ragas_scoring.py:109-116`) | S |
+| [#583](https://github.com/fasrc/archi/issues/583) Lynx faithfulness metric (children #734, #735) | Enters by operator amendment (2026-10-20). RAGAS mean deltas stay inside the run-to-run spread, and the results that held up are binary per-row counts with a paired exact test (apology rows 6 → 0, p = 0.006). Lynx gives one PASS or FAIL verdict per row, so two arms compare row by row with an exact McNemar test. It reads #729's judge bundle, so it scores only deferred runs. No gate reads its PASS rate, but its two code PRs gate this release like any milestone item. The first cluster run is in [#737](https://github.com/fasrc/archi/issues/737), `v2026.11.0` | M |
 
 Parked from this track: #130 (rerank already default-on with +19% RAGAS shipped;
 residual is below judge noise and awaits a human data-egress decision), #241 (the
@@ -167,6 +172,10 @@ classification, only one live robustness gate was left, too thin for its own rel
 | [#372](https://github.com/fasrc/archi/issues/372) preserve the evaluation catalog across `archi create --force` | The chatbot mounts `./data/evaluations` (`base-compose.yaml:255`) and the redeploy path destroys it, taking datasets, human atom approvals, job records and run history with it. Verified P1 from the #368 review; #368 corrected the documentation and left the destructive path live. Losing paid-for human review on a routine redeploy is the opposite of production-ready | M |
 | [#371](https://github.com/fasrc/archi/issues/371) guarantee the evaluations `agent_config_path` exists in the container at create time | Gates #320 alongside #326/#327/#330. An accepted `agent_config_path` is validated on the host and never proven present inside the chatbot container, so an enabled console registers and then fails every run on a missing file. #81's fourth non-negotiable is an automated eval gate, and this is its operator surface | M |
 | [#389](https://github.com/fasrc/archi/issues/389) refuse a deployment whose service templates pin the same base at different references | `base_reference` (`base_image_preflight.py:123-135`) returns the **first** matching reference and stops, so two templates naming one `a2rchi-*-base` at different refs let the preflight probe whichever sorts first and report the deployment ready — before `archi create --force` tears anything down. PR #391 is open, not merged: the guard is not on `dev` | M |
+| [#347](https://github.com/fasrc/archi/issues/347) literal `</think>` in an answer truncates it (UX) | Enters by the UX override, not this track. Moved from `v2026.09.0` by operator decision (2026-10-09) so that release can ship. `base_react.py:292-301` keys the orphan-tag rule on literal characters, so an answer that quotes the tag is truncated to what follows it, on every provider; the balanced-pair pass (`:281-286`) also deletes a quoted `<think>…</think>` pair. Measured on `origin/dev` `9cb61f0c`. The issue's second shape (a mid-stream leak from the #122 gate's latch) needs `enable_thinking: true`, which no deployment sets. Loop 1 first needs two decisions recorded on the issue: split the second shape out, and whether the #84 "no tag in visible content" requirement can be narrowed to "outside a closed code span or fence" | M |
+| [#671](https://github.com/fasrc/archi/issues/671) build the rebuilt knowledge base in new tables, then cut over (UX) | Enters by operator decision (2026-10-12) under the UX override: "silently stale knowledge base" is a named override, and this is a silently partial one. `reset_collection` defaults to `true` (`base-config.yaml:359`). Each full rebuild runs `TRUNCATE TABLE document_chunks CASCADE` (`manager.py:241`), then `VACUUM FULL` (`:263`), which also blocks chat reads. The rebuild commits every 25 files (`:581`), so chat answers from a corpus that grows from 0 to full, with no notice. Measured on dev: about 65 min for 1174 documents and 7105 chunks after every redeploy. A change of embedding dimension has no safe path except `nuke.sh`. This is the full-rebuild path, not the incremental re-ingest that Method excludes. The approved design is [the cutover spec](https://github.com/fasrc/archi/blob/dev/docs/superpowers/specs/2026-10-10-vector-store-rebuild-cutover-design.md). November, not October, by operator choice: the work is L, and October has 19 days and 5 open gates | L |
+| [#737](https://github.com/fasrc/archi/issues/737) judge-offload and Lynx cluster steps (operator) | Enters by operator amendment (2026-10-20), not the broken-without-it bar. It was split out of #729 and #583 so that `v2026.10.0` waits only for their code PRs. It holds the four open offload questions, the `fasrc/archi-config` publish timer and `scrontab`, the judge comparison against Sonnet, and the first Lynx run. It needs a FASRC account and the private config repo, so no agent can drain it | M |
+| [#384](https://github.com/fasrc/archi/issues/384) WordPress chat window on the FASRC site via `/v1` | Enters by operator amendment (2026-08-28), not the broken-without-it bar. The fork's `/v1` already ships bearer-auth chat completions, and inline `[title](url)` citations arrive in the answer text itself via the committed citation-guidance default (`agent_spec.py`), so a markdown-rendering widget shows them (#245 removes `/v1`'s redundant appended source block). AI Engine's free tier ships the widget with a custom OpenAI-compatible connector, so the remaining work is evaluation, config, and ops. The rtCamp `universal-openai-connector` was scouted and is a provider adapter for the WordPress AI Client, not a chat window. **Constraint:** until #81 closes, the widget stays a page-limited pilot — bearer auth on, anonymous `/v1` access off, firewall scoped to the WordPress host; public default-on exposure rides `v2026.11.0`. Moved from `v2026.10.0` by operator decision (2026-10-23), because the site owners have not approved the page and plugin, and the pilot cannot go public before #81, which is in `v2026.11.0` | M |
 
 ---
 
@@ -373,6 +382,47 @@ measurable difference rather than a direction. It is blocked by #279 and #213,
 both `v2026.09.0`: invalid JSON artifacts with inflated scored counts, and an
 unlocked bank drifting under a multi-day campaign, each turn a cross-arm
 comparison into a confident wrong answer.
+
+**2026-10-12:** #671 entered `v2026.11.0` by operator decision, with an approved
+design ([cutover spec](https://github.com/fasrc/archi/blob/dev/docs/superpowers/specs/2026-10-10-vector-store-rebuild-cutover-design.md)).
+Before this decision, #671 had no milestone and no `parked` label, so it was one of the
+issues outside the invariant below. The design builds each full rebuild into new tables while
+chat reads the old tables. A gate (dimension, chunk ratio, failure ratio) then
+approves the new set, and one rename transaction makes it live. The chat reader SQL
+does not change. Chat takes its embedding model from the live set, so it uses the old
+model until the cutover. Option (c) of #671, a retriever notice during a rebuild, is
+not necessary, because chat always reads a complete corpus.
+
+**2026-10-20:** #583 (Lynx faithfulness metric) and the RAGAS judge offload (#729,
+plan [#584](https://github.com/fasrc/archi/pull/584)) entered `v2026.10.0` by operator
+decision, both P1. Before this decision, #583 had no milestone and no `parked` label,
+and no issue tracked the offload plan. The offload plan splits into one issue per PR
+(#730 → #731 → #732 → #733). Lynx splits into #734 (blocked by #731) and #735. #730
+is armed, and each later child is armed when its predecessor merges. Three design
+calls were recorded on #729. The new comparison gates are G11 and G12, because G8 and
+G9 already name the anchors gate and the category-map gate. The judge identity extends
+#618's per-arm key `ragas_judge_identity_effective`. #618's in-run rule for mixed
+judges (withhold ranks and winners) stays. The two items entered with 11 days left on
+the milestone. Every milestone item must close before a release, so the same day the
+cluster and config steps of both moved to #737 in `v2026.11.0`. The October release
+therefore waits only for the six code PRs (#730–#735). #729 and #583 close when their
+code children merge. On 2026-10-21 a review asked for an end-to-end check of the
+deferred path before release. The operator chose a CI test with no cluster (#733,
+task 4.7), because deferred mode ships off by default and #737 runs the real chain
+before any config switches to it.
+
+**Tracker state (2026-10-23):** 19 milestone-assigned + 64 parked = 83 of 140 open
+issues (`sweep.py --drift-only`). The accounting identity is **BROKEN**: 57 open issues
+carry neither a milestone nor the `parked` label. One of the 57, #540, carries
+`evidence-trial`, which the sweep does not count, so 56 are outside the invariant below.
+This entry records the drift and does not reconcile it. The same day #721 and #739
+entered `v2026.10.0` by operator decision (rows above).
+
+**Tracker state (2026-10-23, after the #384 move):** 19 milestone-assigned + 64 parked = 83
+of 140 open issues (`sweep.py --drift-only`), the same counts as the entry above, because
+#384 moved from `v2026.10.0` to `v2026.11.0` and stays milestone-assigned. The accounting
+identity is still **BROKEN**: 57 open issues carry neither a milestone nor the `parked`
+label. One of the 57, #540, carries `evidence-trial`, so 56 are outside the invariant below.
 
 **The invariant:** every open issue carries exactly one of {a milestone, the `parked`
 label, the `evidence-trial` label}, so

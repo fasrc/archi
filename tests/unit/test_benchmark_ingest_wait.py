@@ -69,6 +69,10 @@ def _running(step="Updating vectorstore"):
     return {"state": "running", "step": step, "error": None}
 
 
+def _running_with(done, total=100):
+    return {**_running(), "progress": {"done": done, "total": total}}
+
+
 def _scripted(responses):
     """A fetch that walks `responses`, sticking on the last entry forever.
 
@@ -482,6 +486,161 @@ def test_an_unreachable_first_url_does_not_count_as_an_observed_ingest(monkeypat
     )
 
 
+def test_frozen_counter_trips_the_stall_budget(monkeypatch):
+    """A progress counter that does not advance is not evidence of progress."""
+    _budget_env(monkeypatch, stall="30", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted([_running_with(5)])
+
+    with pytest.raises(TimeoutError) as excinfo:
+        _bench().wait_for_ingestion_completion(
+            fetch=fetch, clock=clock, sleep=clock.sleep
+        )
+
+    assert "no progress reported" in str(excinfo.value)
+
+
+def test_advancing_counter_outlives_the_stall_budget(monkeypatch):
+    """Each advancing poll resets the stall budget; the run must not be killed."""
+    _budget_env(monkeypatch, stall="30", max_wait="0", poll="5")
+    clock = FakeClock()
+    # 10 advancing polls = 50 simulated seconds, well past the 30s stall budget.
+    responses = [_running_with(i) for i in range(10)] + [
+        {"state": "completed", "step": "done"}
+    ]
+    fetch = _scripted(responses)
+
+    elapsed = _bench().wait_for_ingestion_completion(
+        fetch=fetch, clock=clock, sleep=clock.sleep
+    )
+
+    assert clock.now - 1000.0 > 30
+    assert elapsed is not None
+
+
+def test_counter_that_freezes_after_advancing_trips_stall_budget(monkeypatch):
+    """A counter that stops advancing after progress trips the stall budget."""
+    _budget_env(monkeypatch, stall="30", max_wait="0", poll="5")
+    clock = FakeClock()
+    # 3 advancing polls, then frozen at done=3.
+    responses = [_running_with(i) for i in range(3)] + [_running_with(3)]
+    fetch = _scripted(responses)
+
+    with pytest.raises(TimeoutError) as excinfo:
+        _bench().wait_for_ingestion_completion(
+            fetch=fetch, clock=clock, sleep=clock.sleep
+        )
+
+    assert "no progress reported" in str(excinfo.value)
+
+
+def test_malformed_progress_falls_back_to_today_stall_rule(monkeypatch):
+    """Malformed or absent progress falls back to the pre-counter stall rule."""
+    malformed_shapes = [
+        {},  # no progress key
+        {"progress": None},
+        {"progress": "x"},
+        {"progress": {"done": True}},
+        {"progress": {"done": -1}},
+        {"progress": {"done": "3"}},
+        {"progress": {}},
+    ]
+    for extra in malformed_shapes:
+        _budget_env(monkeypatch, stall="30", max_wait="0", poll="5")
+        clock = FakeClock()
+        base = {**_running(), **extra}
+        responses = [base] * 20 + [{"state": "completed", "step": "done"}]
+        fetch = _scripted(responses)
+
+        _bench().wait_for_ingestion_completion(
+            fetch=fetch, clock=clock, sleep=clock.sleep
+        )
+
+        assert clock.now - 1000.0 > 30, f"outlives stall with {extra!r}"
+
+
+def test_state_and_step_exclusions_override_advancing_counter(monkeypatch):
+    """`pending` and `running`/`initializing` still trip the stall budget."""
+    _budget_env(monkeypatch, stall="30", max_wait="600", poll="5")
+
+    for payload_fn in (
+        lambda i: {
+            "state": "pending",
+            "step": None,
+            "error": None,
+            "progress": {"done": i, "total": 10},
+        },
+        lambda i: {**_running("initializing"), "progress": {"done": i, "total": 10}},
+    ):
+        clock = FakeClock()
+        fetch = _scripted([payload_fn(i) for i in range(100)])
+
+        with pytest.raises(TimeoutError):
+            _bench().wait_for_ingestion_completion(
+                fetch=fetch, clock=clock, sleep=clock.sleep
+            )
+
+        assert clock.now - 1000.0 <= 35
+
+
+def test_ingest_progress_done_helper():
+    """_ingest_progress_done returns the done count or None for each input shape."""
+    pd = service_benchmark._ingest_progress_done
+
+    assert pd({"progress": {"done": 5, "total": 10}}) == 5
+    assert pd({"progress": {"done": 0, "total": 10}}) == 0
+    assert pd({"progress": {"done": 0, "total": None}}) == 0
+
+    assert pd({}) is None  # no progress key
+    assert pd({"progress": None}) is None
+    assert pd({"progress": "x"}) is None
+    assert pd({"progress": {"done": True}}) is None  # bool rejected
+    assert pd({"progress": {"done": -1}}) is None  # negative rejected
+    assert pd({"progress": {"done": "3"}}) is None  # string rejected
+    assert pd({"progress": {}}) is None  # missing done
+
+
+def test_ingest_is_progressing_rules_with_counter():
+    """_ingest_is_progressing applies the four counter rules from D5."""
+    ip = service_benchmark._ingest_is_progressing
+
+    # rule 1: state not in running
+    assert ip("pending", "step", done=5, last_done=0) is False
+    # rule 2: initializing step
+    assert ip("running", "initializing", done=5, last_done=0) is False
+    # rule 3: done is None -> True (pre-counter path)
+    assert ip("running", "some step", done=None, last_done=None) is True
+    assert ip("running", "some step", done=None, last_done=5) is True
+    # rule 4: done != last_done -> True
+    assert (
+        ip("running", "some step", done=0, last_done=None) is True
+    )  # first counter poll
+    assert ip("running", "some step", done=1, last_done=0) is True  # advancing
+    # done == last_done -> False
+    assert ip("running", "some step", done=5, last_done=5) is False  # frozen
+
+
+def test_observed_ingest_start_is_first_counter_accepted_poll(monkeypatch):
+    """Queue time (initializing) is excluded from the observed ingest span."""
+    _budget_env(monkeypatch, stall="60", max_wait="0", poll="5")
+    clock = FakeClock()
+    # 3 initializing polls (not accepted), then 2 advancing counter polls, then done.
+    responses = (
+        [{**_running("initializing"), "progress": {"done": 0, "total": 10}}] * 3
+        + [_running_with(0)]
+        + [_running_with(1)]
+        + [{"state": "completed", "step": "done"}]
+    )
+    fetch = _scripted(responses)
+
+    elapsed = _bench().wait_for_ingestion_completion(
+        fetch=fetch, clock=clock, sleep=clock.sleep
+    )
+
+    assert clock.now - 1000.0 == 25.0, "total wait was 25s"
+    assert elapsed == 10.0, "only 10s of it was the observed ingest"
+
+
 def test_default_fetch_parses_the_status_payload(monkeypatch):
     """The real fetch decodes the endpoint's JSON body into a dict."""
     captured = {}
@@ -508,3 +667,66 @@ def test_default_fetch_parses_the_status_payload(monkeypatch):
     assert payload == {"state": "running", "step": "Flushing indices"}
     assert captured["url"] == LOCAL_INTERNAL
     assert captured["timeout"] == 5
+
+
+def test_a_refresh_is_waited_for_but_not_counted_as_ingest_cost(monkeypatch):
+    """Scheduled refreshes and uploads now report running; they are not the corpus build.
+
+    The wait must block on them (the corpus is changing), and they must keep the
+    stall budget alive, but their duration is not `ingest_wall_seconds`.
+    """
+    _budget_env(monkeypatch, stall="12", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted(
+        [_running("scheduled:git")] * 3
+        + [_running("upload")] * 2
+        + [{"state": "completed", "step": "done"}]
+    )
+
+    elapsed = _bench().wait_for_ingestion_completion(
+        fetch=fetch, clock=clock, sleep=clock.sleep
+    )
+
+    assert clock.now - 1000.0 == 25.0, "the wait blocked on the refresh"
+    assert elapsed is None
+
+
+def test_ingest_cost_starts_at_the_first_non_refresh_step(monkeypatch):
+    _budget_env(monkeypatch, stall="60", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted(
+        [_running("scheduled:links")] * 2
+        + [_running()] * 2
+        + [{"state": "completed", "step": "done"}]
+    )
+
+    elapsed = _bench().wait_for_ingestion_completion(
+        fetch=fetch, clock=clock, sleep=clock.sleep
+    )
+
+    assert elapsed == 10.0
+
+
+def test_a_refresh_queued_behind_the_ingest_is_not_counted_as_ingest_cost(
+    monkeypatch,
+):
+    """A refresh that runs after the ingest, before completed, ends the timing.
+
+    The data manager keeps the state running while a refresh is queued, so the
+    completed poll arrives only after the refresh. The ingest ended when the
+    refresh step first appeared.
+    """
+    _budget_env(monkeypatch, stall="60", max_wait="0", poll="5")
+    clock = FakeClock()
+    fetch = _scripted(
+        [_running()] * 2
+        + [_running("scheduled:git")] * 3
+        + [{"state": "completed", "step": "done"}]
+    )
+
+    elapsed = _bench().wait_for_ingestion_completion(
+        fetch=fetch, clock=clock, sleep=clock.sleep
+    )
+
+    assert clock.now - 1000.0 == 25.0, "the wait blocked on the refresh"
+    assert elapsed == 10.0

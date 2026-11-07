@@ -11,6 +11,8 @@ import logging
 import subprocess
 from pathlib import Path
 
+from src.cli.managers.git_env import git_env
+
 logger = logging.getLogger(__name__)
 
 UNKNOWN = "unknown"
@@ -63,6 +65,7 @@ def resolve_source_commit(repo_root=None):
             capture_output=True,
             text=True,
             check=True,
+            env=git_env(),
         ).stdout.strip()
         if not sha:
             return UNKNOWN
@@ -72,6 +75,7 @@ def resolve_source_commit(repo_root=None):
             capture_output=True,
             text=True,
             check=True,
+            env=git_env(),
         ).stdout
         return f"{sha}-dirty" if status.strip() else sha
     except Exception:

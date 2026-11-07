@@ -20,6 +20,7 @@ from .oracle_config import EvaluatorMCPRegistry
 from .profile import load_profile
 from .preparation import iter_preparation_records
 from .runtime import LangChainEvaluatorRuntime
+from .run_visibility import redact_run_for_viewer
 from .schema import CanceledRunRecord, ConsoleMetadata
 from .workflow import QAWorkflow
 
@@ -256,8 +257,11 @@ class EvaluationConsoleService:
     def list_runs(self, *, cutoff: datetime) -> List[Dict[str, Any]]:
         return self.history.list_runs(cutoff=cutoff)
 
-    def get_run(self, history_id: str) -> Dict[str, Any]:
-        return self.history.get_run(history_id)
+    def get_run(
+        self, history_id: str, *, include_hidden: bool = False
+    ) -> Dict[str, Any]:
+        run = self.history.get_run(history_id)
+        return run if include_hidden else redact_run_for_viewer(run)
 
     def get_report(self, history_id: str) -> str:
         return self.history.get_report(history_id)

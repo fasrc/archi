@@ -13,7 +13,8 @@ the ancestor, rather than unwrapping it, keeps `Note:` bold in
 `<strong>Note: <code>a<br>b</code></strong>`.
 
 The split SHALL copy the ancestor's attributes onto both halves, SHALL drop a half that
-holds no tag and no non-blank text, and SHALL drop the whitespace of each half that touches
+holds no tag and no non-blank text (except an emptied anchor with an `href`, which keeps its
+link; see the #430 change), and SHALL drop the whitespace of each half that touches
 the cut. The hoist SHALL run inside the deep-safe worker with the rest of the promotion, so a
 deeply nested page (issue #40) is converted, not failed, by the new code path. When several
 promoted blocks share one ancestor, the hoist SHALL move each sibling node at most once, so the

@@ -86,8 +86,12 @@ class QAPipeline(BasePipeline):
             self.update_retriever(vectorstore)
 
         inputs = self._prepare_inputs(history=kwargs.get("history"))
+        # Forward invoke callbacks (the QA evaluation's usage recorder) to the
+        # two LLM chains; without them the calls report no usage.
+        callbacks = kwargs.get("callbacks")
+        run_config = {"callbacks": callbacks} if callbacks else {}
 
-        condense_output = self.condense_chain.invoke({**inputs})
+        condense_output = self.condense_chain.invoke({**inputs}, config=run_config)
         retriever_output = self.retriever.invoke(condense_output["answer"])
         documents: List = []
         scores: List = []
@@ -101,7 +105,8 @@ class QAPipeline(BasePipeline):
                 **inputs,
                 "condense_output": condense_output["answer"],
                 "retriever_output": documents if documents else "",
-            }
+            },
+            config=run_config,
         )
 
         # Extract model identifier for tracking

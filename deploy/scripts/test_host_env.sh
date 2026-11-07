@@ -75,6 +75,21 @@ run_deploy() { # env assignments passed as "VAR=value" args
   '
 }
 
+# Same as run_deploy, but keeps archi_deploy's own log output in $TESTROOT/out
+# so a case can assert on what a real deploy log would contain.
+run_deploy_capture() { # env assignments passed as "VAR=value" args
+  : > "$TESTROOT/argv"
+  : > "$TESTROOT/out"
+  env -u DEPLOYMENT -u CONFIG -u GPU_IDS "$@" PATH="$TESTROOT/bin:$PATH" bash -c '
+    source "'"$FIXSCRIPTS"'/lib.sh"
+    require_secrets() { :; }
+    require_config_file() { :; }
+    ensure_config() { :; }
+    check_llm()     { :; }
+    archi_deploy
+  ' > "$TESTROOT/out" 2>&1
+}
+
 # --- 1 + 2: no host.env — reserved defaults, and no error --------------------
 rm -f "$FIXSCRIPTS/host.env"
 if run_deploy HOST_ENV_ABSENT=1; then
@@ -376,6 +391,29 @@ else
   notok "23 CHAT_PORT should be 7866 after ensure_config, got: ${port_seen:-<empty, fell back to 7861>}"
 fi
 rm -rf "$TESTROOT/repo/config" "$TESTROOT/fake-secrets.env"
+
+# --- 24 + 25: the deploy log records the effective CONFIG ---------------------
+# deploy/scripts/README.md tells operators that when host.env is unavailable they
+# can recover the deployed config path from the deploy log. That was false when
+# first written (archi_deploy invoked `archi create --config "$CONFIG"` but never
+# echoed it, so a successful log contained no --config at all — PR #536 review).
+# These cases pin the log line so the documented recovery route cannot silently
+# rot again.
+printf 'DEPLOYMENT=claw\nCONFIG=config/environments/claw.yaml\n' > "$FIXSCRIPTS/host.env"
+run_deploy_capture
+if grep -q 'config: deploying config/environments/claw.yaml' "$TESTROOT/out"; then
+  ok "24 the deploy log records the host.env CONFIG path"
+else
+  notok "24 deploy log should name config/environments/claw.yaml, got: $(tr '\n' '|' < "$TESTROOT/out")"
+fi
+rm -f "$FIXSCRIPTS/host.env"
+
+run_deploy_capture HOST_ENV_ABSENT=1
+if grep -q 'config: deploying deploy/fasrc-dev/config.yaml' "$TESTROOT/out"; then
+  ok "25 with no host.env the log records the tracked default"
+else
+  notok "25 deploy log should name the tracked default, got: $(tr '\n' '|' < "$TESTROOT/out")"
+fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

@@ -3,6 +3,14 @@
 Measured on fasrc-dev (`holygpu7c0717.rc.fas.harvard.edu`) on 2026-08-06.
 Tracking issue: fasrc/archi#215.
 
+> **Update 2026-10-19 ([#721](https://github.com/fasrc/archi/issues/721)):** most of
+> the CPU-to-GPU gap below came from torch's CPU thread count, not from the GPU.
+> The CPU baseline ran torch at its default of 32 threads (one per host core), and on
+> this shared host each embedding call then waited ~3 s on its slowest thread. With
+> `OMP_NUM_THREADS=8` the CPU embed stage of a full ingest took 2.1 min (1,162 files),
+> against 1.1 min on a V100. archi now renders that cap by default
+> (`data_manager.torch_threads`, see [configuration](configuration.md)).
+
 ## Hardware
 
 | | |
@@ -193,7 +201,11 @@ is CUDA runtime overhead.
 
 1. **New bottleneck: Git clone + LLM categorize** (12m 51s, was 8m 53s — more
    files). Scales linearly with file count; batching the categorization LLM calls
-   would help.
+   would help. **Superseded 2026-09-22:** the 2026-09 feature-matrix campaign
+   measured the categorization half at about +19 min per 1091-document ingest (an
+   approximate figure — the two arms' corpora were 0.43 % apart) with no resolvable
+   retrieval effect, and no default retrieval path reads the label it writes, so the
+   FASRC configs turn the feature off instead of batching it (issue #496).
 2. **Incremental embedding:** skip files whose content hash already has vectors in
    Postgres. A no-change re-ingest would be near-instant instead of 22 minutes.
 3. **772 remaining "disallowed suffix" warnings** are legitimate (.png, .rst,

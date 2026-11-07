@@ -44,6 +44,42 @@ The agent runs in a worker thread. The chat stream copies the caller's context a
 enters that thread through `contextvars.copy_context().run`, so the request span is
 already active there. No threading instrumentor is involved.
 
+## Slack traffic
+
+A question from the [Slack bot](services.md#slack-interface) carries three
+OpenInference attributes, so Phoenix can show Slack traffic alone:
+
+| Attribute | Value |
+|---|---|
+| `session.id` | The Slack thread key `slack:<team>:<channel>:<thread_ts>` |
+| `tag.tags` | `["slack"]` |
+| `metadata` | `{"source": "slack", "slack_team": …, "slack_channel": …, "slack_thread_ts": …}` |
+
+Two processes set them (`src/interfaces/slack_trace_tags.py`):
+
+- **The Slack bot** opens a `Slack question` CHAIN span around each `/v1` call. It is
+  the root of the trace, and Phoenix's **Sessions** tab groups traces by the root
+  span's `session.id`, so each Slack thread shows as one session, turn by turn. The
+  question and answer text go on this span only when content capture is on.
+- **The chat app** tags its `/v1` request span. It also keeps the attributes active
+  while the answer runs, so the LangGraph, retriever and model spans carry them too.
+  The agent's worker thread copies the context when the answer stream starts, which
+  is inside that window.
+
+To see Slack traffic in Phoenix, open the project and use one of these filters:
+
+```text
+metadata['source'] == 'slack'
+'slack' in tag.tags
+```
+
+Turns from before this change carry no tags. On a deployment where only the Slack bot
+calls `/v1`, this filter finds them:
+
+```text
+'/v1/chat/completions' in name and 'python-requests' in attributes['http']['user_agent']
+```
+
 ## Service names
 
 Each long-running service block in the compose file renders its own

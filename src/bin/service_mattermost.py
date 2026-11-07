@@ -6,6 +6,7 @@ import time
 from src.interfaces import mattermost
 from src.utils.env import read_secret
 from src.utils.logging import setup_logging
+from src.utils.postgres_service_factory import PostgresServiceFactory
 
 # set basicConfig for logging
 setup_logging()
@@ -20,6 +21,12 @@ def main():
     time.sleep(
         30
     )  # temporary hack to prevent mattermost from starting at the same time as other services; eventually replace this with more robust solution
+
+    # Set up shared Postgres services (expects config already in DB)
+    factory = PostgresServiceFactory.from_env(
+        password_override=read_secret("PG_PASSWORD")
+    )
+    PostgresServiceFactory.set_instance(factory)
 
     print("Initializing Mattermost Service")
     mattermost_agent = mattermost.Mattermost()

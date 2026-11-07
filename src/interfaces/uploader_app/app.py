@@ -30,6 +30,7 @@ from src.data_manager.collectors.utils.catalog_postgres import (
 )
 from src.data_manager.vectorstore.loader_utils import load_text_from_path
 from src.interfaces.chat_app.document_utils import check_credentials
+from src.interfaces.uploader_app.document_limits import clamp_document_chars
 from src.utils.catalog_query import parse_metadata_query
 from src.utils.config_access import get_full_config
 from src.utils.env import read_secret
@@ -759,15 +760,14 @@ class FlaskAppWrapper:
         return jsonify({"hits": hits, "total_duration": total_duration})
 
     def api_catalog_document(self, resource_hash: str):
-        max_chars = request.args.get("max_chars", default=4000, type=int)
+        limit = clamp_document_chars(request.args.get("max_chars"))
         self.catalog.refresh()
         path = self.catalog.get_filepath_for_hash(resource_hash)
         if not path:
             return jsonify({"error": "not_found"}), 404
         metadata = self.catalog.get_metadata_for_hash(resource_hash) or {}
         text = load_text_from_path(path) or ""
-        if max_chars and len(text) > max_chars:
-            text = text[:max_chars]
+        text = text[:limit]
         return jsonify(
             {
                 "hash": resource_hash,

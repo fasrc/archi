@@ -15,7 +15,7 @@ This guide covers the complete evaluation workflow:
 
 Evaluation is separate from the legacy `archi evaluate` benchmarking
 workflow. The legacy workflow measures RAGAS and source-retrieval metrics; see
-[Benchmarking](benchmarking.md). `archi eval qa` evaluates complete agent
+[Benchmarking](benchmarking.md). `archi qa` evaluates complete agent
 answers against explicit obligations and preserves reproducible run artifacts.
 
 ## What the evaluator does
@@ -42,7 +42,7 @@ inspection between phases, or use the browser console.
 
 | Interface                                      | Best for                                                                                           | Important behavior                                                                          |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| [CLI Guide](#cli-guide)                         | Automation, CI, local experiments, and exact control over workspaces                               | `archi eval qa` accepts file paths directly and can run all phases or one phase at a time |
+| [CLI Guide](#cli-guide)                         | Automation, CI, local experiments, and exact control over workspaces                               | `archi qa` accepts file paths directly and can run all phases or one phase at a time |
 | [Browser Console Guide](#browser-console-guide) | Importing shared datasets/profiles, manually reviewing atoms, launching runs, and browsing history | `/evaluations` uses persistent catalogs and background jobs in the chat service           |
 
 Both interfaces use the same validation, preparation, agent runtime, scoring,
@@ -67,7 +67,7 @@ workspace paths and individual phases.
 The output directory is not a config file and does not need to exist in
 advance. Before running:
 
-1. [Install Archi](install.md) and confirm `archi eval qa --help` works.
+1. [Install Archi](install.md) and confirm `archi qa --help` works.
 2. Make the tested agent's model provider and selected tool dependencies
    reachable from the CLI process.
 3. Provide credentials for the tested agent and evaluator models. See
@@ -448,7 +448,11 @@ pipeline exported by `src.archi.pipelines`.
 
 The CLI accepts an existing local `.yaml` or `.yml` file through
 `--agent-config`. During the run, Archi snapshots the resolved file as
-`agent_config.resolved.yaml`.
+`agent_config.resolved.yaml`. Values under secret-named keys (API keys, tokens,
+passwords, `Authorization` headers, and the password component of a URL) are
+replaced with `[redacted]` before the write. Every phase, including continue and
+retry, runs from that redacted content. Credentials must come from the environment
+or secrets, not from inline config values.
 
 The browser Console needs no separate agent-config file. It evaluates the agent
 already defined by the running deployment's YAML—for example,
@@ -504,7 +508,7 @@ empty.
 The composite command prepares, runs, and scores in one operation:
 
 ```bash
-archi eval qa \
+archi qa \
   --dataset questions.json \
   --agent-config agent.yaml \
   --agent-spec agent.md \
@@ -537,7 +541,7 @@ the approved baseline are scored.
 Omit `--evaluator-profile` to use the built-in profile:
 
 ```bash
-archi eval qa \
+archi qa \
   --dataset questions.json \
   --agent-config agent.yaml \
   --agent-spec agent.md \
@@ -555,7 +559,7 @@ before paying for evaluator calls.
 ##### 1. Prepare
 
 ```bash
-archi eval qa prepare questions.json \
+archi qa prepare questions.json \
   --evaluator-profile evaluator.yaml \
   --mcp-config qa_evaluation_mcp.yaml \
   --output-dir evaluation-run/
@@ -576,7 +580,7 @@ the tested agent. If no row is prepared, the subsequent run refuses to start.
 ##### 2. Run the agent
 
 ```bash
-archi eval qa run evaluation-run/ \
+archi qa run evaluation-run/ \
   --agent-config agent.yaml \
   --agent-spec agent.md \
   --mcp-config qa_evaluation_mcp.yaml \
@@ -605,14 +609,14 @@ omits unavailable response and duration fields.
 ##### 3. Score
 
 ```bash
-archi eval qa score evaluation-run/ --score-workers 8
+archi qa score evaluation-run/ --score-workers 8
 ```
 
 You may pass `--evaluator-profile evaluator.yaml`, but it must match the
 profile already snapshotted during preparation:
 
 ```bash
-archi eval qa score evaluation-run/ \
+archi qa score evaluation-run/ \
   --evaluator-profile evaluator.yaml
 ```
 
@@ -694,11 +698,11 @@ a RAGAS 0.3.5 question bank and normalized at the import boundary:
   [Evaluator MCP registry](#evaluator-mcp-registry).
 
 The same adapter is reachable from the command line, for a bank you want to run
-through `archi eval qa` rather than upload:
+through `archi qa` rather than upload:
 `python scripts/benchmarking/ragas_bank_to_qa_dataset.py <bank.json> --out <dataset.json>`
 converts a bank — plus the anchor questions the RAGAS harness stages beside it on
 every run, deduped on exact `user_input` with the bank row winning — into a
-`qa-dataset-v2` file that `archi eval qa --dataset <dataset.json>` accepts. It
+`qa-dataset-v2` file that `archi qa --dataset <dataset.json>` accepts. It
 calls this same normalizer and reads the bank with the same strict parser, so for
 a modern-dialect bank the mapping, the carried fields and the ids are identical
 whichever door it comes through. A **legacy** bank is the one difference: the
@@ -811,9 +815,18 @@ Authenticated deployments use:
 - `evaluations:manage` to import datasets and profiles, generate or review
   atoms, refresh live snapshots, and save reviewed datasets.
 
+Run detail keeps the answer key from callers without `evaluations:manage`.
+A view-only caller still gets scores, statuses, questions, judgment outcomes,
+latency, and tool calls, but not approved answers, gold atoms, live-oracle
+evidence, raw agent answers, judgment rationales, the text of error and
+live-validation diagnostics, or the manifest's artifact digests. Failed rows
+keep their status. A caller with `evaluations:manage` gets the full run. The
+run list and reports are the same for both.
+
 The wildcard administrator role grants all three. Add them explicitly to
 custom roles as needed. When authentication is disabled, evaluation routes
-retain the normal unrestricted local-development behavior.
+retain the normal unrestricted local-development behavior, and run detail
+includes the answer key.
 
 ### Usage
 
@@ -984,6 +997,10 @@ The console exposes both rendered results and their persisted evidence:
 | Immutable evidence                                           | The run workspace under the configured evaluation root    |
 | Reusable inputs and work state                               | Dataset/profile catalogs, atom drafts, and persisted jobs |
 
+Answers, gold atoms, and judgment rationales in run detail need
+`evaluations:manage`; a view-only caller sees the outcomes without them (see
+[Permissions](#permissions)).
+
 #### Compare history trends
 
 The evaluation homepage requests one bounded history window from the server for
@@ -1131,7 +1148,7 @@ The current workspace schema is `qa-v2`.
 | `input.snapshot.json` or `.jsonl` | Prepare               | Exact input bytes used by the run                                                                                                                                                                    |
 | `evaluator_profile.resolved.yaml`   | Prepare               | Fixed evaluator profile                                                                                                                                                                              |
 | `preparation.jsonl`                 | Prepare               | One terminal record per input item, containing either runnable normalized data and fixed atoms, a skip, or a preparation failure                                                                     |
-| `agent_config.resolved.yaml`        | Run                   | Exact tested Archi config                                                                                                                                                                            |
+| `agent_config.resolved.yaml`        | Run                   | Exact tested Archi config with secret values redacted                                                                                                                                                |
 | `agent_spec.resolved.md`            | Run                   | Exact tested agent spec and prompt                                                                                                                                                                   |
 | `answers.jsonl`                     | Run                   | One terminal`answer_ready` or `execution_failed` row per attempt slot, including tested-agent `duration_ms` and complete ordered tool-call query/response/error records with optional duration |
 | `live_checks.jsonl`                 | Run                   | Ordered pre-run and post-run oracle observations, normalized answers, hashes, metadata, bounded call evidence, or item-scoped live failures                                                          |
@@ -1143,9 +1160,10 @@ The current workspace schema is `qa-v2`.
 
 The workspace is the reproducibility record. Keep it intact when comparing
 runs, and archive it with any external version identifiers you need. The
-current artifacts record tested-agent and tool-call latency but do not record
-source-control commits, release gates, token usage, model prompts, evaluator
-prompts, or reasoning traces. Tool queries and responses are complete.
+current artifacts record tested-agent and tool-call latency and LLM token
+usage (see [Price a run from recorded tokens](#price-a-run-from-recorded-tokens)),
+but do not record source-control commits, release gates, model prompts,
+evaluator prompts, or reasoning traces. Tool queries and responses are complete.
 
 ### Rerunning and integrity protection
 
@@ -1159,7 +1177,7 @@ Existing evaluator-owned files are not overwritten by default:
   artifacts;
 - `run --overwrite` replaces run artifacts and invalidates score artifacts;
 - `score --overwrite` replaces only results, summary, and report;
-- composite `archi eval qa --overwrite` rebuilds the complete workspace.
+- composite `archi qa --overwrite` rebuilds the complete workspace.
 
 Use a new output directory when comparing agents, prompts, providers, models,
 attempt counts, datasets, or evaluator profiles. Reusing and overwriting one
@@ -1208,6 +1226,75 @@ Canonical answers and atoms are hidden from the tested agent, but they are
 stored in the workspace. Evaluator prompts and rationales also contain or may
 reveal them. Restrict access to datasets, the evaluation root, run artifacts,
 logs, and reports according to the sensitivity of the evaluation set.
+
+#### Price a run from recorded tokens
+
+Token records cover the QA workflow's own LLM calls (atom extraction, the tested
+agent, the comparator) and the RAGAS judge in benchmark runs. The benchmark's
+tested model (the SUT) is **not** recorded: `judge_usage` counts only the judge, so
+pricing a benchmark run from these records leaves out the SUT's tokens.
+
+**Where `usage` appears:**
+
+- `preparation.jsonl` — rows where the extractor was called (`atom_source: "inferred"`,
+  or `preparation_failed` after the extractor call) carry a `usage` key (`null` if the
+  call failed before it reported usage). Supplied-atom rows have no `usage` key.
+- `answers.jsonl` — every `answer_ready` and `execution_failed` row carries `"usage"`
+  (`null` if the runtime reported no counts).
+- `evaluation_results.jsonl` — every `scored` and `evaluation_failed` row carries `"usage"`.
+- `summary.json` → `provenance.usage` — three keys `prepare`, `run`, and `score` hold
+  the phase totals (each is `null` if no rows reported usage for that phase).
+- Benchmark arm entries → `judge_usage` — the ragas judge's token usage for that arm
+  (`null` when ragas did not run).
+
+**Shape (the same everywhere):**
+
+```json
+{
+  "input_tokens": 1234,
+  "output_tokens": 56,
+  "calls": 2,
+  "unreported_calls": 0,
+  "by_model": [
+    {
+      "provider": "huit_bedrock",
+      "model": "claude-x",
+      "input_tokens": 1234,
+      "output_tokens": 56,
+      "calls": 2,
+      "unreported_calls": 0
+    }
+  ]
+}
+```
+
+`calls` counts LLM requests. A request that returns several candidates (`n > 1`)
+counts as one call with its request-level tokens, not once for each candidate.
+
+**Calculating cost:**
+
+Sum over every entry in `by_model` using your provider's per-token rates:
+
+```
+cost = Σ (entry["input_tokens"] × rate_in + entry["output_tokens"] × rate_out)
+```
+
+where `rate_in` and `rate_out` are the per-token input and output prices for that
+`(provider, model)` pair, sourced from the provider's current pricing page.
+
+**Limits:**
+
+- `unreported_calls > 0` means that many LLM calls finished without sending token counts;
+  those tokens were consumed but are not measurable here.
+- A call that raised before it finished left no usage event and is not counted in any field.
+- `input_tokens` is one total. When a provider bills cached-read or cache-creation
+  input tokens at a different rate, that split is not kept here, so the formula
+  gives an estimate that can be higher or lower than the bill.
+- A retry run directory copies rows from its parent; those rows carry the parent run's usage,
+  so the retry totals include them.
+- `provider` is always `services.chat_app.default_provider`, also for a model that a
+  pipeline declares on another provider and for LLM calls inside tools. `model` comes
+  from the response, so check `provider` before you pick a rate (issue #597).
 
 ## Troubleshooting
 
@@ -1278,6 +1365,6 @@ evaluation. A `cancel_requested` job remains active until its process exits. If
 the service restarted, refresh the catalog and verify that the old job was
 marked `interrupted`.
 
-For exact command flags, see [`archi eval qa` in the CLI
-reference](cli_reference.md#archi-eval-qa). For deployment-level paths and
+For exact command flags, see [`archi qa` in the CLI
+reference](cli_reference.md#archi-qa). For deployment-level paths and
 authentication settings, see [Configuration](configuration.md).

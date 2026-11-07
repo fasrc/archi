@@ -71,9 +71,14 @@ class ChainWrapper:
 
         return inputs
 
-    def invoke(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+    def invoke(
+        self, inputs: Dict[str, Any], config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
         Call the chain to produce the LLM answer with some given inputs determined by the prompt.
+
+        ``config`` is the langchain runnable config, passed to the chain as is, so
+        callbacks (for example a usage recorder) reach the LLM call.
         """
         logger.debug("Invoked chain with inputs:\n%s", pprint.pformat(inputs, indent=2))
 
@@ -91,7 +96,7 @@ class ChainWrapper:
         )
 
         # produce LLM response
-        answer = self.chain.invoke(input_variables, config={})
+        answer = self.chain.invoke(input_variables, config=config or {})
 
         logger.debug(f"Chain produced answer: {answer}")
 

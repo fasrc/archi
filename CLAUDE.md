@@ -64,3 +64,7 @@ for the full steps. This project's values:
   - `src/interfaces/chat_app/app.py` is **not imported by unit tests**, so new lines there
     fail diff-cover — route new logic through a small tested helper module and keep `app.py`
     to thin call sites (see `config_fingerprint.py`).
+  - **`bench_out/` is a separate repository** (`fasrc/archi-bench-out`, checked out in place on
+    the dev host) and is git-ignored here; archi tracks nothing under it. Moving this checkout
+    across the commit that untracked it deletes the formerly tracked files from the working
+    tree: run `git -C bench_out checkout -- .` afterwards to restore them from their own repo.

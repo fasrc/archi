@@ -140,14 +140,26 @@ data_manager:
         min_pages: 150
   embedding_name: HuggingFaceEmbeddings
   # --- ingest processing: HTML->Markdown (default-on) + optional LLM categorization ---
-  # Categorization makes one LLM call per doc at ingest, writing a single-token
-  # label to metadata.llm_category. Remove the categorization block (or set
-  # enabled: false) to skip it.
+  # Categorization makes one LLM call per doc at ingest. It writes a single-token
+  # label to metadata.llm_category.
+  #
+  # OFF since 2026-09-22 (issue #496). The 2026-09 feature-matrix campaign measured
+  # arm 03 against the baseline on a 1091-document ingest: 3802 s with the feature
+  # off against 4956 s with it on, about 19 minutes. Enabling adds about 30 %;
+  # disabling saves about 23 %. Treat the figure as approximate -- the two arms did
+  # not ingest identical corpora (6926 chunks against 6896, 0.43 % apart). The
+  # campaign resolved no retrieval effect: context_precision -0.004 / -0.002 against
+  # a minimum detectable effect of 0.025 / 0.027.
+  #
+  # No default retrieval path reads metadata.llm_category. The label is still
+  # reachable through the search_metadata_index tool, which matches unmapped keys by
+  # substring over extra_text, but nothing tells the model this vocabulary. Set
+  # enabled: true to opt back in -- the other keys stay in place.
   processing:
     html_to_markdown:
       enabled: true
     categorization:
-      enabled: true
+      enabled: false
       provider: local            # the deployed vLLM (services.chat_app.providers.local)
       model: "<LLM_MODEL_ID>"
       max_chars: 4000

@@ -42,6 +42,22 @@ _RANKER_CACHE: Dict[str, Any] = {}
 # than racing into duplicate loads or a partially-initialized entry.
 _RANKER_CACHE_LOCK = threading.Lock()
 
+# Metadata keys for the character span of the best-ranked child inside a returned
+# parent's ``page_content``. The retriever tool renders that span instead of the
+# parent's opening (``tools/retriever.py``). Offsets, not the child text, because
+# the benchmark persists full source metadata into its result files.
+MATCHED_START_KEY = "matched_start"
+MATCHED_END_KEY = "matched_end"
+
+
+def _record_matched_span(parent: Document, child_text: str) -> None:
+    """Record where *child_text* sits in *parent*'s text; record nothing if absent."""
+    start = parent.page_content.find(child_text) if child_text else -1
+    if start < 0:
+        return
+    parent.metadata[MATCHED_START_KEY] = start
+    parent.metadata[MATCHED_END_KEY] = start + len(child_text)
+
 
 def _get_cached_ranker(model_name: str) -> Any:  # pragma: no cover - loads model
     """Build (once) and return a FlashRank ``Ranker`` for ``model_name``."""
@@ -239,6 +255,9 @@ class LlamaIndexHierarchicalRetriever(BaseRetriever):
         seen: set = set()
         parent_ids: List[Any] = []
         passthrough: Dict[Tuple[str, Any], Document] = {}
+        # The first child seen per parent is its best-ranked one: the passage the
+        # parent is returned for.
+        best_child_text: Dict[Any, str] = {}
 
         for index, score in ranked:
             doc, _hybrid_score = candidates[index]
@@ -250,6 +269,7 @@ class LlamaIndexHierarchicalRetriever(BaseRetriever):
                 seen.add(key)
                 ordered.append((key, score))
                 parent_ids.append(parent_id)
+                best_child_text[parent_id] = doc.page_content
             else:
                 key = ("child", index)
                 seen.add(key)
@@ -264,6 +284,7 @@ class LlamaIndexHierarchicalRetriever(BaseRetriever):
                 doc = parents.get(ref)
                 if doc is None:
                     continue
+                _record_matched_span(doc, best_child_text[ref])
             else:
                 doc = passthrough[(kind, ref)]
             doc.metadata["rerank_score"] = score

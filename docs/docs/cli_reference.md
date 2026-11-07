@@ -214,11 +214,14 @@ See [Benchmarking](benchmarking.md) for full details on query format and evaluat
 
 ---
 
-### `archi eval qa`
+### `archi qa`
+
+> **Deprecated alias:** `archi eval qa …` still runs the same command for one
+> release and prints a deprecation notice to stderr. Use `archi qa`.
 
 Run source-neutral, atom-based evaluation without changing the legacy
 `archi evaluate` workflow. `archi evaluate` above measures RAGAS and
-source-retrieval benchmarking metrics; `archi eval qa` instead judges a
+source-retrieval benchmarking metrics; `archi qa` instead judges a
 complete agent answer against explicit gold-atom obligations. The composite
 command validates and prepares the dataset, runs the selected agent
 independently for every attempt, then scores each usable answer:
@@ -228,7 +231,7 @@ console usage, state semantics, scoring, and troubleshooting, see the
 [Evaluation Guide](evaluation.md).
 
 ```bash
-archi eval qa \
+archi qa \
   --dataset questions.jsonl \
   --agent-config agent.yaml \
   --agent-spec agent.md \
@@ -319,7 +322,7 @@ answers before scoring them.
 #### 1. Prepare the dataset
 
 ```bash
-archi eval qa prepare questions.jsonl \
+archi qa prepare questions.jsonl \
   --evaluator-profile evaluator.yaml \
   --mcp-config qa_evaluation_mcp.yaml \
   --output-dir evaluation-run/
@@ -346,7 +349,7 @@ workspace. It does not run Archi or generate tested-agent answers.
 #### 2. Run Archi
 
 ```bash
-archi eval qa run evaluation-run/ \
+archi qa run evaluation-run/ \
   --agent-config agent.yaml \
   --agent-spec agent.md \
   --mcp-config qa_evaluation_mcp.yaml \
@@ -370,7 +373,7 @@ rows with timing-only records remain supported by the evaluation console.
 #### 3. Score the answers
 
 ```bash
-archi eval qa score evaluation-run/ --score-workers 8
+archi qa score evaluation-run/ --score-workers 8
 ```
 
 The positional `evaluation-run/` argument is the same workspace directory used by the
@@ -413,7 +416,7 @@ more detailed analysis or automation, the same workspace contains:
 | `preparation.jsonl` | Exactly one terminal record per input item: normalized prepared questions with canonical or resolved answers and fixed gold atoms, intentional live omissions, or oracle/atom-extraction failures. |
 | `live_checks.jsonl` | Ordered pre-run and post-run Dataset V2 oracle observations, answer hashes, metadata, call evidence, and item-scoped live failures. Static runs contain an empty file. |
 | `input.snapshot.json` or `input.snapshot.jsonl` | An exact snapshot of the input dataset used for the evaluation. |
-| `agent_config.resolved.yaml` and `agent_spec.resolved.md` | The resolved Archi configuration and exact agent spec used to generate the answers. |
+| `agent_config.resolved.yaml` and `agent_spec.resolved.md` | The resolved Archi configuration with secret values redacted, and the exact agent spec used to generate the answers. |
 | `evaluator_profile.resolved.yaml` | The resolved atoms-extractor and scoring-evaluator configuration. |
 | `manifest.json` | The run ID, phase states, attempt count, artifact names, versions, and SHA-256 hashes used to detect changes to completed-phase inputs. |
 
@@ -448,11 +451,11 @@ Each atom must have a unique, non-empty `id`, non-empty `text`, and a boolean
 `required` value, and every row must contain at least one required atom.
 Supplying `expected_atoms` replaces automatic atom generation for that row:
 `prepare` validates and copies the supplied atoms without calling the atoms
-extractor. The composite `archi eval qa` command detects this automatically as
+extractor. The composite `archi qa` command detects this automatically as
 well, so no separate atom-generation command is needed. It still performs the
 preparation phase to validate and snapshot the dataset before running and
 scoring it. In the staged workflow, `run` still requires that prepared
-workspace, so `archi eval qa prepare` cannot be omitted entirely.
+workspace, so `archi qa prepare` cannot be omitted entirely.
 
 Across all three stages, `manifest.json` records phase state and SHA-256 hashes.
 Editing an artifact from a completed phase makes the next phase fail closed.
@@ -460,9 +463,12 @@ Editing an artifact from a completed phase makes the next phase fail closed.
 `run` uses the selected Archi pipeline through its normal production interface.
 The evaluation runner observes the pipeline's tool callbacks and stores complete
 ordered query, response, error, status, and available duration evidence in
-`answers.jsonl`. It does not add tool-schema preflight, secret redaction,
-automatic retries, or evaluation-specific changes to agent behavior. Treat the
-workspace as sensitive because tool evidence is not truncated or redacted.
+`answers.jsonl`. Before the first phase, `run` replaces secret values in the
+resolved Archi config with `[redacted]`, and every phase runs from that redacted
+config, so credentials must come from the environment. It does not add
+tool-schema preflight, automatic retries, or other evaluation-specific changes to
+agent behavior. Treat the workspace as sensitive because tool evidence is not
+truncated or redacted.
 When the selected agent spec enables `mcp` but normal pipeline construction
 loads no MCP tools, that attempt is recorded as `execution_failed` before the
 model is invoked.
@@ -486,7 +492,7 @@ qa:
 Use `--evaluator-profile profile.yaml` on the composite command or `prepare`.
 If supplied again to `score`, its resolved content must match the prepared
 profile. Evaluator temperature is fixed at zero; selected evaluator models must
-accept `temperature=0`, otherwise the `archi eval qa` command fails.
+accept `temperature=0`, otherwise the `archi qa` command fails.
 
 ---
 

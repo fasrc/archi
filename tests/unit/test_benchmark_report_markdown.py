@@ -725,3 +725,30 @@ def test_a_null_host_names_the_remote_engine_refusal_cause():
     assert "capture failed" in md_null
     assert "metadata could not be read" in md_null
     assert "predates the field" in md_null
+
+
+def test_markdown_flags_changed_embedding_model_tags():
+    md = _provenance_md(embedding_tags_unchanged_at_endpoints=False)
+
+    assert "embedding model tag" in md
+    assert "changed" in md.lower()
+
+
+def test_markdown_shows_unknown_for_none_embedding_tag_stability():
+    md = _provenance_md(embedding_tags_unchanged_at_endpoints=None)
+
+    assert "embedding model tag" in md.lower()
+    assert "unknown" in md.lower()
+
+
+def test_markdown_shows_unchanged_line_for_stable_embedding_tags():
+    md = _provenance_md(embedding_tags_unchanged_at_endpoints=True)
+
+    assert "embedding model tag" in md
+    assert "did not change" in md
+
+
+def test_markdown_shows_no_tag_line_for_artifact_without_embedding_tag_key():
+    md = _provenance_md()
+
+    assert "embedding model tag" not in md

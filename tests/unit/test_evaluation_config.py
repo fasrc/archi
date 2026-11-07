@@ -311,3 +311,15 @@ def test_validate_chat_app_config_allows_disabled_evaluations():
     mgr = _config_manager()
     config = _minimal_chatbot_config({"enabled": False})
     mgr._validate_chat_app_config(config, ["chatbot"])
+
+
+def test_validate_chat_app_config_refuses_enabled_evaluations_with_missing_file(
+    tmp_path,
+):
+    mgr = _config_manager()
+    missing = tmp_path / "agent.yaml"
+    config = _minimal_chatbot_config(
+        {"enabled": True, "agent_config_path": str(missing)}
+    )
+    with pytest.raises(ValueError, match="not found"):
+        mgr._validate_chat_app_config(config, ["chatbot"])

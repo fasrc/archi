@@ -192,3 +192,6 @@ opentelemetry-instrumentation-psycopg2==0.65b0
 opentelemetry-instrumentation-sqlite3==0.65b0
 opentelemetry-instrumentation-logging==0.65b0
 openinference-instrumentation-langchain==0.1.74
+# add-slack-service: the Slack bot's Socket Mode and Web API client (no required
+# dependencies). Version matches pyproject.toml.
+slack_sdk==3.45.0
