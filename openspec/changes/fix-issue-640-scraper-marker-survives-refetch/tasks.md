@@ -151,7 +151,7 @@
 
 ## 3. Docs (design D9)
 
-- [ ] 3.1 In `docs/docs/configuration.md`, after the bullet list under "Two rows need care
+- [x] 3.1 In `docs/docs/configuration.md`, after the bullet list under "Two rows need care
       when a marker is absent" (`:216-222`) and before "To keep a link source out of an
       ingest today", add the paragraph of design D9. Name the command exactly:
       `python scripts/maintenance/repair_scraper_markers.py --pg-dsn <dsn> --input-list
@@ -171,7 +171,7 @@
 
 ## 4. Publish
 
-- [ ] 4.1 Tick this box, commit the tick through the hook, then push:
+- [x] 4.1 Tick this box, commit the tick through the hook, then push:
       `git push -u origin fix/issue-640-scraper-marker-survives-refetch`. Check for an
       existing PR first: `gh pr list --repo fasrc/archi --head
       fix/issue-640-scraper-marker-survives-refetch --state open --json number`. If one
