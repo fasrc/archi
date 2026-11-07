@@ -6,6 +6,7 @@ into a failure -- and under `--force` that failure lands *after* the existing de
 been removed unless something refuses first (fasrc/archi#266, #287).
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -2754,6 +2755,237 @@ def test_a_recorded_checkout_missing_what_the_source_copy_needs_refuses(
     assert "pyproject.toml" in str(
         excinfo.value
     ), "the refusal must name what was missing, not just that something was"
+
+
+def test_a_recorded_checkout_missing_src_says_missing(tmp_path, monkeypatch):
+    """`src` absent entirely must be named with "is missing", not "unreadable"."""
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    shutil.rmtree(checkout / "src")
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_source_root()
+
+    assert "is missing src" in str(excinfo.value)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+def test_a_recorded_checkout_with_unreadable_src_says_unreadable(tmp_path, monkeypatch):
+    """`src` present but unreadable must be named "unreadable", never "missing".
+
+    `copytree` needs to list and enter `src`; a mode of `0o000` fails both, the same way
+    it would fail the real copy.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    src = checkout / "src"
+    mode = src.stat().st_mode
+    src.chmod(0o000)
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+    try:
+        with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+            preflight.build_source_root()
+    finally:
+        src.chmod(mode)
+
+    message = str(excinfo.value)
+    assert "unreadable src" in message
+    assert "missing" not in message
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+def test_an_unreadable_file_under_src_is_named_by_its_relative_path(
+    tmp_path, monkeypatch
+):
+    """An unreadable file inside `src` must be named, not just `src` itself.
+
+    `copytree` fails on the first entry it cannot read, so the preflight has to walk
+    `src` to predict that -- naming only `src` would send the operator fixing a mode
+    that is already fine.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    probe = checkout / "src" / "cli" / "probe.py"
+    probe.write_text("pass\n")
+    mode = probe.stat().st_mode
+    probe.chmod(0o000)
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+    try:
+        with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+            preflight.build_source_root()
+    finally:
+        probe.chmod(mode)
+
+    assert "src/cli/probe.py" in str(excinfo.value)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+def test_a_missing_path_and_an_unreadable_path_are_both_named(tmp_path, monkeypatch):
+    """A missing `LICENSE` and an unreadable `pyproject.toml` must both be named."""
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    (checkout / "LICENSE").unlink()
+    pyproject = checkout / "pyproject.toml"
+    mode = pyproject.stat().st_mode
+    pyproject.chmod(0o000)
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+    try:
+        with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+            preflight.build_source_root()
+    finally:
+        pyproject.chmod(mode)
+
+    message = str(excinfo.value)
+    assert "is missing LICENSE" in message
+    assert "has unreadable pyproject.toml" in message
+
+
+def test_a_healthy_checkout_is_returned_by_build_source_root(tmp_path, monkeypatch):
+    """A checkout with everything present and readable must not raise."""
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    assert preflight.build_source_root() == checkout
+
+
+def test_src_reported_unreadable_by_os_access_says_unreadable(tmp_path, monkeypatch):
+    """The readability check must go through `os.access`, not a real file mode.
+
+    Driving this branch by monkeypatching `preflight.os.access` keeps the test honest on
+    a host where the real-`chmod` tests above skip (root ignores file modes).
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    real_access = preflight.os.access
+
+    def fake_access(path, mode):
+        if Path(path) == checkout / "src":
+            return False
+        return real_access(path, mode)
+
+    monkeypatch.setattr(preflight.os, "access", fake_access)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_source_root()
+
+    assert "unreadable src" in str(excinfo.value)
+
+
+def test_a_file_under_src_reported_unreadable_by_os_access_is_named(
+    tmp_path, monkeypatch
+):
+    """A single file the walk finds unreadable via `os.access` must be named too."""
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    probe = checkout / "src" / "cli" / "probe.py"
+    probe.write_text("pass\n")
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    real_access = preflight.os.access
+
+    def fake_access(path, mode):
+        if Path(path) == probe:
+            return False
+        return real_access(path, mode)
+
+    monkeypatch.setattr(preflight.os, "access", fake_access)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_source_root()
+
+    assert "src/cli/probe.py" in str(excinfo.value)
+
+
+def test_a_file_behind_a_symlinked_directory_under_src_is_named(tmp_path, monkeypatch):
+    """`copytree` follows a directory symlink under `src`, so the walk must too.
+
+    Without that, an unreadable file behind the link passes the preflight and the copy
+    fails below the teardown -- the failure this check exists to prevent.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.py").write_text("pass\n")
+    (checkout / "src" / "linked").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    hidden = checkout / "src" / "linked" / "secret.py"
+    real_access = preflight.os.access
+
+    def fake_access(path, mode):
+        if Path(path) == hidden:
+            return False
+        return real_access(path, mode)
+
+    monkeypatch.setattr(preflight.os, "access", fake_access)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_source_root()
+
+    assert "has unreadable src/linked/secret.py" in str(excinfo.value)
+
+
+def test_a_directory_symlink_cycle_under_src_refuses(tmp_path, monkeypatch):
+    """A directory symlink back to its own ancestor makes `copytree` fail.
+
+    `copytree` follows the link without end and raises `shutil.Error`, below the
+    teardown. The walk must refuse it instead of looping or passing.
+    """
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    (checkout / "src" / "cli" / "loop").symlink_to(
+        checkout / "src", target_is_directory=True
+    )
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_source_root()
+
+    assert "has unreadable src/cli/loop" in str(excinfo.value)
+
+
+def test_a_directory_under_src_that_cannot_be_listed_is_named(tmp_path, monkeypatch):
+    """A listing failure that `os.access` cannot see must refuse, not pass.
+
+    `os.walk` drops a `scandir` error unless it is given `onerror`, and an I/O error
+    (here `EIO`) passes every `os.access` check. `copytree` would then fail on the same
+    listing below the teardown.
+    """
+    import errno
+
+    from src.cli.managers import source_version
+
+    checkout = _recorded_checkout(tmp_path)
+    broken = checkout / "src" / "cli"
+    monkeypatch.setattr(source_version, "_recorded_repo_root", lambda: checkout)
+
+    real_scandir = preflight.os.scandir
+
+    def fake_scandir(path="."):
+        if Path(path) == broken:
+            raise OSError(errno.EIO, "Input/output error", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(preflight.os, "scandir", fake_scandir)
+
+    with pytest.raises(preflight.BaseImagePreflightError) as excinfo:
+        preflight.build_source_root()
+
+    assert "has unreadable src/cli" in str(excinfo.value)
 
 
 def test_a_recorded_checkout_whose_template_dir_is_a_file_refuses(
