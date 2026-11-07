@@ -42,7 +42,9 @@ block new jobs: `test_job_manager_terminates_running_evaluation_process`
   thread, and a second write failure must follow, so this is out of scope.
 - `wait()` still raises a worker's exception. No code in `src/` calls it, and the new
   tests use it to wait for the worker to end.
-- No new job status, and no change to `_interrupt_stale_jobs()`.
+- No new job status, and no change to `_interrupt_stale_jobs()`. (Decision 9 settles a
+  `cancel_requested` record with no future inside `_settle_ownerless`; the `queued` and
+  `running` no-future cases above stay out of scope.)
 
 ## Decisions
 
@@ -107,6 +109,35 @@ block new jobs: `test_job_manager_terminates_running_evaluation_process`
    cancel could run `on_terminated` twice, and a worker that ended in the gap skipped
    the process-group kill), and four untested guards. This version removes the gap
    (decision 2) and adds a test for each guard.
+8. **A Cancel does not hide a scored run** (operator decision of 2026-11-07, PR #807 open
+   item 3; the Codex P2 thread on `jobs.py:456`). `persist_canceled` in
+   `EvaluationConsoleService.cancel_evaluation` (`src/evaluation/qa/console.py:608-622`)
+   reads nothing about the run before it writes `canceled.json`. When the worker finished
+   scoring (the run directory holds `manifest.json`) and only the manager's final
+   job-file write (`jobs.py:351`) failed, the record stays `running`; the Cancel that the
+   docs recommend then wrote `canceled.json` into the scored run, and
+   `EvaluationHistory._load_canceled` (`history.py:134`) reads the run as `canceled`,
+   with no scores, no report and no retry. On `origin/dev` the same Cancel raised the
+   worker's `OSError` (HTTP 500) and wrote nothing, so the scored run stayed visible.
+   Decision: `persist_canceled` refuses when `run_dir / "manifest.json"` exists (the file
+   the history reads for a scored run). It writes nothing and logs at WARNING that the
+   run finished before the cancel. The job record still ends as `canceled`, as the
+   operator asked, and the history row comes from the manifest, as before the cancel. A
+   run with no manifest (the worker stopped before scoring) keeps the current behavior.
+9. **The ownership rule covers a `cancel_requested` record with no future** (operator
+   decision of 2026-11-07, PR #807 open item 4). After a restart,
+   `_interrupt_stale_jobs()` leaves `attention_required` records alone, so a paused job
+   has no future. If its Cancel fails after the `cancel_requested` write (for example,
+   `persist_canceled` cannot read `console_metadata.json`), the record reads
+   `cancel_requested` with no owner. `_settle_ownerless` (`jobs.py:110-140`) returns
+   `False` at `future is None`, so every launch gets HTTP 409 until the next restart, and
+   the console disables **Cancel** for `cancel_requested`. The same failure on a job
+   paused in the current lifetime settles to `failed`. Decision: a record whose status
+   is `cancel_requested`, whose future is `None`, with `self._cancel_calls[job_id] == 0`
+   and `job_id not in self._processes`, is ownerless too. Its error text is
+   `"a cancel of this job ended without a final status"`. A `queued` or `running` record
+   with no future (the `submit()` case in Non-Goals) still blocks; this decision covers
+   only `cancel_requested`.
 
 ## Risks / Trade-offs
 
