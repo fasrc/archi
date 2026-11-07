@@ -37,7 +37,14 @@
 # Appends: fingerprint, snapshot id, config + code digests, ingest_wall_seconds, live
 # document and chunk counts (from the stack's Postgres), per-metric scored counts
 # recomputed from finite values (#279), the degraded-row count, and the searched
-# collection and embedding model from the artifact's retrieval_identity (null if unrecorded).
+# collection and embedding model from the artifact's retrieval_identity (null if unrecorded),
+# and artifact_sha256, the sha256 of the archived file.
+# A retry after a failed pin write is not refused (#677): when the stack's newest ragas row
+# records this artifact (same path and artifact_sha256) as this arm and run, and the pin is
+# in the state a failed write leaves (absent after a first pin; the row's repinned_from
+# after a re-pin, retried with --new-corpus), it writes the row's fingerprint to the pin,
+# logs "repaired the corpus pin", appends no row, and exits 0. Every other duplicate is
+# still refused.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -108,12 +115,36 @@ fm_arm_page_on_failure "stack $STACK arm $ARM"
 
 # One artifact, one ledger row: refuse a file already archived, and a file that predates
 # this stack's latest ragas-start (the re-run produced nothing; this is run 1's file).
-FM_ERRF="$(mktemp)"
-if ! FM_LEDGER="$(fm_ledger)" FM_ARTIFACT="$ARTIFACT" FM_DATED_BY="$DATED_BY" FM_STACK="$STACK" FM_ARM="$ARM" FM_RUN="$RUN" FM_PIN_FILE="$(fm_pin_file "$STACK")" FM_ACTIVE_LOCK_SHA="$(fm_lock_sha)" "$FM_PYTHON" - 2>"$FM_ERRF" <<'EOF'
-import datetime as dt, json, os, sys
+FM_ERRF="$(mktemp)"; FM_RC=0
+FM_LEDGER="$(fm_ledger)" FM_ARTIFACT="$ARTIFACT" FM_DATED_BY="$DATED_BY" FM_STACK="$STACK" FM_ARM="$ARM" FM_RUN="$RUN" FM_PIN_FILE="$(fm_pin_file "$STACK")" FM_ACTIVE_LOCK_SHA="$(fm_lock_sha)" FM_NEW_CORPUS="$NEW_CORPUS" "$FM_PYTHON" - 2>"$FM_ERRF" <<'EOF' || FM_RC=$?
+import datetime as dt, hashlib, json, os, sys
 ledger, artifact, stack = os.environ["FM_LEDGER"], os.environ["FM_ARTIFACT"], os.environ["FM_STACK"]
 arm, run = os.environ["FM_ARM"], int(os.environ["FM_RUN"])
 rows = json.load(open(ledger)) if os.path.exists(ledger) else []
+# #677: a retry after a failed pin write. The stack's newest ragas row records this exact
+# artifact (path and sha256) as this arm and run, and the pin is in the state a failed
+# write leaves: absent after a first pin, or still the old pin (repinned_from) after a
+# re-pin, which as always needs --new-corpus. Finish the pin write and stop (exit 3 =
+# repaired, no new row). Every other duplicate falls through to the refusals below.
+pin_file = os.environ["FM_PIN_FILE"]
+newest = ([r for r in rows if r.get("kind") == "ragas" and r.get("stack") == stack] or [{}])[-1]
+if (newest.get("artifact") == artifact and newest.get("arm") == arm and newest.get("run") == run
+        and newest.get("artifact_sha256") == hashlib.sha256(open(artifact, "rb").read()).hexdigest()
+        and newest.get("corpus_fingerprint") and not os.path.isdir(pin_file)):
+    pin = open(pin_file).read().strip() if os.path.exists(pin_file) else None
+    old = newest.get("repinned_from")
+    if (pin is None) if old is None else (pin == old and os.environ["FM_NEW_CORPUS"] == "true"):
+        want = newest["corpus_fingerprint"]
+        tmp = f"{pin_file}.tmp.{os.getpid()}"
+        try:
+            with open(tmp, "w") as f:
+                f.write(want + "\n")
+            os.replace(tmp, pin_file)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        print(f"repaired the corpus pin for {stack}: {want} (arm {arm} run {run} was already in the ledger; its pin write had failed)", file=sys.stderr)
+        sys.exit(3)
 dup = [r for r in rows if r.get("artifact") == artifact]
 if dup:
     print(f"artifact already archived as arm {dup[0].get('arm')} run {dup[0].get('run')}", file=sys.stderr); sys.exit(1)
@@ -145,7 +176,11 @@ if True:
     if latest_row.get("lock_sha256") != os.environ["FM_ACTIVE_LOCK_SHA"]:
         print(f"the run that produced this artifact started under lock {str(latest_row.get('lock_sha256'))[:12]}, not the active lock {os.environ['FM_ACTIVE_LOCK_SHA'][:12]} — re-run it under the current lock", file=sys.stderr); sys.exit(1)
 EOF
-then
+if [ "$FM_RC" = 3 ]; then
+  fm_log "$(cat "$FM_ERRF")"; rm -f "$FM_ERRF"
+  exit 0
+fi
+if [ "$FM_RC" != 0 ]; then
   cat "$FM_ERRF" >&2
   FM_REASON="$(cat "$FM_ERRF")"; rm -f "$FM_ERRF"
   fm_die_paged "stack $STACK arm $ARM" "refusing to archive $ARTIFACT (see above)" "$FM_REASON"
@@ -166,7 +201,7 @@ FM_ERRF="$(mktemp)"
 FM_VALIDATED="$(FM_ARTIFACT="$ARTIFACT" FM_ARM="$ARM" FM_RUN="$RUN" FM_STACK="$STACK" FM_DOCS="$DOCS" FM_CHUNKS="$CHUNKS" FM_ARM_YAML="$YAML" FM_KEYS="$FM_FACTOR_KEYS" \
   FM_LEDGER="$(fm_ledger)" FM_LOCK_SHA="$(fm_lock_sha)" FM_JUDGE_GATES="$(fm_judge_gates)" \
   FM_PIN_FILE="$PIN_FILE" FM_NEW_CORPUS="$NEW_CORPUS" FM_FINISHED="$(fm_now)" "$FM_PYTHON" - 2>"$FM_ERRF" <<'EOF'
-import importlib.util, json, math, os, sys, yaml
+import hashlib, importlib.util, json, math, os, sys, yaml
 # The shared judge gates, loaded by path (see fm_judge_gates in lib.sh).
 spec = importlib.util.spec_from_file_location("judge_gates", os.environ["FM_JUDGE_GATES"])
 gates = importlib.util.module_from_spec(spec)
@@ -267,7 +302,7 @@ def num(s):
     except (TypeError, ValueError): return None
 entry = {
     "arm": os.environ["FM_ARM"], "kind": "ragas", "run": run, "stack": os.environ["FM_STACK"],
-    "finished": os.environ["FM_FINISHED"], "artifact": p,
+    "finished": os.environ["FM_FINISHED"], "artifact": p, "artifact_sha256": hashlib.sha256(open(p, "rb").read()).hexdigest(),
     "arm_config": os.environ["FM_ARM_YAML"], "configuration_file": arm.get("configuration_file"),
     "corpus_fingerprint": fp, "corpus_fingerprint_before": fp_before, "fingerprint_source": "artifact", "repinned_from": previous_pin,
     "collection": identity.get("collection"), "embedding_model": identity.get("embedding_model"),

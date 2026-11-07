@@ -228,10 +228,17 @@ are not one observation), when `config_version.divergence_from_selected_file` is
 (the run did not use the settings you selected; Procedure E), when the artifact or the
 (arm, stack, run) identity is already in the ledger, when a run other than 1 arrives before
 the stack has a pin, or when the artifact predates the run's `ragas-start` entry (a re-run
-that wrote nothing must not re-archive run 1 as run 2). Every wrapper also refuses an arm
-label that does not match the YAML's own `name: fm-<arm>`, and a checkout whose HEAD is
-not the locked campaign code or that carries uncommitted source changes. It records:
-artifact path, `corpus_fingerprint`, `corpus_snapshot_id`, `config_version.digest`,
+that wrote nothing must not re-archive run 1 as run 2). One duplicate is not refused: a
+retry after a failed pin write (#677). When the stack's newest RAGAS row records the same
+artifact (same path and `artifact_sha256`) as the same arm and run, and the pin is in the
+state a failed write leaves (absent after a first pin; the row's `repinned_from` after a
+`--new-corpus` re-pin, retried with `--new-corpus`), the wrapper writes the pin, logs
+`repaired the corpus pin`, appends no row, and exits 0. Sweep mode does the same for run 1
+and writes each absent pin. A pin that holds any other value is never overwritten. Every
+wrapper also refuses an arm label that does not match the YAML's own `name: fm-<arm>`, and
+a checkout whose HEAD is not the locked campaign code or that carries uncommitted source
+changes. It records: artifact path and `artifact_sha256`, `corpus_fingerprint`,
+`corpus_snapshot_id`, `config_version.digest`,
 `metadata.code_version.digest`, `ingest_wall_seconds`, the `documents` and
 `document_chunks` counts (queried from the stack), and the scored counts per metric.
 
@@ -411,7 +418,7 @@ Machine record: `bench_out/feature_matrix/ledger.json`, one entry per run, appen
 
 ```json
 {"arm": "03", "run": 1, "kind": "ragas", "stack": "fm-03", "started": "…", "finished": "…",
- "artifact": "bench_out/feature_matrix/benchmarking-fm-03-<ts>.json",
+ "artifact": "bench_out/feature_matrix/benchmarking-fm-03-<ts>.json", "artifact_sha256": "…",
  "corpus_fingerprint": "…", "corpus_snapshot_id": "…", "config_digest": "sha256:…",
  "code_digest": "sha256:…", "ingest_wall_seconds": 4321.0, "documents": 1132, "chunks": 6096,
  "scored": {"answer_relevancy": "109 of 109", "…": "…"}, "degraded": 0}
