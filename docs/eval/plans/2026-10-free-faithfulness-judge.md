@@ -343,7 +343,7 @@ def test_unit_keys_unique_and_reversible(): ...
   - `openrouter_llm(model: str, host: str) -> ChatOpenAI`.
   - `rule_verdict(llm, row) -> dict`. It returns `{verdict: "PASS"|"FAIL"|None, specific: str|None, usage, raw}`.
   - `parse_rule_output(text: str) -> tuple[str|None, str|None]`.
-  - `score_bundle(bundle: Path, judge: str, out: Path) -> None`, where judge is one of `S`, `Ga`, `Na`, `Ma`, `Gb`, `Nb`, `Mb`. It writes `out/<bundle>.<judge>.jsonl`, one record per key: `{key, value|verdict, error, usage, provider_host, ts}`.
+  - `score_bundle(bundle: Path, judge: str, out: Path) -> None`, where judge is one of `S`, `Ga`, `Na`, `Ma`, `Gb`, `Nb`, `Mb`. It writes `out/<bundle>.<judge>.jsonl`, one record per key: `{key, metric, value|verdict, error, usage, provider_host, ts}`. `metric` is `"faithfulness"` for S and mode a, and `"rule"` for mode b. The field is required by the checkpoint reader: `read_checkpoint` (`src/utils/judge_scorer.py` at the pinned commit) requires `key` and `metric` on every record, indexes records by that pair, raises `BundleFailed` on a record without `metric`, and truncates a single such record as a torn write. The daily-cap resume reads the file through it.
   - `scripts/score_llm.py <judge> <bundle>...`.
 
 - [ ] **Step 1: Pick the OpenRouter hosts and record them in `config.OR_HOSTS`.**
@@ -360,6 +360,7 @@ def test_empty_content_or_length_cutoff_is_no_verdict_after_retries():   # Revie
 def test_daily_cap_waits_and_resume_skips_done(tmp_path):                 # Review Focus 4
     # first run: 3 keys done then a 429 "free-models-per-day"; second run resumes
     assert keys_in(out) == ALL_KEYS and no_duplicate_keys(out) and not any(r.get("verdict") for r in capped)
+    assert set(read_checkpoint(out)) >= {(k, "rule") for k in FIRST_RUN_KEYS}   # the resume reads the first run through the pinned reader
 def test_openrouter_llm_pins_host():
     assert openrouter_llm("openai/gpt-oss-120b", "deepinfra").extra_body == {"provider": {"order": ["deepinfra"], "allow_fallbacks": False}}
 def test_mode_a_uses_october_settings(monkeypatch): ...   # captures ragas_settings timeout 600, max_workers 6
@@ -393,6 +394,7 @@ def test_no_key_in_outputs(tmp_path): ...
     - `guidelines` = `guidelines.md`.
   - `load_records(name: str, records: list[dict]) -> None`.
   - `export(name: str) -> list[dict]`, giving `{record_id, made_up_or_wrong, first_specific, how_much_backed, status}`. It uses its own loop, because `pull_grades_from_argilla` drops unknown question names.
+  - `real_yes_count(export: list[dict], records: list[dict]) -> int`: the number of "Yes" grades on the records whose `source` is `"real"` in `d_records.jsonl` (joined by `record_id`). The 6 hidden planted items never count: the spec's real-error criterion and its stopping rule count real rows.
 
 - [ ] **Step 1: Write `guidelines.md`.** It holds the spec's rule verbatim, one failure example and one general-advice pass example, both written from rows outside D.
 - [ ] **Step 2: Write failing tests.**
@@ -400,6 +402,7 @@ def test_no_key_in_outputs(tmp_path): ...
   - `test_record_ids_opaque`.
   - `test_export_maps_all_three_questions`, using a fake dataset object.
   - `test_export_flags_yes_without_specific`.
+  - `test_real_yes_count_excludes_planted_records`: five real "Yes" plus three planted "Yes" give 5, not 8.
 - [ ] **Step 3: Run them and see them fail. Step 4: Implement. Step 5: Run them and see them pass. Step 6: Commit `ffj: argilla load and export`.** Loading happens after the material lock (Task 14).
 
 ### Task 13: Material lock
@@ -409,10 +412,10 @@ def test_no_key_in_outputs(tmp_path): ...
 
 **Interfaces:**
 - Produces:
-  - `build_lock() -> dict`. It contains `{design_lock, archi_pin, bench_commit_parent, files: {relpath: sha256}, bundles: {path: rows_sha256}, counts: {...}}`. It covers every file in `material/`, `rule_prompt.md`, `FROZEN_PROMPT.sha256` and `config.py`, and every bundle under `DATA` (real, planted, control, the variants and dev).
+  - `build_lock() -> dict`. It contains `{design_lock, archi_pin, bench_commit_parent, files: {relpath: sha256}, bundles: {path: rows_sha256}, counts: {...}}`. It covers every file in `material/`, `rule_prompt.md`, `FROZEN_PROMPT.sha256` and `config.py`, and every bundle under `DATA` (real, planted, control, the variants and dev). Under `files` it also hashes every analysis input that lives beside the bundles, which a bundle's `rows_sha256` does not cover: every `DATA/real/<run>.ledger.jsonl` (Task 3), every `<bundle>.tokens.<L0|L1>.json` sidecar (Task 4), and every `units.jsonl` map (Task 9). The spec's material lock covers these artifacts, so a change to any of them after the lock must fail `verify_lock`.
   - `verify_lock(lock) -> list[str]`, which returns any mismatches.
 
-- [ ] **Step 1: Write the failing test** `test_verify_detects_changed_material_file`, then implement, then pass it.
+- [ ] **Step 1: Write the failing tests** `test_verify_detects_changed_material_file` and `test_verify_detects_changed_sidecar` (a changed `units.jsonl` and a changed recovery ledger each return a mismatch), then implement, then pass them.
 - [ ] **Step 2: Write `MATERIAL_LOCK.json`, run `verify_lock` (expect `[]`), and commit `ffj: material lock`.**
   - Ask the operator to approve a push of branch `ffj-2026-10` to `fasrc/archi-bench-out`. The pushed commit is the timestamp the spec requires before scoring.
 
@@ -430,7 +433,7 @@ def test_no_key_in_outputs(tmp_path): ...
 
 - [ ] **Step 1: Write and pass `test_check_complete_counts_missing_and_no_verdict`. Commit.**
 - [ ] **Step 2: Verify the lock before every session of runs:** `verify_lock` returns `[]`.
-- [ ] **Step 3: Run the early stop.** Score C with L0t, L0s (short items only for L0 variants), L1 and L1s. Any variant flagging < 16 of 20 is recorded as rejected in `DATA/scores/early_stop.json` and skipped below.
+- [ ] **Step 3: Run the early stop.** Score all 20 control items of C with each of L0t, L0s, L1 and L1s (spec "Early stop"). The short-only restriction applies to unmodified L0 alone (step 4), never to its variants: C holds 10 short and 10 long items, so a variant held to the short items caps at 10 flags, and the 16-of-20 rule would reject it on perfect verdicts; L0t and L0s exist to read the long rows. Any variant flagging < 16 of 20 is recorded as rejected in `DATA/scores/early_stop.json` and skipped below.
 - [ ] **Step 4: Run the Lynx judges.**
   - L0: B-short and C-short.
   - L1: B and C. Its real-row verdicts are re-read from the recovered bundles, so the rows recovered in Task 3 are scored too.
@@ -441,7 +444,7 @@ def test_no_key_in_outputs(tmp_path): ...
   - Watch spend with `curl -s https://openrouter.ai/api/v1/credits -H "Authorization: Bearer $KEY"`. Stop and ask the operator if usage passes $15.
 - [ ] **Step 6: Run S.** It scores B, C and the original of every B base row (fresh, same session, for the paired reading), plus 20 seeded real rows for the repeatability check.
 - [ ] **Step 7: Load D into Argilla (Task 12) and tell the operator it is ready.**
-  - When they finish: export, count the "Yes" grades, and if there are fewer than 8, load the top-up and wait again.
+  - When they finish: export, and count the "Yes" grades with `real_yes_count` (Task 12): real rows only, never the 6 hidden planted items. If that count is below 8, load the top-up and wait again.
   - After D, apply the contamination exclusion. Record the exclusions in `DATA/scores/exclusions.json`.
 - [ ] **Step 8: Run `check_complete` for every judge × bundle.** Expected: no `missing`. Commit the small outputs (`DATA/scores/**/summary` and the ledgers) into `$CHECK/results/`.
   - Hard deadline: the material-lock date + 14 days. If D is unfinished then, analyze with the graded rows and flag the shortfall (spec "Stopping rule").
@@ -452,8 +455,9 @@ def test_no_key_in_outputs(tmp_path): ...
 - Create: `$CHECK/ffj/analyze.py`, `$CHECK/scripts/analyze.py`, `$CHECK/tests/test_analyze.py`
 
 **Interfaces:**
-- Consumes: all score files, `planted_ledger`, `control_ledger`, the D export, exclusions, the real-row ledgers, and `scripts.benchmarking.paired_tests.paired_binary` for the arm-level McNemar tests.
+- Consumes: all score files, `planted_ledger`, `control_ledger`, the D export, exclusions, the real-row ledgers, `material/dev_records.jsonl`, and `scripts.benchmarking.paired_tests.paired_binary` for the arm-level McNemar tests.
 - Produces:
+  - `dev_identities() -> set[tuple[str, str]]`, the `(run, key)` of every row in `material/dev_records.jsonl`. `analyze.py` removes them from every cohort before it computes any metric: the real-row sets, both `arm_level` comparisons (the full recovered set, and Qwen3.8 vs Qwen3.6, whose run `130451` is where the 10 dev rows come from), `continuity`, `cost` and `s_repeatability`. The spec marks the dev split "excluded from all results". `results.json` records the count removed under `dev_excluded`.
   - `flags(judge, item_scores, originals) -> dict[str, bool|None]`. Binary judges flag on FAIL. Score judges on B use the paired drop ≥ `PAIRED_MARGIN`. Score judges on C and D use the chosen cutoff.
   - `choose_cutoff(judge_scores_d, human_d) -> float`, the higher balanced accuracy of `CUTOFFS`.
   - `metrics(judge) -> dict`, which computes catch rate, real-error catch rate, false-alarm rate (B half, D half and pooled), unrelated flagged out of 20, verdict share of the 130 decision items, and coverage.
@@ -485,6 +489,9 @@ def test_real_error_bands():
     assert decide(..., real_caught=0, yes_count=5) == "reject" and decide(..., real_caught=3, yes_count=5) == "adopt"
     assert decide(..., real_caught=0, yes_count=3) != "reject"     # waived below 4
 def test_l0_never_adopted_coverage(): ...
+def test_dev_rows_never_enter_reported_cohorts():   # the dev split is excluded from all results
+    # a dev row from 130451 with a judge score and a RAGAS score: absent from every cohort in results.json
+    r = analyze(score_files_with(DEV_ROW), dev=[DEV_ROW]); assert DEV_ROW.key not in every_cohort(r) and r["dev_excluded"] == 1
 ```
 
 - [ ] **Step 2: Run them and see them fail. Step 3: Implement. Step 4: Run them and see them pass.**
@@ -498,6 +505,6 @@ def test_l0_never_adopted_coverage(): ...
 - [ ] **Step 1: Invoke the `archi-bench-report-format` skill and follow it.**
   - R recomputes every number from the score files and the ledgers.
   - It stops on any mismatch with `results.json`.
-  - The report has the decision table first, a "what is measured" line per judge, a per-item ledger, and Takeaway / Read-with-care.
+  - The report has the decision table first, a "what is measured" line per judge, a per-item ledger, and Takeaway / Read-with-care. It states how many rows the analysis removed as the prompt-development split (`dev_excluded`).
 - [ ] **Step 2: Run `$RSCRIPT build_report.R`. Expected: exits 0 with every cross-check passing. Commit `ffj: report`, and ask before pushing.**
 - [ ] **Step 3: Draft (do not post) comments for #583 and #737 summarizing the decision. Ask the operator before posting.**
