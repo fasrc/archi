@@ -53,9 +53,13 @@ The helper obeys the same shape rules as `get_enabled_sources()`, so it refuses 
 
 `ConfigurationManager._load_config()` stores the path of each config file as `config["_config_path"]` (`config_manager.py:81`), in the form the operator gave on the command line. The message uses that value. A config dict without the key (only a test builds one) shows `<unknown config>`.
 
-### D6. Existing tests stay green
+### D6. Existing tests: one edit
 
-The CLI tests that load configs with `input_lists` give an absolute path (`tests/unit/test_cli_create_dev_smoke.py:150`, `test_render_preflight.py:833` and `:901`, `test_render_preflight_review.py:151`). Or they use `examples/deployments/basic-openai/config.yaml`, whose list `examples/deployments/basic-openai/miscellanea.list` is checked in and resolves from the repository root, where the gate runs pytest. No CLI test changes the cwd (`grep -rln chdir tests/unit | xargs grep -ln cli_main` prints nothing). `test_config_manager_input_list_inference.py::test_missing_list_path_warns_no_exception` calls `get_enabled_sources()` directly. That function does not change, so the test stays green with no edit.
+The CLI tests that load configs with `input_lists` give an absolute path (`tests/unit/test_cli_create_dev_smoke.py:150`, `test_render_preflight.py:833` and `:901`, `test_render_preflight_review.py:151`). Or they use `examples/deployments/basic-openai/config.yaml`, whose list `examples/deployments/basic-openai/miscellanea.list` is checked in and resolves from the repository root, where the gate runs pytest. `test_config_manager_input_list_inference.py::test_missing_list_path_warns_no_exception` calls `get_enabled_sources()` directly. That function does not change, so the test stays green with no edit.
+
+One CLI test does change the cwd. The earlier proof here (`grep -rln chdir tests/unit | xargs grep -ln cli_main` prints nothing) was wrong: `CliRunner.isolated_filesystem()` changes the cwd inside click, so the grep does not see it. `tests/unit/test_cli_create_dev_smoke.py::test_create_without_env_file_names_the_flag_when_the_fallback_is_missing` (`:1797` on `origin/dev`; `isolated_filesystem()` at `:1816`) runs `create` from a temp directory with `EXAMPLE_CONFIG`, whose relative list path `examples/deployments/basic-openai/miscellanea.list` does not resolve there. With E2 applied, the new check stops the command before the `--env-file` hint that the test asserts. Measured on the nightly host on 2026-10-25: 1 failed, 531 passed, 1 skipped across the 18 unit-test files that use `cli_main`; the 13 new tests of E4 passed.
+
+Operator decision (2026-11-07, option A on #617): keep the E2 order, and make this one edit to that test. Inside the `isolated_filesystem()` block, before `runner.invoke`, write a copy of the example config to the temp directory: `yaml.safe_load(EXAMPLE_CONFIG.read_text())`, set `data_manager.sources.links.input_lists` to `[str(REPO_ROOT / "examples" / "deployments" / "basic-openai" / "miscellanea.list")]`, and `yaml.safe_dump` it to `Path("config.yaml")` in the cwd. Pass that copy with `-c` in place of `str(EXAMPLE_CONFIG)`. Keep the `EXAMPLE_CONFIG.exists()` skip and both assertions. The test's point does not change: `SecretsManager` still resolves its fallback as the relative `src/cli/managers/secrets_dummy.env`, which does not resolve from the temp directory, so the command still fails with the `--env-file` hint. Add one sentence to the docstring that says why the list path is absolute (#617). No other existing test changes.
 
 ### D7. Docs and examples that become false
 
@@ -129,7 +133,7 @@ Correct each path, or use an absolute path, then run the command again.
 
 ### E4. Tests
 
-Two new files. Each test name is new: `grep -rn "def <name>" tests/unit/` prints one line. Do not edit an existing test file.
+Two new files. Each test name is new: `grep -rn "def <name>" tests/unit/` prints one line. Do not edit an existing test file, except the one edit that D6 names.
 
 `tests/unit/test_refuse_missing_input_lists.py` (the helper; build configs as plain dicts with `_config_path` set):
 
