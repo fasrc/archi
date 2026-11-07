@@ -23,7 +23,7 @@ from src.cli.managers.templates_manager import (
 from src.cli.managers.volume_manager import VolumeManager
 from src.cli.qa_eval import eval_cli, qa_cli
 from src.cli.service_registry import service_registry
-from src.cli.source_registry import source_registry
+from src.cli.source_registry import refuse_missing_input_lists, source_registry
 from src.cli.tools import sources_builder
 from src.cli.tools.config_seed import arm_divergence_refusal, seed_entry
 from src.cli.utils.helpers import *
@@ -189,6 +189,7 @@ def create(
 
         # Initialize managers
         config_manager = ConfigurationManager(config_files, env)
+        refuse_missing_input_lists(config_manager.get_configs())
         try:
             secrets_manager = SecretsManager(env_file, config_manager)
         except FileNotFoundError as env_error:
@@ -607,6 +608,10 @@ def restart(
         existing_secrets = set((compose_data.get("secrets") or {}).keys())
 
         config_manager = ConfigurationManager(list(config_files), env)
+        try:
+            refuse_missing_input_lists(config_manager.get_configs())
+        except ValueError as exc:
+            raise click.ClickException(str(exc))
 
         enabled_sources = config_manager.get_enabled_sources()
         config_disabled_sources = config_manager.get_disabled_sources()
@@ -851,6 +856,7 @@ def evaluate(
         if arm_refusal:
             raise click.ClickException(arm_refusal)
         config_manager = ConfigurationManager(config_files, env)
+        refuse_missing_input_lists(config_manager.get_configs())
         bank_errors, bank_warnings = preflight_benchmark_configs(config_manager.configs)
         for bank_warning in bank_warnings:
             logger.warning("Benchmark bank: %s", bank_warning)
