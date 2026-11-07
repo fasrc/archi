@@ -371,11 +371,11 @@ voids the sweep.
 
 **Two evaluators per arm, not one.** `archi evaluate` over the sweep directory produces
 the RAGAS, source-hit and timing rows; it does **not** produce gold-atom scores. Those
-come from `archi eval qa`, which takes the arm's prompt as `--agent-spec`
+come from `archi qa`, which takes the arm's prompt as `--agent-spec`
 (`src/cli/qa_eval.py:41-42`, `:184`) and writes its own run directory, and
 `compare_runs.py` reports gold-atom deltas only when handed those directories with
 `--qa-run LABEL=RUN_DIR`, one per arm (`compare_runs.py:2295-2332`). Rung 0 is therefore
-one `archi eval qa` per prompt file — control, `r0a`, `r0b` — with everything but
+one `archi qa` per prompt file — control, `r0a`, `r0b` — with everything but
 `--agent-spec` identical, the way `feature_matrix/qa_arm.sh` runs it, followed by one
 `compare_runs.py` invocation carrying all three `--qa-run` pairs. Without the QA runs the
 required-atom and other gold-atom deltas do not exist.

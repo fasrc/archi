@@ -40,6 +40,15 @@ program:
   accepts only the two refused paths; both values are printed and the row is
   marked ``OVERRIDDEN``). ``services.benchmarking.agent_md_file`` is reported
   rather than refused — prompt arms vary it on purpose.
+* **G11 — judged.** An arm with ``judge_status: pending`` (a deferred run whose
+  Slurm judge has not scored it yet) is refused with exit 2, and the refusal
+  names the ``<basename>.judged.json`` to wait for.
+* **G12 — one judge.** Arms whose ``ragas_judge_identity_effective`` differ are
+  refused with exit 2, and the differing fields are named. An artifact without
+  the key falls back to ``(evaluator_provider, evaluator_model)``; a missing
+  field never equals a recorded one. Every ``--noise-runs`` replicate is held to
+  the baseline's judge too. Neither gate has an override. The rules live in
+  ``src/utils/judge_gates.py``, which the campaign archiver also calls.
 
 Two facts about the real artifacts shape the rest of the tool.
 
@@ -62,7 +71,7 @@ to move both dilutes the signal and hides the tripwire).
 Standard library only, plus three reuses from the project: ``normalize_bank`` for
 the anchors file (so a legacy-dialect anchors file still matches),
 ``retrieval_identity`` for an arm that recorded none (so its config names its
-embedding model), and ``derive_item_id`` for the optional ``archi eval qa`` join.
+embedding model), and ``derive_item_id`` for the optional ``archi qa`` join.
 
 Exit codes: 0 ok, 1 usage/IO, 2 gate refusal, 3 config-divergence stop.
 """
@@ -415,6 +424,14 @@ def _category_modules():
     from scripts.benchmarking import category_slice, paired_tests
 
     return category_slice, paired_tests
+
+
+def _lynx_report():
+    """The descriptive Lynx section (#734), importable from a plain script run."""
+    _project_root_on_path()
+    from scripts.benchmarking.lynx import report
+
+    return report
 
 
 def load_arms(specs: Sequence[str]) -> List[Arm]:
@@ -995,6 +1012,66 @@ def answer_path_gate(arms: Sequence[Arm], allow_differs: Sequence[str] = ()) -> 
     }
 
 
+# --- G11 and G12: the judge gates (judge offload design D9) ------------------
+#
+# A deferred run writes its result with ``judge_status: pending`` and no RAGAS
+# scores; a Slurm job scores it later and the merge writes the judged file. And
+# two arms that different judges scored are not one measurement. The rules are
+# in ``src/utils/judge_gates.py``, which the campaign archiver also calls, so
+# the two tools cannot drift apart. Neither gate has an override: a comparison
+# of unscored or mixed-judge arms has no meaning.
+
+
+def _judge_gates() -> Any:
+    return _utils_module("judge_gates")
+
+
+def _artifact_path(arm: Arm) -> Path:
+    return Path(arm.source.rpartition("@")[0])
+
+
+def judged_gate(arms: Sequence[Arm], scope: Optional[str] = None) -> dict:
+    """G11: refuse an arm whose deferred judge has not scored it yet."""
+    refusal = _judge_gates().pending_refusal(
+        [(arm.label, arm.raw, _artifact_path(arm)) for arm in arms], scope=scope
+    )
+    if refusal:
+        raise CompareError(refusal, EXIT_GATE)
+    return {
+        "id": "G11",
+        "name": "judged",
+        "status": "pass",
+        "detail": "no arm has judge_status pending",
+    }
+
+
+def _shown_judge(identity: Any) -> str:
+    if not isinstance(identity, dict):
+        return "no judge ran in any arm" if identity is None else str(identity)
+    if "evaluator_model" in identity:
+        return (
+            f"{identity['evaluator_provider']} {identity['evaluator_model']}, read "
+            "from the recorded configuration: the artifacts predate "
+            "ragas_judge_identity_effective"
+        )
+    return f"{identity.get('provider')} {identity.get('model')}"
+
+
+def one_judge_gate(arms: Sequence[Arm], scope: Optional[str] = None) -> dict:
+    """G12: refuse arms whose ``ragas_judge_identity_effective`` differ."""
+    gates = _judge_gates()
+    identities = [(arm.label, gates.judge_identity_of(arm.raw)) for arm in arms]
+    refusal = gates.identity_refusal(identities, scope=scope)
+    if refusal:
+        raise CompareError(refusal, EXIT_GATE)
+    return {
+        "id": "G12",
+        "name": "one judge",
+        "status": "pass",
+        "detail": f"every arm has one judge identity: {_shown_judge(identities[0][1])}",
+    }
+
+
 # --- pairing and statistics --------------------------------------------------
 
 
@@ -1201,6 +1278,25 @@ def check_noise_replicates(
             "sigma=0 and make the noise floor vacuous.",
             EXIT_USAGE,
         )
+    # G11 and G12 hold for the replicates too: an unscored replicate has no
+    # spread to measure, and a replicate another judge scored moves the G7
+    # threshold for arms this judge scored. Each one is held to the baseline's
+    # judge.
+    judged_gate(replicates, scope="the noise replicates")
+    judges = _judge_gates()
+    pool = ([baseline] if baseline is not None else []) + list(replicates)
+    refusal = judges.identity_refusal(
+        [
+            (
+                arm.label if arm is baseline else arm.source,
+                judges.judge_identity_of(arm.raw),
+            )
+            for arm in pool
+        ],
+        scope="the noise replicates",
+    )
+    if refusal:
+        raise CompareError(refusal, EXIT_GATE)
     scope = list(replicates) + ([baseline] if baseline is not None else [])
     fingerprint_version_gate(
         {arm.source: arm.corpus_fingerprint for arm in scope}, "the noise replicates"
@@ -1551,33 +1647,36 @@ def _project_root_on_path() -> None:
 
 
 def _utils_function(module_name: str, name: str) -> Any:
-    """A function from a pure-stdlib ``src/utils`` file, without the package
-    side effects.
+    """A function from a pure-stdlib ``src/utils`` file (see ``_utils_module``)."""
+    return getattr(_utils_module(module_name), name)
+
+
+def _utils_module(module_name: str) -> Any:
+    """A pure-stdlib ``src/utils`` module, without the package side effects.
 
     ``src/utils/__init__.py`` imports the config service, which imports
     ``psycopg2`` — so the ordinary ``from src.utils.<module> import ...``
     needs a database driver on a host that is only reading finished artifacts.
-    ``benchmark_schema.py`` and ``benchmark_provenance.py`` are themselves pure
-    stdlib at import, so the file is loaded straight from disk when the package
-    import is unavailable. Same file, same function: this is not a copy.
+    ``benchmark_schema.py``, ``benchmark_provenance.py`` and ``judge_gates.py``
+    are themselves pure stdlib at import, so the file is loaded straight from
+    disk when the package import is unavailable. Same file, same function: this
+    is not a copy.
     """
     _project_root_on_path()
     try:
-        return getattr(importlib.import_module(f"src.utils.{module_name}"), name)
+        return importlib.import_module(f"src.utils.{module_name}")
     except ImportError:
         pass
     source = REPO_ROOT / "src" / "utils" / f"{module_name}.py"
     spec = importlib.util.spec_from_file_location(f"archi_{module_name}", source)
     if spec is None or spec.loader is None:  # pragma: no cover - unreachable
-        raise CompareError(f"cannot load {name} from {source}", EXIT_USAGE)
+        raise CompareError(f"cannot load {source}", EXIT_USAGE)
     module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
     except Exception as exc:  # pragma: no cover - environment, not logic
-        raise CompareError(
-            f"cannot load {name} from {source}: {exc}", EXIT_USAGE
-        ) from None
-    return getattr(module, name)
+        raise CompareError(f"cannot load {source}: {exc}", EXIT_USAGE) from None
+    return module
 
 
 def _normalize_bank():
@@ -1791,6 +1890,71 @@ def _label_key(label: Any) -> str:
         return f"{type(label).__name__}:{label!r}"
 
 
+def _slice_membership(
+    baseline: Arm, arms: Sequence[Arm], questions: Sequence[str], field: str
+) -> Tuple[Dict[str, List[str]], int]:
+    """Return ``(groups, mismatched)`` for one slice field.
+
+    A clean row with no label for ``field`` -- the key absent, ``None``, or
+    ``""`` -- is dropped before the disagreement test, the baseline included,
+    so the count does not depend on which arm is the baseline. A question
+    joins a group only once it has survived that test *and* the baseline's own
+    row is clean with a non-empty string label: that label is the group key,
+    and a key from a row that did not run establishes nothing.
+    """
+    groups: Dict[str, List[str]] = {}
+    mismatched = 0
+    for question in questions:
+        ran_labels = [
+            arm.rows[question].get(field) for arm in arms if arm.has_clean_row(question)
+        ]
+        labelled = [label for label in ran_labels if label is not None and label != ""]
+        if not labelled:
+            continue
+        # `!=`, not a set: a bank label is whatever the JSON held, and a list
+        # or dict label would make a set raise `unhashable type` and abort the
+        # whole comparison. "Do they all agree" needs equality, not hashing.
+        #
+        # Compared as canonical JSON, because Python's `==` inherits the numeric
+        # tower and would call genuinely different artifacts equal: `True == 1`
+        # and `1 == 1.0`, and the same coercion recurs at any depth inside an
+        # accepted list or dict label, where `[True] == [1]`. Every such pair is
+        # a disagreement the artifacts recorded and `excluded_mismatched` exists
+        # to report.
+        #
+        # Canonicalising closes that whole class in one place instead of adding
+        # a type guard per nesting level. `json.dumps` cannot fail on a value
+        # that came out of `json.loads`, and it yields a string -- so the
+        # `unhashable type: 'list'` abort a `set` caused stays fixed.
+        if any(_label_key(label) != _label_key(labelled[0]) for label in labelled[1:]):
+            mismatched += 1
+            continue
+        if not baseline.has_clean_row(question):
+            continue
+        value = baseline.rows.get(question, {}).get(field)
+        if not (isinstance(value, str) and value):
+            continue
+        groups.setdefault(value, []).append(question)
+    return groups, mismatched
+
+
+def slice_exclusions(
+    baseline: Arm, arms: Sequence[Arm], questions: Sequence[str]
+) -> Dict[str, int]:
+    """``{field: mismatched}`` for every ``SLICE_FIELDS`` entry every arm carries.
+
+    Unlike ``slice_block``, this reports the count whether or not any slice row
+    is emitted for the field -- see issue #447.
+    """
+    exclusions: Dict[str, int] = {}
+    for field in SLICE_FIELDS:
+        if not all(arm.has_metric(field) for arm in arms):
+            continue
+        _, mismatched = _slice_membership(baseline, arms, questions, field)
+        exclusions[field] = mismatched
+    return exclusions
+
+
 def slice_block(
     baseline: Arm,
     arms: Sequence[Arm],
@@ -1830,55 +1994,22 @@ def slice_block(
     from a row that did not run establishes nothing. Dropped from the groups, not
     from the count.
 
-    The count is **not** yet independent of the baseline's *label*. The loop
-    still reads the baseline's own value first and skips the question when that
-    value is not a non-empty string, so a disagreement between two other clean
-    arms goes uncounted when the baseline's row carries no label for the field.
-    That predates this rule and is tracked in **#447**, together with the count
-    being discarded outright when no group is emitted. Do not read the paragraph
-    above as a claim that the count is invariant under every baseline.
+    The count no longer depends on the baseline's own label. Before the
+    mismatch test runs, every unlabelled clean row -- the field absent,
+    ``None``, or ``""`` -- is dropped, the baseline included, so a disagreement
+    between two other clean arms is counted whichever arm happens to be
+    ``--baseline``. The baseline's label still decides which group a surviving
+    question joins -- that check happens after the mismatch test -- so a
+    baseline row with no string label still drops the question from every
+    group, without affecting the count. The count survives even when no group
+    is emitted at all: see ``slice_exclusions``, which reports it independent
+    of any slice row.
     """
     block: List[dict] = []
     for field in SLICE_FIELDS:
         if not all(arm.has_metric(field) for arm in arms):
             continue
-        groups: Dict[str, List[str]] = {}
-        mismatched = 0
-        for question in questions:
-            value = baseline.rows.get(question, {}).get(field)
-            if not (isinstance(value, str) and value):
-                continue
-            ran_labels = [
-                arm.rows[question].get(field)
-                for arm in arms
-                if arm.has_clean_row(question)
-            ]
-            # `!=`, not a set: a bank label is whatever the JSON held, and a list
-            # or dict label would make a set raise `unhashable type` and abort the
-            # whole comparison. "Do they all agree" needs equality, not hashing.
-            # An empty list never indexes -- the slice is empty, so `[0]` is not
-            # evaluated inside the generator.
-            #
-            # Compared as canonical JSON, because Python's `==` inherits the numeric
-            # tower and would call genuinely different artifacts equal: `True == 1`
-            # and `1 == 1.0`, and the same coercion recurs at any depth inside an
-            # accepted list or dict label, where `[True] == [1]`. Every such pair is
-            # a disagreement the artifacts recorded and `excluded_mismatched` exists
-            # to report.
-            #
-            # Canonicalising closes that whole class in one place instead of adding
-            # a type guard per nesting level. `json.dumps` cannot fail on a value
-            # that came out of `json.loads`, and it yields a string -- so the
-            # `unhashable type: 'list'` abort a `set` caused stays fixed.
-            if any(
-                _label_key(label) != _label_key(ran_labels[0])
-                for label in ran_labels[1:]
-            ):
-                mismatched += 1
-                continue
-            if not baseline.has_clean_row(question):
-                continue
-            groups.setdefault(value, []).append(question)
+        groups, mismatched = _slice_membership(baseline, arms, questions, field)
         for value, members in sorted(groups.items()):
             for arm in arms:
                 if arm is baseline:
@@ -1929,7 +2060,7 @@ def _normalize_newlines(text: str) -> str:
 
 
 def qa_item_id(row: dict) -> Optional[str]:
-    """The ``archi eval qa`` item id for a benchmark row, or None.
+    """The ``archi qa`` item id for a benchmark row, or None.
 
     The id is content-derived from the newline-normalized question and reference
     answer — the same derivation the RAGAS-bank converter uses — so the two
@@ -1971,7 +2102,7 @@ def _read_jsonl(path: Path) -> List[dict]:
 
 
 def load_qa_run(directory: str) -> dict:
-    """Read one ``archi eval qa`` run directory into an item-keyed index."""
+    """Read one ``archi qa`` run directory into an item-keyed index."""
     base = Path(directory)
     summary_path = base / "summary.json"
     if not summary_path.exists():
@@ -2463,24 +2594,24 @@ def render_markdown(report: dict) -> str:
                 for row in report["slices"]
             ],
         )
-        dropped = {
-            row["field"]: row["excluded_mismatched"]
-            for row in report["slices"]
-            if row["excluded_mismatched"]
-        }
-        for name, count in sorted(dropped.items()):
+    else:
+        exclusions = report.get("slice_exclusions", {})
+        if not exclusions:
+            out.append(
+                "No slice field (`"
+                + "`, `".join(SLICE_FIELDS)
+                + "`) is present in every arm."
+            )
+        elif not any(exclusions.values()):
+            out.append("No slice group has a paired, scored question in every arm.")
+    for name, count in sorted(report.get("slice_exclusions", {}).items()):
+        if count:
             out.append("")
             out.append(
                 f"{count} question(s) carry a different `{name}` in different "
                 "arms and were dropped from every slice of that field — the arms "
                 "were scored against different labels for the same question."
             )
-    else:
-        out.append(
-            "No slice field (`"
-            + "`, `".join(SLICE_FIELDS)
-            + "`) is present in every arm."
-        )
     out.append("")
 
     out += ["## Timing", ""]
@@ -2563,6 +2694,7 @@ def render_markdown(report: dict) -> str:
             )
         out.append("")
     out += render_category_sections(report)
+    out += _lynx_report().render_section(report.get("lynx"), _table)
     return "\n".join(out).rstrip("\n")
 
 
@@ -2797,6 +2929,7 @@ def build_report(
         "sources": source_block(arms),
         "anchors": anchor_entries,
         "slices": slice_block(baseline, arms, questions, sigmas),
+        "slice_exclusions": slice_exclusions(baseline, arms, questions),
         "timing": timing_block(arms),
         "qa": qa_block(baseline, arms, qa_runs or {}),
     }
@@ -2881,7 +3014,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="LABEL=RUN_DIR",
-        help="an `archi eval qa` run directory to join to an arm (repeatable)",
+        help="an `archi qa` run directory to join to an arm (repeatable)",
     )
     parser.add_argument(
         "--primary",
@@ -3102,6 +3235,9 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             "sweep that holds more than one arm",
             EXIT_USAGE,
         )
+    # G11 and G12 first: an unscored arm or a second judge makes every number
+    # below meaningless, whatever the other gates say.
+    judge_rows = [judged_gate(arms), one_judge_gate(arms)]
     if args.baseline is None:
         baseline = arms[0]
     else:
@@ -3126,6 +3262,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         corpus_gate(arms, args.corpus_differs_by_design),
         divergence_gate(arms, args.ignore_config_divergence),
         answer_path_gate(arms, args.config_differs_by_design),
+        *judge_rows,
     ]
     retrieval = embedding_gate(baseline, arms)
 
@@ -3198,6 +3335,10 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     )
     report["paired_tests"] = paired_tests_block(baseline, arms, primaries)
     report["category"] = category_block(baseline, arms, map_rules)
+    # Descriptive only: no Lynx file, no key; a refused file never changes the exit.
+    lynx = _lynx_report().lynx_section(baseline, arms)
+    if lynx is not None:
+        report["lynx"] = lynx
     print(render_markdown(report))
     if args.json:
         Path(args.json).write_text(json.dumps(report, indent=2, allow_nan=False))

@@ -83,21 +83,22 @@ Two panels at the top of `/ssb/status` show where the running service came from.
 
 If no record exists, the panel says "Deployment provenance unavailable — recorded from the next deploy onward."
 
-**Knowledge Base panel** (newest *successful* row of `ingest_run`, status `updated` or `up_to_date`):
+**Knowledge Base panel** — times, status, and counts come from the newest *successful* row of `ingest_run` (status `updated` or `up_to_date`); the configuration table and drift check come from the newest `updated` run (the last run that embedded documents):
 
 - **Last ingest** — start time, end time (UTC), and duration of that run.
 - **Documents** — embedded, failed, and pending counts at the end of that run.
 - **Chunks** — the chunk count for the active collection only (chunks tagged with that collection, plus untagged chunks). Rows recorded before this rule counted chunks from every collection.
-- **Ingest configuration (as used at ingest)** — the ingest settings saved with that run, such as chunking, embedding model, and **embedding dimensions**. With no `dimensions` set in `embedding_class_map`, the recorded dimension is the model's default (1536 for `OpenAIEmbeddings`, 384 for `HuggingFaceEmbeddings` and unknown models). Rows recorded before this rule stored 384 for every model. For a row without `embedding_dimensions_explicit`, a change from 384 to the model's default is not reported as drift. Runs recorded after [#654](https://github.com/fasrc/archi/issues/654) also save `embedding_dimensions_explicit`, which says whether `dimensions` was set; for those runs every change of the dimension is reported as drift. On a run without that field, an explicit `dimensions: 384` that was later removed still does not show as drift until the next ingest.
-- **⚠ configuration changed after this ingest** — the running config differs from the saved one. Each changed setting is listed with its value now and at ingest.
+- **Ingest configuration (as used at ingest)** — the ingest settings saved with that run, such as chunking, embedding model, and **embedding dimensions**. The settings come from the newest `updated` run, because an `up_to_date` run embeds nothing; if that run is older than the last ingest, its completion time is shown. With no `dimensions` set in `embedding_class_map`, the recorded dimension is the model's default (1536 for `OpenAIEmbeddings`, 384 for `HuggingFaceEmbeddings` and unknown models). Rows recorded before this rule stored 384 for every model. For a row without `embedding_dimensions_explicit`, a change from 384 to the model's default is not reported as drift. Runs recorded after [#654](https://github.com/fasrc/archi/issues/654) also save `embedding_dimensions_explicit`, which says whether `dimensions` was set; for those runs every change of the dimension is reported as drift. On a run without that field, an explicit `dimensions: 384` that was later removed still does not show as drift until the next ingest that embeds documents (an `updated` run).
+- **⚠ configuration changed after the corpus was built** — the running config differs from the config of the last run that embedded documents. Each changed setting is listed with its value now and at ingest.
 
 Unknown and failure states:
 
 - **Current configuration unavailable — drift not evaluated.** The running config could not be read, so no drift check was done. This does not mean there is no drift.
-- **⚠ the most recent ingest attempt failed at …** — a failed run is newer than the run shown. The counts and config are from the last successful run, but the failed attempt may have changed the live corpus (deletions and partial additions are committed as they happen).
+- **Configuration at ingest unknown — no run that embedded documents could be read; drift not evaluated.** Shows when every recorded successful run is `up_to_date`, or when the last `updated` run could not be read. This does not mean there is no drift.
+- **⚠ the most recent ingest attempt failed at …** — a failed run is newer than the run shown. The counts are from the last successful run and the config is from the last run that embedded documents, but the failed attempt may have changed the live corpus (deletions and partial additions are committed as they happen).
 - **No successful ingest run recorded** — no successful run exists yet. If a failed attempt exists, its time is shown below.
 
-Values are recorded when a deploy or ingest runs. A row written before a rule above existed keeps its old value until the next deploy or ingest.
+Values are recorded when a deploy or ingest runs. A row written before a rule above existed keeps its old value until the next deploy or ingest; for the ingest configuration, until the next ingest that embeds documents (an `updated` run). A run that embeds only some documents is not detected yet ([#703](https://github.com/fasrc/archi/issues/703)): after a partial `updated` run the board treats the whole corpus as built under that run's config, and the config shown does not reflect a `failed` run that embedded some documents before a later successful run.
 
 ### Severity Levels
 

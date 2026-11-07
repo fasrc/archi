@@ -40,6 +40,7 @@ def build_summary(
     live_checks: Iterable[Dict[str, Any]] = (),
     *,
     item_sink: Optional[Callable[[Dict[str, Any]], None]] = None,
+    items_total: Optional[int] = None,
 ) -> Dict[str, Any]:
     item_lifecycle = Counter()
     attempt_lifecycle = Counter()
@@ -49,6 +50,7 @@ def build_summary(
     atom_score_sum = 0.0
     required_recall_sum = 0.0
     scored_attempt_count = 0
+    scored_item_count = 0
     oracle_calls = Counter()
     with tempfile.TemporaryDirectory(prefix=".qa-summary-") as temporary:
         connection = sqlite3.connect(str(Path(temporary) / "summary.sqlite3"))
@@ -191,6 +193,8 @@ def build_summary(
                         for atom in json.loads(atoms_json)
                     ],
                 }
+                if scored > 0:
+                    scored_item_count += 1
                 if item_summary["item_pass_rate"] is None:
                     item_macro_exclusion_count += 1
                 else:
@@ -237,6 +241,8 @@ def build_summary(
         },
         "oracle_calls_succeeded": oracle_calls["succeeded"],
         "oracle_calls_failed": oracle_calls["failed"],
+        "items_total": items_total,
+        "scored_items": scored_item_count,
         **({"items": item_summaries} if item_summaries is not None else {}),
     }
 
@@ -283,6 +289,8 @@ def _report_header(summary: Dict[str, Any], manifest: Dict[str, Any]) -> list[st
         f"- Evaluator profile SHA-256: `{provenance.get('evaluator_profile_sha256', 'unavailable')}`",
         f"- Overall attempt pass rate: `{_rate(summary['overall_attempt_pass_rate'])}` "
         f"({summary['passed_attempts']}/{summary['quality_accounted_attempts']})",
+        f"- Scored items: `{_header_value(summary.get('scored_items'))}` "
+        f"/ items: `{_header_value(summary.get('items_total'))}`",
         f"- Macro mean item pass rate: `{_rate(summary['macro_mean_item_pass_rate'])}`",
         f"- Macro mean atom score: `{_rate(summary['macro_mean_scored_attempt_atom_score'])}`",
         f"- Macro mean required-atom recall: `{_rate(summary['macro_mean_scored_attempt_required_atom_recall'])}`",
@@ -339,3 +347,7 @@ def write_report(
 
 def _rate(value: Optional[float]) -> str:
     return "unavailable" if value is None else f"{value:.3f}"
+
+
+def _header_value(value: Optional[int]) -> Any:
+    return "unavailable" if value is None else value

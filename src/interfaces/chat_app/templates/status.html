@@ -347,6 +347,9 @@
           {% if kb.config %}
           <div class="prov-sub">
             <div class="prov-sub-title">Ingest configuration (as used at ingest)</div>
+            {% if kb.corpus_built_at and kb.corpus_built_at != kb.completed_at %}
+            <div class="prov-label">From the last run that embedded documents, completed {{ kb.corpus_built_at.strftime('%Y-%m-%d %H:%M UTC') }}.</div>
+            {% endif %}
             {% for key, value in kb.config | dictsort %}
             <div class="prov-row">
               <span class="prov-label">{{ key.replace('_', ' ') }}</span>
@@ -359,9 +362,12 @@
           {% if not kb.current_config_available %}
           <div class="prov-unavailable">Current configuration unavailable — drift not evaluated.</div>
           {% endif %}
+          {% if not kb.corpus_config_available %}
+          <div class="prov-unavailable">Configuration at ingest unknown — no run that embedded documents could be read; drift not evaluated.</div>
+          {% endif %}
           {% if kb.drift %}
           <div class="prov-warn">
-            <div class="prov-warn-title">⚠ configuration changed after this ingest</div>
+            <div class="prov-warn-title">⚠ configuration changed after the corpus was built</div>
             <div>The corpus above was not built with the configuration running now.</div>
             {% for item in kb.drift %}
             <div class="prov-mono">{{ item.key.replace('_', ' ') }}: {{ item.current }} now · {{ item.at_ingest }} at ingest</div>

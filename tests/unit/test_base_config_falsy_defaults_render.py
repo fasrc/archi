@@ -206,7 +206,7 @@ _NULL_ROWS = [
     (
         "services.chat_app.flask_debug_mode",
         "services.chat_app.flask_debug_mode",
-        True,
+        False,
         {},
     ),
     # :163 defaults to false — both absent and null should yield False.

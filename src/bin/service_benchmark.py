@@ -1,5 +1,4 @@
 import copy
-import importlib
 import json
 import math
 import os
@@ -22,7 +21,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from src.archi.archi import archi
 from src.archi.pipelines.agents.agent_spec import AgentSpecError, load_agent_spec
 from src.archi.providers import get_model
-from src.archi.providers.local_provider import LocalProvider, normalize_base_url
+from src.archi.providers.local_provider import LocalProvider
 from src.bin.benchmark_sut import apply_sut_local_provider, resolve_local_mode
 from src.utils.benchmark_provenance import (
     asserted_config_divergence,
@@ -53,15 +52,12 @@ from src.utils.benchmark_schema import (
     DEFAULT_ENABLED_METRICS,
     LOWER_IS_BETTER_METRICS,
     RAGAS_METRIC_NAMES,
-    build_ragas_metric_objects,
     json_safe,
     metric_winner,
     normalize_bank,
     ragas_effective_settings,
-    ragas_result_column,
     ragas_run_config_kwargs,
     required_fields_for_modes,
-    score_metrics_per_eligibility,
     with_effective_ragas_settings,
 )
 from src.utils.config_access import get_static_config
@@ -70,7 +66,19 @@ from src.utils.generate_benchmark_report import (
     format_markdown_output,
     parse_benchmark_results,
 )
-from src.utils.llm_usage import UsageRecorder
+from src.utils.judge_bundle import (
+    is_deferred,
+    pending_arm_fields,
+    plan_judge_run,
+    write_judge_bundle,
+    write_result_complete,
+)
+from src.utils.judge_identity import (
+    canonical_identity,
+    differing_fields,
+    extended_identity,
+    inline_scorer_identity,
+)
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
 
@@ -359,10 +367,12 @@ class ResultHandler:
         # judged. Only a wholly ABSENT key is skipped, and only because it
         # predates the field.
         judge_pressures = set()
-        # Which judge scored the arm (provider, model, endpoint, client mode).
-        # A None identity is skipped: an unjudged arm already fails the
-        # pressure check above, so counting it here adds nothing.
-        judge_identities = set()
+        # Which judge scored the arm (#618), extended with nested fields by
+        # #732. Compared by canonical JSON: a list or dict value cannot go into
+        # a set as a tuple of items. A None identity is skipped: an unjudged arm
+        # already fails the pressure check above, so counting it here adds
+        # nothing.
+        judge_identities: List[Dict[str, Any]] = []
         for record in records:
             stability = record.get("corpus_unchanged_at_endpoints", _NOT_RECORDED)
             if stability is not _NOT_RECORDED and stability is not True:
@@ -379,7 +389,7 @@ class ResultHandler:
                 fingerprints.add(fingerprint)
             identity = record.get("ragas_judge_identity_effective")
             if identity is not None:
-                judge_identities.add(tuple(sorted(identity.items())))
+                judge_identities.append(identity)
             pressure = record.get("ragas_effective_settings", _NOT_RECORDED)
             if pressure is _NOT_RECORDED:
                 continue
@@ -394,11 +404,11 @@ class ResultHandler:
                 "(concurrency, per-row budget, or one arm was not judged), "
                 "so their scored denominators are not comparable"
             )
-        if len(judge_identities) > 1:
+        if len({canonical_identity(i) for i in judge_identities}) > 1:
             return (
-                "the arms were scored by different RAGAS judges (provider, "
-                "model, endpoint, or client mode), so their scores are not "
-                "comparable"
+                "the arms were scored by different RAGAS judges (these identity "
+                f"fields differ: {', '.join(differing_fields(judge_identities))}), "
+                "so their scores are not comparable"
             )
         if len(fingerprints) > 1:
             return (
@@ -648,6 +658,7 @@ class ResultHandler:
         judge_usage: Optional[Dict[str, Any]] = None,
         ragas_scored: Optional[bool] = None,
         judge_identity: Optional[Dict[str, Any]] = None,
+        judge_bundle: Optional[Dict[str, str]] = None,
     ):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -861,6 +872,10 @@ class ResultHandler:
                 selected_file=str(config_path),
             ),
         }
+        # A deferred arm (#731, design D8): `judge_status: pending` and its
+        # bundle. An inline arm gets neither key.
+        if judge_bundle is not None:
+            current_results.update(pending_arm_fields(judge_bundle))
 
         ResultHandler.results.append(current_results)
         ResultHandler.category_map_records_by_arm.append(category_map_end_records)
@@ -937,7 +952,11 @@ class ResultHandler:
         ResultHandler.metadata.update(meta_data)
 
     @staticmethod
-    def dump_artifacts(benchmark_name: Path):
+    def result_timestamp() -> str:
+        return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    @staticmethod
+    def dump_artifacts(benchmark_name: Path, *, timestamp: Optional[str] = None):
         """Write the run's JSON artifact and its markdown report.
 
         The timestamp is captured ONCE so the report is always the JSON's
@@ -946,7 +965,8 @@ class ResultHandler:
         the source of truth); a report failure is logged and swallowed, and
         `--regenerate-md` on the backfill script rebuilds the report later.
         """
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        if timestamp is None:
+            timestamp = ResultHandler.result_timestamp()
         ResultHandler.dump_category_maps(benchmark_name, timestamp)
         json_path = ResultHandler.dump(benchmark_name, timestamp)
         try:
@@ -1226,6 +1246,19 @@ class ResultHandler:
         """Generate all pairwise index combinations for N configs."""
         return list(combinations(range(n_configs), 2))
 
+    @staticmethod
+    def build_comparisons(primary_metric: str) -> None:
+        """Every pairwise A/B comparison, then the leaderboard, of ``results``.
+
+        One path for the run (2+ arms) and for the judge merge (#732), which
+        rebuilds both from the judged arms of a deferred result.
+        """
+        pairs = ResultHandler.generate_pairwise_combinations(len(ResultHandler.results))
+        for idx_a, idx_b in pairs:
+            paired = ResultHandler.pair_ab_results(idx_a, idx_b)
+            ResultHandler.dump_ab_comparison(paired, idx_a, idx_b)
+        ResultHandler.build_leaderboard(primary_metric)
+
     # Leaderboard metric name -> the aggregate key the run loop writes onto
     # total_results (service_benchmark.py RAGAS block). Order is display order.
     LEADERBOARD_METRICS: List[Tuple[str, str]] = [
@@ -1433,9 +1466,7 @@ class ResultHandler:
             )
             judge_identity = record.get("ragas_judge_identity_effective")
             if judge_identity is not None:
-                ctx_fields["judge_identity"].add(
-                    json.dumps(judge_identity, sort_keys=True)
-                )
+                ctx_fields["judge_identity"].add(canonical_identity(judge_identity))
             ctx_fields["queries_path"].add(bench.get("queries_path"))
             # The corpus is a swept-context field like any other: ranking arms
             # scored against different documents asserts controlled conditions
@@ -1703,6 +1734,11 @@ class Benchmarker:
         self.required_fields = ["user_input"]
         self.benchmark_name = os.environ["container_name"]
         self.all_config_files = self.get_all_configs(configs)
+        self.judge_plan = plan_judge_run(
+            self.all_config_files,
+            package_dir=PACKAGE_DIR,
+            git_info_path=EXTRA_METADATA_PATH,
+        )
         self.all_config_files.append("FINISHED")
         self.previous_input_list = []
         self.chain = None
@@ -1911,91 +1947,28 @@ class Benchmarker:
         return results
 
     def get_ragas_llm_evaluator(self):
+        from src.utils.ragas_scoring import build_ragas_judge_llm
+
         identity = ragas_judge_effective_identity(self.config)
         self._ragas_judge_identity = identity
-        provider_key = identity["provider"]
-        model_name = identity["model"]
-
-        match provider_key:
-            case "openai":
-                return ChatOpenAI(model=model_name)
-            case "ollama":
-                from langchain_ollama import ChatOllama
-
-                return ChatOllama(
-                    model=model_name,
-                    base_url=identity["base_url"],
-                    num_predict=-2,
-                    model_kwargs={"format": "json"},
-                )
-            case "local":
-                # Mirror the SUT bridge (#73): a /v1 judge endpoint is
-                # OpenAI-compatible, so build a ChatOpenAI client instead of
-                # ChatOllama (which 404s against /v1). An explicit provider_mode
-                # (judge-specific or inherited from the SUT) overrides the
-                # /v1 auto-detection.
-                if identity["mode"] == "openai_compat":
-                    # base_url twice: see the huggingface arm below — in openai_compat
-                    # mode LocalProvider now honors the configured base_url instead of
-                    # OLLAMA_HOST, so the keyword agrees with the config copy instead
-                    # of outranking it. Only when there is one, though: the keyword
-                    # lands last, so a None would erase the provider's own local
-                    # default and send the judge to the public OpenAI endpoint. An
-                    # override with nothing to override with is not an override.
-                    override = (
-                        {"base_url": normalize_base_url(identity["base_url"])}
-                        if identity["base_url"]
-                        else {}
-                    )
-                    return get_model(
-                        "local",
-                        model_name,
-                        {"base_url": identity["base_url"], "mode": "openai_compat"},
-                        **override,
-                    )
-                from langchain_ollama import ChatOllama
-
-                return ChatOllama(
-                    model=model_name,
-                    base_url=identity["base_url"],
-                    num_predict=-2,
-                    model_kwargs={"format": "json"},
-                )
-            case "huggingface":
-                # base_url twice, on purpose. load_new_configuration exports the SUT
-                # url as OLLAMA_HOST, but in openai_compat mode LocalProvider now
-                # honors the configured base_url instead of OLLAMA_HOST, so the
-                # keyword agrees with the config copy instead of outranking it.
-                return get_model(
-                    "local",
-                    model_name,
-                    {"base_url": identity["base_url"], "mode": "openai_compat"},
-                    base_url=normalize_base_url(identity["base_url"]),
-                )
-            case "anthropic":
-                from langchain_anthropic import ChatAnthropic
-
-                return ChatAnthropic(model=model_name)
-            case "huit_bedrock":
-                return get_model(
-                    "huit_bedrock", model_name, {"base_url": identity["base_url"]}
-                )
-            case _:
-                return ChatOpenAI(model=model_name)
+        return build_ragas_judge_llm(
+            identity,
+            chat_openai=ChatOpenAI,
+            get_model=get_model,
+        )
 
     def get_ragas_embedding_model(self):
+        from src.utils.ragas_scoring import build_ragas_embeddings
+
         ragas_configs = self.config["services"]["benchmarking"]["mode_settings"][
             "ragas_settings"
         ]
         embedding_model = ragas_configs["embedding_model"]
-
-        match embedding_model.lower():
-            case "openai":
-                return OpenAIEmbeddings()
-            case "huggingface":
-                return HuggingFaceEmbeddings()
-            case _:
-                return OpenAIEmbeddings()
+        return build_ragas_embeddings(
+            embedding_model,
+            openai_embeddings=OpenAIEmbeddings,
+            huggingface_embeddings=HuggingFaceEmbeddings,
+        )
 
     def prepare_match_fields(self, question_item):
 
@@ -2214,69 +2187,70 @@ class Benchmarker:
         WARNING: mutates ``results_by_key`` in place (adds each metric's score to
         the matching question entry).
         """
-        # Lazy import: ragas (and its transitive `datasets` dep) is benchmark-only
-        # and absent from the unit-test environment. See the module-header note.
-        from ragas import EvaluationDataset, RunConfig, evaluate
-
-        # import_module, not ``from ragas import metrics``: it reads the
-        # submodule straight from sys.modules, which the unit-test stub relies on.
-        ragas_metrics = importlib.import_module("ragas.metrics")
-        from ragas.embeddings import LangchainEmbeddingsWrapper
-        from ragas.llms import LangchainLLMWrapper
+        from src.utils.ragas_scoring import RagasScoreOutcome, score_ragas
 
         enabled_metrics = self.benchmarking_configs["mode_settings"]["ragas_settings"][
             "enabled_metrics"
         ]
-        metrics = [name for name in RAGAS_METRIC_NAMES if name in enabled_metrics]
-        # Built per name with a pinned ``name``; a mode metric's scores come back
-        # under ``name(mode=...)``, which ragas_result_column resolves.
-        all_metrics = build_ragas_metric_objects(ragas_metrics, metrics)
-
         ragas_settings = self.config["services"]["benchmarking"]["mode_settings"][
             "ragas_settings"
         ]
-        # The archi config-render pipeline can strip global.verbosity; tolerate
-        # missing key (verbosity 4 enables tenacity retry logging in ragas).
         verbosity = self.config.get("global", {}).get("verbosity", 0)
-        batch_size = ragas_settings["batch_size"] or None
-        # Kwargs built by a tested helper rather than inline: `max_workers` was
-        # never passed here, so ragas' default of 16 concurrent judge calls
-        # applied unannounced. See ragas_run_config_kwargs for why raising
-        # `max_retries` is NOT the lever for judge timeouts.
-        runconfig = RunConfig(**ragas_run_config_kwargs(ragas_settings, verbosity))
-        llm = LangchainLLMWrapper(self.get_ragas_llm_evaluator())
-        embeddings = LangchainEmbeddingsWrapper(self.get_ragas_embedding_model())
         judge_provider, judge_model = ragas_judge_identity(self.config)
-        recorder = UsageRecorder(judge_provider, judge_model or "")
-        # Input rows alone do not prove the judge ran: a metric with no
-        # eligible row records n/a without calling score_fn (#518).
+
+        outcome = RagasScoreOutcome()
         self._ragas_scored = False
-
-        def score_fn(metric, eligible_rows):
-            self._ragas_scored = True
-            # One metric at a time over its own eligible subset: keeps a single
-            # bad metric from failing the batch and preserves per-metric
-            # denominators (the modern EvaluationDataset replaces the legacy
-            # datasets.Dataset + column names).
-            dataset = EvaluationDataset.from_list(eligible_rows)
-            evaluation = evaluate(
-                dataset,
-                metrics=[all_metrics[metric]],
-                llm=llm,
-                embeddings=embeddings,
-                run_config=runconfig,
-                batch_size=batch_size,
-                callbacks=[recorder],
-            )
-            column = ragas_result_column(all_metrics[metric])
-            return evaluation.to_pandas()[column].tolist()
-
         try:
-            return score_metrics_per_eligibility(
-                rows, keys, metrics, results_by_key, score_fn
+            score_ragas(
+                rows,
+                keys,
+                results_by_key,
+                enabled_metrics=enabled_metrics,
+                ragas_settings=ragas_settings,
+                verbosity=verbosity,
+                judge_factory=self.get_ragas_llm_evaluator,
+                embeddings_factory=self.get_ragas_embedding_model,
+                judge_provider=judge_provider,
+                judge_model=judge_model,
+                outcome=outcome,
             )
+            return outcome.aggregates
         finally:
-            self._judge_usage = recorder.snapshot()
+            self._ragas_scored = outcome.scored
+            self._judge_usage = outcome.usage
+            # The D10 fields of this arm's judge (#732); run() merges them into
+            # the four-field identity it records. None when no judge was built.
+            self._ragas_judge_extension = (
+                None
+                if outcome.decoding is None
+                else {
+                    "model_revision": None,
+                    "precision": None,
+                    "server_image_digest": None,
+                    "server_args": None,
+                    "decoding": outcome.decoding,
+                    "run_config": ragas_run_config_kwargs(ragas_settings, verbosity),
+                    "batch_size": ragas_settings["batch_size"] or None,
+                    "chunk_size": None,
+                    "embedding": outcome.embedding,
+                    "metrics": [m for m in RAGAS_METRIC_NAMES if m in enabled_metrics],
+                }
+            )
+
+    def _recorded_judge_identity(self):
+        """The judge identity this arm records: #618's four fields plus D10's.
+
+        The four-field ``_ragas_judge_identity`` alone when no judge was built
+        or the arm has no extension. The scorer of an inline run is the
+        benchmark image; its identity is computed once per run (``pip freeze``).
+        """
+        base = getattr(self, "_ragas_judge_identity", None)
+        fields = getattr(self, "_ragas_judge_extension", None)
+        if base is None or fields is None:
+            return base
+        if getattr(self, "_inline_scorer", None) is None:
+            self._inline_scorer = inline_scorer_identity(PACKAGE_DIR)
+        return extended_identity(base, scorer=self._inline_scorer, **fields)
 
     def _source_scorable_count(self) -> int:
         """The source-accuracy denominator: questions that declare expected sources.
@@ -2357,7 +2331,32 @@ class Benchmarker:
             # False (#518). get_ragas_results sets it True only when a metric
             # invokes the judge. Left untouched when RAGAS is not a mode.
             self._ragas_scored = False
-            if ragas_input:
+            if is_deferred(getattr(self, "judge_plan", None)):
+                # Deferred (#731, design D6): write this arm's judge bundle in
+                # place of the judge. No judge or embedding object is built and
+                # no aggregate is written; _ragas_scored stays False, so
+                # handle_results records the #518 null judge fields. An arm with
+                # no scorable row still writes a bundle: the merge waits for
+                # every arm.
+                plan = self.judge_plan
+                self._judge_bundle = write_judge_bundle(
+                    OUTPUT_DIR / plan.bundle_dir,
+                    result_basename=self.result_basename,
+                    arm_index=self._arm_index,
+                    arm_count=plan.arm_count,
+                    rows=ragas_input,
+                    keys=list(scorable_items(question_wise_results).keys()),
+                    enabled_metrics=self.benchmarking_configs["mode_settings"][
+                        "ragas_settings"
+                    ]["enabled_metrics"],
+                    ragas_settings=self.config["services"]["benchmarking"][
+                        "mode_settings"
+                    ]["ragas_settings"],
+                    verbosity=self.config.get("global", {}).get("verbosity", 0),
+                    code_version=plan.code_version,
+                    package_digest=plan.package_digest,
+                )
+            elif ragas_input:
                 logger.info("Starting to collect RAGAS results")
                 # scorable_items carries #92's per-question keys in ragas_input
                 # order; get_ragas_results scores each metric over its own
@@ -2522,6 +2521,9 @@ class Benchmarker:
             }
 
     def run(self):
+        _result_ts = ResultHandler.result_timestamp()
+        self.result_basename = f"{self.benchmark_name}-{_result_ts}"
+
         ingest_wall_seconds = self.wait_for_ingestion_completion()
 
         modes_being_run = set(self.benchmarking_configs["modes"])
@@ -2542,6 +2544,9 @@ class Benchmarker:
         )
         logger.info("")
 
+        # 0-based position of the arm in benchmarking_results; a deferred arm
+        # names its judge bundle with it (#731, design D5).
+        arm_index = 0
         while self.all_config_files:
             # Read the corpus BEFORE the arm's questions, so the report can show
             # whether they were all scored against the same documents.
@@ -2551,7 +2556,10 @@ class Benchmarker:
             _, category_map_before = ResultHandler.get_category_map(arm_config)
             self._judge_usage = None
             self._ragas_judge_identity = None
+            self._ragas_judge_extension = None
             self._ragas_scored = None
+            self._judge_bundle = None
+            self._arm_index = arm_index
             question_wise_results, total_results = self._process_config(modes_being_run)
             ResultHandler.handle_results(
                 Path(self.current_config),
@@ -2578,42 +2586,35 @@ class Benchmarker:
                 retrieval_identity=arm_identity,
                 judge_usage=getattr(self, "_judge_usage", None),
                 ragas_scored=getattr(self, "_ragas_scored", None),
-                judge_identity=getattr(self, "_ragas_judge_identity", None),
+                judge_identity=self._recorded_judge_identity(),
+                judge_bundle=getattr(self, "_judge_bundle", None),
             )
             self.load_new_configuration()
+            arm_index += 1
 
         ResultHandler.add_metadata()
 
-        # A/B comparison: pair results across configs when 2+ were run.
-        # Auto-enabled — no explicit flag — because there's no useful "skip
-        # pairing" case when the user gave us multiple configs.
-        if len(ResultHandler.results) >= 2:
-            pairs = ResultHandler.generate_pairwise_combinations(
-                len(ResultHandler.results)
-            )
-            logger.info("Generating %d pairwise A/B comparisons...", len(pairs))
-            for idx_a, idx_b in pairs:
-                paired = ResultHandler.pair_ab_results(idx_a, idx_b)
-                ResultHandler.dump_ab_comparison(paired, idx_a, idx_b)
-                comp = ResultHandler.ab_comparisons[-1]
-                name_a = comp["config_a"].get("name", f"config_{idx_a}")
-                name_b = comp["config_b"].get("name", f"config_{idx_b}")
-                logger.info(
-                    ResultHandler.ab_summary_line(
-                        name_a, name_b, len(paired), comp["aggregate"]
-                    )
-                )
-
-        # Prompt-sweep leaderboard: rank every config by mean RAGAS metric.
-        # Independent of the pairwise block above (reads per-config aggregates
-        # directly). Only meaningful with 2+ variants.
+        # A/B comparison: pair results across configs when 2+ were run, then
+        # the prompt-sweep leaderboard, which ranks every config by mean RAGAS
+        # metric. Auto-enabled — no explicit flag — because there's no useful
+        # "skip pairing" case when the user gave us multiple configs.
         if len(ResultHandler.results) >= 2:
             primary_metric = str(
                 self.config.get("services", {})
                 .get("benchmarking", {})
                 .get("primary_metric", "faithfulness")
             )
-            leaderboard = ResultHandler.build_leaderboard(primary_metric)
+            ResultHandler.build_comparisons(primary_metric)
+            for comp in ResultHandler.ab_comparisons:
+                logger.info(
+                    ResultHandler.ab_summary_line(
+                        comp["config_a"]["name"],
+                        comp["config_b"]["name"],
+                        len(comp["per_question"]),
+                        comp["aggregate"],
+                    )
+                )
+            leaderboard = ResultHandler.leaderboard
             logger.info(
                 "Prompt-sweep leaderboard (ranked by %s):",
                 leaderboard["primary_metric"],
@@ -2713,7 +2714,9 @@ class Benchmarker:
                     "Argilla push failed — results were still dumped to disk."
                 )
 
-        ResultHandler.dump_artifacts(self.benchmark_name)
+        ResultHandler.dump_artifacts(self.benchmark_name, timestamp=_result_ts)
+        if is_deferred(getattr(self, "judge_plan", None)):
+            write_result_complete(OUTPUT_DIR, self.result_basename)
         return
 
     def _merge_anchor_questions(self) -> None:

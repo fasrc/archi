@@ -355,7 +355,8 @@ def runs():
 @evaluations_bp.route("/api/evaluations/runs/<history_id>")
 def run_detail(history_id):
     try:
-        return _bounded_json_response({"run": _service().get_run(history_id)})
+        run = _service().get_run(history_id, include_hidden=_can_manage())
+        return _bounded_json_response({"run": run})
     except Exception as exc:
         return _error(exc)
 

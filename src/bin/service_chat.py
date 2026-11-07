@@ -12,45 +12,96 @@ from src.utils.postgres_service_factory import PostgresServiceFactory
 from src.utils.telemetry import instrument_flask_app
 
 
-def main():
+def build_gunicorn_options(chat_config):
+    """Return the five gunicorn option keys for the chat service."""
+    raw = chat_config.get("wsgi_threads")
+    if raw is None:
+        threads = 16
+    else:
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+            raise ValueError(
+                "services.chat_app.wsgi_threads must be an int >= 1, got {!r}".format(
+                    raw
+                )
+            )
+        threads = raw
+    return {
+        "bind": f"{chat_config['host']}:{chat_config['port']}",
+        "workers": 1,
+        "worker_class": "gthread",
+        "threads": threads,
+        "preload_app": False,
+    }
 
-    setup_logging()
 
-    # load secrets
+def make_gunicorn_application(app_factory, options):
+    """Build a gunicorn BaseApplication that serves app_factory()."""
+    from gunicorn.app.base import BaseApplication
+
+    class ChatApplication(BaseApplication):
+        def __init__(self):
+            self.app_factory = app_factory
+            self.options = dict(options)
+            super().__init__()
+
+        def load_config(self):
+            for key, value in self.options.items():
+                self.cfg.set(key, value)
+
+        def load(self):
+            return self.app_factory()
+
+    return ChatApplication()
+
+
+def create_app():
+    """Build and return the Flask app for the chat service."""
     os.environ["ANTHROPIC_API_KEY"] = read_secret("ANTHROPIC_API_KEY")
     os.environ["OPENAI_API_KEY"] = read_secret("OPENAI_API_KEY")
     os.environ["HUGGING_FACE_HUB_TOKEN"] = read_secret("HUGGING_FACE_HUB_TOKEN")
 
-    # Set up shared Postgres services (expects config already in DB)
     factory = PostgresServiceFactory.from_env(
         password_override=read_secret("PG_PASSWORD")
     )
     PostgresServiceFactory.set_instance(factory)
 
-    # Reload config from Postgres (runtime source of truth)
-    config = get_full_config()
-    chat_config = config["services"]["chat_app"]
-    print(
-        f"Starting Chat Service with (host, port): ({chat_config['host']}, {chat_config['port']})"
-    )
-    print(
-        f"Accessible externally at (host, port): ({chat_config['hostname']}, {chat_config['external_port']})"
-    )
-
+    chat_config = get_full_config()["services"]["chat_app"]
     generate_script(chat_config)
+
     flask_app = Flask(
         __name__,
         template_folder=chat_config["template_folder"],
         static_folder=chat_config["static_folder"],
     )
     instrument_flask_app(flask_app)
-    app = FlaskAppWrapper(flask_app)
-    app.run(
-        debug=True,
-        use_reloader=False,
-        port=chat_config["port"],
-        host=chat_config["host"],
+    FlaskAppWrapper(flask_app)
+
+    flask_app.debug = False
+    return flask_app
+
+
+def main():
+
+    setup_logging()
+
+    factory = PostgresServiceFactory.from_env(
+        password_override=read_secret("PG_PASSWORD")
     )
+    PostgresServiceFactory.set_instance(factory)
+    try:
+        chat_config = get_full_config()["services"]["chat_app"]
+    finally:
+        factory.close()
+        PostgresServiceFactory.set_instance(None)
+    print(
+        f"Starting Chat Service with (host, port): ({chat_config['host']}, {chat_config['port']})"
+    )
+    print(
+        f"Accessible externally at (host, port): ({chat_config['hostname']}, {chat_config['external_port']})"
+    )
+    options = build_gunicorn_options(chat_config)
+    server = make_gunicorn_application(create_app, options)
+    server.run()
 
 
 def generate_script(chat_config):

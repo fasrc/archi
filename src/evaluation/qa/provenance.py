@@ -78,8 +78,8 @@ def _tag_reading(config: Mapping[str, Any]):
 def start_readings(config: Mapping[str, Any], spec: Any) -> Dict[str, Any]:
     """Run the start guard and take the first reading, before any question.
 
-    Raises ``CollectionNotReadyError`` from the guard: no attempt has run, so
-    nothing is lost.
+    Raises ``CollectionNotReadyError`` from the guard. Callers invoke this
+    before deleting or writing anything, so a refusal loses nothing.
     """
     if not uses_search(spec):
         return {"retrieval_identity": None, "corpus_fingerprint_before": None}

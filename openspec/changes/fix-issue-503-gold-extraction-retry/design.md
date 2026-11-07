@@ -1,22 +1,26 @@
 ## Context
 
-Anchors verified on `origin/dev` `db701852` (`src/evaluation/qa/`):
+Anchors re-verified on `origin/dev` `6b8afe98` on 2026-10-24 (`src/evaluation/qa/`). Task 1.1
+merged with PR #620, so the record field and the row reader already exist on `dev`:
 
-- `preparation.py:277` `prepare_dataset_item`. The extractor call and validation are one
-  expression at `:323-333`: `validate_gold_output(extractor.extract_gold(...), context=...)`.
-  The bare `except Exception` at `:336` writes `preparation_failed`.
-- `preparation.py:321-322` sets `_extractor_was_called` / `_usage_recorded`; `:335` and `:338`
+- `preparation.py:291` `prepare_dataset_item`. The extractor call and validation are one
+  expression at `:337-347`: `validate_gold_output(extractor.extract_gold(...), context=...)`.
+  The bare `except Exception` at `:350` writes `preparation_failed`.
+- `preparation.py:335-336` sets `_extractor_was_called` / `_usage_recorded`; `:349` and `:352`
   read `extractor.last_usage` (the runtime resets it on every call, `runtime.py:248`).
 - `validation.py:45` `validate_gold_output` raises `ValueError` on a shape violation.
-- `preparation.py:405` `_record_from_row` validates rows with `_require_exact_keys` (`:391`).
+- `preparation.py:419` `_record_from_row` validates rows with `_require_exact_keys` (`:405`).
   An unknown key raises. The score phase re-reads `preparation.jsonl` through this reader
-  (`workflow.py:858-862`), so a new row key must be accepted here or scoring crashes.
-- `preparation.py:225-267` `PreparationRecord.to_dict`.
+  (`workflow.py:869-872`). Task 1.1 already accepts `gold_extraction_attempts` (`:460-465`).
+- `preparation.py:72` `PreparationRecord` has `gold_extraction_attempts` (`:91`); `to_dict`
+  at `:234` emits it only when it is not `None` (`:269-270`, `:279-280`).
 - `src/utils/llm_usage.py:126` `sum_usage` merges usage snapshots and skips `None`.
-- `scoring.py:37` `build_summary`; per-item loop at `:172` has `scored_attempts`; return dict
-  at `:209`. `_report_header` at `:272`.
-- `workflow.py:858` (score phase) and `workflow.py:1213` (retry phase) call `build_summary`.
-  The manifest's `phases.prepare.input_items` is at `workflow.py:279`.
+- `scoring.py:37` `build_summary`; the per-item dict sets `scored_attempts` at `:176`; return
+  dict at `:209`. `_report_header` at `:272`; the overall pass-rate line at `:284-285`.
+- `workflow.py:868` (score phase) and `workflow.py:1226` (retry phase) call `build_summary`.
+  The manifest's `phases.prepare.input_items` is set at `workflow.py:279`. The retry phase
+  copies the parent's `prepare` block into its own `manifest` (`:1043`), so both callers can
+  read `manifest["phases"]["prepare"]["input_items"]`.
 
 ## Decisions
 

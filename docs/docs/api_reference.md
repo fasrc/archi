@@ -667,6 +667,39 @@ Get document statistics (total, enabled, disabled, by source type).
 
 ---
 
+## Uploads
+
+### `POST /api/upload/embed`
+
+Trigger the vectorstore embed update from the chat app. Requires the `Upload.EMBED`
+permission.
+
+The request runs the update in the data manager, which takes the ingestion lock and
+waits behind any running ingest or scheduled refresh before it starts. While the update
+runs, the data manager's [`GET /api/ingestion/status`](#get-apiingestionstatus) reports
+`step` as `"upload"`.
+
+**200 answers:**
+
+| Body field | Value | Meaning |
+|------------|-------|---------|
+| `success` | `true` | The update completed. |
+| `message` | `"Embedding complete. Documents are now searchable."`, or `"<n> document(s) failed to process."` | Always present. The second form comes with `partial`; `<n>` is the number of entries in `failed`. |
+| `partial` | `true` | Present when some files could not be embedded. |
+| `failed` | `[{"file": "<name>", "error": "<reason>"}, ...]` | Present with `partial`; lists up to 20 failed files, newest first. |
+
+**Error answers:**
+
+| Status | Body | Meaning |
+|--------|------|---------|
+| 500 | `{"error": "<data manager detail>"}` | The data manager reported a failure; the error field carries the data manager's `detail` or `error` message. |
+| 502 | `{"error": "Data manager authentication failed"}` | The data manager returned a redirect; check that `DM_API_TOKEN` is correct. |
+| 502 | `{"error": "Data manager error (HTTP <code>)"}` | The data manager returned a non-JSON or unexpected response. |
+| 503 | `{"error": "data_manager_unavailable"}` | The data manager could not be reached. |
+| 504 | `{"error": "The data manager did not answer in time. The update can still be running: reload this page later to see the document status."}` | The read timed out. The update can still be running; `GET /api/ingestion/status` shows when it ends. |
+
+---
+
 ## Analytics
 
 ### `GET /api/analytics/model-usage`
@@ -705,7 +738,8 @@ ingest ends, `progress` keeps its last value.
 **Scheduled refreshes and upload runs** also move through this endpoint. While a
 scheduled source refresh is running, `state` is `running` and `step` is
 `scheduled:<source>` (for example `scheduled:git`). While a file upload is being
-ingested, `step` is `upload`. In both cases `progress` is `null` for the duration of
+ingested, or when the chat app's Process Documents action (`POST /api/upload/embed`) is
+running, `step` is `upload`. In both cases `progress` is `null` for the duration of
 the run. When the run ends, `state` becomes `completed` and `step` becomes `done`; on
 failure, `state` becomes `error` and `step` becomes `failed`. A run whose vectorstore
 sync could not add its documents also ends in `error`. If another run is queued for the
@@ -720,6 +754,22 @@ refreshes and upload runs.
 {"state": "running", "step": "Updating vectorstore", "error": null,
  "progress": {"done": 150, "total": 412}}
 ```
+
+### `POST /document_index/embed`
+
+Run the tracked upload update synchronously.
+
+**Auth:** With `services.data_manager.auth.enabled` false, the endpoint is open. With it
+true, the request needs an admin session or the header
+`Authorization: Bearer <DM_API_TOKEN>`, else the answer is a 302 redirect to `/login`.
+Accepts POST only. While the update runs, `step` is `"upload"` on
+`GET /api/ingestion/status`.
+
+| Status | Body | Meaning |
+|--------|------|---------|
+| 200 | `{"status": "ok"}` | Update completed successfully. |
+| 500 | `{"error": "embed_failed", "detail": "<message>"}` | The update raised an exception (`detail` has the message) or the vectorstore sync reported a failure. |
+| 503 | `{"error": "embed_unavailable"}` | The data manager has no embed hook configured. |
 
 ### `POST /api/reload-schedules`
 
@@ -739,11 +789,13 @@ Get current schedule status.
 
 A URL upload writes its status under `web`, not `links`. As a result, a URL upload does not change the `state` or `last_run` of the `links` job.
 
+A manual ingest writes its status only after its vector update returns. If the update succeeds, it writes `idle` and a new `last_run`. If the update fails, it writes `error` and keeps the old `last_run`, and the uploader answers HTTP 500 with `{"error": "update_failed", "detail": "<message>"}`, not `{"status": "ok"}`. The same order applies to a git repository removal and to a URL upload (under `web`). A failed update does not undo the collection: new documents stay stored and removed documents stay deleted, but retrieval does not see the change until the next successful vector update. A later manual ingest or a scheduled refresh of any source runs that update.
+
 | `state` | Meaning |
 |---|---|
-| `idle` | The last scheduled refresh or manual ingest completed. `last_run` is its completion time. This is also the value for a source that has not run; then `last_run` is `null`. |
+| `idle` | The last scheduled refresh or manual ingest completed, including its vector update. `last_run` is its completion time. This is also the value for a source that has not run; then `last_run` is `null`. |
 | `running` | A refresh is in progress. |
-| `error` | The last scheduled refresh failed. `last_run` keeps the time of the last success. The next scheduled run tries again. A later successful manual ingest of a shared key (`git`, `jira`, `local_files`) sets `idle` again. |
+| `error` | The last scheduled refresh failed, or the vector update after the last manual ingest failed. `last_run` keeps the time of the last success. The next scheduled run tries again. A later successful manual ingest of a shared key (`git`, `jira`, `local_files`) sets `idle` again. |
 
 The cause of a failure is in the data-manager log. `GET /api/ingestion/status` also shows it, but only for a short time: that endpoint keeps one status in memory, so the next ingestion run or a service restart clears the error. The `error` state on this endpoint stays until a later write for that source.
 

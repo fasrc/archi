@@ -35,6 +35,8 @@ run?" without either source still existing. ``code_version`` and
 import hashlib
 import json
 import os
+import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -600,6 +602,47 @@ def code_fingerprint(sources: Iterable[Tuple[str, bytes]]) -> str:
     return f"sha256:{digest}"
 
 
+def package_digest(freeze_text: str) -> str:
+    """Digest of a ``pip freeze`` listing, equal exactly when the package set is.
+
+    Lines are stripped, blank lines dropped and the rest sorted, so the digest
+    does not depend on the order or the spacing that one ``pip`` version prints.
+    The benchmark run and the offline scorer (#732) both call this, so both
+    sides hash the same way.
+    """
+    lines = sorted(line.strip() for line in freeze_text.splitlines() if line.strip())
+    digest = hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def collect_package_digest(run: Any = subprocess.run) -> Dict[str, Any]:
+    """The package digest of this interpreter's environment, from ``pip freeze``.
+
+    Never raises, like ``collect_code_version``: a failed or empty ``pip freeze``
+    gives ``digest: None`` and an ``<unavailable: ...>`` source with the reason.
+    """
+    try:
+        proc = run(
+            [sys.executable, "-m", "pip", "freeze"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {"digest": None, "source": f"<unavailable: pip freeze timed out: {exc}>"}
+    except OSError as exc:
+        return {"digest": None, "source": f"<unavailable: pip freeze failed: {exc}>"}
+    if proc.returncode != 0:
+        return {
+            "digest": None,
+            "source": f"<unavailable: pip freeze exited {proc.returncode}>",
+        }
+    if not (proc.stdout or "").strip():
+        return {"digest": None, "source": "<unavailable: pip freeze printed nothing>"}
+    return {"digest": package_digest(proc.stdout), "source": "pip freeze"}
+
+
 def package_module_files(package_dir: str) -> List[Tuple[str, str]]:
     """Every ``.py`` under *package_dir*, as ``(relative_path, absolute_path)``.
 
@@ -753,11 +796,27 @@ def config_version(
     ``selected_file_digest`` or the divergence list: those two describe the file
     as it was written, and that is their whole audit purpose. Two files that
     differ must fingerprint differently even when they drive identical runs.
+
+    When the basis has a ``data_manager`` section, ``key_settings`` also carries
+    ``effective_chunking`` -- the chunking parameters the ingest path actually
+    applies (see ``ingest_provenance.effective_chunking``), derived rather than a
+    dotted config path. It is omitted with no ``data_manager`` section: the
+    defaults would claim a chunking nobody configured.
     """
     have_running = running is not None
     basis = effective_config(
         running, selected if effective_selected is None else effective_selected
     )
+
+    key_settings = settings_at_paths(basis, KEY_SETTING_PATHS)
+    if isinstance(basis, dict) and isinstance(basis.get("data_manager"), dict):
+        # Imported here, not at the top: ``compare_runs.py`` loads this file by
+        # path on hosts with no database driver, and any ``src.utils`` import
+        # re-enters the package ``__init__`` (psycopg2). It needs only
+        # ``retrieval_identity``, never this branch.
+        from src.utils.ingest_provenance import effective_chunking
+
+        key_settings["effective_chunking"] = effective_chunking(basis["data_manager"])
 
     return {
         "digest": config_fingerprint(basis),
@@ -776,7 +835,7 @@ def config_version(
         "divergence_from_selected_file": (
             asserted_config_divergence(selected, running) if have_running else None
         ),
-        "key_settings": settings_at_paths(basis, KEY_SETTING_PATHS),
+        "key_settings": key_settings,
     }
 
 
