@@ -15,19 +15,26 @@ the answer against the whole `reference`, so such a fact lowers the score of a c
 
 The operator answered the five open questions on 2026-10-19 (#213 body, "Decision").
 
+On 2026-10-20 the operator decided the two Codex P1 findings on PR #728 (#213 body, "Resume"):
+decision 6, re-ingest each cited page before a lock batch, so that the evidence and the lock
+hash describe the same content; and decision 7, a row whose cited page is not in the ingested
+corpus cannot be confirmed until that page is ingested, with no second evidence path.
+
 ## What Changes
 
 - ADD one requirement, *Confirmation standard for locking*, to the `ragas-goldenset-maintenance`
-  capability. It states the operator's five decisions:
+  capability. It states the operator's seven decisions:
   1. every discrete fact in the `reference` must be found, not only the facts that `user_input`
      asks about;
   2. partial support: trim, then lock; a row is never locked while it asserts an unsupported fact;
   3. stale `notes`: fix the notes, then lock;
   4. the evidence source is the ingested chunks, not the live web page;
-  5. a lock batch shows, per fact, the source URL, the chunk index, and a quoted span.
+  5. a lock batch shows, per fact, the source URL, the chunk index, and a quoted span;
+  6. re-ingest each cited page before a lock batch, and take the evidence from that re-ingest;
+  7. a row whose cited page is not in the ingested corpus cannot be confirmed until it is ingested.
 - The requirement keeps source-less rows (for example `should_refuse` anchors) under the existing
   rule (`spec.md:16`, scenario at `:36`).
-- Five scenarios, one per decision.
+- Seven scenarios, one per decision.
 - Archive the change, so the requirement merges into
   `openspec/specs/ragas-goldenset-maintenance/spec.md` and the change moves to
   `openspec/changes/archive/`.
