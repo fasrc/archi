@@ -307,8 +307,19 @@ same tree with the D1 clause.
 | E | `scraper: None, title: a` | `title: b` | `{"title": "b"}` | `{"title": "b"}` |
 | F | `scraper: elog` | `scraper: None, title: b` | `{"scraper": null, "title": "b"}` | `{"scraper": "elog", "title": "b"}` |
 | G | `title: g` (insert only) | — | `{"title": "g"}` | `{"title": "g"}` |
+| J (task 6.1, 2026-11-07, `postgres:16`) | `scraper: indico, title: a`, then `delete_resource` | `b: 2` | — | `{"b": 2}`, `is_deleted = f` |
+| K (task 6.1, 2026-11-07, `postgres:16`) | `scraper: indico, title: a` (no delete) | `b: 2` | — | `{"b": 2, "scraper": "indico"}`, `is_deleted = f` |
 
 `get_metadata_by_filter("scraper", scraper="indico")`: red `['C']`, green `['A', 'C']`.
+
+Cases J and K (the review run of 2026-11-07, PR #783, Codex P2): the same setup on
+`postgres:16` (16.15), the `init.sql:207-255` DDL, the real `upsert_resource` and
+`delete_resource` of the worktree (`module:` path printed), the D1 clause with
+`AND NOT documents.is_deleted`. Before the delete, J read `{"scraper": "indico", "title":
+"a"}`; after `delete_resource`, `is_deleted = t` with the same `extra_json`; the plain
+`web` upsert then gave `{"b": 2}` and `is_deleted = f`. K, with no delete, kept the marker.
+The `red` column does not apply: the pre-6.1 clause gave `{"b": 2, "scraper": "indico"}`
+for J (the proof of 2026-10-26 in the PR body).
 `get_metadata_by_filter("scraper", scraper="elog")`: red `[]`, green `['B', 'F']`.
 
 D7 SQL on the red database: `SELECT_UNMARKED_WEB_ROWS_SQL` returned A, B, D, E, F, G (F has

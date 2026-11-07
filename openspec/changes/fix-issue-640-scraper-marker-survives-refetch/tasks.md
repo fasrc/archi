@@ -199,7 +199,7 @@
 
 ## 6. A deleted row does not revive its marker (operator decision of 2026-11-07, option 1 on #640; do this BEFORE task 3.1)
 
-- [ ] 6.1 Red test, the clause, and the proof in one task. In
+- [x] 6.1 Red test, the clause, and the proof in one task. In
       `tests/unit/test_catalog_postgres_upsert_scraper_marker.py`, add the line
       `AND NOT documents.is_deleted` to `_MARKER_CLAUSE` directly after the
       `WHEN EXCLUDED.source_type = 'web'` line, at the same indentation as the two

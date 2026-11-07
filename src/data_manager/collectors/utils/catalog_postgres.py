@@ -287,7 +287,9 @@ class PostgresCatalogService:
         retains that identity (#640).  An incoming marker always wins, so a
         scraper can still re-own a row.  An incoming row of another source type
         (for example ``sso``: the hash is the URL's, so it hits the same row)
-        does not inherit the marker.
+        does not inherit the marker.  A soft-deleted row does not revive its
+        marker either (``delete_resource`` only sets ``is_deleted``), so
+        "delete the row, then fetch it again" reclassifies a row.
 
         Returns:
             The document ID (for linking to document_chunks)
@@ -343,6 +345,7 @@ class PostgresCatalogService:
                         last_modified = COALESCE(EXCLUDED.last_modified, documents.last_modified),
                         extra_json = CASE
                             WHEN EXCLUDED.source_type = 'web'
+                                AND NOT documents.is_deleted
                                 AND COALESCE(jsonb_typeof(EXCLUDED.extra_json -> 'scraper'), 'null') = 'null'
                                 AND COALESCE(jsonb_typeof(documents.extra_json -> 'scraper'), 'null') <> 'null'
                             THEN COALESCE(EXCLUDED.extra_json, '{}'::jsonb)

@@ -19,6 +19,7 @@ from src.data_manager.collectors.utils.catalog_postgres import PostgresCatalogSe
 _MARKER_CLAUSE = """
     extra_json = CASE
         WHEN EXCLUDED.source_type = 'web'
+            AND NOT documents.is_deleted
             AND COALESCE(jsonb_typeof(EXCLUDED.extra_json -> 'scraper'), 'null') = 'null'
             AND COALESCE(jsonb_typeof(documents.extra_json -> 'scraper'), 'null') <> 'null'
         THEN COALESCE(EXCLUDED.extra_json, '{}'::jsonb)
@@ -95,6 +96,23 @@ def test_conflict_clause_carries_the_marker_only_into_a_web_row():
     assert "EXCLUDED.source_type = 'web'" in when, (
         "the marker may carry over only when the incoming row is a web row; "
         f"got WHEN {when!r}"
+    )
+
+
+def test_conflict_clause_does_not_revive_the_marker_of_a_deleted_row():
+    """A soft-deleted row that a plain link fetch re-inserts starts with no marker.
+
+    delete_resource only sets is_deleted, and resource_hash is UNIQUE, so the next
+    fetch of the URL hits ON CONFLICT. Without the guard the clause copied the old
+    marker back (#640, design D1 and Appendix A case J), and no supported operation
+    could reclassify a row.
+    """
+    sql, _params = _upsert_sql_and_params({"source_type": "web", "url": "https://x/a"})
+    conflict = sql.split("ON CONFLICT", 1)[1]
+    assert "AND NOT documents.is_deleted" in _normalized(conflict), (
+        "the marker must not revive on a soft-deleted row (#640): delete_resource is a "
+        "soft delete, so 'delete the row, then fetch it again' must reclassify it; "
+        f"got {conflict!r}"
     )
 
 
