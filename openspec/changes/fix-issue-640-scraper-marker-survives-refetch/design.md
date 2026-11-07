@@ -54,6 +54,7 @@ Replace `catalog_postgres.py:335` with exactly this clause (same indentation as 
 ```sql
                         extra_json = CASE
                             WHEN EXCLUDED.source_type = 'web'
+                                AND NOT documents.is_deleted
                                 AND COALESCE(jsonb_typeof(EXCLUDED.extra_json -> 'scraper'), 'null') = 'null'
                                 AND COALESCE(jsonb_typeof(documents.extra_json -> 'scraper'), 'null') <> 'null'
                             THEN COALESCE(EXCLUDED.extra_json, '{}'::jsonb)
@@ -70,6 +71,16 @@ Replace `catalog_postgres.py:335` with exactly this clause (same indentation as 
 - An incoming marker always wins (the `ELSE` branch), so a scraper can still re-own a row.
 - Only the `scraper` key is carried over. Every other key still comes from the incoming
   payload, as before.
+- The marker does not revive on a deleted row (`AND NOT documents.is_deleted`; operator
+  decision of 2026-11-07, option 1 on #640). `delete_resource` (`catalog_postgres.py`) is a
+  soft delete, `src/` has no hard delete, and `resource_hash` is `UNIQUE` on all rows
+  (`init.sql:209`), so a later link fetch of a deleted URL hits the same row through
+  `ON CONFLICT`. Without this guard the clause copied the old marker back (proof on a
+  scratch `postgres:16`, 2026-10-26: soft delete, then a plain link upsert of `{"b": 2}`,
+  gave `{"b": 2, "scraper": "indico"}` with `is_deleted = f`), so no supported operation
+  could reclassify a row. With the guard, "delete the row, then fetch it again" is the
+  supported way to reclassify it: the re-fetch takes the incoming payload as is. Task 6.1
+  adds the test and the proof (Appendix A, cases J and K).
 - The marker carries over only into an incoming `web` row (`EXCLUDED.source_type = 'web'`;
   added in review round 1 on PR #783, 2026-10-26). The hash is `md5(url)`
   (`scraped_resource.py:29-32`), so an `sso` ingest of an Indico URL hits the same row.
@@ -252,13 +263,18 @@ them with the script (dry run by default, `--apply` to write); it restores a mar
 from an explicit `elog-` or `indico-` entry in the given lists and reports the
 ELOG-shaped and Indico-shaped rows that it cannot place. Do not say that it reports every
 row that it cannot place: a row whose URL looks like a plain link gets no output (see
-Risks, "The repair cannot see every erased Indico row").
+Risks, "The repair cannot see every erased Indico row"). The paragraph also says how an
+operator reclassifies a row whose entry moved (for example from `indico-` to a plain
+link): delete the row, then let the next ingest fetch it under its new entry; a deleted
+row does not revive its marker (D1). The Codex P1 thread on PR #783 asked for this.
 
 ## Risks / Trade-offs
 
 - **A marker is now sticky.** If an operator moves a URL from an `indico-` entry to a
-  plain link entry, the row keeps `scraper: indico` until it is deleted. This follows from
-  the operator's chosen mechanism; say it in the PR body.
+  plain link entry, the row keeps `scraper: indico` until the operator deletes the row (a
+  soft delete) and the next fetch re-inserts it under the plain entry (D1,
+  `NOT documents.is_deleted`). That is the one supported reclassification path. This
+  follows from the operator's chosen mechanism; say it in the PR body and in the docs (D9).
 - **The unit tests pin SQL text, not SQL behavior.** Appendix A is the behavior proof. A
   later edit of the clause needs a new proof.
 - **Indico category entries cannot be repaired** (their events sit under other URLs). The

@@ -157,8 +157,11 @@
       `python scripts/maintenance/repair_scraper_markers.py --pg-dsn <dsn> --input-list
       <path>`. Say that it runs a dry run by default and writes only with `--apply`, and
       that it reports the ELOG-shaped and Indico-shaped rows that it cannot place (not every
-      row: design D9 and Risks). Do not claim anything that the code does
-      not do (for example, the script does not read the deployment config; the operator
+      row: design D9 and Risks). Also say how an operator reclassifies a row whose entry
+      moved: delete the row, then let the next ingest fetch it under its new entry; a
+      deleted row does not revive its marker (design D1, task 6.1; the Codex P1 thread on
+      PR #783 asked for this). Do 6.1 before this task. Do not claim anything that the code
+      does not do (for example, the script does not read the deployment config; the operator
       names each list file). Run `python -m pytest -q
       tests/unit/test_input_list_precedence_docs.py tests/unit/test_restart_source_flags_docs.py
       tests/unit/test_port_config_docs_contract.py`: all pass. If `mkdocs` is installed, run
@@ -182,7 +185,9 @@
       - what changed (the D1 clause; the repair module and script; the docs paragraph);
       - the proof: copy the Appendix A table and the Appendix B table from `design.md`;
       - the behavior change: a marker is now sticky — a URL moved from an `indico-` entry to a
-        plain link entry stays an Indico row until the row is deleted;
+        plain link entry stays an Indico row until the operator deletes the row and the next
+        fetch re-inserts it; a deleted row does not revive its marker (task 6.1, Appendix A
+        cases J and K);
       - that `schedule_collect_links` did not change (operator decision), so its comment at
         `scraper_manager.py:376-378` still describes rows re-fetched before this change;
       - the operator step after deploy: on the dev host, run the script with `--pg-dsn` and
@@ -191,6 +196,40 @@
       - tests: the new files and their counts, and the gate result.
       Then confirm the link: `gh pr view <number> --repo fasrc/archi --json
       closingIssuesReferences` lists `640`. STOP at the open PR — do not merge.
+
+## 6. A deleted row does not revive its marker (operator decision of 2026-11-07, option 1 on #640; do this BEFORE task 3.1)
+
+- [ ] 6.1 Red test, the clause, and the proof in one task. In
+      `tests/unit/test_catalog_postgres_upsert_scraper_marker.py`, add the line
+      `AND NOT documents.is_deleted` to `_MARKER_CLAUSE` directly after the
+      `WHEN EXCLUDED.source_type = 'web'` line, at the same indentation as the two
+      `COALESCE` lines (copy the clause from design D1). Add the test
+      `test_conflict_clause_does_not_revive_the_marker_of_a_deleted_row`: it gets the
+      conflict branch as `test_conflict_clause_keeps_a_stored_scraper_marker` does and
+      asserts that `"AND NOT documents.is_deleted" in _normalized(conflict)`, with a message
+      that names #640 and the soft delete. Run
+      `python -m pytest -q tests/unit/test_catalog_postgres_upsert_scraper_marker.py` and
+      confirm **2 failed** (the clause-text test and the new test; the others pass). Then
+      replace the clause in `src/data_manager/collectors/utils/catalog_postgres.py`
+      (`upsert_resource`, `ON CONFLICT ... DO UPDATE SET`) with the exact clause of design
+      D1, and add one sentence to the `upsert_resource` docstring paragraph: a deleted row
+      does not revive its marker, so "delete, then re-fetch" reclassifies a row. Re-run the
+      file: all pass. Also run `python -m pytest -q
+      tests/unit/test_scraper_marker_links_schedule.py
+      tests/unit/test_catalog_postgres_upsert_last_modified.py
+      tests/unit/test_catalog_postgres_schema_check.py
+      tests/unit/test_scraper_marker_repair_db.py`: all pass. Then the behavior proof, with
+      the Appendix A setup (a scratch `postgres:17.11` or `postgres:16`, the `documents` DDL
+      from `init.sql`, the real `upsert_resource`): case J — first payload
+      `scraper: indico, title: a`, then `delete_resource(hash)`, then a plain `web` upsert of
+      `{"b": 2}` → `extra_json` is `{"b": 2}` (no `scraper`) and `is_deleted` is `false`;
+      case K — the same without the delete → `{"b": 2, "scraper": "indico"}`. Append both
+      rows to the Appendix A table in `design.md` with the date and the image tag. If
+      `docker` is not on `PATH` in this run, write `proof pending (no docker)` in the commit
+      body and put the two cases in the PR body's "proof pending" line; the review run,
+      which has docker, runs them and updates `design.md`. Run `black` and `isort` BEFORE
+      `git add`. Commit in the foreground. Message:
+      `fix(#640): a deleted row does not revive its scraper marker`.
 
 ## 5. Review round 1 fixes (PR #783, 2026-10-26; done by the review run)
 

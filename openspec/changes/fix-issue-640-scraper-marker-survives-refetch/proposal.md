@@ -56,7 +56,8 @@ The operator decided the mechanism and the repair on 2026-10-20 (issue body, "De
   `tests/unit/test_repair_scraper_markers_script.py` (all new).
 - Behavior change: once a row has a marker, a plain link fetch cannot clear it. A URL
   that an operator moves from an `indico-` entry to a plain link entry stays an Indico row
-  until the row is deleted (design, Risks).
+  until the operator deletes the row and the next fetch re-inserts it; a deleted row does
+  not revive its marker (design D1 and Risks; operator decision of 2026-11-07).
 - Operator step after deploy, outside this PR: run the repair script on dev, dry run
   first.
 - Out of scope: the legacy SQLite `CatalogService` (`index_utils.py:102`; the persistence
