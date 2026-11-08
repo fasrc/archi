@@ -90,7 +90,7 @@
 
 ## 2. Docs
 
-- [ ] 2.1 Apply patch C:
+- [x] 2.1 Apply patch C:
       `git apply -p1 openspec/changes/fix-issue-817-fm-wrapper-signal-during-qa/patches/C-task-2.1.diff`.
       It replaces, in the "**Paging (#504).**" paragraph of
       `docs/docs/proposals/feature-matrix-campaign-2026.md`, the sentence "A signal sent
