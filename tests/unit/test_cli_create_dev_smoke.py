@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from src.cli.utils import service_builder
@@ -1804,6 +1805,8 @@ def test_create_without_env_file_names_the_flag_when_the_fallback_is_missing(
     data, so an installed archi run outside the repo raises FileNotFoundError in
     the constructor -- before validate_secrets() is ever reached. Running from a
     directory where the relative path does not resolve reproduces exactly that.
+    The config copy below gives the input list an absolute path, so the
+    missing-list check of #617 passes and the run reaches SecretsManager.
     """
     if not EXAMPLE_CONFIG.exists():
         pytest.skip(f"missing example config at {EXAMPLE_CONFIG}")
@@ -1814,13 +1817,24 @@ def test_create_without_env_file_names_the_flag_when_the_fallback_is_missing(
 
     runner = CliRunner()
     with runner.isolated_filesystem():
+        config = yaml.safe_load(EXAMPLE_CONFIG.read_text())
+        config["data_manager"]["sources"]["links"]["input_lists"] = [
+            str(
+                REPO_ROOT
+                / "examples"
+                / "deployments"
+                / "basic-openai"
+                / "miscellanea.list"
+            )
+        ]
+        Path("config.yaml").write_text(yaml.safe_dump(config))
         result = runner.invoke(
             cli_main.create,
             [
                 "-n",
                 "smoke",
                 "-c",
-                str(EXAMPLE_CONFIG),
+                "config.yaml",
                 "--services",
                 "chatbot",
                 "--hostmode",

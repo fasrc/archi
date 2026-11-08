@@ -23,8 +23,9 @@ data_manager:
         # REQUIRED operator-supplied corpus (held identical across both arms).
         # config/lists/sources.list is the live FASRC KB list and is gitignored
         # (operator-local), so it is NOT present in a clean checkout. If it is
-        # missing the scraper logs a warning and SKIPS it -- the benchmark then
-        # runs against an EMPTY corpus and yields meaningless RAGAS scores. Stage
+        # missing, `archi evaluate` refuses to start (#617); if it is empty or
+        # unreadable, the benchmark runs against an EMPTY corpus and yields
+        # meaningless RAGAS scores. Stage
         # this file (or repoint at your deployment's list) BEFORE running, and
         # confirm the rendered weblists/<list> is non-empty. See README.md.
         - config/lists/sources.list
