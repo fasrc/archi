@@ -15,6 +15,9 @@
 #   FM_MAIL     the mail binary fm_page invokes (default: mail)
 #   FM_MAIL_TIMEOUT  seconds fm_page waits for FM_MAIL before it gives up (default: 60;
 #               zero or a value that is not a positive number also gives 60)
+#   FM_CHILD_GRACE  seconds fm_run_interruptible waits for its command after it forwards a
+#               HUP, INT or TERM to it, before it sends KILL (default: 10; a value that is
+#               not a positive whole number also gives 10)
 set -euo pipefail
 
 FM_OUT="${FM_OUT:-$PWD/bench_out/feature_matrix}"
@@ -26,6 +29,7 @@ FM_GIT="${FM_GIT:-git}"
 FM_PAGE_MAIL_TO="${FM_PAGE_MAIL_TO:-}"
 FM_MAIL="${FM_MAIL:-mail}"
 FM_MAIL_TIMEOUT="${FM_MAIL_TIMEOUT:-60}"
+FM_CHILD_GRACE="${FM_CHILD_GRACE:-10}"
 FM_PAGED=0
 FM_DIE_MSG=""
 FM_CHILD_PID=""
@@ -161,20 +165,30 @@ fm_run_interruptible() { # $@ = the command and its arguments
   return "$rc"
 }
 # Stops the command fm_run_interruptible is running, for a signal to the wrapper: forwards
-# the same signal and waits for the command. A no-op when no command runs. Records the
-# command's fate in FM_CHILD_FAILED for the page body.
+# the same signal, waits FM_CHILD_GRACE seconds for the command to end, then sends KILL.
+# A no-op when no command runs. Records the command's fate in FM_CHILD_FAILED for the
+# page body.
 fm__stop_child() { # $1 = the signal name
   [ -n "$FM_CHILD_PID" ] || return 0
-  local pid="$FM_CHILD_PID" rc=0
+  local pid="$FM_CHILD_PID" grace="$FM_CHILD_GRACE" fate="stopped by SIG$1" wd wrc=0 rc=0
+  [[ "$grace" =~ ^[1-9][0-9]*$ ]] || grace=10
   kill -s "$1" "$pid" 2>/dev/null || true
+  # The watchdog exits 3 once it has sent KILL. Its TERM trap removes its own sleep, so a
+  # command that ended in time leaves no process behind.
+  ( trap 'kill $(jobs -p) 2>/dev/null || true; exit 0' TERM
+    sleep "$grace" & wait $! || true
+    kill -KILL "$pid" 2>/dev/null || true; exit 3 ) &
+  wd=$!
   # A second signal interrupts this wait (the signal traps are no-ops now); it is repeated
   # while the command runs, as in fm_run_interruptible.
   while :; do
     wait "$pid" 2>/dev/null && rc=0 || rc=$?
     [ "$rc" -gt 128 ] && kill -0 "$pid" 2>/dev/null || break
   done
+  kill -TERM "$wd" 2>/dev/null || true; wait "$wd" 2>/dev/null || wrc=$?
+  [ "$wrc" != 3 ] || fate="killed after ${grace}s (SIG$1 ignored)"
   FM_CHILD_PID=""
-  FM_CHILD_FAILED="$FM_CHILD_CMD stopped by SIG$1"
+  FM_CHILD_FAILED="$FM_CHILD_CMD $fate"
 }
 
 # Arm labels are two digits with an optional letter: 00, 05a. Anything else is refused

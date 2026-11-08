@@ -132,6 +132,8 @@
 #        body names the command and its status
 #   125. with FM_PAGE_MAIL_TO empty the same failure sends no mail and exits 1
 #   126. a SIGTERM sent only to the PID of qa_arm.sh --sweep during `qa run` stops it at once
+#   127. a QA command that ignores SIGTERM is killed after FM_CHILD_GRACE seconds; the wrapper
+#        still pages once and dies of SIGTERM
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -179,6 +181,8 @@ prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && { mkdir -p "\$a"; O
 # a slow QA run: the stub becomes one `sleep` process (exec), as `archi qa` is one process,
 # so a signal forwarded to its PID must end it (#817)
 [ "\$1" = "qa" ] && [ -f "$T/qa-slow" ] && { touch "$T/qa-started"; exec sleep 30; }
+# the same slow run, but it ignores SIGTERM (an ignored signal survives exec)
+[ "\$1" = "qa" ] && [ -f "$T/qa-slow-noterm" ] && { touch "$T/qa-started"; trap '' TERM; exec sleep 30; }
 # exit 1 from the QA run itself when qa-fail exists
 [ "\$1" = "qa" ] && [ -f "$T/qa-fail" ] && exit 1
 [ "\$1" = "qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
@@ -1561,6 +1565,18 @@ if [ "$OUT" = "-15 clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
    && grep -q "qa_arm.sh exited 143: .*archi qa run .* stopped by SIGTERM" "$T/mail.calls" \
    && [ "$(ledger_rows)" = "$BEFORE" ]; then
   ok "a SIGTERM sent only to the PID of qa_arm.sh --sweep during qa run stops it at once and pages once"; else notok "qa_arm sweep SIGTERM pid-only (launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 127: a QA command that ignores SIGTERM is killed after FM_CHILD_GRACE seconds, and the
+# wrapper still pages once (the body says so) and dies of SIGTERM within 5 s
+touch "$T/qa-slow-noterm"; rm -f "$T/qa-started"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+OUT="$(env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org FM_CHILD_GRACE=1 "$REAL_PY" "$T/bin/signal-launch-pid.py" TERM "$T/qa-started" "$T/stdout" "$T/stderr" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml")"
+rm -f "$T/qa-slow-noterm" "$T/qa-started"
+if [ "$OUT" = "-15 clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit 143)" "$T/mail.calls" \
+   && grep -q "qa_arm.sh exited 143: .*archi qa .* killed after 1s (SIGTERM ignored)" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a QA command that ignores SIGTERM is killed after the grace period and the wrapper pages once"; else notok "qa_arm grace kill (launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

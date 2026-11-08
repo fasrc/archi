@@ -61,7 +61,7 @@
       prints 3. Tick this box. Run `bash scripts/gate.sh` in the foreground and wait for
       exit 0. Commit the patch and the tick together only when the gate is green
       (message: `fix(feature-matrix): stop the qa run on a signal to the wrapper pid (#817)`).
-- [ ] 1.2 Red then green in one task (do not commit a red state). Apply the test half of
+- [x] 1.2 Red then green in one task (do not commit a red state). Apply the test half of
       patch B:
       `git apply -p1 --include='scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh' openspec/changes/fix-issue-817-fm-wrapper-signal-during-qa/patches/B-task-1.2.diff`.
       It adds header line 127, the stub's `qa-slow-noterm` mode, and check 127 (a QA
