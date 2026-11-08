@@ -19,7 +19,7 @@
       `design.md`. Run `bash scripts/gate.sh` in the foreground and wait for exit 0. Commit
       only when it is green (message: `refuse a chunk size that is not a positive int`).
 
-- [ ] 1.2 Red then green in one task (do not commit a red state). Write Appendix B to
+- [x] 1.2 Red then green in one task (do not commit a red state). Write Appendix B to
       `/tmp/778-B.diff` and run `git apply -p1 /tmp/778-B.diff`. It appends 3 test functions
       at the end of `tests/unit/test_ingest_provenance.py` and maps a `None` size to its
       default in `effective_chunking` (`src/utils/ingest_provenance.py`, design D2). To see
