@@ -38,7 +38,7 @@
 
 ## 1. The interruptible QA run
 
-- [ ] 1.1 Red then green in one task (do not commit a red state). From the repository
+- [x] 1.1 Red then green in one task (do not commit a red state). From the repository
       root, apply the test half of patch A:
       `git apply -p1 --include='scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh' openspec/changes/fix-issue-817-fm-wrapper-signal-during-qa/patches/A-task-1.1.diff`.
       It adds header lines 121-126, the stub's `exec sleep 30` slow mode and its

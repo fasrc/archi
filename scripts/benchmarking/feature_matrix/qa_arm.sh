@@ -85,8 +85,9 @@ if [ "${1:-}" = --sweep ]; then
   export HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}"
   export OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1
   fm_arm_page_on_failure "stack $STACK arm $STEM"
-  "$FM_ARCHI" qa run "$OUT_DIR" --agent-config "$AGENT_CFG" --agent-spec "$SPEC" --attempts 1 --run-workers 1
-  "$FM_ARCHI" qa score "$OUT_DIR" --evaluator-profile "$PROFILE" --score-workers "${FM_SCORE_WORKERS:-4}"
+  # fm_run_interruptible: a signal sent only to this wrapper's PID stops the run at once (#817)
+  fm_run_interruptible "$FM_ARCHI" qa run "$OUT_DIR" --agent-config "$AGENT_CFG" --agent-spec "$SPEC" --attempts 1 --run-workers 1
+  fm_run_interruptible "$FM_ARCHI" qa score "$OUT_DIR" --evaluator-profile "$PROFILE" --score-workers "${FM_SCORE_WORKERS:-4}"
   MAP_END="$(fm_category_map_digest "$STACK")"
   fm_write_map_readings "$OUT_DIR" "$MAP_START" "$MAP_END"
   AFTER="$(fm_fingerprint "$STACK")"
@@ -155,10 +156,12 @@ fm_log "QA run for arm $ARM on $STACK → $OUT_DIR"
 # run to a digest-bearing arm only when both readings equal the arm's end digest.
 MAP_START="$(fm_category_map_digest "$STACK")"
 fm_arm_page_on_failure "stack $STACK arm $ARM"
+# The run goes through fm_run_interruptible, so a signal sent only to this wrapper's PID
+# stops it at once instead of when the run ends (#817; see lib.sh).
 PG_PASSWORD_FILE="$STACK_DIR/secrets/pg_password.txt" \
 HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}" \
 OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
-"$FM_ARCHI" qa \
+fm_run_interruptible "$FM_ARCHI" qa \
   --dataset "$DATASET" \
   --agent-config "$AGENT_CFG" \
   --agent-spec "$SPEC" \

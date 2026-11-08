@@ -124,6 +124,14 @@
 #   119. a --new-corpus re-pin whose pin write failed, retried without --new-corpus: refused,
 #        old pin kept
 #   120. the same retry with --new-corpus finishes the re-pin and exits 0
+#   121. a SIGTERM sent only to qa_arm.sh's own PID during the QA run stops the run at once:
+#        one page within 5 s, the wrapper dies of SIGTERM, no stub process is left (#817)
+#   122. the same for SIGHUP
+#   123. the same for SIGINT
+#   124. a QA command that exits 1 keeps its status: the wrapper exits 1 and pages once, and the
+#        body names the command and its status
+#   125. with FM_PAGE_MAIL_TO empty the same failure sends no mail and exits 1
+#   126. a SIGTERM sent only to the PID of qa_arm.sh --sweep during `qa run` stops it at once
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -168,7 +176,11 @@ prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && { mkdir -p "\$a"; O
 # the run manifest records the retrieval identity when the test provides one
 [ -n "\$OUTDIR" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$OUTDIR/manifest.json"
 # a corpus that drifts WHILE the QA run is in flight
-[ "\$1" = "qa" ] && [ -f "$T/qa-slow" ] && { touch "$T/qa-started"; sleep 30; }
+# a slow QA run: the stub becomes one `sleep` process (exec), as `archi qa` is one process,
+# so a signal forwarded to its PID must end it (#817)
+[ "\$1" = "qa" ] && [ -f "$T/qa-slow" ] && { touch "$T/qa-started"; exec sleep 30; }
+# exit 1 from the QA run itself when qa-fail exists
+[ "\$1" = "qa" ] && [ -f "$T/qa-fail" ] && exit 1
 [ "\$1" = "qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
 # touch fp-broken after qa when fp-fail-after-qa exists, so fm_fingerprint fails
 [ "\$1" = "qa" ] && [ -f "$T/fp-fail-after-qa" ] && touch "$T/fp-broken"
@@ -1476,6 +1488,79 @@ run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --stack fm-pin11
 if [ "$RC" = 0 ] && grep -q 'repaired the corpus pin for fm-pin119' "$T/stdout" \
    && [ "$(cat "$FM_OUT/corpus-pin-fm-pin119" 2>/dev/null)" = sha256:p119b ] && [ "$(ledger_rows)" = "$ROWS_BEFORE" ]; then
   ok "a re-pin retry with --new-corpus finishes the re-pin"; else notok "re-pin repair (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# --- #817: a signal to the wrapper's own PID stops the QA run at once --------------------
+# PID-only launcher (checks 121-127): like signal-launch.py, but the signal goes to the
+# wrapper's own PID only (os.kill, not os.killpg), and the wait is bounded at 5 s, so a
+# wrapper that handles the signal only when its QA run ends prints `hung leftover`.
+cat > "$T/bin/signal-launch-pid.py" <<'PY'
+import os, signal, subprocess, sys, time
+signame, ready, out, err, cmd = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
+p = subprocess.Popen(cmd, start_new_session=True, stdout=open(out, "w"), stderr=open(err, "w"),
+                     preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+deadline = time.monotonic() + 30
+while not os.path.exists(ready) and p.poll() is None and time.monotonic() < deadline:
+    time.sleep(0.05)
+if p.poll() is None:
+    os.kill(p.pid, getattr(signal, "SIG" + signame))
+try:
+    rc = p.wait(timeout=5)
+except subprocess.TimeoutExpired:
+    rc = "hung"
+try:
+    os.killpg(p.pid, signal.SIGKILL)
+    left = "leftover"
+except ProcessLookupError:
+    left = "clean"
+print(rc, left)
+PY
+
+# 121-123: a SIGTERM, SIGHUP or SIGINT sent only to qa_arm.sh's own PID during the QA run
+# stops the run at once: one page within 5 s that names the command and the signal, the
+# wrapper dies of that signal, and no process of the wrapper's group is left
+for SIGCASE in "121 TERM 143 -15" "122 HUP 129 -1" "123 INT 130 -2"; do
+  read -r N SIG CODE WANT <<<"$SIGCASE"
+  touch "$T/qa-slow"; rm -f "$T/qa-started"
+  : > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+  OUT="$(env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org "$REAL_PY" "$T/bin/signal-launch-pid.py" "$SIG" "$T/qa-started" "$T/stdout" "$T/stderr" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml")"
+  rm -f "$T/qa-slow" "$T/qa-started"
+  if [ "$OUT" = "$WANT clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+     && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit $CODE)" "$T/mail.calls" \
+     && grep -q "qa_arm.sh exited $CODE: .*archi qa .* stopped by SIG$SIG" "$T/mail.calls" \
+     && [ "$(ledger_rows)" = "$BEFORE" ]; then
+    ok "a SIG$SIG sent only to the wrapper's PID stops the QA run at once and pages once ($N)"; else notok "qa_arm SIG$SIG pid-only ($N: launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+done
+
+# 124: a QA command that exits 1 (no signal) keeps its status: the wrapper exits 1 and pages
+# once, and the body names the command and its status
+touch "$T/qa-fail"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+STATUS124=$RC; rm -f "$T/qa-fail"
+if [ "$STATUS124" = 1 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit 1)" "$T/mail.calls" \
+   && grep -q "qa_arm.sh exited 1: .*archi qa .* exited 1" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a QA command that exits 1 keeps its status and pages once with the command in the body"; else notok "qa_arm child exit status (rc=$STATUS124: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 125: with FM_PAGE_MAIL_TO empty the same failure sends no mail and exits 1
+touch "$T/qa-fail"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+STATUS125=$RC; rm -f "$T/qa-fail"
+if [ "$STATUS125" = 1 ] && [ ! -s "$T/mail.calls" ] && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "with FM_PAGE_MAIL_TO empty the failing QA command sends no mail and exits 1"; else notok "qa_arm child exit no-page (rc=$STATUS125: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 126: a SIGTERM sent only to the PID of qa_arm.sh --sweep during `qa run` stops it at once
+touch "$T/qa-slow"; rm -f "$T/qa-started"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+OUT="$(env FM_PAGE_MAIL_TO=ops@example.org "$REAL_PY" "$T/bin/signal-launch-pid.py" TERM "$T/qa-started" "$T/stdout" "$T/stderr" bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl)"
+rm -f "$T/qa-slow" "$T/qa-started"
+if [ "$OUT" = "-15 clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack r0 arm fasrc-docs-r0b-icl: failed after long work (exit 143)" "$T/mail.calls" \
+   && grep -q "qa_arm.sh exited 143: .*archi qa run .* stopped by SIGTERM" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a SIGTERM sent only to the PID of qa_arm.sh --sweep during qa run stops it at once and pages once"; else notok "qa_arm sweep SIGTERM pid-only (launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
