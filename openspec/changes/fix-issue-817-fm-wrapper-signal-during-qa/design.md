@@ -220,3 +220,39 @@ signal cannot hit it mid-start (check 127 is unchanged by that order).
 
 The probe on the fixed `lib.sh`: two group TERMs gave exit 143 after 1.0 s with no process
 left (twice).
+
+**2026-11-08 review run, sync adversarial round 4 on PR #823 (`e63771cf`), medium at
+`lib.sh:181-185`.** The watchdog subshell is forked before it runs its own
+`trap '' HUP INT TERM`; in a subshell a trapped signal is reset to its default, so a repeated
+group TERM or HUP in that start window killed the watchdog, and the wrapper then waited on a
+QA command that ignored the forwarded signal with no KILL timer. Verified with a bash probe
+on the host: a subshell forked under a parent `trap ':' TERM` died of a group TERM 100 ms
+into a 300 ms start delay (exit 143); the same subshell under a parent `trap '' TERM`
+survived it. Check 128 sends its second signal 200 ms later, after the window.
+
+**Fix (D3 amended again).** `fm__page_on_signal` now sets `trap '' HUP INT TERM` (not
+`trap ':'`): the three signals are ignored in the wrapper from the first signal on, and an
+ignored disposition is inherited at the fork, so the watchdog is protected before it runs
+one command and there is no window. The comment that rejected `trap ''` described the old
+watchdog, which trapped TERM to cancel itself; the USR1 cancel of round 2 made it moot. The
+wrapper still ends by the signal: `trap - EXIT HUP INT TERM` resets its own ignore before
+`kill -s <SIG> "$$"` (a shell cannot reset only a signal that was ignored at its entry).
+The `mail` call of the page inherits the ignore too, so a second signal cannot cut the page
+short.
+
+**Check 129** (self-test): the noterm stub under a new launcher `signal-launch-sigign.py`
+that sends one TERM to the wrapper's PID, reads the wrapper's `SigIgn` mask from
+`/proc/<pid>/status` 0.5 s into a 2 s grace period, and prints `ignored` when HUP, INT and
+TERM are all ignored, else `caught`. That observes the mechanism (the disposition the fork
+inherits) deterministically; the fork window itself is not reachable from a test.
+
+| stage | self-test |
+|---|---|
+| tip `e63771cf` + check 129 (test half) | `135 passed, 1 failed`: 129 (`launcher=-15 clean caught`) |
+| + the fix | see the commit message |
+
+The same round reported two more findings, recorded in the PR's round-4 comment: the
+stop path signals the direct child only (pushback: `archi qa` runs `QAWorkflow` in one
+process, `src/cli/qa_eval.py:8`; nothing under `src/evaluation/qa/` except the console
+worker launcher `jobs.py` forks), and the launch window between the fork at `lib.sh:152` and
+`FM_CHILD_PID=$!` at `:153` (a follow-up issue; the deferred-trap design is in it).

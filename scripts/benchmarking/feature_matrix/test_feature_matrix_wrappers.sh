@@ -136,6 +136,8 @@
 #        still pages once and dies of SIGTERM
 #   128. a second SIGTERM to the whole process group during that grace period does not cancel
 #        the KILL watchdog: the run is still killed, one page, the wrapper dies of SIGTERM
+#   129. while the KILL watchdog runs, the wrapper itself ignores HUP, INT and TERM, so the
+#        watchdog inherits the ignore at its fork and a repeated group signal has no window
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -1548,6 +1550,42 @@ except ProcessLookupError:
 print(rc, left)
 PY
 
+# Disposition launcher (check 129): one signal to the wrapper's PID, then 0.5 s later the
+# wrapper's own SigIgn mask from /proc: `ignored` when HUP (bit 0), INT (bit 1) and TERM
+# (bit 14) are all ignored, `caught` otherwise. Then the same bounded wait and group check.
+cat > "$T/bin/signal-launch-sigign.py" <<'PY'
+import os, signal, subprocess, sys, time
+signame, ready, out, err, cmd = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
+p = subprocess.Popen(cmd, start_new_session=True, stdout=open(out, "w"), stderr=open(err, "w"),
+                     preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+deadline = time.monotonic() + 30
+while not os.path.exists(ready) and p.poll() is None and time.monotonic() < deadline:
+    time.sleep(0.05)
+if p.poll() is None:
+    os.kill(p.pid, getattr(signal, "SIG" + signame))
+time.sleep(0.5)
+disposition = "gone"
+want = (1 << 0) | (1 << 1) | (1 << 14)
+try:
+    with open(f"/proc/{p.pid}/status") as status:
+        for line in status:
+            if line.startswith("SigIgn:"):
+                mask = int(line.split()[1], 16)
+                disposition = "ignored" if mask & want == want else "caught"
+except FileNotFoundError:
+    pass
+try:
+    rc = p.wait(timeout=5)
+except subprocess.TimeoutExpired:
+    rc = "hung"
+try:
+    os.killpg(p.pid, signal.SIGKILL)
+    left = "leftover"
+except ProcessLookupError:
+    left = "clean"
+print(rc, left, disposition)
+PY
+
 # 121-123: a SIGTERM, SIGHUP or SIGINT sent only to qa_arm.sh's own PID during the QA run
 # stops the run at once: one page within 5 s that names the command and the signal, the
 # wrapper dies of that signal, and no process of the wrapper's group is left
@@ -1619,6 +1657,19 @@ if [ "$OUT" = "-15 clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
    && grep -q "qa_arm.sh exited 143: .*archi qa .* killed after 1s (SIGTERM ignored)" "$T/mail.calls" \
    && [ "$(ledger_rows)" = "$BEFORE" ]; then
   ok "a repeated group SIGTERM during the grace period does not cancel the kill watchdog"; else notok "qa_arm grace kill under a repeated group SIGTERM (launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 129: while fm__stop_child waits out the grace period, the wrapper itself ignores HUP, INT
+# and TERM (SigIgn in /proc/<pid>/status), so the KILL watchdog it forks inherits the ignore
+# at the fork: a repeated group signal has no window in which to kill the watchdog before the
+# watchdog's own trap runs (sync review round 4 on PR #823). The run still ends as in 127.
+touch "$T/qa-slow-noterm"; rm -f "$T/qa-started"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+OUT="$(env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org FM_CHILD_GRACE=2 "$REAL_PY" "$T/bin/signal-launch-sigign.py" TERM "$T/qa-started" "$T/stdout" "$T/stderr" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml")"
+rm -f "$T/qa-slow-noterm" "$T/qa-started"
+if [ "$OUT" = "-15 clean ignored" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "qa_arm.sh exited 143: .*archi qa .* killed after 2s (SIGTERM ignored)" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "the wrapper ignores HUP, INT and TERM while the kill watchdog runs"; else notok "qa_arm wrapper disposition during the grace period (launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

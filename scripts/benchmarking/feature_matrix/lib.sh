@@ -114,9 +114,10 @@ fm_arm_page_on_failure() { # $1 = subject context, e.g. "stack fm-00 arm 00"
   trap 'fm__page_on_signal 143 TERM' TERM
 }
 fm__page_on_signal() { # $1 = 128 + the signal number, $2 = the signal name
-  # A second signal while the command stops only interrupts a wait, which fm__stop_child
-  # repeats. Not `trap ''`: a subshell (the KILL watchdog) could not trap an ignored signal.
-  trap ':' HUP INT TERM
+  # Ignore the three signals from here on: the KILL watchdog fm__stop_child forks inherits
+  # the ignore at its fork, so a repeated group signal has no window in which to kill it
+  # before its own trap runs. The wrapper cancels the watchdog with USR1, not TERM.
+  trap '' HUP INT TERM
   fm__stop_child "$2"
   fm__page_on_exit "$1"
   trap - EXIT HUP INT TERM
@@ -173,18 +174,20 @@ fm__stop_child() { # $1 = the signal name
   local pid="$FM_CHILD_PID" grace="$FM_CHILD_GRACE" fate="stopped by SIG$1" wd wrc=0 rc=0
   [[ "$grace" =~ ^[1-9][0-9]*$ ]] || grace=10
   kill -s "$1" "$pid" 2>/dev/null || true
-  # The watchdog ignores HUP, INT and TERM (its sleep inherits the ignore), so a second
-  # signal to the whole process group during the grace period cannot cancel it; the wrapper
-  # cancels it with USR1 once the command is gone. It exits 3 once it has sent KILL. The
-  # cancel handler removes its own sleep, so a command that ended in time leaves no process
-  # behind.
+  # The watchdog ignores HUP, INT and TERM: it inherits the ignore from fm__page_on_signal
+  # at its fork (the trap below restates it for a caller that did not ignore them) and its
+  # sleep inherits it too, so a second signal to the whole process group cannot cancel it;
+  # the wrapper cancels it with USR1 once the command is gone. It exits 3 once it has sent
+  # KILL. The cancel handler removes its own sleep, so a command that ended in time leaves
+  # no process behind.
   ( trap '' HUP INT TERM
     trap 'kill -KILL $(jobs -p) 2>/dev/null || true; exit 0' USR1
     sleep "$grace" & wait $! || true
     kill -KILL "$pid" 2>/dev/null || true; exit 3 ) &
   wd=$!
-  # A second signal interrupts this wait (the signal traps are no-ops now); it is repeated
-  # while the command runs, as in fm_run_interruptible.
+  # The signals are ignored now, so a second one does not interrupt this wait; the loop
+  # stays for a caller that only trapped them (a wait that returns 128+N while the command
+  # runs is repeated, as in fm_run_interruptible).
   while :; do
     wait "$pid" 2>/dev/null && rc=0 || rc=$?
     [ "$rc" -gt 128 ] && kill -0 "$pid" 2>/dev/null || break
