@@ -1,0 +1,97 @@
+diff --git a/scripts/benchmarking/feature_matrix/lib.sh b/scripts/benchmarking/feature_matrix/lib.sh
+index 0d5fab8..2ff439e 100755
+--- a/scripts/benchmarking/feature_matrix/lib.sh
++++ b/scripts/benchmarking/feature_matrix/lib.sh
+@@ -15,6 +15,9 @@
+ #   FM_MAIL     the mail binary fm_page invokes (default: mail)
+ #   FM_MAIL_TIMEOUT  seconds fm_page waits for FM_MAIL before it gives up (default: 60;
+ #               zero or a value that is not a positive number also gives 60)
++#   FM_CHILD_GRACE  seconds fm_run_interruptible waits for its command after it forwards a
++#               HUP, INT or TERM to it, before it sends KILL (default: 10; a value that is
++#               not a positive whole number also gives 10)
+ set -euo pipefail
+ 
+ FM_OUT="${FM_OUT:-$PWD/bench_out/feature_matrix}"
+@@ -26,6 +29,7 @@ FM_GIT="${FM_GIT:-git}"
+ FM_PAGE_MAIL_TO="${FM_PAGE_MAIL_TO:-}"
+ FM_MAIL="${FM_MAIL:-mail}"
+ FM_MAIL_TIMEOUT="${FM_MAIL_TIMEOUT:-60}"
++FM_CHILD_GRACE="${FM_CHILD_GRACE:-10}"
+ FM_PAGED=0
+ FM_DIE_MSG=""
+ FM_CHILD_PID=""
+@@ -161,20 +165,30 @@ fm_run_interruptible() { # $@ = the command and its arguments
+   return "$rc"
+ }
+ # Stops the command fm_run_interruptible is running, for a signal to the wrapper: forwards
+-# the same signal and waits for the command. A no-op when no command runs. Records the
+-# command's fate in FM_CHILD_FAILED for the page body.
++# the same signal, waits FM_CHILD_GRACE seconds for the command to end, then sends KILL.
++# A no-op when no command runs. Records the command's fate in FM_CHILD_FAILED for the
++# page body.
+ fm__stop_child() { # $1 = the signal name
+   [ -n "$FM_CHILD_PID" ] || return 0
+-  local pid="$FM_CHILD_PID" rc=0
++  local pid="$FM_CHILD_PID" grace="$FM_CHILD_GRACE" fate="stopped by SIG$1" wd wrc=0 rc=0
++  [[ "$grace" =~ ^[1-9][0-9]*$ ]] || grace=10
+   kill -s "$1" "$pid" 2>/dev/null || true
++  # The watchdog exits 3 once it has sent KILL. Its TERM trap removes its own sleep, so a
++  # command that ended in time leaves no process behind.
++  ( trap 'kill $(jobs -p) 2>/dev/null || true; exit 0' TERM
++    sleep "$grace" & wait $! || true
++    kill -KILL "$pid" 2>/dev/null || true; exit 3 ) &
++  wd=$!
+   # A second signal interrupts this wait (the signal traps are no-ops now); it is repeated
+   # while the command runs, as in fm_run_interruptible.
+   while :; do
+     wait "$pid" 2>/dev/null && rc=0 || rc=$?
+     [ "$rc" -gt 128 ] && kill -0 "$pid" 2>/dev/null || break
+   done
++  kill -TERM "$wd" 2>/dev/null || true; wait "$wd" 2>/dev/null || wrc=$?
++  [ "$wrc" != 3 ] || fate="killed after ${grace}s (SIG$1 ignored)"
+   FM_CHILD_PID=""
+-  FM_CHILD_FAILED="$FM_CHILD_CMD stopped by SIG$1"
++  FM_CHILD_FAILED="$FM_CHILD_CMD $fate"
+ }
+ 
+ # Arm labels are two digits with an optional letter: 00, 05a. Anything else is refused
+diff --git a/scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh b/scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
+index 0129da9..290ebac 100755
+--- a/scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
++++ b/scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
+@@ -132,6 +132,8 @@
+ #        body names the command and its status
+ #   125. with FM_PAGE_MAIL_TO empty the same failure sends no mail and exits 1
+ #   126. a SIGTERM sent only to the PID of qa_arm.sh --sweep during `qa run` stops it at once
++#   127. a QA command that ignores SIGTERM is killed after FM_CHILD_GRACE seconds; the wrapper
++#        still pages once and dies of SIGTERM
+ # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
+ set -euo pipefail
+ 
+@@ -179,6 +181,8 @@ prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && { mkdir -p "\$a"; O
+ # a slow QA run: the stub becomes one `sleep` process (exec), as `archi qa` is one process,
+ # so a signal forwarded to its PID must end it (#817)
+ [ "\$1" = "qa" ] && [ -f "$T/qa-slow" ] && { touch "$T/qa-started"; exec sleep 30; }
++# the same slow run, but it ignores SIGTERM (an ignored signal survives exec)
++[ "\$1" = "qa" ] && [ -f "$T/qa-slow-noterm" ] && { touch "$T/qa-started"; trap '' TERM; exec sleep 30; }
+ # exit 1 from the QA run itself when qa-fail exists
+ [ "\$1" = "qa" ] && [ -f "$T/qa-fail" ] && exit 1
+ [ "\$1" = "qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
+@@ -1562,5 +1566,17 @@ if [ "$OUT" = "-15 clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+    && [ "$(ledger_rows)" = "$BEFORE" ]; then
+   ok "a SIGTERM sent only to the PID of qa_arm.sh --sweep during qa run stops it at once and pages once"; else notok "qa_arm sweep SIGTERM pid-only (launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+ 
++# 127: a QA command that ignores SIGTERM is killed after FM_CHILD_GRACE seconds, and the
++# wrapper still pages once (the body says so) and dies of SIGTERM within 5 s
++touch "$T/qa-slow-noterm"; rm -f "$T/qa-started"
++: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
++OUT="$(env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org FM_CHILD_GRACE=1 "$REAL_PY" "$T/bin/signal-launch-pid.py" TERM "$T/qa-started" "$T/stdout" "$T/stderr" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml")"
++rm -f "$T/qa-slow-noterm" "$T/qa-started"
++if [ "$OUT" = "-15 clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
++   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit 143)" "$T/mail.calls" \
++   && grep -q "qa_arm.sh exited 143: .*archi qa .* killed after 1s (SIGTERM ignored)" "$T/mail.calls" \
++   && [ "$(ledger_rows)" = "$BEFORE" ]; then
++  ok "a QA command that ignores SIGTERM is killed after the grace period and the wrapper pages once"; else notok "qa_arm grace kill (launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
++
+ printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+ [ "$FAIL" = 0 ]
