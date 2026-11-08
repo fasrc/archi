@@ -134,6 +134,8 @@
 #   126. a SIGTERM sent only to the PID of qa_arm.sh --sweep during `qa run` stops it at once
 #   127. a QA command that ignores SIGTERM is killed after FM_CHILD_GRACE seconds; the wrapper
 #        still pages once and dies of SIGTERM
+#   128. a second SIGTERM to the whole process group during that grace period does not cancel
+#        the KILL watchdog: the run is still killed, one page, the wrapper dies of SIGTERM
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -182,7 +184,7 @@ prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && { mkdir -p "\$a"; O
 # so a signal forwarded to its PID must end it (#817)
 [ "\$1" = "qa" ] && [ -f "$T/qa-slow" ] && { touch "$T/qa-started"; exec sleep 30; }
 # the same slow run, but it ignores SIGTERM (an ignored signal survives exec)
-[ "\$1" = "qa" ] && [ -f "$T/qa-slow-noterm" ] && { touch "$T/qa-started"; trap '' TERM; exec sleep 30; }
+[ "\$1" = "qa" ] && [ -f "$T/qa-slow-noterm" ] && { trap '' TERM; touch "$T/qa-started"; exec sleep 30; }
 # exit 1 from the QA run itself when qa-fail exists
 [ "\$1" = "qa" ] && [ -f "$T/qa-fail" ] && exit 1
 [ "\$1" = "qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
@@ -1519,6 +1521,33 @@ except ProcessLookupError:
 print(rc, left)
 PY
 
+# Repeated group launcher (check 128): like signal-launch.py, but the signal goes to the whole
+# group twice, 200 ms apart, and the wait is bounded at 5 s, so a wrapper whose KILL watchdog
+# the second signal cancelled prints `hung leftover`.
+cat > "$T/bin/signal-launch-pg2.py" <<'PY'
+import os, signal, subprocess, sys, time
+signame, ready, out, err, cmd = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
+p = subprocess.Popen(cmd, start_new_session=True, stdout=open(out, "w"), stderr=open(err, "w"),
+                     preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+deadline = time.monotonic() + 30
+while not os.path.exists(ready) and p.poll() is None and time.monotonic() < deadline:
+    time.sleep(0.05)
+for _ in range(2):
+    if p.poll() is None:
+        os.killpg(p.pid, getattr(signal, "SIG" + signame))
+        time.sleep(0.2)
+try:
+    rc = p.wait(timeout=5)
+except subprocess.TimeoutExpired:
+    rc = "hung"
+try:
+    os.killpg(p.pid, signal.SIGKILL)
+    left = "leftover"
+except ProcessLookupError:
+    left = "clean"
+print(rc, left)
+PY
+
 # 121-123: a SIGTERM, SIGHUP or SIGINT sent only to qa_arm.sh's own PID during the QA run
 # stops the run at once: one page within 5 s that names the command and the signal, the
 # wrapper dies of that signal, and no process of the wrapper's group is left
@@ -1577,6 +1606,19 @@ if [ "$OUT" = "-15 clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
    && grep -q "qa_arm.sh exited 143: .*archi qa .* killed after 1s (SIGTERM ignored)" "$T/mail.calls" \
    && [ "$(ledger_rows)" = "$BEFORE" ]; then
   ok "a QA command that ignores SIGTERM is killed after the grace period and the wrapper pages once"; else notok "qa_arm grace kill (launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 128: a second SIGTERM to the whole process group 200 ms after the first, during the grace
+# period, does not cancel the KILL watchdog: the run is still killed after FM_CHILD_GRACE
+# seconds, the wrapper pages once and dies of SIGTERM within 5 s (Codex round 2 on PR #823)
+touch "$T/qa-slow-noterm"; rm -f "$T/qa-started"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+OUT="$(env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org FM_CHILD_GRACE=1 "$REAL_PY" "$T/bin/signal-launch-pg2.py" TERM "$T/qa-started" "$T/stdout" "$T/stderr" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml")"
+rm -f "$T/qa-slow-noterm" "$T/qa-started"
+if [ "$OUT" = "-15 clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit 143)" "$T/mail.calls" \
+   && grep -q "qa_arm.sh exited 143: .*archi qa .* killed after 1s (SIGTERM ignored)" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a repeated group SIGTERM during the grace period does not cancel the kill watchdog"; else notok "qa_arm grace kill under a repeated group SIGTERM (launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

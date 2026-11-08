@@ -173,9 +173,13 @@ fm__stop_child() { # $1 = the signal name
   local pid="$FM_CHILD_PID" grace="$FM_CHILD_GRACE" fate="stopped by SIG$1" wd wrc=0 rc=0
   [[ "$grace" =~ ^[1-9][0-9]*$ ]] || grace=10
   kill -s "$1" "$pid" 2>/dev/null || true
-  # The watchdog exits 3 once it has sent KILL. Its TERM trap removes its own sleep, so a
-  # command that ended in time leaves no process behind.
-  ( trap 'kill $(jobs -p) 2>/dev/null || true; exit 0' TERM
+  # The watchdog ignores HUP, INT and TERM (its sleep inherits the ignore), so a second
+  # signal to the whole process group during the grace period cannot cancel it; the wrapper
+  # cancels it with USR1 once the command is gone. It exits 3 once it has sent KILL. The
+  # cancel handler removes its own sleep, so a command that ended in time leaves no process
+  # behind.
+  ( trap '' HUP INT TERM
+    trap 'kill -KILL $(jobs -p) 2>/dev/null || true; exit 0' USR1
     sleep "$grace" & wait $! || true
     kill -KILL "$pid" 2>/dev/null || true; exit 3 ) &
   wd=$!
@@ -185,7 +189,7 @@ fm__stop_child() { # $1 = the signal name
     wait "$pid" 2>/dev/null && rc=0 || rc=$?
     [ "$rc" -gt 128 ] && kill -0 "$pid" 2>/dev/null || break
   done
-  kill -TERM "$wd" 2>/dev/null || true; wait "$wd" 2>/dev/null || wrc=$?
+  kill -USR1 "$wd" 2>/dev/null || true; wait "$wd" 2>/dev/null || wrc=$?
   [ "$wrc" != 3 ] || fate="killed after ${grace}s (SIG$1 ignored)"
   FM_CHILD_PID=""
   FM_CHILD_FAILED="$FM_CHILD_CMD $fate"

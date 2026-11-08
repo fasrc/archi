@@ -188,3 +188,35 @@ effect when the current command` 0, `#817` 1 (on base: 1, 1, 0).
   within a second, so the watchdog is a backstop.
 - The ERR trap now also records `return "$rc"` in `lib.sh` when the QA command fails;
   the page body does not use that record (D3), and no check pins it.
+
+## Measurement
+
+**2026-11-08 wrap-up, Codex round 2 on PR #823 (`ac3e59ce`), P2 at `lib.sh:180`.** The KILL
+watchdog of D3 trapped TERM to cancel itself. A second TERM to the whole process group during
+the grace period (a repeated `systemd stop`, a second `kill -- -<pgid>`) reached the watchdog
+too, so it cancelled its timer and exited 0; the wrapper's no-op trap only repeated its
+`wait`, the QA command that ignored TERM was never killed, and nothing paged. Reproduced on
+the host against the real `lib.sh` (a wrapper that sources it, under `setsid`,
+`FM_CHILD_GRACE=1`, a child that ignores TERM): one group TERM gave exit 143 after 1.0 s with
+no process left; two group TERMs 200 ms apart hung past 6 s with the wrapper and the
+`sleep 30` child left (twice each). A group HUP would have ended the watchdog the same way
+(default action).
+
+**Fix (D3 amended).** The watchdog starts with `trap '' HUP INT TERM` (its `sleep` inherits
+the ignore, so a group signal does not shorten the grace period either) and a USR1 handler
+that kills its own sleep and exits 0; the wrapper cancels it with `kill -USR1 "$wd"`. The
+exit-3 record of a fired KILL is unchanged.
+
+**Check 128** (self-test): the noterm stub under a new launcher `signal-launch-pg2.py` that
+sends TERM to the whole group twice, 200 ms apart, with a 5 s bound. The stub's
+`qa-slow-noterm` mode now sets `trap '' TERM` before it touches the ready file, so the group
+signal cannot hit it mid-start (check 127 is unchanged by that order).
+
+| stage | self-test |
+|---|---|
+| tip `ac3e59ce` + check 128 (test half) | `134 passed, 1 failed`: 128 (`launcher=hung leftover`) |
+| + the fix | `135 passed, 0 failed` |
+| m5: the fix with `trap '' HUP INT TERM` replaced by `:` | `134 passed, 1 failed`: 128 |
+
+The probe on the fixed `lib.sh`: two group TERMs gave exit 143 after 1.0 s with no process
+left (twice).
