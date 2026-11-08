@@ -667,7 +667,9 @@ data_manager:
 > other value stops the data manager and the chat service with an error that names the
 > key, the same rule as for an invalid `chunk_overlap`. A quoted value such as `"512"`
 > stays a string after the render, so it is refused too. A key with no value uses its
-> default.
+> default. This check covers the type and the sign only: the sentence splitter still
+> refuses a document whose metadata token count reaches the chunk size, so keep both
+> sizes well above that count (the defaults are).
 
 #### The `markdown` strategy
 
