@@ -110,7 +110,7 @@
 
 ## 3. Verify, push, and open the PR
 
-- [ ] 3.1 Run the self-test and confirm `134 passed, 0 failed`. Run
+- [x] 3.1 Run the self-test and confirm `134 passed, 0 failed`. Run
       `git diff origin/dev...HEAD --stat -- docs/` (three dots) and confirm it lists ONLY
       `docs/docs/proposals/feature-matrix-campaign-2026.md`; remove any other file under
       `docs/` that this branch added. If `command -v openspec` finds the CLI, run
