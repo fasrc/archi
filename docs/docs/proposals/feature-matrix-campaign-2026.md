@@ -186,9 +186,12 @@ once ([#624](https://github.com/fasrc/archi/issues/624)); that page's subject en
 the wrapper and the exit status, and then the refusal message, or else the `file:line` and
 the command that failed; a SIGHUP, SIGINT or SIGTERM to the wrapper also pages once, and
 the wrapper then ends by that signal, so a chain that runs it stops too; a refusal that
-already paged does not page again. A signal sent only to the wrapper's own PID (not to its
-process group, as systemd and a closed terminal do) takes effect when the current command
-ends, and that can be the end of the QA run. Precondition refusals (a bad arm label, a
+already paged does not page again. The QA run starts in the background and the wrapper
+waits for it, so a signal sent only to the wrapper process (not to its process group, as
+systemd and a closed terminal do) also takes effect at once: the wrapper forwards the
+signal to the QA run, sends KILL after `FM_CHILD_GRACE` seconds (default 10) if the run
+ignores it, and then pages ([#817](https://github.com/fasrc/archi/issues/817)); the page
+body names the command and its fate. Precondition refusals (a bad arm label, a
 missing file, a dirty checkout) fail before any long work starts and never page. The
 `qa_arm.sh` refusal of a run that scored nothing (§5.3) comes after long work, so it pages
 once through that failure page, with the refusal in the body

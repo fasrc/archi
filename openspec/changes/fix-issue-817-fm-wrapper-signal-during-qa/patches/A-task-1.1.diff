@@ -1,0 +1,246 @@
+diff --git a/scripts/benchmarking/feature_matrix/lib.sh b/scripts/benchmarking/feature_matrix/lib.sh
+index 6c2825d..0d5fab8 100755
+--- a/scripts/benchmarking/feature_matrix/lib.sh
++++ b/scripts/benchmarking/feature_matrix/lib.sh
+@@ -28,6 +28,9 @@ FM_MAIL="${FM_MAIL:-mail}"
+ FM_MAIL_TIMEOUT="${FM_MAIL_TIMEOUT:-60}"
+ FM_PAGED=0
+ FM_DIE_MSG=""
++FM_CHILD_PID=""
++FM_CHILD_CMD=""
++FM_CHILD_FAILED=""
+ 
+ fm_require_run_number() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] || fm_die "run number must be a positive integer, got '${1:-}'"; }
+ 
+@@ -91,10 +94,12 @@ fm_die_paged() { # $1 = subject context (e.g. "stack fm-01 arm 01"), $2 = messag
+ 
+ # Arm a page-on-failure trap for a wrapper that has just started long work. Call this
+ # directly before the long-running command. The EXIT trap pages once on any non-zero exit
+-# that did not already page (FM_PAGED=1); the page body carries the fm_die message or the
+-# failed command with its file:line. A HUP, INT or TERM signal pages and then ends the
+-# wrapper by the same signal, so a chain that runs it stops too. set -E makes the ERR trap
+-# fire inside functions so the failed command and line are recorded for the page body.
++# that did not already page (FM_PAGED=1); the page body carries the fm_die message, the
++# fate of the command fm_run_interruptible ran, or the failed command with its file:line.
++# A HUP, INT or TERM signal first stops the command fm_run_interruptible is running
++# (#817), then pages and ends the wrapper by the same signal, so a chain that runs it stops
++# too. set -E makes the ERR trap fire inside functions so the failed command and line are
++# recorded for the page body.
+ fm_arm_page_on_failure() { # $1 = subject context, e.g. "stack fm-00 arm 00"
+   FM_PAGE_CONTEXT="$1"
+   set -E
+@@ -105,8 +110,12 @@ fm_arm_page_on_failure() { # $1 = subject context, e.g. "stack fm-00 arm 00"
+   trap 'fm__page_on_signal 143 TERM' TERM
+ }
+ fm__page_on_signal() { # $1 = 128 + the signal number, $2 = the signal name
++  # A second signal while the command stops only interrupts a wait, which fm__stop_child
++  # repeats. Not `trap ''`: a subshell (the KILL watchdog) could not trap an ignored signal.
++  trap ':' HUP INT TERM
++  fm__stop_child "$2"
+   fm__page_on_exit "$1"
+-  trap - EXIT "$2"
++  trap - EXIT HUP INT TERM
+   kill -s "$2" "$$"
+   exit "$1"
+ }
+@@ -115,12 +124,59 @@ fm__page_on_exit() { # $1 = the exit status
+   local body
+   if [ -n "$FM_DIE_MSG" ]; then
+     body="$(basename "$0") exited $1: feature_matrix: $FM_DIE_MSG"
++  elif [ -n "$FM_CHILD_FAILED" ]; then
++    body="$(basename "$0") exited $1: $FM_CHILD_FAILED"
+   else
+     body="$(basename "$0") exited $1 at ${fm__failed_line:-?}: ${fm__failed_cmd:-unknown}"
+   fi
+   fm_page "$FM_PAGE_CONTEXT: failed after long work (exit $1)" "$body"
+ }
+ 
++# Runs the long command of a wrapper (the QA run) so that a HUP, INT or TERM signal sent
++# only to the wrapper's own PID takes effect at once (#817). Bash runs a trap only when
++# the foreground command returns, so a foreground `archi qa` delayed the page and the
++# stop to the end of the run. The command runs in the background and the wrapper waits
++# for it with the interruptible `wait` builtin; the signal trap (fm__page_on_signal) then
++# stops the command (fm__stop_child), pages once and ends the wrapper by that signal.
++# Returns the command's exit status, so `set -e` stops the wrapper on a failure as before;
++# FM_CHILD_FAILED carries the command and its status for the page body. The command
++# starts through FM_PYTHON, which resets SIGINT to its default and execs it: a background
++# command of a script starts with SIGINT ignored, and the command cannot reset an ignored
++# signal itself, so a forwarded INT would not reach it.
++fm_run_interruptible() { # $@ = the command and its arguments
++  FM_CHILD_CMD="$*"; FM_CHILD_FAILED=""
++  "$FM_PYTHON" -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' "$@" &
++  FM_CHILD_PID=$!
++  local rc=0
++  # A trapped signal makes `wait` return 128+N. The wrapper's signal traps never return,
++  # but a wait that did return while the command still runs is repeated, so rc is the
++  # command's own status. A reaped PID fails `kill -0`, and a status of 128 or less is a
++  # real exit, so this cannot spin on a reused PID.
++  while :; do
++    wait "$FM_CHILD_PID" && rc=0 || rc=$?
++    [ "$rc" -gt 128 ] && kill -0 "$FM_CHILD_PID" 2>/dev/null || break
++  done
++  FM_CHILD_PID=""
++  [ "$rc" = 0 ] || FM_CHILD_FAILED="$FM_CHILD_CMD exited $rc"
++  return "$rc"
++}
++# Stops the command fm_run_interruptible is running, for a signal to the wrapper: forwards
++# the same signal and waits for the command. A no-op when no command runs. Records the
++# command's fate in FM_CHILD_FAILED for the page body.
++fm__stop_child() { # $1 = the signal name
++  [ -n "$FM_CHILD_PID" ] || return 0
++  local pid="$FM_CHILD_PID" rc=0
++  kill -s "$1" "$pid" 2>/dev/null || true
++  # A second signal interrupts this wait (the signal traps are no-ops now); it is repeated
++  # while the command runs, as in fm_run_interruptible.
++  while :; do
++    wait "$pid" 2>/dev/null && rc=0 || rc=$?
++    [ "$rc" -gt 128 ] && kill -0 "$pid" 2>/dev/null || break
++  done
++  FM_CHILD_PID=""
++  FM_CHILD_FAILED="$FM_CHILD_CMD stopped by SIG$1"
++}
++
+ # Arm labels are two digits with an optional letter: 00, 05a. Anything else is refused
+ # before it becomes a deployment name (the name reaches `archi delete --force` paths).
+ fm_require_arm() { [[ "${1:-}" =~ ^[0-9]{2}[a-z]?$ ]] || fm_die "bad arm label '${1:-}' (want 00, 03, 05a ...)"; }
+diff --git a/scripts/benchmarking/feature_matrix/qa_arm.sh b/scripts/benchmarking/feature_matrix/qa_arm.sh
+index 1811874..a1d1efe 100755
+--- a/scripts/benchmarking/feature_matrix/qa_arm.sh
++++ b/scripts/benchmarking/feature_matrix/qa_arm.sh
+@@ -85,8 +85,9 @@ if [ "${1:-}" = --sweep ]; then
+   export HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}"
+   export OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1
+   fm_arm_page_on_failure "stack $STACK arm $STEM"
+-  "$FM_ARCHI" qa run "$OUT_DIR" --agent-config "$AGENT_CFG" --agent-spec "$SPEC" --attempts 1 --run-workers 1
+-  "$FM_ARCHI" qa score "$OUT_DIR" --evaluator-profile "$PROFILE" --score-workers "${FM_SCORE_WORKERS:-4}"
++  # fm_run_interruptible: a signal sent only to this wrapper's PID stops the run at once (#817)
++  fm_run_interruptible "$FM_ARCHI" qa run "$OUT_DIR" --agent-config "$AGENT_CFG" --agent-spec "$SPEC" --attempts 1 --run-workers 1
++  fm_run_interruptible "$FM_ARCHI" qa score "$OUT_DIR" --evaluator-profile "$PROFILE" --score-workers "${FM_SCORE_WORKERS:-4}"
+   MAP_END="$(fm_category_map_digest "$STACK")"
+   fm_write_map_readings "$OUT_DIR" "$MAP_START" "$MAP_END"
+   AFTER="$(fm_fingerprint "$STACK")"
+@@ -155,10 +156,12 @@ fm_log "QA run for arm $ARM on $STACK → $OUT_DIR"
+ # run to a digest-bearing arm only when both readings equal the arm's end digest.
+ MAP_START="$(fm_category_map_digest "$STACK")"
+ fm_arm_page_on_failure "stack $STACK arm $ARM"
++# The run goes through fm_run_interruptible, so a signal sent only to this wrapper's PID
++# stops it at once instead of when the run ends (#817; see lib.sh).
+ PG_PASSWORD_FILE="$STACK_DIR/secrets/pg_password.txt" \
+ HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}" \
+ OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \
+-"$FM_ARCHI" qa \
++fm_run_interruptible "$FM_ARCHI" qa \
+   --dataset "$DATASET" \
+   --agent-config "$AGENT_CFG" \
+   --agent-spec "$SPEC" \
+diff --git a/scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh b/scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
+index 5320022..0129da9 100755
+--- a/scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
++++ b/scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
+@@ -124,6 +124,14 @@
+ #   119. a --new-corpus re-pin whose pin write failed, retried without --new-corpus: refused,
+ #        old pin kept
+ #   120. the same retry with --new-corpus finishes the re-pin and exits 0
++#   121. a SIGTERM sent only to qa_arm.sh's own PID during the QA run stops the run at once:
++#        one page within 5 s, the wrapper dies of SIGTERM, no stub process is left (#817)
++#   122. the same for SIGHUP
++#   123. the same for SIGINT
++#   124. a QA command that exits 1 keeps its status: the wrapper exits 1 and pages once, and the
++#        body names the command and its status
++#   125. with FM_PAGE_MAIL_TO empty the same failure sends no mail and exits 1
++#   126. a SIGTERM sent only to the PID of qa_arm.sh --sweep during `qa run` stops it at once
+ # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
+ set -euo pipefail
+ 
+@@ -168,7 +176,11 @@ prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && { mkdir -p "\$a"; O
+ # the run manifest records the retrieval identity when the test provides one
+ [ -n "\$OUTDIR" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$OUTDIR/manifest.json"
+ # a corpus that drifts WHILE the QA run is in flight
+-[ "\$1" = "qa" ] && [ -f "$T/qa-slow" ] && { touch "$T/qa-started"; sleep 30; }
++# a slow QA run: the stub becomes one `sleep` process (exec), as `archi qa` is one process,
++# so a signal forwarded to its PID must end it (#817)
++[ "\$1" = "qa" ] && [ -f "$T/qa-slow" ] && { touch "$T/qa-started"; exec sleep 30; }
++# exit 1 from the QA run itself when qa-fail exists
++[ "\$1" = "qa" ] && [ -f "$T/qa-fail" ] && exit 1
+ [ "\$1" = "qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
+ # touch fp-broken after qa when fp-fail-after-qa exists, so fm_fingerprint fails
+ [ "\$1" = "qa" ] && [ -f "$T/fp-fail-after-qa" ] && touch "$T/fp-broken"
+@@ -1477,5 +1489,78 @@ if [ "$RC" = 0 ] && grep -q 'repaired the corpus pin for fm-pin119' "$T/stdout"
+    && [ "$(cat "$FM_OUT/corpus-pin-fm-pin119" 2>/dev/null)" = sha256:p119b ] && [ "$(ledger_rows)" = "$ROWS_BEFORE" ]; then
+   ok "a re-pin retry with --new-corpus finishes the re-pin"; else notok "re-pin repair (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+ 
++# --- #817: a signal to the wrapper's own PID stops the QA run at once --------------------
++# PID-only launcher (checks 121-127): like signal-launch.py, but the signal goes to the
++# wrapper's own PID only (os.kill, not os.killpg), and the wait is bounded at 5 s, so a
++# wrapper that handles the signal only when its QA run ends prints `hung leftover`.
++cat > "$T/bin/signal-launch-pid.py" <<'PY'
++import os, signal, subprocess, sys, time
++signame, ready, out, err, cmd = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
++p = subprocess.Popen(cmd, start_new_session=True, stdout=open(out, "w"), stderr=open(err, "w"),
++                     preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
++deadline = time.monotonic() + 30
++while not os.path.exists(ready) and p.poll() is None and time.monotonic() < deadline:
++    time.sleep(0.05)
++if p.poll() is None:
++    os.kill(p.pid, getattr(signal, "SIG" + signame))
++try:
++    rc = p.wait(timeout=5)
++except subprocess.TimeoutExpired:
++    rc = "hung"
++try:
++    os.killpg(p.pid, signal.SIGKILL)
++    left = "leftover"
++except ProcessLookupError:
++    left = "clean"
++print(rc, left)
++PY
++
++# 121-123: a SIGTERM, SIGHUP or SIGINT sent only to qa_arm.sh's own PID during the QA run
++# stops the run at once: one page within 5 s that names the command and the signal, the
++# wrapper dies of that signal, and no process of the wrapper's group is left
++for SIGCASE in "121 TERM 143 -15" "122 HUP 129 -1" "123 INT 130 -2"; do
++  read -r N SIG CODE WANT <<<"$SIGCASE"
++  touch "$T/qa-slow"; rm -f "$T/qa-started"
++  : > "$T/mail.calls"; BEFORE="$(ledger_rows)"
++  OUT="$(env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org "$REAL_PY" "$T/bin/signal-launch-pid.py" "$SIG" "$T/qa-started" "$T/stdout" "$T/stderr" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml")"
++  rm -f "$T/qa-slow" "$T/qa-started"
++  if [ "$OUT" = "$WANT clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
++     && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit $CODE)" "$T/mail.calls" \
++     && grep -q "qa_arm.sh exited $CODE: .*archi qa .* stopped by SIG$SIG" "$T/mail.calls" \
++     && [ "$(ledger_rows)" = "$BEFORE" ]; then
++    ok "a SIG$SIG sent only to the wrapper's PID stops the QA run at once and pages once ($N)"; else notok "qa_arm SIG$SIG pid-only ($N: launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
++done
++
++# 124: a QA command that exits 1 (no signal) keeps its status: the wrapper exits 1 and pages
++# once, and the body names the command and its status
++touch "$T/qa-fail"
++: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
++run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
++STATUS124=$RC; rm -f "$T/qa-fail"
++if [ "$STATUS124" = 1 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
++   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit 1)" "$T/mail.calls" \
++   && grep -q "qa_arm.sh exited 1: .*archi qa .* exited 1" "$T/mail.calls" \
++   && [ "$(ledger_rows)" = "$BEFORE" ]; then
++  ok "a QA command that exits 1 keeps its status and pages once with the command in the body"; else notok "qa_arm child exit status (rc=$STATUS124: $(cat "$T/mail.calls" "$T/stderr"))"; fi
++
++# 125: with FM_PAGE_MAIL_TO empty the same failure sends no mail and exits 1
++touch "$T/qa-fail"
++: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
++run env FM_AGENT_SPEC="$T/cfg/spec.md" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
++STATUS125=$RC; rm -f "$T/qa-fail"
++if [ "$STATUS125" = 1 ] && [ ! -s "$T/mail.calls" ] && [ "$(ledger_rows)" = "$BEFORE" ]; then
++  ok "with FM_PAGE_MAIL_TO empty the failing QA command sends no mail and exits 1"; else notok "qa_arm child exit no-page (rc=$STATUS125: $(cat "$T/mail.calls" "$T/stderr"))"; fi
++
++# 126: a SIGTERM sent only to the PID of qa_arm.sh --sweep during `qa run` stops it at once
++touch "$T/qa-slow"; rm -f "$T/qa-started"
++: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
++OUT="$(env FM_PAGE_MAIL_TO=ops@example.org "$REAL_PY" "$T/bin/signal-launch-pid.py" TERM "$T/qa-started" "$T/stdout" "$T/stderr" bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl)"
++rm -f "$T/qa-slow" "$T/qa-started"
++if [ "$OUT" = "-15 clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
++   && grep -q "ARGS: -s feature_matrix: stack r0 arm fasrc-docs-r0b-icl: failed after long work (exit 143)" "$T/mail.calls" \
++   && grep -q "qa_arm.sh exited 143: .*archi qa run .* stopped by SIGTERM" "$T/mail.calls" \
++   && [ "$(ledger_rows)" = "$BEFORE" ]; then
++  ok "a SIGTERM sent only to the PID of qa_arm.sh --sweep during qa run stops it at once and pages once"; else notok "qa_arm sweep SIGTERM pid-only (launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
++
+ printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+ [ "$FAIL" = 0 ]

@@ -15,6 +15,9 @@
 #   FM_MAIL     the mail binary fm_page invokes (default: mail)
 #   FM_MAIL_TIMEOUT  seconds fm_page waits for FM_MAIL before it gives up (default: 60;
 #               zero or a value that is not a positive number also gives 60)
+#   FM_CHILD_GRACE  seconds fm_run_interruptible waits for its command after it forwards a
+#               HUP, INT or TERM to it, before it sends KILL (default: 10; a value that is
+#               not a positive whole number also gives 10)
 set -euo pipefail
 
 FM_OUT="${FM_OUT:-$PWD/bench_out/feature_matrix}"
@@ -26,8 +29,12 @@ FM_GIT="${FM_GIT:-git}"
 FM_PAGE_MAIL_TO="${FM_PAGE_MAIL_TO:-}"
 FM_MAIL="${FM_MAIL:-mail}"
 FM_MAIL_TIMEOUT="${FM_MAIL_TIMEOUT:-60}"
+FM_CHILD_GRACE="${FM_CHILD_GRACE:-10}"
 FM_PAGED=0
 FM_DIE_MSG=""
+FM_CHILD_PID=""
+FM_CHILD_CMD=""
+FM_CHILD_FAILED=""
 
 fm_require_run_number() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] || fm_die "run number must be a positive integer, got '${1:-}'"; }
 
@@ -91,10 +98,12 @@ fm_die_paged() { # $1 = subject context (e.g. "stack fm-01 arm 01"), $2 = messag
 
 # Arm a page-on-failure trap for a wrapper that has just started long work. Call this
 # directly before the long-running command. The EXIT trap pages once on any non-zero exit
-# that did not already page (FM_PAGED=1); the page body carries the fm_die message or the
-# failed command with its file:line. A HUP, INT or TERM signal pages and then ends the
-# wrapper by the same signal, so a chain that runs it stops too. set -E makes the ERR trap
-# fire inside functions so the failed command and line are recorded for the page body.
+# that did not already page (FM_PAGED=1); the page body carries the fm_die message, the
+# fate of the command fm_run_interruptible ran, or the failed command with its file:line.
+# A HUP, INT or TERM signal first stops the command fm_run_interruptible is running
+# (#817), then pages and ends the wrapper by the same signal, so a chain that runs it stops
+# too. set -E makes the ERR trap fire inside functions so the failed command and line are
+# recorded for the page body.
 fm_arm_page_on_failure() { # $1 = subject context, e.g. "stack fm-00 arm 00"
   FM_PAGE_CONTEXT="$1"
   set -E
@@ -105,8 +114,13 @@ fm_arm_page_on_failure() { # $1 = subject context, e.g. "stack fm-00 arm 00"
   trap 'fm__page_on_signal 143 TERM' TERM
 }
 fm__page_on_signal() { # $1 = 128 + the signal number, $2 = the signal name
+  # Ignore the three signals from here on: the KILL watchdog fm__stop_child forks inherits
+  # the ignore at its fork, so a repeated group signal has no window in which to kill it
+  # before its own trap runs. The wrapper cancels the watchdog with USR1, not TERM.
+  trap '' HUP INT TERM
+  fm__stop_child "$2"
   fm__page_on_exit "$1"
-  trap - EXIT "$2"
+  trap - EXIT HUP INT TERM
   kill -s "$2" "$$"
   exit "$1"
 }
@@ -115,10 +129,73 @@ fm__page_on_exit() { # $1 = the exit status
   local body
   if [ -n "$FM_DIE_MSG" ]; then
     body="$(basename "$0") exited $1: feature_matrix: $FM_DIE_MSG"
+  elif [ -n "$FM_CHILD_FAILED" ]; then
+    body="$(basename "$0") exited $1: $FM_CHILD_FAILED"
   else
     body="$(basename "$0") exited $1 at ${fm__failed_line:-?}: ${fm__failed_cmd:-unknown}"
   fi
   fm_page "$FM_PAGE_CONTEXT: failed after long work (exit $1)" "$body"
+}
+
+# Runs the long command of a wrapper (the QA run) so that a HUP, INT or TERM signal sent
+# only to the wrapper's own PID takes effect at once (#817). Bash runs a trap only when
+# the foreground command returns, so a foreground `archi qa` delayed the page and the
+# stop to the end of the run. The command runs in the background and the wrapper waits
+# for it with the interruptible `wait` builtin; the signal trap (fm__page_on_signal) then
+# stops the command (fm__stop_child), pages once and ends the wrapper by that signal.
+# Returns the command's exit status, so `set -e` stops the wrapper on a failure as before;
+# FM_CHILD_FAILED carries the command and its status for the page body. The command
+# starts through FM_PYTHON, which resets SIGINT to its default and execs it: a background
+# command of a script starts with SIGINT ignored, and the command cannot reset an ignored
+# signal itself, so a forwarded INT would not reach it.
+fm_run_interruptible() { # $@ = the command and its arguments
+  FM_CHILD_CMD="$*"; FM_CHILD_FAILED=""
+  "$FM_PYTHON" -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' "$@" &
+  FM_CHILD_PID=$!
+  local rc=0
+  # A trapped signal makes `wait` return 128+N. The wrapper's signal traps never return,
+  # but a wait that did return while the command still runs is repeated, so rc is the
+  # command's own status. A reaped PID fails `kill -0`, and a status of 128 or less is a
+  # real exit, so this cannot spin on a reused PID.
+  while :; do
+    wait "$FM_CHILD_PID" && rc=0 || rc=$?
+    [ "$rc" -gt 128 ] && kill -0 "$FM_CHILD_PID" 2>/dev/null || break
+  done
+  FM_CHILD_PID=""
+  [ "$rc" = 0 ] || FM_CHILD_FAILED="$FM_CHILD_CMD exited $rc"
+  return "$rc"
+}
+# Stops the command fm_run_interruptible is running, for a signal to the wrapper: forwards
+# the same signal, waits FM_CHILD_GRACE seconds for the command to end, then sends KILL.
+# A no-op when no command runs. Records the command's fate in FM_CHILD_FAILED for the
+# page body.
+fm__stop_child() { # $1 = the signal name
+  [ -n "$FM_CHILD_PID" ] || return 0
+  local pid="$FM_CHILD_PID" grace="$FM_CHILD_GRACE" fate="stopped by SIG$1" wd wrc=0 rc=0
+  [[ "$grace" =~ ^[1-9][0-9]*$ ]] || grace=10
+  kill -s "$1" "$pid" 2>/dev/null || true
+  # The watchdog ignores HUP, INT and TERM: it inherits the ignore from fm__page_on_signal
+  # at its fork (the trap below restates it for a caller that did not ignore them) and its
+  # sleep inherits it too, so a second signal to the whole process group cannot cancel it;
+  # the wrapper cancels it with USR1 once the command is gone. It exits 3 once it has sent
+  # KILL. The cancel handler removes its own sleep, so a command that ended in time leaves
+  # no process behind.
+  ( trap '' HUP INT TERM
+    trap 'kill -KILL $(jobs -p) 2>/dev/null || true; exit 0' USR1
+    sleep "$grace" & wait $! || true
+    kill -KILL "$pid" 2>/dev/null || true; exit 3 ) &
+  wd=$!
+  # The signals are ignored now, so a second one does not interrupt this wait; the loop
+  # stays for a caller that only trapped them (a wait that returns 128+N while the command
+  # runs is repeated, as in fm_run_interruptible).
+  while :; do
+    wait "$pid" 2>/dev/null && rc=0 || rc=$?
+    [ "$rc" -gt 128 ] && kill -0 "$pid" 2>/dev/null || break
+  done
+  kill -USR1 "$wd" 2>/dev/null || true; wait "$wd" 2>/dev/null || wrc=$?
+  [ "$wrc" != 3 ] || fate="killed after ${grace}s (SIG$1 ignored)"
+  FM_CHILD_PID=""
+  FM_CHILD_FAILED="$FM_CHILD_CMD $fate"
 }
 
 # Arm labels are two digits with an optional letter: 00, 05a. Anything else is refused
