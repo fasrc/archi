@@ -32,7 +32,7 @@
 
 ## 2. Docs
 
-- [ ] 2.1 Write Appendix C to `/tmp/778-C.diff` and run `git apply -p1 /tmp/778-C.diff`. It
+- [x] 2.1 Write Appendix C to `/tmp/778-C.diff` and run `git apply -p1 /tmp/778-C.diff`. It
       replaces the last sentence of the "Backward compatibility" note in the `chunking`
       section of `docs/docs/configuration.md` (the #596 sentence that ends "the hierarchical
       parser cannot use it."). Change nothing else in the file. Run `bash scripts/gate.sh`
@@ -40,7 +40,7 @@
 
 ## 3. Publish
 
-- [ ] 3.1 Tick this box, commit the tick through the hook (message: `mark #778 tasks
+- [x] 3.1 Tick this box, commit the tick through the hook (message: `mark #778 tasks
       complete`), then push, so the push carries every commit. Push with
       `git push -u origin fix/issue-778-chunk-size-validation`. PR #809 already exists for
       this branch (opened 2026-11-05 as a partial PR): do NOT run `gh pr create`. Edit #809
