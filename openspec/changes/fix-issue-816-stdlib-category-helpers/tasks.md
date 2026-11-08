@@ -51,7 +51,7 @@
 
 ## 2. Publish
 
-- [ ] 2.1 Tick this box, commit the tick through the hook (message: `mark #816 tasks complete`),
+- [x] 2.1 Tick this box, commit the tick through the hook (message: `mark #816 tasks complete`),
       then push and open the PR, so the push carries every commit. Push with
       `git push -u origin fix/issue-816-stdlib-category-helpers`. Open the PR with
       `gh pr create --repo fasrc/archi --base dev --head fix/issue-816-stdlib-category-helpers`,
