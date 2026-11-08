@@ -103,8 +103,12 @@ def effective_chunking(data_manager_config: Any) -> Dict[str, Any]:
     strategy = chunking.get("strategy", _DEFAULT_CHUNKING_STRATEGY)
 
     if strategy in (_DEFAULT_CHUNKING_STRATEGY, _MARKDOWN_STRATEGY):
-        parent = chunking.get("parent_chunk_size", _DEFAULT_PARENT_CHUNK_SIZE)
-        child = chunking.get("child_chunk_size", _DEFAULT_CHILD_CHUNK_SIZE)
+        parent = chunking.get("parent_chunk_size")
+        if parent is None:
+            parent = _DEFAULT_PARENT_CHUNK_SIZE
+        child = chunking.get("child_chunk_size")
+        if child is None:
+            child = _DEFAULT_CHILD_CHUNK_SIZE
         overlap = chunking.get("chunk_overlap")
         if overlap is None:
             overlap = _DEFAULT_CHILD_CHUNK_OVERLAP
