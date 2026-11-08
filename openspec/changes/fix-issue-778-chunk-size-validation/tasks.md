@@ -1,3 +1,9 @@
+> **Resume (2026-11-08).** Task 1.1 is done on this branch (`e755459a`, tick `97d6f7b9`).
+> Start at task 1.2. PR #809 is this branch's PR, and task 3.1 edits it in place. Do not
+> branch again from `dev`, and do not merge `dev` into this branch: the patches and the
+> test counts below are pinned to base `5f3d80e9`. The two open Codex threads on #809
+> (P2 provenance, P1 docs) are tasks 1.2 and 2.1.
+
 ## 1. Refuse a bad chunk size (fasrc/archi#778)
 
 - [x] 1.1 Red then green in one task (do not commit a red state). Write Appendix A to
@@ -35,15 +41,16 @@
 ## 3. Publish
 
 - [ ] 3.1 Tick this box, commit the tick through the hook (message: `mark #778 tasks
-      complete`), then push and open the PR, so the push carries every commit. Push with
-      `git push -u origin fix/issue-778-chunk-size-validation`. Open the PR with
-      `gh pr create --repo fasrc/archi --base dev --head fix/issue-778-chunk-size-validation`,
-      the title `fix(vectorstore): refuse a chunk size that is not a positive int`, and
-      `Closes #778` in the BODY (not the title). Pass the body with `--body` or a file under
-      `/tmp`; do NOT commit a PR-body file to the repository. In the body, copy the
-      "## Measurement" tables of `design.md`, and add one line: "Runtime effect: the data
-      manager and the chat service now stop at startup on a bad size, the same as on a bad
-      `chunk_overlap`." STOP at the open PR — do not merge.
+      complete`), then push, so the push carries every commit. Push with
+      `git push -u origin fix/issue-778-chunk-size-validation`. PR #809 already exists for
+      this branch (opened 2026-11-05 as a partial PR): do NOT run `gh pr create`. Edit #809
+      in place with `gh pr edit 809 --repo fasrc/archi --title "fix(vectorstore): refuse a
+      chunk size that is not a positive int" --body-file /tmp/778-pr-body.md`. Write the
+      body file under `/tmp`; do NOT commit a PR-body file to the repository. The body must
+      contain `Closes #778` (in the BODY, not the title), the "## Measurement" tables of
+      `design.md`, and one line: "Runtime effect: the data manager and the chat service now
+      stop at startup on a bad size, the same as on a bad `chunk_overlap`." The new body
+      replaces the old "PARTIAL — do not merge" notice. STOP at the open PR — do not merge.
 
 ## Appendix (Loop 1 scratch evidence, 2026-11-05)
 
