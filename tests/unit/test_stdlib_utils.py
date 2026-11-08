@@ -17,6 +17,7 @@ module raises ``ImportError``.
 from __future__ import annotations
 
 import importlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -133,3 +134,70 @@ def test_compare_runs_turns_a_load_failure_into_a_usage_error(no_driver):
 
     assert info.value.code == cr.EXIT_USAGE
     assert "no_such_module.py" in str(info.value)
+
+
+# --- the category helpers -------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", HELPERS)
+def test_a_category_helper_imports_without_the_src_package(
+    name, no_driver, fresh_helpers
+):
+    module = importlib.import_module(f"scripts.benchmarking.{name}")
+
+    assert module.canonical_source_url.__module__ == "archi_benchmark_provenance"
+    assert module.canonical_source_url(f"{KB}/running-jobs/") == f"{KB}/running-jobs"
+
+
+@pytest.mark.parametrize("name", HELPERS)
+def test_a_category_helper_binds_the_package_function_when_the_driver_is_present(
+    name, fresh_helpers
+):
+    module = importlib.import_module(f"scripts.benchmarking.{name}")
+
+    assert module.canonical_source_url is package_function
+
+
+def test_category_modules_load_without_the_src_package(no_driver, fresh_helpers):
+    category_slice, paired_tests = cr._category_modules()
+
+    assert (
+        category_slice.canonical_source_url.__module__ == "archi_benchmark_provenance"
+    )
+    assert category_slice.canonical_source_url(f"{KB}/x/") == f"{KB}/x"
+    assert paired_tests.canonical_source_url(f"{KB}/x/") == f"{KB}/x"
+
+
+def test_category_modules_load_in_an_isolated_interpreter_from_another_directory(
+    tmp_path,
+):
+    # The issue's repro as a plain script run: no site-packages (-S, so no psycopg2),
+    # no cwd or PYTHONPATH on sys.path (-I), a cwd outside the repository, and only
+    # the script's own directory on sys.path, as `python scripts/benchmarking/...`
+    # has it. Only the script's own shim can make `scripts` and `src` importable.
+    script_dir = Path(cr.__file__).resolve().parent
+    # `_utils_function` goes first: at that point nothing but its own shim has put
+    # the repository root on sys.path, so a shim that forgets to is caught here.
+    probe = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(script_dir)!r})\n"
+        "import compare_runs\n"
+        "loaded = compare_runs._utils_function("
+        "'benchmark_provenance', 'canonical_source_url')\n"
+        "print(loaded.__module__)\n"
+        "category_slice, paired_tests = compare_runs._category_modules()\n"
+        "print(category_slice.canonical_source_url.__module__)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-S", "-I", "-c", probe],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == [
+        "archi_benchmark_provenance",
+        "archi_benchmark_provenance",
+    ]

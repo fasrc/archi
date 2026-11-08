@@ -19,7 +19,13 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Mapping, Sequence
 
-from src.utils.benchmark_provenance import canonical_source_url
+from scripts.benchmarking.stdlib_utils import utils_function
+
+#: ``src.utils.benchmark_provenance.canonical_source_url``, bound through the
+#: pure-stdlib shim so this module imports on a host with no database driver
+#: (``src/utils/__init__.py`` imports psycopg2; fasrc/archi#816). Same file,
+#: same function: this is not a copy.
+canonical_source_url = utils_function("benchmark_provenance", "canonical_source_url")
 
 
 def mcnemar_exact(b: int, c: int) -> float:

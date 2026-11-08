@@ -23,7 +23,7 @@
       together only when the gate is green (message:
       `refactor(benchmarking): share compare_runs' pure-stdlib src.utils loader`).
 
-- [ ] 1.2 Red then green in one task (do not commit a red state). Write Appendix B to
+- [x] 1.2 Red then green in one task (do not commit a red state). Write Appendix B to
       `/tmp/816-B.diff` with the Write tool; copy it exactly. Apply its test half first:
       `git apply -p1 --include='tests/*' /tmp/816-B.diff`. Run
       `python -m pytest -q tests/unit/test_stdlib_utils.py` and confirm EXACTLY
