@@ -1,6 +1,6 @@
 ## 1. Load the category helpers' one `src.utils` function through a shared pure-stdlib shim (fasrc/archi#816)
 
-- [ ] 1.1 Red then green in one task (do not commit a red state). Write Appendix A to
+- [x] 1.1 Red then green in one task (do not commit a red state). Write Appendix A to
       `/tmp/816-A.diff` with the Write tool; do not rewrite the patch, copy it. From the
       repository root, apply its test half first:
       `git apply -p1 --include='tests/*' /tmp/816-A.diff`. Run
