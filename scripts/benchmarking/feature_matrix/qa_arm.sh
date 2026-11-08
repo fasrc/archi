@@ -84,6 +84,7 @@ if [ "${1:-}" = --sweep ]; then
   export PG_PASSWORD_FILE="$STACK_DIR/secrets/pg_password.txt"
   export HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}"
   export OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1
+  fm_arm_page_on_failure "stack $STACK arm $STEM"
   "$FM_ARCHI" qa run "$OUT_DIR" --agent-config "$AGENT_CFG" --agent-spec "$SPEC" --attempts 1 --run-workers 1
   "$FM_ARCHI" qa score "$OUT_DIR" --evaluator-profile "$PROFILE" --score-workers "${FM_SCORE_WORKERS:-4}"
   MAP_END="$(fm_category_map_digest "$STACK")"
@@ -153,6 +154,7 @@ fm_log "QA run for arm $ARM on $STACK → $OUT_DIR"
 # The category map is read around the QA run too (#538 rule 1): compare_runs joins a QA
 # run to a digest-bearing arm only when both readings equal the arm's end digest.
 MAP_START="$(fm_category_map_digest "$STACK")"
+fm_arm_page_on_failure "stack $STACK arm $ARM"
 PG_PASSWORD_FILE="$STACK_DIR/secrets/pg_password.txt" \
 HUIT_API_KEY_FILE="${HUIT_API_KEY_FILE:-$STACK_DIR/secrets/huit_api_key.txt}" \
 OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}" HOST_MODE=1 \

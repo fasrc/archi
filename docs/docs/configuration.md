@@ -193,8 +193,11 @@ these to turn anything off or to hide anything:
 | `data_manager.sources.links.html_scraper.reset_data` | no consumer reads it — `ScraperManager` extracts the `html_scraper` block but reads only `verify_urls` and `enable_warnings` when it builds link scrapers |
 | `services.chat_app.flask_debug_mode` | the chat service runs on gunicorn and always turns the Flask debugger off. The grader and the data manager still read their own `flask_debug_mode` keys |
 
-`visible: false` works for all sources. The chat app maps each document's stored metadata
-to a config key using the following table, then reads `visible` from that config entry:
+`visible: false` works for all sources. It removes a document from the chat app's source list
+and from the citation block of `/v1/chat/completions`, streaming and non-streaming. It does not
+remove the document from retrieval: the model still reads it, and the model's own answer text
+can still name it. Both lists map each document's stored metadata to a config key using the
+following table, then read `visible` from that config entry:
 
 | Stored `source_type` | Stored marker | Config key used |
 |---|---|---|
@@ -749,7 +752,7 @@ directory. A path that exists but is not a readable file does not stop the comma
 logs a WARNING and skips that list (see [Data Sources](data_sources.md)). (Changed in
 [#617](https://github.com/fasrc/archi/issues/617).)
 
-The `visible` flag on any source (`sources.<name>.visible`) controls whether content appears in chat citations (default: `true`).
+The `visible` flag on any source (`sources.<name>.visible`) controls whether content appears in chat citations and in `/v1` citations (default: `true`).
 
 ### Processing (HTML → Markdown & categorization)
 
@@ -853,8 +856,10 @@ data_manager:
   the target stays in the knowledge base. A quotation, heading, or table cell does not
   count when the link is inside `<kbd>`, `<samp>`, `<code>`, or `<pre>`, where the link
   shows no target, and a heading does not count inside a heading or table cell, where it
-  shows no `#` (PR #716 review). A relative or fragment target, such as `/docs`,
-  becomes `[/docs](/docs)`. The conversion ignores a `data-archi-link-shown` or
+  shows no `#` (PR #716 review). Inside a heading or table cell, an image counts only
+  when its `alt` text is not blank, and a video only when it holds text, because there
+  markdownify writes only that text (issue #718). A relative or fragment target, such as
+  `/docs`, becomes `[/docs](/docs)`. The conversion ignores a `data-archi-link-shown` or
   `data-archi-promoted` attribute in the page HTML (issue #713): these names are its own
   markers. Whitespace that touches the cut is removed,
   so no line beside the fence begins or ends with a stray space. The shape is rare in the

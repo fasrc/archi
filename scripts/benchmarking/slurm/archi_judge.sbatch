@@ -12,6 +12,8 @@
 # The partition, GPU count and time limit above are the design's first option: gpu_h200,
 # 2 x H200 in bf16. The operator confirms them on fasrc/archi#729. For 1 x H200 in fp8, use
 # --gres=gpu:1 and JUDGE_PRECISION=fp8 in judge.env (precision is part of the judge identity).
+# Weights that ship pre-quantized (gpt-oss-120b MXFP4, Nemotron 3 Super FP8) take
+# JUDGE_PRECISION=checkpoint: no --quantization flag, vLLM reads the method from the weights.
 
 # The offloaded RAGAS judge job (#733; design D5, D6 and D10 in
 # openspec/changes/archive/2026-10-23-offload-ragas-judge-to-slurm).
@@ -168,7 +170,11 @@ case "$PRECISION" in
   bf16) PRECISION_ARGS=(--dtype bfloat16) ;;
   fp16) PRECISION_ARGS=(--dtype float16) ;;
   fp8) PRECISION_ARGS=(--quantization fp8) ;;
-  *) die "JUDGE_PRECISION=$PRECISION has no vLLM setting here; use bf16, fp16 or fp8" ;;
+  # Pre-quantized weights (MXFP4, modelopt FP8, FP8 checkpoints): vLLM reads the method
+  # from the checkpoint's config.json, and an explicit --quantization would ask for a
+  # second, dynamic quantization. The identity records "checkpoint" as the precision.
+  checkpoint) PRECISION_ARGS=(--dtype auto) ;;
+  *) die "JUDGE_PRECISION=$PRECISION has no vLLM setting here; use bf16, fp16, fp8 or checkpoint" ;;
 esac
 # The job builds these flags from its pinned settings, and the judge identity records those
 # settings. JUDGE_SERVER_ARGS must not set them again: a later --revision would serve other

@@ -99,6 +99,31 @@
 #   95. archive_run.sh refuses an artifact whose judge is pending (G11) and names the judged file
 #   96. archive_run.sh takes the judged file beside it and records the arm's judge identity
 #   97. archive_run.sh refuses a run whose judge identity differs from the campaign's rows (G12)
+#   98. a fingerprint-read failure after qa in qa_arm.sh arm mode pages once and exits non-zero
+#   99. a fingerprint-read failure after qa in qa_arm.sh --sweep pages exactly once
+#   100. a qa-score failure in qa_arm.sh --sweep exits non-zero and pages exactly once
+#   101. with FM_PAGE_MAIL_TO empty the qa-score failure sends no mail and exits with the same status
+#   102. a failed ledger append in qa_arm.sh arm mode pages once and names the failed command and its file:line
+#   103. a QA run that scored nothing pages once with the refusal in the body
+#   104. a SIGTERM to qa_arm.sh's process group during the QA run pages once, and the wrapper dies of SIGTERM
+#   105. the same for SIGHUP
+#   106. a failed ledger append in archive_run.sh arm mode pages once and leaves no pin
+#   107. no artifact with paging on sends nothing (a precondition)
+#   108. a missing agent spec in qa_arm.sh arm mode with paging on sends nothing (a precondition)
+#   109. an existing output dir in qa_arm.sh arm mode with paging on sends nothing (the last precondition)
+#   110. an arm missing from the sweep lock in qa_arm.sh --sweep with paging on sends nothing
+#   111. archive_run.sh --sweep with no sweep lock and paging on sends nothing
+#   112. a SIGINT to qa_arm.sh's process group during the QA run pages once, and the wrapper dies of SIGINT (in the 104-105 loop)
+#   113. a retry of check 80's archive (ledger row durable, pin write failed) writes the pin,
+#        logs "repaired the corpus pin", exits 0, and appends no second row (#677)
+#   114. a second archive of that complete run is still refused; ledger and pin unchanged
+#   115. a row with no artifact_sha256 (written before #677) is not repaired: refused, no pin
+#   116. a matching row that is not the stack's newest ragas row is not repaired: refused, no pin
+#   117. an artifact whose bytes changed since its row was written is not repaired: refused, no pin
+#   118. a pin that holds another value is not overwritten for a first-pin row: refused, pin kept
+#   119. a --new-corpus re-pin whose pin write failed, retried without --new-corpus: refused,
+#        old pin kept
+#   120. the same retry with --new-corpus finishes the re-pin and exits 0
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -127,7 +152,7 @@ case "\$1" in
   exec)    sql="\$*"
            case "\$sql" in
              *container_category_map_digest*) cat "$T/mapfp" ;;
-             *benchmark_provenance*) cat "$T/fp" ;;
+             *benchmark_provenance*) [ -f "$T/fp-broken" ] && exit 1; cat "$T/fp" ;;
              *document_chunks*)  [ -f "$T/nocounts" ] || echo 6096 ;;
              *documents*)        [ -f "$T/nocounts" ] || echo 1132 ;;
            esac ;;
@@ -143,7 +168,12 @@ prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && { mkdir -p "\$a"; O
 # the run manifest records the retrieval identity when the test provides one
 [ -n "\$OUTDIR" ] && [ -f "$T/qa-identity" ] && cp "$T/qa-identity" "\$OUTDIR/manifest.json"
 # a corpus that drifts WHILE the QA run is in flight
+[ "\$1" = "qa" ] && [ -f "$T/qa-slow" ] && { touch "$T/qa-started"; sleep 30; }
 [ "\$1" = "qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
+# touch fp-broken after qa when fp-fail-after-qa exists, so fm_fingerprint fails
+[ "\$1" = "qa" ] && [ -f "$T/fp-fail-after-qa" ] && touch "$T/fp-broken"
+# exit 1 on qa score when qa-score-fail exists
+[ "\$1 \${2:-}" = "qa score" ] && [ -f "$T/qa-score-fail" ] && exit 1
 # summary.json is written only by the scoring phase: the single-arm combined call
 # (qa --output-dir <dir>, no subcommand) and the sweep score call (qa score
 # <dir>) — never qa run or qa prepare.
@@ -831,8 +861,9 @@ assert "collection" in old and old["collection"] is None and "embedding_model" i
 PY2
 then ok "qa_arm copies collection and embedding_model from the run manifest, null when unrecorded"; else notok "qa_arm ledger identity fields (rc=$RC: $(cat "$T/stderr"))"; fi
 
-# --- operator paging (#504): archive_run.sh and qa_arm.sh page by mail on the four refusals
-# that follow long unattended work; preconditions and paging-off never run the mail binary.
+# --- operator paging (#504, #624): archive_run.sh and qa_arm.sh page by mail on the four refusals
+# that follow long unattended work; after long work starts, any other failure exit, and a
+# SIGHUP, SIGINT or SIGTERM, pages once (#624). Preconditions and paging-off never run the mail binary.
 
 # 60: a refused arm-mode archive (the duplicate-artifact guard at archive_run.sh's archive
 # site) pages once, with the stack and arm in the subject and the refusal reason in the body
@@ -1214,6 +1245,237 @@ BEFORE="$(judge_rows)"
 run env FM_OUT="$JO" bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --stack fm-judge
 if [ "$RC" = 2 ] && grep -q "G12 refused" "$T/stderr" && grep -q "model (" "$T/stderr" && [ "$(judge_rows)" = "$BEFORE" ]; then
   ok "archive refuses a run whose judge differs from the campaign's rows"; else notok "archive G12 (rc=$RC: $(cat "$T/stderr"))"; fi
+
+# 98: a fingerprint-read failure after qa in arm mode pages once and exits non-zero
+touch "$T/fp-fail-after-qa"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/fp-fail-after-qa" "$T/fp-broken"
+if [ "$RC" != 0 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a fingerprint-read failure after qa in arm mode pages once and exits non-zero"; else notok "qa_arm arm trap on fingerprint fail (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 99: a fingerprint-read failure after qa in qa_arm.sh --sweep pages exactly once
+touch "$T/fp-fail-after-qa"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl
+rm -f "$T/fp-fail-after-qa" "$T/fp-broken"
+if [ "$RC" != 0 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack r0 arm fasrc-docs-r0b-icl" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a fingerprint-read failure in qa_arm.sh --sweep pages exactly once"; else notok "qa_arm sweep trap on fingerprint fail (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 100: a qa-score failure in qa_arm.sh --sweep exits non-zero and pages exactly once
+touch "$T/qa-score-fail"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl
+STATUS100=$RC; rm -f "$T/qa-score-fail"
+if [ "$STATUS100" != 0 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack r0 arm fasrc-docs-r0b-icl" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a qa-score failure in qa_arm.sh --sweep exits non-zero and pages exactly once"; else notok "qa_arm sweep trap on score fail (rc=$STATUS100: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 101: with FM_PAGE_MAIL_TO empty the same score failure sends no mail and exits with the same status
+touch "$T/qa-score-fail"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+run bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm fasrc-docs-r0b-icl
+STATUS101=$RC; rm -f "$T/qa-score-fail"
+if [ "$STATUS101" = "$STATUS100" ] && [ ! -s "$T/mail.calls" ] \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "with FM_PAGE_MAIL_TO empty the score failure sends no mail and exits with the same status"; else notok "qa_arm sweep trap on score fail no-page (rc=$STATUS101 vs $STATUS100: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# The line of the ledger-append command in lib.sh; checks 102 and 106 expect it in the page body.
+LEDGER_LINE="$(grep -n 'FM_LEDGER="\$ledger" FM_ENTRY' "$HERE/lib.sh" | cut -d: -f1)"
+
+# 102: a failed ledger append in qa_arm.sh arm mode pages once, and the body names the failed command and its file:line
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+FM_PYTHON="$T/bin/python-ledger-fail"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+FM_PYTHON="$REAL_PY"
+if [ "$RC" = 1 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit 1)" "$T/mail.calls" \
+   && [[ "$LEDGER_LINE" =~ ^[0-9]+$ ]] && grep -q "qa_arm.sh exited 1 at lib.sh:$LEDGER_LINE: FM_LEDGER=" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a failed ledger append in qa_arm.sh arm mode pages once and names the failed command"; else notok "qa_arm ledger-fail page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 103: a QA run that scored nothing pages once through the failure trap, and the body carries the refusal
+printf '{"attempt_lifecycle_counts": {"scored": 0, "execution_failed": 0, "evaluation_failed": 0}}' > "$T/qa-summary"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+rm -f "$T/qa-summary"
+if [ "$RC" = 2 ] && grep -q 'QA run scored nothing' "$T/stderr" && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit 2)" "$T/mail.calls" \
+   && grep -q "qa_arm.sh exited 2: feature_matrix: QA run scored nothing" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a QA run that scored nothing pages once with the refusal in the body"; else notok "qa_arm scored-0 page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# signal launcher (checks 104-105): starts the command in its own session (its own process
+# group), waits for the ready file, signals the whole group, and prints the wait status
+# (negative = killed by that signal) and whether any process of the group was left.
+cat > "$T/bin/signal-launch.py" <<'PY'
+import os, signal, subprocess, sys, time
+signame, ready, out, err, cmd = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
+p = subprocess.Popen(cmd, start_new_session=True, stdout=open(out, "w"), stderr=open(err, "w"),
+                     preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+deadline = time.monotonic() + 30
+while not os.path.exists(ready) and p.poll() is None and time.monotonic() < deadline:
+    time.sleep(0.05)
+if p.poll() is None:
+    os.killpg(p.pid, getattr(signal, "SIG" + signame))
+try:
+    rc = p.wait(timeout=30)
+except subprocess.TimeoutExpired:
+    rc = "hung"
+try:
+    os.killpg(p.pid, signal.SIGKILL)
+    left = "leftover"
+except ProcessLookupError:
+    left = "clean"
+print(rc, left)
+PY
+
+# 104-105: a SIGTERM or SIGHUP to qa_arm.sh arm mode during the QA run pages once, and the
+# wrapper then dies of that signal (so a calling shell sees a signal death, not an exit)
+for SIGCASE in "104 TERM 143 -15" "105 HUP 129 -1" "112 INT 130 -2"; do
+  read -r N SIG CODE WANT <<<"$SIGCASE"
+  touch "$T/qa-slow"; rm -f "$T/qa-started"
+  : > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+  OUT="$(env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org "$REAL_PY" "$T/bin/signal-launch.py" "$SIG" "$T/qa-started" "$T/stdout" "$T/stderr" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml")"
+  rm -f "$T/qa-slow" "$T/qa-started"
+  if [ "$OUT" = "$WANT clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+     && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit $CODE)" "$T/mail.calls" \
+     && [ "$(ledger_rows)" = "$BEFORE" ]; then
+    ok "a SIG$SIG during the QA run pages once and the wrapper dies of SIG$SIG ($N)"; else notok "qa_arm SIG$SIG page ($N: launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+done
+
+# 106: a failed ledger append in archive_run.sh arm mode pages once and leaves no pin
+mkdir -p "$ARCHI_DIR/archi-fm-pin624"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-pin624
+artifact "$FM_OUT/benchmarking-fm-pin624-20260903_000040.json" '[]' pin624 5
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+FM_PYTHON="$T/bin/python-ledger-fail"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin624
+FM_PYTHON="$REAL_PY"
+if [ "$RC" = 1 ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-pin624 arm 00: failed after long work (exit 1)" "$T/mail.calls" \
+   && [[ "$LEDGER_LINE" =~ ^[0-9]+$ ]] && grep -q "archive_run.sh exited 1 at lib.sh:$LEDGER_LINE: FM_LEDGER=" "$T/mail.calls" \
+   && [ ! -e "$FM_OUT/corpus-pin-fm-pin624" ] && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a failed ledger append in archive_run.sh pages once and leaves no pin"; else notok "archive ledger-fail page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 107: "nothing archived" (no artifact) with paging on still sends nothing: it is a precondition
+mkdir -p "$ARCHI_DIR/archi-fm-noart"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-noart
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-noart
+if [ "$RC" = 2 ] && grep -q "nothing archived for stack fm-noart" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "no artifact with paging on sends nothing"; else notok "no-artifact no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 108: a precondition refusal in qa_arm.sh arm mode (agent spec not found) with paging on sends nothing
+: > "$T/mail.calls"
+run env FM_AGENT_SPEC="$T/cfg/no-such-spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml"
+if [ "$RC" = 2 ] && grep -q "agent spec not found" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "a missing agent spec in qa_arm.sh with paging on sends nothing"; else notok "qa_arm missing-spec no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 109: the last precondition before the qa_arm.sh arm point (output dir exists) with paging on sends nothing
+: > "$T/mail.calls"
+run env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml" --run 1
+if [ "$RC" = 2 ] && grep -q "output dir exists" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "an existing output dir in qa_arm.sh with paging on sends nothing"; else notok "qa_arm outdir-exists no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 110: an arm missing from the sweep lock in qa_arm.sh --sweep with paging on sends nothing
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/qa_arm.sh" --sweep "$SW/configs" --stack r0 --arm no-such-arm
+if [ "$RC" = 2 ] && grep -q "not in the sweep lock" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "an arm missing from the sweep lock with paging on sends nothing"; else notok "qa_arm sweep bad-arm no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# 111: archive_run.sh --sweep on a stack with no sweep lock, with paging on, sends nothing
+: > "$T/mail.calls"
+run env FM_PAGE_MAIL_TO=ops@example.org bash "$HERE/archive_run.sh" --sweep "$SW/configs" --stack r0-noart --run 1
+if [ "$RC" = 2 ] && grep -q "no sweep lock" "$T/stderr" && [ ! -s "$T/mail.calls" ]; then
+  ok "archive_run.sh --sweep with no sweep lock and paging on sends nothing"; else notok "archive sweep no-lock no-page (rc=$RC: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+# --- #677: a retry after a failed pin write finishes the pin -----------------------------
+A80="$FM_OUT/benchmarking-fm-pin80-20260903_000023.json"
+pin80_rows() { "$FM_PYTHON" -c "import json,sys; print(sum(1 for e in json.load(open(sys.argv[1])) if e.get('kind')=='ragas' and e.get('stack')=='fm-pin80'))" "$FM_OUT/ledger.json"; }
+
+# 113: check 80 left a durable ledger row and no pin. The same archive, retried with the
+# real python, finishes the pin write and exits 0; it appends no second row for the run.
+ROWS_BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin80
+if [ "$RC" = 0 ] && grep -q 'repaired the corpus pin for fm-pin80' "$T/stdout" && ! grep -q 'archived arm' "$T/stdout" \
+   && [ "$(cat "$FM_OUT/corpus-pin-fm-pin80" 2>/dev/null)" = sha256:pin80 ] && [ "$(ledger_rows)" = "$ROWS_BEFORE" ] \
+   && [ "$(pin80_rows)" = 1 ] && ! compgen -G "$FM_OUT/corpus-pin-fm-pin80.tmp.*" >/dev/null; then
+  ok "a retry after a failed pin write finishes the pin and exits 0"; else notok "pin repair on retry (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# 114: the run is complete now, so a second archive of it is still refused as a duplicate
+ROWS_BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin80
+if [ "$RC" != 0 ] && grep -q 'already archived' "$T/stderr" && ! grep -q 'repaired' "$T/stdout" \
+   && [ "$(ledger_rows)" = "$ROWS_BEFORE" ] && [ "$(cat "$FM_OUT/corpus-pin-fm-pin80" 2>/dev/null)" = sha256:pin80 ]; then
+  ok "a second archive of a complete run is still refused"; else notok "complete-run refusal (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# 115-117 remove the pin and change one thing the repair checks; each retry must be refused
+# and must write no pin. The ledger and the artifact are restored after each check.
+cp "$FM_OUT/ledger.json" "$T/ledger.677"; cp -p "$A80" "$T/artifact.677"
+rm -f "$FM_OUT/corpus-pin-fm-pin80"
+
+# 115: a row written before #677 has no artifact_sha256, so it cannot prove the file is the same
+"$FM_PYTHON" -c "import json,sys; p=sys.argv[1]; rows=json.load(open(p)); [e.pop('artifact_sha256', None) for e in rows if e.get('stack')=='fm-pin80']; json.dump(rows, open(p, 'w'), indent=1)" "$FM_OUT/ledger.json"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin80
+cp "$T/ledger.677" "$FM_OUT/ledger.json"
+if [ "$RC" != 0 ] && grep -q 'already archived' "$T/stderr" && [ ! -e "$FM_OUT/corpus-pin-fm-pin80" ]; then
+  ok "a row with no artifact_sha256 is not repaired"; else notok "legacy-row repair guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# 116: a later ragas row on the stack means the pin may have moved since; not repaired
+"$FM_PYTHON" -c "import json,sys; p=sys.argv[1]; rows=json.load(open(p)); rows.append({'kind': 'ragas', 'arm': '00', 'stack': 'fm-pin80', 'run': 2, 'artifact': 'later.json', 'corpus_fingerprint': 'sha256:pin80'}); json.dump(rows, open(p, 'w'), indent=1)" "$FM_OUT/ledger.json"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin80
+cp "$T/ledger.677" "$FM_OUT/ledger.json"
+if [ "$RC" != 0 ] && grep -q 'already archived' "$T/stderr" && [ ! -e "$FM_OUT/corpus-pin-fm-pin80" ]; then
+  ok "a row that is not the stack's newest ragas row is not repaired"; else notok "newest-row repair guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# 117: the artifact's bytes changed since its row was written (same path, another sha256)
+printf '\n' >> "$A80"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin80
+cp -p "$T/artifact.677" "$A80"
+if [ "$RC" != 0 ] && grep -q 'already archived' "$T/stderr" && [ ! -e "$FM_OUT/corpus-pin-fm-pin80" ]; then
+  ok "an artifact whose bytes changed is not repaired"; else notok "artifact-digest repair guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# 118: a pin that holds another value was not left by a failed first-pin write; it is kept
+printf 'sha256:other\n' > "$FM_OUT/corpus-pin-fm-pin80"
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin80
+if [ "$RC" != 0 ] && grep -q 'already archived' "$T/stderr" && [ "$(cat "$FM_OUT/corpus-pin-fm-pin80")" = sha256:other ]; then
+  ok "a pin that holds another value is not overwritten"; else notok "other-pin repair guard (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+rm -f "$FM_OUT/corpus-pin-fm-pin80"
+
+# 119-120: a closing-baseline re-pin (--new-corpus) whose pin write fails after the ledger
+# append leaves the old pin in place. A fresh stack: run 1 pins p119a; then a fresh deploy
+# and a run-2 re-pin to p119b that fails at the pin write (check 80's shim).
+mkdir -p "$ARCHI_DIR/archi-fm-pin119"
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-pin119
+artifact "$FM_OUT/benchmarking-fm-pin119-20260903_000040.json" '[]' p119a 5
+run bash "$HERE/archive_run.sh" 00 1 "$T/arms/00-baseline.yaml" --stack fm-pin119
+R1=$RC
+run env RAGAS_ENV_FILE="$T/judge.env" bash "$HERE/run_arm.sh" 00 "$T/arms/00-baseline.yaml" --stack fm-pin119
+rm -f "$FM_OUT"/benchmarking-fm-pin119-*.json
+artifact "$FM_OUT/benchmarking-fm-pin119-20260903_000041.json" '[]' p119b 5
+FM_PYTHON="$T/bin/python-pin-fail"
+run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --stack fm-pin119 --new-corpus
+FM_PYTHON="$REAL_PY"
+R2=$RC
+if [ -f "$FM_OUT" ]; then rm -f "$FM_OUT"; mv "$FM_OUT.moved" "$FM_OUT"; fi
+
+# 119: the retry without --new-corpus is refused: moving an existing pin needs the flag
+run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --stack fm-pin119
+if [ "$R1" = 0 ] && [ "$R2" != 0 ] && [ "$RC" != 0 ] && grep -q 'already archived' "$T/stderr" \
+   && [ "$(cat "$FM_OUT/corpus-pin-fm-pin119" 2>/dev/null)" = sha256:p119a ]; then
+  ok "a re-pin retry without --new-corpus is refused and keeps the old pin"; else notok "re-pin repair needs --new-corpus (r1=$R1 r2=$R2 rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
+
+# 120: the same retry with --new-corpus finishes the re-pin and exits 0
+ROWS_BEFORE="$(ledger_rows)"
+run bash "$HERE/archive_run.sh" 00 2 "$T/arms/00-baseline.yaml" --stack fm-pin119 --new-corpus
+if [ "$RC" = 0 ] && grep -q 'repaired the corpus pin for fm-pin119' "$T/stdout" \
+   && [ "$(cat "$FM_OUT/corpus-pin-fm-pin119" 2>/dev/null)" = sha256:p119b ] && [ "$(ledger_rows)" = "$ROWS_BEFORE" ]; then
+  ok "a re-pin retry with --new-corpus finishes the re-pin"; else notok "re-pin repair (rc=$RC: $(cat "$T/stdout" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

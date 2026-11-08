@@ -136,7 +136,7 @@ A run can skip the RAGAS judge and write each arm's judge input to disk, so that
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `judge_mode` | `inline` | `inline` scores each arm with the judge during the run. `deferred` writes a judge bundle for each arm and makes no judge call. Any other value, including `false` and `Deferred`, stops the run before the first question |
+| `judge_mode` | `inline` | `inline` scores each arm with the judge during the run. `deferred` writes a judge bundle for each arm and makes no judge call. `inline+bundle` writes the bundle and then scores inline (see below). Any other value, including `false`, `both` and `Deferred`, stops the run before the first question |
 | `judge_bundle_dir` | `judge_bundles` | Folder for the bundles, relative to `out_dir`. It must be a relative path with no `..` part, so that the bundles stay in the output folder that the container mounts |
 | `evaluator_model_revision` | — | Revision of the judge model (`evaluator_model`) that a deferred bundle asks for. Required when `judge_mode` is `deferred` |
 
@@ -154,6 +154,8 @@ The run checks these keys once, before the ingest wait and before the first ques
 - a deferred config has an empty `evaluator_model` or `evaluator_model_revision`;
 - the configs of a deferred sweep do not resolve to the same `judge_bundle_dir`;
 - a deferred run cannot compute its code digest or its package digest (`pip freeze`). Without them, no scorer can match the bundles.
+
+`judge_mode: inline+bundle` keeps the inline judge and the bundle together: the run writes the arm's bundle before it builds the judge or the embeddings (so a judge outage still leaves a scorable bundle), then scores the arm inline exactly as `inline` does. The arm record keeps its RAGAS aggregates and gains `judge_bundle` (the folder name and the SHA-256 of `rows.jsonl`); it has no `judge_status` key, so it reads as inline everywhere, gate G11 accepts it, and no `RESULT_COMPLETE` marker is written. The start rules are those of `deferred` except that `evaluator_model_revision` is not required (the inline judge is a hosted model). The manifest records `judge_mode`, and `publish.py` copies only `deferred` bundles to the queue, so an `inline+bundle` bundle never waits there for a judge job. Use it when the same answers must be scored both by the inline judge and offline, for example to compare candidate judges ([#737](https://github.com/fasrc/archi/issues/737)) or to run the Lynx metric beside the RAGAS scores.
 
 A deferred arm writes `<out_dir>/<judge_bundle_dir>/<result basename>-arm<N>/` (`N` starts at 0) with `rows.jsonl`, `manifest.json` and an empty `BUNDLE_COMPLETE`. An arm with no scorable answer still writes a bundle, with no rows. In the result JSON, the arm has `judge_status: pending`, `judge_bundle` (the folder name and the SHA-256 of `rows.jsonl`), and no RAGAS aggregates, so the leaderboard shows its metrics as missing. After the result JSON is written, the run creates `<result basename>.RESULT_COMPLETE` in `out_dir`. `python scripts/benchmarking/judge/publish.py --out-dir <out_dir> --queue <queue>` copies complete bundles and complete pending results to the queue folder. A Slurm GPU job scores the bundles, and a merge writes `<result basename>.judged.json`: see [Offloaded RAGAS judge on Slurm](#offloaded-ragas-judge-on-slurm). Until the judged file exists, the result has no RAGAS scores, and `compare_runs.py` and the campaign archiver refuse it (gate G11).
 
@@ -334,7 +336,8 @@ Each judge job hashes the SIF file it serves the judge from, and the judge ident
 ```bash
 JUDGE_MODEL_ID=meta-llama/Llama-3.3-70B-Instruct
 JUDGE_MODEL_REVISION=<pinned revision>
-# bf16, fp16 or fp8
+# bf16, fp16, fp8, or checkpoint (pre-quantized weights such as gpt-oss-120b MXFP4 or
+# Nemotron 3 Super FP8: no quantization flag, vLLM reads the method from the weights)
 JUDGE_PRECISION=bf16
 # The time budget's rate before the job has scored a row
 JUDGE_BOOTSTRAP_ROWS_PER_MINUTE=20

@@ -6,6 +6,7 @@ missing-record fallbacks — so the route handler and the Jinja template can sta
 thin call sites (design D7).
 """
 
+import logging
 from datetime import datetime, timezone
 
 import pytest
@@ -601,3 +602,279 @@ def test_pin_mismatch_reflects_only_a_confirmed_false_verdict(
 
 def test_unavailable_deployment_panel_has_no_pin_mismatch():
     assert build_deployment_panel(None)["pin_mismatch"] is False
+
+
+# ---------------------------------------------------------------------------
+# D2–D3 — corpus run for config and drift
+# ---------------------------------------------------------------------------
+
+
+def test_corpus_run_config_and_drift_come_from_the_corpus_not_the_newest_run():
+    corpus = _run_row(
+        status="updated",
+        started_at=DEPLOYED,
+        completed_at=STARTED,
+        documents_embedded=5,
+        chunk_count=50,
+        config_snapshot={"categorization": False, "chunk_size": 1000},
+    )
+    run = _run_row(
+        status="up_to_date", config_snapshot={"categorization": True, "chunk_size": 500}
+    )
+    current = {"categorization": True, "chunk_size": 500}
+
+    panel = build_knowledge_base_panel(run, current, corpus_run=corpus)
+
+    assert panel["config"] == {"categorization": False, "chunk_size": 1000}
+    sorted_drift = sorted(panel["drift"], key=lambda d: d["key"])
+    assert sorted_drift == [
+        {"key": "categorization", "current": True, "at_ingest": False},
+        {"key": "chunk_size", "current": 500, "at_ingest": 1000},
+    ]
+    assert panel["corpus_config_available"] is True
+    assert panel["corpus_built_at"] == STARTED
+    assert panel["status"] == "up_to_date"
+    assert panel["started_at"] == STARTED
+    assert panel["completed_at"] == FINISHED
+    assert panel["duration"] == "1 hr 7 min"
+    assert panel["documents_embedded"] == 1091
+    assert panel["chunk_count"] == 6926
+
+
+def test_updated_run_uses_its_own_snapshot_and_corpus_built_at_is_completed_at():
+    run = _run_row()  # status="updated", completed_at=FINISHED
+    different_corpus = _run_row(
+        status="updated",
+        completed_at=DEPLOYED,
+        config_snapshot={"categorization": True, "chunk_size": 999},
+    )
+
+    panel = build_knowledge_base_panel(run, {}, corpus_run=different_corpus)
+
+    assert panel["config"] == {"categorization": False, "chunk_size": 1000}
+    assert panel["corpus_built_at"] == FINISHED
+
+
+def test_up_to_date_run_with_no_corpus_run_gives_unknown_config():
+    run = _run_row(status="up_to_date")
+
+    panel = build_knowledge_base_panel(run, {}, corpus_run=None)
+
+    assert panel["config"] == {}
+    assert panel["drift"] == []
+    assert panel["corpus_config_available"] is False
+    assert panel["corpus_built_at"] is None
+    assert panel["current_config_available"] is True
+
+
+def test_absent_run_gives_corpus_config_unavailable_and_no_corpus_built_at():
+    panel = build_knowledge_base_panel(None, {})
+
+    assert panel["corpus_config_available"] is False
+    assert panel["corpus_built_at"] is None
+
+
+def test_loader_up_to_date_newest_run_reads_corpus_row_for_config():
+    upd = _run_row(
+        status="updated",
+        completed_at=STARTED,
+        config_snapshot={"categorization": False, "chunk_size": 1000},
+    )
+    utd = _run_row(
+        status="up_to_date",
+        config_snapshot={"categorization": False, "chunk_size": 500},
+    )
+    conn = _FakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(utd.values()),
+            ({"chunk_size": 500},),
+            None,
+            tuple(upd.values()),
+        ]
+    )
+
+    view = load_status_provenance(conn)
+    kb = view["knowledge_base"]
+
+    assert kb["config"] == {"categorization": False, "chunk_size": 1000}
+    assert kb["drift"] == [{"key": "chunk_size", "current": 500, "at_ingest": 1000}]
+    assert kb["corpus_built_at"] == STARTED
+    assert kb["status"] == "up_to_date"
+    assert kb["completed_at"] == FINISHED
+    assert kb["corpus_config_available"] is True
+
+
+class _CountingFakeCursor:
+    def __init__(self, results):
+        self.results = list(results)
+        self._row = None
+        self.execute_count = 0
+
+    def execute(self, sql, params=None):
+        self.execute_count += 1
+        self._row = self.results.pop(0) if self.results else None
+
+    def fetchone(self):
+        return self._row
+
+    def close(self):
+        pass
+
+
+class _CountingFakeConn:
+    def __init__(self, results=()):
+        self.cursor_obj = _CountingFakeCursor(results)
+
+    def cursor(self, **kwargs):
+        return self.cursor_obj
+
+    def close(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+def test_loader_updated_newest_run_executes_exactly_four_reads():
+    conn = _CountingFakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(_run_row().values()),
+            ({"data_manager": {}},),
+            None,
+        ]
+    )
+    load_status_provenance(conn)
+    assert conn.cursor_obj.execute_count == 4
+
+
+def test_loader_corpus_read_raises_gives_unknown_config_and_logs_warning(caplog):
+    upd = _run_row(
+        status="updated",
+        completed_at=STARTED,
+        config_snapshot={"categorization": False, "chunk_size": 1000},
+    )
+    utd = _run_row(
+        status="up_to_date",
+        config_snapshot={"categorization": False, "chunk_size": 500},
+    )
+    conn = _NthCallRaisingConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(utd.values()),
+            ({"chunk_size": 500},),
+            None,
+        ],
+        raise_on_call=5,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        view = load_status_provenance(conn)
+
+    assert view["deployment"]["available"] is True
+    kb = view["knowledge_base"]
+    assert kb["available"] is True
+    assert kb["status"] == "up_to_date"
+    assert kb["config"] == {}
+    assert kb["drift"] == []
+    assert kb["corpus_config_available"] is False
+    assert any(
+        r.levelname == "WARNING"
+        and r.name == "src.interfaces.chat_app.status_provenance"
+        for r in caplog.records
+    )
+
+
+def test_sql_latest_corpus_run_selects_newest_updated_run_only():
+    from src.interfaces.chat_app.status_provenance import _SQL_LATEST_CORPUS_RUN
+
+    assert "status = 'updated'" in _SQL_LATEST_CORPUS_RUN
+    assert "up_to_date" not in _SQL_LATEST_CORPUS_RUN
+    assert "ORDER BY completed_at DESC" in _SQL_LATEST_CORPUS_RUN
+    assert "LIMIT 1" in _SQL_LATEST_CORPUS_RUN
+
+
+class _SqlRecordingFakeCursor:
+    def __init__(self, results):
+        self.results = list(results)
+        self._row = None
+        self.sqls = []
+
+    def execute(self, sql, params=None):
+        self.sqls.append(sql)
+        self._row = self.results.pop(0) if self.results else None
+
+    def fetchone(self):
+        return self._row
+
+    def close(self):
+        pass
+
+
+class _SqlRecordingFakeConn:
+    def __init__(self, results=()):
+        self.cursor_obj = _SqlRecordingFakeCursor(results)
+
+    def cursor(self, **kwargs):
+        return self.cursor_obj
+
+    def close(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+def test_loader_fifth_read_runs_the_corpus_query():
+    from src.interfaces.chat_app.status_provenance import _SQL_LATEST_CORPUS_RUN
+
+    upd = _run_row(
+        status="updated",
+        completed_at=STARTED,
+        config_snapshot={"categorization": False, "chunk_size": 1000},
+    )
+    utd = _run_row(
+        status="up_to_date",
+        config_snapshot={"categorization": False, "chunk_size": 500},
+    )
+    conn = _SqlRecordingFakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(utd.values()),
+            ({"chunk_size": 500},),
+            None,
+            tuple(upd.values()),
+        ]
+    )
+
+    load_status_provenance(conn)
+
+    assert len(conn.cursor_obj.sqls) == 5
+    assert conn.cursor_obj.sqls[4] == _SQL_LATEST_CORPUS_RUN
+
+
+def test_loader_up_to_date_newest_run_with_no_updated_run_gives_unknown_config():
+    utd = _run_row(
+        status="up_to_date",
+        config_snapshot={"categorization": False, "chunk_size": 500},
+    )
+    conn = _FakeConn(
+        results=[
+            tuple(_deploy_row().values()),
+            tuple(utd.values()),
+            ({"chunk_size": 500},),
+            None,
+            None,
+        ]
+    )
+
+    view = load_status_provenance(conn)
+    kb = view["knowledge_base"]
+
+    assert kb["available"] is True
+    assert kb["status"] == "up_to_date"
+    assert kb["config"] == {}
+    assert kb["drift"] == []
+    assert kb["corpus_config_available"] is False
+    assert kb["corpus_built_at"] is None

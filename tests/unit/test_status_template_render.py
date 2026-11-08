@@ -113,7 +113,7 @@ def test_drift_renders_each_flag_with_both_values(env):
         },
     )
 
-    assert "configuration changed after this ingest" in html
+    assert "configuration changed after the corpus was built" in html
     assert "categorization" in html
     assert "at ingest" in html
 
@@ -227,7 +227,7 @@ def test_unavailable_current_config_renders_text_and_no_drift_warning(env):
     )
     assert "Current configuration unavailable" in html
     assert "drift not evaluated" in html
-    assert "configuration changed after this ingest" not in html
+    assert "configuration changed after the corpus was built" not in html
 
 
 def test_unknown_pin_verdict_with_dirty_paths_does_not_say_not_pinned_commit(env):
@@ -253,3 +253,87 @@ def test_confirmed_pin_mismatch_says_not_pinned_commit(env):
         },
     )
     assert "not the pinned commit" in html
+
+
+def test_corpus_run_label_renders_when_corpus_built_at_differs(env):
+    corpus = _run_row(status="updated", completed_at=STARTED)
+    run = _run_row(status="up_to_date", completed_at=FINISHED)
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(run, {}, corpus_run=corpus),
+        },
+    )
+    assert (
+        "From the last run that embedded documents, completed 2026-09-22 19:49 UTC"
+        in html
+    )
+
+
+def test_updated_run_does_not_render_corpus_run_label(env):
+    run = _run_row(status="updated", completed_at=FINISHED)
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(run, {}),
+        },
+    )
+    assert "From the last run that embedded documents" not in html
+
+
+def test_up_to_date_with_no_corpus_run_renders_unknown_sentence(env):
+    run = _run_row(status="up_to_date")
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(run, {}, corpus_run=None),
+        },
+    )
+    assert (
+        "Configuration at ingest unknown — no run that embedded documents"
+        " could be read; drift not evaluated." in html
+    )
+    assert "No recorded" not in html
+    assert "no updated run" not in html
+    assert "configuration changed after" not in html
+
+
+def test_updated_run_does_not_render_config_unknown(env):
+    run = _run_row(status="updated")
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(run, {}),
+        },
+    )
+    assert "Configuration at ingest unknown" not in html
+
+
+def test_drift_box_names_corpus_not_this_ingest(env):
+    corpus = _run_row(
+        status="updated",
+        config_snapshot={"categorization": False, "chunk_size": 1000},
+        completed_at=STARTED,
+    )
+    run = _run_row(
+        status="up_to_date",
+        config_snapshot={"categorization": False, "chunk_size": 500},
+        completed_at=FINISHED,
+    )
+    html = _render(
+        env,
+        {
+            "deployment": build_deployment_panel(_deploy_row()),
+            "knowledge_base": build_knowledge_base_panel(
+                run,
+                {"categorization": False, "chunk_size": 500},
+                corpus_run=corpus,
+            ),
+        },
+    )
+    assert "configuration changed after the corpus was built" in html
+    assert "configuration changed after this ingest" not in html

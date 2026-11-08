@@ -541,6 +541,70 @@ class TestValidatorFence:
         pruned["status"] = "run_completed"
         RunManifest.from_dict(pruned)
 
+    @pytest.mark.parametrize(
+        ("artifact", "message"),
+        [
+            ("live_checks.jsonl", "qa-v2 manifest is missing live-check artifacts"),
+            ("summary.json", "scored manifest is missing result artifacts"),
+            ("report.md", "scored manifest is missing result artifacts"),
+        ],
+    )
+    def test_scored_manifest_refused_without_artifact(
+        self, monkeypatch, tmp_path, runtimes, artifact, message
+    ):
+        value = {"value": 7, "revision": "r1"}
+        run_dir, _invoker, _rt = _run(monkeypatch, tmp_path, [value] * 3, runtimes)
+        manifest = read_json(run_dir / "manifest.json")
+        assert manifest["schema_version"] == "qa-v2"
+        assert manifest["status"] == "scored"
+
+        # Positive control: the untouched scored manifest is accepted.
+        RunManifest.from_dict(copy.deepcopy(manifest))
+
+        broken = copy.deepcopy(manifest)
+        broken["artifacts"].pop(artifact)
+        with pytest.raises(ValueError) as caught:
+            RunManifest.from_dict(broken)
+        assert str(caught.value) == message
+
+    @pytest.mark.parametrize("status", ["run_completed", "attention_required"])
+    def test_live_check_rule_covers_status(
+        self, monkeypatch, tmp_path, runtimes, status
+    ):
+        value = {"value": 7, "revision": "r1"}
+        run_dir, _invoker, _rt = _run(monkeypatch, tmp_path, [value] * 3, runtimes)
+        manifest = copy.deepcopy(read_json(run_dir / "manifest.json"))
+        manifest["status"] = status
+        if status == "run_completed":
+            manifest["phases"].pop("score")
+            for name in SCORE_FILES:
+                manifest["artifacts"].pop(name, None)
+
+        # Positive control: the edited manifest passes every earlier rule.
+        RunManifest.from_dict(copy.deepcopy(manifest))
+
+        manifest["artifacts"].pop("live_checks.jsonl")
+        with pytest.raises(ValueError) as caught:
+            RunManifest.from_dict(manifest)
+        assert str(caught.value) == "qa-v2 manifest is missing live-check artifacts"
+
+    def test_paused_manifest_refused_without_live_checks(
+        self, monkeypatch, tmp_path, runtimes
+    ):
+        _workflow, run_dir = _paused_at_live_gate(monkeypatch, tmp_path)
+        manifest = read_json(run_dir / "manifest.json")
+        assert manifest["schema_version"] == "qa-v2"
+        assert manifest["status"] == "attention_required"
+
+        # Positive control: the real first-run pause manifest is accepted.
+        RunManifest.from_dict(copy.deepcopy(manifest))
+
+        broken = copy.deepcopy(manifest)
+        broken["artifacts"].pop("live_checks.jsonl")
+        with pytest.raises(ValueError) as caught:
+            RunManifest.from_dict(broken)
+        assert str(caught.value) == "qa-v2 manifest is missing live-check artifacts"
+
 
 class TestHappyPathAuditSweep:
     """5.2: Every manifest.json published on the happy path and first-run pause validates."""

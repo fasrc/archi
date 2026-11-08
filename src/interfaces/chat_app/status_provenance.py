@@ -81,6 +81,16 @@ _SQL_LATEST_FAILED_INGEST_RUN = """
     LIMIT 1
 """
 
+# The newest run that embedded documents. Its snapshot is the config that built
+# the corpus; an up_to_date run embeds nothing, so its snapshot does not.
+_SQL_LATEST_CORPUS_RUN = f"""
+    SELECT {", ".join(_INGEST_RUN_COLUMNS)}
+    FROM ingest_run
+    WHERE completed_at IS NOT NULL AND status = 'updated'
+    ORDER BY completed_at DESC
+    LIMIT 1
+"""
+
 
 def _short(sha: Optional[str]) -> Optional[str]:
     return sha[:_SHORT_SHA] if sha else None
@@ -150,15 +160,29 @@ def build_deployment_panel(row: Optional[Mapping]) -> Dict[str, Any]:
     }
 
 
+def _corpus_run_for(run: Mapping, corpus_run: Optional[Mapping]) -> Optional[Mapping]:
+    """Return the run whose snapshot describes the corpus.
+
+    An up_to_date run embeds nothing, so the corpus was built by an earlier
+    updated run. For any other status the run itself built the corpus.
+    """
+    if run.get("status") == "up_to_date":
+        return corpus_run
+    return run
+
+
 def build_knowledge_base_panel(
     run: Optional[Mapping],
     current_snapshot: Optional[Mapping],
     last_failed_at: Any = None,
+    corpus_run: Optional[Mapping] = None,
 ) -> Dict[str, Any]:
     """Build the Knowledge base panel from the newest completed ingest run.
 
-    The flag values come from the run's own snapshot, never from current
-    configuration — that distinction is the whole point of recording it.
+    Times, status, and counts come from run. Config and drift come from the
+    corpus run's snapshot — the last updated run that actually embedded
+    documents — because an up_to_date run records the current config, not the
+    config used to build the vectors.
     """
     if not run:
         return {
@@ -174,16 +198,30 @@ def build_knowledge_base_panel(
             "config": {},
             "drift": [],
             "current_config_available": current_snapshot is not None,
+            "corpus_config_available": False,
+            "corpus_built_at": None,
             "last_attempt_failed_at": last_failed_at,
         }
 
-    snapshot = _as_flag_mapping(run.get("config_snapshot"))
-    if current_snapshot is None:
+    corpus = _corpus_run_for(run, corpus_run)
+
+    if corpus is None:
+        config: Dict[str, Any] = {}
         drift: List[Dict[str, Any]] = []
-        current_config_available = False
+        corpus_config_available = False
+        corpus_built_at = None
+        current_config_available = current_snapshot is not None
     else:
-        drift = compare_ingest_config(current_snapshot, snapshot)
-        current_config_available = True
+        config = _as_flag_mapping(corpus.get("config_snapshot"))
+        corpus_config_available = True
+        corpus_built_at = corpus.get("completed_at")
+        if current_snapshot is None:
+            drift = []
+            current_config_available = False
+        else:
+            drift = compare_ingest_config(current_snapshot, config)
+            current_config_available = True
+
     return {
         "available": True,
         "started_at": run.get("started_at"),
@@ -194,9 +232,11 @@ def build_knowledge_base_panel(
         "documents_failed": run.get("documents_failed"),
         "documents_pending": run.get("documents_pending"),
         "chunk_count": run.get("chunk_count"),
-        "config": snapshot,
+        "config": config,
         "drift": drift,
         "current_config_available": current_config_available,
+        "corpus_config_available": corpus_config_available,
+        "corpus_built_at": corpus_built_at,
         "last_attempt_failed_at": _newer_failed_at(
             run.get("completed_at"), last_failed_at
         ),
@@ -272,6 +312,7 @@ def load_status_provenance(conn: Any) -> Dict[str, Any]:
     run_row = None
     current_snapshot: Optional[Dict[str, Any]] = None
     last_failed_at = None
+    corpus_row = None
 
     try:
         cursor = conn.cursor()
@@ -287,6 +328,11 @@ def load_status_provenance(conn: Any) -> Dict[str, Any]:
             failed_row = cursor.fetchone()
             if failed_row:
                 last_failed_at = failed_row[0]
+
+            if run_row and run_row.get("status") == "up_to_date":
+                corpus_row = _fetch_row(
+                    cursor, _SQL_LATEST_CORPUS_RUN, _INGEST_RUN_COLUMNS
+                )
         finally:
             cursor.close()
     except Exception as exc:
@@ -295,7 +341,10 @@ def load_status_provenance(conn: Any) -> Dict[str, Any]:
     return {
         "deployment": build_deployment_panel(deployment_row),
         "knowledge_base": build_knowledge_base_panel(
-            run_row, current_snapshot, last_failed_at=last_failed_at
+            run_row,
+            current_snapshot,
+            last_failed_at=last_failed_at,
+            corpus_run=corpus_row,
         ),
     }
 

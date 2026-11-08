@@ -75,6 +75,7 @@ from src.interfaces.chat_app.config_fingerprint import (
     resolve_provider_boot_summary,
 )
 from src.interfaces.chat_app.document_utils import *
+from src.interfaces.chat_app.embed_proxy import request_embed
 from src.interfaces.chat_app.evaluation_console import (
     build_authorize_request,
     build_evaluation_service,
@@ -6417,7 +6418,10 @@ class FlaskAppWrapper(object):
         """
         try:
             logger.info("Triggering vectorstore update...")
-            self.chat.vector_manager.update_vectorstore()
+            failure = request_embed(self.data_manager_url, self._dm_headers)
+            if failure is not None:
+                body, status = failure
+                return jsonify(body), status
             logger.info("Vectorstore update completed")
 
             # Check for failed documents after processing

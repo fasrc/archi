@@ -24,6 +24,13 @@ _ABSENT = object()
 DEFAULT_BUNDLE_DIR = "judge_bundles"
 BUNDLE_FORMAT = 1
 _ROW_FIELDS = ("user_input", "retrieved_contexts", "response", "reference")
+#: The three ``judge_mode`` values. ``inline`` scores during the run; ``deferred``
+#: writes the judge bundle and makes no judge call; ``inline+bundle`` writes the
+#: bundle first and then scores inline (add-inline-bundle-judge-mode, D1).
+MODE_INLINE = "inline"
+MODE_DEFERRED = "deferred"
+MODE_INLINE_BUNDLE = "inline+bundle"
+_MODES = (MODE_INLINE, MODE_DEFERRED, MODE_INLINE_BUNDLE)
 
 
 class JudgeRunRefused(ValueError):
@@ -34,18 +41,15 @@ def parse_judge_mode(value=_ABSENT) -> str:
     """Parse a judge_mode config value.
 
     Call with no argument when the key is absent from the config; returns
-    'inline'.  Raises ValueError for any value that is not 'inline' or
-    'deferred', naming the value and both allowed values.
+    'inline'.  Raises ValueError for any value that is not one of the three
+    modes, naming the value and every allowed value.
     """
     if value is _ABSENT:
-        return "inline"
-    if value == "inline":
-        return "inline"
-    if value == "deferred":
-        return "deferred"
-    raise ValueError(
-        f"judge_mode {value!r} is not valid; allowed values are 'inline' and 'deferred'"
-    )
+        return MODE_INLINE
+    if isinstance(value, str) and value in _MODES:
+        return value
+    allowed = ", ".join(repr(mode) for mode in _MODES)
+    raise ValueError(f"judge_mode {value!r} is not valid; allowed values are {allowed}")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -59,7 +63,17 @@ class JudgePlan:
 
 def is_deferred(plan: Optional[JudgePlan]) -> bool:
     """True for a deferred plan. ``None`` (a bench built without ``__init__``) is inline."""
-    return plan is not None and plan.mode == "deferred"
+    return plan is not None and plan.mode == MODE_DEFERRED
+
+
+def writes_bundle(plan: Optional[JudgePlan]) -> bool:
+    """True when the run writes a judge bundle: ``deferred`` or ``inline+bundle`` (D2)."""
+    return plan is not None and plan.mode in (MODE_DEFERRED, MODE_INLINE_BUNDLE)
+
+
+def scores_inline(plan: Optional[JudgePlan]) -> bool:
+    """True when the run calls the judge itself: ``inline`` or ``inline+bundle`` (D2)."""
+    return plan is None or plan.mode in (MODE_INLINE, MODE_INLINE_BUNDLE)
 
 
 def _read_ragas_settings(config_path: str) -> Dict[str, Any]:
@@ -80,13 +94,23 @@ def _read_mode(config_path: str, ragas: Dict[str, Any]) -> str:
     return parse_judge_mode()
 
 
-def _check_judge_model(config_path: str, ragas: Dict[str, Any]) -> None:
-    """Refuse a deferred config that does not name the judge model and its revision."""
-    for key in ("evaluator_model", "evaluator_model_revision"):
+def _check_judge_model(
+    config_path: str, ragas: Dict[str, Any], *, mode: str = MODE_DEFERRED
+) -> None:
+    """Refuse a bundle-writing config that does not name its judge.
+
+    A deferred bundle is matched to a judge job by model id AND revision, so both
+    are required. An ``inline+bundle`` run judges with the inline (hosted) model,
+    which has no revision, so only the model id is required (D3).
+    """
+    keys = ("evaluator_model", "evaluator_model_revision")
+    if mode != MODE_DEFERRED:
+        keys = ("evaluator_model",)
+    for key in keys:
         value = ragas.get(key)
         if not isinstance(value, str) or not value.strip():
             raise JudgeRunRefused(
-                f"{config_path}: judge_mode 'deferred' needs a non-empty string "
+                f"{config_path}: judge_mode {mode!r} needs a non-empty string "
                 f"{key}, but found {value!r}"
             )
 
@@ -145,13 +169,15 @@ def plan_judge_run(
             f"mixed modes: {detail}"
         )
 
-    mode = modes[0] if modes else "inline"
-    if mode == "inline":
+    mode = modes[0] if modes else MODE_INLINE
+    if mode == MODE_INLINE:
         return JudgePlan(mode=mode, arm_count=len(config_paths))
 
+    # deferred and inline+bundle both write bundles, so both need the digests
+    # and one bundle folder; only deferred needs the judge revision (D3).
     bundle_dirs: List[str] = []
     for path, ragas in zip(config_paths, settings):
-        _check_judge_model(path, ragas)
+        _check_judge_model(path, ragas, mode=mode)
         bundle_dirs.append(_resolve_bundle_dir(path, ragas))
     if len(set(bundle_dirs)) > 1:
         detail = ", ".join(
@@ -214,13 +240,16 @@ def write_judge_bundle(
     verbosity: int,
     code_version: Mapping[str, Any],
     package_digest: str,
+    judge_mode: str = MODE_DEFERRED,
 ) -> Dict[str, str]:
-    """Write the judge bundle of one deferred arm (design D5).
+    """Write the judge bundle of one bundle-writing arm (design D5).
 
     Makes ``<bundle_root>/<result_basename>-arm<arm_index>/`` with
     ``rows.jsonl``, ``manifest.json`` and an empty ``BUNDLE_COMPLETE``, in that
     order. The folder must not exist: a bundle is never overwritten. Zero rows
     still give a complete bundle, because the merge waits for every arm.
+    ``judge_mode`` is recorded in the manifest: the publish step queues only
+    ``deferred`` bundles (add-inline-bundle-judge-mode, D5).
     Returns ``{"folder": <folder name>, "digest": <rows_sha256>}``.
     """
     if len(rows) != len(keys):
@@ -244,6 +273,7 @@ def write_judge_bundle(
     rows_sha256 = "sha256:" + hashlib.sha256(rows_bytes).hexdigest()
     manifest = {
         "bundle_format": BUNDLE_FORMAT,
+        "judge_mode": judge_mode,
         "result_basename": result_basename,
         "arm_index": arm_index,
         "arm_count": arm_count,
@@ -288,6 +318,30 @@ def pending_arm_fields(judge_bundle: Mapping[str, str]) -> Dict[str, Any]:
             "folder": judge_bundle["folder"],
             "digest": judge_bundle["digest"],
         },
+    }
+
+
+def judge_arm_fields(
+    mode: str, judge_bundle: Optional[Mapping[str, str]]
+) -> Dict[str, Any]:
+    """The judge keys an arm's result record gets, by mode (D6).
+
+    ``inline``: none. ``deferred``: ``judge_status: pending`` and the bundle.
+    ``inline+bundle``: the bundle alone, so the arm still reads as inline and
+    keeps its scores. No bundle (an inline arm, or a plan without one): none.
+    """
+    if mode not in _MODES:
+        allowed = ", ".join(repr(m) for m in _MODES)
+        raise ValueError(f"judge mode {mode!r} is not one of {allowed}")
+    if judge_bundle is None or mode == MODE_INLINE:
+        return {}
+    if mode == MODE_DEFERRED:
+        return pending_arm_fields(judge_bundle)
+    return {
+        "judge_bundle": {
+            "folder": judge_bundle["folder"],
+            "digest": judge_bundle["digest"],
+        }
     }
 
 

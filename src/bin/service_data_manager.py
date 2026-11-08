@@ -1,5 +1,4 @@
 #!/bin/python
-import json
 import os
 import threading
 from pathlib import Path
@@ -9,6 +8,8 @@ from flask import Flask, jsonify
 
 from src.data_manager.data_manager import DataManager
 from src.data_manager.scheduler import CronScheduler
+from src.data_manager.vectorstore import parent_nodes
+from src.data_manager.vectorstore.schema import ensure_chunks_parent_id_index
 from src.interfaces.uploader_app.app import FlaskAppWrapper
 from src.utils.config_access import (
     get_full_config,
@@ -20,9 +21,50 @@ from src.utils.env import read_secret
 from src.utils.ingestion_status import build_ingestion_helpers
 from src.utils.logging import get_logger, setup_logging
 from src.utils.postgres_service_factory import PostgresServiceFactory
+from src.utils.source_status_file import (
+    load_source_status,
+    seed_source_schedules,
+    set_source_schedules,
+    update_source_status,
+)
 from src.utils.telemetry import instrument_flask_app
 
 logger = get_logger(__name__)
+
+
+def build_parent_id_index_at_startup(factory) -> bool:
+    """Build ``idx_chunks_parent_id`` once, in its own committed transaction (#667).
+
+    ``init.sql`` creates the index only on a fresh volume. The data-manager start
+    is the single owner of the build: no request or ingest path runs DDL. The
+    statement is the plain ``CREATE INDEX IF NOT EXISTS`` (no ``CONCURRENTLY``).
+
+    Return ``True`` when the build committed. Return ``False`` and run no DDL
+    when ``document_parent_nodes`` does not exist. Return ``False`` and log a
+    WARNING when the connection or the build fails: the service still starts,
+    and the parent deletes scan ``document_chunks`` until a later start.
+    """
+    try:
+        with factory.connection_pool.get_connection() as conn:
+            with conn.cursor() as cursor:
+                if not parent_nodes.parent_table_exists(cursor):
+                    conn.rollback()
+                    logger.info(
+                        "document_parent_nodes does not exist; "
+                        "skipped the idx_chunks_parent_id build"
+                    )
+                    return False
+                ensure_chunks_parent_id_index(cursor)
+            conn.commit()
+    except Exception:
+        logger.warning(
+            "Could not build idx_chunks_parent_id at data-manager start; "
+            "parent deletes scan document_chunks until a later start builds it",
+            exc_info=True,
+        )
+        return False
+    logger.info("Ensured idx_chunks_parent_id on document_chunks")
+    return True
 
 
 def main() -> None:
@@ -36,6 +78,7 @@ def main() -> None:
         password_override=read_secret("PG_PASSWORD")
     )
     PostgresServiceFactory.set_instance(factory)
+    build_parent_id_index_at_startup(factory)
     config = get_full_config()
     services_config = get_services_config()
     data_manager_cfg = services_config.get("data_manager", {})
@@ -46,28 +89,12 @@ def main() -> None:
     _ing = build_ingestion_helpers(data_manager.run_ingestion, lock)
 
     def load_status() -> Dict[str, Dict[str, str]]:
-        if not status_file.exists():
-            return {}
-        try:
-            return json.loads(status_file.read_text())
-        except Exception:
-            return {}
-
-    def save_status(data: Dict[str, Dict[str, str]]) -> None:
-        status_file.parent.mkdir(parents=True, exist_ok=True)
-        status_file.write_text(json.dumps(data))
+        return load_source_status(status_file)
 
     def set_source_status(
         source: str, *, state: str | None = None, last_run: str | None = None
     ) -> None:
-        data = load_status()
-        entry = data.get(source, {})
-        if state is not None:
-            entry["state"] = state
-        if last_run is not None:
-            entry["last_run"] = last_run
-        data[source] = entry
-        save_status(data)
+        update_source_status(status_file, source, state=state, last_run=last_run)
 
     def run_locked(name: str, func: Callable[[], None]) -> None:
         update = data_manager.update_vectorstore
@@ -162,20 +189,15 @@ def main() -> None:
     logger.info("Loaded source schedules: %s", db_schedules)
 
     # seed status with schedules
-    initial_status = load_status()
+    seed_source_schedules(status_file, db_schedules)
 
     for source_name, schedule in db_schedules.items():
         if schedule:
-            entry = initial_status.get(source_name, {})
-            entry.setdefault("schedule", schedule)
-            entry.setdefault("state", "idle")
-            initial_status[source_name] = entry
             scheduler.add_job(
                 name=source_name,
                 cron=schedule,
                 callback=create_job_callback(source_name),
             )
-    save_status(initial_status)
 
     if scheduler.jobs:
         scheduler.start()
@@ -216,11 +238,7 @@ def main() -> None:
             if scheduler.jobs:
                 scheduler.start()
             # Update status file with new schedules
-            status = load_status()
-            for source_name, schedule in new_schedules.items():
-                if source_name in status:
-                    status[source_name]["schedule"] = schedule
-            save_status(status)
+            set_source_schedules(status_file, new_schedules)
             return jsonify(
                 {
                     "success": True,
