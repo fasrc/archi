@@ -23,7 +23,11 @@ from src.cli.managers.templates_manager import (
 from src.cli.managers.volume_manager import VolumeManager
 from src.cli.qa_eval import eval_cli, qa_cli
 from src.cli.service_registry import service_registry
-from src.cli.source_registry import refuse_missing_input_lists, source_registry
+from src.cli.source_registry import (
+    refuse_input_lists_inside_deployment,
+    refuse_missing_input_lists,
+    source_registry,
+)
 from src.cli.tools import sources_builder
 from src.cli.tools.config_seed import arm_divergence_refusal, seed_entry
 from src.cli.utils.helpers import *
@@ -190,6 +194,9 @@ def create(
         # Initialize managers
         config_manager = ConfigurationManager(config_files, env)
         refuse_missing_input_lists(config_manager.get_configs())
+        if force:
+            # The --force teardown removes base_dir before the lists are staged (#819).
+            refuse_input_lists_inside_deployment(config_manager.get_configs(), base_dir)
         try:
             secrets_manager = SecretsManager(env_file, config_manager)
         except FileNotFoundError as env_error:
@@ -857,6 +864,9 @@ def evaluate(
             raise click.ClickException(arm_refusal)
         config_manager = ConfigurationManager(config_files, env)
         refuse_missing_input_lists(config_manager.get_configs())
+        if force:
+            # The --force teardown removes base_dir before the lists are staged (#819).
+            refuse_input_lists_inside_deployment(config_manager.get_configs(), base_dir)
         bank_errors, bank_warnings = preflight_benchmark_configs(config_manager.configs)
         for bank_warning in bank_warnings:
             logger.warning("Benchmark bank: %s", bank_warning)
