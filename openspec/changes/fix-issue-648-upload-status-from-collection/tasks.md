@@ -88,7 +88,7 @@
       print `1`, and `grep -c 'collection phase of an upload' docs/docs/benchmarking.md` must
       print `0`. Tick this box and commit through the hook
       (`docs(#648): an upload is reported from the start of its collection`).
-- [ ] 2.2 Do the steps of this task in this order: check, tick this box, commit the tick
+- [x] 2.2 Do the steps of this task in this order: check, tick this box, commit the tick
       through the hook, push, then open the PR. The tick must ride the push that opens the
       PR; after the PR opens, `git status --porcelain` must be empty and
       `git rev-parse HEAD` must equal
