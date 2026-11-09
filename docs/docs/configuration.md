@@ -756,6 +756,14 @@ directory. A path that exists but is not a readable file does not stop the comma
 logs a WARNING and skips that list (see [Data Sources](data_sources.md)). (Changed in
 [#617](https://github.com/fasrc/archi/issues/617).)
 
+A list inside the deployment directory (`${ARCHI_DIR:-$HOME/.archi}/archi-<name>/`, for
+example a `weblists/` copy that an earlier run staged) stops `archi create --force` and
+`archi evaluate --force` before the teardown. The `--force` teardown deletes that
+directory before archi stages the lists, so the list would be lost. The error names the
+list, the directory, and the config file: move the file outside the directory and point
+the config at the moved copy. (Changed in
+[#819](https://github.com/fasrc/archi/issues/819).)
+
 The `visible` flag on any source (`sources.<name>.visible`) controls whether content appears in chat citations and in `/v1` citations (default: `true`).
 
 ### Processing (HTML → Markdown & categorization)

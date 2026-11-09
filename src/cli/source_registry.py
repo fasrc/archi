@@ -56,17 +56,15 @@ def _input_list_is_missing(path) -> bool:
     return False
 
 
-def refuse_missing_input_lists(configs) -> None:
-    """Raise ValueError naming every configured input list that does not exist.
+def _configured_input_list_entries(configs):
+    """Yield ``(path, config file)`` for each usable ``input_lists`` entry.
 
-    A relative path resolves from the current directory, as get_enabled_sources()
-    and staging resolve it (fasrc/archi#617). A path that exists but cannot be
-    read is not refused here: those callers warn about it and skip it (#636).
-    That includes a list under a directory the user cannot traverse: os.stat
-    raises PermissionError there, which is not "does not exist".
+    The shape rules match get_enabled_sources(): a config whose ``data_manager``,
+    ``sources``, or ``links`` is not a mapping, or whose ``input_lists`` is not a
+    list, yields nothing, and an entry that is not a str or an os.PathLike is
+    skipped (it keeps the WARNING that get_enabled_sources() logs for it). The
+    config file is the ``_config_path`` the operator gave on the command line.
     """
-    missing_pairs = []
-    seen = {}
     for cfg in configs:
         config_path = cfg.get("_config_path", "<unknown config>")
         dm = cfg.get("data_manager")
@@ -84,11 +82,24 @@ def refuse_missing_input_lists(configs) -> None:
         for entry in input_lists:
             if not isinstance(entry, (str, os.PathLike)):
                 continue
-            path_str = os.fspath(entry)
-            key = (path_str, config_path)
-            if key not in seen and _input_list_is_missing(entry):
-                seen[key] = True
-                missing_pairs.append(key)
+            yield os.fspath(entry), config_path
+
+
+def refuse_missing_input_lists(configs) -> None:
+    """Raise ValueError naming every configured input list that does not exist.
+
+    A relative path resolves from the current directory, as get_enabled_sources()
+    and staging resolve it (fasrc/archi#617). A path that exists but cannot be
+    read is not refused here: those callers warn about it and skip it (#636).
+    That includes a list under a directory the user cannot traverse: os.stat
+    raises PermissionError there, which is not "does not exist".
+    """
+    missing_pairs = []
+    seen = set()
+    for key in _configured_input_list_entries(configs):
+        if key not in seen and _input_list_is_missing(key[0]):
+            seen.add(key)
+            missing_pairs.append(key)
 
     if not missing_pairs:
         return None
@@ -102,6 +113,55 @@ def refuse_missing_input_lists(configs) -> None:
         f" resolves from the current directory ({cwd}), not from the config"
         f" file's directory.\n{lines}\n"
         f"Correct each path, or use an absolute path, then run the command again."
+    )
+
+
+def refuse_input_lists_inside_deployment(configs, deployment_dir) -> None:
+    """Raise ValueError naming every configured input list inside *deployment_dir*.
+
+    A ``--force`` run of ``archi create`` or ``archi evaluate`` removes the whole
+    deployment directory (remove_existing_deployment() ->
+    DeploymentManager.delete_deployment()) before it stages the lists into
+    ``<deployment dir>/weblists/``. A list that lives inside that directory, for
+    example a ``weblists/`` copy that an earlier run staged, passes
+    refuse_missing_input_lists() and is then deleted by the teardown; staging
+    warns and skips it, and the new deployment starts without it
+    (fasrc/archi#819).
+
+    Both sides are resolved with Path.resolve(): symbolic links are followed,
+    ``..`` is collapsed, and a relative path is taken from the current directory,
+    as refuse_missing_input_lists() takes it. So a link or a relative path that
+    lands inside the directory is refused too. ``~`` is not expanded, as nowhere
+    else in the input-list path handling expands it. A sibling directory with the
+    same prefix (``archi-smoke-2`` next to ``archi-smoke``) is outside.
+    """
+    resolved_dir = Path(deployment_dir).resolve()
+    inside = []
+    seen = set()
+    for path_str, config_path in _configured_input_list_entries(configs):
+        key = (path_str, config_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved = Path(path_str).resolve()
+        if resolved.is_relative_to(resolved_dir):
+            inside.append((path_str, str(resolved), config_path))
+
+    if not inside:
+        return None
+
+    lines = []
+    for path_str, resolved_str, config_path in inside:
+        where = (
+            path_str if resolved_str == path_str else f"{path_str} -> {resolved_str}"
+        )
+        lines.append(f"  - {where} (config: {config_path})")
+    raise ValueError(
+        f"input_lists: these configured list files are inside the deployment"
+        f" directory {resolved_dir}. A --force run deletes that directory before"
+        f" archi stages the lists, so they would be lost.\n" + "\n".join(lines) + "\n"
+        f"Move each file outside that directory, point the config at the new"
+        f" location, then run the command again."
     )
 
 
