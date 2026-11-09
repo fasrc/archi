@@ -83,7 +83,7 @@
 
 ## 2. Docs
 
-- [ ] 2.1 Apply patch B: `git apply -p1 openspec/changes/fix-issue-824-fm-launch-window/patches/B-task-2.1.diff`.
+- [x] 2.1 Apply patch B: `git apply -p1 openspec/changes/fix-issue-824-fm-launch-window/patches/B-task-2.1.diff`.
       It appends one paragraph, "**Follow-up (#824, the launch window).**", to the end of
       `openspec/changes/fix-issue-817-fm-wrapper-signal-during-qa/design.md` (issue plan
       step 4; the #817 change is not archived). Confirm that
