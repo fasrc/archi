@@ -95,7 +95,7 @@
 
 ## 3. Verify, push, and open the PR
 
-- [ ] 3.1 Run the self-test and confirm `137 passed, 0 failed`. Run
+- [x] 3.1 Run the self-test and confirm `137 passed, 0 failed`. Run
       `git diff origin/dev...HEAD --stat` (three dots) and confirm it lists ONLY
       `scripts/benchmarking/feature_matrix/lib.sh`,
       `scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh`,
