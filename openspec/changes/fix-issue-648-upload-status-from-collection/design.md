@@ -232,6 +232,18 @@ collections remain after an `error` (it would hide the failed collection's error
    `41481966` had the inverse wart with one failure (a new collection shown as a finished
    error).
 
+   **The same limitation with one failure (adversarial pass on `36c1c436`, after item 4;
+   recorded on #828).** A collection fails while the initial ingestion holds the lock and
+   publishes `error`; a scheduled refresh that joins the queue then publishes `running`
+   (rule 3) before it does any work, as the ingestion's next progress step does (item 2).
+   After both succeed the status is `completed` with no trace of the failure, and a
+   benchmark poll that missed the short `error` accepts it. Restricting rule 3 to
+   collections would only move the erasure to the lock take (`_publish_running`, the `dev`
+   behaviour), so it is not done here. The failure-aware status the pass asks for, a
+   failure kept apart from the shown run and the benchmark wait rejecting it until a later
+   run resolves it, is #828's Design A; the acceptance test (a concurrent
+   failure-and-queued-refresh sequence) is listed there.
+
 4. **Async Codex pass on `b10a28a0` (P2, thread `PRRT_kwDORx3_1861RTae`): `completed` over
    a collection's error.** A collection that failed during the initial ingestion's last
    phase, with no sibling in flight and no later progress step, published `error`; the
