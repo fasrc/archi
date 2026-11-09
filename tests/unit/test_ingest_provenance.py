@@ -577,3 +577,33 @@ def test_compare_legacy_row_with_non_default_dimensions_still_drifts():
     drift = compare_ingest_config(current, at_ingest)
 
     assert "embedding_dimensions" in {entry["key"] for entry in drift}
+
+
+@pytest.mark.parametrize("strategy", ["sentence", "markdown"])
+def test_effective_chunking_null_sizes_resolve_to_the_defaults(strategy):
+    dm = {
+        "chunking": {
+            "strategy": strategy,
+            "parent_chunk_size": None,
+            "child_chunk_size": None,
+        }
+    }
+    result = effective_chunking(dm)
+    assert result["parent_chunk_size"] == 2048
+    assert result["child_chunk_size"] == 512
+
+
+def test_effective_chunking_null_parent_size_alone_resolves_to_the_default():
+    result = effective_chunking({"chunking": {"parent_chunk_size": None}})
+    assert result["parent_chunk_size"] == 2048
+
+
+def test_effective_chunking_null_parent_size_still_clamps_the_overlap():
+    dm = {
+        "chunking": {
+            "strategy": "sentence",
+            "parent_chunk_size": None,
+            "child_chunk_size": 30,
+        }
+    }
+    assert effective_chunking(dm)["child_chunk_overlap"] == 15

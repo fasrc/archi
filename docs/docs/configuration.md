@@ -666,9 +666,13 @@ data_manager:
 > 10 for a size of 20), so re-ingest such a collection to apply the change. The keys
 > exist so a benchmark can sweep chunk sizes and recommend defaults from data — see
 > [Benchmarking → Hierarchical-rerank A/B](benchmarking.md#hierarchical-rerank-ab).
-> Give `parent_chunk_size` and `child_chunk_size` as plain integers; a quoted value
-> such as `"512"` stays a string after the render, and the hierarchical parser cannot
-> use it.
+> Give `parent_chunk_size` and `child_chunk_size` as plain integers of 1 or more. Any
+> other value stops the data manager and the chat service with an error that names the
+> key, the same rule as for an invalid `chunk_overlap`. A quoted value such as `"512"`
+> stays a string after the render, so it is refused too. A key with no value uses its
+> default. This check covers the type and the sign only: the sentence splitter still
+> refuses a document whose metadata token count reaches the chunk size, so keep both
+> sizes well above that count (the defaults are).
 
 #### The `markdown` strategy
 
