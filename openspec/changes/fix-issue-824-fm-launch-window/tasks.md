@@ -43,7 +43,7 @@
 
 ## 1. Process a signal that arrives at the launch once the PID is known
 
-- [ ] 1.1 Red then green in one task (do not commit a red state). The window is
+- [x] 1.1 Red then green in one task (do not commit a red state). The window is
       microseconds wide, so the red run needs the launch mutant and a scratch worktree; the
       real tree gets the finished patch. From the repository root:
       (a) `git worktree add --detach /tmp/fm-mutant-824 HEAD`, then `cd /tmp/fm-mutant-824`.
