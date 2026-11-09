@@ -10,13 +10,19 @@ The status dict also carries a run identity: ``run_id``, ``started_at``, and
 a non-``running`` state, and ends at the next terminal publish (``completed``
 or ``error``). Runs that queue behind a running run share its ``run_id`` and
 ``started_at``; see ``_set_running`` and ``_finish``.
+
+An upload through the uploader is tracked from the start of its collection by
+``track_upload``: the collection takes no ingestion lock, and the vectorstore
+update inside the block is counted as a run of its own, so ``completed`` is
+never published between the two.
 """
 
 import logging
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +43,8 @@ def build_ingestion_helpers(
       - ``run_tracked(step, fn)``
       - ``run_source_refresh(name, func, update_vectorstore, set_source_status)``
       - ``run_upload_update(update_vectorstore)``
+      - ``track_upload()`` — a context manager around an upload's collection
+        and vectorstore update
       - ``ingestion_lock`` — the caller's ingestion mutual-exclusion lock
 
     ``now`` is a keyword-only seam, a callable returning an aware UTC
@@ -104,11 +112,26 @@ def build_ingestion_helpers(
         with _status_lock:
             _set_running(step)
 
-    def _finish(state: str, step: str, error: Optional[str] = None) -> None:
-        """Count a run out. Call it while the run still holds ingestion_lock."""
+    def _finish(
+        state: str,
+        step: str,
+        error: Optional[str] = None,
+        *,
+        keep_error: bool = False,
+    ) -> None:
+        """Count a run out.
+
+        A run that holds ingestion_lock calls it before the release; the
+        upload tracker calls it without the lock. With ``keep_error``, an
+        ``error`` already published by another run is kept: the tracker never
+        re-publishes ``running``, so it must not turn the ``error`` of the
+        update inside its block into ``completed``.
+        """
         nonlocal _inflight
         with _status_lock:
             _inflight -= 1
+            if keep_error and _status["state"] == "error":
+                return
             if state == "error" or _inflight == 0:
                 _status.update(
                     {
@@ -143,6 +166,26 @@ def build_ingestion_helpers(
 
     def run_upload_update(update_vectorstore: Callable[..., Any]) -> None:
         run_tracked("upload", lambda: _update_or_raise(update_vectorstore))
+
+    @contextmanager
+    def track_upload() -> Iterator[None]:
+        """Report an upload as running from the start of its collection.
+
+        The block takes no ingestion_lock, so a collection never waits behind
+        an ingest. It counts the upload in before the block and out after it;
+        the vectorstore update inside the block joins and finishes as a run of
+        its own, so the counter keeps the status at ``running`` between the
+        two. A block that raises publishes ``error`` with the message. A block
+        that ends normally publishes ``completed`` when no other run is in
+        flight, unless its update already published ``error``.
+        """
+        _join("upload")
+        try:
+            yield
+        except Exception as exc:
+            _finish("error", "failed", str(exc))
+            raise
+        _finish("completed", "done", keep_error=True)
 
     def run_source_refresh(
         name: str,
@@ -198,5 +241,6 @@ def build_ingestion_helpers(
         "run_tracked": run_tracked,
         "run_source_refresh": run_source_refresh,
         "run_upload_update": run_upload_update,
+        "track_upload": track_upload,
         "ingestion_lock": ingestion_lock,
     }

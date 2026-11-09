@@ -49,7 +49,7 @@
 
 ## 1. Report an upload from the start of its collection
 
-- [ ] 1.1 Test first, then implement design D1–D5, one commit
+- [x] 1.1 Test first, then implement design D1–D5, one commit
       (`fix(#648): report an upload from the start of its collection`).
       (a) Apply Appendix A: copy the block into `/tmp/648-tests.diff` and run
       `git apply /tmp/648-tests.diff`. It creates the two new test files and edits

@@ -4,9 +4,10 @@ import os
 import re
 import secrets
 import time
+from contextlib import nullcontext
 from functools import wraps
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, ContextManager, Dict, List, Optional, Tuple
 
 from flask import (
     Flask,
@@ -43,12 +44,18 @@ logger = get_logger(__name__)
 class FlaskAppWrapper:
     """Uploader UI + API wrapper for the data manager service."""
 
+    # The data manager's upload tracker (``track_upload`` of
+    # ``build_ingestion_helpers``). A class default, so a wrapper built with
+    # ``object.__new__`` in tests runs the handlers without one.
+    track_upload: Optional[Callable[[], ContextManager[None]]] = None
+
     def __init__(
         self,
         app: Flask,
         *,
         post_update_hook: Optional[Callable[[], None]] = None,
         status_file: Optional[Path] = None,
+        track_upload: Optional[Callable[[], ContextManager[None]]] = None,
     ) -> None:
         self.app = app
         self.config = get_full_config()
@@ -108,6 +115,7 @@ class FlaskAppWrapper:
             dm_config=self.config.get("data_manager")
         )
         self.post_update_hook = post_update_hook
+        self.track_upload = track_upload
 
         CORS(self.app)
 
@@ -262,8 +270,9 @@ class FlaskAppWrapper:
             return jsonify({"error": "missing_repo_url"}), 400
 
         try:
-            self.scraper_manager.collect_git(self.persistence, [repo_url.strip()])
-            return self._finish_manual_ingest("git", {"status": "ok"})
+            with self._tracked_upload():
+                self.scraper_manager.collect_git(self.persistence, [repo_url.strip()])
+                return self._finish_manual_ingest("git", {"status": "ok"})
         except Exception as exc:
             logger.error("Failed to add git repo %s: %s", repo_url, exc)
             return jsonify({"error": "ingest_failed", "detail": str(exc)}), 500
@@ -297,12 +306,14 @@ class FlaskAppWrapper:
                     404,
                 )
 
-            for resource_hash in to_remove:
-                self.persistence.delete_resource(resource_hash, flush=False)
-            self.persistence.flush_index()
-            return self._finish_manual_ingest(
-                "git", {"status": "ok", "repo": repo_name, "deleted": len(to_remove)}
-            )
+            with self._tracked_upload():
+                for resource_hash in to_remove:
+                    self.persistence.delete_resource(resource_hash, flush=False)
+                self.persistence.flush_index()
+                return self._finish_manual_ingest(
+                    "git",
+                    {"status": "ok", "repo": repo_name, "deleted": len(to_remove)},
+                )
         except Exception as exc:
             logger.error("Failed to remove git repo %s: %s", repo_name, exc)
             return jsonify({"error": "delete_failed", "detail": str(exc)}), 500
@@ -316,9 +327,12 @@ class FlaskAppWrapper:
             return jsonify({"error": "jira_not_configured"}), 400
 
         try:
-            self.ticket_manager.collect_jira(self.persistence, [project_key.strip()])
-            self.persistence.flush_index()
-            return self._finish_manual_ingest("jira", {"status": "ok"})
+            with self._tracked_upload():
+                self.ticket_manager.collect_jira(
+                    self.persistence, [project_key.strip()]
+                )
+                self.persistence.flush_index()
+                return self._finish_manual_ingest("jira", {"status": "ok"})
         except Exception as exc:
             logger.error("Failed to add JIRA project %s: %s", project_key, exc)
             return jsonify({"error": "ingest_failed", "detail": str(exc)}), 500
@@ -339,13 +353,14 @@ class FlaskAppWrapper:
             return jsonify({"error": "unsupported_extension", "allowed": accepted}), 400
 
         try:
-            stored_path = self.localfile_manager.ingest_uploaded_file(
-                upload, self.persistence
-            )
-            self.persistence.flush_index()
-            return self._finish_manual_ingest(
-                "local_files", {"status": "ok", "path": str(stored_path)}
-            )
+            with self._tracked_upload():
+                stored_path = self.localfile_manager.ingest_uploaded_file(
+                    upload, self.persistence
+                )
+                self.persistence.flush_index()
+                return self._finish_manual_ingest(
+                    "local_files", {"status": "ok", "path": str(stored_path)}
+                )
         except Exception as exc:
             logger.error("Failed to ingest uploaded file %s: %s", filename, exc)
             return jsonify({"error": "upload_failed", "detail": str(exc)}), 500
@@ -380,23 +395,18 @@ class FlaskAppWrapper:
         if url:
             logger.info("Uploading the following URL: %s", url)
             try:
-                scraped_count = self.scraper_manager.collect_links(
-                    self.persistence, link_urls=[url], max_depth=depth
-                )
-                self.persistence.flush_index()
-                added_to_urls = True
+                with self._tracked_upload():
+                    scraped_count = self.scraper_manager.collect_links(
+                        self.persistence, link_urls=[url], max_depth=depth
+                    )
+                    self.persistence.flush_index()
+                    logger.info("URL uploaded successfully")
+                    return self._finish_manual_ingest(
+                        "web", {"status": "ok", "resources_scraped": scraped_count}
+                    )
             except Exception as exc:
                 logger.exception("Failed to upload URL: %s", exc)
-                added_to_urls = False
-                upload_error = str(exc)
-
-            if added_to_urls:
-                logger.info("URL uploaded successfully")
-                return self._finish_manual_ingest(
-                    "web", {"status": "ok", "resources_scraped": scraped_count}
-                )
-            else:
-                return jsonify({"error": "upload_failed", "detail": upload_error}), 500
+                return jsonify({"error": "upload_failed", "detail": str(exc)}), 500
         else:
             return jsonify({"error": "missing_url"}), 400
 
@@ -503,6 +513,12 @@ class FlaskAppWrapper:
             self.post_update_hook()
         except Exception as exc:
             logger.warning("Post-update hook failed: %s", exc)
+
+    def _tracked_upload(self) -> ContextManager[None]:
+        """The data manager's upload tracker, or a no-op without one."""
+        if self.track_upload is None:
+            return nullcontext()
+        return self.track_upload()
 
     def _finish_manual_ingest(self, source: str, ok_body: Dict[str, object]):
         """Run the vector update of a manual ingest, then record its outcome.
