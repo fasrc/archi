@@ -232,6 +232,30 @@ collections remain after an `error` (it would hide the failed collection's error
    `41481966` had the inverse wart with one failure (a new collection shown as a finished
    error).
 
+4. **Async Codex pass on `b10a28a0` (P2, thread `PRRT_kwDORx3_1861RTae`): `completed` over
+   a collection's error.** A collection that failed during the initial ingestion's last
+   phase, with no sibling in flight and no later progress step, published `error`; the
+   ingestion's `_finish("completed")` then saw `_inflight == 0` and replaced it with
+   `completed` under the failed run's `run_id` and a new `finished_at`. The benchmark wait
+   (`wait_for_ingestion_completion`) accepts `completed` and raises on `error` with no
+   `run_id` check, so the outcome depended on which side of the overwrite it polled. D2's
+   `keep_error` guard covered only the tracker's own exit; a `run_tracked` refresh that ends
+   after a failed collection had the same hole. Fix: the rule is general. A `completed`
+   finish that finds `error` shown returns after the count-out, whatever the count in
+   flight. The condition is exact without extra state: every `running` publish clears
+   `error`, so an `error` shown at a `completed` finish was published after the finishing
+   run's last `running`, by work inside its window (a failed collection, or the update
+   inside a tracker's block). The `keep_error` flag is removed; the tracker's exit passes
+   nothing. A later failure still replaces an earlier one (`state == "error"` publishes as
+   before; the attribution of that case is #828). Not chosen: publishing `completed` with a
+   new identity (the failure would be hidden, which the queued-run rule forbids). Tests:
+   `test_the_ingest_ending_after_a_failed_collection_alone_keeps_the_error`,
+   `test_a_refresh_ending_after_a_failed_collection_alone_keeps_the_error`, and the guard
+   `test_the_ingest_failing_after_a_failed_collection_publishes_its_own_error`. Mutation
+   check: no guard → 4 failures (the two D2 tests and the two new ones); guard on every
+   finish, the `completed` check dropped → 1 (the guard test); guard only for the tracker,
+   D2's semantic → 2.
+
 Tests (`tests/unit/test_ingestion_status_upload_tracking.py`):
 `test_the_ingest_ending_during_a_collection_shows_the_upload_step`,
 `test_a_step_after_a_failed_collection_starts_a_new_run`, and the two guards

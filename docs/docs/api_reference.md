@@ -744,8 +744,9 @@ vectorstore update, until that update ends; the endpoint does not show `complete
 between the two. The collection takes no ingestion lock, so it never waits behind a
 running ingest; only its vectorstore update does. A collection that fails ends the run
 in `error` with the collection's message, even while an ingest runs; the next step that
-ingest publishes shows `running` again. A failed vectorstore update leaves `error` in
-place. An ingest that ends while an upload still collects leaves the endpoint at
+ingest publishes shows `running` again, and an ingest that ends without a later step
+keeps the `error`: `completed` never replaces a published failure. A failed vectorstore
+update leaves `error` in place. An ingest that ends while an upload still collects leaves the endpoint at
 `running` with `step` `upload` and `progress` `null`. The chat app's Process Documents
 action (`POST /api/upload/embed`)
 is reported with `step` `upload` while its update runs. In all cases `progress` is

@@ -19,7 +19,9 @@ no step of its own while another run is shown running; when the last
 lock-taking run ends and only collections remain, ``_finish`` shows
 ``step="upload"`` for them. A collection that fails publishes ``error`` even
 while the initial ingestion runs; the ingestion's next progress step then
-starts a new run identity (``set_ingestion_status``), never a finished one.
+starts a new run identity (``set_ingestion_status``), never a finished one,
+and an ingestion that ends without such a step keeps the ``error``:
+``completed`` never replaces a published failure (``_finish``).
 """
 
 import logging
@@ -149,16 +151,17 @@ def build_ingestion_helpers(
         step: str,
         error: Optional[str] = None,
         *,
-        keep_error: bool = False,
         collecting: bool = False,
     ) -> None:
         """Count a run out.
 
         A run that holds ingestion_lock calls it before the release; the
-        upload tracker calls it without the lock, with ``collecting``. With
-        ``keep_error``, an ``error`` already published by another run is kept:
-        the tracker never re-publishes ``running``, so it must not turn the
-        ``error`` of the update inside its block into ``completed``.
+        upload tracker calls it without the lock, with ``collecting``. An
+        ``error`` shown at a ``completed`` finish was published after this
+        run's last ``running`` (a tracked collection that failed, or the
+        update inside a tracker's block) and nothing cleared it since: it is
+        kept, whatever the count in flight. ``completed`` never replaces a
+        failure; a later failure does.
 
         A run that ends while only tracked uploads remain shows their step:
         no lock-taking run is left to publish one, and the finished run's
@@ -170,7 +173,7 @@ def build_ingestion_helpers(
             _inflight -= 1
             if collecting:
                 _collecting -= 1
-            if keep_error and _status["state"] == "error":
+            if state == "completed" and _status["state"] == "error":
                 return
             if state == "error" or _inflight == 0:
                 _status.update(
@@ -219,7 +222,7 @@ def build_ingestion_helpers(
         its own, so the counter keeps the status at ``running`` between the
         two. A block that raises publishes ``error`` with the message. A block
         that ends normally publishes ``completed`` when no other run is in
-        flight, unless its update already published ``error``. While a
+        flight, unless an ``error`` is shown (its update failed). While a
         lock-taking run is shown running, the block publishes no step; when
         that run ends first, ``_finish`` shows ``upload`` for the collection.
         """
@@ -229,7 +232,7 @@ def build_ingestion_helpers(
         except Exception as exc:
             _finish("error", "failed", str(exc), collecting=True)
             raise
-        _finish("completed", "done", keep_error=True, collecting=True)
+        _finish("completed", "done", collecting=True)
 
     def run_source_refresh(
         name: str,

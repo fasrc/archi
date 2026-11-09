@@ -30,7 +30,7 @@ The data manager SHALL publish `state == "running"` with `step == "upload"` when
 - **THEN** the status keeps `step == "scheduled:git"` until the refresh finishes with `completed`
 
 ### Requirement: A failed upload never ends as completed
-The data manager SHALL publish `state == "error"` with `step == "failed"` and the exception message when the tracked block raises, SHALL re-raise that exception, and SHALL keep an `error` published by the vectorstore update inside the block when the block ends normally.
+The data manager SHALL publish `state == "error"` with `step == "failed"` and the exception message when the tracked block raises, SHALL re-raise that exception, and SHALL keep an `error` published by the vectorstore update inside the block when the block ends normally, and SHALL keep a published `error` when any run ends with `completed` without having published `running` after it.
 
 #### Scenario: The collection raises
 - **WHEN** the block raises `RuntimeError("crawl down")`
@@ -47,6 +47,11 @@ The data manager SHALL publish `state == "error"` with `step == "failed"` and th
 #### Scenario: An ingest that ends after a failed collection keeps the error
 - **WHEN** one tracked collection raised during the initial ingestion, another is still inside its block, and the ingestion ends
 - **THEN** the status keeps `state == "error"`, `step == "failed"` and the collection's message
+
+#### Scenario: An ingest that ends after a failed collection, alone and without a later step, keeps the error
+- **WHEN** one tracked collection raised during the initial ingestion, no other run is in flight, and the ingestion ends without a later progress step
+- **THEN** the status keeps `state == "error"`, `step == "failed"`, the collection's message, the failed run's `run_id` and its `finished_at`; `completed` is not published
+- **AND** a refresh that holds the lock keeps the `error` the same way when it ends normally, while a run that fails after it publishes its own message
 
 #### Scenario: A collection that starts after a sibling's failure is reported as running
 - **WHEN** one tracked collection raised while a second still collects, and a third enters `track_upload()` after that

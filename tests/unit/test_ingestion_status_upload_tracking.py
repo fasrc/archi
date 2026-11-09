@@ -322,3 +322,73 @@ def test_a_collection_that_starts_after_a_siblings_failure_is_running():
     assert done["state"] == "completed"
     assert done["run_id"] == third["run_id"]
     assert done["finished_at"] == "2026-11-09T03:05:00+00:00"
+
+
+def test_the_ingest_ending_after_a_failed_collection_alone_keeps_the_error():
+    """A collection fails during the initial ingestion's last phase: no sibling in
+    flight, no later progress step. The ingest that ends then keeps the failure:
+    ``completed`` never replaces an ``error`` the finishing run did not clear."""
+    times = [
+        datetime(2026, 11, 9, 3, 0, tzinfo=timezone.utc),
+        datetime(2026, 11, 9, 3, 1, tzinfo=timezone.utc),
+        datetime(2026, 11, 9, 3, 5, tzinfo=timezone.utc),
+    ]
+    seen = {}
+
+    def run_ingestion(progress_callback, embedding_progress):
+        progress_callback("Updating vectorstore")
+        with pytest.raises(RuntimeError, match="crawl down"):
+            with helpers["track_upload"]():
+                raise RuntimeError("crawl down")
+        seen["after_error"] = helpers["get_ingestion_status"]()
+
+    helpers = build_ingestion_helpers(
+        run_ingestion, threading.RLock(), now=_fixed_now(times)
+    )
+    helpers["run_initial_ingestion_async"]()
+    done = helpers["get_ingestion_status"]()
+
+    assert seen["after_error"]["state"] == "error"
+    assert done["state"] == "error"
+    assert done["step"] == "failed"
+    assert done["error"] == "crawl down"
+    assert done["run_id"] == seen["after_error"]["run_id"]
+    assert done["finished_at"] == "2026-11-09T03:01:00+00:00"
+
+
+def test_a_refresh_ending_after_a_failed_collection_alone_keeps_the_error():
+    """The same for a refresh that holds the lock: its normal end does not turn
+    the collection's published ``error`` into ``completed``."""
+    helpers = _helpers()
+
+    def refresh_fn():
+        with pytest.raises(RuntimeError, match="crawl down"):
+            with helpers["track_upload"]():
+                raise RuntimeError("crawl down")
+
+    helpers["run_tracked"]("scheduled:git", refresh_fn)
+    status = helpers["get_ingestion_status"]()
+
+    assert status["state"] == "error"
+    assert status["step"] == "failed"
+    assert status["error"] == "crawl down"
+
+
+def test_the_ingest_failing_after_a_failed_collection_publishes_its_own_error():
+    """A kept failure never hides a later one: the ingest that fails after a
+    collection failed publishes its own message."""
+
+    def run_ingestion(progress_callback, embedding_progress):
+        progress_callback("Updating vectorstore")
+        with pytest.raises(RuntimeError, match="crawl down"):
+            with helpers["track_upload"]():
+                raise RuntimeError("crawl down")
+        raise RuntimeError("embed down")
+
+    helpers = build_ingestion_helpers(run_ingestion, threading.RLock())
+    helpers["run_initial_ingestion_async"]()
+    status = helpers["get_ingestion_status"]()
+
+    assert status["state"] == "error"
+    assert status["step"] == "failed"
+    assert status["error"] == "embed down"

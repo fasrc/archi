@@ -949,3 +949,9 @@ index 39a4e8ca..ad0d8edc 100644
       `running` whenever the shown state is not `running`, so a collection that starts after
       a sibling's published `error` is shown as a new run (design D8, item 3). Test first:
       `test_a_collection_that_starts_after_a_siblings_failure_is_running`.
+- [x] 3.4 Async Codex pass on `b10a28a0` (P2 thread `PRRT_kwDORx3_1861RTae`): a `completed`
+      finish never replaces a shown `error`, whatever the count in flight; the `keep_error`
+      flag is removed (design D8, item 4). Test first:
+      `test_the_ingest_ending_after_a_failed_collection_alone_keeps_the_error` and
+      `test_a_refresh_ending_after_a_failed_collection_alone_keeps_the_error`, with the guard
+      `test_the_ingest_failing_after_a_failed_collection_publishes_its_own_error`.
