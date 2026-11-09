@@ -737,14 +737,21 @@ ingest ends, `progress` keeps its last value.
 
 **Scheduled refreshes and upload runs** also move through this endpoint. While a
 scheduled source refresh is running, `state` is `running` and `step` is
-`scheduled:<source>` (for example `scheduled:git`). While a file upload is being
-ingested, or when the chat app's Process Documents action (`POST /api/upload/embed`) is
-running, `step` is `upload`. In both cases `progress` is `null` for the duration of
-the run. When the run ends, `state` becomes `completed` and `step` becomes `done`; on
+`scheduled:<source>` (for example `scheduled:git`). A manual ingest through the
+uploader (a file upload, a URL, a git repository, a JIRA project, or a git repository
+removal) is reported with `step` `upload` from the start of its collection, before its
+vectorstore update, until that update ends; the endpoint does not show `completed`
+between the two. The collection takes no ingestion lock, so it never waits behind a
+running ingest; only its vectorstore update does. A collection that fails ends the run
+in `error` with the collection's message, and a failed vectorstore update leaves
+`error` in place. The chat app's Process Documents action (`POST /api/upload/embed`)
+is reported with `step` `upload` while its update runs. In all cases `progress` is
+`null` for the duration of the run. When the run ends, `state` becomes `completed` and `step` becomes `done`; on
 failure, `state` becomes `error` and `step` becomes `failed`. A run whose vectorstore
 sync could not add its documents also ends in `error`. If another run is queued for the
 ingestion lock, the endpoint keeps reporting `running` instead of `completed`, and it
-does not publish a queued run's step over a running one. A run that starts when no run
+does not publish the step of a queued run, or of an upload's collection, over a
+running one. A run that starts when no run
 is reported as `running` publishes its step at once, so `completed` never stays visible
 while that run waits for the lock. Any benchmark that
 polls this endpoint to wait for an idle system will also wait during scheduled

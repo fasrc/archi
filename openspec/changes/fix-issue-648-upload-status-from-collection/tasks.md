@@ -79,7 +79,7 @@
 
 ## 2. Docs and publish
 
-- [ ] 2.1 Apply Appendix C (`/tmp/648-docs.diff`) to `docs/docs/api_reference.md` and
+- [x] 2.1 Apply Appendix C (`/tmp/648-docs.diff`) to `docs/docs/api_reference.md` and
       `docs/docs/benchmarking.md` (design D6); nothing else changes. Then
       `python -m pytest -q tests/unit/test_api_reference_schedule_state_contract.py tests/unit/test_benchmarking_docs_inline_bundle.py`
       must show `10 passed`,
