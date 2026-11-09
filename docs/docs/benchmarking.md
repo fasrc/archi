@@ -227,19 +227,25 @@ plain "give up after N seconds":
   a phase before the embedding loop starts), a wedged ingest is byte-for-byte
   the same as a working one, and only the ceiling can catch it.
 
-Scheduled source refreshes and upload-triggered vectorstore updates also report
-through this endpoint (`step=scheduled:<source>` or `step=upload`), so a
-benchmark that starts while one runs waits for it, and the refresh's polls keep
+Scheduled source refreshes and uploads (from the start of their collection to the
+end of their vectorstore update) also report through this endpoint
+(`step=scheduled:<source>` or `step=upload`), so a benchmark that starts while one
+runs waits for it, and the refresh's polls keep
 the stall budget alive. The endpoint reports `completed` only when no such run is
 queued. A refresh is not the corpus build, so its time is not counted in
 `ingest_wall_seconds`. This includes a refresh that runs after the ingest and
 before `completed`: the timing stops at the first poll that shows the refresh.
+An upload whose collection outlives the ingest shows `step=upload` from the
+moment the ingest ends, so the timing stops there too, and its polls keep the
+stall budget alive.
 
 What this wait does **not** cover: a corpus change that starts *after* the
-benchmark's wait returned. That includes the collection phase of an upload,
-which runs before its vectorstore update begins to report. The harness detects
-those changes after the fact, by fingerprinting the corpus on both sides of each
-arm and recording `corpus_unchanged_at_endpoints` in the results.
+benchmark's wait returned. An upload is reported from the start of its collection,
+not only during its vectorstore update, so a wait that saw `completed` has no upload
+collecting behind it; an upload that starts after the wait returned is still
+invisible to it. The harness detects those changes after the fact, by fingerprinting
+the corpus on both sides of each arm and recording `corpus_unchanged_at_endpoints`
+in the results.
 
 A long-but-healthy ingest hits none of them. CPU-only ingest of the full FASRC
 corpus takes ~64 min; with `processing.categorization.enabled: true` it runs one

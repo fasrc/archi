@@ -8,6 +8,7 @@ writer leaves in ``ingestion_status.json``.
 """
 
 import json
+import time
 
 import pytest
 
@@ -85,9 +86,12 @@ def started(monkeypatch, tmp_path):
         return made["scheduler"]
 
     class _FakeUploader:
-        def __init__(self, app, *, post_update_hook=None, status_file=None):
+        def __init__(
+            self, app, *, post_update_hook=None, status_file=None, track_upload=None
+        ):
             made["app"] = app
             made["status_file"] = status_file
+            made["track_upload"] = track_upload
 
         def run(self, **kwargs):
             pass
@@ -182,3 +186,25 @@ def test_schedules_route_reads_the_state_from_the_file(started):
     assert jobs["git"]["last_run"] == "t0"
     assert jobs["jira"]["state"] == "idle"
     assert jobs["jira"]["last_run"] is None
+
+
+def _wait_for_the_initial_ingest(client):
+    deadline = time.monotonic() + 5
+    while client.get("/api/ingestion/status").get_json()["state"] != "completed":
+        assert time.monotonic() < deadline, "the initial ingest did not finish"
+        time.sleep(0.01)
+
+
+def test_the_uploader_gets_the_data_managers_upload_tracker(started):
+    """The tracker main() hands to the uploader publishes on the status endpoint (#648)."""
+    made, _ = started
+    client = made["app"].test_client()
+    _wait_for_the_initial_ingest(client)
+
+    with made["track_upload"]():
+        during = client.get("/api/ingestion/status").get_json()
+    after = client.get("/api/ingestion/status").get_json()
+
+    assert during["state"] == "running"
+    assert during["step"] == "upload"
+    assert after["state"] == "completed"

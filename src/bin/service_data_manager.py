@@ -217,7 +217,10 @@ def main() -> None:
     ingestion_thread.start()
 
     uploader = FlaskAppWrapper(
-        app, post_update_hook=trigger_update, status_file=status_file
+        app,
+        post_update_hook=trigger_update,
+        status_file=status_file,
+        track_upload=_ing["track_upload"],
     )
 
     def get_ingestion_status():
