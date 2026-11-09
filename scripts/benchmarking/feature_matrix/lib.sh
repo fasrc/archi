@@ -35,6 +35,7 @@ FM_DIE_MSG=""
 FM_CHILD_PID=""
 FM_CHILD_CMD=""
 FM_CHILD_FAILED=""
+fm__deferred_signal=""
 
 fm_require_run_number() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] || fm_die "run number must be a positive integer, got '${1:-}'"; }
 
@@ -109,6 +110,11 @@ fm_arm_page_on_failure() { # $1 = subject context, e.g. "stack fm-00 arm 00"
   set -E
   trap 'fm__failed_cmd="$BASH_COMMAND"; fm__failed_line="${BASH_SOURCE[0]##*/}:$LINENO"' ERR
   trap 'fm__page_on_exit $?' EXIT
+  fm__arm_signal_traps
+}
+# The HUP, INT and TERM traps of fm_arm_page_on_failure, in one place: fm_run_interruptible
+# re-arms them after its launch, once the PID of its command is known (#824).
+fm__arm_signal_traps() {
   trap 'fm__page_on_signal 129 HUP' HUP
   trap 'fm__page_on_signal 130 INT' INT
   trap 'fm__page_on_signal 143 TERM' TERM
@@ -148,10 +154,26 @@ fm__page_on_exit() { # $1 = the exit status
 # starts through FM_PYTHON, which resets SIGINT to its default and execs it: a background
 # command of a script starts with SIGINT ignored, and the command cannot reset an ignored
 # signal itself, so a forwarded INT would not reach it.
+# The launch is a window of its own (#824): bash runs a pending trap between two simple
+# commands, so a signal that arrived during the fork ran fm__page_on_signal before
+# FM_CHILD_PID was set, fm__stop_child found no PID, the wrapper paged and died, and the
+# command ran on with no wrapper. Across the launch the three signal traps only record the
+# signal (fm__deferred_signal); once the PID is known, the traps of fm_arm_page_on_failure
+# are re-armed (fm__arm_signal_traps) and a recorded signal goes through the same handler,
+# with the PID known. The caller must have armed paging first, as every wrapper does.
 fm_run_interruptible() { # $@ = the command and its arguments
-  FM_CHILD_CMD="$*"; FM_CHILD_FAILED=""
+  FM_CHILD_CMD="$*"; FM_CHILD_FAILED=""; fm__deferred_signal=""
+  trap 'fm__deferred_signal=HUP' HUP
+  trap 'fm__deferred_signal=INT' INT
+  trap 'fm__deferred_signal=TERM' TERM
   "$FM_PYTHON" -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' "$@" &
   FM_CHILD_PID=$!
+  fm__arm_signal_traps
+  case "$fm__deferred_signal" in
+    HUP) fm__page_on_signal 129 HUP ;;
+    INT) fm__page_on_signal 130 INT ;;
+    TERM) fm__page_on_signal 143 TERM ;;
+  esac
   local rc=0
   # A trapped signal makes `wait` return 128+N. The wrapper's signal traps never return,
   # but a wait that did return while the command still runs is repeated, so rc is the

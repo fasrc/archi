@@ -138,6 +138,9 @@
 #        the KILL watchdog: the run is still killed, one page, the wrapper dies of SIGTERM
 #   129. while the KILL watchdog runs, the wrapper itself ignores HUP, INT and TERM, so the
 #        watchdog inherits the ignore at its fork and a repeated group signal has no window
+#   130. a SIGTERM that the QA command itself sends to the wrapper's PID as it starts is
+#        processed once the PID is known: the run is killed after the grace period, one page,
+#        the wrapper dies of SIGTERM, no process is left (#824, the launch window)
 # Run: bash scripts/benchmarking/feature_matrix/test_feature_matrix_wrappers.sh
 set -euo pipefail
 
@@ -187,6 +190,10 @@ prev=""; for a in "\$@"; do [ "\$prev" = "--output-dir" ] && { mkdir -p "\$a"; O
 [ "\$1" = "qa" ] && [ -f "$T/qa-slow" ] && { touch "$T/qa-started"; exec sleep 30; }
 # the same slow run, but it ignores SIGTERM (an ignored signal survives exec)
 [ "\$1" = "qa" ] && [ -f "$T/qa-slow-noterm" ] && { trap '' TERM; touch "$T/qa-started"; exec sleep 30; }
+# the same, but it first sends SIGTERM to the wrapper (its parent) itself, as early in the
+# launch as a real signal can arrive (#824); it ignores TERM before that, so the wrapper's
+# forwarded TERM cannot end it and its fate is always the grace-period KILL
+[ "\$1" = "qa" ] && [ -f "$T/qa-slow-selfterm" ] && { trap '' TERM; kill -TERM \$PPID; touch "$T/qa-started"; exec sleep 30; }
 # exit 1 from the QA run itself when qa-fail exists
 [ "\$1" = "qa" ] && [ -f "$T/qa-fail" ] && exit 1
 [ "\$1" = "qa" ] && [ -f "$T/drift-after-qa" ] && printf 'sha256:moved\n' > "$T/fp"
@@ -1670,6 +1677,48 @@ if [ "$OUT" = "-15 clean ignored" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" =
    && grep -q "qa_arm.sh exited 143: .*archi qa .* killed after 2s (SIGTERM ignored)" "$T/mail.calls" \
    && [ "$(ledger_rows)" = "$BEFORE" ]; then
   ok "the wrapper ignores HUP, INT and TERM while the kill watchdog runs"; else notok "qa_arm wrapper disposition during the grace period (launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
+
+# --- #824: a signal that arrives at the launch is processed once the PID is known ---------
+# Self-signal launcher (check 130): like signal-launch-pid.py, but it sends no signal: the QA
+# stub sends it to the wrapper itself. Waits for the ready file, then the same 5 s bounded
+# wait and group check.
+cat > "$T/bin/signal-launch-self.py" <<'PY'
+import os, signal, subprocess, sys, time
+ready, out, err, cmd = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+p = subprocess.Popen(cmd, start_new_session=True, stdout=open(out, "w"), stderr=open(err, "w"),
+                     preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+deadline = time.monotonic() + 30
+while not os.path.exists(ready) and p.poll() is None and time.monotonic() < deadline:
+    time.sleep(0.05)
+try:
+    rc = p.wait(timeout=5)
+except subprocess.TimeoutExpired:
+    rc = "hung"
+try:
+    os.killpg(p.pid, signal.SIGKILL)
+    left = "leftover"
+except ProcessLookupError:
+    left = "clean"
+print(rc, left)
+PY
+
+# 130: the QA stub sends SIGTERM to the wrapper's own PID as its first action (after it starts
+# to ignore TERM), so the signal arrives as early in the launch as a real one can. It is
+# processed once FM_CHILD_PID is known: the run is killed after FM_CHILD_GRACE seconds, the
+# wrapper pages once (the body says so) and dies of SIGTERM within 5 s, and no process of the
+# group is left. The window itself (between the launch and FM_CHILD_PID=$!) is microseconds
+# wide, so the signal nearly always lands after it; the #824 mutant (`sleep 0.3` before that
+# line, never committed) widens it, and on the pre-#824 code this check then prints
+# `launcher=-15 leftover`: the wrapper paged with no PID to stop and the run outlived it.
+touch "$T/qa-slow-selfterm"; rm -f "$T/qa-started"
+: > "$T/mail.calls"; BEFORE="$(ledger_rows)"
+OUT="$(env FM_AGENT_SPEC="$T/cfg/spec.md" FM_PAGE_MAIL_TO=ops@example.org FM_CHILD_GRACE=1 "$REAL_PY" "$T/bin/signal-launch-self.py" "$T/qa-started" "$T/stdout" "$T/stderr" bash "$HERE/qa_arm.sh" 00 "$T/arms/00-baseline.yaml" --profile "$T/cfg/qa/profile.yaml")"
+rm -f "$T/qa-slow-selfterm" "$T/qa-started"
+if [ "$OUT" = "-15 clean" ] && [ "$(grep -c '^ARGS:' "$T/mail.calls")" = 1 ] \
+   && grep -q "ARGS: -s feature_matrix: stack fm-00 arm 00: failed after long work (exit 143)" "$T/mail.calls" \
+   && grep -q "qa_arm.sh exited 143: .*archi qa .* killed after 1s (SIGTERM ignored)" "$T/mail.calls" \
+   && [ "$(ledger_rows)" = "$BEFORE" ]; then
+  ok "a SIGTERM sent to the wrapper's PID at the launch is processed once the PID is known"; else notok "qa_arm self-signal at launch (launcher=$OUT: $(cat "$T/mail.calls" "$T/stderr"))"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

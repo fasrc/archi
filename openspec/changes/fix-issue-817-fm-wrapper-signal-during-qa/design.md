@@ -256,3 +256,12 @@ stop path signals the direct child only (pushback: `archi qa` runs `QAWorkflow` 
 process, `src/cli/qa_eval.py:8`; nothing under `src/evaluation/qa/` except the console
 worker launcher `jobs.py` forks), and the launch window between the fork at `lib.sh:152` and
 `FM_CHILD_PID=$!` at `:153` (a follow-up issue; the deferred-trap design is in it).
+
+**Follow-up (#824, the launch window).** The round-4 finding deferred above is fixed in the
+`fix-issue-824-fm-launch-window` change (its design D1-D3): across the launch of the QA
+command the three signal traps of `fm_run_interruptible` only record the signal in
+`fm__deferred_signal`; once `FM_CHILD_PID` is set, the traps of `fm_arm_page_on_failure` are
+re-armed through the new `fm__arm_signal_traps`, and a recorded signal goes through
+`fm__page_on_signal` with the PID known, so the command is stopped as the requirement above
+says. Check 130 (a QA stub that signals the wrapper itself as it starts) and the `sleep 0.3`
+launch mutant are the proof; the window is not reachable from a timing test.
