@@ -19,7 +19,8 @@ must be able to call embedding and reranking models hosted on a GPU server.
 - New reranker backend setting `data_manager.retrievers.hierarchical_rerank.reranker.backend`:
   `flashrank` (default, unchanged) or `http`, with `url`. The `http` backend posts the query and
   the candidate texts to `{url}/rerank` and orders candidates by the returned scores. A failed
-  request raises; it never falls back silently to another ordering.
+  request falls back to today's FlashRank model with a warning (`reranker.fallback: flashrank`,
+  the default), or raises when `reranker.fallback` is `none`.
 - Defaults are unchanged, so deployments that set none of the new keys render and behave as today.
 
 ## Capabilities

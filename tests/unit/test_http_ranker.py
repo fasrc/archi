@@ -10,7 +10,10 @@ from types import SimpleNamespace
 import pytest
 
 from src.data_manager.vectorstore.retrievers import http_ranker as mod
-from src.data_manager.vectorstore.retrievers.http_ranker import HttpRanker
+from src.data_manager.vectorstore.retrievers.http_ranker import (
+    FallbackRanker,
+    HttpRanker,
+)
 
 
 class _Resp:
@@ -91,3 +94,44 @@ def test_missing_scores_raise(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="2 candidates"):
         HttpRanker(url="http://h/v1", model="rr").rerank(_request(["a", "b"]))
+
+
+# --- FallbackRanker -----------------------------------------------------------
+
+
+class _StubRanker:
+    def __init__(self, result=None, error=None):
+        self.result = result
+        self.error = error
+        self.requests = []
+
+    def rerank(self, request):
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def test_fallback_ranker_uses_the_primary_when_it_succeeds():
+    primary = _StubRanker(result=[{"id": 10, "score": 0.9}])
+    built = []
+    ranker = FallbackRanker(primary, lambda: built.append(1) or _StubRanker())
+    assert ranker.rerank(_request(["a"])) == [{"id": 10, "score": 0.9}]
+    assert built == []  # FlashRank is never loaded while the server answers
+
+
+def test_fallback_ranker_reranks_with_flashrank_when_the_primary_fails(caplog):
+    request = _request(["a", "b"])
+    fallback = _StubRanker(result=[{"id": 11, "score": 0.7}, {"id": 10, "score": 0.2}])
+    ranker = FallbackRanker(
+        _StubRanker(error=RuntimeError("rerank request to http://h failed: HTTP 503")),
+        lambda: fallback,
+    )
+    with caplog.at_level("WARNING"):
+        assert ranker.rerank(request) == [
+            {"id": 11, "score": 0.7},
+            {"id": 10, "score": 0.2},
+        ]
+    assert fallback.requests == [request]
+    assert "falling back to FlashRank" in caplog.text
+    assert "HTTP 503" in caplog.text

@@ -442,6 +442,11 @@ data_manager:
 {%- if data_manager.retrievers.hierarchical_rerank.reranker.timeout is defined and data_manager.retrievers.hierarchical_rerank.reranker.timeout is not none %}
         timeout: {{ data_manager.retrievers.hierarchical_rerank.reranker.timeout | tojson }}
 {%- endif %}
+{%- if data_manager.retrievers.hierarchical_rerank.reranker.fallback is defined and data_manager.retrievers.hierarchical_rerank.reranker.fallback is not none %}
+        # http only: `flashrank` (the default when unset) reranks with today's
+        # FlashRank model when the server fails; `none` raises instead.
+        fallback: {{ data_manager.retrievers.hierarchical_rerank.reranker.fallback | tojson }}
+{%- endif %}
   sources:
     local_files:
       {%- set v_local_files_enabled = data_manager.sources.local_files.enabled %}

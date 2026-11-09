@@ -20,8 +20,9 @@ from src.utils.logging import get_logger
 from .hierarchical_retriever import (
     DEFAULT_RERANKER_MODEL,
     LlamaIndexHierarchicalRetriever,
+    _get_cached_ranker,
 )
-from .http_ranker import HttpRanker
+from .http_ranker import FallbackRanker, HttpRanker
 from .hybrid_retriever import HybridRetriever
 
 logger = get_logger(__name__)
@@ -86,11 +87,13 @@ def build_vector_retriever(
     )
 
 
-def _build_ranker(reranker_cfg: Dict[str, Any]) -> Optional[HttpRanker]:
+def _build_ranker(reranker_cfg: Dict[str, Any]) -> Optional[Any]:
     """Return the injected ranker for ``reranker.backend``.
 
     ``flashrank`` (the default) returns None: the retriever builds its FlashRank
-    ``Ranker`` lazily from ``reranker.model``. ``http`` returns an ``HttpRanker``.
+    ``Ranker`` lazily from ``reranker.model``. ``http`` returns an ``HttpRanker``,
+    wrapped in a ``FallbackRanker`` that reranks with today's FlashRank model when
+    the server fails, unless ``reranker.fallback`` is ``none``.
     """
     backend = reranker_cfg.get("backend") or "flashrank"
     if backend == "flashrank":
@@ -101,10 +104,21 @@ def _build_ranker(reranker_cfg: Dict[str, Any]) -> Optional[HttpRanker]:
             raise ValueError(
                 "hierarchical_rerank reranker.backend is 'http' but reranker.url is not set"
             )
-        return HttpRanker(
+        ranker = HttpRanker(
             url=url,
             model=reranker_cfg.get("model", DEFAULT_RERANKER_MODEL),
             timeout=reranker_cfg.get("timeout", 60.0),
+        )
+        fallback = reranker_cfg.get("fallback")
+        if fallback is None or fallback == "flashrank":
+            return FallbackRanker(
+                ranker, lambda: _get_cached_ranker(DEFAULT_RERANKER_MODEL)
+            )
+        if fallback == "none":
+            return ranker
+        raise ValueError(
+            f"unknown hierarchical_rerank reranker.fallback {fallback!r}; "
+            "expected 'flashrank' or 'none'"
         )
     raise ValueError(
         f"unknown hierarchical_rerank reranker.backend {backend!r}; "

@@ -14,6 +14,8 @@
 - [x] 2.4 Wire `build_vector_retriever`
 - [x] 2.5 Failing render tests: `backend` defaults to `flashrank`; `url` rendered only when set
 - [x] 2.6 Render `backend` and `url` in `base-config.yaml`
+- [x] 2.7 Failing tests for `FallbackRanker` (primary used when it succeeds, FlashRank never built; on failure a warning and the fallback's ranking) and for the factory (`http` wraps by default, `fallback: none` gives the bare `HttpRanker`, unknown values raise) and the render (`fallback` only when set)
+- [x] 2.8 Implement `FallbackRanker`, the `reranker.fallback` switch in `_build_ranker`, and its render
 
 ## Docs
 

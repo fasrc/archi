@@ -6,9 +6,13 @@ first. This class sends the texts to ``{url}/rerank`` (Cohere/Jina/vLLM request 
 so a GPU-hosted cross-encoder can replace FlashRank without touching the retriever.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 import requests
+
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class HttpRanker:
@@ -47,3 +51,23 @@ class HttpRanker:
             )
         ranked = [{**passage, "score": scores[i]} for i, passage in enumerate(passages)]
         return sorted(ranked, key=lambda item: item["score"], reverse=True)
+
+
+class FallbackRanker:
+    """Rerank with ``primary``; on any error, warn and rerank with ``fallback()``.
+
+    ``fallback`` is a zero-argument factory, so the FlashRank model loads only after
+    the remote reranker first fails, and a reranker outage degrades ranking quality
+    instead of failing the chat turn.
+    """
+
+    def __init__(self, primary: Any, fallback: Callable[[], Any]):
+        self.primary = primary
+        self.fallback = fallback
+
+    def rerank(self, request: Any) -> List[Dict[str, Any]]:
+        try:
+            return self.primary.rerank(request)
+        except Exception as exc:
+            logger.warning("Remote reranker failed, falling back to FlashRank: %s", exc)
+            return self.fallback().rerank(request)

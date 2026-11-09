@@ -11,7 +11,10 @@ from langchain_core.vectorstores import VectorStore
 
 from src.data_manager.vectorstore.remote_embeddings import RemoteEmbeddings
 from src.data_manager.vectorstore.retrievers import build_vector_retriever
-from src.data_manager.vectorstore.retrievers.http_ranker import HttpRanker
+from src.data_manager.vectorstore.retrievers.http_ranker import (
+    FallbackRanker,
+    HttpRanker,
+)
 from src.utils.config_service import ConfigService
 
 
@@ -67,11 +70,17 @@ def _hier(reranker):
     return {"hierarchical_rerank": {"enabled": True, "reranker": reranker}}
 
 
-def test_http_backend_injects_http_ranker():
+def test_http_backend_without_fallback_injects_the_bare_http_ranker():
     retriever = build_vector_retriever(
         _FakeStore(),
         _hier(
-            {"backend": "http", "url": "http://h:8012/v1", "model": "rr", "timeout": 30}
+            {
+                "backend": "http",
+                "url": "http://h:8012/v1",
+                "model": "rr",
+                "timeout": 30,
+                "fallback": "none",
+            }
         ),
     )
     assert isinstance(retriever.reranker, HttpRanker)
@@ -79,6 +88,24 @@ def test_http_backend_injects_http_ranker():
     assert retriever.reranker.model == "rr"
     assert retriever.reranker.timeout == 30
     assert retriever.reranker_model == "rr"
+
+
+def test_http_backend_falls_back_to_flashrank_by_default():
+    retriever = build_vector_retriever(
+        _FakeStore(),
+        _hier({"backend": "http", "url": "http://h:8012/v1", "model": "rr"}),
+    )
+    assert isinstance(retriever.reranker, FallbackRanker)
+    assert isinstance(retriever.reranker.primary, HttpRanker)
+    assert retriever.reranker.primary.url == "http://h:8012/v1"
+
+
+def test_http_backend_unknown_fallback_raises():
+    with pytest.raises(ValueError, match="reranker.fallback"):
+        build_vector_retriever(
+            _FakeStore(),
+            _hier({"backend": "http", "url": "http://h", "fallback": False}),
+        )
 
 
 def test_http_backend_without_url_raises():
@@ -146,6 +173,7 @@ def test_reranker_backend_defaults_to_flashrank_without_url():
     reranker = _render({})["retrievers"]["hierarchical_rerank"]["reranker"]
     assert reranker["backend"] == "flashrank"
     assert "url" not in reranker
+    assert "fallback" not in reranker
     assert reranker["model"] == "ms-marco-MiniLM-L-12-v2"
 
 
@@ -159,6 +187,7 @@ def test_reranker_http_backend_rendered_with_url():
                         "url": "http://localhost:8012/v1",
                         "model": "nemotron-rerank",
                         "timeout": 60,
+                        "fallback": "none",
                     }
                 }
             }
@@ -169,4 +198,5 @@ def test_reranker_http_backend_rendered_with_url():
         "url": "http://localhost:8012/v1",
         "model": "nemotron-rerank",
         "timeout": 60,
+        "fallback": "none",
     }
