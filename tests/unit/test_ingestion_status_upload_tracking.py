@@ -141,3 +141,148 @@ def test_the_upload_keeps_one_run_identity_from_collection_to_update():
     assert after_update["finished_at"] is None
     assert done["run_id"] == at_collection["run_id"]
     assert done["finished_at"] == "2026-11-09T03:05:00+00:00"
+
+
+def test_a_step_after_a_failed_collection_starts_a_new_run():
+    """A collection that fails during the initial ingestion ends the shared run in
+    ``error``; the ingestion's next progress step is a new run, not a finished one."""
+    times = [
+        datetime(2026, 11, 9, 3, 0, tzinfo=timezone.utc),
+        datetime(2026, 11, 9, 3, 1, tzinfo=timezone.utc),
+        datetime(2026, 11, 9, 3, 2, tzinfo=timezone.utc),
+        datetime(2026, 11, 9, 3, 5, tzinfo=timezone.utc),
+    ]
+    seen = {}
+
+    def run_ingestion(progress_callback, embedding_progress):
+        progress_callback("Updating vectorstore")
+        with pytest.raises(RuntimeError):
+            with helpers["track_upload"]():
+                raise RuntimeError("crawl down")
+        seen["after_error"] = helpers["get_ingestion_status"]()
+        progress_callback("Updating vectorstore")
+        seen["after_step"] = helpers["get_ingestion_status"]()
+
+    helpers = build_ingestion_helpers(
+        run_ingestion, threading.RLock(), now=_fixed_now(times)
+    )
+    helpers["run_initial_ingestion_async"]()
+    done = helpers["get_ingestion_status"]()
+
+    assert seen["after_error"]["state"] == "error"
+    assert seen["after_error"]["finished_at"] == "2026-11-09T03:01:00+00:00"
+    assert seen["after_step"]["state"] == "running"
+    assert seen["after_step"]["step"] == "Updating vectorstore"
+    assert seen["after_step"]["error"] is None
+    assert seen["after_step"]["finished_at"] is None
+    assert seen["after_step"]["run_id"] != seen["after_error"]["run_id"]
+    assert seen["after_step"]["started_at"] == "2026-11-09T03:02:00+00:00"
+    assert done["state"] == "completed"
+    assert done["run_id"] == seen["after_step"]["run_id"]
+    assert done["finished_at"] == "2026-11-09T03:05:00+00:00"
+
+
+def test_the_ingest_ending_during_a_collection_shows_the_upload_step():
+    """When the initial ingestion ends while an upload still collects, the status
+    shows the collection: ``step`` ``upload`` and no frozen embedding counter."""
+    times = [
+        datetime(2026, 11, 9, 3, 0, tzinfo=timezone.utc),
+        datetime(2026, 11, 9, 3, 5, tzinfo=timezone.utc),
+    ]
+    ingest_inside = threading.Event()
+    release_ingest = threading.Event()
+
+    def run_ingestion(progress_callback, embedding_progress):
+        progress_callback("Updating vectorstore")
+        embedding_progress(40, 40)
+        ingest_inside.set()
+        release_ingest.wait(timeout=5)
+
+    helpers = build_ingestion_helpers(
+        run_ingestion, threading.RLock(), now=_fixed_now(times)
+    )
+    ingest = threading.Thread(
+        target=helpers["run_initial_ingestion_async"], daemon=True
+    )
+    ingest.start()
+    assert ingest_inside.wait(timeout=5)
+
+    with helpers["track_upload"]():
+        while_ingest_runs = helpers["get_ingestion_status"]()
+        release_ingest.set()
+        ingest.join(timeout=5)
+        ingest_ended = not ingest.is_alive()
+        after_ingest = helpers["get_ingestion_status"]()
+    done = helpers["get_ingestion_status"]()
+
+    assert ingest_ended, "the initial ingestion did not end"
+    assert while_ingest_runs["step"] == "Updating vectorstore"
+    assert while_ingest_runs["progress"] == {"done": 40, "total": 40}
+    assert after_ingest["state"] == "running"
+    assert after_ingest["step"] == "upload"
+    assert after_ingest["progress"] is None
+    assert after_ingest["run_id"] == while_ingest_runs["run_id"]
+    assert after_ingest["finished_at"] is None
+    assert done["state"] == "completed"
+    assert done["step"] == "done"
+    assert done["finished_at"] == "2026-11-09T03:05:00+00:00"
+
+
+def test_the_collection_ending_during_a_refresh_keeps_the_refresh_step():
+    """An upload whose collection ends while a refresh holds the lock leaves the
+    refresh's step in place: only the lock owner publishes a step while it runs."""
+    helpers = _helpers()
+    refresh_inside = threading.Event()
+    release_refresh = threading.Event()
+
+    def refresh_fn():
+        refresh_inside.set()
+        release_refresh.wait(timeout=5)
+
+    with helpers["track_upload"]():
+        refresh = threading.Thread(
+            target=lambda: helpers["run_tracked"]("scheduled:git", refresh_fn),
+            daemon=True,
+        )
+        refresh.start()
+        assert refresh_inside.wait(timeout=5)
+    while_refresh_runs = helpers["get_ingestion_status"]()
+    release_refresh.set()
+    refresh.join(timeout=5)
+
+    assert while_refresh_runs["state"] == "running"
+    assert while_refresh_runs["step"] == "scheduled:git"
+    assert helpers["get_ingestion_status"]()["state"] == "completed"
+
+
+def test_the_ingest_ending_after_a_failed_collection_keeps_the_error():
+    """A failed collection published ``error``. The ingest that ends while another
+    upload still collects does not replace that error with the collection's step."""
+    ingest_inside = threading.Event()
+    release_ingest = threading.Event()
+
+    def run_ingestion(progress_callback, embedding_progress):
+        progress_callback("Updating vectorstore")
+        ingest_inside.set()
+        release_ingest.wait(timeout=5)
+
+    helpers = build_ingestion_helpers(run_ingestion, threading.RLock())
+    ingest = threading.Thread(
+        target=helpers["run_initial_ingestion_async"], daemon=True
+    )
+    ingest.start()
+    assert ingest_inside.wait(timeout=5)
+
+    with pytest.raises(RuntimeError, match="crawl down"):
+        with helpers["track_upload"]():
+            raise RuntimeError("crawl down")
+    with helpers["track_upload"]():
+        release_ingest.set()
+        ingest.join(timeout=5)
+        after_ingest = helpers["get_ingestion_status"]()
+
+    assert not ingest.is_alive(), "the initial ingestion did not end"
+    assert after_ingest["state"] == "error"
+    assert after_ingest["step"] == "failed"
+    assert after_ingest["error"] == "crawl down"
+    assert helpers["get_ingestion_status"]()["state"] == "error"

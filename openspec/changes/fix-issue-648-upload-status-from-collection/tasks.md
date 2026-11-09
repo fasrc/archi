@@ -932,3 +932,16 @@ index 39a4e8ca..ad0d8edc 100644
  A long-but-healthy ingest hits none of them. CPU-only ingest of the full FASRC
  corpus takes ~64 min; with `processing.categorization.enabled: true` it runs one
 ````
+
+## 3. Review
+
+- [x] 3.1 Round 1 (2026-11-09, Codex P2 thread `PRRT_kwDORx3_1861O1bP`): when the
+      lock-owning run ends and only tracked uploads remain, `_finish` publishes
+      `step="upload"`, `progress=None` (design D8). Test first:
+      `test_the_ingest_ending_during_a_collection_shows_the_upload_step`, with the guards
+      `test_the_collection_ending_during_a_refresh_keeps_the_refresh_step` and
+      `test_the_ingest_ending_after_a_failed_collection_keeps_the_error`.
+- [x] 3.2 Round 1 (2026-11-09, Codex P2 thread `PRRT_kwDORx3_1861O1bL`):
+      `set_ingestion_status("running")` from a non-running state assigns a new run
+      identity (design D8). Test first:
+      `test_a_step_after_a_failed_collection_starts_a_new_run`.

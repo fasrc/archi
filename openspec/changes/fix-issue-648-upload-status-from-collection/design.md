@@ -169,6 +169,47 @@ first (squash), this branch's copy of the same content merges clean; if this PR 
 #777's diff shrinks to nothing and a human closes it against #559's remaining tasks. Both are
 human decisions; neither is made here.
 
+### D8 — Review round 1 (2026-11-09): the step after the lock owner ends, and the identity after a failed collection
+
+Two Codex P2 findings on `b90ee6ba`, both reproduced on the host before the change.
+
+1. **Only collections remain.** When the lock-owning run (the initial ingestion or a
+   `run_tracked` refresh) finished while a tracked upload still collected, `_finish` saw
+   `_inflight == 1` and published nothing: the status kept the finished run's step and its
+   frozen embedding counter. `_ingest_is_progressing` (`src/bin/service_benchmark.py`)
+   returns `False` on a frozen counter, so a collection longer than
+   `BENCH_INGEST_WAIT_TIMEOUT` aborted a benchmark as stalled, and a shorter one was
+   charged to `ingest_wall_seconds` because the wait saw no upload step until the update.
+   Fix: a second counter, `_collecting`, counts the tracked uploads among `_inflight`
+   (`_join`/`_finish` take `collecting=True` from the tracker). A `_finish` that leaves
+   `_inflight == _collecting` with the state `running` publishes `step="upload"`,
+   `progress=None` and nothing else: no identity change, no `finished_at`, because the
+   run (shared with the collection) is not over. A published `error` is left in place,
+   and a remaining lock-taker (`_inflight != _collecting`) still publishes its own step
+   after it takes the lock, as before.
+2. **A step after a failed collection.** A collection that failed during the initial
+   ingestion published `error` and `finished_at` (the queued-run rule: an error is never
+   hidden). The ingestion's next `progress_callback` → `set_ingestion_status("running",
+   step=...)` bypassed `_set_running`, so the status read `running` with the failed run's
+   `run_id` and a non-null `finished_at`. Fix: `set_ingestion_status` applies the same
+   transition as `_set_running` — `running` from a non-`running` state gets a new
+   `run_id`/`started_at` and `finished_at = None` (`_new_run_identity()`, shared by
+   both) — and keeps `progress`, which `test_set_ingestion_status_preserves_progress`
+   requires. A step update inside a live run is unchanged
+   (`test_progress_callback_step_update_keeps_run_identity`).
+
+Not chosen: routing the progress callback through `_publish_running` (it resets
+`progress` on every step); publishing `running`/`upload` with a new identity when only
+collections remain after an `error` (it would hide the failed collection's error).
+
+Tests (`tests/unit/test_ingestion_status_upload_tracking.py`):
+`test_the_ingest_ending_during_a_collection_shows_the_upload_step`,
+`test_a_step_after_a_failed_collection_starts_a_new_run`, and the two guards
+`test_the_collection_ending_during_a_refresh_keeps_the_refresh_step` and
+`test_the_ingest_ending_after_a_failed_collection_keeps_the_error`. Mutation check: no
+`elif` → 1 failure; `elif` without the `running` guard → 1; `elif` on any remaining run →
+1; no identity transition in `set_ingestion_status` → 1.
+
 ## Risks / Trade-offs
 
 - A failed collection now publishes `error` on `/api/ingestion/status`, where it published

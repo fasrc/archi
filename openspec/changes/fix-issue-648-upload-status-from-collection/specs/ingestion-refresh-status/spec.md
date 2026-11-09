@@ -20,6 +20,15 @@ The data manager SHALL publish `state == "running"` with `step == "upload"` when
 - **WHEN** the block starts, runs `run_upload_update`, and ends
 - **THEN** `run_id` and `started_at` are set at the block's start and unchanged after the update, `finished_at` is `null` until the block ends, and `finished_at` is set when the block ends
 
+#### Scenario: The ingest ends while the upload still collects
+- **WHEN** the initial ingestion published a step and an embedding counter, an upload entered `track_upload()` while it ran, and the ingestion ends before the block does
+- **THEN** inside the block the status has `state == "running"`, `step == "upload"`, `progress` `null`, the ingestion's `run_id`, and `finished_at` `null`
+- **AND** after the block the status has `state == "completed"` with `finished_at` set
+
+#### Scenario: The collection ends while a refresh holds the lock
+- **WHEN** a `run_tracked` refresh with `step == "scheduled:git"` starts inside the block and still runs when the block ends
+- **THEN** the status keeps `step == "scheduled:git"` until the refresh finishes with `completed`
+
 ### Requirement: A failed upload never ends as completed
 The data manager SHALL publish `state == "error"` with `step == "failed"` and the exception message when the tracked block raises, SHALL re-raise that exception, and SHALL keep an `error` published by the vectorstore update inside the block when the block ends normally.
 
@@ -30,6 +39,14 @@ The data manager SHALL publish `state == "error"` with `step == "failed"` and th
 #### Scenario: The update inside the block fails
 - **WHEN** `run_upload_update` inside the block raises because the sync returned `"failed"`, the caller swallows the exception, and the block ends normally
 - **THEN** the status keeps `state == "error"` and `step == "failed"`, with an `error` that names `documents not added`
+
+#### Scenario: The collection raises while the initial ingestion runs
+- **WHEN** the block raises during the initial ingestion and the ingestion then publishes a step through its progress callback
+- **THEN** the status after the raise has `state == "error"` with `finished_at` set, and the status after the step has `state == "running"`, `finished_at` `null`, and a `run_id` and `started_at` that differ from the failed run's
+
+#### Scenario: An ingest that ends after a failed collection keeps the error
+- **WHEN** one tracked collection raised during the initial ingestion, another is still inside its block, and the ingestion ends
+- **THEN** the status keeps `state == "error"`, `step == "failed"` and the collection's message
 
 ### Requirement: Every manual-ingest handler runs inside the upload tracker
 The uploader SHALL enter the data manager's upload tracker before the collection of `add_git_repo`, `add_jira_project`, `upload` and `upload_url` and before the deletes of `remove_git_repo`, SHALL leave it after `_finish_manual_ingest` returned, SHALL keep each handler's answers unchanged, and SHALL run the handlers without a tracker when none was given.

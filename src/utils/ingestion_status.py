@@ -14,7 +14,12 @@ or ``error``). Runs that queue behind a running run share its ``run_id`` and
 An upload through the uploader is tracked from the start of its collection by
 ``track_upload``: the collection takes no ingestion lock, and the vectorstore
 update inside the block is counted as a run of its own, so ``completed`` is
-never published between the two.
+never published between the two. A tracked upload holds no lock and publishes
+no step of its own while another run is shown running; when the last
+lock-taking run ends and only collections remain, ``_finish`` shows
+``step="upload"`` for them. A collection that fails publishes ``error`` even
+while the initial ingestion runs; the ingestion's next progress step then
+starts a new run identity (``set_ingestion_status``), never a finished one.
 """
 
 import logging
@@ -62,11 +67,29 @@ def build_ingestion_helpers(
         "finished_at": None,
     }
 
+    def _new_run_identity() -> Dict[str, object]:
+        return {
+            "run_id": str(uuid.uuid4()),
+            "started_at": now().isoformat(),
+            "finished_at": None,
+        }
+
     def set_ingestion_status(
         state: str, *, step: Optional[str] = None, error: Optional[str] = None
     ) -> None:
+        """Publish a state and step from inside a run (the progress callback).
+
+        ``running`` from a non-``running`` state starts a new run identity, as
+        ``_set_running`` does: a tracked upload's collection can publish
+        ``error`` while the initial ingestion still runs, and the ingestion's
+        next step must not read as ``running`` with that run's ``finished_at``.
+        ``progress`` is kept either way.
+        """
         with _status_lock:
-            _status.update({"state": state, "step": step, "error": error})
+            update: Dict[str, object] = {"state": state, "step": step, "error": error}
+            if state == "running" and _status["state"] != "running":
+                update.update(_new_run_identity())
+            _status.update(update)
 
     def set_ingestion_progress(done: int, total: Optional[int] = None) -> None:
         with _status_lock:
@@ -76,10 +99,14 @@ def build_ingestion_helpers(
         with _status_lock:
             return dict(_status)
 
-    # Runs that hold or wait for ingestion_lock. Only the lock owner publishes
-    # its step, and "completed" is published only when no run is queued: a
-    # benchmark that sees "completed" must not have a corpus change behind it.
+    # Runs that hold or wait for ingestion_lock, plus tracked uploads. Only the
+    # lock owner publishes its step, and "completed" is published only when no
+    # run is queued: a benchmark that sees "completed" must not have a corpus
+    # change behind it.
     _inflight = 0
+    # The tracked uploads among them. They hold no lock, so when they are all
+    # that remains, no run will publish a step for them; see _finish.
+    _collecting = 0
 
     def _set_running(step: str) -> None:
         """Publish running, assigning a fresh run identity if a new run started.
@@ -90,21 +117,22 @@ def build_ingestion_helpers(
         """
         update = {"state": "running", "step": step, "error": None, "progress": None}
         if _status["state"] != "running":
-            update["run_id"] = str(uuid.uuid4())
-            update["started_at"] = now().isoformat()
-            update["finished_at"] = None
+            update.update(_new_run_identity())
         _status.update(update)
 
-    def _join(step: str) -> None:
+    def _join(step: str, *, collecting: bool = False) -> None:
         """Count a run in, and publish its step if no other run is shown running.
 
         One _status_lock hold for both, so a run that joins next cannot publish
         between them and be masked. A terminal state is cleared here too: the
         previous owner can publish completed and still hold ingestion_lock.
+        ``collecting`` marks a tracked upload, which holds no lock.
         """
-        nonlocal _inflight
+        nonlocal _inflight, _collecting
         with _status_lock:
             _inflight += 1
+            if collecting:
+                _collecting += 1
             if _inflight == 1 and _status["state"] != "running":
                 _set_running(step)
 
@@ -118,18 +146,26 @@ def build_ingestion_helpers(
         error: Optional[str] = None,
         *,
         keep_error: bool = False,
+        collecting: bool = False,
     ) -> None:
         """Count a run out.
 
         A run that holds ingestion_lock calls it before the release; the
-        upload tracker calls it without the lock. With ``keep_error``, an
-        ``error`` already published by another run is kept: the tracker never
-        re-publishes ``running``, so it must not turn the ``error`` of the
-        update inside its block into ``completed``.
+        upload tracker calls it without the lock, with ``collecting``. With
+        ``keep_error``, an ``error`` already published by another run is kept:
+        the tracker never re-publishes ``running``, so it must not turn the
+        ``error`` of the update inside its block into ``completed``.
+
+        A run that ends while only tracked uploads remain shows their step:
+        no lock-taking run is left to publish one, and the finished run's
+        embedding counter would otherwise stay frozen in the status, which a
+        benchmark reads as a stall. A published ``error`` is left in place.
         """
-        nonlocal _inflight
+        nonlocal _inflight, _collecting
         with _status_lock:
             _inflight -= 1
+            if collecting:
+                _collecting -= 1
             if keep_error and _status["state"] == "error":
                 return
             if state == "error" or _inflight == 0:
@@ -141,6 +177,8 @@ def build_ingestion_helpers(
                         "finished_at": now().isoformat(),
                     }
                 )
+            elif _inflight == _collecting and _status["state"] == "running":
+                _status.update({"step": "upload", "progress": None})
 
     def run_tracked(step: str, fn: Callable[[], Any]) -> Any:
         _join(step)
@@ -177,15 +215,17 @@ def build_ingestion_helpers(
         its own, so the counter keeps the status at ``running`` between the
         two. A block that raises publishes ``error`` with the message. A block
         that ends normally publishes ``completed`` when no other run is in
-        flight, unless its update already published ``error``.
+        flight, unless its update already published ``error``. While a
+        lock-taking run is shown running, the block publishes no step; when
+        that run ends first, ``_finish`` shows ``upload`` for the collection.
         """
-        _join("upload")
+        _join("upload", collecting=True)
         try:
             yield
         except Exception as exc:
-            _finish("error", "failed", str(exc))
+            _finish("error", "failed", str(exc), collecting=True)
             raise
-        _finish("completed", "done", keep_error=True)
+        _finish("completed", "done", keep_error=True, collecting=True)
 
     def run_source_refresh(
         name: str,
