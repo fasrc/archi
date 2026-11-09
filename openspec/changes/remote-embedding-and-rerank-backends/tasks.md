@@ -15,6 +15,10 @@
 - [x] 2.5 Failing render tests: `backend` defaults to `flashrank`; `url` rendered only when set
 - [x] 2.6 Render `backend` and `url` in `base-config.yaml`
 
+## Docs
+
+- [x] Document both backends with their endpoint contracts and the vector-length rule in `docs/docs/models_providers.md` and `docs/docs/configuration.md` (review finding on #829)
+
 ## 3. Verify
 
 - [x] 3.1 `bash scripts/gate.sh` green (format, unit tests, diff coverage >= 80%)

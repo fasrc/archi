@@ -199,6 +199,37 @@ data_manager:
 
 `similarity_score_reference` is a minimum cosine similarity in the range `0..1`; `0.0` means cite everything retrieved. Uses HuggingFace models locally. Optionally requires `HUGGINGFACEHUB_API_TOKEN` for private models.
 
+### Remote Embeddings (OpenAI-compatible server)
+
+`RemoteEmbeddings` embeds through a model server you run, for example a GPU host that serves an embedding model behind an OpenAI-compatible `/embeddings` route. It is opt-in: the template renders this entry only when your config defines it.
+
+```yaml
+data_manager:
+  embedding_name: RemoteEmbeddings
+  embedding_class_map:
+    RemoteEmbeddings:
+      class: RemoteEmbeddings
+      kwargs:
+        base_url: http://gpu-host:8011/v1
+        model: my-embedder-documents     # model name the server uses for documents
+        query_model: my-embedder-queries # optional; defaults to `model`
+        # api_key: ...                   # optional; sent as a Bearer token
+        # batch_size: 32                 # texts per request
+        # timeout: 120                   # seconds per request
+      similarity_score_reference: 0.0
+      dimensions: 1024                   # must equal the length the server returns
+```
+
+**Endpoint contract.** archi sends `POST {base_url}/embeddings` with `{"model": "<name>", "input": ["<text>", ...]}`, as plain text rather than token IDs. Document batches use `model` and search queries use `query_model`, so the server can apply each model's own document and query prompts. The server returns `{"data": [{"index": 0, "embedding": [...]}, ...]}`, one item per input; archi restores input order from `index`. A non-2xx response or a wrong number of vectors raises an error. There is no fallback to another embedder.
+
+**Vector length.** Set `dimensions` to the exact length of the vectors the server returns:
+
+- It sizes the `document_chunks.embedding` column when the database is first created. Left unset, the column is 384 long, and a vector of any other length fails the ingest.
+- Keep it at 2,000 or below while the vector index is HNSW (the default): pgvector's HNSW index does not accept longer vectors. If the model's native vectors are longer, have the server shorten them.
+- The column size is fixed at creation, so moving an existing deployment to a different vector length needs a new vector store and a full re-ingest.
+
+Every container that embeds text (the data manager, the chat app and the benchmark runner) must be able to reach `base_url`.
+
 ---
 
 ## Bring Your Own Key (BYOK)

@@ -618,6 +618,31 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 
 > **Note:** `use_hybrid_search` is a dynamic runtime setting (managed via the configuration API), not a YAML config key.
 
+### Reranker backend
+
+With `retrievers.hierarchical_rerank.enabled: true`, a reranker reorders each search's candidate chunks before the best ones go to the model. `reranker.backend` picks where the reranker runs.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `retrievers.hierarchical_rerank.reranker.backend` | string | `flashrank` | `flashrank` runs a FlashRank model on CPU inside archi; `http` calls a reranker server |
+| `retrievers.hierarchical_rerank.reranker.model` | string | `ms-marco-MiniLM-L-12-v2` | With `flashrank`, a FlashRank model name; with `http`, the model name the server expects (set it, the default is a FlashRank name) |
+| `retrievers.hierarchical_rerank.reranker.url` | string | none | The server's base URL; required when `backend` is `http` |
+| `retrievers.hierarchical_rerank.reranker.timeout` | float | `60` | Seconds per request, `http` only |
+
+```yaml
+data_manager:
+  retrievers:
+    hierarchical_rerank:
+      enabled: true
+      reranker:
+        backend: http
+        url: http://gpu-host:8012
+        model: my-reranker
+        timeout: 60
+```
+
+**`http` contract.** archi sends `POST {url}/rerank` with `{"model": "<model>", "query": "<question>", "documents": ["<text>", ...]}`, the Cohere and Jina rerank request shape. It expects `{"results": [{"index": 0, "relevance_score": 0.93}, ...]}` with a score for every document, and orders the candidates by score, highest first. A non-2xx response or a missing score raises an error; archi never falls back to FlashRank or to the search order. Every container that searches (the chat app, the data manager and the benchmark runner) must be able to reach `url`.
+
 ### Chunking
 
 Controls how the data manager splits documents at ingestion. `sentence` is the
