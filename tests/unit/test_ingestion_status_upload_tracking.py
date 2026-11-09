@@ -256,8 +256,9 @@ def test_the_collection_ending_during_a_refresh_keeps_the_refresh_step():
 
 
 def test_the_ingest_ending_after_a_failed_collection_keeps_the_error():
-    """A failed collection published ``error``. The ingest that ends while another
-    upload still collects does not replace that error with the collection's step."""
+    """A collection fails while a second one, in flight before it, still collects: the
+    error is shown. The ingest that ends then does not replace it with the upload step.
+    """
     ingest_inside = threading.Event()
     release_ingest = threading.Event()
 
@@ -273,10 +274,10 @@ def test_the_ingest_ending_after_a_failed_collection_keeps_the_error():
     ingest.start()
     assert ingest_inside.wait(timeout=5)
 
-    with pytest.raises(RuntimeError, match="crawl down"):
-        with helpers["track_upload"]():
-            raise RuntimeError("crawl down")
     with helpers["track_upload"]():
+        with pytest.raises(RuntimeError, match="crawl down"):
+            with helpers["track_upload"]():
+                raise RuntimeError("crawl down")
         release_ingest.set()
         ingest.join(timeout=5)
         after_ingest = helpers["get_ingestion_status"]()
@@ -286,3 +287,38 @@ def test_the_ingest_ending_after_a_failed_collection_keeps_the_error():
     assert after_ingest["step"] == "failed"
     assert after_ingest["error"] == "crawl down"
     assert helpers["get_ingestion_status"]()["state"] == "error"
+
+
+def test_a_collection_that_starts_after_a_siblings_failure_is_running():
+    """A collection fails while a second one still collects: the error is shown.
+    A third collection that starts then is live work, so the status shows it as a
+    new running run and does not keep the finished failure over it."""
+    times = [
+        datetime(2026, 11, 9, 3, 0, tzinfo=timezone.utc),
+        datetime(2026, 11, 9, 3, 1, tzinfo=timezone.utc),
+        datetime(2026, 11, 9, 3, 2, tzinfo=timezone.utc),
+        datetime(2026, 11, 9, 3, 5, tzinfo=timezone.utc),
+    ]
+    helpers = _helpers(now=_fixed_now(times))
+
+    with helpers["track_upload"]():
+        with pytest.raises(RuntimeError, match="crawl down"):
+            with helpers["track_upload"]():
+                raise RuntimeError("crawl down")
+        after_failure = helpers["get_ingestion_status"]()
+        with helpers["track_upload"]():
+            third = helpers["get_ingestion_status"]()
+    done = helpers["get_ingestion_status"]()
+
+    assert after_failure["state"] == "error"
+    assert after_failure["error"] == "crawl down"
+    assert after_failure["finished_at"] == "2026-11-09T03:01:00+00:00"
+    assert third["state"] == "running"
+    assert third["step"] == "upload"
+    assert third["error"] is None
+    assert third["finished_at"] is None
+    assert third["run_id"] != after_failure["run_id"]
+    assert third["started_at"] == "2026-11-09T03:02:00+00:00"
+    assert done["state"] == "completed"
+    assert done["run_id"] == third["run_id"]
+    assert done["finished_at"] == "2026-11-09T03:05:00+00:00"

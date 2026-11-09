@@ -202,6 +202,26 @@ Not chosen: routing the progress callback through `_publish_running` (it resets
 `progress` on every step); publishing `running`/`upload` with a new identity when only
 collections remain after an `error` (it would hide the failed collection's error).
 
+3. **Round 2 (sync adversarial pass on `7146c180`), a join after a published error.**
+   `_join` published `running` only for the first run in (`_inflight == 1`). A tracked
+   collection that failed while a sibling still collected published `error` (the
+   queued-run rule: a failure is never hidden); a third collection that joined after that
+   left the status at `error` with `finished_at` set for its whole collection, until its
+   update took the lock. The benchmark wait raises on `error`, which is the right outcome
+   for the failure itself, but the status also said "finished" while new work ran. Fix:
+   `_join` publishes `running` whenever the shown state is not `running`, whatever the
+   count in flight. The first-run guard was a proxy for "no run is shown running"
+   (`docs/docs/api_reference.md`: a run that starts when no run is reported as `running`
+   publishes its step at once), and the two differ only in this case: a terminal state
+   with runs in flight is always an `error` left by a failed sibling. The sibling that was
+   already collecting when the error was published stays under that `error` until its
+   update re-publishes `running`: that is the existing queued-run rule, kept on purpose,
+   because the error must be shown at least until a later run starts. Not chosen: a
+   separate field that keeps the earlier failure (a queued lock-taker on `dev` erases it the
+   same way when it publishes `running`; the data-manager log keeps the message). Test:
+   `test_a_collection_that_starts_after_a_siblings_failure_is_running`; the first-run guard
+   restored → 1 failure.
+
 Tests (`tests/unit/test_ingestion_status_upload_tracking.py`):
 `test_the_ingest_ending_during_a_collection_shows_the_upload_step`,
 `test_a_step_after_a_failed_collection_starts_a_new_run`, and the two guards

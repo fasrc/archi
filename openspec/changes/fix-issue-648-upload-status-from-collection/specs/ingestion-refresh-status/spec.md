@@ -48,6 +48,11 @@ The data manager SHALL publish `state == "error"` with `step == "failed"` and th
 - **WHEN** one tracked collection raised during the initial ingestion, another is still inside its block, and the ingestion ends
 - **THEN** the status keeps `state == "error"`, `step == "failed"` and the collection's message
 
+#### Scenario: A collection that starts after a sibling's failure is reported as running
+- **WHEN** one tracked collection raised while a second still collects, and a third enters `track_upload()` after that
+- **THEN** the status before the third starts has `state == "error"` with the first's message and `finished_at` set
+- **AND** inside the third's block the status has `state == "running"`, `step == "upload"`, `error` `null`, `finished_at` `null`, and a new `run_id` and `started_at`
+
 ### Requirement: Every manual-ingest handler runs inside the upload tracker
 The uploader SHALL enter the data manager's upload tracker before the collection of `add_git_repo`, `add_jira_project`, `upload` and `upload_url` and before the deletes of `remove_git_repo`, SHALL leave it after `_finish_manual_ingest` returned, SHALL keep each handler's answers unchanged, and SHALL run the handlers without a tracker when none was given.
 

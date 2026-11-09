@@ -945,3 +945,7 @@ index 39a4e8ca..ad0d8edc 100644
       `set_ingestion_status("running")` from a non-running state assigns a new run
       identity (design D8). Test first:
       `test_a_step_after_a_failed_collection_starts_a_new_run`.
+- [x] 3.3 Round 2 (2026-11-09, sync adversarial pass on `7146c180`, high): `_join` publishes
+      `running` whenever the shown state is not `running`, so a collection that starts after
+      a sibling's published `error` is shown as a new run (design D8, item 3). Test first:
+      `test_a_collection_that_starts_after_a_siblings_failure_is_running`.

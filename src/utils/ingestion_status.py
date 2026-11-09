@@ -124,16 +124,20 @@ def build_ingestion_helpers(
         """Count a run in, and publish its step if no other run is shown running.
 
         One _status_lock hold for both, so a run that joins next cannot publish
-        between them and be masked. A terminal state is cleared here too: the
-        previous owner can publish completed and still hold ingestion_lock.
-        ``collecting`` marks a tracked upload, which holds no lock.
+        between them and be masked. A terminal state is cleared here too,
+        whatever the count of runs in flight: the previous owner can publish
+        completed and still hold ingestion_lock, and a tracked upload that
+        failed publishes error while other runs are in flight. A run that
+        joins then is live work, so it is shown as a new run; the error is
+        never shown over work that started after it. ``collecting`` marks a
+        tracked upload, which holds no lock.
         """
         nonlocal _inflight, _collecting
         with _status_lock:
             _inflight += 1
             if collecting:
                 _collecting += 1
-            if _inflight == 1 and _status["state"] != "running":
+            if _status["state"] != "running":
                 _set_running(step)
 
     def _publish_running(step: str) -> None:
