@@ -502,6 +502,7 @@ _NON_BOOL_DEFAULT_BASELINE = [
     "data_manager.retrievers.bm25_retriever.num_documents_to_retrieve=5",
     "data_manager.retrievers.hierarchical_rerank.candidate_pool_size=20",
     "data_manager.retrievers.hierarchical_rerank.num_documents_to_retrieve=5",
+    "data_manager.retrievers.hierarchical_rerank.reranker.backend='flashrank'",
     "data_manager.retrievers.hierarchical_rerank.reranker.model='ms-marco-MiniLM-L-12-v2'",
     "data_manager.retrievers.hybrid_retriever.bm25_weight=0.6",
     "data_manager.retrievers.hybrid_retriever.num_documents_to_retrieve=5",

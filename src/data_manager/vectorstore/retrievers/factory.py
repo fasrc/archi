@@ -20,7 +20,9 @@ from src.utils.logging import get_logger
 from .hierarchical_retriever import (
     DEFAULT_RERANKER_MODEL,
     LlamaIndexHierarchicalRetriever,
+    _get_cached_ranker,
 )
+from .http_ranker import FallbackRanker, HttpRanker
 from .hybrid_retriever import HybridRetriever
 
 logger = get_logger(__name__)
@@ -54,6 +56,7 @@ def build_vector_retriever(
     if hierarchical_cfg.get("enabled", False):
         reranker_cfg = hierarchical_cfg.get("reranker", {}) or {}
         retriever = LlamaIndexHierarchicalRetriever(
+            reranker=_build_ranker(reranker_cfg),
             vectorstore=vectorstore,
             candidate_pool_size=hierarchical_cfg.get("candidate_pool_size", 20),
             num_documents_to_retrieve=hierarchical_cfg.get(
@@ -81,4 +84,43 @@ def build_vector_retriever(
         k=k,
         bm25_weight=bm25_weight,
         semantic_weight=semantic_weight,
+    )
+
+
+def _build_ranker(reranker_cfg: Dict[str, Any]) -> Optional[Any]:
+    """Return the injected ranker for ``reranker.backend``.
+
+    ``flashrank`` (the default) returns None: the retriever builds its FlashRank
+    ``Ranker`` lazily from ``reranker.model``. ``http`` returns an ``HttpRanker``,
+    wrapped in a ``FallbackRanker`` that reranks with today's FlashRank model when
+    the server fails, unless ``reranker.fallback`` is ``none``.
+    """
+    backend = reranker_cfg.get("backend") or "flashrank"
+    if backend == "flashrank":
+        return None
+    if backend == "http":
+        url = reranker_cfg.get("url")
+        if not url:
+            raise ValueError(
+                "hierarchical_rerank reranker.backend is 'http' but reranker.url is not set"
+            )
+        ranker = HttpRanker(
+            url=url,
+            model=reranker_cfg.get("model", DEFAULT_RERANKER_MODEL),
+            timeout=reranker_cfg.get("timeout", 60.0),
+        )
+        fallback = reranker_cfg.get("fallback")
+        if fallback is None or fallback == "flashrank":
+            return FallbackRanker(
+                ranker, lambda: _get_cached_ranker(DEFAULT_RERANKER_MODEL)
+            )
+        if fallback == "none":
+            return ranker
+        raise ValueError(
+            f"unknown hierarchical_rerank reranker.fallback {fallback!r}; "
+            "expected 'flashrank' or 'none'"
+        )
+    raise ValueError(
+        f"unknown hierarchical_rerank reranker.backend {backend!r}; "
+        "expected 'flashrank' or 'http'"
     )

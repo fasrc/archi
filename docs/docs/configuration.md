@@ -618,6 +618,34 @@ Controls data ingestion, vectorstore behaviour, and retrieval settings.
 
 > **Note:** `use_hybrid_search` is a dynamic runtime setting (managed via the configuration API), not a YAML config key.
 
+### Reranker backend
+
+With `retrievers.hierarchical_rerank.enabled: true`, a reranker reorders each search's candidate chunks before the best ones go to the model. `reranker.backend` picks where the reranker runs.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `retrievers.hierarchical_rerank.reranker.backend` | string | `flashrank` | `flashrank` runs a FlashRank model on CPU inside archi; `http` calls a reranker server |
+| `retrievers.hierarchical_rerank.reranker.model` | string | `ms-marco-MiniLM-L-12-v2` | With `flashrank`, a FlashRank model name; with `http`, the model name the server expects (set it, the default is a FlashRank name) |
+| `retrievers.hierarchical_rerank.reranker.url` | string | none | The server's base URL; required when `backend` is `http` |
+| `retrievers.hierarchical_rerank.reranker.timeout` | float | `60` | Seconds per request, `http` only |
+| `retrievers.hierarchical_rerank.reranker.fallback` | string | `flashrank` | `http` only. `flashrank` reranks with `ms-marco-MiniLM-L-12-v2` when the server fails; `none` raises instead |
+
+```yaml
+data_manager:
+  retrievers:
+    hierarchical_rerank:
+      enabled: true
+      reranker:
+        backend: http
+        url: http://gpu-host:8012
+        model: my-reranker
+        timeout: 60
+```
+
+**`http` contract.** archi sends `POST {url}/rerank` with `{"model": "<model>", "query": "<question>", "documents": ["<text>", ...]}`, the Cohere and Jina rerank request shape. It expects `{"results": [{"index": 0, "relevance_score": 0.93}, ...]}` with a score for every document, and orders the candidates by score, highest first. Every container that searches (the chat app, the data manager and the benchmark runner) must be able to reach `url`.
+
+**When the server fails.** A refused connection, a timeout, a non-2xx response or a missing score counts as a failure. With `fallback: flashrank` (the default), archi logs a warning naming the error and reranks the same candidates with FlashRank's `ms-marco-MiniLM-L-12-v2`, today's default model, so answers keep coming at today's ranking quality. The FlashRank model loads on the first failure. Every chat question searches at least once, so this keeps a reranker outage from failing chat turns. A server that hangs still costs up to `timeout` seconds per search before the fallback runs, so keep `timeout` close to the server's normal response time. With `fallback: none`, the failure raises instead. Set that on a benchmark run that tests a remote reranker, so the run cannot quietly measure FlashRank in its place.
+
 ### Chunking
 
 Controls how the data manager splits documents at ingestion. `sentence` is the

@@ -500,7 +500,7 @@ class ConfigService:
         """
         Resolve known embedding class names to callables.
 
-        Currently supports: OpenAIEmbeddings, HuggingFaceEmbeddings.
+        Currently supports: OpenAIEmbeddings, HuggingFaceEmbeddings, RemoteEmbeddings.
         """
         if not embedding_class_map:
             return {}
@@ -508,9 +508,12 @@ class ConfigService:
         from langchain_huggingface import HuggingFaceEmbeddings
         from langchain_openai import OpenAIEmbeddings
 
+        from src.data_manager.vectorstore.remote_embeddings import RemoteEmbeddings
+
         EMBEDDING_MAPPING = {
             "OpenAIEmbeddings": OpenAIEmbeddings,
             "HuggingFaceEmbeddings": HuggingFaceEmbeddings,
+            "RemoteEmbeddings": RemoteEmbeddings,
         }
 
         resolved: Dict[str, Any] = {}
