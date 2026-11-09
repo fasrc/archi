@@ -19,7 +19,7 @@
 
 ## 3. Docs
 
-- [ ] 3.1 In ONE commit, make the 2 edits of design E5: the new paragraph in `docs/docs/configuration.md` (`### Sources`, after the #617 paragraph, before the ``The `visible` flag`` line) and the new paragraph in `docs/docs/data_sources.md` (after the #617 paragraph, before `A list that exists but is not a regular file`). Wrap each at the width of its file (about 90 characters) with a blank line on each side. Then confirm: `grep -c "issues/819" docs/docs/configuration.md docs/docs/data_sources.md` prints `1` for each file (it prints `0` for both on `origin/dev`). If `mkdocs` is installed, run `mkdocs build --config-file docs/mkdocs.yml --strict --site-dir /tmp/mkdocs-819` and confirm it prints no WARNING; if it is not installed, say so in the commit body. Gate green, commit (`docs(#819): a list inside the deployment directory stops a forced run`).
+- [x] 3.1 In ONE commit, make the 2 edits of design E5: the new paragraph in `docs/docs/configuration.md` (`### Sources`, after the #617 paragraph, before the ``The `visible` flag`` line) and the new paragraph in `docs/docs/data_sources.md` (after the #617 paragraph, before `A list that exists but is not a regular file`). Wrap each at the width of its file (about 90 characters) with a blank line on each side. Then confirm: `grep -c "issues/819" docs/docs/configuration.md docs/docs/data_sources.md` prints `1` for each file (it prints `0` for both on `origin/dev`). If `mkdocs` is installed, run `mkdocs build --config-file docs/mkdocs.yml --strict --site-dir /tmp/mkdocs-819` and confirm it prints no WARNING; if it is not installed, say so in the commit body. Gate green, commit (`docs(#819): a list inside the deployment directory stops a forced run`).
 
 ## 4. Verify, push, and open the PR
 

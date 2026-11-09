@@ -35,6 +35,11 @@ A list path that does not exist stops `archi create`, `archi restart --config`, 
 that lists it, and the current directory. A relative path resolves from the directory
 where you run `archi`. (Changed in [#617](https://github.com/fasrc/archi/issues/617).)
 
+A list inside the deployment directory (`~/.archi/archi-<name>/`) stops
+`archi create --force` and `archi evaluate --force` before the teardown, because the
+teardown deletes that directory before archi stages the lists. Move the file outside the
+directory. (Changed in [#819](https://github.com/fasrc/archi/issues/819).)
+
 A list that exists but is not a regular file, or cannot be read (for example, permission
 denied, or bytes that are not UTF-8), does not stop `archi create`. A list problem does
 not stop a scrape either. Archi logs a WARNING that names the list, skips that list, and
