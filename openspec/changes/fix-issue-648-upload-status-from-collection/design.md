@@ -222,6 +222,16 @@ collections remain after an `error` (it would hide the failed collection's error
    `test_a_collection_that_starts_after_a_siblings_failure_is_running`; the first-run guard
    restored → 1 failure.
 
+   **Known limitation (final adversarial pass on `41481966`, tracked as #828).** Rule 3 lets
+   a newer run identity start (a collection that joins after a sibling's `error`) while an
+   older lock-holding run is still active; that older run's later terminal publish then
+   lands on the newer identity with a `finished_at`, while the newer collection still runs.
+   It needs two failures in one window (the sibling's collection and the older run). The
+   remedy, a per-operation run generation with the older failure kept visible separately,
+   is a change to the identity model and is the work order of #828; the state before
+   `41481966` had the inverse wart with one failure (a new collection shown as a finished
+   error).
+
 Tests (`tests/unit/test_ingestion_status_upload_tracking.py`):
 `test_the_ingest_ending_during_a_collection_shows_the_upload_step`,
 `test_a_step_after_a_failed_collection_starts_a_new_run`, and the two guards
