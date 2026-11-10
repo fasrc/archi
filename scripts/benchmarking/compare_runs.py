@@ -79,7 +79,6 @@ Exit codes: 0 ok, 1 usage/IO, 2 gate refusal, 3 config-divergence stop.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import math
 import re
@@ -1636,14 +1635,24 @@ def timing_block(arms: Sequence[Arm]) -> List[dict]:
 
 
 def _project_root_on_path() -> None:
-    """Make ``src`` importable from a plain ``python scripts/...`` run.
+    """Make ``src`` and ``scripts`` importable from a plain ``python scripts/...`` run.
 
-    The two project imports below happen *inside* their functions on purpose:
+    The project imports below happen *inside* their functions on purpose:
     a module-level import would be sorted above this shim by isort and the
     script would then only work when it was already run from the repo root.
+    ``stdlib_utils`` owns the shared copy of this shim, but it is itself reached
+    through this one, so the two lines stay here as well.
     """
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
+
+
+def _stdlib_utils() -> Any:
+    """The pure-stdlib ``src/utils`` loader shared with the category helpers (#816)."""
+    _project_root_on_path()
+    from scripts.benchmarking import stdlib_utils
+
+    return stdlib_utils
 
 
 def _utils_function(module_name: str, name: str) -> Any:
@@ -1655,28 +1664,16 @@ def _utils_module(module_name: str) -> Any:
     """A pure-stdlib ``src/utils`` module, without the package side effects.
 
     ``src/utils/__init__.py`` imports the config service, which imports
-    ``psycopg2`` — so the ordinary ``from src.utils.<module> import ...``
+    ``psycopg2``, so the ordinary ``from src.utils.<module> import ...``
     needs a database driver on a host that is only reading finished artifacts.
-    ``benchmark_schema.py``, ``benchmark_provenance.py`` and ``judge_gates.py``
-    are themselves pure stdlib at import, so the file is loaded straight from
-    disk when the package import is unavailable. Same file, same function: this
-    is not a copy.
+    ``stdlib_utils.utils_module`` tries the package import first and otherwise
+    loads the module's own file straight from disk. Same file, same function:
+    this is not a copy. A file that cannot be loaded either is a usage error.
     """
-    _project_root_on_path()
     try:
-        return importlib.import_module(f"src.utils.{module_name}")
-    except ImportError:
-        pass
-    source = REPO_ROOT / "src" / "utils" / f"{module_name}.py"
-    spec = importlib.util.spec_from_file_location(f"archi_{module_name}", source)
-    if spec is None or spec.loader is None:  # pragma: no cover - unreachable
-        raise CompareError(f"cannot load {source}", EXIT_USAGE)
-    module = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(module)
-    except Exception as exc:  # pragma: no cover - environment, not logic
-        raise CompareError(f"cannot load {source}: {exc}", EXIT_USAGE) from None
-    return module
+        return _stdlib_utils().utils_module(module_name)
+    except ImportError as exc:
+        raise CompareError(str(exc), EXIT_USAGE) from None
 
 
 def _normalize_bank():

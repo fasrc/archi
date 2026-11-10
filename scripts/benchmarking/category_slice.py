@@ -35,7 +35,13 @@ from scripts.benchmarking.category_attribution import (
     metric_rows,
     url_categories,
 )
-from src.utils.benchmark_provenance import canonical_source_url
+from scripts.benchmarking.stdlib_utils import utils_function
+
+#: ``src.utils.benchmark_provenance.canonical_source_url``, bound through the
+#: pure-stdlib shim so this module imports on a host with no database driver
+#: (``src/utils/__init__.py`` imports psycopg2; fasrc/archi#816). Same file,
+#: same function: this is not a copy.
+canonical_source_url = utils_function("benchmark_provenance", "canonical_source_url")
 
 UNAVAILABLE = "<unavailable:"
 METADATA_TOOL = "search_metadata_index"
