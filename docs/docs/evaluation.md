@@ -1369,6 +1369,15 @@ evaluation. A `cancel_requested` job remains active until its process exits. If
 the service restarted, refresh the catalog and verify that the old job was
 marked `interrupted`.
 
+A job can also keep reading `queued`, `running` or `cancel_requested` after
+its worker stopped, for example when the console could not write the job file
+on a full disk. Such a job does not block new launches. The next launch records
+it as `failed`, with the error that stopped its worker when there was one, and
+then starts. While the jobs directory still refuses writes, a launch or a
+**Cancel evaluation** fails with HTTP 500 instead of 409, and the chat-app log
+names the write error. When writes succeed again, **Cancel evaluation** also
+ends an evaluation that still reads `queued` or `running`, as `canceled`.
+
 For exact command flags, see [`archi qa` in the CLI
 reference](cli_reference.md#archi-qa). For deployment-level paths and
 authentication settings, see [Configuration](configuration.md).

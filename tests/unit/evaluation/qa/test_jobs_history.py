@@ -2326,6 +2326,449 @@ def test_continue_process_popen_failure_drops_the_prior_start_time(
     manager.close()
 
 
+def _process_request(tmp_path):
+    return {
+        "operation": "composite",
+        "output_dir": str(tmp_path / "run"),
+        "dataset": str(tmp_path / "dataset.json"),
+        "agent_config": str(tmp_path / "config.yaml"),
+        "agent_spec": str(tmp_path / "agent.md"),
+        "evaluator_profile_path": str(tmp_path / "profile.yaml"),
+        "attempts": 1,
+        "run_workers": 1,
+        "score_workers": 1,
+    }
+
+
+def _fail_job_writes_after_the_first(monkeypatch):
+    """Fail every job-file write after the first (the ``queued`` write).
+
+    Set ``writes["failing"] = False`` to let writes succeed again. Counting
+    writes, not statuses, keeps the stub free of timing: the first write is
+    the one ``start``/``start_process`` makes under the lock before it submits
+    the worker.
+    """
+    production_write_json = jobs_module.write_json
+    writes = {"count": 0, "failing": True}
+
+    def write_json(path, payload):
+        writes["count"] += 1
+        if writes["failing"] and writes["count"] > 1:
+            raise OSError("disk full")
+        production_write_json(path, payload)
+
+    monkeypatch.setattr(jobs_module, "write_json", write_json)
+    return writes
+
+
+def _start_stuck_process_job(monkeypatch, manager, tmp_path):
+    """Leave a process job ``queued`` on disk with a worker that raised (#751).
+
+    The ``running`` write raises, the worker is reaped, and the ``failed``
+    write raises too, so the exception ends the executor future.
+    """
+    writes = _fail_job_writes_after_the_first(monkeypatch)
+
+    class _FakeProcess:
+        pid = 2**31 - 1
+
+    monkeypatch.setattr(jobs_module.subprocess, "Popen", lambda *a, **k: _FakeProcess())
+    monkeypatch.setattr(manager, "_terminate", lambda process: None)
+    stuck = manager.start_process(
+        _process_request(tmp_path),
+        context={"workspace_id": "run", "attempts": 1},
+    )
+    with pytest.raises(OSError, match="disk full"):
+        manager.wait(stuck["id"], timeout=JOB_WAIT_TIMEOUT)
+    assert manager.get(stuck["id"])["status"] == "queued"
+    return stuck, writes
+
+
+def test_a_stuck_process_job_does_not_block_the_next_job_once_writes_recover(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+    stuck, writes = _start_stuck_process_job(monkeypatch, manager, tmp_path)
+    writes["failing"] = False
+
+    next_job = manager.start("generate_atoms", lambda: {})
+
+    assert manager.wait(next_job["id"], timeout=JOB_WAIT_TIMEOUT)["status"] == (
+        "completed"
+    )
+    settled = manager.get(stuck["id"])
+    assert settled["status"] == "failed"
+    assert "disk full" in settled["error"]
+    assert settled["completed_at"] is not None
+    manager.close()
+
+
+def test_while_job_writes_fail_a_stuck_job_lets_start_raise_the_write_error(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+    stuck, _writes = _start_stuck_process_job(monkeypatch, manager, tmp_path)
+
+    with pytest.raises(OSError, match="disk full"):
+        manager.start("generate_atoms", lambda: {})
+
+    assert manager.get(stuck["id"])["status"] == "queued"
+    assert [job["id"] for job in manager.list()] == [stuck["id"]]
+    manager.close()
+
+
+def test_a_stuck_atom_job_reads_failed_and_does_not_block_the_next_job(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+    writes = _fail_job_writes_after_the_first(monkeypatch)
+    stuck = manager.start("generate_atoms", lambda: {"draft_id": "never"})
+    with pytest.raises(OSError, match="disk full"):
+        manager.wait(stuck["id"], timeout=JOB_WAIT_TIMEOUT)
+    assert manager.get(stuck["id"])["status"] == "queued"
+    writes["failing"] = False
+
+    next_job = manager.start("generate_atoms", lambda: {})
+
+    assert manager.wait(next_job["id"], timeout=JOB_WAIT_TIMEOUT)["status"] == (
+        "completed"
+    )
+    settled = manager.get(stuck["id"])
+    assert settled["status"] == "failed"
+    assert "disk full" in settled["error"]
+    manager.close()
+
+
+def test_a_job_whose_final_write_fails_does_not_block_the_next_job(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+    production_write_json = jobs_module.write_json
+    writes = {"failing": False}
+
+    def write_json(path, payload):
+        if writes["failing"]:
+            raise OSError("disk full")
+        production_write_json(path, payload)
+
+    class _FinishingProcess:
+        pid = 2**31 - 1
+
+        def wait(self, timeout=None):
+            # The worker exits; every write from here on fails.
+            writes["failing"] = True
+            return 0
+
+    monkeypatch.setattr(jobs_module, "write_json", write_json)
+    monkeypatch.setattr(
+        jobs_module.subprocess, "Popen", lambda *a, **k: _FinishingProcess()
+    )
+    job = manager.start_process(
+        _process_request(tmp_path),
+        context={"workspace_id": "run", "attempts": 1},
+    )
+    with pytest.raises(OSError, match="disk full"):
+        manager.wait(job["id"], timeout=JOB_WAIT_TIMEOUT)
+    assert manager.get(job["id"])["status"] == "running"
+    writes["failing"] = False
+
+    next_job = manager.start("generate_atoms", lambda: {})
+
+    assert manager.wait(next_job["id"], timeout=JOB_WAIT_TIMEOUT)["status"] == (
+        "completed"
+    )
+    settled = manager.get(job["id"])
+    assert settled["status"] == "failed"
+    assert "disk full" in settled["error"]
+    manager.close()
+
+
+def test_a_failed_cancellation_does_not_leave_its_job_stuck(monkeypatch, tmp_path):
+    manager = EvaluationJobManager(tmp_path)
+    release = threading.Event()
+
+    class _BlockingProcess:
+        pid = 2**31 - 1
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout=None):
+            release.wait(JOB_WAIT_TIMEOUT)
+            self.returncode = -15
+            return self.returncode
+
+    monkeypatch.setattr(
+        jobs_module.subprocess, "Popen", lambda *a, **k: _BlockingProcess()
+    )
+    monkeypatch.setattr(manager, "_terminate", lambda process: release.set())
+    job = manager.start_process(
+        _process_request(tmp_path),
+        context={"workspace_id": "run", "attempts": 1},
+    )
+    deadline = time.monotonic() + JOB_WAIT_TIMEOUT
+    while manager.get(job["id"])["status"] != "running":
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+    def on_terminated(_job):
+        raise RuntimeError("canceled.json could not be written")
+
+    with pytest.raises(RuntimeError, match="canceled.json"):
+        manager.cancel(job["id"], on_terminated=on_terminated)
+    manager.wait(job["id"], timeout=JOB_WAIT_TIMEOUT)
+    assert manager.get(job["id"])["status"] == "cancel_requested"
+
+    next_job = manager.start("generate_atoms", lambda: {})
+
+    assert manager.wait(next_job["id"], timeout=JOB_WAIT_TIMEOUT)["status"] == (
+        "completed"
+    )
+    settled = manager.get(job["id"])
+    assert settled["status"] == "failed"
+    assert settled["error"] == "the job ended without a final status"
+    manager.close()
+
+
+def test_a_failed_cancellation_before_start_does_not_leave_its_job_stuck(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+    gate = threading.Event()
+    # Hold the single executor thread, so the job's future stays pending and
+    # cancel() takes its before-start path (future.cancel() returns True).
+    blocker = manager._executor.submit(gate.wait, JOB_WAIT_TIMEOUT)
+    popen_calls = []
+    monkeypatch.setattr(
+        jobs_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a)
+    )
+    job = manager.start_process(
+        _process_request(tmp_path),
+        context={"workspace_id": "run", "attempts": 1},
+    )
+
+    def on_terminated(_job):
+        raise RuntimeError("canceled.json could not be written")
+
+    try:
+        with pytest.raises(RuntimeError, match="canceled.json"):
+            manager.cancel(job["id"], on_terminated=on_terminated)
+    finally:
+        gate.set()
+    blocker.result(timeout=JOB_WAIT_TIMEOUT)
+    assert manager._futures[job["id"]].cancelled()
+    assert manager.get(job["id"])["status"] == "cancel_requested"
+
+    next_job = manager.start("generate_atoms", lambda: {})
+
+    assert manager.wait(next_job["id"], timeout=JOB_WAIT_TIMEOUT)["status"] == (
+        "completed"
+    )
+    settled = manager.get(job["id"])
+    assert settled["status"] == "failed"
+    assert settled["error"] == "the job ended without a final status"
+    assert popen_calls == []
+    manager.close()
+
+
+def test_overlapping_cancels_keep_the_job_blocking_until_the_last_one_ends(
+    monkeypatch, tmp_path
+):
+    """One cancel() that raises must not release a job another cancel() owns.
+
+    This passes on the code before #751 too. It guards the per-job count of
+    cancel calls: a set would let the first call to end release the record
+    while the other call is still in its ``cancel_requested`` window.
+    """
+    manager = EvaluationJobManager(tmp_path)
+    release_process = threading.Event()
+    first_cancel_terminating = threading.Event()
+    let_first_cancel_finish = threading.Event()
+    terminate_calls = []
+
+    class _BlockingProcess:
+        pid = 2**31 - 1
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout=None):
+            release_process.wait(JOB_WAIT_TIMEOUT)
+            self.returncode = -15
+            return self.returncode
+
+    def fake_terminate(process):
+        # cancel() calls this without the manager lock.
+        terminate_calls.append(process)
+        if len(terminate_calls) == 1:
+            first_cancel_terminating.set()
+            let_first_cancel_finish.wait(JOB_WAIT_TIMEOUT)
+        else:
+            release_process.set()
+
+    monkeypatch.setattr(
+        jobs_module.subprocess, "Popen", lambda *a, **k: _BlockingProcess()
+    )
+    monkeypatch.setattr(manager, "_terminate", fake_terminate)
+    job = manager.start_process(
+        _process_request(tmp_path),
+        context={"workspace_id": "run", "attempts": 1},
+    )
+    deadline = time.monotonic() + JOB_WAIT_TIMEOUT
+    while manager.get(job["id"])["status"] != "running":
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+    first_results = []
+    first_errors = []
+
+    def first_cancel():
+        try:
+            first_results.append(manager.cancel(job["id"]))
+        except BaseException as exc:
+            first_errors.append(exc)
+
+    first = threading.Thread(target=first_cancel)
+    first.start()
+    try:
+        assert first_cancel_terminating.wait(JOB_WAIT_TIMEOUT)
+
+        def on_terminated(_job):
+            raise RuntimeError("canceled.json could not be written")
+
+        with pytest.raises(RuntimeError, match="canceled.json"):
+            manager.cancel(job["id"], on_terminated=on_terminated)
+        manager.wait(job["id"], timeout=JOB_WAIT_TIMEOUT)
+
+        with pytest.raises(JobConflictError, match="already cancel_requested"):
+            manager.start("generate_atoms", lambda: {})
+    finally:
+        let_first_cancel_finish.set()
+        first.join(JOB_WAIT_TIMEOUT)
+
+    assert first_errors == []
+    assert [result["status"] for result in first_results] == ["canceled"]
+    manager.close()
+
+
+def test_a_stuck_job_whose_process_is_still_tracked_keeps_blocking_until_canceled(
+    monkeypatch, tmp_path
+):
+    """Never release a record while the manager still tracks its process.
+
+    This passes on the code before #751 too. It guards the ownership rule: a
+    worker that raised out of ``process.wait()`` left its process in the
+    table, so the job is not ownerless and only ``cancel()`` may end it.
+    """
+    manager = EvaluationJobManager(tmp_path)
+    terminated = []
+
+    class _UnwaitableProcess:
+        pid = 2**31 - 1
+
+        def wait(self, timeout=None):
+            raise RuntimeError("wait failed")
+
+    process = _UnwaitableProcess()
+    monkeypatch.setattr(jobs_module.subprocess, "Popen", lambda *a, **k: process)
+    monkeypatch.setattr(manager, "_terminate", terminated.append)
+    job = manager.start_process(
+        _process_request(tmp_path),
+        context={"workspace_id": "run", "attempts": 1},
+    )
+    with pytest.raises(RuntimeError, match="wait failed"):
+        manager.wait(job["id"], timeout=JOB_WAIT_TIMEOUT)
+    assert manager.get(job["id"])["status"] == "running"
+
+    with pytest.raises(JobConflictError, match="already running"):
+        manager.start("generate_atoms", lambda: {})
+
+    assert manager.cancel(job["id"])["status"] == "canceled"
+    assert terminated == [process]
+    manager.close()
+
+
+def test_an_active_record_with_a_non_string_id_still_blocks(tmp_path):
+    """A hand-edited job file must not crash the ownership check.
+
+    This passes on the code before #751 too. ``jobs_dir`` is a host folder a
+    person can edit, and an id that cannot be a dict key must keep the old
+    behavior (a conflict), not raise ``TypeError``.
+    """
+    manager = EvaluationJobManager(tmp_path)
+    write_json(
+        tmp_path / f"{uuid.uuid4()}.json",
+        {"id": ["not", "a", "string"], "kind": "evaluation", "status": "queued"},
+    )
+
+    with pytest.raises(JobConflictError, match="already queued"):
+        manager.start("generate_atoms", lambda: {})
+    manager.close()
+
+
+def test_cancel_of_a_stuck_process_job_returns_canceled_without_raising(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+    stuck, writes = _start_stuck_process_job(monkeypatch, manager, tmp_path)
+    writes["failing"] = False
+
+    canceled = manager.cancel(stuck["id"])
+
+    assert canceled["status"] == "canceled"
+    assert manager.get(stuck["id"])["status"] == "canceled"
+    next_job = manager.start("generate_atoms", lambda: {})
+    assert manager.wait(next_job["id"], timeout=JOB_WAIT_TIMEOUT)["status"] == (
+        "completed"
+    )
+    manager.close()
+
+
+def test_cancel_of_a_stuck_process_job_still_blocks_start_until_it_ends(
+    monkeypatch, tmp_path
+):
+    manager = EvaluationJobManager(tmp_path)
+    stuck, writes = _start_stuck_process_job(monkeypatch, manager, tmp_path)
+    writes["failing"] = False
+    terminal_callback_statuses = []
+
+    def on_terminated(terminated_job):
+        terminal_callback_statuses.append(terminated_job["status"])
+        with pytest.raises(JobConflictError, match="already cancel_requested"):
+            manager.start("generate_atoms", lambda: {})
+
+    canceled = manager.cancel(stuck["id"], on_terminated=on_terminated)
+
+    assert terminal_callback_statuses == ["cancel_requested"]
+    assert canceled["status"] == "canceled"
+    manager.close()
+
+
+def test_a_failed_settle_write_does_not_block_the_next_job(monkeypatch, tmp_path):
+    manager = EvaluationJobManager(tmp_path)
+    stuck, writes = _start_stuck_process_job(monkeypatch, manager, tmp_path)
+    writes["failing"] = False
+    stuck_name = f"{stuck['id']}.json"
+    recovered_write_json = jobs_module.write_json
+
+    def write_json(path, payload):
+        if path.name == stuck_name:
+            raise OSError("settle write failed")
+        recovered_write_json(path, payload)
+
+    monkeypatch.setattr(jobs_module, "write_json", write_json)
+
+    next_job = manager.start("generate_atoms", lambda: {})
+
+    assert manager.wait(next_job["id"], timeout=JOB_WAIT_TIMEOUT)["status"] == (
+        "completed"
+    )
+    assert manager.get(stuck["id"])["status"] == "queued"
+    manager.close()
+
+
 def test_the_sweep_keeps_a_uuid_spelled_differently_than_the_manager_writes_it(
     tmp_path,
 ):
