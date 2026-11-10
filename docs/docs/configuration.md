@@ -224,6 +224,23 @@ Two rows need care when a marker is absent:
   whatever the `jira` or `redmine` `visible` flag says. The ticket integrations write the
   marker on every ticket that they store as `ticket`, so only a hand-made row can lack it.
 
+A plain link re-fetch keeps a stored `scraper` marker (changed in
+[#640](https://github.com/fasrc/archi/issues/640)). A row that the ELOG or Indico scraper
+stored keeps its marker when a later ingest fetches the same URL as a plain link, so the
+row still obeys the `elog` or `indico` flag. Rows that lost their marker before that change
+still map to `links`. To restore them, run
+`python scripts/maintenance/repair_scraper_markers.py --pg-dsn <dsn> --input-list <path>`
+on the host, with every input-list file of the deployment (repeat `--input-list`; the script
+does not read the deployment config). The run is a dry run by default and writes only with
+`--apply`. It restores a marker only from an explicit `elog-` or `indico-` entry in the given
+lists; it reports, and does not write, a row at or under a plain link entry (the crawler
+descends from a seed, so that row may be a plain-link row that no list names) and the
+ELOG-shaped and Indico-shaped rows that it cannot place. To
+reclassify a row whose entry moved (for example from an `indico-` entry to a plain link
+entry), delete the document through the uploader app (its `/document_index/delete/<hash>`
+endpoint; a soft delete of the catalog row), then let the next ingest fetch the URL under
+its new entry: a deleted row does not revive its marker.
+
 To keep a link source out of an ingest today, remove it from `input_lists` rather than
 setting `enabled: false`.
 
